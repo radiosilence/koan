@@ -808,9 +808,21 @@ impl SubsonicClient {
 
     /// Have the server hand `command` (a link command, as JSON) to the device
     /// `to` on this account: a koan extension, `koanDevices`.
-    pub fn koan_command(&self, to: &str, command: &str) -> Result<(), SubsonicError> {
-        self.get_with_params("koanCommand", &[("to", to), ("command", command)])?;
-        Ok(())
+    /// Ask the server to get `command` (JSON) to the device `to`. With `ack`,
+    /// a server offering `koanAck` waits a moment for the device and says how
+    /// it went; one that does not answers `None`.
+    pub fn koan_command(
+        &self,
+        to: &str,
+        command: &str,
+        ack: Option<u64>,
+    ) -> Result<Option<crate::remote::acks::AckOutcome>, SubsonicError> {
+        let ack = ack.map(|a| a.to_string());
+        let mut params = vec![("to", to), ("command", command)];
+        if let Some(ack) = &ack {
+            params.push(("ack", ack));
+        }
+        Ok(self.get_with_params("koanCommand", &params)?.koan_command)
     }
 
     // -- Play history: koan servers offering `koanHistory` --
@@ -895,6 +907,7 @@ struct SubsonicResponse {
     join: Option<KoanJoined>,
     pair: Option<KoanPair>,
     koan_history: Option<KoanHistoryPage>,
+    koan_command: Option<crate::remote::acks::AckOutcome>,
 }
 
 /// A page of a koan server's play history (`koanHistory`).

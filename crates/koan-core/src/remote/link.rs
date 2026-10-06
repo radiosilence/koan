@@ -631,9 +631,8 @@ pub struct Local {
     pub state: Arc<dyn Fn() -> LinkState + Send + Sync>,
     /// Act on a command. With a `Pending`, the sender waits for the answer:
     /// finish it with the outcome once the command has been acted on.
-    pub on_command: Arc<
-        dyn Fn(LinkCommand, CommandSource, Option<crate::remote::acks::Pending>) + Send + Sync,
-    >,
+    pub on_command:
+        Arc<dyn Fn(LinkCommand, CommandSource, Option<crate::remote::acks::Pending>) + Send + Sync>,
 }
 
 /// Keep a link open to the configured server for as long as the process runs,
@@ -1321,6 +1320,7 @@ mod tests {
         let report = LinkReport::Command {
             to: "phone".into(),
             command: LinkCommand::HandOff { to: "mac".into() },
+            ack: None,
         };
         let json = serde_json::to_string(&report).unwrap();
         assert_eq!(

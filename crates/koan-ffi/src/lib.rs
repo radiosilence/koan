@@ -471,13 +471,13 @@ impl KoanEngine {
                 | koan_core::remote::link::LinkCommand::HistoryChanged
         ) {
             return offload::offload(move || {
-                self.handle_link(cmd, koan_core::remote::link::CommandSource::Account);
+                self.handle_link(cmd, koan_core::remote::link::CommandSource::Account, None);
                 Ok(())
             })
             .await;
         }
         offload::sequenced(move || {
-            self.handle_link(cmd, koan_core::remote::link::CommandSource::Account);
+            self.handle_link(cmd, koan_core::remote::link::CommandSource::Account, None);
             Ok(())
         })
         .await
@@ -4143,11 +4143,11 @@ impl KoanEngine {
             identity: koan_core::remote::link::LinkIdentity::this_device(device_name),
             // What a command may cost, and where it may go, depends on who
             // sent it: see `handle_link`.
-            on_command: Arc::new(move |cmd, source| {
+            on_command: Arc::new(move |cmd, source, pending| {
                 let weak = weak.clone();
                 offload::from_another_device(move || {
                     if let Some(engine) = weak.upgrade() {
-                        engine.handle_link(cmd, source);
+                        engine.handle_link(cmd, source, pending);
                     }
                 });
             }),
@@ -4556,7 +4556,28 @@ impl KoanEngine {
         &self,
         cmd: koan_core::remote::link::LinkCommand,
         source: koan_core::remote::link::CommandSource,
+        pending: Option<koan_core::remote::acks::Pending>,
     ) {
+        use koan_core::remote::acks::AckOutcome;
+        let outcome = match self.run_link_command(cmd, source) {
+            Ok(()) => AckOutcome::Done,
+            Err(e) => {
+                log::warn!("link: {e}");
+                AckOutcome::Failed {
+                    error: e.to_string(),
+                }
+            }
+        };
+        if let Some(pending) = pending {
+            pending.finish(outcome);
+        }
+    }
+
+    fn run_link_command(
+        &self,
+        cmd: koan_core::remote::link::LinkCommand,
+        source: koan_core::remote::link::CommandSource,
+    ) -> Result<(), KoanError> {
         use koan_core::remote::link::{CommandSource, LinkCommand};
         // Only the account may cost a sync: anyone on the network can send a
         // track id this library has never heard of.
@@ -4570,7 +4591,7 @@ impl KoanEngine {
             }
             found
         };
-        let result = match cmd {
+        match cmd {
             LinkCommand::Play {
                 track_ids,
                 start_at,
@@ -4643,7 +4664,7 @@ impl KoanEngine {
             // check, made again.
             LinkCommand::Shared { command } => {
                 if command.allowed_playback() {
-                    self.handle_link(*command, CommandSource::Shared);
+                    self.run_link_command(*command, CommandSource::Shared)?;
                 }
                 Ok(())
             }
@@ -4652,7 +4673,8 @@ impl KoanEngine {
             | LinkCommand::Shares { .. }
             | LinkCommand::Forgotten { .. }
             | LinkCommand::WatchLevels { .. }
-            | LinkCommand::Levels { .. } => Ok(()),
+            | LinkCommand::Levels { .. }
+            | LinkCommand::Acked { .. } => Ok(()),
             LinkCommand::SetOutput { output } => {
                 koan_core::remote::outputs::set(output, koan_core::upnp::choose(), &self.tx)
                     .map_err(|message| KoanError::Audio { message })
@@ -4764,9 +4786,6 @@ impl KoanEngine {
             LinkCommand::SleepTimer { timer } => {
                 self.send_local(PlayerCommand::SetSleepTimer(timer))
             }
-        };
-        if let Err(e) = result {
-            log::warn!("link: {e}");
         }
     }
 

@@ -38,6 +38,10 @@ pub const HISTORY: &str = "koanHistory";
 /// the key and not the password. See `helpers::set_remote_credentials`.
 pub const SIGN_IN: &str = "koanSignIn";
 
+/// The server relays devices' answers to commands sent with an id, and
+/// answers `koanCommand` with how it went: see `remote::acks`.
+pub const ACK: &str = "koanAck";
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerProfile {
     /// OpenSubsonic's `type`: `koan`, `navidrome`. `None` from a server that

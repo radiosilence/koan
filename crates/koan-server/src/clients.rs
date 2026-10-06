@@ -9,6 +9,7 @@
 use std::sync::LazyLock;
 
 use koan_core::db::queries::{self, UidKind};
+use koan_core::remote::acks::{AckOutcome, Envelope};
 use koan_core::remote::link::{LinkCommand, LinkDevice, LinkState};
 use outbox::Absent;
 use parking_lot::Mutex;
@@ -37,6 +38,8 @@ pub struct ClientInfo {
     /// Reached by a notification it shows rather than over its link: iOS had
     /// suspended it. What was sent runs when someone taps the notification.
     pub notified: bool,
+    /// It answers commands sent with an id: see `koan_core::remote::acks`.
+    pub acks: bool,
 }
 
 impl ClientInfo {
@@ -60,11 +63,33 @@ struct Entry {
     info: ClientInfo,
     /// The client's own id for itself, so a reconnect replaces its entry.
     device: String,
-    tx: UnboundedSender<LinkCommand>,
+    tx: UnboundedSender<Envelope>,
     /// Sent the account's other devices whenever one changes. Asked for by
     /// the client; one that predates them would log each as a bad command.
     wants_devices: bool,
+    /// When anything last came up this link, in Unix milliseconds: what
+    /// tells a link that has stopped answering from one that is only slow.
+    heard_ms: i64,
 }
+
+/// A command relayed with an id, and what to do with the answer: `None` when
+/// the device it went to gives none.
+pub struct Acking {
+    pub id: u64,
+    pub reply: Box<dyn FnOnce(Option<AckOutcome>) + Send>,
+}
+
+/// An answer the server is waiting for.
+struct Waiting {
+    reply: Box<dyn FnOnce(Option<AckOutcome>) + Send>,
+    sent_ms: i64,
+}
+
+/// How long a linked device has to answer before the server looks at its
+/// link; and, if it has heard from the device since, how long in all before
+/// it gives up.
+const FIRST_LOOK: std::time::Duration = std::time::Duration::from_millis(2500);
+const SLOW_ANSWER: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// A Live Activity on a phone showing another device, and where to push its
 /// updates.
@@ -129,6 +154,8 @@ pub struct Registry {
     /// Where each device last linked from, by device id: its account and
     /// address. Kept in `link_devices` too, so a restart keeps it.
     addresses: Mutex<std::collections::HashMap<String, (String, std::net::IpAddr)>>,
+    /// Answers awaited, by the device asked and the command's id.
+    answers: Mutex<std::collections::HashMap<(String, u64), Waiting>>,
 }
 
 /// `watcher`, a device of `watcher_user`, has `target`'s playing bars on
@@ -163,8 +190,9 @@ impl Registry {
         name: &str,
         platform: &str,
         device: &str,
-        tx: UnboundedSender<LinkCommand>,
+        tx: UnboundedSender<Envelope>,
         wants_devices: bool,
+        acks: bool,
     ) -> String {
         let id = uuid::Uuid::now_v7().to_string();
         if let Some((sent, how)) = WOKEN
@@ -180,7 +208,7 @@ impl Registry {
         // link first.
         let live = self.live();
         for cmd in outbox::take_and_remember(username, device, name, platform, &live) {
-            let _ = tx.send(cmd);
+            let _ = tx.send(cmd.into());
         }
         let mut entries = self.entries.lock();
         entries.retain(|e| !(e.device == device && e.info.username == username));
@@ -197,10 +225,12 @@ impl Registry {
                 state_at: chrono::Utc::now().timestamp_millis(),
                 reports: false,
                 notified: false,
+                acks,
             },
             device: device.to_string(),
             tx,
             wants_devices,
+            heard_ms: chrono::Utc::now().timestamp_millis(),
         });
         drop(entries);
         // Always, empty or not: an app signed in elsewhere before holds that
@@ -333,7 +363,7 @@ impl Registry {
             .iter()
             .find(|e| e.info.username == username && e.device == device)
         {
-            let _ = e.tx.send(cmd);
+            let _ = e.tx.send(cmd.into());
         }
     }
 
@@ -391,6 +421,7 @@ impl Registry {
                 last_seen: None,
                 wakeable: Some(can_push && asleep.iter().any(|t| t.device == e.device)),
                 owner: None,
+                acks: e.info.acks,
             })
             .collect();
         for t in asleep {
@@ -404,13 +435,14 @@ impl Registry {
                     last_seen: Some(t.last_seen),
                     wakeable: Some(can_push),
                     owner: None,
+                    acks: false,
                 });
             }
         }
         all.extend(self.shared_devices(username, &entries, can_push));
         for e in ours.iter().filter(|e| e.wants_devices) {
             let devices = all.iter().filter(|d| d.id != e.device).cloned().collect();
-            let _ = e.tx.send(LinkCommand::Devices { devices });
+            let _ = e.tx.send(LinkCommand::Devices { devices }.into());
         }
     }
 
@@ -443,6 +475,7 @@ impl Registry {
                     last_seen: None,
                     wakeable: Some(can_push),
                     owner: Some(g.owner.clone()),
+                    acks: e.info.acks,
                 }),
                 None => {
                     if let Some(t) = outbox::push_targets(Some(&g.owner))
@@ -458,6 +491,7 @@ impl Registry {
                             last_seen: Some(t.last_seen),
                             wakeable: Some(can_push),
                             owner: Some(g.owner.clone()),
+                            acks: false,
                         });
                     }
                 }
@@ -530,11 +564,11 @@ impl Registry {
                 .into_iter()
                 .filter(|a| a != owner)
                 .collect();
-            let _ = e.tx.send(LinkCommand::Shares {
+            let _ = e.tx.send(Envelope::from(LinkCommand::Shares {
                 grantees,
                 error,
                 accounts,
-            });
+            }));
         }
     }
 
@@ -697,6 +731,18 @@ impl Registry {
         to: &str,
         command: LinkCommand,
     ) -> Result<ClientInfo, String> {
+        self.relay_acked(username, from, to, command, None)
+    }
+
+    /// `relay_from`, with the device's answer handed to `acking`'s reply.
+    pub fn relay_acked(
+        &self,
+        username: &str,
+        from: Option<&str>,
+        to: &str,
+        command: LinkCommand,
+        acking: Option<Acking>,
+    ) -> Result<ClientInfo, String> {
         // Levels are relayed only between live links, by `watch_levels` and
         // `levels`: never queued for a device that is away, never a push.
         if matches!(
@@ -721,7 +767,7 @@ impl Registry {
             let command = LinkCommand::Shared {
                 command: Box::new(command),
             };
-            return self.send(Some(&owner), Some(to), command);
+            return self.send_with(Some(&owner), Some(to), command, acking);
         }
         // The other way: a device shared with `to`'s account hands its music
         // there, as "Move here" from that account asks it to. That and only
@@ -735,9 +781,9 @@ impl Registry {
             let command = LinkCommand::Shared {
                 command: Box::new(command),
             };
-            return self.send(Some(&grantee), Some(to), command);
+            return self.send_with(Some(&grantee), Some(to), command, acking);
         }
-        self.send(Some(username), Some(to), command)
+        self.send_with(Some(username), Some(to), command, acking)
     }
 
     /// Where to push a Live Activity's updates: `watcher` shows `target`.
@@ -850,6 +896,21 @@ impl Registry {
         id: Option<&str>,
         cmd: LinkCommand,
     ) -> Result<ClientInfo, String> {
+        self.send_with(username, id, cmd, None)
+    }
+
+    /// `send`, and with `acking` the device's answer handed to its `reply`.
+    /// A device that is away is answered for: `Queued`, once it has been woken
+    /// to take the command. One whose link has gone quiet since the command
+    /// was sent is taken for away, and woken; one that is only slow is given
+    /// longer. One that gives no answers is answered `None` at once.
+    pub fn send_with(
+        &self,
+        username: Option<&str>,
+        id: Option<&str>,
+        cmd: LinkCommand,
+        acking: Option<Acking>,
+    ) -> Result<ClientInfo, String> {
         let clients = self.list(username);
         let target = match id {
             Some(id) => clients
@@ -860,23 +921,82 @@ impl Registry {
         };
         // Not linked: a phone iOS has suspended is woken to take it.
         let Some(target) = target else {
-            return reach_absent(username, id, &cmd).unwrap_or_else(|| {
+            let reached = reach_absent(username, id, &cmd).unwrap_or_else(|| {
                 Err(match id {
                     Some(id) => format!("no linked client {id}; see `clients`"),
                     None => "no koan app is linked to this server; open koan on the device".into(),
                 })
             });
+            if let (Ok(_), Some(acking)) = (&reached, acking) {
+                (acking.reply)(Some(AckOutcome::Queued));
+            }
+            return reached;
         };
+        let target = target.clone();
         let entries = self.entries.lock();
         let entry = entries
             .iter()
             .find(|e| e.info.id == target.id)
             .ok_or("that client has just gone")?;
-        entry
-            .tx
-            .send(cmd)
-            .map_err(|_| "that client has just gone".to_string())?;
-        Ok(target.clone())
+        let device = entry.device.clone();
+        // Listened for before it is sent, so a quick answer is not missed.
+        // Nothing is answered while the entries are held: an answer may relay
+        // to another link.
+        let (ack, unanswered) = match acking {
+            Some(acking) if entry.info.acks => {
+                self.answers.lock().insert(
+                    (device.clone(), acking.id),
+                    Waiting {
+                        reply: acking.reply,
+                        sent_ms: chrono::Utc::now().timestamp_millis(),
+                    },
+                );
+                (Some(acking.id), None)
+            }
+            other => (None, other),
+        };
+        let sent = entry.tx.send(Envelope {
+            command: cmd.clone(),
+            ack,
+        });
+        drop(entries);
+        if sent.is_err() {
+            if let Some(w) = ack.and_then(|ack| self.answers.lock().remove(&(device, ack))) {
+                (w.reply)(Some(AckOutcome::Failed {
+                    error: "its link has just gone".into(),
+                }));
+            }
+            return Err("that client has just gone".to_string());
+        }
+        if let Some(acking) = unanswered {
+            (acking.reply)(None);
+        }
+        if let Some(ack) = ack {
+            let owner = target.username.clone();
+            std::thread::spawn(move || watch_answer(owner, device, ack, cmd));
+        }
+        Ok(target)
+    }
+
+    /// `device` answered the command it was sent under `ack`.
+    pub fn answered(&self, device: &str, ack: u64, outcome: AckOutcome) {
+        let waiting = self.answers.lock().remove(&(device.to_string(), ack));
+        if let Some(w) = waiting {
+            (w.reply)(Some(outcome));
+        }
+    }
+
+    /// Something came up `device`'s link.
+    pub fn heard(&self, username: &str, device: &str) {
+        let now = chrono::Utc::now().timestamp_millis();
+        if let Some(e) = self
+            .entries
+            .lock()
+            .iter_mut()
+            .find(|e| e.info.username == username && e.device == device)
+        {
+            e.heard_ms = now;
+        }
     }
 }
 
@@ -1061,7 +1181,7 @@ impl Registry {
         let entries = self.entries.lock();
         entries
             .iter()
-            .filter(|e| ids.contains(&e.info.id) && e.tx.send(cmd.clone()).is_ok())
+            .filter(|e| ids.contains(&e.info.id) && e.tx.send(cmd.clone().into()).is_ok())
             .map(|e| e.info.name.clone())
             .collect()
     }
@@ -1159,6 +1279,7 @@ fn reach_absent(
         state_at: 0,
         reports: false,
         notified: true,
+        acks: false,
     };
     // What it asks, whoever asks it.
     let asked = match cmd {
@@ -1185,6 +1306,51 @@ fn reach_absent(
     };
     std::thread::spawn(move || deliver_push(pusher, &target, &push));
     Some(Ok(info))
+}
+
+/// After `FIRST_LOOK`, see whether `device` has answered the command sent
+/// under `ack`. If nothing has come up its link since it was sent, the link is
+/// dead though the socket is not yet closed: drop it, and reach the device as
+/// one that is away. If something has, it is busy; give it until
+/// `SLOW_ANSWER`.
+fn watch_answer(username: String, device: String, ack: u64, cmd: LinkCommand) {
+    std::thread::sleep(FIRST_LOOK);
+    let registry = registry();
+    let key = (device.clone(), ack);
+    let Some(sent_ms) = registry.answers.lock().get(&key).map(|w| w.sent_ms) else {
+        return;
+    };
+    let heard = registry
+        .entries
+        .lock()
+        .iter()
+        .find(|e| e.info.username == username && e.device == device)
+        .is_some_and(|e| e.heard_ms > sent_ms);
+    if heard {
+        std::thread::sleep(SLOW_ANSWER.saturating_sub(FIRST_LOOK));
+        if let Some(w) = registry.answers.lock().remove(&key) {
+            (w.reply)(Some(AckOutcome::Failed {
+                error: format!("{device} did not answer"),
+            }));
+        }
+        return;
+    }
+    let Some(w) = registry.answers.lock().remove(&key) else {
+        return;
+    };
+    log::info!("link: {device} went quiet; its link is dropped and it is woken instead");
+    // Dropping the entry ends its session, which closes the socket.
+    registry
+        .entries
+        .lock()
+        .retain(|e| !(e.info.username == username && e.device == device));
+    let outcome = match reach_absent(Some(&username), Some(&device), &cmd) {
+        Some(Ok(_)) => AckOutcome::Queued,
+        _ => AckOutcome::Failed {
+            error: format!("{device} is not reachable"),
+        },
+    };
+    (w.reply)(Some(outcome));
 }
 
 /// The track whose album cover a notification for `cmd` shows. Commands carry
@@ -1839,10 +2005,52 @@ fn pick(clients: &[ClientInfo], now: i64) -> Result<&ClientInfo, String> {
 mod tests {
 
     #[test]
+    fn a_command_relayed_with_an_id_is_answered_once() {
+        use koan_core::remote::acks::AckOutcome;
+        let reg = Registry::default();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("a", "phone", "ios", "dev-answers", tx, false, true);
+        let (old_tx, mut old_rx) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("a", "mac", "macos", "dev-old", old_tx, false, false);
+        let answers = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let acking = |id: u64| {
+            let answers = answers.clone();
+            Acking {
+                id,
+                reply: Box::new(move |outcome| answers.lock().unwrap().push((id, outcome))),
+            }
+        };
+
+        // A device that answers is sent the id, and its answer handed on once.
+        reg.relay_acked(
+            "a",
+            None,
+            "dev-answers",
+            LinkCommand::Pause,
+            Some(acking(7)),
+        )
+        .unwrap();
+        assert_eq!(rx.try_recv().unwrap().ack, Some(7));
+        reg.answered("dev-answers", 7, AckOutcome::Done);
+        reg.answered("dev-answers", 7, AckOutcome::Done);
+
+        // One that predates answers gets the command plain, and the asker
+        // learns at once that no answer is coming.
+        reg.relay_acked("a", None, "dev-old", LinkCommand::Pause, Some(acking(8)))
+            .unwrap();
+        assert_eq!(old_rx.try_recv().unwrap().ack, None);
+
+        assert_eq!(
+            *answers.lock().unwrap(),
+            [(7, Some(AckOutcome::Done)), (8, None)]
+        );
+    }
+
+    #[test]
     fn a_watch_is_never_queued_and_is_renewed_when_the_target_relinks() {
         let reg = Registry::default();
         let watches = |rx: &mut tokio::sync::mpsc::UnboundedReceiver<LinkCommand>| {
-            std::iter::from_fn(|| rx.try_recv().ok())
+            std::iter::from_fn(|| rx.try_recv().ok().map(|e| e.command))
                 .filter(|c| matches!(c, LinkCommand::WatchLevels { .. }))
                 .collect::<Vec<_>>()
         };
@@ -1854,7 +2062,7 @@ mod tests {
         // Watched while away: nothing is queued for it.
         reg.watch_levels("rl", "rl-mac", "rl-phone", true);
         let (tx, mut phone) = tokio::sync::mpsc::unbounded_channel();
-        reg.register("rl", "phone", "ios", "rl-phone", tx, false);
+        reg.register("rl", "phone", "ios", "rl-phone", tx, false, false);
         assert_eq!(
             watches(&mut phone),
             vec![LinkCommand::WatchLevels { on: true }],
@@ -1862,7 +2070,7 @@ mod tests {
         );
         // Relinked: a new session, told again.
         let (tx, mut phone) = tokio::sync::mpsc::unbounded_channel();
-        reg.register("rl", "phone", "ios", "rl-phone", tx, false);
+        reg.register("rl", "phone", "ios", "rl-phone", tx, false, false);
         assert_eq!(
             watches(&mut phone),
             vec![LinkCommand::WatchLevels { on: true }]
@@ -1875,10 +2083,10 @@ mod tests {
         let reg = Registry::default();
         let (tx_mac, mut mac) = tokio::sync::mpsc::unbounded_channel();
         let (tx_phone, mut phone) = tokio::sync::mpsc::unbounded_channel();
-        let mac_id = reg.register("lv", "mac", "macos", "lv-mac", tx_mac, false);
-        reg.register("lv", "phone", "ios", "lv-phone", tx_phone, false);
+        let mac_id = reg.register("lv", "mac", "macos", "lv-mac", tx_mac, false, false);
+        reg.register("lv", "phone", "ios", "lv-phone", tx_phone, false, false);
         let levels = |rx: &mut tokio::sync::mpsc::UnboundedReceiver<LinkCommand>| {
-            std::iter::from_fn(|| rx.try_recv().ok())
+            std::iter::from_fn(|| rx.try_recv().ok().map(|e| e.command))
                 .filter(|c| {
                     matches!(
                         c,
@@ -1995,16 +2203,16 @@ mod tests {
         let (tx1, _rx1) = tokio::sync::mpsc::unbounded_channel();
         let (tx2, mut rx2) = tokio::sync::mpsc::unbounded_channel();
         let (tx3, _rx3) = tokio::sync::mpsc::unbounded_channel();
-        reg.register("j", "phone", "ios", "dev-1", tx1, false);
-        let id = reg.register("j", "phone", "ios", "dev-1", tx2, false);
-        reg.register("someone", "laptop", "macos", "dev-2", tx3, false);
+        reg.register("j", "phone", "ios", "dev-1", tx1, false, false);
+        let id = reg.register("j", "phone", "ios", "dev-1", tx2, false, false);
+        reg.register("someone", "laptop", "macos", "dev-2", tx3, false, false);
 
         assert_eq!(reg.list(Some("j")).len(), 1);
         assert_eq!(reg.list(None).len(), 2);
 
         let sent = reg.send(Some("j"), None, LinkCommand::Pause).unwrap();
         assert_eq!(sent.id, id);
-        assert_eq!(rx2.try_recv().unwrap(), LinkCommand::Pause);
+        assert_eq!(rx2.try_recv().unwrap().command, LinkCommand::Pause);
 
         // Another account's device is not this account's to command.
         assert!(
@@ -2021,8 +2229,8 @@ mod tests {
         let reg = Registry::default();
         let (tx1, mut rx1) = tokio::sync::mpsc::unbounded_channel();
         let (tx2, mut rx2) = tokio::sync::mpsc::unbounded_channel();
-        reg.register("j", "phone", "ios", "dev-1", tx1, false);
-        reg.register("someone", "laptop", "macos", "dev-2", tx2, false);
+        reg.register("j", "phone", "ios", "dev-1", tx1, false, false);
+        reg.register("someone", "laptop", "macos", "dev-2", tx2, false, false);
 
         reg.disconnect("j");
         assert!(reg.list(Some("j")).is_empty());
@@ -2087,8 +2295,8 @@ mod tests {
         let reg = Registry::default();
         let (tx1, _rx1) = tokio::sync::mpsc::unbounded_channel();
         let (tx2, mut rx2) = tokio::sync::mpsc::unbounded_channel();
-        let mac = reg.register("j", "mac", "macos", "dev-1", tx1, false);
-        let phone = reg.register("j", "phone", "ios", "dev-2", tx2, false);
+        let mac = reg.register("j", "mac", "macos", "dev-1", tx1, false, false);
+        let phone = reg.register("j", "phone", "ios", "dev-2", tx2, false, false);
 
         // Two idle devices: no telling, so the caller is told to ask.
         let err = reg.send(Some("j"), None, LinkCommand::Pause).unwrap_err();
@@ -2105,7 +2313,7 @@ mod tests {
             reg.send(Some("j"), None, LinkCommand::Pause).unwrap().id,
             phone
         );
-        assert_eq!(rx2.try_recv().unwrap(), LinkCommand::Pause);
+        assert_eq!(rx2.try_recv().unwrap().command, LinkCommand::Pause);
 
         // Stopped a moment ago: still the one meant, over the Mac.
         reg.report(&phone, LinkState::default());
@@ -2117,7 +2325,7 @@ mod tests {
     }
 
     fn drain(rx: &mut tokio::sync::mpsc::UnboundedReceiver<LinkCommand>) -> Vec<LinkCommand> {
-        std::iter::from_fn(|| rx.try_recv().ok()).collect()
+        std::iter::from_fn(|| rx.try_recv().ok().map(|e| e.command)).collect()
     }
 
     /// `j` shares the phone with `k`, not the Mac.
@@ -2131,9 +2339,9 @@ mod tests {
         let (phone_tx, mut phone) = tokio::sync::mpsc::unbounded_channel();
         let (mac_tx, mac) = tokio::sync::mpsc::unbounded_channel();
         let (k_tx, k) = tokio::sync::mpsc::unbounded_channel();
-        let id = reg.register("j", "phone", "ios", "dev-phone", phone_tx, true);
-        reg.register("j", "mac", "macos", "dev-mac", mac_tx, true);
-        reg.register("k", "laptop", "macos", "dev-k", k_tx, true);
+        let id = reg.register("j", "phone", "ios", "dev-phone", phone_tx, true, false);
+        reg.register("j", "mac", "macos", "dev-mac", mac_tx, true, false);
+        reg.register("k", "laptop", "macos", "dev-k", k_tx, true, false);
         reg.report(
             &id,
             LinkState {
@@ -2286,7 +2494,7 @@ mod tests {
     fn a_device_hears_whom_it_is_shared_with_every_time_it_links() {
         let reg = Registry::default();
         let (tx, mut phone) = tokio::sync::mpsc::unbounded_channel();
-        reg.register("j", "phone", "ios", "dev-phone", tx, true);
+        reg.register("j", "phone", "ios", "dev-phone", tx, true, false);
         let first = drain(&mut phone);
         assert!(
             first.contains(&LinkCommand::Shares {
@@ -2310,7 +2518,7 @@ mod tests {
     fn the_owner_is_told_who_it_shares_with() {
         let reg = Registry::default();
         let (tx, mut phone) = tokio::sync::mpsc::unbounded_channel();
-        reg.register("j", "phone", "ios", "dev-phone", tx, true);
+        reg.register("j", "phone", "ios", "dev-phone", tx, true, false);
         reg.share("j", "dev-phone", "k", true).unwrap();
         reg.share("j", "dev-phone", "m", true).unwrap();
         let last = drain(&mut phone).into_iter().rev().find_map(|c| match c {
@@ -2391,18 +2599,19 @@ mod tests {
         let reg = Registry::default();
         let (mac_tx, mut mac) = tokio::sync::mpsc::unbounded_channel();
         let (other_tx, mut other) = tokio::sync::mpsc::unbounded_channel();
-        reg.register("j", "mac", "macos", "dev-mac", mac_tx, true);
-        reg.register("k", "laptop", "macos", "dev-k", other_tx, true);
+        reg.register("j", "mac", "macos", "dev-mac", mac_tx, true, false);
+        reg.register("k", "laptop", "macos", "dev-k", other_tx, true, false);
         while mac.try_recv().is_ok() {}
         while other.try_recv().is_ok() {}
 
         reg.forget("j", "dev-phone").unwrap();
-        let heard: Vec<LinkCommand> = std::iter::from_fn(|| mac.try_recv().ok()).collect();
+        let heard: Vec<LinkCommand> =
+            std::iter::from_fn(|| mac.try_recv().ok().map(|e| e.command)).collect();
         assert!(heard.contains(&LinkCommand::Forgotten {
             device: "dev-phone".into()
         }));
         assert!(
-            std::iter::from_fn(|| other.try_recv().ok())
+            std::iter::from_fn(|| other.try_recv().ok().map(|e| e.command))
                 .all(|c| !matches!(c, LinkCommand::Forgotten { .. })),
             "another account hears nothing of it"
         );
@@ -2476,9 +2685,9 @@ mod tests {
         let (tx1, mut rx1) = tokio::sync::mpsc::unbounded_channel();
         let (tx2, mut rx2) = tokio::sync::mpsc::unbounded_channel();
         let (tx3, mut rx3) = tokio::sync::mpsc::unbounded_channel();
-        reg.register("j", "mac", "macos", "dev-mac", tx1, true);
-        let phone = reg.register("j", "phone", "ios", "dev-phone", tx2, true);
-        reg.register("someone", "laptop", "macos", "dev-other", tx3, true);
+        reg.register("j", "mac", "macos", "dev-mac", tx1, true, false);
+        let phone = reg.register("j", "phone", "ios", "dev-phone", tx2, true, false);
+        reg.register("someone", "laptop", "macos", "dev-other", tx3, true, false);
 
         reg.report(
             &phone,
@@ -2507,7 +2716,7 @@ mod tests {
 
         while rx2.try_recv().is_ok() {}
         reg.relay("j", "dev-phone", LinkCommand::Pause).unwrap();
-        assert_eq!(rx2.try_recv().unwrap(), LinkCommand::Pause);
+        assert_eq!(rx2.try_recv().unwrap().command, LinkCommand::Pause);
         assert!(
             reg.relay("someone", "dev-phone", LinkCommand::Pause)
                 .is_err(),

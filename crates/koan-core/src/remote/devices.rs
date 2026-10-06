@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 use parking_lot::{Condvar, Mutex};
 
 use crate::config::Config;
+use crate::remote::acks;
 use crate::remote::link::{
     self, CommandSource, LinkCommand, LinkDevice, LinkHello, LinkReport, LinkState, Local,
 };
@@ -1202,6 +1203,7 @@ pub fn send_live(id: &str, cmd: LinkCommand) -> bool {
     let linked = link::report(LinkReport::Command {
         to: id.to_string(),
         command: cmd,
+        ack: None,
     });
     near || linked
 }
@@ -1226,14 +1228,34 @@ pub fn send(id: &str, cmd: LinkCommand) -> Result<(), String> {
     if !own && !cmd.allowed_playback() {
         return Err("Only your own devices can be asked that.".into());
     }
-    if nearby && crate::remote::nearby::send(id, cmd.clone()) {
-        return Ok(());
+    let routes = Routes {
+        lan: nearby,
+        lan_answers: nearby && answers_on_network(id),
+        link_answers: answers_by_link(id),
+    };
+    // One id for the command whichever way it goes, so a device it reaches
+    // twice acts on it once; and listened for before it is sent, so an answer
+    // quicker than this thread is still heard.
+    let ack = acks::next_id();
+    let answer = acks::expect(ack);
+    if routes.lan {
+        let sent = if routes.lan_answers {
+            crate::remote::nearby::send_acked(id, cmd.clone(), ack)
+        } else {
+            crate::remote::nearby::send(id, cmd.clone())
+        };
+        if sent {
+            follow(id, cmd, ack, answer, Route::Network, routes);
+            return Ok(());
+        }
     }
     let account = own || shared;
     if link::report(LinkReport::Command {
         to: id.to_string(),
         command: cmd.clone(),
+        ack: routes.link_answers.then_some(ack),
     }) {
+        follow(id, cmd, ack, answer, Route::Link, routes);
         return Ok(());
     }
     if !account && !nearby {
@@ -1241,16 +1263,130 @@ pub fn send(id: &str, cmd: LinkCommand) -> Result<(), String> {
         // Activity outlives this process's list of devices.
         log::info!("devices: {id} is not listed; asking the server");
     }
-    ask_server(id, &cmd)
+    acks::forget(ack);
+    ask_server(id, &cmd, Some(ack)).map(|outcome| told(id, &cmd, outcome))
+}
+
+/// The ways a command can reach a device, and which of them bring an answer.
+#[derive(Debug, Clone, Copy)]
+struct Routes {
+    lan: bool,
+    lan_answers: bool,
+    link_answers: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Route {
+    Network,
+    Link,
+}
+
+/// How long to wait for an answer by each way before trying the next. Up the
+/// link it is the server's round trip and its own fallback to a push.
+const NETWORK_ANSWER: Duration = Duration::from_secs(1);
+const LINK_ANSWER: Duration = Duration::from_secs(3);
+
+/// Wait for `id`'s answer to the command sent under `ack` by `route`, off the
+/// caller's thread, and try the next way when none comes. A way that brings
+/// no answer is taken as sent, as it always was.
+fn follow(
+    id: &str,
+    cmd: LinkCommand,
+    ack: u64,
+    answer: crossbeam_channel::Receiver<acks::AckOutcome>,
+    route: Route,
+    routes: Routes,
+) {
+    let answers = match route {
+        Route::Network => routes.lan_answers,
+        Route::Link => routes.link_answers,
+    };
+    if !answers {
+        acks::forget(ack);
+        return;
+    }
+    let id = id.to_owned();
+    let _ = std::thread::Builder::new()
+        .name("koan-ack".into())
+        .spawn(move || {
+            let outcome = walk(&id, &cmd, ack, &answer, route, routes);
+            acks::forget(ack);
+            told(&id, &cmd, outcome);
+        });
+}
+
+/// What became of a command sent under `ack`: the first answer by any way.
+fn walk(
+    id: &str,
+    cmd: &LinkCommand,
+    ack: u64,
+    answer: &crossbeam_channel::Receiver<acks::AckOutcome>,
+    first: Route,
+    routes: Routes,
+) -> Option<acks::AckOutcome> {
+    if first == Route::Network {
+        if let Ok(outcome) = answer.recv_timeout(NETWORK_ANSWER) {
+            return Some(outcome);
+        }
+        log::info!("devices: no answer from {id} on the network; trying the link");
+        if routes.link_answers
+            && link::report(LinkReport::Command {
+                to: id.to_string(),
+                command: cmd.clone(),
+                ack: Some(ack),
+            })
+            && let Ok(outcome) = answer.recv_timeout(LINK_ANSWER)
+        {
+            return Some(outcome);
+        }
+    } else if let Ok(outcome) = answer.recv_timeout(LINK_ANSWER) {
+        return Some(outcome);
+    }
+    log::info!("devices: no answer from {id}; asking the server");
+    match ask_server(id, cmd, Some(ack)) {
+        Ok(outcome) => outcome,
+        Err(error) => Some(acks::AckOutcome::Failed { error }),
+    }
+}
+
+/// What a command came to, once known. `None`: sent by a way that brings no
+/// answer.
+fn told(id: &str, cmd: &LinkCommand, outcome: Option<acks::AckOutcome>) {
+    match outcome {
+        Some(acks::AckOutcome::Done) | None => {}
+        Some(acks::AckOutcome::Queued) => {
+            log::info!("devices: {id} is asleep; {cmd:?} waits for it")
+        }
+        Some(other) => log::warn!("devices: {cmd:?} did not reach {id}: {other:?}"),
+    }
+}
+
+/// Whether `id`, reached on the local network, answers commands.
+fn answers_on_network(id: &str) -> bool {
+    with(|s| s.nearby.iter().any(|n| n.hello.id == id && n.hello.acks))
+}
+
+/// Whether `id`, reached up the link, answers: the server relays answers and
+/// says the device gives them.
+fn answers_by_link(id: &str) -> bool {
+    crate::remote::profile::current().is_some_and(|p| p.offers(crate::remote::profile::ACK))
+        && with(|s| s.account.iter().any(|(d, _)| d.id == id && d.acks))
 }
 
 /// Get `cmd` to `id` in one request to the server, which relays it down the
-/// device's link or wakes it.
-fn ask_server(id: &str, cmd: &LinkCommand) -> Result<(), String> {
+/// device's link or wakes it. With `ack`, a server that answers waits a moment
+/// for the device and says how it went; one that does not answers `None`.
+fn ask_server(
+    id: &str,
+    cmd: &LinkCommand,
+    ack: Option<u64>,
+) -> Result<Option<acks::AckOutcome>, String> {
     let cfg = Config::load().unwrap_or_default();
     let client = crate::helpers::subsonic_client(&cfg).ok_or("not signed in to a server")?;
     let json = serde_json::to_string(cmd).map_err(|e| e.to_string())?;
-    client.koan_command(id, &json).map_err(|e| e.to_string())
+    client
+        .koan_command(id, &json, ack)
+        .map_err(|e| e.to_string())
 }
 
 /// `send`, by the server first: for the lock screen's buttons. iOS runs
@@ -1260,7 +1396,18 @@ fn ask_server(id: &str, cmd: &LinkCommand) -> Result<(), String> {
 /// to it if not. A device the server cannot reach, one only on this
 /// network, falls back to `send`.
 pub fn send_by_server_first(id: &str, cmd: LinkCommand) -> Result<(), String> {
-    server_first(|| ask_server(id, &cmd), || send(id, cmd.clone()))
+    server_first(
+        || {
+            ask_server(id, &cmd, Some(acks::next_id())).map(|outcome| match outcome {
+                Some(acks::AckOutcome::Refused { reason }) => Err(reason),
+                outcome => {
+                    told(id, &cmd, outcome);
+                    Ok(())
+                }
+            })?
+        },
+        || send(id, cmd.clone()),
+    )
 }
 
 fn server_first(
@@ -1306,6 +1453,7 @@ mod tests {
             last_seen: None,
             wakeable: None,
             owner: None,
+            acks: false,
         }
     }
 
@@ -1319,6 +1467,7 @@ mod tests {
             name: id.into(),
             platform: "ios".into(),
             library: None,
+            acks: false,
         }
     }
 
@@ -2059,6 +2208,7 @@ mod tests {
                 name: "Mac".into(),
                 platform: "macos".into(),
                 library: None,
+                acks: false,
             },
             "mac.local:5626",
         );
@@ -2068,6 +2218,7 @@ mod tests {
                 name: "Living room".into(),
                 platform: "macos".into(),
                 library: Some("elsewhere".into()),
+                acks: false,
             },
             "10.0.0.9:5626",
         );
