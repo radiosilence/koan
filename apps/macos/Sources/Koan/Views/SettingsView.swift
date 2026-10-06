@@ -338,7 +338,7 @@ private struct RemoteSettings: View {
     var body: some View {
         Form {
             if model.settings.remoteSignedIn {
-                Section("Signed in") {
+                Section {
                     #if os(tvOS)
                     LabeledContent("Server", value: model.settings.remoteUrl)
                     #else
@@ -387,6 +387,8 @@ private struct RemoteSettings: View {
                             .koanButton(.secondary)
                     }
                     .rowButtons()
+                } header: {
+                    KoanSectionHeader("Signed in")
                 }
                 #if !os(tvOS)
                 .alert("Change your password", isPresented: $changingPassword) {
@@ -529,7 +531,7 @@ private struct RemoteSettings: View {
             }
             }
 
-            Section("Downloads") {
+            Section {
                 #if os(tvOS)
                 // tvOS has no stepper.
                 Picker("Parallel downloads", selection: Binding(
@@ -566,6 +568,8 @@ private struct RemoteSettings: View {
                             .disabled(activity.conflicts(with: [.downloads]))
                     }
                 }
+            } header: {
+                KoanSectionHeader("Downloads")
             }
         }
         .formStyle(.grouped)

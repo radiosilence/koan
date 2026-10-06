@@ -98,11 +98,13 @@ struct PickerSheet: View {
         } else {
             List(selection: $highlighted) {
                 if !picked.isEmpty {
-                    Section("Selected") {
+                    Section {
                         ForEach(picked) { row in
                             PickerRowView(row: row, isPicked: true)
                                 .onTapGesture { toggle(row) }
                         }
+                    } header: {
+                        KoanSectionHeader("Selected")
                     }
                 }
                 if !results.isEmpty {

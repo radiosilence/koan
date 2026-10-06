@@ -97,8 +97,8 @@ private struct BandEditor: View {
     var body: some View {
         HStack(spacing: 8) {
             Text("\(index + 1)")
+                .koanText(.body, .muted)
                 .monospacedDigit()
-                .foregroundStyle(.secondary)
                 .frame(width: 22, alignment: .leading)
             Picker("Type", selection: Binding(get: { kind }, set: { kind = $0; commit() })) {
                 ForEach(BandTable.kinds, id: \.id) { Text($0.name).tag($0.id) }

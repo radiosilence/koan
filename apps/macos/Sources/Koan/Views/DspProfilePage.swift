@@ -35,14 +35,14 @@ struct DspProfilePage: View {
                 if let problem = d.problem {
                     Section {
                         KoanLabel(problem, icon: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
+                            .koanText(.meta, .bad)
                     }
                 }
 
-                Section("Used for") {
+                Section {
                     if d.devices.isEmpty {
                         Text("No output yet")
-                            .foregroundStyle(.secondary)
+                            .koanText(.body, .muted)
                     }
                     ForEach(d.devices, id: \.self) { Text(dsp.label($0)) }
                     if let device = dsp.overview?.device {
@@ -52,6 +52,8 @@ struct DspProfilePage: View {
                             Button("Use for \(dsp.label(device))") { dsp.use(d.name) }
                         }
                     }
+                } header: {
+                    KoanSectionHeader("Used for")
                 }
 
                 LayersSection(dsp: dsp, detail: d)
@@ -87,8 +89,10 @@ struct DspProfilePage: View {
                 }
 
                 if !d.source.isEmpty {
-                    Section("Imported from") {
-                        ForEach(d.source, id: \.self) { Text($0).foregroundStyle(.secondary) }
+                    Section {
+                        ForEach(d.source, id: \.self) { Text($0).koanText(.body, .muted) }
+                    } header: {
+                        KoanSectionHeader("Imported from")
                     }
                 }
 
@@ -282,7 +286,7 @@ private struct ImpulseRow: View {
                 Text("\(DspModel.khz(ir.rate)) kHz")
                 Spacer()
                 Text(channels)
-                    .foregroundStyle(.secondary)
+                    .koanText(.body, .muted)
             }
             Text(shape)
                 .koanText(.fine, .muted)
@@ -320,8 +324,8 @@ struct BandRow: View {
             Text(kind)
             Spacer()
             Text(values)
+                .koanText(.body, .muted)
                 .monospacedDigit()
-                .foregroundStyle(.secondary)
         }
     }
 
