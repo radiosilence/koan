@@ -48,7 +48,13 @@ enum EvidenceRenderer {
     }
 
     private static func snapshot(_ view: AnyView, size: CGSize, dark: Bool, to file: URL) async {
-        let host = NSHostingView(rootView: view.tint(.koanAccent))
+        // Drawn as in the front window, as a person sees the page: a window
+        // never shown is never key, and inactive controls lose their accent.
+        let host = NSHostingView(
+            rootView: view
+                .tint(.koanAccent)
+                .environment(\.controlActiveState, .key)
+        )
         host.frame = CGRect(origin: .zero, size: size)
         // Far off every screen, and never ordered in: drawn, never shown.
         let window = NSWindow(
