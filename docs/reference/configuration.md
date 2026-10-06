@@ -187,18 +187,23 @@ Run `koan devices` to list available audio outputs.
 
 ## `[appearance]`
 
-How the macOS, iOS and tvOS apps are drawn. Read once as an app opens, so a
-change shows the next time it starts.
+How the macOS, iOS and tvOS apps are drawn. The theme is read once as an app
+opens, so a change of theme shows the next time it starts; the others apply at
+once.
 
 ```toml
 [appearance]
 theme = "koan"     # "koan": the site's look throughout (the default); "system": the platform's own
 theme_icons = true # in the kōan theme, icons beside labels; false for labels alone
+record_colours = true # the record playing colours the wash and the accent; false for neither
 ```
 
-Settings → Appearance → **Theme** chooses between them from the Mac app, and
+Settings → Appearance → **Theme** chooses between them on every app, and
 **Show icons**, shown while the kōan theme is chosen, sets `theme_icons`. The
-system look always draws its icons. The theme's design is
+system look always draws its icons. **Colours from the record** sets
+`record_colours`: off, there is no wash behind the window and the accent is
+koan's mint, in either theme. The graphics level is separate, and governs what
+the wash and the playing bars cost rather than whether they take colour. The theme's design is
 `docs/design/koan-theme.md`.
 
 ## `[library]`

@@ -76,6 +76,7 @@ The accent follows the record playing, and is tone-mapped the same way in both t
 - A sleeve whose chroma is under `accent-no-hue`, and no record at all, give mint.
 - A hue within `accent-bad-gap` of `bad`'s moves to the edge of that gap, so a red record never reads as an error.
 - A change of record eases to the new accent over 0.35 s, and only when the colour was not already known; one in hand lands with the record.
+- "Colours from the record" (`appearance.record_colours`) off pins the accent to mint and removes the wash, in both themes.
 
 ### Wash
 
