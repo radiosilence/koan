@@ -233,10 +233,11 @@ struct KoanApp: App {
         // kōan here, still linked and listening, so other devices can control
         // this Mac.
         MenuBarExtra(
-            "kōan", systemImage: Icon.track,
             isInserted: Binding(get: { state?.residency.keepRunning ?? false }, set: { _ in })
         ) {
             if let state { MenuBarMenu(state: state) }
+        } label: {
+            MenuBarLabel(residency: state?.residency)
         }
 
         Settings {
@@ -254,6 +255,21 @@ struct KoanApp: App {
                     .environment(state.mirror)
             }
         }
+    }
+}
+
+/// The menu bar item's icon, and what opens the main window when AppKit asks
+/// for it: the item is on screen whenever kōan is resident, and the delegate
+/// has no `openWindow` of its own.
+private struct MenuBarLabel: View {
+    let residency: Residency?
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Image(systemName: Icon.track)
+            .onChange(of: residency?.wantsWindow ?? false, initial: true) { _, wants in
+                if wants { residency?.showWindow(with: openWindow) }
+            }
     }
 }
 
@@ -277,11 +293,7 @@ private struct MenuBarMenu: View {
         Button("Next") { state.player.next() }
             .disabled(entry == nil)
         Divider()
-        Button("Open kōan") {
-            NSApp.setActivationPolicy(.regular)
-            openWindow(id: MainWindow.id)
-            NSApp.activate()
-        }
+        Button("Open kōan") { state.residency.showWindow(with: openWindow) }
         Button("Quit kōan") { NSApp.terminate(nil) }
     }
 }

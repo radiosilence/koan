@@ -4,6 +4,7 @@ import KoanFFI
 import Observation
 import OSLog
 import ServiceManagement
+import SwiftUI
 
 /// Whether kōan stays running with its window closed, and opens at login.
 ///
@@ -24,11 +25,18 @@ final class Residency {
         didSet {
             // AppKit quits a windowless app on its own when it judges nobody
             // will notice, which a menu bar app that other devices control is
-            // not.
-            ProcessInfo.processInfo.automaticTerminationSupportEnabled = !keepRunning
+            // not. Off the menu bar, the app's own choice stands.
+            ProcessInfo.processInfo.automaticTerminationSupportEnabled =
+                keepRunning ? false : Self.automaticTermination
             if !keepRunning { showInDock() }
         }
     }
+    private static let automaticTermination = ProcessInfo.processInfo.automaticTerminationSupportEnabled
+
+    /// The main window should open as soon as something that can open it is
+    /// on screen: the menu bar item, which has SwiftUI's `openWindow` and
+    /// AppKit's delegate does not.
+    var wantsWindow = false
 
     /// Whether macOS will open kōan at login. Asked of the system, which owns
     /// it, rather than kept in the configuration: it can be turned off in
@@ -89,6 +97,14 @@ final class Residency {
         refreshLogin()
     }
 
+    /// Open the main window, as the menu bar item's Open kōan does.
+    func showWindow(with openWindow: OpenWindowAction) {
+        wantsWindow = false
+        NSApp.setActivationPolicy(.regular)
+        openWindow(id: MainWindow.id)
+        NSApp.activate()
+    }
+
     static var mainWindowShown: Bool {
         NSApp.windows.contains { $0.identifier?.rawValue == MainWindow.id && $0.isVisible }
     }
@@ -119,6 +135,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var startupError: String?
     /// A link opened before the engine was up, handled once it is.
     @ObservationIgnored var pendingURL: URL?
+    /// Opened by macOS at login rather than by someone: the one launch that
+    /// starts in the menu bar without its window.
+    @ObservationIgnored private var launchedAtLogin = false
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        launchedAtLogin =
+            NSAppleEventManager.shared().currentAppleEvent?
+            .paramDescriptor(forKeyword: keyAELaunchedAsLogInItem) != nil
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Task { await start() }
@@ -136,11 +161,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             startupError = String(describing: error)
         }
-        // Restored with the window closed: resident, kōan belongs in the
-        // menu bar only.
-        if state?.residency.keepRunning == true, !Residency.mainWindowShown {
+        // Restored with the window closed. Opened at login, a resident kōan
+        // belongs in the menu bar only; opened by someone, they want it.
+        guard let residency = state?.residency, residency.keepRunning, !Residency.mainWindowShown
+        else { return }
+        if launchedAtLogin {
             NSApp.setActivationPolicy(.accessory)
+        } else {
+            residency.wantsWindow = true
         }
+    }
+
+    /// Opening kōan again from Finder, Spotlight or the Dock while it runs
+    /// in the menu bar: the window it was opened for. Otherwise SwiftUI's own
+    /// handling.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        guard let residency = state?.residency, residency.keepRunning, !Residency.mainWindowShown
+        else { return true }
+        residency.wantsWindow = true
+        return false
     }
 
     /// Not before the setting is read: AppKit asks at launch, when state
