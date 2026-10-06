@@ -48,10 +48,37 @@ impl Entry {
         format!("{} (AutoEQ, {})", self.name, self.measured_by())
     }
 
-    fn parametric_url(&self) -> String {
+    /// Where its ParametricEQ.txt is: always under [`RESULTS`], or `None`.
+    fn parametric_url(&self) -> Option<String> {
+        if !safe_path(&self.path) {
+            return None;
+        }
         let folder = self.path.rsplit('/').next().unwrap_or_default();
-        format!("{RESULTS}/{}/{folder}%20ParametricEQ.txt", self.path)
+        let url = url::Url::parse(&format!(
+            "{RESULTS}/{}/{folder}%20ParametricEQ.txt",
+            self.path
+        ))
+        .ok()?;
+        url.as_str()
+            .starts_with(&format!("{RESULTS}/"))
+            .then(|| url.into())
     }
+}
+
+/// An index path that stays inside `results/`: relative, without `.` or `..`
+/// segments however they are spelled, and nothing that would end the path
+/// (`?`, `#`) or be read as a separator (`\`, an encoded `/`).
+fn safe_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.contains(['?', '#', '\\'])
+        && !lower.contains("%2f")
+        && !lower.contains("%5c")
+        && lower.split('/').all(|segment| {
+            let segment = segment.replace("%2e", ".");
+            !segment.is_empty() && segment != "." && segment != ".."
+        })
 }
 
 /// Read AutoEQ's `results/INDEX.md`: lines such as
@@ -68,7 +95,7 @@ pub fn parse_index(text: &str) -> Vec<Entry> {
                 Some((source, rig)) => (source, Some(rig.trim().to_owned())),
                 None => (by, None),
             };
-            Some((name, path, source, rig))
+            safe_path(path).then_some((name, path, source, rig))
         })
         .enumerate()
         .map(|(i, (name, path, source, rig))| Entry {
@@ -130,10 +157,28 @@ fn http() -> Result<reqwest::blocking::Client, String> {
         .map_err(|e| e.to_string())
 }
 
-/// AutoEQ's index: the copy kept, while it is less than a day old, otherwise
-/// asked for again. With `refresh`, asked for whatever the copy's age. The
-/// copy is used when GitHub does not answer.
-pub fn index(refresh: bool) -> Result<Vec<Entry>, String> {
+/// How far [`index`] may go to the network.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Freshness {
+    /// The copy kept while it is less than a day old, otherwise asked for
+    /// again: what searching uses.
+    Daily,
+    /// Asked for whatever the copy's age.
+    Refresh,
+    /// The copy kept, however old, asked for only when there is none: what
+    /// installing by a number from an earlier search uses, since a newer
+    /// index may number things differently.
+    Kept,
+}
+
+/// The largest index accepted. It is about 850 KB.
+const INDEX_CAP: u64 = 8 << 20;
+/// The largest ParametricEQ.txt accepted. They are about 1 KB.
+const PARAMETRIC_CAP: u64 = 64 << 10;
+
+/// AutoEQ's index, as `freshness` allows. The copy kept is used whenever
+/// GitHub does not answer, or answers with something that is not an index.
+pub fn index(freshness: Freshness) -> Result<Vec<Entry>, String> {
     let dir = cache_dir();
     let file = dir.join("INDEX.md");
     let etag_file = dir.join("INDEX.etag");
@@ -142,17 +187,27 @@ pub fn index(refresh: bool) -> Result<Vec<Entry>, String> {
         .and_then(|m| m.modified())
         .ok()
         .and_then(|t| SystemTime::now().duration_since(t).ok());
-    if let Some(text) = &kept
-        && !refresh
-        && age.is_some_and(|a| a < FRESH_FOR)
-    {
-        return Ok(parse_index(text));
+    if let Some(text) = &kept {
+        let fresh = match freshness {
+            Freshness::Daily => age.is_some_and(|a| a < FRESH_FOR),
+            Freshness::Refresh => false,
+            Freshness::Kept => true,
+        };
+        if fresh {
+            return Ok(parse_index(text));
+        }
     }
 
     let etag = kept
         .as_ref()
         .and_then(|_| std::fs::read_to_string(&etag_file).ok());
-    match fetch_index(etag.as_deref()) {
+    let fetched = fetch_index(etag.as_deref()).and_then(|f| match f {
+        Fetched::New { text, .. } if parse_index(&text).is_empty() => {
+            Err("the index fetched lists nothing".to_owned())
+        }
+        f => Ok(f),
+    });
+    match fetched {
         Ok(Fetched::Unchanged) => {
             // Fresh again for another day.
             let _ = std::fs::File::options()
@@ -162,13 +217,21 @@ pub fn index(refresh: bool) -> Result<Vec<Entry>, String> {
             Ok(parse_index(kept.as_deref().unwrap_or_default()))
         }
         Ok(Fetched::New { text, etag }) => {
-            let _ = std::fs::create_dir_all(&dir);
-            let _ = std::fs::write(&file, &text);
+            // Written beside it and renamed over it, so an interrupted write
+            // never leaves a truncated index looking fresh.
+            let part = dir.join("INDEX.md.part");
+            let kept_new = std::fs::create_dir_all(&dir)
+                .and_then(|()| std::fs::write(&part, &text))
+                .and_then(|()| std::fs::rename(&part, &file));
+            if let Err(e) = kept_new {
+                log::info!("autoeq: index not kept: {e}");
+                let _ = std::fs::remove_file(&part);
+            }
             match etag {
-                Some(etag) => {
+                Some(etag) if kept_new.is_ok() => {
                     let _ = std::fs::write(&etag_file, etag);
                 }
-                None => {
+                _ => {
                     let _ = std::fs::remove_file(&etag_file);
                 }
             }
@@ -189,6 +252,19 @@ enum Fetched {
     New { text: String, etag: Option<String> },
 }
 
+/// A response's body as text, refused rather than cut short past `cap`.
+fn body(resp: reqwest::blocking::Response, cap: u64) -> Result<String, String> {
+    use std::io::Read as _;
+    let mut bytes = Vec::new();
+    resp.take(cap + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() as u64 > cap {
+        return Err(format!("the response is larger than {} KB", cap >> 10));
+    }
+    String::from_utf8(bytes).map_err(|_| "the response is not text".to_owned())
+}
+
 fn fetch_index(etag: Option<&str>) -> Result<Fetched, String> {
     let mut request = http()?.get(format!("{RESULTS}/INDEX.md"));
     if let Some(etag) = etag {
@@ -206,7 +282,7 @@ fn fetch_index(etag: Option<&str>) -> Result<Fetched, String> {
         .get(reqwest::header::ETAG)
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
-    let text = resp.text().map_err(|e| e.without_url().to_string())?;
+    let text = body(resp, INDEX_CAP)?;
     Ok(Fetched::New { text, etag })
 }
 
@@ -226,8 +302,11 @@ pub fn imported(entry: &Entry, parametric: &str) -> Result<Imported, String> {
 /// profile's name. A profile of that name already there is replaced, keeping
 /// its devices.
 pub fn install(entry: &Entry) -> Result<String, String> {
+    let url = entry
+        .parametric_url()
+        .ok_or_else(|| format!("AutoEQ's index gives {} an address outside it", entry.name))?;
     let resp = http()?
-        .get(entry.parametric_url())
+        .get(url)
         .send()
         .map_err(|e| format!("AutoEQ could not be reached: {}", e.without_url()))?;
     if !resp.status().is_success() {
@@ -237,7 +316,8 @@ pub fn install(entry: &Entry) -> Result<String, String> {
             resp.status()
         ));
     }
-    let text = resp.text().map_err(|e| e.without_url().to_string())?;
+    let text =
+        body(resp, PARAMETRIC_CAP).map_err(|e| format!("AutoEQ's file for {}: {e}", entry.name))?;
     profiles::save(imported(entry, &text)?, None)
 }
 
@@ -273,7 +353,7 @@ Filter 3: ON PK Fc 118 Hz Gain -3.1 dB Q 0.50
         assert_eq!(aero.source, "HypetheSonics");
         assert_eq!(aero.rig.as_deref(), Some("GRAS RA0045"));
         assert_eq!(
-            aero.parametric_url(),
+            aero.parametric_url().unwrap(),
             format!(
                 "{RESULTS}/HypetheSonics/GRAS%20RA0045%20in-ear/1MORE%20Aero%20(ANC%20Off)/1MORE%20Aero%20(ANC%20Off)%20ParametricEQ.txt"
             )
@@ -282,6 +362,51 @@ Filter 3: ON PK Fc 118 Hz Gain -3.1 dB Q 0.50
         assert_eq!(
             entries[3].profile_name(),
             "Sennheiser HD 650 (AutoEQ, crinacle on GRAS 43AG-7)"
+        );
+    }
+
+    #[test]
+    fn an_index_line_cannot_point_outside_autoeq() {
+        let hostile = [
+            "- [A](./../../../../other/repo/main/x) by a",
+            "- [B](./oratory1990/%2E%2e/%2e%2E/x) by b",
+            "- [C](./oratory1990/over-ear/C?x=1) by c",
+            "- [D](./oratory1990/over-ear/D#x) by d",
+            "- [E](./oratory1990\\..\\x) by e",
+            "- [F](.//etc/x) by f",
+            "- [G](./a%2F..%2F..%2Fx) by g",
+            "- [H](./oratory1990/./x) by h",
+        ];
+        for line in hostile {
+            assert!(parse_index(line).is_empty(), "{line}");
+        }
+        let fine = parse_index("- [I](./oratory1990/over-ear/I%20(2020)) by i");
+        assert!(fine[0].parametric_url().unwrap().starts_with(RESULTS));
+    }
+
+    #[test]
+    fn a_kept_index_is_read_as_it_is_however_old() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let kept = dir.path().join("autoeq/INDEX.md");
+        std::fs::create_dir_all(kept.parent().unwrap()).unwrap();
+        std::fs::write(&kept, INDEX).unwrap();
+        let old = SystemTime::now() - FRESH_FOR * 30;
+        std::fs::File::options()
+            .append(true)
+            .open(&kept)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        let entries = index(Freshness::Kept).unwrap();
+        assert_eq!(entries.len(), 6);
+        assert_eq!(
+            std::fs::metadata(&kept).unwrap().modified().unwrap(),
+            old,
+            "read without asking GitHub"
         );
     }
 

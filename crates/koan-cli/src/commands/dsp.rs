@@ -114,7 +114,12 @@ pub fn cmd_dsp_clear(named: Option<String>) {
 /// AutoEQ's results matching `query`, best first, numbered as `install`
 /// takes them.
 pub fn cmd_dsp_autoeq_search(query: &str, limit: usize, refresh: bool) {
-    let entries = autoeq::index(refresh).unwrap_or_else(|e| fail(e));
+    let freshness = if refresh {
+        autoeq::Freshness::Refresh
+    } else {
+        autoeq::Freshness::Daily
+    };
+    let entries = autoeq::index(freshness).unwrap_or_else(|e| fail(e));
     let found = autoeq::search(&entries, query, limit);
     if found.is_empty() {
         println!("{}", "no matches".dimmed());
@@ -140,7 +145,7 @@ pub fn cmd_dsp_autoeq_search(query: &str, limit: usize, refresh: bool) {
 pub fn cmd_dsp_autoeq_install(wanted: &str, source: Option<&str>, device: Option<String>) {
     // A number refers to the index search showed, so the copy kept is used
     // however old it is.
-    let entries = autoeq::index(false).unwrap_or_else(|e| fail(e));
+    let entries = autoeq::index(autoeq::Freshness::Kept).unwrap_or_else(|e| fail(e));
     let Some(entry) = autoeq::find(&entries, wanted, source) else {
         let near: Vec<String> = autoeq::search(&entries, wanted, 5)
             .iter()
