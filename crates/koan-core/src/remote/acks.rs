@@ -49,6 +49,13 @@ pub struct Envelope {
     pub ack: Option<u64>,
 }
 
+impl Envelope {
+    /// A command as a push carries it: the same JSON as over the link.
+    pub fn parse(json: &str) -> Result<Self, String> {
+        serde_json::from_str(json).map_err(|e| e.to_string())
+    }
+}
+
 impl From<LinkCommand> for Envelope {
     fn from(command: LinkCommand) -> Self {
         Self { command, ack: None }

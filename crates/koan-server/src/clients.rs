@@ -1595,7 +1595,7 @@ mod outbox {
         name: &str,
         platform: &str,
         live: &[(String, String)],
-    ) -> Vec<Envelope> {
+    ) -> Vec<koan_core::remote::acks::Envelope> {
         let Some(db) = db() else { return Vec::new() };
         let now = chrono::Utc::now().timestamp();
         let _ = db.conn.execute(
@@ -1744,12 +1744,20 @@ mod outbox {
 
     /// Queue `cmd` for one device, to go down its next link.
     pub fn queue_for(device: &str, username: &str, cmd: &LinkCommand) {
-        queue_envelope_for(device, username, &Envelope::from(cmd.clone()));
+        queue_envelope_for(
+            device,
+            username,
+            &koan_core::remote::acks::Envelope::from(cmd.clone()),
+        );
     }
 
     /// `queue_for`, keeping the id the command was sent under, so a device
     /// that also got it over its link acts on it once.
-    pub fn queue_envelope_for(device: &str, username: &str, envelope: &Envelope) {
+    pub fn queue_envelope_for(
+        device: &str,
+        username: &str,
+        envelope: &koan_core::remote::acks::Envelope,
+    ) {
         let (Some(db), Ok(text)) = (db(), serde_json::to_string(envelope)) else {
             return;
         };

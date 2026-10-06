@@ -445,7 +445,7 @@ impl KoanEngine {
     /// every transport call waits on only resolves what is already here.
     pub async fn run_pushed_command(self: Arc<Self>, command: String) -> Result<(), KoanError> {
         koan_core::remote::link::nudge();
-        let envelope = match serde_json::from_str::<koan_core::remote::acks::Envelope>(&command) {
+        let envelope = match koan_core::remote::acks::Envelope::parse(&command) {
             Ok(envelope) => envelope,
             Err(e) => {
                 log::warn!("push: not a command ({e}): {command}");
