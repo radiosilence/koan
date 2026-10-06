@@ -19,6 +19,7 @@ order it was cut in.
     changelog.py --lint       fail on a malformed fragment, or a released version
                               in CHANGELOG.md that the fragments do not make
     changelog.py --release V  move the unreleased fragments to V, then write
+    changelog.py --stdout     print it instead of writing it
 """
 
 import argparse
@@ -157,6 +158,7 @@ def main():
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--check", action="store_true")
     action.add_argument("--lint", action="store_true")
+    action.add_argument("--stdout", action="store_true")
     action.add_argument("--release", metavar="VERSION")
     parser.add_argument("--root", type=Path, default=ROOT, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -167,6 +169,9 @@ def main():
         text = render(fragments)
     except Malformed as e:
         sys.exit(f"changelog: {e}")
+    if args.stdout:
+        sys.stdout.write(text)
+        return
     if args.lint:
         if not changelog.exists() or released(changelog.read_text()) != released(text):
             sys.exit("changelog: a released version in CHANGELOG.md is not what changelog.d/ makes; edit its fragments instead")

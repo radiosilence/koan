@@ -66,7 +66,12 @@ render() {
 rm -rf "$out"
 for entry in "${pages[@]}"; do
   src=${entry#*|}
-  render "$(slug "$src")" --toc --toc-depth=2 < "$root/$src"
+  if [[ $src == CHANGELOG.md ]]; then
+    # Generated, so the unreleased entries are in it too.
+    python3 "$root/scripts/changelog.py" --stdout | render "$(slug "$src")" --toc --toc-depth=2
+  else
+    render "$(slug "$src")" --toc --toc-depth=2 < "$root/$src"
+  fi
 done
 
 # The index: the same list as the sidebar, as the page.

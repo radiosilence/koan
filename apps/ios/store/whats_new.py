@@ -13,6 +13,7 @@ Needs the same APPLE_API_* environment as push.py.
 """
 
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -30,7 +31,10 @@ PATIENCE = 45 * 60
 
 
 def notes(version):
-    text = Path(__file__).parents[3].joinpath("CHANGELOG.md").read_text()
+    # Generated rather than read, so a build between releases has the
+    # unreleased entries.
+    script = Path(__file__).parents[3] / "scripts" / "changelog.py"
+    text = subprocess.run([sys.executable, script, "--stdout"], check=True, capture_output=True, text=True).stdout
     match = re.search(rf"^## {re.escape(version)}\n(.*?)(?=^## |\Z)", text, re.S | re.M)
     body = match.group(1) if match else ""
     if not body.strip():

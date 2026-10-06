@@ -17,6 +17,8 @@ on:
       - "site/**"
       - "docs/**"
       - "CHANGELOG.md"
+      - "changelog.d/**"
+      - "scripts/changelog.py"
       - ".github/workflows/site.yml"
 
 env:

@@ -91,6 +91,11 @@ class Changelog(unittest.TestCase):
             ),
         )
 
+    def test_stdout_prints_without_writing(self):
+        result = self.run_script("--stdout")
+        self.assertEqual(result.stdout, RELEASED)
+        self.assertFalse((self.root / "CHANGELOG.md").exists())
+
     def test_writing_twice_changes_nothing(self):
         self.write("unreleased/added/1.md", "- **One.**\n")
         self.run_script()
