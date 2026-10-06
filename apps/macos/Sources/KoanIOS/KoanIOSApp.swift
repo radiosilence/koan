@@ -136,6 +136,9 @@ struct KoanIOSApp: App {
                         }
                     }
                     state = built
+                    #if os(tvOS)
+                    IntentTarget.set(built)
+                    #endif
                     if let pendingURL {
                         open(pendingURL, in: built)
                         self.pendingURL = nil
@@ -151,6 +154,9 @@ struct KoanIOSApp: App {
                     ShareInbox.collect(into: built.dsp)
                 } catch {
                     startupError = String(describing: error)
+                    #if os(tvOS)
+                    IntentTarget.fail(String(describing: error))
+                    #endif
                 }
             }
         }

@@ -24,6 +24,7 @@
 - **Find in AutoEQ by maker and model,** before anything is typed, and AutoEQ offered for headphones whose own names leave the maker out, where the name still says which model and generation they are (Sony WH-1000XM4, AirPods Max). A name that says only roughly (AirPods Pro, a Bose QC45) is offered a search for the model instead, to pick the variant from.
 - **AutoEQ in the apps.** *Find in AutoEQ…* in the Mac and iOS apps' EQ settings searches AutoEQ by headphone name and installs a result for the output in use. An output whose name ends with a headphone's full name, maker included, is offered AutoEQ's profile for it; the match is strict, and the offer can be turned down per device.
 - **AutoEQ search from the command line.** `koan dsp autoeq search` finds a headphone in AutoEQ's index by name, and `koan dsp autoeq install` saves its parametric EQ as a profile, optionally for an output device. The index is kept beside the config and refreshed at most daily.
+- **Siri on Apple TV: play, pause and play a record.** "Play a record in kōan" asks which, and finds it in the library as the search page does. "Play kōan" and "Pause kōan" act on the queue. They start audio with the app in the background, and wait for the engine if Siri launched the app.
 - **`playback.muted` and `playback.renderers`.** Muted, playback runs as usual and plays silence; with renderers off, no UPnP renderer is looked for. The iOS and tvOS UI tests set both, so a walk on a shared machine is not heard through its speakers and cannot reach a renderer on its network.
 
 ### Security
