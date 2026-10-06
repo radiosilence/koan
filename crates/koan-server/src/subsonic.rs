@@ -14,7 +14,7 @@ use axum::extract::{Path as UrlPath, Query, RawQuery, Request, State};
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use koan_core::auth::Role;
 use koan_core::config::Config;
 use koan_core::db::connection::Database;
@@ -4129,17 +4129,31 @@ async fn koan_invite(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery
 /// own answers as `koanSignIn` does, with a new key named `name`: the key the
 /// request came with is among those revoked.
 ///
+/// Signed with an API key or the account's own password only: an app password
+/// is a credential handed to one client, and the shared secret is no account's.
+///
 /// A wrong `current` counts against the account's sign-in budget, as a wrong
-/// password at sign-in does. The request itself is usually signed with a key,
-/// which the sign-in throttle leaves alone, so the budget is checked here.
+/// password at sign-in does, and a spent budget refuses the check from every
+/// network, the account's own included: the sign-in throttle spares those, and
+/// a check that is not a sign-in must not be repeatable from one without limit.
+/// The request is usually signed with a key, which that throttle leaves alone,
+/// so the budget is checked here.
+///
+/// POST only, so the passwords never sit in a URL, where a proxy in front of
+/// the server would log them.
 async fn koan_set_user_password(
     State(state): State<Arc<AppState>>,
-    crate::auth::routes::ClientIp(from): crate::auth::routes::ClientIp,
     RawQuery(raw): RawQuery,
 ) -> Response {
     offload_response(move || {
         let params = RawParams::parse(raw.as_deref());
         respond_db_caller(&state, &params.auth(), Role::Readonly, |db, caller, b| {
+            if !matches!(caller.via, Via::ApiKey | Via::Password) {
+                return Err(SubsonicError::new(
+                    SubsonicErrorCode::NotAuthorized,
+                    "sign in with the account's password or an API key to set a password",
+                ));
+            }
             let username = params
                 .get("username")
                 .map_or(caller.username.as_str(), str::trim);
@@ -4154,7 +4168,7 @@ async fn koan_set_user_password(
                 let current = params
                     .get("current")
                     .ok_or_else(|| SubsonicError::missing_param("current"))?;
-                if state.users.spent(username, from) {
+                if state.users.exhausted(username) {
                     return Err(SubsonicError::new(
                         SubsonicErrorCode::Generic,
                         "Too many failed sign-ins for this account; try again in a minute",
@@ -4714,10 +4728,7 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
             get(koan_create_user).post(koan_create_user),
         )
         .route("/rest/koanInvite", get(koan_invite).post(koan_invite))
-        .route(
-            "/rest/koanSetUserPassword",
-            get(koan_set_user_password).post(koan_set_user_password),
-        )
+        .route("/rest/koanSetUserPassword", post(koan_set_user_password))
         .route("/rest/koanJoin", get(koan_join).post(koan_join))
         .route("/rest/koanSignIn", get(koan_sign_in).post(koan_sign_in))
         .route(
@@ -5888,16 +5899,25 @@ mod tests {
     #[tokio::test]
     async fn passwords_are_set_by_admins_and_changed_by_their_owners() {
         let (state, _dir) = test_state();
-        let call = |path: String| {
+        let set = |form: String| {
             let state = state.clone();
-            async move { get_response(build_test_router(state), &path).await.1 }
-        };
-        let json = |body: &str| -> serde_json::Value {
-            serde_json::from_str::<serde_json::Value>(body).unwrap()["subsonic-response"].clone()
+            async move {
+                let body =
+                    post_form(build_test_router(state), "/rest/koanSetUserPassword", &form).await;
+                serde_json::from_str::<serde_json::Value>(&body).unwrap()["subsonic-response"]
+                    .clone()
+            }
         };
         let ping = |query: String| {
-            let call = call.clone();
-            async move { call(format!("/rest/ping?{query}&v=1.16.1&c=test")).await }
+            let state = state.clone();
+            async move {
+                get_response(
+                    build_test_router(state),
+                    &format!("/rest/ping?{query}&v=1.16.1&c=test"),
+                )
+                .await
+                .1
+            }
         };
         let db = state.open_db().unwrap();
         let mate = queries::auth::get_user_by_username(&db.conn, "mate")
@@ -5906,27 +5926,22 @@ mod tests {
         let (_, key) = queries::api_keys::replace_api_key(&db.conn, mate.id, "phone").unwrap();
         let as_mate = format!("apiKey={key}&v=1.16.1&c=test&f=json");
 
+        // POST only: the passwords never sit in a URL.
+        let (status, _) = get_response(
+            build_test_router(state.clone()),
+            &format!(
+                "/rest/koanSetUserPassword?current=hunter22&password=correct%20horse&{as_mate}"
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+
         // Only their own, and only with the current password.
-        let v = json(
-            &call(format!(
-                "/rest/koanSetUserPassword?username=owner&password=taken%20over&{as_mate}"
-            ))
-            .await,
-        );
+        let v = set(format!("username=owner&password=taken%20over&{as_mate}")).await;
         assert_eq!(v["error"]["code"], 50, "{v}");
-        let v = json(
-            &call(format!(
-                "/rest/koanSetUserPassword?password=new%20enough&{as_mate}"
-            ))
-            .await,
-        );
+        let v = set(format!("password=new%20enough&{as_mate}")).await;
         assert_eq!(v["error"]["code"], 10, "{v}");
-        let v = json(
-            &call(format!(
-                "/rest/koanSetUserPassword?current=wrong&password=new%20enough&{as_mate}"
-            ))
-            .await,
-        );
+        let v = set(format!("current=wrong&password=new%20enough&{as_mate}")).await;
         assert_eq!(
             v["error"]["code"], 0,
             "not 40, which reads as the app signed out: {v}"
@@ -5938,10 +5953,10 @@ mod tests {
         );
 
         // Changed: every old credential ends, and the device gets a new key.
-        let v = json(&call(format!(
-            "/rest/koanSetUserPassword?current=hunter22&password=correct%20horse&name=phone&{as_mate}"
+        let v = set(format!(
+            "current=hunter22&password=correct%20horse&name=phone&{as_mate}"
         ))
-        .await);
+        .await;
         assert_eq!(v["join"]["username"], "mate", "{v}");
         let fresh = v["join"]["apiKey"].as_str().unwrap().to_owned();
         assert!(ping(format!("apiKey={key}")).await.contains("code=\"44\""));
@@ -5963,12 +5978,7 @@ mod tests {
 
         // An admin sets anyone's, without theirs, and says nothing back.
         let owner = "u=owner&p=sesame&v=1.16.1&c=test&f=json";
-        let v = json(
-            &call(format!(
-                "/rest/koanSetUserPassword?username=mate&password=battery%20staple&{owner}"
-            ))
-            .await,
-        );
+        let v = set(format!("username=mate&password=battery%20staple&{owner}")).await;
         assert_eq!(v["status"], "ok", "{v}");
         assert!(v.get("join").is_none(), "{v}");
         assert!(
@@ -5981,17 +5991,64 @@ mod tests {
                 .await
                 .contains("status=\"ok\"")
         );
-        let v = json(
-            &call(format!(
-                "/rest/koanSetUserPassword?username=mate&password=short&{owner}"
-            ))
-            .await,
-        );
+        let v = set(format!("username=mate&password=short&{owner}")).await;
         assert_eq!(v["error"]["code"], 0, "too short: {v}");
     }
 
-    /// Checked in the handler: the request is signed with a key, which the
-    /// sign-in throttle leaves alone.
+    /// An app password is one client's credential and the shared secret is no
+    /// account's: neither may set a password, nor try current passwords.
+    #[tokio::test]
+    async fn only_a_key_or_the_password_itself_may_set_a_password() {
+        let (state, _dir) = test_state();
+        let set = |auth: String| {
+            let state = state.clone();
+            async move {
+                post_form(
+                    build_test_router(state),
+                    "/rest/koanSetUserPassword",
+                    &format!("current=hunter22&password=correct%20horse&{auth}&v=1.16.1&c=test"),
+                )
+                .await
+            }
+        };
+        let db = state.open_db().unwrap();
+        let mate = queries::auth::get_user_by_username(&db.conn, "mate")
+            .unwrap()
+            .unwrap();
+        let app_password = queries::app_passwords::create_app_password(
+            &db.conn,
+            state.app_key.as_ref().unwrap(),
+            mate.id,
+            "arpeggi",
+        )
+        .unwrap()
+        .1;
+        let salt = "c0ffee";
+        let token = format!("{:x}", md5::compute(format!("{app_password}{salt}")));
+
+        let body = set(format!("u=mate&p={app_password}")).await;
+        assert!(body.contains("code=\"50\""), "app password as p: {body}");
+        let body = set(format!("u=mate&t={token}&s={salt}")).await;
+        assert!(
+            body.contains("code=\"50\""),
+            "app password as a token: {body}"
+        );
+        let body = set(auth_query("")).await;
+        assert!(body.contains("code=\"50\""), "the shared secret: {body}");
+        assert!(
+            queries::auth::get_user_by_username(&db.conn, "mate")
+                .unwrap()
+                .is_some_and(
+                    |u| koan_core::auth::verify_password("hunter22", &u.password_hash).is_ok()
+                ),
+            "unchanged"
+        );
+    }
+
+    /// Checked in the handler, from every network: the request is signed with
+    /// a key, which the sign-in throttle leaves alone, and that throttle spares
+    /// networks the account signed in from, which must not make guessing here
+    /// free.
     #[tokio::test]
     async fn a_wrong_current_password_spends_the_sign_in_budget() {
         let (state, _dir) = test_state();
@@ -6002,11 +6059,16 @@ mod tests {
         let (_, key) = queries::api_keys::replace_api_key(&db.conn, mate.id, "phone").unwrap();
         let change = |current: &str| {
             let state = state.clone();
-            let path = format!(
-                "/rest/koanSetUserPassword?current={current}&password=another%20one&apiKey={key}&v=1.16.1&c=test"
-            );
-            async move { get_response(build_test_router(state), &path).await.1 }
+            let form =
+                format!("current={current}&password=another%20one&apiKey={key}&v=1.16.1&c=test");
+            async move { post_form(build_test_router(state), "/rest/koanSetUserPassword", &form).await }
         };
+        // Signing in by password makes this network one the account is known on.
+        let app = subsonic_app(state.clone());
+        let body = get_response(app, "/rest/ping?u=mate&p=hunter22&v=1.16.1&c=test")
+            .await
+            .1;
+        assert!(body.contains("status=\"ok\""), "{body}");
 
         let body = change("wrong").await;
         assert!(body.contains("the current password is wrong"), "{body}");

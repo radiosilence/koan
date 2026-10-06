@@ -215,6 +215,23 @@ impl SubsonicClient {
         resp.subsonic_response.ok()
     }
 
+    /// As `get_with_params`, sent as a form POST (OpenSubsonic `formPost`): for
+    /// endpoints that change something and take only POST, and for anything
+    /// that must not sit in a URL.
+    fn post_with_params(
+        &self,
+        endpoint: &str,
+        extra: &[(&str, &str)],
+    ) -> Result<SubsonicResponse, SubsonicError> {
+        let url = format!("{}/rest/{}", self.auth.base_url, endpoint);
+        let mut params = self.auth_params()?;
+        for (k, v) in extra {
+            params.insert((*k).to_string(), (*v).to_string());
+        }
+        let resp: SubsonicResponseWrapper = self.http.post(&url).form(&params).send()?.json()?;
+        resp.subsonic_response.ok()
+    }
+
     /// As `get_with_params`, for a parameter given more than once: Subsonic
     /// batches by repeating `id` and `time`.
     fn get_with_pairs(
@@ -803,7 +820,7 @@ impl SubsonicClient {
         username: &str,
         password: &str,
     ) -> Result<(), SubsonicError> {
-        self.get_with_params(
+        self.post_with_params(
             "koanSetUserPassword",
             &[("username", username), ("password", password)],
         )?;
@@ -819,7 +836,7 @@ impl SubsonicClient {
         password: &str,
         device: &str,
     ) -> Result<KoanJoined, SubsonicError> {
-        self.get_with_params(
+        self.post_with_params(
             "koanSetUserPassword",
             &[
                 ("current", current),
