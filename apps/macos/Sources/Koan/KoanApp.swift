@@ -13,20 +13,7 @@ struct KoanApp: App {
             Group {
                 if let state {
                     RootView(hotkeys: state.hotkeys)
-                        .environment(state)
-                        .environment(state.ui)
-                        .environment(state.player)
-                        .environment(state.library)
-                        .environment(state.nav)
-                        .environment(state.search)
-                        .environment(state.art)
-                        .environment(state.organize)
-                        .environment(state.playlists)
-                        .environment(state.activity)
-                        .environment(state.levels)
-                        .environment(state.meter)
-                        .environment(state.mirror)
-                        .koanTheme(state.appearance)
+                        .appEnvironment(state)
                         .modifier(InviteConfirmation(state: state))
                         .modifier(PairingConfirmation(state: state))
                         // One accent for the whole app, from the icon. Without

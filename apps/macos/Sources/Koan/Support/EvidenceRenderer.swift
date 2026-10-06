@@ -59,6 +59,31 @@ enum EvidenceRenderer {
                 await snapshot(page.view, size: page.size, dark: dark, to: file)
             }
         }
+        // The whole window, at a section: the shell, the room and the page
+        // together. What is playing is whatever the scratch library's saved
+        // session left cued.
+        let nav = state.nav
+        var windows: [(name: String, go: () -> Void)] = [
+            ("window-queue", { nav.show(.queue) }),
+            ("window-albums", { nav.show(.albums) }),
+            ("window-artists", { nav.show(.artists) }),
+        ]
+        if let album = state.player.currentAlbumId {
+            windows.append(("window-album", { nav.open(album: album) }))
+        }
+        if let only = ProcessInfo.processInfo.environment["KOAN_RENDER_PAGES"]?.split(separator: ",") {
+            windows.removeAll { window in !only.contains { window.name.hasPrefix($0) } }
+        }
+        for window in windows {
+            window.go()
+            for dark in [false, true] {
+                let file = dir.appending(path: "\(window.name)-\(dark ? "dark" : "light").png")
+                await snapshot(
+                    AnyView(RootView(hotkeys: state.hotkeys).appEnvironment(state)),
+                    size: CGSize(width: 1440, height: 900), dark: dark, to: file
+                )
+            }
+        }
         NSApp.terminate(nil)
     }
 
@@ -92,6 +117,27 @@ enum EvidenceRenderer {
         try? rep.representation(using: .png, properties: [:])?.write(to: file)
         window.contentView = nil
         window.close()
+    }
+}
+
+extension View {
+    /// What the main window's root is handed. `KoanApp` and the renderer both
+    /// call this, so a page drawn here is drawn as the window draws it.
+    func appEnvironment(_ state: AppState) -> some View {
+        environment(state)
+            .environment(state.ui)
+            .environment(state.player)
+            .environment(state.library)
+            .environment(state.nav)
+            .environment(state.search)
+            .environment(state.art)
+            .environment(state.organize)
+            .environment(state.playlists)
+            .environment(state.activity)
+            .environment(state.levels)
+            .environment(state.meter)
+            .environment(state.mirror)
+            .koanTheme(state.appearance)
     }
 }
 #endif
