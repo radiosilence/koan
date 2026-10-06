@@ -107,12 +107,41 @@ const SAME_TARGET_DB: f64 = 1.5;
 /// The furthest a target difference moves any frequency.
 const MAX_DB: f64 = 12.0;
 
+/// How much nearer the best match must be than the next for a result to be
+/// taken for it. Shipped targets differ by less than a decibel in places,
+/// and a guess between two would apply the wrong difference.
+const MARGIN_DB: f64 = 0.3;
+
+/// The level a curve's point may have. Targets sit within about ±15 dB; a
+/// value past this is a file that is not one, and is refused rather than
+/// carried into a filter.
+const LEVEL_LIMIT_DB: f64 = 40.0;
+
+/// The largest file read as a target.
+const FILE_CAP: u64 = 1 << 20;
+
+impl Ear {
+    /// The kind of headphone an AutoEQ result is for, from its path in the
+    /// results: `…/over-ear/…`, `…/711 in-ear/…`, `…/earbud/…`.
+    pub fn of_result_path(path: &str) -> Option<Self> {
+        let lower = path.to_ascii_lowercase();
+        if lower.contains("in-ear") || lower.contains("earbud") {
+            Some(Ear::In)
+        } else if lower.contains("over-ear") || lower.contains("on-ear") {
+            Some(Ear::Over)
+        } else {
+            None
+        }
+    }
+}
+
 /// A curve: (Hz, dB), rising in frequency.
 pub type Curve = Vec<(f64, f64)>;
 
 /// Read a curve: two numbers per line, frequency and level, separated by a
 /// comma, a tab or spaces, as AutoEQ's CSVs, REW exports and squig.link's
-/// text have them. Header and comment lines are skipped.
+/// text have them. Header and comment lines are skipped, and so is a point
+/// that is not a frequency in hertz with a level within ±40 dB.
 pub fn parse(text: &str) -> Curve {
     let mut curve: Curve = text
         .lines()
@@ -122,7 +151,8 @@ pub fn parse(text: &str) -> Curve {
                 .filter(|f| !f.is_empty());
             let hz: f64 = fields.next()?.parse().ok()?;
             let db: f64 = fields.next()?.parse().ok()?;
-            (hz > 0.0 && hz.is_finite() && db.is_finite()).then_some((hz, db))
+            (hz > 0.0 && hz.is_finite() && db.is_finite() && db.abs() <= LEVEL_LIMIT_DB)
+                .then_some((hz, db))
         })
         .collect();
     curve.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -168,10 +198,16 @@ fn levelled(curve: &[(f64, f64)], grid: &[f64]) -> Vec<f64> {
     grid.iter().map(|&hz| at(curve, hz) - k).collect()
 }
 
-/// Which of `TARGETS` a result was made for, from the target its CSV
-/// carries, if it is close enough to one to say.
-pub fn identify(result_target: &[(f64, f64)]) -> Option<&'static Target> {
-    if result_target.len() < 2 {
+/// Which of `TARGETS` for `ear` a result was made for, from the target its
+/// CSV carries: the nearest, when it is close and clearly nearer than the
+/// next. Targets for the other kind of headphone are not compared, since
+/// some lie within a decibel of each other.
+pub fn identify(result_target: &[(f64, f64)], ear: Ear) -> Option<&'static Target> {
+    if result_target.len() < 2
+        || result_target
+            .iter()
+            .any(|(f, d)| !f.is_finite() || !d.is_finite())
+    {
         return None;
     }
     let grid = grid();
@@ -181,12 +217,23 @@ pub fn identify(result_target: &[(f64, f64)]) -> Option<&'static Target> {
         let sum: f64 = theirs.iter().zip(&ours).map(|(a, b)| (a - b).powi(2)).sum();
         (sum / grid.len() as f64).sqrt()
     };
-    TARGETS
+    let mut near: Vec<(f64, &'static Target)> = TARGETS
         .iter()
+        .filter(|t| t.ear == ear)
         .map(|t| (rms(t), t))
-        .filter(|(d, _)| *d <= SAME_TARGET_DB)
-        .min_by(|a, b| a.0.total_cmp(&b.0))
-        .map(|(_, t)| t)
+        .collect();
+    near.sort_by(|a, b| a.0.total_cmp(&b.0));
+    match near.as_slice() {
+        [(best, t), rest @ ..]
+            if *best <= SAME_TARGET_DB
+                && rest
+                    .first()
+                    .is_none_or(|(next, _)| next - best >= MARGIN_DB) =>
+        {
+            Some(t)
+        }
+        _ => None,
+    }
 }
 
 /// The curve that moves a correction made for `from` to `to`: their
@@ -197,7 +244,14 @@ pub fn identify(result_target: &[(f64, f64)]) -> Option<&'static Target> {
 pub fn difference(from: &[(f64, f64)], to: &[(f64, f64)]) -> GraphicEq {
     let grid = grid();
     let (a, b) = (levelled(from, &grid), levelled(to, &grid));
-    let delta: Vec<f64> = b.iter().zip(&a).map(|(t, f)| t - f).collect();
+    // A curve that is not a target's makes no difference at all, rather than
+    // one that is not a number.
+    let delta: Vec<f64> = b
+        .iter()
+        .zip(&a)
+        .map(|(t, f)| t - f)
+        .map(|d| if d.is_finite() { d } else { 0.0 })
+        .collect();
     let smoothed: Vec<f64> = grid
         .iter()
         .map(|&hz| {
@@ -215,6 +269,7 @@ pub fn difference(from: &[(f64, f64)], to: &[(f64, f64)]) -> GraphicEq {
     let mut next = 20.0;
     for (&hz, &db) in grid.iter().zip(&smoothed) {
         if hz >= next || Some(&hz) == grid.last() {
+            let db = if db.is_nan() { 0.0 } else { db };
             points.push((hz, db.clamp(-MAX_DB, MAX_DB)));
             next = hz * 2f64.powf(1.0 / 12.0);
         }
@@ -266,7 +321,16 @@ pub fn added() -> Vec<Added> {
 /// covers the audible band well enough to take a difference from: points
 /// from below 100 Hz to above 10 kHz, at least twenty of them.
 pub fn add(path: &Path) -> Result<Added, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    use std::io::Read as _;
+    let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut bytes = Vec::new();
+    file.take(FILE_CAP + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    if bytes.len() as u64 > FILE_CAP {
+        return Err("A target file is a few kilobytes; this one is over a megabyte".into());
+    }
+    let text = String::from_utf8_lossy(&bytes);
     let curve = parse(&text);
     let (Some(first), Some(last)) = (curve.first(), curve.last()) else {
         return Err("No frequency and level pairs in it".into());
@@ -362,7 +426,10 @@ mod tests {
     #[test]
     fn a_result_is_known_by_its_target_and_its_rigs_offset_is_tolerated() {
         let harman = shipped("harman-over-ear-2018").unwrap();
-        assert_eq!(identify(&harman.curve()).map(|t| t.id), Some(harman.id));
+        assert_eq!(
+            identify(&harman.curve(), Ear::Over).map(|t| t.id),
+            Some(harman.id)
+        );
         // A rig's compensation: a dip of a few dB around 6 kHz, as AutoEQ's
         // Rtings and Innerfidelity results carry.
         let rig: Curve = harman
@@ -373,16 +440,75 @@ mod tests {
                 (hz, db - 3.0 * (-x * x * 4.0).exp())
             })
             .collect();
-        assert_eq!(identify(&rig).map(|t| t.id), Some(harman.id));
+        assert_eq!(identify(&rig, Ear::Over).map(|t| t.id), Some(harman.id));
         let no_bass = shipped("harman-over-ear-2018-without-bass").unwrap();
-        assert_eq!(identify(&no_bass.curve()).map(|t| t.id), Some(no_bass.id));
+        assert_eq!(
+            identify(&no_bass.curve(), Ear::Over).map(|t| t.id),
+            Some(no_bass.id)
+        );
         // Something none of them is near.
         let tilted: Curve = harman
             .curve()
             .into_iter()
             .map(|(hz, db)| (hz, db + 6.0 * (hz / 1000.0).log2()))
             .collect();
-        assert_eq!(identify(&tilted), None);
+        assert_eq!(identify(&tilted, Ear::Over), None);
+    }
+
+    /// An in-ear result is never taken for an over-ear target however near
+    /// one lies, and a result between two targets is taken for neither.
+    #[test]
+    fn identification_keeps_to_the_ear_and_refuses_to_guess() {
+        let in_ear = shipped("harman-in-ear-2019").unwrap();
+        assert_eq!(
+            identify(&in_ear.curve(), Ear::In).map(|t| t.id),
+            Some(in_ear.id)
+        );
+        // AutoEQ's in-ear target lies within a decibel of Harman over-ear
+        // 2018 without its bass shelf; as an in-ear result it is itself.
+        let autoeq = shipped("autoeq-in-ear").unwrap();
+        assert_eq!(
+            identify(&autoeq.curve(), Ear::In).map(|t| t.id),
+            Some(autoeq.id)
+        );
+        // Halfway between Harman 2018 with and without its bass shelf.
+        let with = shipped("harman-over-ear-2018").unwrap().curve();
+        let without = shipped("harman-over-ear-2018-without-bass")
+            .unwrap()
+            .curve();
+        let between: Curve = with
+            .iter()
+            .zip(&without)
+            .map(|((f, a), (_, b))| (*f, (a + b) / 2.0))
+            .collect();
+        assert_eq!(identify(&between, Ear::Over), None);
+        assert_eq!(
+            Ear::of_result_path("crinacle/711 in-ear/1Custom SA02"),
+            Some(Ear::In)
+        );
+        assert_eq!(
+            Ear::of_result_path("oratory1990/over-ear/Sennheiser HD 650"),
+            Some(Ear::Over)
+        );
+        assert_eq!(
+            Ear::of_result_path("Rtings/HMS II.3 over-ear/X"),
+            Some(Ear::Over)
+        );
+        assert_eq!(Ear::of_result_path("someone/elsewhere/X"), None);
+    }
+
+    /// A file of garbage cannot put anything but numbers into a filter.
+    #[test]
+    fn a_hostile_curve_cannot_make_a_filter_that_is_not_a_number() {
+        let hostile = "20000,-3\n20,nan\n100,inf\n200,-inf\n300,1.7e308\n400,-1.7e308\n500,-50\n1000,0\n50,2\n";
+        let curve = parse(hostile);
+        assert_eq!(curve, vec![(50.0, 2.0), (1000.0, 0.0), (20000.0, -3.0)]);
+        let from = shipped("harman-over-ear-2018").unwrap().curve();
+        let g = difference(
+            &from,
+            &[(20.0, f64::MAX), (21.0, -f64::MAX), (20000.0, 0.0)],
+        );
+        assert!(g.points.iter().all(|(f, d)| f.is_finite() && d.is_finite()));
     }
 
     #[test]

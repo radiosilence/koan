@@ -681,7 +681,10 @@ fn keep_result(entry: &Entry, name: &str) -> Result<Option<&'static str>, String
     let dir = profiles::dir(name);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     std::fs::write(super::targets::result_path(&dir), &text).map_err(|e| e.to_string())?;
-    Ok(super::targets::identify(&target).map(|t| t.id))
+    let Some(ear) = super::targets::Ear::of_result_path(&entry.path) else {
+        return Ok(None);
+    };
+    Ok(super::targets::identify(&target, ear).map(|t| t.id))
 }
 
 #[cfg(test)]
