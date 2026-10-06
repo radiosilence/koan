@@ -12,7 +12,11 @@ struct SignInPage: View {
     let signedIn: () -> Void
 
     @Environment(AppState.self) private var state
+    @Environment(ActivityModel.self) private var activity
     @State private var server = ""
+    /// A pairing being opened: the server can take a minute to answer, and a
+    /// second press meanwhile would race the first for the engine's one slot.
+    @State private var connecting = false
     @State private var pairing: PairingCode?
     @State private var waiting: Task<Void, Never>?
     @State private var problem: String?
@@ -70,11 +74,12 @@ struct SignInPage: View {
             if server.isEmpty { server = settings.remoteUrl }
         }
         .onDisappear { cancel() }
-        .sheet(isPresented: $manual, onDismiss: {
-            Task { if await state.engine.settings().remoteSignedIn { signedIn() } }
-        }) {
+        .sheet(isPresented: $manual, onDismiss: recheck) {
             NavigationStack { SettingsView() }
         }
+        // The form's sign-in runs as an activity, and can finish after the
+        // sheet has been dismissed.
+        .onChange(of: activity.tasks.count) { recheck() }
     }
 
     private var addressForm: some View {
@@ -85,8 +90,14 @@ struct SignInPage: View {
                 .autocorrectionDisabled()
                 .frame(width: 900)
                 .onSubmit(start)
-            Button("Get a Code", action: start)
-                .disabled(server.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(connecting)
+            if connecting {
+                ProgressView()
+                    .frame(width: 240)
+            } else {
+                Button("Get a Code", action: start)
+                    .disabled(server.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
         }
     }
 
@@ -132,13 +143,16 @@ struct SignInPage: View {
     }
 
     private func start() {
+        guard !connecting else { return }
         let url = normalised
         let engine = state.engine
         problem = nil
+        connecting = true
         waiting?.cancel()
         waiting = Task {
             do {
                 let opened = try await engine.startPairing(url: url)
+                connecting = false
                 // Cancelling the task does not interrupt the call already in
                 // flight; a pairing opened after "Another Server" is given up.
                 guard !Task.isCancelled else {
@@ -150,11 +164,17 @@ struct SignInPage: View {
                 pairing = nil
                 signedIn()
             } catch {
+                connecting = false
                 guard !Task.isCancelled else { return }
                 pairing = nil
                 problem = Self.explain(error)
             }
         }
+    }
+
+    private func recheck() {
+        let engine = state.engine
+        Task { if await engine.settings().remoteSignedIn { signedIn() } }
     }
 
     private func cancel() {
@@ -166,6 +186,11 @@ struct SignInPage: View {
 
     private static func explain(_ error: Error) -> String {
         let reason = SettingsModel.describe(error)
-        return "Could not sign in this way: \(reason). A server that is not kōan signs in with a password or API key."
+        // Only a server without pairing needs the other way in pointed out;
+        // a declined or lapsed code is asked for again.
+        if case KoanError.NotFound = error {
+            return "\(reason.prefix(1).uppercased() + reason.dropFirst()). A server that is not kōan signs in with a password or API key."
+        }
+        return "Could not sign in this way: \(reason)."
     }
 }

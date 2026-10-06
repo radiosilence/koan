@@ -56,6 +56,12 @@ pub enum PairError {
     BadUrl(String),
     #[error("could not reach the server: {0}")]
     Connect(String),
+    /// The server answered, and has no pairing to offer: not koan, or a koan
+    /// from before pairing.
+    #[error("this server does not pair devices")]
+    Unsupported,
+    #[error("too many devices are waiting to pair from this network; try again in a few minutes")]
+    TooMany,
     #[error("the server answered with something unexpected")]
     BadResponse,
     #[error("the sign-in was declined")]
@@ -99,8 +105,16 @@ impl Cancel {
 pub fn start(url: &str, device: &str) -> Result<Pending, PairError> {
     let server = url.trim().trim_end_matches('/').to_owned();
     let socket_url = pair_url(&server, device)?;
-    let (mut socket, _) =
-        tungstenite::connect(socket_url.as_str()).map_err(|e| PairError::Connect(e.to_string()))?;
+    let (mut socket, _) = tungstenite::connect(socket_url.as_str()).map_err(|e| match e {
+        // Any answer but an upgrade is a server without pairing, except a
+        // koan turning away a busy address and a proxy whose server is down.
+        tungstenite::Error::Http(ref response) => match response.status().as_u16() {
+            429 => PairError::TooMany,
+            502..=504 => PairError::Connect(e.to_string()),
+            _ => PairError::Unsupported,
+        },
+        e => PairError::Connect(e.to_string()),
+    })?;
     if let Some(tcp) = tcp(&socket) {
         let _ = tcp.set_read_timeout(Some(SILENCE));
     }

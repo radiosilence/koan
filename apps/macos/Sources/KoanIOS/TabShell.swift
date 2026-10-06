@@ -39,6 +39,26 @@ struct TabShell: View {
     #endif
 
     var body: some View {
+        #if os(tvOS)
+        // Signed out, the television has nothing to show but the way in: in
+        // place of the tabs rather than over them, since Menu dismisses a
+        // cover and would leave an empty room behind it.
+        Group {
+            if signedIn {
+                shell
+            } else {
+                SignInPage { joined() }
+            }
+        }
+        .toggleStyle(SystemSwitch())
+        .buttonStyle(TelevisionButton())
+        .task { await checkSignedIn() }
+        #else
+        shell
+        #endif
+    }
+
+    private var shell: some View {
         // The record's colour: the tint here, for everything below, and the wash
         // as each tab's navigation background — see `roomBackground()`. A phone
         // has no window to hang one wash on, and a stack paints its own ground
@@ -84,11 +104,6 @@ struct TabShell: View {
         // The remote's Play/Pause, wherever focus is.
         .onPlayPauseCommand { player.togglePlayPause() }
         .shareCodes(player)
-        // Signed out, the television has nothing to show but the way in.
-        .fullScreenCover(isPresented: Binding(get: { !signedIn }, set: { _ in })) {
-            SignInPage { joined() }
-        }
-        .task { await checkSignedIn() }
         .onChange(of: selection) { Task { await checkSignedIn() } }
         .onChange(of: mirror.connection?.linked) { Task { await checkSignedIn() } }
         #endif

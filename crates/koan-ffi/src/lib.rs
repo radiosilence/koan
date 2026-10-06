@@ -5112,6 +5112,9 @@ fn pair_error(e: koan_core::remote::pair::PairError) -> KoanError {
     use koan_core::remote::pair::PairError;
     match e {
         PairError::Remote(e) => remote_error(e),
+        e @ PairError::Unsupported => KoanError::NotFound {
+            message: e.to_string(),
+        },
         e @ (PairError::Connect(_) | PairError::Closed) => KoanError::Remote {
             message: e.to_string(),
         },
