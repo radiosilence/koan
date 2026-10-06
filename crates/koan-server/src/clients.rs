@@ -81,6 +81,24 @@ struct Waiting {
     reply: Box<dyn FnOnce(Option<AckOutcome>) + Send>,
     /// The device said the command came off its link.
     received: bool,
+    /// The timer that looks at it, stopped once the answer is in, so an
+    /// answered command costs nothing more.
+    timer: Option<tokio::task::AbortHandle>,
+}
+
+impl Waiting {
+    fn answer(mut self, outcome: Option<AckOutcome>) {
+        let reply = std::mem::replace(&mut self.reply, Box::new(|_| {}));
+        reply(outcome);
+    }
+}
+
+impl Drop for Waiting {
+    fn drop(&mut self) {
+        if let Some(timer) = self.timer.take() {
+            timer.abort();
+        }
+    }
 }
 
 /// How long a linked device has to say a command came off its link before it
@@ -951,6 +969,7 @@ impl Registry {
                     Waiting {
                         reply: acking.reply,
                         received: false,
+                        timer: None,
                     },
                 );
                 (Some(acking.id), None)
@@ -964,7 +983,7 @@ impl Registry {
         drop(entries);
         if sent.is_err() {
             if let Some(w) = ack.and_then(|ack| self.answers.lock().remove(&(device, ack))) {
-                (w.reply)(Some(AckOutcome::Failed {
+                w.answer(Some(AckOutcome::Failed {
                     error: "its link has just gone".into(),
                 }));
             }
@@ -974,17 +993,45 @@ impl Registry {
             (acking.reply)(None);
         }
         if let Some(ack) = ack {
-            let owner = target.username.clone();
-            std::thread::spawn(move || watch_answer(owner, device, ack, cmd));
+            self.watch(target.username.clone(), device, ack, cmd);
         }
         Ok(target)
+    }
+
+    /// Look at the command sent to `device` under `ack` after `FIRST_LOOK`,
+    /// and give up on its answer after `LONGEST_ANSWER`: a timer on the
+    /// server's runtime, kept with the waiting answer and stopped when the
+    /// answer comes. Outside a runtime (a test) nothing looks.
+    fn watch(&self, username: String, device: String, ack: u64, cmd: LinkCommand) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let key = (device.clone(), ack);
+        let timer = runtime.spawn(async move {
+            tokio::time::sleep(FIRST_LOOK).await;
+            let looking = device.clone();
+            let taken = tokio::task::spawn_blocking(move || {
+                registry().look(&username, &looking, ack, &cmd)
+            })
+            .await
+            .unwrap_or(false);
+            if taken {
+                tokio::time::sleep(LONGEST_ANSWER.saturating_sub(FIRST_LOOK)).await;
+                registry().give_up(&device, ack);
+            }
+        });
+        match self.answers.lock().get_mut(&key) {
+            Some(w) => w.timer = Some(timer.abort_handle()),
+            // Answered already.
+            None => timer.abort(),
+        }
     }
 
     /// `device` answered the command it was sent under `ack`.
     pub fn answered(&self, device: &str, ack: u64, outcome: AckOutcome) {
         let waiting = self.answers.lock().remove(&(device.to_string(), ack));
         if let Some(w) = waiting {
-            (w.reply)(Some(outcome));
+            w.answer(Some(outcome));
         }
     }
 
@@ -1019,7 +1066,7 @@ impl Registry {
                 error: format!("{device} did not take it"),
             },
         };
-        (w.reply)(Some(outcome));
+        w.answer(Some(outcome));
         false
     }
 
@@ -1028,7 +1075,7 @@ impl Registry {
     fn give_up(&self, device: &str, ack: u64) {
         let waiting = self.answers.lock().remove(&(device.to_string(), ack));
         if let Some(w) = waiting {
-            (w.reply)(None);
+            w.answer(None);
         }
     }
 }
@@ -1344,16 +1391,6 @@ fn reach_absent(
     };
     std::thread::spawn(move || deliver_push(pusher, &target, &push));
     Some(Ok(info))
-}
-
-/// After `FIRST_LOOK`, see whether `device` has taken the command sent under
-/// `ack`; see `Registry::look`.
-fn watch_answer(username: String, device: String, ack: u64, cmd: LinkCommand) {
-    std::thread::sleep(FIRST_LOOK);
-    if registry().look(&username, &device, ack, &cmd) {
-        std::thread::sleep(LONGEST_ANSWER.saturating_sub(FIRST_LOOK));
-        registry().give_up(&device, ack);
-    }
 }
 
 /// The track whose album cover a notification for `cmd` shows. Commands carry
@@ -2050,6 +2087,22 @@ mod tests {
             Some((2, Some(AckOutcome::Failed { .. })))
         ));
         assert_eq!(reg.list(Some("q")).len(), 1, "the link is not dropped");
+    }
+
+    /// An answered command costs nothing more: the answer takes its waiting
+    /// entry, and that stops the timer that would have looked at it.
+    #[tokio::test]
+    async fn an_answer_stops_its_timer() {
+        let timer = tokio::spawn(tokio::time::sleep(std::time::Duration::from_secs(3600)));
+        let handle = timer.abort_handle();
+        let waiting = Waiting {
+            reply: Box::new(|_| {}),
+            received: true,
+            timer: Some(timer.abort_handle()),
+        };
+        waiting.answer(Some(koan_core::remote::acks::AckOutcome::Done));
+        assert!(timer.await.unwrap_err().is_cancelled());
+        assert!(handle.is_finished());
     }
 
     #[test]
