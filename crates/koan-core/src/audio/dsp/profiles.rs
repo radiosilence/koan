@@ -193,6 +193,16 @@ pub struct Detail {
     pub everywhere: bool,
     /// Where it is kept was chosen, rather than following from what it is.
     pub scope_set: bool,
+    /// A headphone correction, rather than tuning.
+    pub correction: bool,
+    pub role_set: bool,
+    /// The chain in a line each: see [`summary`].
+    pub corrects: Option<String>,
+    pub tunings: Vec<String>,
+    /// For each of `layers`, whether it is a correction.
+    pub layer_corrections: Vec<bool>,
+    pub measured: bool,
+    pub made_for: Option<String>,
 }
 
 /// Everything in the profile `name`.
@@ -252,6 +262,7 @@ pub fn detail(name: &str) -> Option<Detail> {
         problem = Some(problem.map_or(note.clone(), |p| format!("{p}. {note}")));
     }
     let preamp_db = setup.map_or(0.0, |s| s.preamp_db(preamp_rate, 2));
+    let chain_summary = summary(name).unwrap_or_default();
     Some(Detail {
         name: profile.name.clone(),
         devices: profile.devices.clone(),
@@ -265,6 +276,23 @@ pub fn detail(name: &str) -> Option<Detail> {
         problem,
         everywhere: scope(profile, &cfg.dsp.profiles) == DspScope::Everywhere,
         scope_set: profile.scope.is_some(),
+        correction: role(profile) == DspRole::Correction,
+        role_set: profile.role.is_some(),
+        corrects: chain_summary.correction,
+        tunings: chain_summary.tunings,
+        layer_corrections: profile
+            .layers
+            .iter()
+            .map(|l| {
+                cfg.dsp
+                    .profiles
+                    .iter()
+                    .find(|p| p.name == l.profile)
+                    .is_some_and(|p| role(p) == DspRole::Correction)
+            })
+            .collect(),
+        measured: profile.measurement.is_some(),
+        made_for: profile.target.as_ref().map(|t| t.made_for.clone()),
     })
 }
 

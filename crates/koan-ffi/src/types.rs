@@ -1116,7 +1116,9 @@ pub struct DspTargetOption {
 /// The target a correction was made for, the one chosen, and the others.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct DspTargets {
-    pub made_for: DspTargetOption,
+    /// None for a correction built from a measurement, which is made for
+    /// `chosen`.
+    pub made_for: Option<DspTargetOption>,
     /// Unset when it plays as made.
     pub chosen: Option<String>,
     pub choices: Vec<DspTargetOption>,
@@ -1218,6 +1220,9 @@ pub struct DspResponse {
     pub target: Option<Vec<f64>>,
     pub predicted: Option<Vec<f64>>,
     pub preamp_db: f64,
+    /// For a chain with both: the correction alone, and the tuning on top.
+    pub correction: Option<Vec<f64>>,
+    pub tuning: Option<Vec<f64>>,
 }
 
 impl From<koan_core::audio::dsp::profiles::Response> for DspResponse {
@@ -1239,6 +1244,8 @@ impl From<koan_core::audio::dsp::profiles::Response> for DspResponse {
             target: r.target,
             predicted: r.predicted,
             preamp_db: r.preamp_db,
+            correction: r.correction,
+            tuning: r.tuning,
         }
     }
 }
@@ -1273,6 +1280,21 @@ pub struct DspProfileDetail {
     pub scope_set: bool,
     /// Why the server would not keep it, while it would not.
     pub sync_problem: Option<String>,
+    /// A headphone correction, rather than tuning on top of one.
+    pub correction: bool,
+    /// What it is for was said, rather than following from what it is.
+    pub role_set: bool,
+    /// The chain in a line each: the headphone it corrects and how, and the
+    /// tunings on top.
+    pub corrects: Option<String>,
+    pub tunings: Vec<String>,
+    /// For each of `layers`, whether it is a correction.
+    pub layer_corrections: Vec<bool>,
+    /// Built from a measurement, to `DspTargets.chosen`.
+    pub measured: bool,
+    /// For a ready-made correction: the target it was made for, by id, if
+    /// that is known.
+    pub made_for: Option<String>,
 }
 
 /// One of a profile's filters, in the order they run.
@@ -1418,6 +1440,13 @@ impl From<koan_core::audio::dsp::profiles::Detail> for DspProfileDetail {
             everywhere: d.everywhere,
             scope_set: d.scope_set,
             sync_problem: None,
+            correction: d.correction,
+            role_set: d.role_set,
+            corrects: d.corrects,
+            tunings: d.tunings,
+            layer_corrections: d.layer_corrections,
+            measured: d.measured,
+            made_for: d.made_for,
         }
     }
 }
