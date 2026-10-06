@@ -247,6 +247,8 @@ struct KoanApp: App {
                     .koanTheme(state.appearance)
             }
         }
+        .defaultSize(width: 820, height: 780)
+        .windowResizability(.contentMinSize)
     }
 }
 

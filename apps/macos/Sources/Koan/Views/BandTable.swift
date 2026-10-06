@@ -69,6 +69,7 @@ struct BandTable: View {
             #endif
             #if !os(tvOS)
             Button(KoanTheme.label("Add a Band")) { dsp.addBand(profile) }
+                .koanButton(.secondary)
             #endif
         } header: {
             KoanSectionHeader("Filters")
