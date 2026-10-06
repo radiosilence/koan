@@ -423,8 +423,8 @@ const NOT_HEADPHONE_WORDS: &[&str] = &[
 /// person picks the variant themselves.
 ///
 /// The end of the name, up to four words, that begins some entry's model, the
-/// longest that does; it must hold a word of four letters or more, so "M2"
-/// or "4i4" alone never count. Failing that, one of `MAKER_SEARCHES` the
+/// longest that does; it must hold a word of four letters or more, and a
+/// single word six, so "M2", "4i4" or "Solo" alone never count. Failing that, one of `MAKER_SEARCHES` the
 /// name begins with. A
 /// name with a word like "speakers", "display" or "USB" in it is not
 /// headphones and gets nothing.
@@ -444,9 +444,15 @@ pub fn search_for(entries: &[Entry], device: &str) -> Option<String> {
             words(&e.name).split_off(maker)
         })
         .collect();
+    // A run of words needs one of four letters or more; a single word, six,
+    // since a short one ("Solo", "Duet") begins a model of some maker's and
+    // names an audio interface as often as a headphone.
     let lettered = |run: &[String]| {
-        run.iter()
-            .any(|w| w.chars().filter(|c| c.is_alphabetic()).count() >= 4)
+        let letters = |w: &String| w.chars().filter(|c| c.is_alphabetic()).count();
+        match run {
+            [one] => letters(one) >= 6,
+            _ => run.iter().any(|w| letters(w) >= 4),
+        }
     };
     for len in (1..=device.len().min(4)).rev() {
         let run = &device[device.len() - len..];
@@ -742,6 +748,11 @@ Filter 3: ON PK Fc 118 Hz Gain -3.1 dB Q 0.50
         assert_eq!(search("LG UltraFine Display Audio"), None);
         assert_eq!(search("MacBook Pro Speakers"), None);
         assert_eq!(search("FiiO K3"), None, "a maker of DACs too is no search");
+        assert_eq!(
+            search("Focusrite Scarlett Solo"),
+            None,
+            "a short word alone is no search"
+        );
     }
 
     #[test]
@@ -1019,6 +1030,8 @@ Filter 3: ON PK Fc 118 Hz Gain -3.1 dB Q 0.50
             "iFi ZEN DAC V2",
             "Zen Air DAC",
             "Schiit Modi",
+            "External Headphones",
+            "Headphones",
         ]
         .iter()
         .filter_map(|d| search_for(&entries, d).map(|q| format!("{d} → {q}")))
