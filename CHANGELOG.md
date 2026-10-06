@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.54.3
+
+### Changed
+
+- **Signing in to a kōan server with a password ends in an API key** ([#819](https://github.com/radiosilence/koan/issues/819)). The apps and terminal UI send the password once, over plain HTTP too, to the new `/rest/koanSignIn`, and keep the API key it returns for the device in place of the password, as an invite does. Signing in again from the same device replaces its key rather than adding one. An app password or the shared secret typed in place of the password is kept as before. Signing in over plain HTTP no longer fails with error 41. Other Subsonic servers are unchanged, and error 41 from one now reads as needing an app password or API key. Servers list the `koanSignIn` extension.
 
 ### Fixed
 
@@ -40,10 +44,6 @@
 
 - **The Mac's shelf, search and album grid follow the window when it widens.** Opened in a narrow window, Recently Played, Favourites, search and the album grid kept their narrow layout when the window grew.
 - **The web UI on a phone.** A favourite track shows its heart beside the row's ⋯ again, as a mark; the heart to press is in the menu. History rows give the title the width the tick boxes took: on a phone a play is removed with Remove from History in its menu, as in the apps, and the time is set smaller. On a wide screen the Tracks browser's name field is wide enough for its hint.
-
-### Changed
-
-- **Signing in to a kōan server with a password ends in an API key** ([#819](https://github.com/radiosilence/koan/issues/819)). The apps and terminal UI send the password once, over plain HTTP too, to the new `/rest/koanSignIn`, and keep the API key it returns for the device in place of the password, as an invite does. Signing in again from the same device replaces its key rather than adding one. An app password or the shared secret typed in place of the password is kept as before. Signing in over plain HTTP no longer fails with error 41. Other Subsonic servers are unchanged, and error 41 from one now reads as needing an app password or API key. Servers list the `koanSignIn` extension.
 
 ## 0.54.0
 
