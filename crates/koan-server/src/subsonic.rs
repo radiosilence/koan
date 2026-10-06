@@ -2199,6 +2199,11 @@ async fn get_bookmarks(
 /// client never reads back something other than what it saved.
 const MAX_BOOKMARK_COMMENT: usize = 1024;
 
+/// The most songs a saved play queue holds. Longer is refused rather than cut,
+/// so a client never reads back something other than what it saved; each song
+/// is a lookup and a row written in one transaction.
+const MAX_PLAY_QUEUE: usize = 5000;
+
 /// `createBookmark`: save where the caller is in the song `id` names, as
 /// `position` milliseconds and an optional `comment`. One per song; a second
 /// replaces the first.
@@ -2286,10 +2291,13 @@ fn play_queue_response(state: &AppState, params: &RawParams, by_index: bool) -> 
             .attr("username", &caller.username)
             .attr("changed", &iso(queue.changed_at))
             .attr("changedBy", &queue.changed_by);
-        node = match (by_index, queue.current) {
-            (true, Some(at)) => node.attr_int("currentIndex", at as i64),
-            (false, Some(at)) => node.attr("current", &extras.uids.track(queue.track_ids[at])),
-            (_, None) => node,
+        node = if by_index {
+            node.attr_int("currentIndex", queue.current as i64)
+        } else {
+            node.attr(
+                "current",
+                &extras.uids.track(queue.track_ids[queue.current]),
+            )
         };
         Ok(b.child(
             node.list(
@@ -2326,6 +2334,12 @@ async fn get_play_queue_by_index(
 fn save_play_queue_response(state: &AppState, params: &RawParams, by_index: bool) -> Response {
     respond_db_caller(state, &params.auth(), Role::User, |db, caller, b| {
         let user = queue_owner(caller)?;
+        if params.all("id").count() > MAX_PLAY_QUEUE {
+            return Err(SubsonicError::new(
+                SubsonicErrorCode::MissingParameter,
+                format!("a play queue holds at most {MAX_PLAY_QUEUE} songs"),
+            ));
+        }
         let asked: Vec<Option<i64>> = params
             .all("id")
             .map(|raw| resolve_as(db, raw, EntityKind::Song, "id").ok())
@@ -2345,7 +2359,7 @@ fn save_play_queue_response(state: &AppState, params: &RawParams, by_index: bool
             .filter_map(|(at, id)| id.filter(|id| known.contains(id)).map(|id| (at, id)))
             .collect();
         let current = if by_index {
-            match params.get("currentIndex") {
+            match params.get("currentIndex").filter(|raw| !raw.is_empty()) {
                 Some(raw) => {
                     let at = raw
                         .parse::<usize>()
@@ -2353,9 +2367,12 @@ fn save_play_queue_response(state: &AppState, params: &RawParams, by_index: bool
                     if at >= asked.len() && !asked.is_empty() {
                         return Err(SubsonicError::bad_param("currentIndex"));
                     }
-                    kept.iter().position(|(asked_at, _)| *asked_at == at)
+                    // The first kept song from the one named on: a song left
+                    // out leaves the place to the next that stays.
+                    kept.iter().position(|(asked_at, _)| *asked_at >= at)
                 }
-                None => None,
+                None if asked.is_empty() => None,
+                None => return Err(SubsonicError::missing_param("currentIndex")),
             }
         } else {
             params
@@ -2363,7 +2380,8 @@ fn save_play_queue_response(state: &AppState, params: &RawParams, by_index: bool
                 .and_then(|raw| resolve_as(db, raw, EntityKind::Song, "current").ok())
                 .and_then(|current| kept.iter().position(|(_, id)| *id == current))
         };
-        let position = match params.get("position") {
+        // An empty position is the start, as OpenSubsonic says.
+        let position = match params.get("position").filter(|raw| !raw.is_empty()) {
             Some(raw) => raw
                 .parse::<i64>()
                 .ok()
@@ -6675,7 +6693,54 @@ mod tests {
         }
         let v = call(owner, "getPlayQueue?".into()).await;
         assert_eq!(ids(&v["playQueue"]["entry"]), [a.as_str()], "{v}");
-        assert!(v["playQueue"]["current"].is_null(), "{v}");
+        assert_eq!(
+            v["playQueue"]["current"], a,
+            "a current entry while there are any: {v}"
+        );
+        let v = call(owner, "getPlayQueueByIndex?".into()).await;
+        assert_eq!(v["playQueueByIndex"]["currentIndex"], 0, "{v}");
+
+        // By index the current place is required with songs; an empty
+        // position is the start.
+        let v = call(owner, format!("savePlayQueueByIndex?id={a}")).await;
+        assert_eq!(v["error"]["code"], 10, "{v}");
+        let v = call(
+            owner,
+            format!("savePlayQueueByIndex?id={a}&id={b}&currentIndex=1&position="),
+        )
+        .await;
+        assert_eq!(v["status"], "ok", "{v}");
+        let v = call(owner, "getPlayQueueByIndex?".into()).await;
+        assert_eq!(
+            (
+                v["playQueueByIndex"]["currentIndex"].clone(),
+                v["playQueueByIndex"]["position"].clone()
+            ),
+            (1.into(), 0.into()),
+            "{v}"
+        );
+
+        // Past the limit, refused whole. Asked of the handler directly: a
+        // request this long is past what a URI holds, and a form is turned
+        // into one before any endpoint sees it.
+        let query = format!(
+            "u=owner&p=sesame&v=1.16.1&c=x&f=json&{}",
+            std::iter::repeat_n(format!("id={a}"), MAX_PLAY_QUEUE + 1)
+                .collect::<Vec<_>>()
+                .join("&")
+        );
+        let resp = save_play_queue_response(&state, &RawParams::parse(Some(&query)), false);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = String::from_utf8_lossy(&body);
+        assert!(body.contains("\"code\":10"), "{body}");
+        let v = call(owner, "getPlayQueueByIndex?".into()).await;
+        assert_eq!(
+            v["playQueueByIndex"]["entry"].as_array().unwrap().len(),
+            2,
+            "unchanged: {v}"
+        );
 
         // Another account has none; the shared secret is refused.
         let v = call("u=mate&p=hunter22", "getPlayQueue?".into()).await;

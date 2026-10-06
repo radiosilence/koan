@@ -8,14 +8,15 @@ use rusqlite::{Connection, OptionalExtension, params};
 // Its entries are rows that name tracks, so a track merge moves them and a
 // track removed from the library takes its entries with it. The current entry
 // is held by its place in the order as saved, so entries removed before it do
-// not move it onto another track.
+// not move it onto another track; when it is removed itself, the next one that
+// remains is current, or the first.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlayQueue {
     /// The queue's tracks, in order. A track may appear more than once.
     pub track_ids: Vec<i64>,
-    /// Index into `track_ids` of the current entry, when it is still there.
-    pub current: Option<usize>,
+    /// Index into `track_ids` of the current entry.
+    pub current: usize,
     pub position_ms: i64,
     /// Seconds since the epoch.
     pub changed_at: i64,
@@ -107,7 +108,8 @@ pub fn play_queue(conn: &Connection, user: i64) -> rusqlite::Result<Option<PlayQ
     }
     Ok(Some(PlayQueue {
         current: current_position
-            .and_then(|at| entries.iter().position(|(position, _)| *position == at)),
+            .and_then(|at| entries.iter().position(|(position, _)| *position >= at))
+            .unwrap_or(0),
         track_ids: entries.into_iter().map(|(_, track)| track).collect(),
         position_ms,
         changed_at,
@@ -137,7 +139,7 @@ mod tests {
         save_play_queue(conn, ALICE, &[1, 2, 1], Some(2), 1500, "Feishin").unwrap();
         let q = play_queue(conn, ALICE).unwrap().unwrap();
         assert_eq!(q.track_ids, [1, 2, 1]);
-        assert_eq!(q.current, Some(2), "the second 1, not the first");
+        assert_eq!(q.current, 2, "the second 1, not the first");
         assert_eq!((q.position_ms, q.changed_by.as_str()), (1500, "Feishin"));
         assert_eq!(
             play_queue(conn, ALICE + 1).unwrap(),
@@ -156,10 +158,14 @@ mod tests {
         conn.execute("DELETE FROM tracks WHERE id = 2", []).unwrap();
         let q = play_queue(conn, ALICE).unwrap().unwrap();
         assert_eq!(q.track_ids, [1, 3]);
-        assert_eq!(q.current, Some(1), "still on 3");
+        assert_eq!(q.current, 1, "still on 3");
 
+        // The current one gone: the next that remains, else the first.
+        save_play_queue(conn, ALICE, &[1, 3, 1], Some(1), 0, "x").unwrap();
         conn.execute("DELETE FROM tracks WHERE id = 3", []).unwrap();
         let q = play_queue(conn, ALICE).unwrap().unwrap();
-        assert_eq!((q.track_ids.as_slice(), q.current), ([1].as_slice(), None));
+        assert_eq!((q.track_ids.as_slice(), q.current), ([1, 1].as_slice(), 1));
+        save_play_queue(conn, ALICE, &[1, 1], None, 0, "x").unwrap();
+        assert_eq!(play_queue(conn, ALICE).unwrap().unwrap().current, 0);
     }
 }
