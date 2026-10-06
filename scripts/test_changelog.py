@@ -109,6 +109,15 @@ class Changelog(unittest.TestCase):
         (self.root / "changelog.d/unreleased/added/1.md").unlink()
         self.assertNotEqual(self.run_script("--check").returncode, 0)
 
+    def test_lint_ignores_unreleased_but_not_history(self):
+        self.run_script()
+        self.write("unreleased/added/1.md", "- **One.**\n")
+        self.assertEqual(self.run_script("--lint").returncode, 0)
+        (self.root / "CHANGELOG.md").write_text(self.changelog.replace("Nine", "Nein"))
+        self.assertIn("released version", self.run_script("--lint").stderr)
+        self.write("unreleased/added/2.md", "- **Two.**\n\n")
+        self.assertIn("2.md", self.run_script("--lint").stderr)
+
     def test_a_release_takes_the_unreleased_fragments_in_order(self):
         self.write("unreleased/fixed/902-later.md", "- **902.**\n")
         self.write("unreleased/fixed/89-earlier.md", "- **89.**\n")

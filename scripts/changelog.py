@@ -16,6 +16,8 @@ order it was cut in.
 
     changelog.py              write CHANGELOG.md
     changelog.py --check      fail if CHANGELOG.md is not what the fragments make
+    changelog.py --lint       fail on a malformed fragment, or a released version
+                              in CHANGELOG.md that the fragments do not make
     changelog.py --release V  move the unreleased fragments to V, then write
 """
 
@@ -122,6 +124,11 @@ def render(fragments):
     return out
 
 
+def released(text):
+    """The changelog without its Unreleased block."""
+    return re.sub(r"\n## Unreleased\n.*?(?=\n## |\Z)", "", text, flags=re.S)
+
+
 def cut(fragments, version):
     if not VERSION.match(version):
         raise Malformed(f"{version}: not a version")
@@ -149,6 +156,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--check", action="store_true")
+    action.add_argument("--lint", action="store_true")
     action.add_argument("--release", metavar="VERSION")
     parser.add_argument("--root", type=Path, default=ROOT, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -159,6 +167,10 @@ def main():
         text = render(fragments)
     except Malformed as e:
         sys.exit(f"changelog: {e}")
+    if args.lint:
+        if not changelog.exists() or released(changelog.read_text()) != released(text):
+            sys.exit("changelog: a released version in CHANGELOG.md is not what changelog.d/ makes; edit its fragments instead")
+        return
     if args.check:
         if not changelog.exists() or changelog.read_text() != text:
             sys.exit("changelog: CHANGELOG.md is not what changelog.d/ makes; run scripts/changelog.py")
