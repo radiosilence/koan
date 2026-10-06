@@ -565,19 +565,23 @@ jobs:
       # binary here contains.
       - if: ${{ !matrix.prebuilt }}
         run: cargo build --release --target ${{ matrix.target }} -p koan-cli
-      # Developer ID signed and notarised, so the tarball runs from a browser
-      # download without clearing quarantine. Pull requests stay ad-hoc signed.
-      - name: Sign and notarise (macOS)
+      # Developer ID signed (hardened runtime, secure timestamp) here, and
+      # notarised by `notarise` once the release is out: Apple's queue is no
+      # part of releasing. A ticket for a bare binary is fetched online, keyed
+      # on its code directory hash, so the tarball published now is the one
+      # notarised later. Pull requests stay ad-hoc signed.
+      - name: Developer ID (macOS)
         if: runner.os == 'macOS'
-        uses: radiosilence/blit-workflows/macos-notarise@c8a650dfa5a0fbe012c61eab28f615c1983aee18
+        uses: ./.github/actions/developer-id
         with:
-          binaries: |
-            target/${{ matrix.target }}/release/koan
           certificate-p12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           certificate-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          api-key-p8: ${{ secrets.APPLE_API_KEY_P8 }}
-          api-key-id: ${{ secrets.APPLE_API_KEY_ID }}
-          api-issuer-id: ${{ secrets.APPLE_API_ISSUER_ID }}
+      - name: Sign (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          bin=target/${{ matrix.target }}/release/koan
+          codesign --force --options runtime --timestamp --sign "$KOAN_SIGN_IDENTITY" "$bin"
+          codesign --verify --strict --verbose=2 "$bin"
       - name: Package
         run: |
           cp target/${{ matrix.target }}/release/koan koan
@@ -592,7 +596,8 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 45
     # Packages the binary the macOS App job built from this commit: signing,
-    # the bundle, the DMG and notarisation are all that is left to do.
+    # the bundle and the DMG are all that is left to do. `notarise` notarises
+    # and staples the DMG once the release is out.
     needs: [check-version, macos-app]
     if: needs.check-version.outputs.should_release == 'true'
     # Signing is present only in this repository; without it (a fork) the app
@@ -612,28 +617,12 @@ jobs:
       - run: |
           tar xzf koan-app-build.tar.gz -C "$RUNNER_TEMP"
           echo "KOAN_APP_BINARY=$RUNNER_TEMP/Koan" >> "$GITHUB_ENV"
-      # The Developer ID certificate goes into a keychain made for this job
-      # alone, with a random password, and codesign is allowed to use its key
-      # without a prompt. The identity's full name is read back from it, so the
-      # certificate can be renewed without editing the workflow.
-      - name: Import Developer ID certificate
+      - name: Developer ID
         if: env.MACOS_CERTIFICATE_P12 != ''
-        run: |
-          keychain="$RUNNER_TEMP/signing.keychain-db"
-          password=$(openssl rand -hex 24)
-          security create-keychain -p "$password" "$keychain"
-          security set-keychain-settings -lut 21600 "$keychain"
-          security unlock-keychain -p "$password" "$keychain"
-          printf '%s' "$MACOS_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
-          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" \
-            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          rm "$RUNNER_TEMP/certificate.p12"
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
-          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
-          identity=$(security find-identity -v -p codesigning "$keychain" \
-            | awk -F'"' '/Developer ID Application/ { print $2; exit }')
-          test -n "$identity" || { echo "::error::no Developer ID Application identity in the certificate"; exit 1; }
-          echo "KOAN_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+        uses: ./.github/actions/developer-id
+        with:
+          certificate-p12: ${{ env.MACOS_CERTIFICATE_P12 }}
+          certificate-password: ${{ env.MACOS_CERTIFICATE_PASSWORD }}
       # Bundle, check, then package. `macos-verify` inspects the assembled
       # kōan.app, so it has to come after something that assembles one —
       # `macos-dmg` does that itself via `macos-bundle`, which put the check
@@ -642,13 +631,9 @@ jobs:
       - run: just macos-bundle
       - run: just macos-verify arm64
       - run: just macos-dmg
-      - name: Notarise
-        if: env.MACOS_CERTIFICATE_P12 != '' && env.APPLE_API_KEY_P8 != ''
-        run: |
-          export APPLE_API_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
-          printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$APPLE_API_KEY_PATH"
-          just macos-notarize
-          rm "$APPLE_API_KEY_PATH"
+      - name: Sign the DMG
+        if: env.MACOS_CERTIFICATE_P12 != ''
+        run: codesign --force --timestamp --sign "$KOAN_SIGN_IDENTITY" apps/macos/.build/pkg/Koan.dmg
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: koan-macos-app
@@ -816,10 +801,88 @@ jobs:
           end
           FORMULA
           sed -i 's/^          //' Formula/koan.rb
-          # The GUI ships as a cask beside the CLI formula. Named koan-app so
-          # `brew install koan` stays unambiguously the command-line player.
-          DMG_SHA=$(shasum_of Koan.dmg)
+          # The cask follows the notarised DMG, from `notarise`.
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "Update koan to v${VERSION}"
+          git push
+
+  # Apple's notary, apart from the release: everything else is out by the
+  # time this starts, and its queue can take hours. It waits on Apple, staples
+  # the DMG and replaces the release's copy with it, then moves the Homebrew
+  # cask to it. Failing or timing out fails this job alone; re-running it
+  # waits on the submissions already made (`scripts/notarise.sh`) rather than
+  # submitting again.
+  notarise:
+    name: Notarise (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 200
+    needs: [publish-release, check-version]
+    if: ${{ !cancelled() && needs.publish-release.result == 'success' && needs.check-version.outputs.should_release == 'true' }}
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.check-version.outputs.version }}
+      APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: artifacts
+          pattern: koan-macos-*
+      - name: API key
+        run: |
+          test -n "$APPLE_API_KEY_P8" || { echo "::error::set the APPLE_API_KEY_* secrets"; exit 1; }
+          printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+      # Each submission is named for what it holds, its version and the hash of
+      # its contents, which is how a re-run finds it again.
+      - name: Notarise the binaries
+        run: |
+          set -euo pipefail
+          mkdir payload
+          for arch in arm64 x86_64; do
+            tar xzf "artifacts/koan-macos-$arch/koan-macos-$arch.tar.gz" -C "$RUNNER_TEMP"
+            mv "$RUNNER_TEMP/koan" "payload/koan-$arch"
+          done
+          hash=$(cat payload/* | shasum -a 256 | cut -c1-12)
+          zip="$RUNNER_TEMP/koan-$VERSION-macos-$hash.zip"
+          ditto -c -k --norsrc --noextattr payload "$zip"
+          scripts/notarise.sh "$zip"
+      - name: Notarise and staple the DMG
+        run: |
+          set -euo pipefail
+          hash=$(shasum -a 256 artifacts/koan-macos-app/Koan.dmg | cut -c1-12)
+          dmg="$RUNNER_TEMP/Koan-$VERSION-$hash.dmg"
+          cp artifacts/koan-macos-app/Koan.dmg "$dmg"
+          scripts/notarise.sh "$dmg"
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
+          mkdir stapled
+          cp "$dmg" stapled/Koan.dmg
+      - name: Replace the release's DMG
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "v$VERSION" stapled/Koan.dmg --clobber
+      - name: Update the Homebrew cask
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GITHUB_TOKEN" ]; then
+            echo "::error::RELEASE_TOKEN is not set; the Homebrew cask cannot be updated"
+            exit 1
+          fi
+          DMG_SHA=$(shasum -a 256 stapled/Koan.dmg | awk '{print $1}')
+          git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/radiosilence/homebrew-koan.git" "$RUNNER_TEMP/tap"
+          cd "$RUNNER_TEMP/tap"
           mkdir -p Casks
+          # Named koan-app so `brew install koan` stays the command-line player.
           cat > Casks/koan-app.rb <<CASK
           cask "koan-app" do
             version "${VERSION}"
@@ -837,13 +900,14 @@ jobs:
             zap trash: "~/.config/koan"
           end
           CASK
-          sed -i 's/^          //' Casks/koan-app.rb
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
           git diff --cached --quiet && exit 0
-          git commit -m "Update koan to v${VERSION}"
+          git commit -m "Update koan-app to v${VERSION}"
           git push
+      - if: always()
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
 
   # After the container image and the release: a published package promises
   # an image that exists, and never names a release that never happened.
