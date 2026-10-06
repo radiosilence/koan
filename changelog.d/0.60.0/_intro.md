@@ -1,0 +1,1 @@
+0.59.0 was never published: its macOS notarisation timed out on Apple's side, so its GitHub release and server image did not go out. 0.60.0 is the first release to carry its changes, below under 0.59.0, including the move from schema 20 to 21. Upgrading from 0.58.0 or earlier runs that migration; snapshot the database first.
