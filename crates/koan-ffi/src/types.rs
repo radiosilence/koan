@@ -1529,6 +1529,25 @@ pub struct MoveResult {
     /// yet: the music was sent and may still arrive (a device asleep takes it
     /// when woken), and stays paused where it was.
     pub started: bool,
+    /// The destination is asleep, and takes the music when it wakes.
+    pub queued: bool,
+    /// The destination would not take it, and why; the music plays on where
+    /// it was if it was playing.
+    pub error: Option<String>,
+}
+
+/// A command to another device that did not simply arrive: queued for one
+/// asleep, or not taken. What the app says, since the device's state cannot.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct CommandNotice {
+    /// Counts up, so the same notice twice is still news.
+    pub seq: u64,
+    /// The device, by name.
+    pub device: String,
+    /// Waiting for the device to wake, rather than not taken.
+    pub queued: bool,
+    /// Why it was not taken.
+    pub detail: String,
 }
 
 /// Another device koan can play on: one on the same account, or one on the
@@ -1740,6 +1759,8 @@ pub struct ConnectionInfo {
     /// The servers devices on this network are signed in to, announced over
     /// Bonjour: what a device not signed in yet offers to sign in to.
     pub nearby_servers: Vec<NearbyServer>,
+    /// The last command to another device that did not simply arrive.
+    pub command_notice: Option<CommandNotice>,
 }
 
 /// A server another device on this network announced it is signed in to.

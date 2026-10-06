@@ -1297,16 +1297,14 @@ async fn admins_create_invite_and_remove_accounts() {
 /// An open koanLink for `username`, as the link route registers one.
 fn open_link(
     username: &str,
-) -> tokio::sync::mpsc::UnboundedReceiver<koan_core::remote::link::LinkCommand> {
+) -> tokio::sync::mpsc::UnboundedReceiver<koan_core::remote::acks::Envelope> {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-    crate::clients::registry().register(username, "phone", "ios", "ui-tests", tx, false);
+    crate::clients::registry().register(username, "phone", "ios", "ui-tests", tx, false, false);
     rx
 }
 
 /// The link's session would see its channel close, which is what ends it.
-fn assert_closed(
-    mut rx: tokio::sync::mpsc::UnboundedReceiver<koan_core::remote::link::LinkCommand>,
-) {
+fn assert_closed(mut rx: tokio::sync::mpsc::UnboundedReceiver<koan_core::remote::acks::Envelope>) {
     while rx.try_recv().is_ok() {}
     assert!(matches!(
         rx.try_recv(),

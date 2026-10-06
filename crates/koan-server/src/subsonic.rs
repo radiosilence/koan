@@ -59,6 +59,7 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     (koan_core::remote::profile::SIGN_IN, &[1]),
     (koan_core::remote::profile::PASSWORDS, &[1]),
     (koan_core::remote::profile::API_KEYS, &[1]),
+    (koan_core::remote::profile::ACK, &[1]),
 ];
 
 /// Articles clients strip when sorting the artist index. Every real server
@@ -4924,6 +4925,8 @@ async fn koan_link(
         .map(str::to_owned)
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
     let wants_devices = params.get("devices") == Some("1");
+    // It answers commands sent with an id: see `koan_core::remote::acks`.
+    let acks = params.get("acks") == Some("1");
     let lease = crate::auth::Lease {
         user_id: caller.user_id,
         mark,
@@ -4939,6 +4942,7 @@ async fn koan_link(
                 platform,
                 device,
                 wants_devices,
+                acks,
                 addr,
             },
         )
@@ -4951,6 +4955,7 @@ struct LinkPeer {
     platform: String,
     device: String,
     wants_devices: bool,
+    acks: bool,
     /// The client's address, through a trusted proxy if there is one.
     addr: std::net::IpAddr,
 }
@@ -4971,13 +4976,80 @@ async fn koan_command(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
                 .get("command")
                 .and_then(|c| koan_core::remote::link::parse_command(c).ok())
                 .ok_or_else(|| SubsonicError::bad_param("command"))?;
+            // The client's id when it sent one, so a device the command
+            // reaches by another way too acts on it once.
+            let ack = params
+                .get("ack")
+                .and_then(|a| a.parse::<u64>().ok())
+                .unwrap_or_else(koan_core::remote::acks::next_id);
+            let (tx, answer) = crossbeam_channel::bounded(1);
             crate::clients::registry()
-                .relay(&caller.username, to, command)
+                .relay_acked(
+                    &caller.username,
+                    None,
+                    to,
+                    command,
+                    Some(crate::clients::Acking {
+                        id: ack,
+                        reply: Box::new(move |outcome| {
+                            let _ = tx.send(outcome);
+                        }),
+                    }),
+                )
                 .map_err(|e| SubsonicError::not_found(&e))?;
-            Ok(b)
+            // A device that gives no answers, or none in time, gets no
+            // `koanCommand`: sent, as a server before answers said.
+            Ok(match answer.recv_timeout(COMMAND_ANSWER).ok().flatten() {
+                Some(outcome) => b.child(ack_node(&outcome)),
+                None => b,
+            })
         })
     })
     .await
+}
+
+/// How long `koanCommand` waits for the device's answer: its first look, and
+/// a push to wake it if its link has gone quiet.
+const COMMAND_ANSWER: Duration = Duration::from_secs(4);
+
+/// An answer as `koanCommand` gives it, the same shape as the link's.
+fn ack_node(outcome: &koan_core::remote::acks::AckOutcome) -> XmlNode {
+    use koan_core::remote::acks::AckOutcome;
+    let node = XmlNode::new("koanCommand");
+    match outcome {
+        AckOutcome::Done => node.attr("result", "done"),
+        AckOutcome::Queued => node.attr("result", "queued"),
+        AckOutcome::Refused { reason } => node.attr("result", "refused").attr("reason", reason),
+        AckOutcome::Failed { error } => node.attr("result", "failed").attr("error", error),
+    }
+}
+
+/// Hand `to`'s answer to the command `device` sent under `ack` back to
+/// `device`, as `Acked`: the first answer only, however many ways it comes.
+fn answer_once(
+    username: &str,
+    device: &str,
+    to: &str,
+    ack: u64,
+) -> std::sync::Arc<dyn Fn(koan_core::remote::acks::AckOutcome) + Send + Sync> {
+    let (username, device, to) = (username.to_owned(), device.to_owned(), to.to_owned());
+    let answered = std::sync::atomic::AtomicBool::new(false);
+    std::sync::Arc::new(move |outcome| {
+        if answered.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            return;
+        }
+        // News, like levels: to the asker's link if it is still there, and
+        // never a push to wake it for.
+        crate::clients::registry().send_live(
+            &username,
+            &device,
+            koan_core::remote::link::LinkCommand::Acked {
+                from: to.clone(),
+                ack,
+                outcome,
+            },
+        );
+    })
 }
 
 const LINK_CHECK: Duration = Duration::from_secs(15);
@@ -4999,6 +5071,7 @@ async fn link_session(
         platform,
         device,
         wants_devices,
+        acks,
         addr,
     } = peer;
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -5014,7 +5087,15 @@ async fn link_session(
             device.clone(),
         );
         let registered = tokio::task::spawn_blocking(move || {
-            let id = registry.register(&username, &name, &platform, &device, tx, wants_devices);
+            let id = registry.register(
+                &username,
+                &name,
+                &platform,
+                &device,
+                tx,
+                wants_devices,
+                acks,
+            );
             // After `register`, which records the device the address is kept on.
             registry.seen_at(&device, &username, addr);
             id
@@ -5080,6 +5161,7 @@ async fn link_session(
                             Ok(LinkReport::Command {
                                 to,
                                 command: koan_core::remote::link::LinkCommand::WatchLevels { on },
+                                ..
                             }) => {
                                 registry.watch_levels(&username, &device, &to, on);
                             }
@@ -5088,13 +5170,36 @@ async fn link_session(
                             Ok(LinkReport::Levels { f }) => {
                                 registry.levels(&username, &device, f);
                             }
-                            Ok(LinkReport::Command { to, command }) => {
+                            Ok(LinkReport::Command { to, command, ack }) => {
                                 // Relaying may push to a phone, which blocks.
                                 let (username, device) = (username.clone(), device.clone());
                                 tokio::task::spawn_blocking(move || {
-                                    if let Err(e) = registry.relay_from(&username, Some(&device), &to, command) {
+                                    // The answer goes back to this device as `Acked`,
+                                    // once, however the relay ends.
+                                    let reply = ack.map(|ack| answer_once(&username, &device, &to, ack));
+                                    let acking = reply.clone().map(|reply| crate::clients::Acking {
+                                        id: ack.unwrap_or_default(),
+                                        reply: Box::new(move |outcome| {
+                                            if let Some(outcome) = outcome {
+                                                reply(outcome);
+                                            }
+                                        }),
+                                    });
+                                    if let Err(e) = registry.relay_acked(&username, Some(&device), &to, command, acking) {
                                         log::info!("link: relay to {to}: {e}");
+                                        if let Some(reply) = reply {
+                                            reply(koan_core::remote::acks::AckOutcome::Refused { reason: e });
+                                        }
                                     }
+                                });
+                            }
+                            Ok(LinkReport::Received { ack }) => {
+                                registry.received(&device, ack);
+                            }
+                            Ok(LinkReport::Ack { ack, outcome }) => {
+                                let device = device.clone();
+                                tokio::task::spawn_blocking(move || {
+                                    registry.answered(&device, ack, outcome);
                                 });
                             }
                             Ok(LinkReport::Activity { token, device: shown, sandbox }) => {

@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 
 use crate::config::{Config, DEVICES_PORT};
+use crate::remote::acks::{AckOutcome, Envelope};
 use crate::remote::devices;
 use crate::remote::link::{LinkCommand, LinkHello, LinkReport, LinkState, Local};
 use crate::remote::wire::{self, Waker};
@@ -28,7 +29,7 @@ pub const SERVICE: &str = "_koan._tcp";
 
 /// A connection this app made to another, once it has said who it is.
 struct Conn {
-    outbox: Vec<LinkCommand>,
+    outbox: Vec<Envelope>,
     waker: Arc<Waker>,
 }
 
@@ -499,11 +500,26 @@ pub fn listening_port() -> Option<u16> {
 /// Queue `cmd` for the device `id` on its local connection. False when there
 /// is none.
 pub fn send(id: &str, cmd: LinkCommand) -> bool {
+    send_envelope(id, cmd.into())
+}
+
+/// As `send`, asking `id` to answer under `ack`: see `remote::acks`.
+pub fn send_acked(id: &str, cmd: LinkCommand, ack: u64) -> bool {
+    send_envelope(
+        id,
+        Envelope {
+            command: cmd,
+            ack: Some(ack),
+        },
+    )
+}
+
+fn send_envelope(id: &str, envelope: Envelope) -> bool {
     let mut conns = CONNS.lock();
     let Some(conn) = conns.as_mut().and_then(|c| c.get_mut(id)) else {
         return false;
     };
-    conn.outbox.push(cmd);
+    conn.outbox.push(envelope);
     conn.waker.wake();
     true
 }
@@ -631,6 +647,7 @@ fn serve(stream: TcpStream, local: &Local, stop: &Arc<Stop>) -> Result<(), Strin
         sent: None,
         waker: waker.clone(),
         levels: None,
+        answers: Default::default(),
     };
     wire::drive(&mut socket, fd, &waker, &mut session)
 }
@@ -644,6 +661,9 @@ struct Serving<'a> {
     /// Set while the device at the other end has bars on screen for this
     /// one. Dropped with the connection, which stops the frames.
     levels: Option<crate::remote::levels::Watch>,
+    /// Answers to commands sent with an id, waiting to go back down this
+    /// connection; filled from whichever thread finishes each.
+    answers: Arc<Mutex<Vec<LinkReport>>>,
 }
 
 impl wire::Session for Serving<'_> {
@@ -657,9 +677,11 @@ impl wire::Session for Serving<'_> {
                 name: id.name.clone(),
                 platform: id.platform.clone(),
                 library: crate::remote::link::library_fingerprint(&cfg),
+                acks: true,
             }));
             self.greeted = true;
         }
+        out.append(&mut self.answers.lock());
         let now = for_the_network((self.local.state)(), full_control());
         if self
             .sent
@@ -678,20 +700,84 @@ impl wire::Session for Serving<'_> {
     }
 
     fn incoming(&mut self, text: &str) {
-        match serde_json::from_str::<LinkCommand>(text) {
-            Ok(LinkCommand::WatchLevels { on }) => {
-                self.levels = on.then(|| crate::remote::levels::feed().watch(&self.waker));
+        let envelope = match serde_json::from_str::<Envelope>(text) {
+            Ok(envelope) => envelope,
+            Err(e) => {
+                log::warn!("nearby: not a command ({e}): {text}");
+                return;
             }
-            Ok(cmd) => match cmd.from_the_network(full_control()) {
-                Some(source) => (self.local.on_command)(cmd, source),
-                None => log::warn!("nearby: refused {cmd:?}"),
-            },
-            Err(e) => log::warn!("nearby: not a command ({e}): {text}"),
+        };
+        let (answers, waker) = (self.answers.clone(), self.waker.clone());
+        let answer = move |ack, outcome| {
+            answers.lock().push(LinkReport::Ack { ack, outcome });
+            waker.wake();
+        };
+        match admit(envelope, full_control(), answer) {
+            Admitted::Levels(on, pending) => {
+                self.levels = on.then(|| crate::remote::levels::feed().watch(&self.waker));
+                if let Some(pending) = pending {
+                    pending.finish(AckOutcome::Done);
+                }
+            }
+            Admitted::Command(cmd, source, pending) => {
+                (self.local.on_command)(cmd, source, pending)
+            }
+            Admitted::Neither => {}
         }
     }
 
     fn done(&self) -> bool {
         self.stop.stopped()
+    }
+}
+
+/// What a command from the network comes to here.
+enum Admitted {
+    Levels(bool, Option<crate::remote::acks::Pending>),
+    Command(
+        LinkCommand,
+        crate::remote::link::CommandSource,
+        Option<crate::remote::acks::Pending>,
+    ),
+    /// Refused, or a repeat already answered.
+    Neither,
+}
+
+/// Admit a command from the network: checked against what this device lets
+/// the network do (`full` control or a stranger's set) before its id is
+/// taken, so a refused command answers `refused` and leaves the id free. A
+/// stranger who has seen one of this person's ids then cannot spend it ahead
+/// of the real command.
+fn admit(
+    envelope: Envelope,
+    full: bool,
+    answer: impl FnOnce(u64, AckOutcome) + Send + 'static,
+) -> Admitted {
+    let source = match &envelope.command {
+        LinkCommand::WatchLevels { .. } => None,
+        cmd => match cmd.from_the_network(full) {
+            Some(source) => Some(source),
+            None => {
+                log::warn!("nearby: refused {cmd:?}");
+                if let Some(ack) = envelope.ack {
+                    answer(
+                        ack,
+                        AckOutcome::Refused {
+                            reason: "not allowed from this network".into(),
+                        },
+                    );
+                }
+                return Admitted::Neither;
+            }
+        },
+    };
+    let Some((command, pending)) = crate::remote::acks::take(envelope, answer) else {
+        return Admitted::Neither;
+    };
+    match (command, source) {
+        (LinkCommand::WatchLevels { on }, _) => Admitted::Levels(on, pending),
+        (cmd, Some(source)) => Admitted::Command(cmd, source, pending),
+        (_, None) => Admitted::Neither,
     }
 }
 
@@ -946,6 +1032,7 @@ impl wire::Session for Controlling<'_> {
                     crate::remote::levels::remote().received(id, f);
                 }
             }
+            Ok(LinkReport::Ack { ack, outcome }) => crate::remote::acks::resolve(ack, outcome),
             Ok(_) => {}
             Err(e) => log::debug!("nearby: not a report ({e})"),
         }
@@ -1589,5 +1676,40 @@ mod tests {
         let playback = super::for_the_network(state, false);
         assert!(playback.playing);
         assert_eq!(playback.outputs, None);
+    }
+}
+
+#[cfg(test)]
+mod admit_tests {
+    use super::*;
+    use crate::remote::acks;
+
+    /// A stranger who has seen one of this person's ids sends a command it may
+    /// not, under that id. It is refused, and the id is still free for the
+    /// person's own command when it comes.
+    #[test]
+    fn a_stranger_cannot_spend_an_id_ahead_of_the_real_command() {
+        let id = acks::next_id();
+        let refused = std::sync::Arc::new(parking_lot::Mutex::new(None));
+        let got = refused.clone();
+        let forged = Envelope {
+            command: LinkCommand::Sync { full: true },
+            ack: Some(id),
+        };
+        assert!(matches!(
+            admit(forged, false, move |_, o| *got.lock() = Some(o)),
+            Admitted::Neither
+        ));
+        assert!(matches!(*refused.lock(), Some(AckOutcome::Refused { .. })));
+
+        // The real one, under the same id, is acted on.
+        let real = Envelope {
+            command: LinkCommand::Pause,
+            ack: Some(id),
+        };
+        assert!(matches!(
+            admit(real, false, |_, _| {}),
+            Admitted::Command(LinkCommand::Pause, _, Some(_))
+        ));
     }
 }
