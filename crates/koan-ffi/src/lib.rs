@@ -3012,6 +3012,45 @@ impl KoanEngine {
         .await
     }
 
+    /// What splitting the baked EQ `name` would give, with the headphones'
+    /// measurement `text` and `target` as neutral: the correction, the
+    /// tuning, their sum, and the EQ itself as `original`.
+    pub async fn dsp_preview_split(
+        self: Arc<Self>,
+        name: String,
+        text: String,
+        target: String,
+    ) -> Result<DspResponse, KoanError> {
+        offload::offload(move || {
+            koan_core::audio::dsp::profiles::preview_split(&name, &text, &target, 48000)
+                .map(Into::into)
+                .map_err(|message| KoanError::BadArgument { message })
+        })
+        .await
+    }
+
+    /// Split the baked EQ `name` into a correction from the headphones'
+    /// measurement and a tuning made against `target`; the outputs that
+    /// played it play the two. The new profiles' names, correction first.
+    pub async fn dsp_split_baked(
+        self: Arc<Self>,
+        name: String,
+        text: String,
+        in_ear: bool,
+        target: String,
+    ) -> Result<Vec<String>, KoanError> {
+        offload::sequenced(move || {
+            use koan_core::config::DspEar;
+            let ear = if in_ear { DspEar::In } else { DspEar::Over };
+            let (correction, tuning) =
+                koan_core::audio::dsp::profiles::split_baked(&name, &text, ear, &target)
+                    .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)?;
+            Ok(vec![correction, tuning])
+        })
+        .await
+    }
+
     /// Move `name`'s correction to the target `id`, or with `None` back to the
     /// one it was made for.
     pub async fn dsp_choose_target(

@@ -852,6 +852,8 @@ struct EqSettings: View {
     @State private var importing = false
     @State private var finding: AutoEqFind?
     @State private var measuring = false
+    /// A baked EQ being split into correction and tuning.
+    @State private var splitting: ShownProfile?
     @State private var showing: String?
 
     private var active: String? { app.dsp.overview?.active }
@@ -865,7 +867,9 @@ struct EqSettings: View {
     var body: some View {
         KoanForm {
             if let o = app.dsp.overview, let device = o.device, !o.profiles.isEmpty {
-                OutputEqSection(dsp: app.dsp, overview: o, device: device)
+                OutputEqSection(dsp: app.dsp, overview: o, device: device) {
+                    splitting = ShownProfile(name: $0)
+                }
             }
             if let active, let detail, detail.group {
                 Section {
@@ -920,6 +924,9 @@ struct EqSettings: View {
         }
         .sheet(isPresented: $measuring) {
             MeasurementFlow(dsp: app.dsp).koanSheet()
+        }
+        .sheet(item: $splitting) { baked in
+            SplitFlow(dsp: app.dsp, name: baked.name).koanSheet()
         }
         // A profile imported from a file: a neutral correction, one with a
         // tuning already in it, or taste to add on top? kōan cannot tell,

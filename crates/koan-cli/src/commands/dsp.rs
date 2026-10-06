@@ -256,6 +256,24 @@ pub fn cmd_dsp_measure(path: &std::path::Path, name: &str, in_ear: bool, target:
     );
 }
 
+/// Split the baked EQ `name` into a correction and a tuning.
+pub fn cmd_dsp_split(name: &str, path: &std::path::Path, in_ear: bool, target: &str) {
+    use koan_core::config::DspEar;
+    let text =
+        std::fs::read_to_string(path).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())));
+    let ear = if in_ear { DspEar::In } else { DspEar::Over };
+    let (correction, tuning) =
+        profiles::split_baked(name, &text, ear, target).unwrap_or_else(|e| fail(e));
+    println!(
+        "{} '{}' into '{}' and '{}', made against {}",
+        "split".green(),
+        name.bold(),
+        correction.bold(),
+        tuning.bold(),
+        profiles::target_name(target)
+    );
+}
+
 /// Say what `name` is for: `correction`, `tuning` or `baked`.
 pub fn cmd_dsp_role(name: &str, role: &str) {
     use koan_core::config::DspRole;

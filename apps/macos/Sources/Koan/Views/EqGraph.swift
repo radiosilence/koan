@@ -87,6 +87,11 @@ struct EqGraph: View {
                     lines(curves: [Curve(name: "Tuning", db: tuning)],
                           color: AnyShapeStyle(ProfileRole.tuning.color), width: 1.2)
                 }
+                // A split's preview: the baked EQ the two come from.
+                if let original = response.original {
+                    lines(curves: [Curve(name: "Original", db: original)],
+                          color: KoanTheme.style(.muted, system: Color.secondary), width: 1.2, dashed: true)
+                }
                 lines(curves: [Curve(name: "EQ", db: response.total)], color: AnyShapeStyle(.tint), width: 2)
                 ForEach(shownHandles) { h in
                     PointMark(x: .value("Hz", h.hz), y: .value("dB", h.db))
@@ -215,6 +220,9 @@ struct EqGraph: View {
                 } else {
                     key("EQ", AnyShapeStyle(.tint))
                 }
+                if response.original != nil {
+                    key("Original", KoanTheme.style(.muted, system: Color.secondary), dashed: true)
+                }
                 key("No change", KoanTheme.style(.rule, system: Color.secondary.opacity(0.4)), thin: true)
                 if !response.bands.isEmpty {
                     key("Each band", AnyShapeStyle(KoanTheme.style(.muted, system: .tint).opacity(0.3)))
@@ -273,7 +281,7 @@ struct EqGraph: View {
 
     private var shown: [[Double]] {
         if showingEq {
-            return [response.total, response.correction ?? [], response.tuning ?? []]
+            return [response.total, response.correction ?? [], response.tuning ?? [], response.original ?? []]
                 + response.bands.map(\.db) + [handles.map(\.db)]
         }
         return [response.measurement, response.target, response.predicted].compactMap { $0 }

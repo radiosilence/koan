@@ -725,6 +725,9 @@ pub struct Response {
     /// own. `total` is the two together.
     pub correction: Option<Vec<f64>>,
     pub tuning: Option<Vec<f64>>,
+    /// For a split's preview: the baked EQ it comes from, which `total`
+    /// plays the same as.
+    pub original: Option<Vec<f64>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -836,6 +839,7 @@ fn response_of(profile: &DspProfile, all: &[DspProfile], rate: u32) -> Option<Re
         preamp_db,
         correction,
         tuning,
+        original: None,
     })
 }
 
@@ -1378,15 +1382,182 @@ pub fn preview_measurement(text: &str, target: &str, rate: u32) -> Result<Respon
         preamp_db: 0.0,
         correction: None,
         tuning: None,
+        original: None,
         total,
         freqs,
     })
+}
+
+/// A baked EQ taken apart, given the headphones' measurement and the target
+/// that counts as neutral: the correction, target − measurement, and what
+/// the EQ does beyond it, its taste, as a curve. The reverse of what
+/// squig.link does to make one.
+struct Split {
+    taste: crate::config::GraphicEq,
+    freqs: Vec<f64>,
+    original: Vec<f64>,
+    correction: Vec<f64>,
+    tuning: Vec<f64>,
+}
+
+fn split(name: &str, text: &str, target: &str, rate: u32) -> Result<Split, String> {
+    use super::targets;
+    use crate::config::DspFilter;
+    let cfg = Config::cached();
+    let all = &cfg.dsp.profiles;
+    let p = all
+        .iter()
+        .find(|p| p.name == name)
+        .ok_or_else(|| format!("No profile called {name}"))?;
+    if !super::responses(p, all).is_empty() {
+        return Err(format!(
+            "{name} has impulse responses: only an EQ splits into a correction and a tuning"
+        ));
+    }
+    // What is split is one EQ, the same on every channel: a stack or group
+    // would lose its layers, and a mix, a delay or one side's bands would be
+    // folded into a curve for both.
+    if !p.layers.is_empty() || p.group {
+        return Err(format!(
+            "{name} plays other profiles: split the baked one among them instead"
+        ));
+    }
+    if p.filters.iter().any(|f| match f {
+        DspFilter::Band(b) => !b.channels.is_empty(),
+        DspFilter::Graphic(g) => !g.channels.is_empty(),
+        DspFilter::Mix(_) | DspFilter::Delay(_) => true,
+    }) {
+        return Err(format!(
+            "{name} treats its channels differently: only an EQ the same on every channel splits"
+        ));
+    }
+    let measured = read_measurement(text)?;
+    let aim = targets::choice_curve(target).ok_or_else(|| format!("No target {target}"))?;
+    let freqs = targets::grid();
+    let filters = super::chain(p, all, &mut Vec::new()).map_err(|e| e.to_string())?;
+    let original = super::response(&filters, &freqs, rate);
+    let correction = super::response(
+        &[DspFilter::Graphic(targets::correction(&measured, &aim))],
+        &freqs,
+        rate,
+    );
+    let curve =
+        |db: &[f64]| -> targets::Curve { freqs.iter().copied().zip(db.iter().copied()).collect() };
+    // The taste is what the EQ does beyond target minus measurement whole,
+    // its treble too, so it carries to other headphones; the correction
+    // saved holds the treble back where measurements disagree.
+    let neutral = super::response(
+        &[DspFilter::Graphic(targets::difference(&measured, &aim))],
+        &freqs,
+        rate,
+    );
+    let taste = targets::difference(&curve(&neutral), &curve(&original));
+    let tuning = super::response(&[DspFilter::Graphic(taste.clone())], &freqs, rate);
+    Ok(Split {
+        taste,
+        freqs,
+        original,
+        correction,
+        tuning,
+    })
+}
+
+/// What splitting the baked EQ `name` would give, before anything is saved:
+/// the correction and the tuning, their sum as `total`, and the EQ itself as
+/// `original`, which the sum follows but for the treble a correction holds
+/// back.
+pub fn preview_split(name: &str, text: &str, target: &str, rate: u32) -> Result<Response, String> {
+    let s = split(name, text, target, rate)?;
+    let total = s
+        .correction
+        .iter()
+        .zip(&s.tuning)
+        .map(|(c, t)| c + t)
+        .collect();
+    Ok(Response {
+        bands: Vec::new(),
+        layers: Vec::new(),
+        measurement: None,
+        target: None,
+        predicted: None,
+        preamp_db: 0.0,
+        correction: Some(s.correction),
+        tuning: Some(s.tuning),
+        original: Some(s.original),
+        total,
+        freqs: s.freqs,
+    })
+}
+
+/// Split the baked EQ `name` into a correction built from the headphones'
+/// measurement, to `target`, and a tuning holding the rest, made against
+/// `target` so it carries to other headphones. Every output that played
+/// `name` plays the two instead; `name` itself is kept. The new profiles'
+/// names, correction then tuning.
+pub fn split_baked(
+    name: &str,
+    text: &str,
+    ear: DspEar,
+    target: &str,
+) -> Result<(String, String), String> {
+    let s = split(name, text, target, 48_000)?;
+    let devices = Config::cached()
+        .dsp
+        .profiles
+        .iter()
+        .find(|p| p.name == name)
+        .map(|p| p.devices.clone())
+        .unwrap_or_default();
+    let mut correction =
+        measured_profile(&free_name(&format!("{name} correction")), text, ear, target)?;
+    let tuning = free_name(&format!("{name} tuning"));
+    let made = (correction.name.clone(), tuning.clone());
+    // One write: both profiles, and every output moved to them, or nothing.
+    correction.devices = devices.clone();
+    let written = persist(|cfg| {
+        for p in &mut cfg.dsp.profiles {
+            p.devices.retain(|d| !devices.contains(d));
+        }
+        cfg.dsp.tunings.retain(|t| !devices.contains(&t.device));
+        cfg.dsp
+            .tunings
+            .extend(devices.iter().map(|d| crate::config::DspOutputTuning {
+                device: d.clone(),
+                tuning: tuning.clone(),
+            }));
+        cfg.dsp.profiles.push(correction);
+        cfg.dsp.profiles.push(DspProfile {
+            name: tuning.clone(),
+            filters: vec![crate::config::DspFilter::Graphic(s.taste)],
+            role: Some(DspRole::Tuning),
+            tuned_for: Some(target.to_owned()),
+            ..Default::default()
+        });
+    });
+    if written.is_err() {
+        let _ = std::fs::remove_dir_all(dir(&made.0));
+    }
+    written.map(|()| made)
 }
 
 /// Save a correction built from a measurement: the headphone `name`,
 /// measured as `text`, corrected to `target`. A correction, kept everywhere
 /// like any headphone's.
 pub fn save_measured(name: &str, text: &str, ear: DspEar, target: &str) -> Result<String, String> {
+    let profile = measured_profile(name, text, ear, target)?;
+    let name = profile.name.clone();
+    persist(|cfg| cfg.dsp.profiles.push(profile))?;
+    Ok(name)
+}
+
+/// The profile `save_measured` keeps, its measurement written to its folder
+/// and the profile itself not yet.
+fn measured_profile(
+    name: &str,
+    text: &str,
+    ear: DspEar,
+    target: &str,
+) -> Result<DspProfile, String> {
     use super::targets;
     let name = name.trim();
     if name.is_empty() {
@@ -1409,18 +1580,15 @@ pub fn save_measured(name: &str, text: &str, ear: DspEar, target: &str) -> Resul
         targets::on_grid(&measured),
     )
     .map_err(|e| e.to_string())?;
-    persist(|cfg| {
-        cfg.dsp.profiles.push(DspProfile {
-            name: name.to_owned(),
-            role: Some(DspRole::Correction),
-            measurement: Some(DspMeasurement {
-                ear,
-                target: target.to_owned(),
-            }),
-            ..Default::default()
-        })
-    })?;
-    Ok(name.to_owned())
+    Ok(DspProfile {
+        name: name.to_owned(),
+        role: Some(DspRole::Correction),
+        measurement: Some(DspMeasurement {
+            ear,
+            target: target.to_owned(),
+        }),
+        ..Default::default()
+    })
 }
 
 /// Make `name` a stack of `layers`, in order, creating it if there is none.
@@ -2408,6 +2576,181 @@ mod tests {
         assert_eq!(t.chosen, None, "an in-ear target is no move for over-ears");
         set_made_for("Preset", None).unwrap();
         assert_eq!(target(), None);
+    }
+
+    /// Where the target difference is what tips the chain past the filters
+    /// it may hold, it is the step that goes: the tuning plays without it,
+    /// and says so.
+    #[test]
+    fn the_target_difference_goes_before_the_tuning() {
+        use crate::config::{DspFilter, DspLayer, DspTarget};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let spread = |n: usize, from: f64| -> Vec<DspFilter> {
+            (0..n)
+                .map(|i| {
+                    DspFilter::Band(crate::config::EqFilter {
+                        kind: crate::config::EqFilterKind::Peaking,
+                        freq: from + i as f64,
+                        gain_db: 1.0,
+                        q: 1.0,
+                        channels: vec![(i % 4) as u16],
+                    })
+                })
+                .collect()
+        };
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Base".into(),
+                filters: spread(100, 1000.0),
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "HD 600".into(),
+                filters: vec![band(100.0)],
+                layers: vec![DspLayer {
+                    profile: "Base".into(),
+                    on: true,
+                }],
+                target: Some(DspTarget {
+                    made_for: "harman-over-ear-2018".into(),
+                    chosen: None,
+                }),
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Many".into(),
+                filters: spread(156, 100.0),
+                tuned_for: Some("diffuse-field-gras-kemar".into()),
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        let dac = "Desk DAC";
+        assign(Some("HD 600"), dac).unwrap();
+        set_tuning(dac, Some("Many")).unwrap();
+        let cfg = Config::cached();
+        let chain = super::super::output_chain(&cfg.dsp, dac).unwrap();
+        assert!(chain.tuning_plays);
+        let played = super::super::chain(&chain.profile, &chain.all, &mut Vec::new()).unwrap();
+        assert_eq!(
+            played.len(),
+            100 + 156 + 1,
+            "Base, the tuning, the correction's own"
+        );
+        assert!(
+            !played.iter().any(|f| matches!(f, DspFilter::Graphic(_))),
+            "no target difference"
+        );
+        assert!(
+            chain
+                .left_out
+                .as_deref()
+                .is_some_and(|l| l.starts_with("Many plays without the target difference")),
+            "{:?}",
+            chain.left_out
+        );
+    }
+
+    /// A baked EQ, a correction and a bass band in one, splits back into the
+    /// two: the correction from the measurement, the band as the tuning,
+    /// made against the target, and the output that played it plays them.
+    #[test]
+    fn a_baked_eq_splits_into_correction_and_tuning() {
+        use super::super::targets;
+        use crate::config::DspFilter;
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let mut text = String::from("frequency,raw\n");
+        for hz in targets::grid() {
+            let peak = |at: f64, db: f64| db * (-(hz / at).log2().powi(2) / 0.1).exp();
+            text.push_str(&format!(
+                "{hz:.2},{:.2}\n",
+                90.0 + peak(3000.0, 6.0) + peak(8000.0, 5.0)
+            ));
+        }
+        let target = "harman-in-ear-2019";
+        let measured = read_measurement(&text).unwrap();
+        // As a squig.link export bakes it: target minus measurement whole.
+        let correction = targets::difference(&measured, &targets::choice_curve(target).unwrap());
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Lush".into(),
+                filters: vec![DspFilter::Graphic(correction), band(80.0)],
+                role: Some(DspRole::Baked),
+                devices: vec!["Desk DAC".into()],
+                ..Default::default()
+            })
+        })
+        .unwrap();
+
+        let r = preview_split("Lush", &text, target, 48_000).unwrap();
+        let at = |db: &[f64], hz: f64| {
+            let i = r.freqs.iter().position(|&f| f >= hz).unwrap();
+            db[i]
+        };
+        let tuning = r.tuning.as_ref().unwrap();
+        assert!((at(tuning, 80.0) - 3.0).abs() < 1.0, "{}", at(tuning, 80.0));
+        assert!(at(tuning, 3000.0).abs() < 0.7, "{}", at(tuning, 3000.0));
+        // The headphones' treble is the correction's, not the taste's.
+        assert!(at(tuning, 8000.0).abs() < 1.0, "{}", at(tuning, 8000.0));
+        let original = r.original.as_ref().unwrap();
+        for hz in [50.0, 200.0, 1000.0, 4000.0] {
+            assert!((at(&r.total, hz) - at(original, hz)).abs() < 1.0, "{hz} Hz");
+        }
+
+        let (c, t) = split_baked("Lush", &text, DspEar::In, target).unwrap();
+        assert_eq!((c.as_str(), t.as_str()), ("Lush correction", "Lush tuning"));
+        let cfg = Config::cached();
+        assert_eq!(cfg.dsp.profile_for("Desk DAC").unwrap().name, c);
+        assert_eq!(tuning_for("Desk DAC").as_deref(), Some(t.as_str()));
+        let made = cfg.dsp.profiles.iter().find(|p| p.name == t).unwrap();
+        assert_eq!(made.tuned_for.as_deref(), Some(target));
+        assert_eq!(role(made), DspRole::Tuning);
+        assert!(cfg.dsp.profiles.iter().any(|p| p.name == "Lush"), "kept");
+        // On its own target, no difference to play: the tuning's curve and
+        // the correction's.
+        let chain = super::super::output_chain(&cfg.dsp, "Desk DAC").unwrap();
+        let played = super::super::chain(&chain.profile, &chain.all, &mut Vec::new()).unwrap();
+        assert_eq!(played.len(), 2);
+        assert!(split_baked("Lush", &text, DspEar::In, "made-up").is_err());
+
+        // One EQ the same on every channel splits; nothing else does.
+        let stack = |c: &mut Config| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Stack".into(),
+                layers: vec![crate::config::DspLayer {
+                    profile: "Lush".into(),
+                    on: true,
+                }],
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Left".into(),
+                filters: vec![DspFilter::Band(crate::config::EqFilter {
+                    kind: crate::config::EqFilterKind::Peaking,
+                    freq: 100.0,
+                    gain_db: 2.0,
+                    q: 1.0,
+                    channels: vec![0],
+                })],
+                ..Default::default()
+            });
+        };
+        persist(stack).unwrap();
+        let refused = preview_split("Stack", &text, target, 48_000).unwrap_err();
+        assert!(refused.contains("plays other profiles"), "{refused}");
+        let refused = preview_split("Left", &text, target, 48_000).unwrap_err();
+        assert!(
+            refused.contains("treats its channels differently"),
+            "{refused}"
+        );
     }
 
     /// An output plays its tuning on top of its correction, with the

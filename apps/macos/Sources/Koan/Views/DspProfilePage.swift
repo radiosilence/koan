@@ -20,6 +20,7 @@ struct DspProfilePage: View {
     /// Bands, responses, headroom and sync, for a correction: most people
     /// pick a correction and its target and are done.
     @State private var showingMore = false
+    @State private var splitting = false
 
     var body: some View {
         KoanForm {
@@ -71,7 +72,7 @@ struct DspProfilePage: View {
                 // A stack with nothing of its own is what its layers are.
                 if d.layers.isEmpty || !d.bands.isEmpty || !d.impulses.isEmpty {
                     RoleSection(dsp: dsp, detail: d, madeForChoices: madeForChoices,
-                                targets: targets, adding: $addingTarget)
+                                targets: targets, adding: $addingTarget, splitting: $splitting)
                 }
                 if d.group {
                     GroupSection(dsp: dsp, detail: d)
@@ -120,6 +121,9 @@ struct DspProfilePage: View {
             if case let .success(urls) = result, let url = urls.first {
                 Task { await dsp.addTarget(url) }
             }
+        }
+        .sheet(isPresented: $splitting) {
+            SplitFlow(dsp: dsp, name: name).koanSheet()
         }
         #endif
         .confirmationDialog(
@@ -473,6 +477,8 @@ private struct RoleSection: View {
     /// The targets this correction can move to, once its own is known.
     let targets: DspTargets?
     @Binding var adding: Bool
+    /// Taking a baked EQ apart, presented by the page.
+    @Binding var splitting: Bool
 
     private var madeFor: String? { targets?.madeFor?.id }
     private var current: String { targets?.chosen ?? madeFor ?? "" }
@@ -501,6 +507,11 @@ private struct RoleSection: View {
                 .pickerStyle(.navigationLink)
                 #endif
             }
+            #if !os(tvOS)
+            if detail.role == .baked, detail.impulses.isEmpty, detail.layers.isEmpty {
+                Button("Split into Correction + Tuning…") { splitting = true }
+            }
+            #endif
             if detail.role == .correction {
                 if let targets {
                     Picker("Corrected to", selection: Binding(
@@ -552,7 +563,7 @@ private struct RoleSection: View {
         case .tuning:
             return "A tuning is taste: more bass, a darker treble. It plays on top of a correction. Say which target it was made against, and on headphones corrected to another, kōan plays the difference first, so it sounds as it was made to."
         case .baked:
-            return "A correction with a tuning already in it, as most finished presets are. It counts as the stack's correction, so a tuning on top would add taste twice."
+            return "A correction with a tuning already in it, as most finished presets are. It counts as the stack's correction, so a tuning on top would add taste twice. Split it, with a measurement of the headphones, to swap tunings."
         case .correction:
             break
         }

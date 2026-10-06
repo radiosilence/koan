@@ -1305,6 +1305,8 @@ pub struct DspResponse {
     /// For a chain with both: the correction alone, and the tuning on top.
     pub correction: Option<Vec<f64>>,
     pub tuning: Option<Vec<f64>>,
+    /// For a split's preview: the baked EQ it comes from.
+    pub original: Option<Vec<f64>>,
 }
 
 impl From<koan_core::audio::dsp::profiles::Response> for DspResponse {
@@ -1328,6 +1330,7 @@ impl From<koan_core::audio::dsp::profiles::Response> for DspResponse {
             preamp_db: r.preamp_db,
             correction: r.correction,
             tuning: r.tuning,
+            original: r.original,
         }
     }
 }
