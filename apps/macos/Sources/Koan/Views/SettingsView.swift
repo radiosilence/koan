@@ -1263,50 +1263,57 @@ private struct ScrobblingSettings: View {
             Section {
                 if let c = connection {
                     Text("Scrobbling to ListenBrainz as \(c.account)")
+                        .koanText(.body)
                     if let refused = c.error {
-                        Label(refused, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.orange)
+                        KoanLabel(refused, icon: "exclamationmark.triangle")
+                            .koanText(.meta, .bad)
                         Text("Disconnect, then connect again with a current token. Plays recorded meanwhile are kept and sent.")
-                            .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                            .koanText(.meta, .muted)
                     } else if c.pending > 0 {
                         Text(Format.count(c.pending, "play") + " waiting to be sent")
-                            .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                            .koanText(.meta, .muted)
                     }
                     #if !os(tvOS)
                     Button("Disconnect", role: .destructive, action: disconnect)
+                        .koanButton(.secondary)
                         .disabled(busy)
                     #endif
                 } else if !loaded {
-                    Text("Checking…").foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                    Text("Checking…").koanText(.body, .muted)
                 } else if statusFailed {
                     Button("Try Again") { Task { await load() } }
+                        .koanButton(.secondary)
                 } else {
                     #if os(tvOS)
                     Text("Not connected. Connect ListenBrainz from kōan on a phone or Mac.")
-                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                        .koanText(.body, .muted)
                     #else
-                    SecureField("User token", text: $token, prompt: Text("ListenBrainz user token"))
-                        .verbatimEntry()
-                        .onSubmit(connect)
+                    LabeledContent("User token") {
+                        SecureField("User token", text: $token, prompt: Text("ListenBrainz user token"))
+                            .verbatimEntry()
+                            .onSubmit(connect)
+                            .koanField()
+                    }
                     HStack {
                         Link("Find your token", destination: URL(string: "https://listenbrainz.org/settings/")!)
+                            .koanButton(.text)
                         Spacer()
                         Button("Connect", action: connect)
+                            .koanButton(.primary)
                             .disabled(busy || token.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                     .rowButtons()
                     #endif
                 }
                 if let error {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.red)
+                    KoanLabel(error, icon: "exclamationmark.triangle")
+                        .koanText(.meta, .bad)
                 }
             } header: {
-                Text("Scrobbling")
+                KoanSectionHeader("Scrobbling")
             } footer: {
                 Text("The server sends what you play to ListenBrainz, from every app signed in as you, your history included when you connect. The token is kept on the server.")
-                    .font(.role(.fine, system: .caption))
-                    .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
+                    .koanText(.fine, .muted)
             }
             .task(id: mirror.connection?.scrobbling) { await load() }
         }
