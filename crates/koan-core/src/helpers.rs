@@ -2668,10 +2668,10 @@ mod refusal_tests {
                 let body = if endpoint == "koanSignIn" {
                     keys.lock().unwrap().insert("second".into());
                     r#"{"subsonic-response":{"status":"ok","join":{"username":"mate","apiKey":"second"}}}"#.to_owned()
-                } else if !keys.lock().unwrap().contains(&param("apiKey")) {
-                    r#"{"subsonic-response":{"status":"failed","error":{"code":44,"message":"invalid API key"}}}"#.to_owned()
                 } else if endpoint == "getOpenSubsonicExtensions" {
                     r#"{"subsonic-response":{"status":"ok","openSubsonicExtensions":[{"name":"koanSignIn","versions":[1]}]}}"#.to_owned()
+                } else if !keys.lock().unwrap().contains(&param("apiKey")) {
+                    r#"{"subsonic-response":{"status":"failed","error":{"code":44,"message":"invalid API key"}}}"#.to_owned()
                 } else {
                     r#"{"subsonic-response":{"status":"ok","indexes":{"lastModified":1}}}"#
                         .to_owned()
