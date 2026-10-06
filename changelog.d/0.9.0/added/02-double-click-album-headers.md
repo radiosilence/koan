@@ -1,0 +1,1 @@
+- **Double-click album headers** — double-clicking an album header in the queue now starts playback from the first track of that album

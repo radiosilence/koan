@@ -1,0 +1,1 @@
+- **Transport icons** — play/pause/stop status icons use Unicode symbols instead of ASCII

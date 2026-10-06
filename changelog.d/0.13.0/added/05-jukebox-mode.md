@@ -1,0 +1,1 @@
+- **`--jukebox` mode** — server plays audio, client is remote control only

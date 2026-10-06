@@ -1,0 +1,1 @@
+- **The preset menu says when processing is off.** With DSP off everywhere, choosing a preset on the Mac or the phone did nothing audible; the menu now says processing is off and offers to turn it on.

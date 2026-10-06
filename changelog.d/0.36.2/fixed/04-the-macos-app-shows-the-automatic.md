@@ -1,0 +1,1 @@
+- **The macOS app shows the automatic sync and the startup scan.** The engine never published the `Tasks` slice, so neither row ever appeared.

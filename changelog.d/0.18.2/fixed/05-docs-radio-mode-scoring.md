@@ -1,0 +1,1 @@
+- **Docs: radio mode scoring** — corrected signal descriptions to match actual implementation

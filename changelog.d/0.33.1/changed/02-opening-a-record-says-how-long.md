@@ -1,0 +1,2 @@
+- **Opening a record says how long it took.** A signpost in a view says when SwiftUI worked out what to draw, which on this gesture is a few milliseconds and nowhere near when you see anything — layout, the CoreAnimation commit and the render server all come after the last line any view gets to run. `FrameTimer` times the tap against the display link instead, and reports the body, the frame that could carry it, and every stall after that. See CONTRIBUTING.
+

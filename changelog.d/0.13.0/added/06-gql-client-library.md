@@ -1,0 +1,1 @@
+- **GQL client library** in koan-core — typed helpers for all queries and mutations

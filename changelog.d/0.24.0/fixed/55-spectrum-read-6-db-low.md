@@ -1,0 +1,1 @@
+- **Spectrum read 6 dB low.** The FFT magnitude scale was `2/N`, correct for a rectangular window, but the analyzer applies a Hann window with a coherent gain of 0.5. Everything read 6.02 dB down, so against the -80 dB floor a full-scale sine topped out at 0.925 and the bars never reached the top of the widget. The scale is now derived from the window's own sum.

@@ -1,0 +1,1 @@
+- **Config path** — `~/.config/koan/` (was `~/Library/Application Support/koan/`)

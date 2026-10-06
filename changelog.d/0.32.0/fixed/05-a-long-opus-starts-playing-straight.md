@@ -1,0 +1,6 @@
+- **A long Opus starts playing straight away rather than waiting for the whole download.** It used to wait because of that last page. koan now opens a partial file without stating a length, which is what stops a container going looking for its tail — and is how every format opens mid-download, not only Ogg, because stating a length also sends the reader looking for metadata at the end of a file that is not all there. The track starts in milliseconds and plays. What each format gives up is whatever only its tail could tell it: for Ogg that is the duration, and with it seeking, until the transfer lands. Ones that describe their frames from the front — FLAC, MP3, MP4 — stay seekable throughout, as far into the track as the bytes reach.
+
+  The transport says which of the two it is rather than leaving you to find out: the bar fills as the file arrives, the playhead moves against the duration the library knows, and reaching for a position it cannot reach yet gets an answer instead of silence.
+
+  When the transfer lands, seeking comes back on its own. Playback is not interrupted to do it — the decoder is reading a file, and a file being renamed underneath an open descriptor is not something it notices. The finished file is picked up the next time the track is seeked, which is the first moment it matters.
+

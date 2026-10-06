@@ -1,0 +1,1 @@
+- **Share links unfurl.** Share pages carry OpenGraph and Twitter card tags (title, a description with tracks and duration, and the cover as an absolute `og:image` on `sharing.public_url`), so messaging apps show a card with the cover.

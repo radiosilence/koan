@@ -1,0 +1,1 @@
+- **graphql.rs split** — 2400-line god file decomposed into `graphql/{mod,types,queries,mutations,helpers,server}.rs`

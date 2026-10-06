@@ -1,0 +1,1 @@
+- **Memory usage on playlist build** — `playlist_items_from_paths` now uses `tracks_by_paths()` (batched IN-query) instead of loading every track in the library into a HashMap ([#99](https://github.com/radiosilence/koan/issues/99))

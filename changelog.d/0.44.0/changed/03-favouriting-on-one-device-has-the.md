@@ -1,0 +1,1 @@
+- **Favouriting on one device has the account's other linked devices sync**, so the heart lights on the Mac for a track favourited on the phone.

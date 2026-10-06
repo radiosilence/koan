@@ -1,0 +1,1 @@
+- **Cancelling a library scan stops the folder watcher's too.** The watcher's scans had no way to be stopped, so the apps' Cancel did nothing to the scan the activity row was showing. Forgetting a library folder now also stops a scan of it, rather than leaving it to index again what was just forgotten.

@@ -1,0 +1,1 @@
+- **Rescanning from the app walks each folder once.** The file count for the progress bar came from a separate walk of every folder, and files were checked against the scan cache one at a time; the count now comes from the scan's own walk and the checks run in parallel.

@@ -1,0 +1,1 @@
+- **Transaction boundaries** — `upsert_track()` wraps the entire artist/album/track/FTS5 operation in a savepoint. Scanner and analyzer use proper `unchecked_transaction()` with error propagation instead of silent `let _ =` drops ([#79](https://github.com/radiosilence/koan/pull/79))

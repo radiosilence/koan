@@ -1,0 +1,1 @@
+- **Track artist vs album artist** — stored separately in DB, compilations display correctly

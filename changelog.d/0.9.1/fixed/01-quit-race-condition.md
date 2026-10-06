@@ -1,0 +1,1 @@
+- **Quit race condition** — quit handlers were sending `PlayerCommand::Stop` (which clears the playlist) before saving state, so persisted queue was always empty. Stop is now sent after saving

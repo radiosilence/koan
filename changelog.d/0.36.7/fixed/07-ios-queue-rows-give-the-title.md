@@ -1,0 +1,1 @@
+- **iOS: queue rows give the title the width.** A duration of an hour or more wrapped onto two lines in its fixed column, and the codec repeated what the album heading says. The duration keeps one line at whatever width it needs, and the codec is left off on iOS.

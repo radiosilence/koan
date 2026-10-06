@@ -1,0 +1,1 @@
+- **An artist with no biography found is asked about again.** A lookup that found nothing was cached for a month, so an artist that could not be resolved then (as with the empty ids fixed in 0.36.9) stayed blank. Misses are no longer cached, and those already cached are dropped. The page says it is looking the artist up while it does.

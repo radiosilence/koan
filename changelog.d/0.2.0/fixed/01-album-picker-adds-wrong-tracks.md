@@ -1,0 +1,1 @@
+- **Album picker adds wrong tracks** — was passing album IDs as track IDs, now correctly expands via DB query

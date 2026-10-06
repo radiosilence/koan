@@ -1,0 +1,1 @@
+- **`Player` holds `Box<dyn AudioBackend>`** — all device/engine calls go through trait

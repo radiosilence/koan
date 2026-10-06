@@ -1,0 +1,1 @@
+- **All but the last mouse event in a frame were dropped** — coalescing every event meant a trackpad flick scrolled one line, and a click whose press and release landed in the same frame did nothing. Only motion coalesces now.

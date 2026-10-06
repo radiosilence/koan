@@ -1,0 +1,1 @@
+- **Cookie auth for web clients** — auth routes set `HttpOnly; Secure; SameSite=None` cookies alongside JSON responses. Middleware checks cookie before Bearer header (priority: cookie > Bearer > query param). Logout clears the cookie. No breaking changes for CLI/mobile clients. ([#172](https://github.com/radiosilence/koan/pull/172))

@@ -1,0 +1,1 @@
+- **Shuffle sits in the artist page's button row**, beside Play Next and Queue, rather than on a line of its own below them. ([#437](https://github.com/radiosilence/koan/pull/437))

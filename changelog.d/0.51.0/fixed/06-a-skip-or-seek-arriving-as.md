@@ -1,0 +1,1 @@
+- **A skip or seek arriving as a track finishes decoding no longer jumps a track further.**

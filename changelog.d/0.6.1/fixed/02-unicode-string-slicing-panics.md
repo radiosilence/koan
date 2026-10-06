@@ -1,0 +1,1 @@
+- **Unicode string slicing panics** — fixed two panics in organize path diff caused by byte-slicing fullwidth/CJK characters; all path helpers now use char-based operations

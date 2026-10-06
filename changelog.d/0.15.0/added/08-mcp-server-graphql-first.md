@@ -1,0 +1,1 @@
+- **MCP server: GraphQL-first** — 2 tools: `schema_sdl` + `graphql`. Claude reads the schema, drives everything through one tool

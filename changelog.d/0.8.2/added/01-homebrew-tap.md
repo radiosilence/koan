@@ -1,0 +1,1 @@
+- **Homebrew tap** — `brew install radiosilence/koan/koan`. Formula auto-updates on each release via CI

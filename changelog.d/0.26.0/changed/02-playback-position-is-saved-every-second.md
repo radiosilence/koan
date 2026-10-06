@@ -1,0 +1,1 @@
+- **Playback position is saved every second**, so a crash costs a second rather than the session. The queue is only rewritten when the queue changes: it is stored as a JSON blob, and re-serialising a library-sized one every second to remember a number is not a trade.

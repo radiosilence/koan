@@ -1,0 +1,1 @@
+- **DB cache for playlist loading** — when adding files that are already in the library database, metadata is pulled from SQLite instead of re-reading from disk, making re-adds near-instant

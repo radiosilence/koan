@@ -1,0 +1,2 @@
+- **Most of the ways koan syncs never touched playlists, and koan's own auto-sync never touched favourites either.** Four callers each knew separately what a sync consists of — the app, the CLI, the GraphQL job and the background auto-sync — so a star or a playlist made on the server arrived only if you happened to press the right button. There is one `sync_remote` now and all four go through it.
+

@@ -1,0 +1,1 @@
+- **ReplayGain default changed to `off`** — was `album`. Users who want loudness normalization can opt in via `replaygain = "album"` or `"track"` ([#120](https://github.com/radiosilence/koan/pull/120))

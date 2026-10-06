@@ -1,0 +1,1 @@
+- **A long Ogg track streaming from a server showed no length.** Ogg keeps its duration on its last page, which arrives last; a track opened before then now runs on the library's duration, so a nine-hour recording shows its length and progress from the start.

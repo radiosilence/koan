@@ -1,0 +1,1 @@
+- **The seek bar follows the track again.** It stopped updating once clicked, because the position updater skipped a focused range and a clicked range keeps focus; it now skips only while the range is being dragged, and resets as soon as the track changes.

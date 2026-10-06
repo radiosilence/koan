@@ -1,0 +1,1 @@
+- **Downloads no longer wait on a track nobody is playing.** Since 0.46.2 workers hold back while the cursor's track downloads, but one that looked before a new queue reached the player waited on the old cursor's download. A cursor move now wakes them.

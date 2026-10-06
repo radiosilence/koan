@@ -1,0 +1,1 @@
+- **The documentation and site match the code**: five crates, `Config::persist` for config writes, current GraphQL operation names and configuration keys, radio's use of ListenBrainz and MusicBrainz, and where the Mac app keeps its data.

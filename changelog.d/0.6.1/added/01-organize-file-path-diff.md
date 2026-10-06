@@ -1,0 +1,1 @@
+- **Organize file path diff** — organize modal now shows a before/after visual diff of file paths, highlighting changed path segments in green

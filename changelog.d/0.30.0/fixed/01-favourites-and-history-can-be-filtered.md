@@ -1,0 +1,2 @@
+- **Favourites and history can be filtered, which they were already built for.** Both narrow on title, artist and album, history has an empty state for when a filter matches nothing, and neither could be typed into: the toolbar offered its field to albums and artists by name, and ⌘F named the same two. Which sections have a filter is now one answer on `Navigator.Section` that the field and ⌘F both read, so a section cannot be filterable in the model and not on screen. Favourites also draws the narrowed list rather than the whole one, and counts what it is showing.
+

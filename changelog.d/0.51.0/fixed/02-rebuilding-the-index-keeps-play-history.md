@@ -1,0 +1,1 @@
+- **Rebuilding the index keeps play history, playlists, favourites and lyrics.** It now forgets only what each file and server entry said, and the next scan and sync read them all again into the rows they had.

@@ -1,0 +1,1 @@
+- **The web UI's name and year filters apply as you type.** A pause in typing replaces the listing under the toolbar and leaves the field focused; the URL is replaced rather than pushed, so back does not step through each keystroke. A year applies once it has four digits. On a phone the sheet's Apply still applies everything.

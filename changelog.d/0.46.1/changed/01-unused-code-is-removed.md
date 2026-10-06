@@ -1,0 +1,1 @@
+- **Unused code is removed**, including twelve koan-ffi exports the apps no longer call. No behaviour changes.

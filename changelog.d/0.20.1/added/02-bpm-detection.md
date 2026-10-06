@@ -1,0 +1,1 @@
+- **BPM detection** — beat onset interval tracking with median estimation. Stored on VisualizerState for future use. Resets on track changes.

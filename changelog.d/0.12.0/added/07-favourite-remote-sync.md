@@ -1,0 +1,1 @@
+- **Favourite → remote sync** — favouriting/unfavouriting via GQL or MCP automatically syncs to Subsonic/Navidrome (`star`/`unstar` API) on a background thread. Fire-and-forget, best-effort

@@ -1,0 +1,1 @@
+- **Sequential scan_cache lookups** — scanner now batch-loads the entire scan cache into a HashMap instead of issuing one DB query per file, dramatically faster for large libraries ([#99](https://github.com/radiosilence/koan/issues/99))

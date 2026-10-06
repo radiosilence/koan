@@ -1,0 +1,1 @@
+- **Pause, seek and stop reach the server's Now Playing** ([#570](https://github.com/radiosilence/koan/issues/570)). Only starts and scrobbles were reported, so Navidrome's Now Playing ran on through pauses, ignored seeks and stayed up after a stop.

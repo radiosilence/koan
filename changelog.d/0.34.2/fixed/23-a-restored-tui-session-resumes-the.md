@@ -1,0 +1,1 @@
+- **A restored TUI session resumes the track it saved, the way it saved it.** The saved position went to whichever track became ready first, and always paused.

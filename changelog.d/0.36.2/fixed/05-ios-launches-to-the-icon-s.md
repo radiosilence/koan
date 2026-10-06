@@ -1,0 +1,1 @@
+- **iOS launches to the icon's ensō rather than a blank screen and a spinner.** The launch screen was empty; it now draws the ensō on its ground, and the app draws the same image in the same place until the engine is up. The mini player's sleeve and buttons also clear the capsule's curved ends.

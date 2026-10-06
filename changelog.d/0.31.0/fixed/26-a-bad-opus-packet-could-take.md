@@ -1,0 +1,2 @@
+- **A bad Opus packet could take the decode thread down with it.** `opus-decoder` 0.1.1 overflows a shift building CELT's collapse mask on the first packet of some stereo streams: a panic in a debug build, a wrong mask in a release one. It is the only Opus decoder on crates.io that isn't libopus over FFI, and it is unmaintained, so the decode call is contained — that packet is skipped and logged, and playback carries on, which is already how a malformed packet is handled.
+

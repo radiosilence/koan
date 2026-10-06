@@ -1,0 +1,1 @@
+- **MCP server crash on startup** — all tool return types now use object schemas (MCP 2025-11-25 spec requires `outputSchema` root type to be `object`). Bare string and array returns replaced with `StatusResponse`, `QueueResponse`, `TrackListResponse`, `ArtistListResponse`, `AlbumListResponse`, `DeviceListResponse` wrapper types

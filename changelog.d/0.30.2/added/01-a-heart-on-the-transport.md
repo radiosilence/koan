@@ -1,0 +1,1 @@
+- **A heart on the transport.** ⌘D has always favourited what is playing from anywhere, but a heart you can see also tells you whether this one is already in. It sits next to the title, because that is what it acts on.

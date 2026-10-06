@@ -1,0 +1,1 @@
+- **Queue persistence** — queue and playback position are automatically saved every second and restored on next launch. Ctrl+C and `q` both trigger a clean save. Use `--clear` to start fresh instead of restoring

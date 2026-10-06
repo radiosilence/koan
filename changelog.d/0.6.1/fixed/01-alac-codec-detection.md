@@ -1,0 +1,1 @@
+- **ALAC codec detection** — MP4 files containing ALAC audio are now correctly identified as ALAC instead of AAC, using lofty's `Mp4File` codec probe

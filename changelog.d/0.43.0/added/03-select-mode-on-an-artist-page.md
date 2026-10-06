@@ -1,0 +1,1 @@
+- **Select mode on an artist page's albums** ([#569](https://github.com/radiosilence/koan/pull/569)), as the library grid already had. A click on a record there played it and replaced the queue, which was easy to do by accident when picking a few to add.

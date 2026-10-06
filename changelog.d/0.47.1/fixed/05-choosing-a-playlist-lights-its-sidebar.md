@@ -1,0 +1,1 @@
+- **Choosing a playlist lights its sidebar row at once.** The row followed the page, so it went dark while the playlist loaded and the previous row lit up again until it arrived.

@@ -1,0 +1,1 @@
+- **Linux audio support** — `AudioBackend` trait abstraction with `CpalBackend` (ALSA/PipeWire/PulseAudio via cpal) for Linux and `CoreAudioBackend` for macOS. Bit-perfect gapless on both platforms. Decode pipeline untouched — backends are dumb ring buffer consumers ([#58](https://github.com/radiosilence/koan/pull/58))

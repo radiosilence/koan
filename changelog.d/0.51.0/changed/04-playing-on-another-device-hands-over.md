@@ -1,0 +1,1 @@
+- **Playing on another device hands over in one step.** The receiving device replaces its queue and opens the track at the source's position, playing or paused, as one command and one undo step. A session restored at launch opens at its position the same way, waiting for the track if it is still downloading.

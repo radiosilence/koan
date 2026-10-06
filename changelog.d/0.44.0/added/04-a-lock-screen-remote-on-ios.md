@@ -1,0 +1,1 @@
+- **A lock-screen remote on iOS.** While the phone controls another device, a Live Activity shows what is playing there with previous, play-pause and next. The server pushes it each change once iOS has suspended the app (with the `[push]` key), and its buttons reach the server in one request when the app's link is down.

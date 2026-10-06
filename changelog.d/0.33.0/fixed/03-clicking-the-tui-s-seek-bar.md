@@ -1,0 +1,1 @@
+- **Clicking the TUI's seek bar lands where it was aimed on a track still downloading.** The click was mapped against the duration the container reported, which on a partial file reads short, while the bar was drawn against the one the library knows. Both use the library's now.

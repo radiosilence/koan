@@ -1,0 +1,1 @@
+- **Favourites filter** — `favouritesOnly: true` parameter on `artists`, `albums`, and `tracks` queries. Dedicated `favourites` query with cursor pagination. `isFavourite` field on track type

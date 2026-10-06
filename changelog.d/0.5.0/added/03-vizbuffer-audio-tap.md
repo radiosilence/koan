@@ -1,0 +1,1 @@
+- **VizBuffer audio tap** — circular sample buffer shared between decode thread and analysis thread via `parking_lot::Mutex`

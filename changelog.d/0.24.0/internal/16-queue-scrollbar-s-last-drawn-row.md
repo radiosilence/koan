@@ -1,0 +1,1 @@
+- **Queue scrollbar's last drawn row was not clickable** — clicking it fell through and selected a track.

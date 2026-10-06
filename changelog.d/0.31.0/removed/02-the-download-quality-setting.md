@@ -1,0 +1,2 @@
+- **The download quality setting.** It offered Original, Opus 128 and MP3 320, wrote your choice to `config.toml`, carried it over GraphQL and FFI, and was read by nothing — no request has ever asked a server to transcode. Re-encoding a stream is the opposite of what koan is for, so the setting goes rather than gains an implementation. `remote.transcode_quality` in an existing config is ignored; the GraphQL `Config.transcodeQuality` field and its input are gone.
+

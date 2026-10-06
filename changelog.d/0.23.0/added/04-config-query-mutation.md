@@ -1,0 +1,1 @@
+- **Config query + mutation** — `config` query exposes current settings, `updateConfig` mutation writes individual fields to `config.toml` (admin-only).

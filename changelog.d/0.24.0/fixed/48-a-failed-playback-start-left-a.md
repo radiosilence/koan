@@ -1,0 +1,1 @@
+- **A failed playback start left a zombie "Playing" transport** with a frozen position, since the engine had already been torn down by the time the failure surfaced. A failure now leaves the player cleanly stopped, and pause/resume report what the engine actually did instead of assuming success.

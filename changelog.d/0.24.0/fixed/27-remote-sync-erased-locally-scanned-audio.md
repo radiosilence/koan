@@ -1,0 +1,1 @@
+- **Remote sync erased locally-scanned audio properties** — merging wrote every column straight from the incoming metadata, so syncing against a Navidrome serving the same files nulled `sample_rate`, `bit_depth`, `channels`, `size_bytes` and `mtime` across the library and rewrote the codec. A merge now fills gaps only and never overwrites a populated column with NULL.

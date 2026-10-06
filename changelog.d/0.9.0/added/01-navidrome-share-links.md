@@ -1,0 +1,1 @@
+- **Navidrome share links** — right-click a song or album header in the queue and select "Share link" to create a public sharing URL via the Subsonic API. The link is copied to clipboard and shown in the hint bar. Prefers album-level shares when all selected tracks are from the same album. Requires `[remote]` to be configured with sharing enabled on the server

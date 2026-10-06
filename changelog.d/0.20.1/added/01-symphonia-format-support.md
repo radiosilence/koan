@@ -1,0 +1,1 @@
+- **Symphonia format support** — added ADPCM codec, MKV/WebM and CAF container support. Opus decoding is not yet supported (see [#149](https://github.com/radiosilence/koan/issues/149)).

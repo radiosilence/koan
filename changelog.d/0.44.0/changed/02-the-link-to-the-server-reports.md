@@ -1,0 +1,1 @@
+- **The link to the server reports on change rather than every few seconds.** It waits on its socket and on the engine's change signal, so a pause on one device shows on the other at once and a quiet link wakes only to ping.

@@ -1,0 +1,1 @@
+- **A rare crash when the Mac or iOS app changes track or output.** When CoreAudio could not confirm the output had fully stopped, its playback data was freed while the audio thread might still read it. It is now kept instead.

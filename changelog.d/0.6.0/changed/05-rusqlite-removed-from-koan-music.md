@@ -1,0 +1,1 @@
+- **rusqlite removed from koan-music** — 3 raw SQL calls replaced with koan-core query functions (`album_date`, `clear_cached_paths`). Binary crate no longer links rusqlite directly

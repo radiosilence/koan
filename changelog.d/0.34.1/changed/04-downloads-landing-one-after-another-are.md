@@ -1,0 +1,1 @@
+- **Downloads landing one after another are one library change, not one each.** A record fetched a track at a time made every page reload its rows per track. The engine says so once the batch is down, or every couple of seconds while it is still coming.

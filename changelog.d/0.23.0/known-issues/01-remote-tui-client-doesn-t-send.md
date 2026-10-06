@@ -1,0 +1,1 @@
+- **Remote TUI client doesn't send a JWT yet** — `koan play --server <url>` still fails against `auth_enabled = true` servers because the client has no login/token flow. Tracked in [#173](https://github.com/radiosilence/koan/issues/173).

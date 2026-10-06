@@ -1,0 +1,1 @@
+- **Lyrics DB caching** — fetched lyrics are cached in SQLite so subsequent views are instant

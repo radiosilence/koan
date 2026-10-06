@@ -1,0 +1,1 @@
+- **Player device restart dedup** — extracted shared restart logic, config load errors now logged instead of silently swallowed (`Config::load_or_default()`)

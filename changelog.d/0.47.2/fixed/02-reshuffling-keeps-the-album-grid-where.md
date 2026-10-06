@@ -1,0 +1,1 @@
+- **Reshuffling keeps the album grid where it is.** 0.47.1 remembered the grid's place by the album at its top, so a reshuffle followed that album to wherever it landed. The place is now a scroll distance, which a reshuffle leaves alone and a visit back to the page still restores.

@@ -1,0 +1,1 @@
+- **Assistants in the apps.** Settings → Server shows the server's MCP address to copy and links to its page on connecting Claude or another assistant, where the server knows its public address (`sharing.public_url`). The server offers this as `koanMcp`.

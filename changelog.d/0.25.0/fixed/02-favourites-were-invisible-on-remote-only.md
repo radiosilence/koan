@@ -1,0 +1,1 @@
+- **Favourites were invisible on remote-only libraries** — `track_id_by_path` matches `path`, `cached_path` *or* `remote_url`, but the favourite check compared only the two local paths. A never-cached remote track could therefore be favourited and never show as one, and toggling one failed outright for want of a local path to key on.

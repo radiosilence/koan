@@ -1,0 +1,1 @@
+- **Symphonia format support** — added ADPCM codec, MKV/WebM and CAF container support.

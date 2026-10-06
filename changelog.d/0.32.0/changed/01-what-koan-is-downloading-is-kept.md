@@ -1,0 +1,2 @@
+- **What koan is downloading is kept in one place.** Whether a track was arriving was recorded twice — once against the queue entry and once by the downloader — and the two had to be told separately, so they could and did disagree: a queue entry pointed at the file a transfer had just been renamed away from, and anything the TUI fetched was invisible to everything else. A queue entry now says only whether its own file can be played, and whether bytes are arriving is asked of the downloader.
+

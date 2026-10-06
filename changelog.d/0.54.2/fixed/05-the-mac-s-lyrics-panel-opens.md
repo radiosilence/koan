@@ -1,0 +1,1 @@
+- **The Mac's lyrics panel opens without tearing the window.** Opening or closing it slid the panel while the album grid and track lists jumped to their new width at once, so for a moment the two halves of the window were out of step and the sidebar was pushed off the left edge. The panel now opens and closes in one step, with every page laid out alongside it.

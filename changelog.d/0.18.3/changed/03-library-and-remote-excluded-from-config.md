@@ -1,0 +1,1 @@
+- **`[library]` and `[remote]` excluded from `config.toml`** — machine-specific paths and credentials belong in `config.local.toml` only. Prevents accidental credential leaks into dotfile repos ([#120](https://github.com/radiosilence/koan/pull/120))

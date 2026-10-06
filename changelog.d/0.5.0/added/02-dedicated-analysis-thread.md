@@ -1,0 +1,1 @@
+- **Dedicated analysis thread** — FFT runs on a background thread (`VizAnalyzer`) decoupled from both the decode and UI threads. The UI reads a pre-computed `VizSnapshot` every frame with sub-microsecond lock hold times, keeping FFT work off the render thread

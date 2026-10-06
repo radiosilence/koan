@@ -1,0 +1,1 @@
+- **MP3 duration overstated by ~30 ms** — the probe reported the untrimmed frame count while the decoder dropped encoder delay and padding, so the seek bar ran past the end of the audio. Both sides now report the trimmed length.

@@ -1,0 +1,1 @@
+- **Parallel disk scanning** — adding files from disk now uses rayon for parallel metadata reads, significantly faster for large collections

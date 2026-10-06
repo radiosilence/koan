@@ -1,0 +1,1 @@
+- **Deleting a playlist that was never on a server removes it from the sidebar.**

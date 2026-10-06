@@ -1,0 +1,1 @@
+- **Cancelling a large library scan no longer hangs.** The tag readers blocked on a full channel that nothing was reading any more, which left the scan unfinished and every rayon worker parked for the rest of the process. The readers now stop on cancel and the channel is closed before the scan waits for them.

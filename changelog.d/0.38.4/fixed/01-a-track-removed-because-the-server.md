@@ -1,0 +1,1 @@
+- **A track removed because the server deleted it takes its downloaded file with it.** The row went and the file stayed in the cache, where nothing would play or clean it up.

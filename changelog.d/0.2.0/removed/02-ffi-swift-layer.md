@@ -1,0 +1,1 @@
+- **FFI/Swift layer** — removed entirely, pure Rust

@@ -1,0 +1,1 @@
+- **Standing orders survive restarts.** `queueOnClientWhenAdded` and the new playlist orders were held in memory, and every deploy dropped them; they are kept in the database now.

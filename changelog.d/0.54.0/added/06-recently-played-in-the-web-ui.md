@@ -1,0 +1,1 @@
+- **Recently played in the web UI.** The artists, records and tracks the signed-in account played in the last 30 days, each once and newest first, on the same layout as Favourites.

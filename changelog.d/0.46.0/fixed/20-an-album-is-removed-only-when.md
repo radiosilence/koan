@@ -1,0 +1,1 @@
+- **An album is removed only when the server says it is gone.** The album list is walked by offset, so a deletion during the walk could push a different album off a page boundary and have its tracks and play history deleted. An album missing from the list is now checked with `getAlbum` first.

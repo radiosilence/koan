@@ -1,0 +1,1 @@
+- **Atomic ordering hardened** — `samples_played` uses `AcqRel` on fetch_add, `Acquire` on loads. `running` flag uses `Acquire`/`Release`. No more `Relaxed` for cross-thread state ([#76](https://github.com/radiosilence/koan/pull/76))
