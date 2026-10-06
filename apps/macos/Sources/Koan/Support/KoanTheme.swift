@@ -988,10 +988,32 @@ private struct KoanToggleRole: ViewModifier {
 }
 
 #if !os(tvOS)
+#if os(macOS)
+/// A form row's label in a column of its own, so the fields beside a run of
+/// labels start at one edge.
+struct KoanLabeledContentStyle: LabeledContentStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: KoanTheme.Space.m) {
+            configuration.label
+                .foregroundStyle(Color.koanMuted)
+                .frame(width: 150, alignment: .leading)
+            configuration.content
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+#endif
+
 /// A square box: a `muted` outline off, filled with the accent and checked in
 /// `bg` on.
 struct KoanToggleStyle: ToggleStyle {
     @Environment(\.isEnabled) private var enabled
+    /// A finger's target on a phone; a pointer needs no more than the row.
+    #if os(macOS)
+    private static let hit: CGFloat = 24
+    #else
+    private static let hit: CGFloat = 44
+    #endif
 
     func makeBody(configuration: Configuration) -> some View {
         Button {
@@ -1014,7 +1036,7 @@ struct KoanToggleStyle: ToggleStyle {
                     .foregroundStyle(Color.koanInk)
                 Spacer(minLength: 0)
             }
-            .frame(minHeight: 44)
+            .frame(minHeight: Self.hit)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1426,6 +1448,7 @@ struct KoanForm<Content: View>: View {
             .foregroundStyle(Color.koanInk)
             .toggleStyle(KoanToggleStyle())
             .textFieldStyle(.plain)
+            .labeledContentStyle(KoanLabeledContentStyle())
         } else {
             Form { content }.formStyle(.grouped)
         }

@@ -75,6 +75,7 @@ enum EvidenceRenderer {
         // together. What is playing is whatever the scratch library's saved
         // session left cued.
         let nav = state.nav
+        state.ui.showLyrics = false
         var windows: [(name: String, go: () -> Void)] = [
             ("window-queue", { nav.show(.queue) }),
             ("window-albums", { nav.show(.albums) }),
@@ -95,10 +96,29 @@ enum EvidenceRenderer {
         if let only = ProcessInfo.processInfo.environment["KOAN_RENDER_PAGES"]?.split(separator: ",") {
             windows.removeAll { window in !only.contains { window.name.hasPrefix($0) } }
         }
+        // `KOAN_RENDER_FRAMED`: the window as a window — titlebar, toolbar,
+        // sidebar column and all — at the size given (points, `1200x750` by
+        // default), for the website's screenshots.
+        let framed = ProcessInfo.processInfo.environment["KOAN_RENDER_FRAMED"].map { spec -> CGSize in
+            let parts = spec.split(separator: "x").compactMap { Double($0) }
+            return parts.count == 2 ? CGSize(width: parts[0], height: parts[1]) : CGSize(width: 1200, height: 750)
+        }
+        // One window for every page, as the app has: tearing one down under a
+        // page still settling its geometry is a crash, not a picture.
+        let frame = framed.map {
+            FramedWindow(
+                RootView(hotkeys: state.hotkeys).appEnvironment(state).environment(\.drawnOffscreen, true),
+                size: $0
+            )
+        }
         for window in windows {
             window.go()
             for dark in [false, true] {
                 let file = dir.appending(path: "\(window.name)-\(dark ? "dark" : "light").png")
+                if let frame {
+                    await frame.capture(dark: dark, to: file)
+                    continue
+                }
                 let sidebar = window.name == "window-sidebar"
                 await snapshot(
                     sidebar
@@ -110,6 +130,66 @@ enum EvidenceRenderer {
             }
         }
         NSApp.terminate(nil)
+    }
+
+    /// A real window, ordered in far off every screen so nobody sees it: the
+    /// titlebar, the toolbar SwiftUI bridges into it and the split view's
+    /// sidebar column only draw in a window that is ordered in. Read back from
+    /// the window server as this process's own window; nothing is captured
+    /// from the screen.
+    @MainActor
+    private final class FramedWindow {
+        private let window: Unconstrained
+
+        init(_ view: some View, size: CGSize) {
+            let host = NSHostingController(
+                rootView: view
+                    .tint(.koanAccent)
+                    .environment(\.controlActiveState, .key)
+                    .environment(\.koanIcons, true)
+            )
+            host.sceneBridgingOptions = [.toolbars, .title]
+            let place = CGRect(x: -30_000, y: -30_000, width: size.width, height: size.height)
+            window = Unconstrained(
+                contentRect: place,
+                styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                backing: .buffered,
+                defer: false
+            )
+            window.isReleasedWhenClosed = false
+            window.contentViewController = host
+            window.setFrame(place, display: false)
+            window.orderFrontRegardless()
+        }
+
+        func capture(dark: Bool, to file: URL) async {
+            window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            try? await Task.sleep(for: .seconds(2.5))
+            window.displayIfNeeded()
+            guard let image = EvidenceRenderer.ownWindowImage(window.windowNumber) else { return }
+            try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(to: file)
+        }
+    }
+
+    /// This process's own window, as the window server composited it —
+    /// vibrancy, the sidebar's material and all, which `cacheDisplay` leaves
+    /// out. An app may read its own windows without screen-recording access.
+    /// Looked up by name: the call is deprecated in favour of ScreenCaptureKit,
+    /// which asks for that access even for an app's own windows.
+    fileprivate static func ownWindowImage(_ number: Int) -> CGImage? {
+        typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else {
+            return nil
+        }
+        let capture = unsafeBitCast(symbol, to: Capture.self)
+        // .null bounds: the window's own; including window; best resolution, no shadow.
+        let options: UInt32 = (1 << 3) | (1 << 0)
+        return capture(.null, 1 << 3, UInt32(number), options)?.takeRetainedValue()
+    }
+
+    /// A window AppKit does not pull back onto a screen when it is ordered in.
+    private final class Unconstrained: NSWindow {
+        override func constrainFrameRect(_ rect: NSRect, to screen: NSScreen?) -> NSRect { rect }
     }
 
     private static func snapshot(_ view: AnyView, size: CGSize, dark: Bool, to file: URL) async {
