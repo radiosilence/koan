@@ -146,10 +146,10 @@ struct HistoryView: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text("History")
+            Text(KoanTheme.label("History"))
                 .font(.role(.title, system: .system(size: 26, weight: .semibold)))
                 .foregroundStyle(KoanTheme.style(.strong, system: .primary))
-            Text(entries.count == 1 ? "1 play" : "\(entries.count) plays")
+            Text(KoanTheme.label(entries.count == 1 ? "1 play" : "\(entries.count) plays"))
                 .font(.role(.control, system: .callout))
                 .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             Spacer(minLength: 0)

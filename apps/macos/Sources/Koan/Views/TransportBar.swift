@@ -599,13 +599,13 @@ struct SleepButton: View {
             HStack(spacing: 4) {
                 Image(systemName: sleep == nil ? "moon" : "moon.zzz.fill")
                 switch sleep {
-                case _ where player.sleepFading: Text("Fading")
+                case _ where player.sleepFading: Text(KoanTheme.label("Fading"))
                 case .at(let unixMs):
                     let now = Date.now
                     Text(timerInterval: now...max(now, Self.date(unixMs)), countsDown: true)
                         .monospacedDigit()
-                case .endOfTrack: Text("Track")
-                case .endOfRecord: Text("Record")
+                case .endOfTrack: Text(KoanTheme.label("Track"))
+                case .endOfRecord: Text(KoanTheme.label("Record"))
                 case nil: EmptyView()
                 }
             }

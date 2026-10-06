@@ -17,7 +17,7 @@ struct LyricsPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Lyrics")
+                Text(KoanTheme.label("Lyrics"))
                     .font(.role(.body, system: .headline))
                 Spacer()
                 if loading {

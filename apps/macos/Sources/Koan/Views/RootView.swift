@@ -91,10 +91,6 @@ struct RootView: View {
                     .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
                 }
         }
-        // The wash and the tint, both the colour of one record. Its own
-        // modifier because what it reads moves per track, and a read here
-        // re-runs the window — see `RecordRoom`.
-        .modifier(RecordRoom())
         // The one place a library change reaches the app's own lists. Every
         // page showing something asked for on demand reloads where it is
         // drawn — see `View.reloading(on:)` — so nothing here decides which
@@ -138,6 +134,11 @@ struct RootView: View {
         .overlay(alignment: .bottom) {
             TransportOverlay(columns: columns)
         }
+        // The wash and the tint, both the colour of one record. Its own
+        // modifier because what it reads moves per track, and a read here
+        // re-runs the window — see `RecordRoom`. Outside the transport, which
+        // draws in the tint too.
+        .modifier(RecordRoom())
         .onPreferenceChange(TransportHeightKey.self) { transportHeight = $0 }
         .onGeometryChange(for: CGSize.self) { $0.size } action: { ui.windowSize = $0 }
         // Its own content rather than built here: it reads the page, and a read in
@@ -368,6 +369,8 @@ struct RecordRoom: ViewModifier {
             #endif
             .environment(\.roomTint, tint)
             .environment(\.koanAccent, accent)
+            // The theme's text button for every button that names no style.
+            .koanButtons(.text)
             .onChange(of: record, initial: true) { _, now in worn = now }
     }
 }

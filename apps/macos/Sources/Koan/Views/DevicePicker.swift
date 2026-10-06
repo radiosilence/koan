@@ -148,7 +148,7 @@ struct ControlPicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Control")
+            Text(KoanTheme.label("Control"))
                 .font(.role(.body, system: .headline))
                 .padding(.horizontal, 14)
                 .padding(.top, 12)
@@ -203,7 +203,7 @@ struct OutputPicker: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 1) {
-                Text("Output")
+                Text(KoanTheme.label("Output"))
                     .font(.role(.body, system: .headline))
                 if let owner = player.outputs?.owner {
                     Text("On \(owner)")

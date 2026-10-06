@@ -299,7 +299,7 @@ struct QueueView: View {
                         .lineLimit(1)
                     #endif
                 } else {
-                    Text("Queue")
+                    Text(KoanTheme.label("Queue"))
                         .font(.role(.body, system: .headline))
                 }
                 Text(summary)

@@ -71,6 +71,11 @@ enum EvidenceRenderer {
             ("window-queue", { nav.show(.queue) }),
             ("window-albums", { nav.show(.albums) }),
             ("window-artists", { nav.show(.artists) }),
+            ("window-tracks", { nav.show(.tracks) }),
+            ("window-favourites", { nav.show(.favourites) }),
+            ("window-recent", { nav.show(.recentlyPlayed) }),
+            ("window-history", { nav.show(.playHistory) }),
+            ("window-downloads", { nav.show(.downloads) }),
         ]
         if let album = state.player.currentAlbumId {
             windows.append(("window-album", { nav.open(album: album) }))

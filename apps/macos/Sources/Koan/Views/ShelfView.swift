@@ -189,7 +189,7 @@ struct ShelfView: View {
         VStack(alignment: .leading, spacing: 1) {
             // A television's navigation title already names the page, above.
             #if !os(tvOS)
-            Text(title)
+            Text(KoanTheme.label(title))
                 .font(.role(.titleSmall, system: .title2.weight(.semibold)))
             #endif
             Text(counts)
@@ -221,7 +221,7 @@ struct ShelfView: View {
     private func sectionHead(_ title: String, total: UInt64, list: LibraryModel.ShelfList) -> some View {
         Button { open(list) } label: {
             HStack(spacing: 6) {
-                Text(title)
+                Text(KoanTheme.label(title))
                 Text("\(total)")
                     .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                     .monospacedDigit()
