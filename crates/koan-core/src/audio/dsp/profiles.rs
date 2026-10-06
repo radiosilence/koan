@@ -1632,4 +1632,188 @@ mod tests {
         set_scope("Bass", DspScope::Device).unwrap();
         assert_eq!(kept("Bass"), DspScope::Device);
     }
+
+    /// A measurement as text: flat, with `bump` dB at 3 kHz.
+    fn measured(bump: f64) -> String {
+        let mut text = String::from("frequency,raw\n");
+        for hz in super::super::targets::grid() {
+            let db = bump * (-((hz / 3000.0).log2() * 3.0).powi(2)).exp();
+            text.push_str(&format!("{hz:.2},{db:.2}\n"));
+        }
+        text
+    }
+
+    /// A headphone measured and corrected to a target: a correction, kept
+    /// everywhere, playing target minus measurement, said in one line.
+    #[test]
+    fn a_measurement_is_corrected_to_its_target() {
+        use super::super::targets;
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let text = measured(6.0);
+        assert!(
+            read_measurement("1000,0\n").is_err(),
+            "too little to correct from"
+        );
+        let preview = preview_measurement(&text, "harman-in-ear-2019", 48000).unwrap();
+        assert!(preview.predicted.is_some() && preview.measurement.is_some());
+
+        save_measured("AFUL Performer 8S", &text, DspEar::In, "harman-in-ear-2019").unwrap();
+        assert!(
+            save_measured("AFUL Performer 8S", &text, DspEar::In, "harman-in-ear-2019").is_err()
+        );
+        let cfg = Config::cached();
+        let p = cfg
+            .dsp
+            .profiles
+            .iter()
+            .find(|p| p.name == "AFUL Performer 8S")
+            .unwrap()
+            .clone();
+        assert_eq!(role(&p), DspRole::Correction);
+        assert_eq!(scope(&p, &cfg.dsp.profiles), DspScope::Everywhere);
+        assert_eq!(
+            summary("AFUL Performer 8S").unwrap().correction.as_deref(),
+            Some("AFUL Performer 8S → Harman in-ear 2019 (from measurement)")
+        );
+
+        // What plays is the correction from the measurement to the target.
+        let r = response("AFUL Performer 8S", 48000).unwrap();
+        let at = |curve: &[f64], hz: f64| curve[r.freqs.iter().position(|f| *f >= hz).unwrap()];
+        let wanted = targets::correction(
+            &targets::parse(&text),
+            &targets::choice_curve("harman-in-ear-2019").unwrap(),
+        );
+        let expect = targets::at(&wanted.points, 3000.0);
+        assert!(
+            (at(&r.total, 3000.0) - expect).abs() < 1.0,
+            "{} vs {expect}",
+            at(&r.total, 3000.0)
+        );
+        // Held to ±3 dB in the treble, where rigs disagree.
+        assert!(
+            wanted
+                .points
+                .iter()
+                .filter(|(hz, _)| *hz >= 10_000.0)
+                .all(|(_, db)| db.abs() <= 3.0)
+        );
+
+        // Another target: the same measurement, corrected to it.
+        let choices = target_choices("AFUL Performer 8S").unwrap();
+        assert!(choices.made_for.is_none());
+        choose_target("AFUL Performer 8S", Some("harman-in-ear-2019-without-bass")).unwrap();
+        assert_eq!(
+            summary("AFUL Performer 8S").unwrap().correction.as_deref(),
+            Some("AFUL Performer 8S → Harman in-ear 2019, no bass shelf (from measurement)")
+        );
+    }
+
+    /// One correction to a chain: a second, as a layer or by its role, is
+    /// refused, naming the one already there; tuning on top is fine.
+    #[test]
+    fn a_chain_corrects_once() {
+        use crate::config::{DspLayer, DspTarget};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        persist(|c| {
+            for (name, target) in [("HD 650", true), ("HD 600", true), ("Warm", false)] {
+                c.dsp.profiles.push(DspProfile {
+                    name: name.into(),
+                    filters: vec![band(100.0)],
+                    target: target.then(|| DspTarget {
+                        made_for: "harman-over-ear-2018".into(),
+                        chosen: None,
+                    }),
+                    ..Default::default()
+                });
+            }
+        })
+        .unwrap();
+        let layer = |p: &str| DspLayer {
+            profile: p.into(),
+            on: true,
+        };
+        set_layers("Desk", vec![layer("HD 650"), layer("Warm")]).unwrap();
+        let s = summary("Desk").unwrap();
+        assert_eq!(
+            s.correction.as_deref(),
+            Some("HD 650: ready-made EQ (made for Harman over-ear 2018)")
+        );
+        assert_eq!(s.tunings, vec!["Warm".to_string()]);
+        let refused = set_layers(
+            "Desk",
+            vec![layer("HD 650"), layer("Warm"), layer("HD 600")],
+        )
+        .unwrap_err();
+        assert_eq!(
+            refused,
+            "This stack already corrects for HD 650. Remove that correction first, or add HD 600 as a tuning instead."
+        );
+        let refused = set_role("Warm", DspRole::Correction).unwrap_err();
+        assert!(
+            refused.starts_with("This stack already corrects for HD 650"),
+            "{refused}"
+        );
+        set_role("HD 600", DspRole::Tuning).unwrap();
+        set_layers(
+            "Desk",
+            vec![layer("HD 650"), layer("Warm"), layer("HD 600")],
+        )
+        .unwrap();
+    }
+
+    /// An AutoEQ correction moved to another target is rebuilt from the
+    /// measurement AutoEQ kept, rather than played as its bands and a step.
+    #[test]
+    fn autoeq_moved_to_another_target_is_rebuilt() {
+        use crate::config::{DspFilter, DspTarget};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let folder = super::dir("HD 650");
+        std::fs::create_dir_all(&folder).unwrap();
+        let mut csv = String::from("frequency,raw,target\n");
+        for hz in super::super::targets::grid() {
+            csv.push_str(&format!("{hz:.2},0.0,0.0\n"));
+        }
+        std::fs::write(super::super::targets::result_path(&folder), csv).unwrap();
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "HD 650".into(),
+                filters: vec![band(100.0), band(1000.0)],
+                target: Some(DspTarget {
+                    made_for: "harman-over-ear-2018".into(),
+                    chosen: None,
+                }),
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        let chain = || {
+            let cfg = Config::cached();
+            let p = cfg.dsp.profiles[0].clone();
+            super::super::chain(&p, &cfg.dsp.profiles, &mut Vec::new()).unwrap()
+        };
+        assert_eq!(chain().len(), 2, "AutoEQ's bands, as made");
+        choose_target("HD 650", Some("harman-over-ear-2018-without-bass")).unwrap();
+        let rebuilt = chain();
+        assert_eq!(rebuilt.len(), 1, "{rebuilt:?}");
+        assert!(matches!(rebuilt[0], DspFilter::Graphic(_)));
+        assert!(
+            summary("HD 650")
+                .unwrap()
+                .correction
+                .unwrap()
+                .contains("rebuilt from AutoEQ's measurement")
+        );
+    }
 }
