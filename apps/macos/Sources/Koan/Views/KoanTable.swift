@@ -115,7 +115,7 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         table.backgroundColor = .clear
         // The separators a SwiftUI list draws between its rows.
         table.gridStyleMask = .solidHorizontalGridLineMask
-        table.gridColor = .separatorColor
+        table.gridColor = .koanSeparator
         table.allowsMultipleSelection = true
         table.allowsTypeSelect = true
         table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle

@@ -748,7 +748,7 @@ private final class TrackItem: NSCollectionViewItem {
         // At the bottom edge; the view is not flipped.
         separator.frame = CGRect(x: 8, y: 0, width: view.bounds.width - 16, height: 1 / (view.window?.backingScaleFactor ?? 2))
         view.effectiveAppearance.performAsCurrentDrawingAppearance {
-            separator.backgroundColor = NSColor.separatorColor.cgColor
+            separator.backgroundColor = NSColor.koanSeparator.cgColor
         }
         CATransaction.commit()
         row.frame = view.bounds.insetBy(dx: 8, dy: 0)
@@ -762,7 +762,7 @@ private final class TrackItem: NSCollectionViewItem {
         let focused = view.window?.firstResponder === collectionView
         view.effectiveAppearance.performAsCurrentDrawingAppearance {
             highlight.backgroundColor = isSelected
-                ? (focused ? NSColor.selectedContentBackgroundColor : NSColor.unemphasizedSelectedContentBackgroundColor).cgColor
+                ? (focused ? NSColor.koanSelection(.selectedContentBackgroundColor) : NSColor.koanSelection(.unemphasizedSelectedContentBackgroundColor)).cgColor
                 : nil
         }
         row.backgroundStyle = isSelected && focused ? .emphasized : .normal
@@ -836,7 +836,7 @@ private final class ArtistPillItem: NSCollectionViewItem {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         view.effectiveAppearance.performAsCurrentDrawingAppearance {
-            capsule.backgroundColor = NSColor.quaternaryLabelColor.cgColor
+            capsule.backgroundColor = NSColor.koanQuaternaryLabel.cgColor
         }
         capsule.opacity = hovering ? 1 : 0.8
         mic.contents = micImage

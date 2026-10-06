@@ -115,7 +115,7 @@ The title in `body`, `ink`; secondary text in `meta`, `muted`; numbers right-ali
 
 ### Navigation row (sidebar)
 
-The label in `body`, `muted`, lowercase; with icons, the glyph before it in the same colour. Selected: `accent`, with the 2-point leading rule. Section headings in `fine`, `ink`, with 16 points above.
+The label in `body`, `muted`, lowercase; with icons, the glyph before it in the same colour. Selected: `accent`, with the 2-point leading rule. On the Mac the list keeps AppKit's own selection beneath it, which is what VoiceOver announces and the arrow keys move. Section headings in `fine`, `ink`, with 16 points above.
 
 ### Tab bar (phone)
 

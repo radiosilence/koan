@@ -215,7 +215,7 @@ private struct LibrarySettings: View {
                         } label: {
                             Image(systemName: "minus.circle")
                         }
-                        .koanButton(.icon)
+                        .koanButton(.icon, system: .borderless)
                         .help("Stop scanning this folder")
                     }
                 }
@@ -582,7 +582,7 @@ private struct RemoteSettings: View {
                     HStack {
                         Text(Format.bytes(Int64(model.settings.cacheBytes)))
                         Button("Clear") { model.clearCache() }
-                            .koanButton(.text)
+                            .koanButton(.text, system: .borderless)
                             .disabled(activity.conflicts(with: [.downloads]))
                     }
                 }
@@ -884,7 +884,7 @@ private struct AutoEqSuggestion: View {
                 }
             }
         }
-        .koanButton(.text)
+        .koanButton(.text, system: .borderless)
         .koanText(.meta)
     }
 
@@ -1131,7 +1131,7 @@ private struct ScrobblingSettings: View {
                     Text("Scrobbling to ListenBrainz as \(c.account)")
                     if let refused = c.error {
                         Label(refused, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(KoanTheme.style(.bad, system: .orange))
                         Text("Disconnect, then connect again with a current token. Plays recorded meanwhile are kept and sent.")
                             .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     } else if c.pending > 0 {
@@ -1165,7 +1165,7 @@ private struct ScrobblingSettings: View {
                 }
                 if let error {
                     Label(error, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(KoanTheme.style(.bad, system: .red))
                 }
             } header: {
                 Text("Scrobbling")
@@ -1327,7 +1327,7 @@ private struct DevicesSettings: View {
                         Button("Remove", role: .destructive) {
                             model.edit { $0.devicesAddresses.removeAll { $0 == addr } }
                         }
-                        .koanButton(.text)
+                        .koanButton(.text, system: .borderless)
                     }
                 }
                 HStack {
@@ -1353,7 +1353,7 @@ private struct DevicesSettings: View {
                             Text(account)
                             Spacer()
                             Button("Stop sharing", role: .destructive) { share(account, allow: false) }
-                                .koanButton(.text)
+                                .koanButton(.text, system: .borderless)
                         }
                     }
                     HStack {

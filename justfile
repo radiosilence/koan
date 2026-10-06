@@ -419,6 +419,7 @@ theme-leaks:
         'cornerRadius: [0-9]'
         'AnyShapeStyle\(\.(primary|secondary|tertiary)\)'
         'Color\.accentColor|Color\.koanAccent|\.controlAccentColor'
+        'foregroundStyle\(\.(orange|red)\)|[^.]\.system(Red|Orange)\b|separatorColor|selectedContentBackgroundColor|[^.]\.quaternaryLabelColor'
         'ContentUnavailableView\('
         'font: \.(caption|callout|body|subheadline|footnote|headline)\b'
         '\.shadow\(color: \.black\.opacity\([0-9]'
@@ -429,7 +430,7 @@ theme-leaks:
     found=0
     for pattern in "${patterns[@]}"; do
         hits=$(grep -rnE "$pattern" apps/macos/Sources --include='*.swift' \
-            | grep -v -e 'Support/KoanTheme.swift' -e '// theme: raw' -e 'role(\.' -e 'KoanTheme\.' -e 'Support/Graphics.swift' -e '\.pointSize')
+            | grep -v -e 'Support/KoanTheme.swift' -e '// theme: raw' -e 'role(\.' -e 'KoanTheme\.' -e 'Support/Graphics.swift' -e '\.pointSize' -e 'koanBad(' -e 'koanSelection(')
         if [ -n "$hits" ]; then
             found=1
             echo "$hits"

@@ -31,7 +31,7 @@ struct SidebarView: View {
 
         // A row is lit when the page on screen is that row. The navigator
         // owns both halves of the binding — see `sidebarSelection`.
-        List(selection: selection) {
+        List(selection: nav.sidebarSelection) {
             Section {
                 QueueRowLabel()
                     .tag(Navigator.Section.queue)
@@ -128,15 +128,6 @@ struct SidebarView: View {
         .onDisappear { ui.sidebarWidth = 0 }
     }
 
-    /// In the theme, a click still goes where the row says, but the list is
-    /// never told it holds a selection: the row where you are is marked by the
-    /// theme's leading rule and accent (`koanNavRow`), and AppKit's own
-    /// selection would draw its rounded fill over them.
-    private var selection: Binding<Navigator.Section?> {
-        guard KoanTheme.isOn else { return nav.sidebarSelection }
-        let chosen = nav.sidebarSelection
-        return Binding(get: { nil }, set: { chosen.wrappedValue = $0 })
-    }
 
     // MARK: - Playlists
 
@@ -295,11 +286,11 @@ private struct SidebarFooter: View {
                 .koanText(.fine, .muted)
             }
         }
-        // The rows' own inset at the sides, and clear of the window's rounded
-        // corner below: under a bar, nothing else keeps the text off the edge.
-        .padding(.horizontal, KoanTheme.Space.l)
-        .padding(.top, KoanTheme.Space.s)
-        .padding(.bottom, KoanTheme.Space.xl)
+        // In the theme: the rows' own inset at the sides, and clear of the
+        // window's rounded corner below. The platform's look as it was.
+        .padding(.horizontal, KoanTheme.isOn ? KoanTheme.Space.l : 14)
+        .padding(.top, KoanTheme.isOn ? KoanTheme.Space.s : 0)
+        .padding(.bottom, KoanTheme.isOn ? KoanTheme.Space.xl : 10)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

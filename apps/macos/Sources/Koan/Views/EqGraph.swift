@@ -61,7 +61,7 @@ struct EqGraph: View {
         Chart {
             if showingEq {
                 RuleMark(y: .value("dB", 0.0))
-                    .foregroundStyle(KoanTheme.style(.rule))
+                    .foregroundStyle(KoanTheme.style(.rule, system: Color.secondary.opacity(0.4)))
                     .lineStyle(StrokeStyle(lineWidth: 0.5))
                 ForEach(bandAreas) { area in
                     AreaMark(
@@ -71,7 +71,11 @@ struct EqGraph: View {
                         series: .value("Band", area.series)
                     )
                     // Each band neutral, so the accent is the curve that plays.
-                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary).opacity(0.15))
+                    .foregroundStyle(
+                        KoanTheme.isOn
+                            ? AnyShapeStyle(Color.koanMuted.opacity(0.15))
+                            : AnyShapeStyle(.tint.opacity(0.13))
+                    )
                 }
                 lines(curves: [Curve(name: "EQ", db: response.total)], color: AnyShapeStyle(.tint), width: 2)
                 ForEach(shownHandles) { h in
@@ -196,7 +200,9 @@ struct EqGraph: View {
             if showingEq {
                 key("EQ", AnyShapeStyle(.tint))
                 if !response.bands.isEmpty {
-                    key("Each band", AnyShapeStyle(KoanTheme.style(.muted, system: .secondary).opacity(0.3)))
+                    key("Each band", KoanTheme.isOn
+                        ? AnyShapeStyle(Color.koanMuted.opacity(0.3))
+                        : AnyShapeStyle(.tint.opacity(0.3)))
                 }
             } else {
                 key("Measured", KoanTheme.style(.muted))

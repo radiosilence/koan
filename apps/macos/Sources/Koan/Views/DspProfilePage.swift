@@ -336,7 +336,7 @@ private struct ScopeSection: View {
             }
             if let problem = detail.syncProblem {
                 Label(problem, systemImage: "exclamationmark.icloud")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(KoanTheme.style(.bad, system: .orange))
             }
             if let note = detail.syncNote {
                 Label(note, systemImage: "arrow.triangle.2.circlepath")

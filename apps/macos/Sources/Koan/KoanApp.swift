@@ -303,7 +303,7 @@ private struct StartupErrorView: View {
         VStack(spacing: 14) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 34, weight: .light))
-                .foregroundStyle(.orange)
+                .foregroundStyle(KoanTheme.style(.bad, system: .orange))
             Text("Couldn't open your library")
                 .font(.role(.titleSmall, system: .title3.weight(.medium)))
             Text(message)

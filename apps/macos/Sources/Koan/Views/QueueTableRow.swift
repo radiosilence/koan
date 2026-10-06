@@ -207,7 +207,7 @@ final class QueueTableRow: NSTableCellView, TableRow {
         case .priorityPending:
             statusImage = Symbol.image("arrow.down.circle", size: 10, colours: [selected ? .white : context.tint], appearance: appearance)
         case .failed:
-            statusImage = Symbol.image("exclamationmark.triangle.fill", size: 10, colours: [.systemOrange], appearance: appearance)
+            statusImage = Symbol.image("exclamationmark.triangle.fill", size: 10, colours: [NSColor.koanBad(.systemOrange)], appearance: appearance)
         case .played:
             statusImage = Symbol.image("checkmark", size: 10, colours: [selected ? .white : .koanTertiaryLabel], appearance: appearance)
         case .queued:
@@ -227,7 +227,7 @@ final class QueueTableRow: NSTableCellView, TableRow {
         heart.isHidden = content.trackId == nil || !(favourite || hovered)
         heartImage = Symbol.image(
             favourite ? "heart.fill" : "heart", size: 10,
-            colours: [favourite ? .systemRed : (selected ? .white : .koanTertiaryLabel)], appearance: appearance
+            colours: [favourite ? NSColor.koanBad(.systemRed) : (selected ? .white : .koanTertiaryLabel)], appearance: appearance
         )
         CATransaction.commit()
 

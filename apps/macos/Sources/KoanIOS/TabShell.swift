@@ -384,10 +384,8 @@ private struct Transport: ViewModifier {
         .padding(.top, 10)
         .padding(.bottom, 4)
         .frame(minHeight: 64, alignment: .top)
-        // A tab bar to VoiceOver, which then says "tab, 2 of 4"; and capped,
-        // as the platform's is, with the large content viewer past the cap.
-        .accessibilityElement(children: .contain)
-        .accessibilityAddTraits(.isTabBar)
+        // Capped, as the platform's bar is, with the large content viewer
+        // past the cap.
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         // The underline slides to the tab chosen; the page itself swaps at once.
         .koanAnimation(KoanTheme.Motion.normal, value: selection)

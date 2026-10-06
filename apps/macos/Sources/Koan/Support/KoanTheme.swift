@@ -274,6 +274,14 @@ extension NSColor {
     @MainActor static var koanSecondaryLabel: NSColor { KoanTheme.isOn ? koanMuted : .secondaryLabelColor }
     @MainActor static var koanTertiaryLabel: NSColor { KoanTheme.isOn ? koanMuted : .tertiaryLabelColor }
     @MainActor static var koanQuaternaryLabel: NSColor { KoanTheme.isOn ? koanRule : .quaternaryLabelColor }
+    static let koanBadToken = koan(dark: 0xEF6B73, light: 0xC43F3F)
+    /// Errors, warnings and hearts: `bad` in the theme, the given system
+    /// colour otherwise.
+    @MainActor static func koanBad(_ system: NSColor) -> NSColor { KoanTheme.isOn ? koanBadToken : system }
+    /// Hairlines between rows: `rule` in the theme.
+    @MainActor static var koanSeparator: NSColor { KoanTheme.isOn ? koanRule : .separatorColor }
+    /// A selected item's ground: `surface` in the theme.
+    @MainActor static func koanSelection(_ system: NSColor) -> NSColor { KoanTheme.isOn ? koanSurface : system }
 
     fileprivate static func rgb(_ hex: UInt32) -> NSColor {
         NSColor(
@@ -687,10 +695,15 @@ extension View {
         modifier(KoanRuleRole(edge: edge, inset: inset))
     }
 
-    /// One of the theme's buttons. In the platform's look, the nearest system
-    /// style.
+    /// One of the theme's buttons. In the platform's look, the button as it
+    /// was: whatever style it already had, or inherits.
     func koanButton(_ kind: KoanButtonKind) -> some View {
-        modifier(KoanButtonRole(kind: kind))
+        modifier(KoanButtonRole(kind: kind, system: Optional<DefaultButtonStyle>.none))
+    }
+
+    /// One of the theme's buttons, and exactly `system` in the platform's look.
+    func koanButton<S: PrimitiveButtonStyle>(_ kind: KoanButtonKind, system: S) -> some View {
+        modifier(KoanButtonRole(kind: kind, system: system))
     }
 
     /// The theme's buttons of one kind for everything inside, leaving the
@@ -910,19 +923,17 @@ private struct KoanRuleRole: ViewModifier {
     }
 }
 
-private struct KoanButtonRole: ViewModifier {
+private struct KoanButtonRole<S: PrimitiveButtonStyle>: ViewModifier {
     let kind: KoanButtonKind
+    let system: S?
 
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
             content.buttonStyle(KoanButtonStyle(kind: kind))
+        } else if let system {
+            content.buttonStyle(system)
         } else {
-            switch kind {
-            case .primary: content.buttonStyle(.borderedProminent)
-            case .secondary: content.buttonStyle(.bordered)
-            case .text: content.buttonStyle(.borderless)
-            case .icon, .iconOutlined, .card: content.buttonStyle(.plain)
-            }
+            content
         }
     }
 }
@@ -1214,6 +1225,7 @@ private struct KoanNavRowRole: ViewModifier {
                         if selected { Rectangle().fill(.tint).frame(width: 2) }
                     }
                 )
+                .accessibilityAddTraits(selected ? .isSelected : [])
         } else {
             content
         }
