@@ -25,7 +25,12 @@ struct DspProfilePage: View {
 
             if let d = detail {
                 if let r = response {
-                    Section { EqGraph(response: r) }
+                    Section {
+                        EqGraph(response: r, handles: BandTable.handles(d.bands)) { index, hz, db in
+                            let b = d.bands[index]
+                            dsp.setBand(name, index, kind: b.kind, freq: hz, gain: db, q: b.q)
+                        }
+                    }
                 }
                 if let problem = d.problem {
                     Section {
@@ -69,13 +74,7 @@ struct DspProfilePage: View {
                     }
                 }
 
-                if !d.bands.isEmpty {
-                    Section("Filters") {
-                        ForEach(Array(d.bands.enumerated()), id: \.offset) { _, band in
-                            BandRow(band: band)
-                        }
-                    }
-                }
+                BandTable(dsp: dsp, profile: name, bands: d.bands)
 
                 Section {
                     LabeledContent("Preamp", value: "\(String(format: "%.1f", d.preampDb)) dB")
@@ -319,7 +318,7 @@ private struct ImpulseRow: View {
     }
 }
 
-private struct BandRow: View {
+struct BandRow: View {
     let band: DspBand
 
     var body: some View {

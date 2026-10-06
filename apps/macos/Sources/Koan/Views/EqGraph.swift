@@ -8,9 +8,26 @@ import SwiftUI
 /// measured, the target it plays to, and the measurement corrected. Every
 /// curve comes from the core, computed from the filters the DSP runs; this
 /// only draws them.
+///
+/// Given `handles`, each band has a point at its frequency and gain that can
+/// be dragged; `onDrag` is told where it was let go, and the curves follow
+/// once the profile has been changed and drawn again.
 struct EqGraph: View {
     let response: DspResponse
+    var handles: [Handle] = []
+    var onDrag: ((Int, Double, Double) -> Void)?
+
+    /// A band's point: its index among the profile's filters, and where it is.
+    struct Handle: Identifiable, Equatable {
+        let index: Int
+        let hz: Double
+        let db: Double
+        var id: Int { index }
+    }
+
     @State private var view: Shown = .eq
+    /// The handle being dragged, and where it is now.
+    @State private var dragging: Handle?
 
     enum Shown: String, CaseIterable, Identifiable {
         case eq = "EQ"
@@ -19,6 +36,8 @@ struct EqGraph: View {
     }
 
     private var measured: Bool { response.measurement != nil }
+    private var showingEq: Bool { view == .eq || !measured }
+    private static let accent = Color.koanAccent
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -39,33 +58,38 @@ struct EqGraph: View {
 
     private var chart: some View {
         Chart {
-            if view == .eq || !measured {
-                RuleMark(y: .value("0 dB", 0))
-                    .foregroundStyle(.secondary.opacity(0.4))
+            if showingEq {
+                RuleMark(y: .value("dB", 0.0))
+                    .foregroundStyle(Color.secondary.opacity(0.4))
                     .lineStyle(StrokeStyle(lineWidth: 0.5))
-                ForEach(Array(response.bands.enumerated()), id: \.offset) { index, band in
-                    ForEach(points(band.db), id: \.hz) { p in
-                        AreaMark(
-                            x: .value("Hz", p.hz),
-                            yStart: .value("dB", 0.0),
-                            yEnd: .value("dB", p.db),
-                            series: .value("Band", "band-\(index)")
-                        )
-                        .foregroundStyle(Color.koanAccent.opacity(0.13))
-                        .interpolationMethod(.monotone)
-                    }
+                ForEach(bandAreas) { area in
+                    AreaMark(
+                        x: .value("Hz", area.hz),
+                        yStart: .value("dB", 0.0),
+                        yEnd: .value("dB", area.db),
+                        series: .value("Band", area.series)
+                    )
+                    .foregroundStyle(Self.accent.opacity(0.13))
                 }
-                line(response.total, "EQ", .koanAccent, width: 2)
+                lines(curves: [Curve(name: "EQ", db: response.total)], color: Self.accent, width: 2)
+                ForEach(shownHandles) { h in
+                    PointMark(x: .value("Hz", h.hz), y: .value("dB", h.db))
+                        .symbolSize(h.index == dragging?.index ? 120 : 60)
+                        .foregroundStyle(Self.accent)
+                }
             } else {
-                if let m = response.measurement { line(m, "Measured", .secondary, width: 1.2) }
-                if let t = response.target { line(t, "Target", .primary.opacity(0.55), width: 1.2, dashed: true) }
-                if let p = response.predicted { line(p, "Corrected", .koanAccent, width: 2) }
+                lines(curves: response.measurement.map { [Curve(name: "Measured", db: $0)] } ?? [],
+                      color: Color.secondary, width: 1.2)
+                lines(curves: response.target.map { [Curve(name: "Target", db: $0)] } ?? [],
+                      color: Color.primary.opacity(0.55), width: 1.2, dashed: true)
+                lines(curves: response.predicted.map { [Curve(name: "Corrected", db: $0)] } ?? [],
+                      color: Self.accent, width: 2)
             }
         }
         .chartXScale(domain: 20.0 ... 20000.0, type: .log)
         .chartYScale(domain: yDomain)
         .chartXAxis {
-            AxisMarks(values: [20.0, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]) { value in
+            AxisMarks(values: Self.hzTicks) { value in
                 AxisGridLine()
                 AxisValueLabel {
                     if let hz = value.as(Double.self) { Text(Self.hzLabel(hz)) }
@@ -81,36 +105,92 @@ struct EqGraph: View {
             }
         }
         .chartLegend(.hidden)
-        .accessibilityLabel(view == .eq ? "EQ response" : "Headphone response")
+        .chartOverlay { proxy in
+            if showingEq, onDrag != nil {
+                GeometryReader { geo in
+                    Rectangle()
+                        .fill(Color.clear)
+                        .contentShape(Rectangle())
+                        .gesture(drag(proxy, geo))
+                }
+            }
+        }
+        .accessibilityLabel(showingEq ? "EQ response" : "Headphone response")
     }
 
-    @ChartContentBuilder
-    private func line(
-        _ db: [Double],
-        _ name: String,
-        _ color: some ShapeStyle,
+    private struct Curve {
+        let name: String
+        let db: [Double]
+    }
+
+    private func lines(
+        curves: [Curve],
+        color: Color,
         width: CGFloat,
         dashed: Bool = false
     ) -> some ChartContent {
-        ForEach(points(db), id: \.hz) { p in
+        ForEach(curves.flatMap { curve in points(curve.db).map { (curve.name, $0) } }, id: \.1.id) { name, p in
             LineMark(x: .value("Hz", p.hz), y: .value("dB", p.db), series: .value("Curve", name))
                 .foregroundStyle(color)
                 .lineStyle(StrokeStyle(lineWidth: width, dash: dashed ? [4, 3] : []))
-                .interpolationMethod(.monotone)
         }
+    }
+
+    // MARK: - Dragging a band
+
+    private var shownHandles: [Handle] {
+        handles.map { h in dragging?.index == h.index ? dragging! : h }
+    }
+
+    private func drag(_ proxy: ChartProxy, _ geo: GeometryProxy) -> some Gesture {
+        DragGesture(minimumDistance: 2)
+            .onChanged { g in
+                guard let plot = proxy.plotFrame else { return }
+                let origin = geo[plot].origin
+                let at = CGPoint(x: g.location.x - origin.x, y: g.location.y - origin.y)
+                if dragging == nil {
+                    let start = CGPoint(x: g.startLocation.x - origin.x, y: g.startLocation.y - origin.y)
+                    dragging = nearest(to: start, proxy)
+                }
+                guard let held = dragging,
+                      let hz: Double = proxy.value(atX: at.x),
+                      let db: Double = proxy.value(atY: at.y)
+                else { return }
+                dragging = Handle(
+                    index: held.index,
+                    hz: min(max(hz, 20), 20000),
+                    db: min(max(db, yDomain.lowerBound), yDomain.upperBound)
+                )
+            }
+            .onEnded { _ in
+                if let held = dragging { onDrag?(held.index, held.hz, held.db) }
+                dragging = nil
+            }
+    }
+
+    /// The handle under `point`, within a finger's width of it.
+    private func nearest(to point: CGPoint, _ proxy: ChartProxy) -> Handle? {
+        handles
+            .compactMap { h -> (Handle, CGFloat)? in
+                guard let at = proxy.position(for: (x: h.hz, y: h.db)) else { return nil }
+                return (h, hypot(at.x - point.x, at.y - point.y))
+            }
+            .filter { $0.1 < 24 }
+            .min { $0.1 < $1.1 }?
+            .0
     }
 
     // MARK: - The legend
 
     @ViewBuilder private var legend: some View {
         HStack(spacing: 14) {
-            if view == .eq || !measured {
-                key("EQ", .koanAccent)
-                if !response.bands.isEmpty { key("Each band", Color.koanAccent.opacity(0.3)) }
+            if showingEq {
+                key("EQ", Self.accent)
+                if !response.bands.isEmpty { key("Each band", Self.accent.opacity(0.3)) }
             } else {
-                key("Measured", .secondary)
-                key("Target", .primary.opacity(0.55), dashed: true)
-                key("Corrected", .koanAccent)
+                key("Measured", Color.secondary)
+                key("Target", Color.primary.opacity(0.55), dashed: true)
+                key("Corrected", Self.accent)
             }
             Spacer()
             Text("Preamp \(String(format: "%.1f", response.preampDb)) dB")
@@ -120,7 +200,7 @@ struct EqGraph: View {
         .font(.caption)
     }
 
-    private func key(_ name: String, _ color: some ShapeStyle, dashed: Bool = false) -> some View {
+    private func key(_ name: String, _ color: Color, dashed: Bool = false) -> some View {
         HStack(spacing: 5) {
             Capsule()
                 .stroke(color, style: StrokeStyle(lineWidth: 2, dash: dashed ? [3, 2] : []))
@@ -131,18 +211,37 @@ struct EqGraph: View {
 
     // MARK: - Data
 
-    struct Point { let hz: Double; let db: Double }
+    struct Point: Identifiable {
+        let id: Int
+        let hz: Double
+        let db: Double
+    }
+
+    private struct Area: Identifiable {
+        let id: Int
+        let series: String
+        let hz: Double
+        let db: Double
+    }
 
     /// Every third point of AutoEQ's grid: about 230, a pixel apart at
     /// most widths, and a third of the marks to lay out.
     private func points(_ db: [Double]) -> [Point] {
         stride(from: 0, to: min(db.count, response.freqs.count), by: 3).map {
-            Point(hz: response.freqs[$0], db: db[$0])
+            Point(id: $0, hz: response.freqs[$0], db: db[$0])
+        }
+    }
+
+    private var bandAreas: [Area] {
+        response.bands.enumerated().flatMap { band, curve in
+            points(curve.db).map { p in
+                Area(id: band * 10_000 + p.id, series: "band-\(band)", hz: p.hz, db: p.db)
+            }
         }
     }
 
     private var shown: [[Double]] {
-        if view == .eq || !measured { return [response.total] + response.bands.map(\.db) }
+        if showingEq { return [response.total] + response.bands.map(\.db) + [handles.map(\.db)] }
         return [response.measurement, response.target, response.predicted].compactMap { $0 }
     }
 
@@ -156,6 +255,8 @@ struct EqGraph: View {
     }
 
     private var yStride: Double { (yDomain.upperBound - yDomain.lowerBound) > 30 ? 10 : 6 }
+
+    private static let hzTicks: [Double] = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]
 
     static func hzLabel(_ hz: Double) -> String {
         hz >= 1000 ? "\(Int(hz / 1000))k" : "\(Int(hz))"

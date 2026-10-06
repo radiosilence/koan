@@ -4,6 +4,7 @@
 
 ### Added
 
+- **An EQ page with a graph of what plays.** The Mac and iOS apps' EQ settings, and each profile's page, draw the response of the filters the DSP runs, each band behind the total, and for an AutoEQ correction the headphone as measured against its target and corrected. Parametric bands are edited in a table (type, frequency, gain, Q) or by dragging them on the graph, and heard at once.
 - **Layered EQ.** A profile can play others first, in order, each switched on or off: a headphone's correction, then a bass shelf or a tilt on top, without editing the correction itself.
 - **Choose a target for an AutoEQ correction.** A headphone installed from AutoEQ can be moved from the target it was made for to another: Harman over-ear 2018 or in-ear 2019 (with or without their bass shelf), oratory1990's, AutoEQ's in-ear, or diffuse field, each described in the picker. The difference between the two plays after the correction. A target of your own can be added from a CSV or a squig.link export.
 - **Find in AutoEQ by maker and model,** before anything is typed, and AutoEQ offered for headphones whose own names leave the maker out, where the name still says which model and generation they are (Sony WH-1000XM4, AirPods Max). A name that says only roughly (AirPods Pro, a Bose QC45) is offered a search for the model instead, to pick the variant from.

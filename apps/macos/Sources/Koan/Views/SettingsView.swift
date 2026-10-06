@@ -616,23 +616,29 @@ private struct PlaybackSettings: View {
 struct EqSettings: View {
     @Environment(AppState.self) private var app
     @State private var response: DspResponse?
+    @State private var detail: DspProfileDetail?
 
     private var active: String? { app.dsp.overview?.active }
 
     var body: some View {
         Form {
-            if let active, let response {
+            if let active, let response, let detail {
                 Section {
-                    EqGraph(response: response)
+                    EqGraph(response: response, handles: BandTable.handles(detail.bands)) { index, hz, db in
+                        let b = detail.bands[index]
+                        app.dsp.setBand(active, index, kind: b.kind, freq: hz, gain: db, q: b.q)
+                    }
                 } header: {
                     Text(active)
                 }
+                BandTable(dsp: app.dsp, profile: active, bands: detail.bands)
             }
             DspSettings()
         }
         .formStyle(.grouped)
         .task(id: "\(active ?? "")\u{0}\(app.dsp.version)") {
             response = if let active { await app.dsp.response(active) } else { nil }
+            detail = if let active { await app.dsp.detail(active) } else { nil }
         }
     }
 }

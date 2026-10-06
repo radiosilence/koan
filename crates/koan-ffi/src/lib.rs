@@ -2567,6 +2567,57 @@ impl KoanEngine {
         .await
     }
 
+    /// Set filter `index` of `name`, a parametric band, to `kind` at `freq`,
+    /// `gain_db` and `q`, held within the ranges a band may have.
+    pub async fn dsp_set_band(
+        self: Arc<Self>,
+        name: String,
+        index: u32,
+        kind: String,
+        freq: f64,
+        gain_db: f64,
+        q: f64,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::set_band(
+                &name,
+                index as usize,
+                &kind,
+                freq,
+                gain_db,
+                q,
+            )
+            .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// Add a flat band at 1 kHz to `name`; its index among the filters.
+    pub async fn dsp_add_band(self: Arc<Self>, name: String) -> Result<u32, KoanError> {
+        offload::sequenced(move || {
+            let index = koan_core::audio::dsp::profiles::add_band(&name)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)?;
+            Ok(index as u32)
+        })
+        .await
+    }
+
+    /// Take filter `index` out of `name`.
+    pub async fn dsp_remove_filter(
+        self: Arc<Self>,
+        name: String,
+        index: u32,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::remove_filter(&name, index as usize)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
     /// What `name` does to the sound at `rate`, for drawing. `None` for a
     /// profile that is not there or would not play.
     pub async fn dsp_response(self: Arc<Self>, name: String, rate: u32) -> Option<DspResponse> {

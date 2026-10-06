@@ -423,6 +423,93 @@ pub fn assign(name: Option<&str>, device: &str) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+/// The ranges a band edited by hand is held to: the audible band, what a
+/// correction plausibly asks, and Q from very broad to very narrow.
+const BAND_HZ: std::ops::RangeInclusive<f64> = 10.0..=22_000.0;
+const BAND_DB: std::ops::RangeInclusive<f64> = -30.0..=30.0;
+const BAND_Q: std::ops::RangeInclusive<f64> = 0.1..=20.0;
+
+fn clamp(v: f64, r: &std::ops::RangeInclusive<f64>) -> Result<f64, String> {
+    if !v.is_finite() {
+        return Err("Not a number".into());
+    }
+    Ok(v.clamp(*r.start(), *r.end()))
+}
+
+/// Set filter `index` of `name`, a parametric band, to `kind` at `freq`,
+/// `gain_db` and `q`, held within the ranges a band may have. Its channels
+/// are kept. Delays, mixes and graphic curves are not edited this way.
+pub fn set_band(
+    name: &str,
+    index: usize,
+    kind: &str,
+    freq: f64,
+    gain_db: f64,
+    q: f64,
+) -> Result<(), String> {
+    use crate::config::{DspFilter, EqFilterKind};
+    let kind: EqFilterKind = serde_json::from_value(serde_json::Value::String(kind.into()))
+        .map_err(|_| format!("No band type called {kind}"))?;
+    let (freq, gain_db, q) = (
+        clamp(freq, &BAND_HZ)?,
+        clamp(gain_db, &BAND_DB)?,
+        clamp(q, &BAND_Q)?,
+    );
+    let mut found = Err(format!("{name} has no band {}", index + 1));
+    persist(|cfg| {
+        if let Some(DspFilter::Band(b)) = cfg
+            .dsp
+            .profiles
+            .iter_mut()
+            .find(|p| p.name == name)
+            .and_then(|p| p.filters.get_mut(index))
+        {
+            (b.kind, b.freq, b.gain_db, b.q) = (kind, freq, gain_db, q);
+            found = Ok(());
+        }
+    })
+    .map_err(|e| e.to_string())?;
+    found
+}
+
+/// Add a band to `name`: flat, at 1 kHz, for shaping from there. Answers
+/// with its index among the profile's filters.
+pub fn add_band(name: &str) -> Result<usize, String> {
+    use crate::config::{DspFilter, EqFilter, EqFilterKind};
+    if !Config::cached().dsp.profiles.iter().any(|p| p.name == name) {
+        return Err(format!("No profile called {name}"));
+    }
+    let mut index = 0;
+    persist(|cfg| {
+        let p = profile_mut(&mut cfg.dsp.profiles, name);
+        p.filters.push(DspFilter::Band(EqFilter {
+            kind: EqFilterKind::Peaking,
+            freq: 1000.0,
+            gain_db: 0.0,
+            q: 1.0,
+            channels: vec![],
+        }));
+        index = p.filters.len() - 1;
+    })
+    .map_err(|e| e.to_string())?;
+    Ok(index)
+}
+
+/// Take filter `index` out of `name`.
+pub fn remove_filter(name: &str, index: usize) -> Result<(), String> {
+    let mut found = Err(format!("{name} has no filter {}", index + 1));
+    persist(|cfg| {
+        if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name)
+            && index < p.filters.len()
+        {
+            p.filters.remove(index);
+            found = Ok(());
+        }
+    })
+    .map_err(|e| e.to_string())?;
+    found
+}
+
 /// What a profile does to the sound, for drawing: every curve on AutoEQ's
 /// grid, in dB.
 #[derive(Debug, Clone, PartialEq)]
@@ -965,5 +1052,54 @@ mod tests {
         let r = response("Both", 48000).unwrap();
         assert!(at(&r, &r.total, 30.0).abs() < 0.3, "the shelf off");
         assert!(!r.layers[0].on);
+    }
+
+    /// A band edited by hand is held to its ranges, keeps its channels, and
+    /// changes what plays; one added starts flat; one taken out is gone.
+    #[test]
+    fn bands_are_edited_in_place() {
+        use crate::config::{DspFilter, EqFilter, EqFilterKind};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Mine".into(),
+                filters: vec![DspFilter::Band(EqFilter {
+                    kind: EqFilterKind::Peaking,
+                    freq: 100.0,
+                    gain_db: 3.0,
+                    q: 1.0,
+                    channels: vec![1],
+                })],
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        set_band("Mine", 0, "low_shelf", 80.0, 99.0, 0.0).unwrap();
+        let filters = || detail("Mine").unwrap().filters;
+        assert_eq!(
+            filters()[0],
+            DspFilter::Band(EqFilter {
+                kind: EqFilterKind::LowShelf,
+                freq: 80.0,
+                gain_db: 30.0,
+                q: 0.1,
+                channels: vec![1],
+            })
+        );
+        assert!(set_band("Mine", 0, "wobble", 80.0, 0.0, 1.0).is_err());
+        assert!(set_band("Mine", 0, "peaking", f64::NAN, 0.0, 1.0).is_err());
+        assert!(set_band("Mine", 5, "peaking", 80.0, 0.0, 1.0).is_err());
+        assert_eq!(add_band("Mine").unwrap(), 1);
+        assert_eq!(filters().len(), 2);
+        let r = response("Mine", 48000).unwrap();
+        assert_eq!(r.bands.len(), 2);
+        remove_filter("Mine", 0).unwrap();
+        assert_eq!(filters().len(), 1);
+        assert!(remove_filter("Mine", 3).is_err());
+        assert!(add_band("Nobody").is_err());
     }
 }

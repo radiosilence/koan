@@ -242,6 +242,23 @@ final class DspModel {
         act { try await $0.dspSetLayers(name: name, layers: layers) }
     }
 
+    /// Set band `index` of `name`.
+    func setBand(_ name: String, _ index: Int, kind: String, freq: Double, gain: Double, q: Double) {
+        act {
+            try await $0.dspSetBand(
+                name: name, index: UInt32(index), kind: kind, freq: freq, gainDb: gain, q: q
+            )
+        }
+    }
+
+    func addBand(_ name: String) {
+        act { _ = try await $0.dspAddBand(name: name) }
+    }
+
+    func removeFilter(_ name: String, _ index: Int) {
+        act { try await $0.dspRemoveFilter(name: name, index: UInt32(index)) }
+    }
+
     /// What `name` does to the sound, at 48 kHz, for the graph.
     func response(_ name: String) async -> DspResponse? {
         await engine.dspResponse(name: name, rate: 48000)
