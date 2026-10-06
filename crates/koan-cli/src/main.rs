@@ -346,6 +346,16 @@ enum DspCommands {
     /// The target a ready-made EQ was made for, or `unknown`, which leaves
     /// target switching off
     MadeFor { name: String, target: String },
+    /// Play a tuning on top of an output's correction (the current output by
+    /// default), or `none`
+    Tuning {
+        name: String,
+        #[arg(long)]
+        device: Option<String>,
+    },
+    /// The target a tuning was made against, or `unknown`. On headphones
+    /// corrected to another, the difference plays first
+    TunedFor { name: String, target: String },
     /// Make a profile a stack of others, played in the order given: a
     /// headphone's correction, then taste on top. Creates it if need be
     Stack { name: String, layers: Vec<String> },
@@ -648,6 +658,13 @@ fn main() {
             DspCommands::MadeFor { name, target } => {
                 commands::cmd_dsp_made_for(&name, Some(target.as_str()).filter(|t| *t != "unknown"))
             }
+            DspCommands::Tuning { name, device } => {
+                commands::cmd_dsp_tuning(Some(name.as_str()).filter(|n| *n != "none"), device)
+            }
+            DspCommands::TunedFor { name, target } => commands::cmd_dsp_tuned_for(
+                &name,
+                Some(target.as_str()).filter(|t| *t != "unknown"),
+            ),
             DspCommands::Stack { name, layers } => commands::cmd_dsp_stack(&name, &layers),
             DspCommands::Layer {
                 stack,

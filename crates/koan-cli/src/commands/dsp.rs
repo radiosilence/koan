@@ -38,6 +38,8 @@ pub fn cmd_dsp_list() {
     for p in &o.profiles {
         let marker = if o.active.as_ref() == Some(&p.name) {
             " *".yellow().bold().to_string()
+        } else if o.tuning.as_ref() == Some(&p.name) {
+            " + tuning".yellow().to_string()
         } else {
             String::new()
         };
@@ -281,6 +283,31 @@ pub fn cmd_dsp_made_for(name: &str, target: Option<&str>) {
             profiles::target_name(t)
         ),
         None => println!("'{}' was made for an unknown target", name.bold()),
+    }
+}
+
+/// Play `tuning` on top of `device`'s correction (the current output if not
+/// named), or none.
+pub fn cmd_dsp_tuning(tuning: Option<&str>, named: Option<String>) {
+    let device = device(named);
+    profiles::set_tuning(&device, tuning).unwrap_or_else(|e| fail(e));
+    match tuning {
+        Some(t) => println!("{} plays '{}' on top", device.bold(), t.bold()),
+        None => println!("{} plays no tuning", device.bold()),
+    }
+}
+
+/// Record the target the tuning `name` was made against, or that it is not
+/// known.
+pub fn cmd_dsp_tuned_for(name: &str, target: Option<&str>) {
+    profiles::set_tuned_for(name, target).unwrap_or_else(|e| fail(e));
+    match target {
+        Some(t) => println!(
+            "'{}' was made against {}",
+            name.bold(),
+            profiles::target_name(t)
+        ),
+        None => println!("'{}' plays as it is on any correction", name.bold()),
     }
 }
 
