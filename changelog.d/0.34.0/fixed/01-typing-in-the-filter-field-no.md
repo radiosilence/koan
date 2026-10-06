@@ -1,0 +1,4 @@
+- **Typing in the filter field no longer throws you out of it.** The first keystroke re-ran the whole window, and the toolbar rebuilt the field with it — so the filter applied and focus went with the old field. Two reads caused it: the menus asked whether anyone was typing from the Scene body, which is the whole window, and the field read the filter back in `RootView`, where SwiftUI charged it to the root.
+
+  The same mistake ran through the rest of the window. Every letter typed into the search box re-ran the root and the whole sidebar, and a pause, a toast or a download ticking over re-ran one or the other. Each is now read by the view that draws it — the menu items, the filter field, the sidebar's Queue and Downloads rows, its footer, the toasts, the wash behind the window — and a keystroke reaches the field and what shows the results, nothing else.
+

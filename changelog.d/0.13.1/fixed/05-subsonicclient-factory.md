@@ -1,0 +1,1 @@
+- **SubsonicClient factory** — single `subsonic_client()` helper replaces 9 manual construction sites, 30s timeout on all HTTP clients

@@ -1,0 +1,1 @@
+- Constant-time password comparison in Subsonic API (fixes timing attack).

@@ -1,0 +1,1 @@
+- **Play starts the queue when nothing is loaded.** After a start that failed, or a session restored stopped, play and resume did nothing until a track was double-clicked: there was no playback to resume. They now start the track under the cursor.

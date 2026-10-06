@@ -1,0 +1,1 @@
+- **Animation timing** — all visualizer animations now use actual frame delta time instead of hardcoded 1/60. Consistent speed at 30fps, 60fps, or 120fps.

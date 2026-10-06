@@ -1,0 +1,1 @@
+- **Empty file handling** — scanner skips 0-byte files with a clear error instead of confusing "probe reach EOF" messages

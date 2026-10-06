@@ -1,0 +1,1 @@
+- **The web UI's sign-in shares the server's ceiling on password checks.** It ran argon2 with only a per-address limit, so requests from many addresses could run any number of checks at once. It now goes through the same verifier as the Subsonic API and `/auth/login`.

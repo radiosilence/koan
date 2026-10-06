@@ -1,0 +1,1 @@
+- **The playing position is saved without rewriting the queue.** It shared a row with the saved queue, which SQLite rewrites whenever the row changes size, as it does on every track change and when the position passes 32.8 seconds. It now has a table of its own. The queue itself is rewritten only when its contents change, not on every track change or finished download.

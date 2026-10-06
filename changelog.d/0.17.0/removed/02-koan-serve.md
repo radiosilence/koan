@@ -1,0 +1,1 @@
+- **`koan serve`** — replaced by `koan --headless`

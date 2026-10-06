@@ -1,0 +1,1 @@
+- **A track menu in the web UI.** Right-click a track row, or press and hold it on a phone, for what the apps' context menu offers: Play, Play Next, Add to Queue, favourite, share, Go to Album and Go to Artist. On a phone a row shows only a ⋯ button for it, so its title has the width.

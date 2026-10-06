@@ -1,0 +1,1 @@
+The library database moves from schema 16 to 19 (new tables for ratings, bookmarks, scrobbling and smart playlists, and the play history table rebuilt for sharing between devices; every existing row is kept as it was). Builds older than 0.54.0 refuse a schema-19 database, so going back means restoring a copy taken before upgrading.

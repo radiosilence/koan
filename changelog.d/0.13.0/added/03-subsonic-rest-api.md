@@ -1,0 +1,1 @@
+- **Subsonic REST API** — 22 endpoints for third-party client compatibility (play:Sub, Amperfy). Browsing, search, streaming with Range support, cover art, star/unstar, scrobble, playlists (mapped to snapshots), genres. XML + JSON, MD5+salt auth. Proxy streaming for remote tracks

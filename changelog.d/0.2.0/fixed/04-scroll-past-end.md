@@ -1,0 +1,1 @@
+- **Scroll past end** — queue scroll clamps correctly

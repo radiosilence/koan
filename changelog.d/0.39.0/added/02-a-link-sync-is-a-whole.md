@@ -1,0 +1,1 @@
+- **A link sync is a whole sync.** It pulled the library only; it now also reconciles favourites and playlists, as the app's own sync does, so a playlist made on the server appears.

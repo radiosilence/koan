@@ -1,12 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.58.0
 
-The library database moves from schema 20 to 21. The upgrade only adds tables: the EQ profiles a server keeps for its accounts, and a device's record of what it synced. Every existing row is kept as it was, and the upgrade runs in one transaction. Builds older than this one refuse a schema-21 database, so going back means restoring a copy taken before upgrading.
+The library database moves from schema 19 to 20 (new tables for Subsonic saved play queues; every existing row is kept). Upgrades now run in one transaction and roll back whole if any step fails, and a server finding the database newer than it knows drains and exits. Builds older than 0.58.0 refuse a schema-20 database, so going back means restoring a copy taken before upgrading.
 
 ### Added
-
-- **EQ profiles on every device.** Signed in to a kōan server, a profile kept On every device is synced to the account's other devices: filters, preamp, target, layers and its files, but not which output plays it. AutoEQ corrections and profiles of bands go everywhere until chosen otherwise; room and speaker corrections stay on their device, as does everything a device had before it first synced, unless it came from AutoEQ. The later change to a profile wins, deletions reach every device, and a stack kept everywhere cannot layer a profile kept on one device. The server offers this as `koanDspProfiles`, reached only with the account's password or an API key.
 
 - **Scrobbling is set up in the apps.** Settings → Server → Scrobbling in the Mac and iOS apps connects the account's ListenBrainz with its user token, shows how many plays are waiting and any token ListenBrainz stopped accepting, and disconnects; the Apple TV shows the connection. It is offered where the server lists the `koanScrobbling` extension, through which the server checks and keeps the token and never returns it. The web UI's Scrobbling page does the same.
 - **Assistants in the apps.** Settings → Server shows the server's MCP address to copy and links to its page on connecting Claude or another assistant, where the server knows its public address (`sharing.public_url`). The server offers this as `koanMcp`.
@@ -26,7 +24,6 @@ The library database moves from schema 20 to 21. The upgrade only adds tables: t
 
 ### Changed
 
-- **EQ profiles play within fixed bounds, and DSP output never passes full scale.** A preamp set by hand is lowered when the profile's filters or impulse response would push the peak above full scale, so a profile with a 0 dB preamp over a boost, or a room correction whose response peaks above 0 dB, plays quieter after upgrading; its page shows "preamp −X dB for headroom". Every profile is held within the bounds in [Bounds](docs/guide/dsp.md#bounds): values clamped, and at most two seconds of delay and two graphic curves a channel, eight mixes, and impulse responses of 262,145 taps. A moved target counts as a graphic curve and is the one dropped past the count. Each profile's page says what was adjusted. Whatever the chain puts out is held within full scale, with anything that is not a number turned to silence.
 - **A schema upgrade is one transaction, and stops an older server sharing the database.** A migration that fails part way leaves the database as it was, and another process reading meanwhile sees the old schema or the new one. A server whose database a newer koan has upgraded under it stops handing out connections, drains and exits, so it never writes to a schema it does not know.
 
 ### Fixed

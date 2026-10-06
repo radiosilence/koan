@@ -1,0 +1,1 @@
+- **A sync that could not write some tracks says so and tries again.** Failed track writes were logged but not counted, so the sync reported nothing failed and an incremental one moved its high-water mark past them. They now count as failures, which leaves the mark where it was.

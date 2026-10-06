@@ -1,0 +1,1 @@
+- **The Live Activity's buttons go by the server first.** iOS runs them without waking the app, whose link is then most likely dead, and a command put into it was lost. The server knows whether the device is linked and wakes it if not; a device only on the local network is still reached directly.

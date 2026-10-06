@@ -1,0 +1,1 @@
+- **N+1 query elimination** — genre/favourite filtering uses batch SQL instead of per-item calls ([#64](https://github.com/radiosilence/koan/pull/64))

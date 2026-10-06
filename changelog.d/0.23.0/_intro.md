@@ -1,0 +1,1 @@
+Groundwork for the upcoming browser SPA: full GraphQL schema for web clients, real-time subscriptions, cookie auth, and configurable CORS. Subsonic streaming now rides the GraphQL port by default, so the remote TUI (`koan play --server`) finally works end-to-end.

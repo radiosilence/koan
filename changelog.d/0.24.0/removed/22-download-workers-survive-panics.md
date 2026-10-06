@@ -1,0 +1,1 @@
+- **Download workers survive panics** — a panicking download permanently shrank the worker pool for the process lifetime.

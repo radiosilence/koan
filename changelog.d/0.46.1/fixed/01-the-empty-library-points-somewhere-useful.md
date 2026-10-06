@@ -1,0 +1,1 @@
+- **The empty library points somewhere useful.** On iPhone and iPad it said to run a scan, which the app cannot do, and on the Mac it named a terminal command. It now points to Settings → Server on iOS, and to adding a folder or signing in on the Mac.

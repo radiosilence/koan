@@ -1,0 +1,1 @@
+- **Drag-to-resize transport bar** — click and drag the bottom edge of the transport/album art area to resize it. Makes more room for the visualizer or enlarges album art. Persisted to config. ([#147](https://github.com/radiosilence/koan/pull/147))

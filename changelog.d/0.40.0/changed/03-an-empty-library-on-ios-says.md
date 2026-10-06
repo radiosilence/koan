@@ -1,0 +1,1 @@
+- **An empty library on iOS says how to fill it.** The queue's empty state points to Settings → Server when there is no library yet, which is what anyone opening the app for the first time sees.

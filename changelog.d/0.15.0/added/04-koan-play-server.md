@@ -1,0 +1,1 @@
+- **`koan play --server`** — TUI client mode via GQL. Streams audio locally from a remote `koan serve` instance ([#55](https://github.com/radiosilence/koan/pull/55))

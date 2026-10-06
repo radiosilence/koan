@@ -1,0 +1,6 @@
+- **The radio documentation described a feature that does not run.** The README and the radio guide both led with Subsonic `getSimilarSongs2` and a cache of similar-artist relationships as radio's strongest signals. Neither is reached: the auto-queue loop turns the network signals off before it picks, because ListenBrainz and MusicBrainz rate-limit to one request a second per seed artist and all three are synchronous HTTP in front of a track that is needed before the current one ends. What radio actually scores is genre and era, same-artist, acoustic similarity over bliss-audio vectors, and a low-scored random tail — all database reads.
+
+  The code is unchanged; the docs now say what it does, and the guide says why the network signals are switched off and what would have to happen to switch them back on. Two things follow from the same gap and are now written down: nothing writes the `similar_artists` cache, so `similarArtists` over GraphQL and FFI and `getSimilarSongs2` on koan's own Subsonic API return empty; and radio behaving identically offline is not graceful degradation, because there is no online path to degrade from.
+
+  `koan scan --analyze` is the one thing that meaningfully improves radio, so the docs now say that instead of burying it fifth in a list.
+

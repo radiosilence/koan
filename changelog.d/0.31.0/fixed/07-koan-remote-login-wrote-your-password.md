@@ -1,0 +1,2 @@
+- **`koan remote login` wrote your password to disk.** The macOS sign-in path already stored it in the platform credential store and explicitly cleared any plaintext copy; the CLI wrote it straight into `config.local.toml`. Both go through `helpers::set_remote_credentials` now. koan's own Subsonic secret also read the config field *before* the keychain, so a stale plaintext copy beat the real secret — the credential store wins in both, and the config field stays what it always was: the fallback for machines without one.
+

@@ -1,0 +1,1 @@
+- **The download queue no longer looks at the cursor every 30ms for the life of the process.** It waits for the engine to say something moved, like every other watcher.

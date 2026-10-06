@@ -1,0 +1,4 @@
+- **The wash behind the window runs on the GPU.** Its drift was three `repeatForever` SwiftUI animations on `offset` and `scaleEffect` — and `.offset` is a *layout* modifier, so animating it meant the attribute graph re-evaluated a window-sized layout pass every display frame, forever. It cost about a tenth of the main thread with nothing happening, and the app was unresponsive for the whole two seconds a record change took to dissolve. The drift, the blur, the saturation and the dissolve are `CABasicAnimation` and `CALayer.filters` now: committed once, run by the compositor, never touching the main thread again.
+
+  Blocking file reads and image decoding also came off Swift's cooperative pool, which has one thread per core and was being emptied by a screenful of tiles — the same starvation, one layer down. Both now have lanes of their own, the CPU one bounded.
+

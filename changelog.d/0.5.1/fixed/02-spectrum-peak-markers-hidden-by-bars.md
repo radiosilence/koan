@@ -1,0 +1,1 @@
+- **Spectrum peak markers hidden by bars** — peak hold markers now render on top of bar fill instead of being overwritten

@@ -1,0 +1,1 @@
+- **A single panicking file aborted the whole scan** — lofty and symphonia can panic on hostile tags; rayon re-raised it at `collect()`, so one bad file out of 500k produced zero indexed tracks and a backtrace that didn't name it. Tag reads are contained; the file is reported as an error and the scan continues. Same for acoustic analysis.

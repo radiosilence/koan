@@ -1,0 +1,1 @@
+- **Playback state persistence** — `savePlaybackState` and `clearPlaybackState` mutations for web clients.

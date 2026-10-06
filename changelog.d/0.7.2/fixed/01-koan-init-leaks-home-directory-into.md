@@ -1,0 +1,1 @@
+- **`koan init` leaks home directory into config.toml** — `library.folders` (containing the resolved `~/Music` path) was written to the shareable `config.toml` instead of `config.local.toml`. Now `config.toml` omits `library.folders` entirely, and `config.local.toml` gets the detected music directory as a starting point

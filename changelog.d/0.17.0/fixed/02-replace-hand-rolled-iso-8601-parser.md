@@ -1,0 +1,2 @@
+- **Replace hand-rolled ISO 8601 parser with chrono** — the manual RFC 3339 parser in `remote/sync.rs` (~70 lines) could panic on malformed input from Subsonic servers. Replaced with `chrono::DateTime::parse_from_rfc3339()` + fallback patterns for common server quirks (missing timezone, fractional seconds, space separators). Added 11 unit tests ([#74](https://github.com/radiosilence/koan/pull/74))
+

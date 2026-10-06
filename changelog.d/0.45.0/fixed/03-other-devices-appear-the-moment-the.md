@@ -1,0 +1,1 @@
+- **Other devices appear the moment the app opens.** The last device list is kept on disk and drawn at once. Coming to the front, every connection is pinged and one that does not answer within two seconds is replaced, rather than waiting up to 45 seconds on a socket iOS closed while the app was suspended; the server's profile is no longer asked again before each reconnect.

@@ -1,0 +1,1 @@
+- **Radio tops up with a fraction of the queries.** The queue's rows are read in one query, configuration is reread once a minute rather than every two seconds, and a top-up that found nothing waits for the queue to change, or a minute, before trying again.

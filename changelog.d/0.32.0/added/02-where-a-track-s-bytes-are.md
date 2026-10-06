@@ -1,0 +1,2 @@
+- **Where a track's bytes are, wherever a track is listed.** One mark, in one column, meaning the same thing in the queue as in a record: an empty cloud for something on the server, a ring filling as it arrives, a solid cloud once it is here. The queue drew a ring while a track was fetching and nothing at all afterwards — the one list where you watch a download happen was the one that could not say it had.
+

@@ -1,0 +1,1 @@
+- **Favourites streamed and never downloaded count in every listing.** A track that has never been downloaded is favourited by its stream URL, and the favourite album and artist filters, and the GraphQL `favourites` and `tracks(favouritesOnly)` listings, compared only file and download paths. On a library synced from a server most favourites were missing from them.

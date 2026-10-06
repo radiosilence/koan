@@ -1,0 +1,1 @@
+- **Undo stack O(1) eviction** — `Vec` replaced with `VecDeque` for O(1) `pop_front()` instead of O(n) `remove(0)`. Batch depth capped at 500 to prevent unbounded nesting ([#78](https://github.com/radiosilence/koan/pull/78))

@@ -1,0 +1,1 @@
+- **iOS builds reach TestFlight again** ([#580](https://github.com/radiosilence/koan/pull/580)). CI signed each archive with a fresh Apple Development certificate until the account ran out, and 0.43.0 never uploaded; it now reuses one stored certificate.

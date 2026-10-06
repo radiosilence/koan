@@ -50,7 +50,9 @@ AutoEQ's corrections can be found by headphone name instead of downloaded by
 hand. In the Mac and iOS apps, **Find in AutoEQ…** under EQ and convolution
 searches as you type, or, before anything is typed, lists the makers and
 under each its models, for a headphone whose name does not come to mind;
-choosing a result installs it and plays the output in use through it.
+choosing a result installs it and plays the output in use through it. A maker
+AutoEQ files under two names, such as AFUL and AFUL Acoustics, is listed and
+searched as one; each result keeps the name AutoEQ gives it.
 
 When the output's own name ends with a headphone's whole name as AutoEQ
 gives it, maker included ("Jo's Sony WH-1000XM4"), the same section offers

@@ -1,0 +1,1 @@
+- **The dedicated Subsonic port (`[subsonic] port`) knows its clients' addresses.** It was served without connection info, so the sign-in throttle believed any `X-Forwarded-For` a client sent and a new one per request bypassed it. A request whose peer is unknown is no longer taken as coming from a trusted proxy.

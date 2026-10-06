@@ -1,0 +1,1 @@
+- **A password reset signs the account out everywhere**, as the Users page says it does: its API keys are deleted and its open links to the server are closed, as well as its refresh tokens. A key made by whoever else had the password would otherwise have outlived the reset. Deleting an account closes its open links too.

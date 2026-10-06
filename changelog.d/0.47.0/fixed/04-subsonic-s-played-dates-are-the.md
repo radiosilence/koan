@@ -1,0 +1,1 @@
+- **Subsonic's `played` dates are the caller's own.** Songs and albums reported the last play by any account, so one account could see when another last listened to something.

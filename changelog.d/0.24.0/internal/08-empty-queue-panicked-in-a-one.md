@@ -1,0 +1,1 @@
+- **Empty queue panicked in a one-row pane** — `QueueView` wrote its "empty" line at `block.inner(area).y` without checking the top border had left a row.

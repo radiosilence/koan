@@ -1,0 +1,1 @@
+- **CI reliability** — arm64 cross-compile no longer silently fails, tags not force-pushed, doc tests added

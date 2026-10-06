@@ -1,0 +1,1 @@
+- **`"+3.21 db"` silently disabled ReplayGain** — only a literal `"dB"` suffix was stripped, so a lower-case tag failed to parse and the file played unadjusted. The suffix match is now case-insensitive.

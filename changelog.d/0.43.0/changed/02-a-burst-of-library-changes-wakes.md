@@ -1,0 +1,1 @@
+- **A burst of library changes wakes a suspended phone once** ([#565](https://github.com/radiosilence/koan/issues/559)). Each change sent every absent device its own background push, so downloading several albums sent a phone a burst of them; wakes now wait for the library to go quiet and collapse per device.

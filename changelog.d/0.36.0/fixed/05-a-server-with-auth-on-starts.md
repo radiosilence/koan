@@ -1,0 +1,1 @@
+- **A server with auth on starts without `koan auth setup` having run first.** It generates its signing keypair on first start, as the auth-disabled path already did; a server in a container has no terminal to run setup in before it starts, and crash-looped instead. Accounts are still created deliberately: until one exists, nothing signs in.

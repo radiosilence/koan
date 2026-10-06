@@ -1,0 +1,1 @@
+- **`koan play --server` signs in with the stored refresh token** ([#173](https://github.com/radiosilence/koan/issues/173)). It sent no credentials, so a server with `auth_enabled` refused every request, reported at startup as "error decoding response body".

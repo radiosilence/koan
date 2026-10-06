@@ -1,0 +1,1 @@
+- **`addToPlaylistWhenAdded(playlistId, artist, album, titles)`.** Adds an album, or the named tracks from it, to a playlist once it is in the library, for music being fetched with slsk. With the above, "make me a cyberpunk playlist" can start with what is in the library and grow as the rest downloads, on every device, without anyone asking again.

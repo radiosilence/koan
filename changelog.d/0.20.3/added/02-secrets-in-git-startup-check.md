@@ -1,0 +1,1 @@
+- **Secrets-in-git startup check** — on launch, koan checks if config files containing passwords are tracked by git. If so, the app refuses to start and prints remediation steps (remove from git, add to .gitignore, rotate credentials). Hard panic, no bypass.

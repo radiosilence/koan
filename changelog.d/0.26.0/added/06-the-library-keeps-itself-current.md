@@ -1,0 +1,2 @@
+- **The library keeps itself current.** An incremental scan a few seconds after startup, a rescan when the library folders change, and an incremental sync with the server on a timer. All three are cheap: 48,000 files walk in under a second and everything unchanged is skipped on its mtime and size, so the cost tracks what actually changed. Automatic sync is configurable, and a full sync stays a deliberate choice.
+

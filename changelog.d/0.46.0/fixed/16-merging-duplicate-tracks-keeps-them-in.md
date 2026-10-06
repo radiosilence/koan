@@ -1,0 +1,1 @@
+- **Merging duplicate tracks keeps them in playlists and shares.** Entries for the row being merged away were deleted with it; they now move to the surviving row.

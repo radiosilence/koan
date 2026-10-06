@@ -1,0 +1,1 @@
+- **Signal-level coloring** — spectrum bars are colored by amplitude, not position. Green at safe headroom, yellow when hot, red only near clipping (0dBFS)

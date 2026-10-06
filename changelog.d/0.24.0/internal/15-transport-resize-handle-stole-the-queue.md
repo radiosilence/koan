@@ -1,0 +1,1 @@
+- **Transport resize handle stole the queue's top border row.**

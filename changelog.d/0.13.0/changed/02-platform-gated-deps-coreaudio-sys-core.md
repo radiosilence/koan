@@ -1,0 +1,1 @@
+- Platform-gated deps: `coreaudio-sys`/`core-foundation` macOS-only, `cpal` Linux-only

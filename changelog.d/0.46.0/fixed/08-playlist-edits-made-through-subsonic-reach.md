@@ -1,0 +1,1 @@
+- **Playlist edits made through Subsonic reach the account's other devices** and the upstream server, as GraphQL edits already did. The koan apps edit playlists on a koan server through these endpoints, so a playlist changed on the phone did not appear on the Mac until it next synced on its own, and one deleted there came back with the next upstream sync.

@@ -1,0 +1,1 @@
+- **Starring a remote-only track over Subsonic or GraphQL stars that track.** Subsonic keyed it by an empty path, so every remote track shared one favourite; GraphQL refused them. Both use the same key the app does now, and Subsonic stars sync back to the server. An album or artist id is refused rather than read as a track id.

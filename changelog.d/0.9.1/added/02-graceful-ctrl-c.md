@@ -1,0 +1,1 @@
+- **Graceful Ctrl+C** — replaced raw `SIG_DFL` with a safe signal handler so Ctrl+C performs a clean shutdown (saving state, restoring terminal) instead of killing the process

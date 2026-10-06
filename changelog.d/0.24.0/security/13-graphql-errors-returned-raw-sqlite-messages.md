@@ -1,0 +1,1 @@
+- **GraphQL errors returned raw SQLite messages and absolute filesystem paths.** The detail is logged; clients get "internal error".

@@ -1,0 +1,1 @@
+- **Subsonic star/unstar/getStarred2 API** — new SubsonicClient methods for managing server-side favourites

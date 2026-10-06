@@ -1,0 +1,1 @@
+- **One failed command no longer stops the Mac and iOS apps' controls.** An error such as importing a malformed EQ or convolution file stopped every later play, queue and transport command until the app was relaunched; the failing command now reports an error and the rest carry on.

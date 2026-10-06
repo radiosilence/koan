@@ -1,0 +1,1 @@
+- **iOS: the queue is not in selection mode until asked.** Every row showed a selection circle and a drag handle all the time. Select, in the queue's menu, turns them on, and Done turns them off and clears the selection.

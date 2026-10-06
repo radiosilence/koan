@@ -1,0 +1,1 @@
+- **Two-layer config** — `config.toml` (committable) + `config.local.toml` (gitignored)

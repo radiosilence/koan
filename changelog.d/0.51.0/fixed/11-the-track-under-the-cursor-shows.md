@@ -1,0 +1,1 @@
+- **The track under the cursor shows its download progress in the apps.** It showed a static arrow for the whole transfer; it now shows the ring, as every other downloading row does.

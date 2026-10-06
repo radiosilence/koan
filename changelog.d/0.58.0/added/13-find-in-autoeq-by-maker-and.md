@@ -1,0 +1,1 @@
+- **Find in AutoEQ by maker and model,** before anything is typed, and AutoEQ offered for headphones whose own names leave the maker out, where the name still says which model and generation they are (Sony WH-1000XM4, AirPods Max). A name that says only roughly (AirPods Pro, a Bose QC45) is offered a search for the model instead, to pick the variant from.

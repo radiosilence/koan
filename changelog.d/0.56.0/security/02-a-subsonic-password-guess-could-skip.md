@@ -1,0 +1,1 @@
+- **A Subsonic password guess could skip the sign-in limits.** A request for the shared username carrying `t` but no `s` was exempted as a shared-secret token, while the server checked its `p=` instead. The exemption now requires both, exactly as the check does.

@@ -1,0 +1,1 @@
+- **Clean schema type names** — stripped `Gql` prefix from all GraphQL types. `GqlArtist` → `Artist`, `GqlTrack` → `Track`, `GqlNowPlaying` → `NowPlaying`, etc. The public schema now has clean, idiomatic names

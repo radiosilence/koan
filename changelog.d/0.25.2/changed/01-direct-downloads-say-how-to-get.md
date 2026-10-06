@@ -1,0 +1,1 @@
+- **Direct downloads say how to get past Gatekeeper.** The app is signed but not notarised, so macOS refuses the first open of a downloaded copy and offers only "Move to Trash". The `xattr -dr com.apple.quarantine` line now leads the release notes and the README's install section; the Homebrew cask already did this in a postflight.

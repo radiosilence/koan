@@ -1,0 +1,1 @@
+- **Neural discovery (feature-gated)** — DCLAP ONNX embeddings behind `neural-discovery` cargo feature. `textSearch` GQL query, `koan analyze --neural`. Opt-in, graceful degradation ([#69](https://github.com/radiosilence/koan/pull/69))

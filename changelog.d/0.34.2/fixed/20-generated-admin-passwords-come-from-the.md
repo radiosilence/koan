@@ -1,0 +1,1 @@
+- **Generated admin passwords come from the system RNG.** They were hashed from the clock a character at a time.

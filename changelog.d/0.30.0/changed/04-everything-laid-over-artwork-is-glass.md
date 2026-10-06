@@ -1,0 +1,2 @@
+- **Everything laid over artwork is glass now.** The codec badge on a sleeve is clear glass rather than a black scrim hiding the corner it sits on; the favourite heart gets a ground of its own instead of a drop shadow fighting whatever is behind it, and grows in on hover. Artist chips, the shortcut sheet's key caps, the picker's commit bar and the error toast follow — the toast tinted rather than bordered, since glass already has an edge.
+

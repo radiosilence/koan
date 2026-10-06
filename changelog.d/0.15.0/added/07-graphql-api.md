@@ -1,0 +1,1 @@
+- **GraphQL API** — full Relay-style cursor pagination, rich metadata filters (year, codec, genre, sample rate, bit depth, duration), fuzzy search, lyrics, cover art, organize, scan, sync, share mutations ([#36](https://github.com/radiosilence/koan/pull/36))

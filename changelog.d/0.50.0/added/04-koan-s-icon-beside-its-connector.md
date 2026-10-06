@@ -1,0 +1,1 @@
+- **koan's icon beside its connector.** The MCP server names its icon, and `/favicon.ico` and `/apple-touch-icon.png` are served at the root; without them, clients showed the icon of the server's parent domain.

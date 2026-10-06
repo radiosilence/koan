@@ -1,0 +1,1 @@
+- **Subsonic `search3` pages.** `artistOffset`, `albumOffset` and `songOffset` were ignored, so every page repeated the first. An empty query (`query=` or `query=""`) lists the whole library in id order, straight off the primary keys, so an offset walk neither skips nor repeats. Counts are capped at 1,000 per kind.

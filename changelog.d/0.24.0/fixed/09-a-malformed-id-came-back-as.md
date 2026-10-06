@@ -1,0 +1,1 @@
+- **A malformed `id` came back as a bare HTTP 400** from axum's extractor rather than a Subsonic error 10.

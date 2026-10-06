@@ -1,0 +1,1 @@
+- **Admins set passwords.** The Users page and GraphQL (`setUserPassword`) set a chosen password; inviting with a reset generates one. Either signs the account out everywhere.

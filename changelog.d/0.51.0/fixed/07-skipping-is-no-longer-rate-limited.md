@@ -1,0 +1,1 @@
+- **Skipping is no longer rate-limited for remote control.** The player dropped a next or previous within 150 ms of the last one, which swallowed rapid skips from the apps, GraphQL, MCP and the link. The TUI keeps the limit for its own keys, against terminal key repeat.

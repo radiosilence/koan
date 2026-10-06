@@ -1,0 +1,1 @@
+- **Login takes as long for a username that doesn't exist as for one that does.** An unknown name returned at once, while a known one paid for an Argon2 verify — enough to list who has an account.

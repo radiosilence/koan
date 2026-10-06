@@ -1,0 +1,2 @@
+- **Back moves on the first press.** The cursor stepped on the click and left the page to catch up, so pressing Back while a record was still being read cancelled that record — which then never applied and never recorded — and stepped off a page nobody had arrived at. The screen stayed where it was and it took a second press to go anywhere. Where you are now changes beside the page rather than ahead of it.
+

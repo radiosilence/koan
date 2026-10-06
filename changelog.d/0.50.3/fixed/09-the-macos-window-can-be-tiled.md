@@ -1,0 +1,1 @@
+- **The macOS window can be tiled to half of a 2560pt display.** Its minimum width was 1320pt; it is now 1260pt, with the lyrics panel opening at 280pt rather than 320pt.

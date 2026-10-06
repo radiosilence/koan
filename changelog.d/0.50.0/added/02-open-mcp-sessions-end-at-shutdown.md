@@ -1,0 +1,1 @@
+- **Open MCP sessions end at shutdown** rather than holding it up until the process is killed.

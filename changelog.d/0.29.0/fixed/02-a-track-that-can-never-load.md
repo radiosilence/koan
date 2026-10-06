@@ -1,0 +1,2 @@
+- **A track that can never load no longer parks the queue on itself forever.** `play()` leaves the cursor on an item that is not yet Ready and waits for `TrackReady` — and a download that fails never sends one. With the library folder offline and the remote unreadable, every item failed and the player sat stopped on the first one, which is the same picture as a queue still fetching. Failures raise `TrackFailed` now, and the cursor walks on to the next item that can still load, or stops cleanly when there is none.
+

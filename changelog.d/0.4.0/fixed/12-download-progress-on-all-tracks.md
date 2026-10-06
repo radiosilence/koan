@@ -1,0 +1,1 @@
+- **Download progress on all tracks** — tracks before the playing position now correctly show download progress and status instead of being unconditionally marked as played

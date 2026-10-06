@@ -1,0 +1,1 @@
+- **Subsonic token auth (`t`/`s`) for accounts.** It needed that readable copy. Clients get error 41 and should send the password (`p=`, over HTTPS) or an API key; the `[subsonic]` shared secret still accepts it. A koan app signed in to a koan server over plain HTTP needs signing in again, or an invite.

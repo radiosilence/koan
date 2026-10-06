@@ -1,0 +1,2 @@
+- **The app says so when it has a server configured and no password for it.** Nothing did. The queue filled with tracks that never loaded, every sleeve came back empty and no download started — which reads as a broken library rather than as being signed out, and sends you looking in the wrong place for it. A toast at launch now names the server and points at Settings, which is where the one thing that fixes it lives.
+

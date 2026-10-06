@@ -1,0 +1,1 @@
+- **Test coverage expanded** — 332 → 371 tests. Added coverage for PlaybackTimeline (6), SharedPlayerState (12), favourites (8), Subsonic client (5), metadata probe (5). Removed 4 AI-generated duplicate streaming tests

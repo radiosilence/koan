@@ -1,0 +1,1 @@
+- **A download in progress is played from disk rather than copied into memory.** The decoder used to read from a growing in-memory copy that a second thread filled from the file: a 451 MB recording cost 451 MB of RAM for as long as it played. It reads the file directly now, which costs nothing, seeks backwards for free, and carries on across the rename that ends a download.

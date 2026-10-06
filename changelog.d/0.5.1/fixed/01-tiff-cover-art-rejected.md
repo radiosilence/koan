@@ -1,0 +1,1 @@
+- **TIFF cover art rejected** — embedded TIFF artwork is now skipped during extraction, falling back to the next JPEG/PNG picture. Fixes `CGImageDestinationFinalize failed` errors on macOS Now Playing

@@ -1,0 +1,1 @@
+- **Decode thread panic on missing file** — `SourceEntry::from_file` used `panic!` when a file couldn't be opened (e.g. deleted during gapless lookahead). The `make_mss` closure is now fallible (`-> io::Result`), and decode errors are logged gracefully instead of crashing

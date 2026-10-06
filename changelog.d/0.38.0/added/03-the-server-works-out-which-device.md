@@ -1,0 +1,1 @@
+- **The server works out which device is meant.** Without a `client`, a command goes to the app that is playing, else the one that played in the last six hours; with several linked and none of them recent, it answers with the choices so an assistant asks.

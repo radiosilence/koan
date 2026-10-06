@@ -1,0 +1,1 @@
+- **Skipping, seeking or stopping a track that is still downloading no longer freezes the player.** The decoder waits at the download's write head for the next bytes, and stopping it only asked it to stop — it did not wake it. On a slow or stalled transfer the player thread sat in that join for as long as the network took, up to thirty seconds, answering nothing.

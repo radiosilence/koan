@@ -1,0 +1,1 @@
+- **Hearts in the web UI.** Tracks, records and artists can be favourited from the browser: a heart on every track row, record tile, album and artist page. It is the same favourite the apps and the Subsonic API's `star` make, per account, so the account's apps pick it up at once. Read-only accounts see no hearts.

@@ -1,0 +1,1 @@
+- **Playlist version query** — `playlistVersion` returns monotonic counter for change detection.

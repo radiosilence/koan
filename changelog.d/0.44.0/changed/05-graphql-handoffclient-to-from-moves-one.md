@@ -1,0 +1,1 @@
+- GraphQL: `handOffClient(to, from)` moves one linked app's music to another, and `Client.device` is each app's stable id.

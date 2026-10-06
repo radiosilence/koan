@@ -1,0 +1,1 @@
+- **iOS: the queue header in selection mode fits a phone.** The count, Clear and Remove were squeezed by the rest of the header and wrapped a few letters to a line. Each now keeps its own width, and on iOS Clear and Remove are icons.

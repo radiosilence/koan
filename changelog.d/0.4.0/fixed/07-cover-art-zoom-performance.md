@@ -1,0 +1,1 @@
+- **Cover art zoom performance** — full-screen album art view no longer runs Lanczos3 resize every frame. Rendered output is cached and reused until terminal size changes
