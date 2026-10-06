@@ -1083,6 +1083,14 @@ pub enum KoanError {
     NeedsSampleRate { message: String },
 }
 
+/// A maker in AutoEQ's index.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct AutoEqMaker {
+    pub name: String,
+    /// How many results it has, sources counted apart.
+    pub results: u32,
+}
+
 /// A headphone's result in AutoEQ's index.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct AutoEqEntry {

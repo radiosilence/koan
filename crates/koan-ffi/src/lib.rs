@@ -2395,6 +2395,42 @@ impl KoanEngine {
         .await
     }
 
+    /// The makers in AutoEQ's index, alphabetically, with how many results
+    /// each has.
+    pub async fn autoeq_makers(self: Arc<Self>) -> Result<Vec<AutoEqMaker>, KoanError> {
+        offload::offload(move || {
+            use koan_core::audio::dsp::autoeq;
+            let entries = autoeq::index(autoeq::Freshness::Daily)
+                .map_err(|message| KoanError::Remote { message })?;
+            Ok(autoeq::makers(&entries)
+                .into_iter()
+                .map(|(name, results)| AutoEqMaker {
+                    name,
+                    results: results as u32,
+                })
+                .collect())
+        })
+        .await
+    }
+
+    /// `maker`'s results, by model, AutoEQ's preferred source first within
+    /// each.
+    pub async fn autoeq_models(
+        self: Arc<Self>,
+        maker: String,
+    ) -> Result<Vec<AutoEqEntry>, KoanError> {
+        offload::offload(move || {
+            use koan_core::audio::dsp::autoeq;
+            let entries = autoeq::index(autoeq::Freshness::Daily)
+                .map_err(|message| KoanError::Remote { message })?;
+            Ok(autoeq::models(&entries, &maker)
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
     /// Install the AutoEQ result `name`, measured by `measured_by`, as a
     /// profile, and play `device` through it if given. Answers with the
     /// profile's name.

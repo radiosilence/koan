@@ -26,6 +26,8 @@ final class DspModel {
     var needsRate: Pending?
     /// AutoEQ's results for the last search.
     private(set) var autoEqResults: [AutoEqEntry] = []
+    /// The makers in AutoEQ's index, to browse when nothing is typed.
+    private(set) var autoEqMakers: [AutoEqMaker] = []
     /// Moves with every search, so one that returns after a newer one began
     /// is dropped rather than shown for the wrong query.
     private var autoEqSearch = 0
@@ -126,6 +128,27 @@ final class DspModel {
         } catch {
             guard search == autoEqSearch else { return }
             lastError = SettingsModel.describe(error)
+        }
+    }
+
+    /// The makers to browse. Read once per sheet; the index changes daily
+    /// at most.
+    func loadAutoEqMakers() async {
+        guard autoEqMakers.isEmpty else { return }
+        do {
+            autoEqMakers = try await engine.autoeqMakers()
+        } catch {
+            lastError = SettingsModel.describe(error)
+        }
+    }
+
+    /// `maker`'s results, by model.
+    func autoEqModels(_ maker: String) async -> [AutoEqEntry] {
+        do {
+            return try await engine.autoeqModels(maker: maker)
+        } catch {
+            lastError = SettingsModel.describe(error)
+            return []
         }
     }
 

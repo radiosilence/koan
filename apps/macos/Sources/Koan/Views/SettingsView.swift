@@ -746,30 +746,29 @@ private struct AutoEqSearch: View {
 
     var body: some View {
         NavigationStack {
-            List(dsp.autoEqResults, id: \.profileName) { entry in
-                Button {
-                    dsp.installAutoEq(entry)
-                    dismiss()
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.name)
-                        Text(entry.measuredBy)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            .overlay {
+            Group {
                 if query.isEmpty {
-                    ContentUnavailableView(
-                        "Find in AutoEQ",
-                        systemImage: "headphones",
-                        description: Text("Type a headphone's name. Where several people measured it, the first is the one AutoEQ recommends.")
-                    )
-                } else if dsp.autoEqResults.isEmpty {
-                    ContentUnavailableView.search(text: query)
+                    // Nothing typed: the makers, each opening its models.
+                    List(dsp.autoEqMakers, id: \.name) { maker in
+                        NavigationLink {
+                            AutoEqModels(dsp: dsp, maker: maker.name) { dismiss() }
+                        } label: {
+                            LabeledContent(maker.name, value: "\(maker.results)")
+                        }
+                    }
+                    .task { await dsp.loadAutoEqMakers() }
+                } else {
+                    List(dsp.autoEqResults, id: \.profileName) { entry in
+                        AutoEqRow(entry: entry) {
+                            dsp.installAutoEq(entry)
+                            dismiss()
+                        }
+                    }
+                    .overlay {
+                        if dsp.autoEqResults.isEmpty {
+                            ContentUnavailableView.search(text: query)
+                        }
+                    }
                 }
             }
             .searchable(text: $query, prompt: "Headphone")
@@ -789,6 +788,48 @@ private struct AutoEqSearch: View {
         #if os(macOS)
         .frame(minWidth: 420, minHeight: 460)
         #endif
+    }
+}
+#endif
+
+#if !os(tvOS)
+/// One AutoEQ result: the headphone, and who measured it.
+private struct AutoEqRow: View {
+    let entry: AutoEqEntry
+    let choose: () -> Void
+
+    var body: some View {
+        Button(action: choose) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.name)
+                Text(entry.measuredBy)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// A maker's results, by model; where several people measured one, the one
+/// AutoEQ recommends comes first. Choosing one installs it and closes the
+/// search.
+private struct AutoEqModels: View {
+    let dsp: DspModel
+    let maker: String
+    let done: () -> Void
+    @State private var models: [AutoEqEntry] = []
+
+    var body: some View {
+        List(models, id: \.profileName) { entry in
+            AutoEqRow(entry: entry) {
+                dsp.installAutoEq(entry)
+                done()
+            }
+        }
+        .navigationTitle(maker)
+        .task { models = await dsp.autoEqModels(maker) }
     }
 }
 #endif

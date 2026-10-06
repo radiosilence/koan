@@ -44,16 +44,21 @@ koan dsp import "Harman 780.zip" --device "Topping E30"
 
 AutoEQ's corrections can be found by headphone name instead of downloaded by
 hand. In the Mac and iOS apps, **Find in AutoEQ…** under EQ and convolution
-searches as you type; choosing a result installs it and plays the output in
-use through it.
+searches as you type, or, before anything is typed, lists the makers and
+under each its models, for a headphone whose name does not come to mind;
+choosing a result installs it and plays the output in use through it.
 
 When the output's own name ends with a headphone's whole name as AutoEQ
 gives it, maker included ("Jo's Sony WH-1000XM4"), the same section offers
 AutoEQ's profile for it. The rule is strict because a wrong correction is
-worse than none: a name without the maker ("WH-1000XM4", "Jo's AirPods Pro")
-or with a generation the index lacks ("Apple AirPods Pro 3") is offered
-nothing, and so are audio interfaces and DACs whose model happens to share a
-headphone's ("MOTU M2", "Hugo 2"). Find in AutoEQ… covers the rest. Nothing is
+worse than none: a name with a generation the index lacks ("Apple AirPods
+Pro 3") is offered nothing, and so are audio interfaces and DACs whose model
+happens to share a headphone's ("MOTU M2", "Hugo 2"). A short list of models
+that name their own generation may leave the maker out, as their Bluetooth
+names do: Sony's WH-1000X and WF-1000X lines and LinkBuds, AirPods Max,
+AirPods 4 and AirPods Pro 2, and Samsung's Galaxy Buds2 and Buds3. Plain
+"AirPods" and "AirPods Pro" are not on it, since every generation calls
+itself that. Find in AutoEQ… covers the rest. Nothing is
 applied until you choose to, and turning the offer down for a device is
 remembered in `config.local.toml` (`dsp.autoeq_dismissed`). An output with a
 profile of its own is not offered one.
