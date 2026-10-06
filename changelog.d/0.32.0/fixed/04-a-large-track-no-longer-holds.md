@@ -1,0 +1,2 @@
+- **A large track no longer holds the player deaf while it opens.** Reading a container to find out what it is happened on the thread that answers play, pause and seek. Ogg states its duration in its last page, so opening one mid-download waited for the entire remaining transfer first — twenty-two seconds of an unresponsive player, on a fast connection. That reading now happens on its own thread and comes back as a message like anything else.
+

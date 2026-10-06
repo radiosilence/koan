@@ -1,0 +1,1 @@
+- **The iOS app shows its version**, at the foot of Settings and under the ensō while it starts: which build is running, for a bug report or to see a TestFlight update arrived.

@@ -1,0 +1,1 @@
+- **Roles and accounts are read from the database on each GraphQL request and web UI page**, not taken from the access token. A demoted or deleted admin kept admin until the token expired, long enough to restore it. Account ids are no longer reused after a deletion (`users.id` is `AUTOINCREMENT`; existing databases are rebuilt once, keeping every id).

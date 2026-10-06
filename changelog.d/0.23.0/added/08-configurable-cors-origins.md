@@ -1,0 +1,1 @@
+- **Configurable CORS origins** — `[graphql] cors_origins = [...]` restricts allowed origins with `credentials: true` for cookie auth. Empty (default) keeps `Allow-Origin: *` for dev/backward compat.

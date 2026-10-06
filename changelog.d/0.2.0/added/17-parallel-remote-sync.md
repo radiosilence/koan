@@ -1,0 +1,1 @@
+- **Parallel remote sync** — album detail fetches parallelized with rayon, batch DB writes per page

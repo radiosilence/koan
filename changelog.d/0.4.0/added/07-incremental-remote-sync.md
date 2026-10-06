@@ -1,0 +1,1 @@
+- **Incremental remote sync** — `koan remote sync` now only fetches albums newer than the last sync timestamp, dramatically reducing sync time. Use `--full` to force a complete re-sync

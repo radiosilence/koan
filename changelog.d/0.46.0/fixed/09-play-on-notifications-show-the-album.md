@@ -1,0 +1,1 @@
+- **"Play on" notifications show the album cover.** The command's track uid was parsed as a row id, which never matched.

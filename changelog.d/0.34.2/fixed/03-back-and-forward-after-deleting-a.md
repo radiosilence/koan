@@ -1,0 +1,1 @@
+- **Back and Forward after deleting a playlist could crash.** The history entry was pruned while the move was loading, and the arrival set the cursor past the end.

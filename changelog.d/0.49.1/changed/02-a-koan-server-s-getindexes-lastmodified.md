@@ -1,0 +1,1 @@
+- **A koan server's `getIndexes` `lastModified` moves when anything is added or removed**, not only when a file changes, and `ifModifiedSince` is answered with the timestamp alone when nothing has.

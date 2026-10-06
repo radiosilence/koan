@@ -1,0 +1,1 @@
+- **Organize Files is not offered on iOS.** The long-press menus offered it on a phone, where it opened nothing.

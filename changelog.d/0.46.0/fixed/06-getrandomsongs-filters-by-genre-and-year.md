@@ -1,0 +1,1 @@
+- **`getRandomSongs` filters by genre and year before drawing.** A genre that is a small share of the library came back almost empty, because the filter ran after a draw from the whole library. `fromYear` and `toYear` are now honoured, `size` is capped at 500 like the other list endpoints, and the draw no longer joins every track to pick a few.

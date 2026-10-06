@@ -1,0 +1,1 @@
+- **iOS: artist rows give the name room.** The album and track counts sit under the name instead of in two columns beside it, which cut names to four letters.

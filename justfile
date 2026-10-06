@@ -29,6 +29,10 @@ check:
 fmt:
     cargo fmt
 
+# Write CHANGELOG.md from the fragments in changelog.d/.
+changelog *args:
+    python3 scripts/changelog.py {{args}}
+
 # Compile the web UI and share page stylesheets. The output is committed, since
 # the server embeds it; CI fails a build where it is stale.
 css:

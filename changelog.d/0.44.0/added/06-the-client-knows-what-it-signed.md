@@ -1,0 +1,1 @@
+- **The client knows what it signed in to.** koan's extensions are listed in `getOpenSubsonicExtensions` (`koanLink`, `koanDevices`), and the app probes `ping` and that list once per sign-in rather than checking whether the server calls itself koan, so a feature is offered only where the server has it. Settings → Server shows the server, its version and the extensions it listed.

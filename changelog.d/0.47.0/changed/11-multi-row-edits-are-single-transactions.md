@@ -1,0 +1,1 @@
+- **Multi-row edits are single transactions**: playlist edits (including Subsonic `createPlaylist` and `updatePlaylist`), favourite imports, the offline queue for linked devices, and `scrobble` batches. Readers no longer see a half-applied edit, and a scrobble batch naming a track that does not exist records none of its plays, so a retry does not duplicate them.

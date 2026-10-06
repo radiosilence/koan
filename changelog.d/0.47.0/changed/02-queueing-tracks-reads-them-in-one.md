@@ -1,0 +1,1 @@
+- **Queueing tracks reads them in one query.** Each track added to the queue cost three queries, and through GraphQL a configuration file read and parse as well; a batch now costs one query and one configuration read whatever its size.

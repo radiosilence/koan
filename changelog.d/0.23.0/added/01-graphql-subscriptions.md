@@ -1,0 +1,1 @@
+- **GraphQL subscriptions** — real-time data over WebSocket at `/graphql/ws`. Three subscriptions: `nowPlaying` (playback state at configurable interval), `queueUpdated` (full queue snapshot on change), `vizFrame` (spectrum/VU/waveform at configurable FPS). ([#162](https://github.com/radiosilence/koan/issues/162), [#171](https://github.com/radiosilence/koan/pull/171))

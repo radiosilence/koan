@@ -1,0 +1,1 @@
+- **Library source indicator** — tracks in the TUI library browser show a colored icon indicating whether they are local (green HDD) or remote (cyan cloud)

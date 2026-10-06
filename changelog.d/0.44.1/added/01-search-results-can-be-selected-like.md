@@ -1,0 +1,1 @@
+- **Search results can be selected like the album grid**: artists, albums and tracks, with Select in the toolbar, ⌘-click, ⇧-click for a range and ⌘A, then Play or Add to Queue. A pick survives a new query, so it can gather from several searches, and dragging a ticked result drags the whole pick.

@@ -1,0 +1,1 @@
+- **Ticker double-speed after merge** — duplicate ticker animation block from merge caused scrolling text to advance twice per frame

@@ -1,0 +1,2 @@
+- **Fetching and removing downloads, wholesale or a track at a time.** Library → Clear Downloaded Files throws away everything cached from the server. Right-clicking offers whichever of the two applies: a track already downloaded can be removed, one that is not can be fetched without queueing it — for going somewhere without a server, mostly. Either way the library rows stay and fetch again on demand.
+

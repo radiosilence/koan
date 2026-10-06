@@ -1,0 +1,1 @@
+- **Layered EQ.** A profile can play others first, in order, each switched on or off: a headphone's correction, then a bass shelf or a tilt on top, without editing the correction itself.

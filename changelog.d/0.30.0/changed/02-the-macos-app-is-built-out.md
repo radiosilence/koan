@@ -1,0 +1,4 @@
+- **The macOS app is built out of Liquid Glass.** Not a coat of blur over the old chrome — the real macOS 26 material, and the layout changes it asks for. The transport is a slab of glass floating over the stage rather than a bar welded to the window's bottom edge behind a divider: the queue scrolls *under* it, fading out at the soft scroll edge as it goes, because glass with nothing moving behind it is just a grey rectangle.
+
+  It hangs off the window rather than the detail column. A `NavigationStack` drops decoration applied around it the moment it pushes, which took the transport off every album and artist page; each screen now makes its own room for it instead. It stops short of the sidebar, and takes the full width when the sidebar is closed. Play/pause is bigger than the two beside it and no longer goes dead when nothing is queued — it is the control you reach for without looking.
+

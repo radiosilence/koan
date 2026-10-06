@@ -71,8 +71,7 @@ autocomplete=off aria-label=\"ListenBrainz user token\"><button class=\"primary\
 
 fn listenbrainz(s: &UiState, user_id: i64) -> Option<Option<ScrobbleService>> {
     let db = open(&s.pool)?;
-    let services = scrobbling::services(&db.conn, user_id).ok()?;
-    Some(services.into_iter().find(|s| s.service == LISTENBRAINZ))
+    scrobbling::service(&db.conn, user_id, LISTENBRAINZ).ok()
 }
 
 pub(super) async fn page(
@@ -118,40 +117,34 @@ pub(super) async fn connect(
     if !s.auth_enabled {
         return failed(NO_ACCOUNTS);
     }
-    let token = serde_json::from_slice::<serde_json::Value>(&body)
+    let pasted = serde_json::from_slice::<serde_json::Value>(&body)
         .ok()
-        .and_then(|v| v.get("lbtoken")?.as_str().map(|t| t.trim().to_owned()))
+        .and_then(|v| v.get("lbtoken")?.as_str().map(str::to_owned))
         .unwrap_or_default();
-    if token.is_empty() || token.len() > 200 {
-        return failed("Paste the user token from your ListenBrainz settings.");
-    }
-    let checked = {
-        let token = token.clone();
-        tokio::task::spawn_blocking(move || {
-            koan_core::scrobbling::validate_listenbrainz_token(&token)
-        })
-        .await
-    };
-    let name = match checked {
-        Ok(Ok(name)) => name,
+    let checked = tokio::task::spawn_blocking(move || {
+        koan_core::scrobbling::check_listenbrainz_token(&pasted)
+    })
+    .await;
+    let (token, name) = match checked {
+        Ok(Ok(checked)) => checked,
         Ok(Err(e)) => return failed(&e.to_string()),
         Err(_) => return failed("The token could not be checked."),
     };
     let connected = blocking(move || {
         let db = open(&s.pool)?;
-        let queued =
-            scrobbling::connect(&db.conn, user.user_id, LISTENBRAINZ, &token, &name).ok()?;
-        let service = scrobbling::services(&db.conn, user.user_id)
-            .ok()?
-            .into_iter()
-            .find(|s| s.service == LISTENBRAINZ)?;
-        Some((queued, service))
+        Some(koan_core::scrobbling::connect_listenbrainz(
+            &db.conn,
+            user.user_id,
+            &token,
+            &name,
+        ))
     })
     .await;
-    let Some((queued, service)) = connected else {
-        return failed("The connection could not be saved.");
+    let (queued, service) = match connected {
+        Some(Ok(connected)) => connected,
+        Some(Err(e)) => return failed(&e.to_string()),
+        None => return failed("The connection could not be saved."),
     };
-    koan_core::scrobbling::wake();
     let message = if queued > 0 {
         format!(
             "Connected. {} from your history are on their way.",

@@ -1,0 +1,1 @@
+- **The Mac's shelf, search and album grid follow the window when it widens.** Opened in a narrow window, Recently Played, Favourites, search and the album grid kept their narrow layout when the window grew.

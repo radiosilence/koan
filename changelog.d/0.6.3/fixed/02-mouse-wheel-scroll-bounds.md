@@ -1,0 +1,1 @@
+- **Mouse wheel scroll bounds** — wheel scrolling now correctly bounds against the display line count (including album headers) instead of just the entry count

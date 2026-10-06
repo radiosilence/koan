@@ -1,0 +1,1 @@
+- `dirs` 7.0.0 ([#444](https://github.com/radiosilence/koan/pull/444)) and `lru` 0.18.5 ([#443](https://github.com/radiosilence/koan/pull/443)). Neither changes behaviour; `dirs` 7 resolves the home and music folders exactly as 6 did.

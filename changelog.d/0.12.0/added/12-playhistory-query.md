@@ -1,0 +1,1 @@
+- **`playHistory` query** — recent play history with track info, paginated

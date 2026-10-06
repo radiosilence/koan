@@ -1,0 +1,1 @@
+- **Visualiser config** — `[visualizer]` section with `enabled`, `fps` (default: 60), `scale`, `amplitude_scale`, `bar_decay_ms` (default: 50), `peak_decay_ms` (default: 180). Also accepts `[visualiser]` spelling

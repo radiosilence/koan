@@ -1,0 +1,1 @@
+- **No white or black band above the sidebar in full screen.** In full screen the toolbar moves into a separate window, where AppKit backs the sidebar's part of it with an opaque view; koan now hides that view so the sidebar's wash shows through.

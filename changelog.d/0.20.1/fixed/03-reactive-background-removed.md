@@ -1,0 +1,1 @@
+- **Reactive background removed** — the beat-pulsing background color on braille modes (starfield, wormhole, kaleidoscope, etc.) looked flickery. Transparent background integrates better with the TUI.

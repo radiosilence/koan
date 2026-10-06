@@ -1,0 +1,1 @@
+- **Docs: removed fabricated Docker content** — no Docker image exists

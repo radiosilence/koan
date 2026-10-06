@@ -1,0 +1,1 @@
+- **A broken bundle can no longer ship.** `just macos-verify <arches>` asserts the binary contains every architecture asked for and does not link `koan_ffi` dynamically, and CI runs it between the build and the DMG. Both bundles that went out broken today built, signed and packaged without complaint.

@@ -1,0 +1,1 @@
+- **An output device connected while the macOS app is running appears in the device menu.** The list was read once at launch; it is now re-read whenever CoreAudio's device list changes.

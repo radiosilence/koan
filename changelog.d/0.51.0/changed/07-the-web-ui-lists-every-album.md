@@ -1,0 +1,1 @@
+- **The web UI lists every album and artist on one page, as the apps do.** Pages of 60 albums and 100 artists behind a Load more button made a large library tedious to scroll and broke find-in-page. Covers load lazily, so the whole listing costs markup rather than images.

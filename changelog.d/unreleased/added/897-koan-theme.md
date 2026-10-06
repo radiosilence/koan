@@ -1,0 +1,1 @@
+- **The kōan theme.** The apps on the Mac, iPhone and Apple TV are drawn as koan.rocks is, by default: Geist Mono, flat greys, square controls and lowercase labels, with the wash kept behind the bare ground. Settings → Appearance → Theme brings back the platform's look, and "Show icons" turns the theme's icons off. The design is set down in `docs/design/koan-theme.md`.

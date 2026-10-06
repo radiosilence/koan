@@ -1,0 +1,1 @@
+- **A four-way lock cycle could hang the app in remote-bridge mode** — `current_download_fraction` took the track-info lock before the playlist lock while `derive_visible_queue` took them the other way round. Neither holds both any more.

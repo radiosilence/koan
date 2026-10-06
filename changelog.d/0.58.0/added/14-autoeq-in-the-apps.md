@@ -1,0 +1,1 @@
+- **AutoEQ in the apps.** *Find in AutoEQ…* in the Mac and iOS apps' EQ settings searches AutoEQ by headphone name and installs a result for the output in use. An output whose name ends with a headphone's full name, maker included, is offered AutoEQ's profile for it; the match is strict, and the offer can be turned down per device.

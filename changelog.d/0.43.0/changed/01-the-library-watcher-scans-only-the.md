@@ -1,0 +1,1 @@
+- **The library watcher scans only the directories a change touches** ([#568](https://github.com/radiosilence/koan/pull/568)), ignores events that cannot change the index, and keeps its watches in step with the folder list and mounts. It ran a whole-library scan for any event, which on a large library on a spinning disk was a steady stream of walks that found nothing.

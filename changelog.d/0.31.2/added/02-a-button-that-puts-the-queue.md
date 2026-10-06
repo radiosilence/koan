@@ -1,0 +1,1 @@
+- **A button that puts the queue back on the row that is playing.** Beside the layout picker, since both are about what you are looking at rather than what is in the queue. The row is centred rather than dropped at the top edge — what is playing is read against what comes after it. It runs the same path `g` and `G` do, and is disabled rather than hidden when nothing is playing.

@@ -1,0 +1,1 @@
+- **Radio mode via API** — `enableRadio`/`disableRadio` GQL mutations and `enable_radio`/`disable_radio`/`radio_status` MCP tools. Radio mode was previously TUI-only (Shift+R). Uses SharedPlayerState atomic so TUI and API stay in sync

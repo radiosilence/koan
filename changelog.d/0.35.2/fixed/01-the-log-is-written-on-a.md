@@ -1,0 +1,1 @@
+- **The log is written on a first launch.** The logger opened `koan.log` before anything had created `~/.config/koan`, failed, and stayed silent for the rest of the run, so a first launch of the macOS app, or of the CLI on a fresh machine, left nothing to diagnose. It now creates the directory itself and retries the open on a later message if one fails.

@@ -1,0 +1,1 @@
+- **MusicBrainz artist searches match the whole name.** A name of several words was searched word by word, so "Azure Ray" found Ray Charles. This also sharpens radio's relationship lookups.

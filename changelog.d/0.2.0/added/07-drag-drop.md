@@ -1,0 +1,1 @@
+- **Drag/drop** — drag files or folders from Finder into the terminal to add to the queue (bracketed paste)

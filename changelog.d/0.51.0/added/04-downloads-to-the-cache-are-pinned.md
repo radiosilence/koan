@@ -1,0 +1,1 @@
+- **Downloads to the cache are pinned.** "Download to Cache" fetches tracks with no queue entry and marks them, so eviction takes them only once nothing fetched for playback is left to remove. Before this release it gave up after five seconds without fetching anything.

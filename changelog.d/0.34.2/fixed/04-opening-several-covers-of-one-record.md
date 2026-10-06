@@ -1,0 +1,1 @@
+- **Opening several covers of one record at once fetches and decodes it once.** Concurrent tiles each started their own fetch and decode — the sharing checked and claimed in two separate steps.

@@ -1,0 +1,1 @@
+- **`[discovery]` config section** — `analysis_on_scan` (run analysis during library scan, default false) and `acoustic_weight` (scoring weight for acoustic signal)

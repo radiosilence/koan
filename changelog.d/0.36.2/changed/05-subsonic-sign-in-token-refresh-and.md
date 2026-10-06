@@ -1,0 +1,1 @@
+- **Subsonic, sign-in, token refresh and sign-out no longer run on the server's async workers.** Their SQLite queries and argon2 checks ran inline, so a few concurrent Subsonic calls could occupy every worker and stall unrelated routes, the web UI included. They now run on the blocking pool, as GraphQL, the web UI and share pages already did.

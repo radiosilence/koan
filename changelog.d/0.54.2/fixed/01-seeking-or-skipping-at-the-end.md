@@ -1,0 +1,1 @@
+- **Seeking or skipping at the end of the queue could freeze playback.** When the player was busy, the decoder reporting the end of the queue and the player stopping that decoder could wait on each other indefinitely.

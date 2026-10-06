@@ -1,0 +1,1 @@
+- **A sync whose album listing came up short no longer removes or relinks tracks.** An album deleted on the server mid-walk shifts the next page of the listing, and the album pushed out of view had its tracks treated as gone. The album itself was already checked before being removed; its tracks now wait for a listing that is whole.

@@ -1,0 +1,1 @@
+- **ALAC codec tests** — fallback tests for `mp4_codec()` plus integration test against real ALAC files

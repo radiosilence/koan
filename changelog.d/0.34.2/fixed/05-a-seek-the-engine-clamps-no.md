@@ -1,0 +1,1 @@
+- **A seek the engine clamps no longer pins the seek bar.** It gave up after twenty playhead updates, which were once a timer's ticks and now arrive only on a seek or pause, so it could wait until the track ended. It gives up after two seconds. A Control Center scrub past what has downloaded is clamped like one in the app.

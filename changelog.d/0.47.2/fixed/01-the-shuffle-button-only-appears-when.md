@@ -1,0 +1,1 @@
+- **The shuffle button only appears when albums are sorted at random.** 0.47.1 showed it for every sort.

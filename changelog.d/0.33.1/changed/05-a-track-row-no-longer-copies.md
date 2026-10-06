@@ -1,0 +1,1 @@
+- **A track row no longer copies the whole track list to itself.** Each row carries the ids of the list it belongs to, so playing it keeps the rest queued behind it — and that list was rebuilt inside the row's own body, once per row. It is built once per pass now.

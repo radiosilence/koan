@@ -1,0 +1,1 @@
+- **Server shares are always made on the server.** The web UI and GraphQL `createShare` made the link on an upstream Navidrome when `[remote]` was configured, where it belonged to the upstream account and could be neither listed nor revoked here, and failed outright for local-only tracks. They now make the same native link Subsonic `createShare` does.

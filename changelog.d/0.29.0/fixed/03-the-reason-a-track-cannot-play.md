@@ -1,0 +1,2 @@
+- **The reason a track cannot play reaches the front ends.** It was a string inside `LoadState::Failed` that nothing read: the TUI drew `!`, the macOS app drew a triangle captioned "Couldn't be fetched", and the actual sentence — a locked keychain, a server that would not answer — lived in the log file. `QueueEntry` carries it, so the TUI raises it once per distinct reason rather than once per track, the triangle's tooltip says it, and GraphQL clients can read `QueueEntry.failureReason`.
+

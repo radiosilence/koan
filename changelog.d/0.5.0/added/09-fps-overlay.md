@@ -1,0 +1,1 @@
+- **FPS overlay** — `[playback] show_fps = true` displays an FPS counter in the top-right corner

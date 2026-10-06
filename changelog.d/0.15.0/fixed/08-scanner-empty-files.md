@@ -1,0 +1,1 @@
+- **Scanner: empty files** — 0-byte files get clear error instead of confusing Symphonia probe messages

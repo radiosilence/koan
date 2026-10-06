@@ -1,0 +1,1 @@
+- **Terminal left in raw mode on I/O errors** — every `?` out of the event loop skipped the restore block. A `Drop` guard handles it.

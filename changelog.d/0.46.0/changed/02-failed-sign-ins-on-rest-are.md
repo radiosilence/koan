@@ -1,0 +1,1 @@
+- **Failed sign-ins on `/rest` are also counted per address**, 30 a minute whatever the username, alongside the 10 a minute per address and account. Changing the username on each guess no longer resets the allowance. The shared username's tokens are exempt only when a shared secret is configured; without one the name is an ordinary account's.

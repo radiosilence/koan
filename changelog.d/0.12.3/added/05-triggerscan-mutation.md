@@ -1,0 +1,1 @@
+- **`triggerScan` mutation** — trigger a library rescan from the API. Returns added/updated/unchanged counts

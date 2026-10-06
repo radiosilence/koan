@@ -1,0 +1,1 @@
+- **`organizeUndo` mutation** — undo the last organize batch

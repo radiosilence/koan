@@ -1,0 +1,1 @@
+- **Acoustic similarity** — `koan analyze` generates 23-dim acoustic fingerprints (tempo, timbre, chroma, spectral features) via bliss-audio. Stored in SQLite, brute-force KNN is sub-millisecond. Radio mode gains `SimilarityAxis::Acoustic` — finds tracks that *sound* similar regardless of metadata. `similarTracks(trackId, limit)` GraphQL query for "more like this"

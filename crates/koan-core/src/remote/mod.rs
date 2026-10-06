@@ -16,6 +16,7 @@ pub mod profile;
 pub mod proof;
 pub mod queue;
 pub mod refusal;
+pub mod scrobbling;
 pub mod sync;
 pub mod wikimedia;
 pub mod wire;

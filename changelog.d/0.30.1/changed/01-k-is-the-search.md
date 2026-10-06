@@ -1,0 +1,1 @@
+- **⌘K is the search.** It is the search everywhere it exists, and koan's knows albums, artists and tracks. It opened the sheet that builds a queue instead, which is a different job — that keeps its place in the menu and moves to ⇧⌘K.

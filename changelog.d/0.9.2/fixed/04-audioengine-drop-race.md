@@ -1,0 +1,1 @@
+- **AudioEngine drop race** — removed unreliable `thread::yield_now()` before `AudioUnitUninitialize`. `AudioOutputUnitStop` is synchronous (callback guaranteed finished on return), so no extra wait is needed. The callback is also explicitly removed as a safety net for the rare case where stop fails

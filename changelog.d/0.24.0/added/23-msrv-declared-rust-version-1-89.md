@@ -1,0 +1,1 @@
+- MSRV declared (`rust-version = "1.89"`, set by async-graphql) and enforced by a CI job.

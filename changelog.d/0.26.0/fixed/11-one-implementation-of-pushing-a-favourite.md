@@ -1,0 +1,1 @@
+- **One implementation of pushing a favourite to the server.** The TUI, the app and the server each had a byte-identical copy.

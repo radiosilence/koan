@@ -1,0 +1,1 @@
+- **Media keys** — macOS Control Center integration via souvlaki (play/pause, next/prev, now playing info)

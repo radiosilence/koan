@@ -1,0 +1,1 @@
+- **`insert_in_queue` MCP tool** — was silently appending instead of inserting after the specified `after_queue_item_id`. Now uses `InsertInPlaylist` command directly

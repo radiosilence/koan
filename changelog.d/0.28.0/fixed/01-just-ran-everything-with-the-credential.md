@@ -1,0 +1,2 @@
+- **`just` ran everything with the credential store switched off.** `export KOAN_NO_KEYCHAIN := "1"` sat directly above `check:`, reading as though it belonged to it — but a top-level `export` in a justfile reaches every recipe, so `just macos-run` launched the app with no keychain. With no password there is no server, and koan degraded three ways at once: nothing played, no downloads started, and every record came back with no artwork, which reads as an empty library rather than as being signed out. It is set per-recipe now, on the two that run unsigned test binaries.
+

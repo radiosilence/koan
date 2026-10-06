@@ -1,0 +1,1 @@
+- **`?token=` applied to every route** — a valid JWT could sit in any URL, and from there in shell history, proxy logs and `Referer`. It exists for WebSocket URLs, which cannot carry a header, and is now confined to `/graphql/ws`.

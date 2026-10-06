@@ -1,0 +1,1 @@
+- **A slow load no longer lands on the page you moved to.** A cover still loading when the track changed, lyrics still reading when you skipped, a playlist still opening when you clicked another: each finished late and painted over what was now on screen.

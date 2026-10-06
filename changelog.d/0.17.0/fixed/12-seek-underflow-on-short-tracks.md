@@ -1,0 +1,1 @@
+- **Seek underflow on short tracks** — guard `max_ms > 5_000` before subtracting safety margin, preventing short/partially-downloaded tracks from clamping seek to 0 ([#78](https://github.com/radiosilence/koan/pull/78))

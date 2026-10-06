@@ -1,0 +1,1 @@
+- **`organizePreview` / `organizeExecute` mutations** — preview and execute file renames using fb2k-compatible format strings. Supports per-track or whole-library operations

@@ -1,0 +1,1 @@
+- **A headless server keeps its index current.** It scans the library folders at start and whenever they change, as the macOS app already did; new music needed `koan scan` or the `triggerScan` mutation before.

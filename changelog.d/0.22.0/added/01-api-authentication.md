@@ -1,0 +1,16 @@
+- **API authentication** — JWT-based auth with Ed25519 signing for the GraphQL and Subsonic APIs. ([#161](https://github.com/radiosilence/koan/issues/161))
+  - Three roles: `admin` (full control), `user` (playback, queue, favourites), `readonly` (browse-only).
+  - Argon2id password hashing, short-lived access tokens (15min default), single-use rotating refresh tokens (30d default).
+  - Auth routes: `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`.
+  - Axum middleware validates JWT on protected routes. When `auth_enabled = false`, all requests pass through as admin — zero breaking change for existing installs.
+  - CLI commands: `koan auth setup` (keypair + first admin), `koan auth create-user`, `koan auth delete-user`, `koan auth list-users`, `koan auth login`, `koan auth logout`.
+  - Refresh tokens stored in platform keychain via `keyring`. In-process execution (MCP) bypasses auth.
+  - Config: `[graphql]` section gains `auth_enabled`, `access_token_ttl`, `refresh_token_ttl`.
+  - DB tables: `users`, `refresh_tokens` (auto-created on startup).
+  - Role-based guards on all GraphQL mutations (admin: scan/organize/device, user: playback/queue/favourites, readonly: queries only).
+  - `koan auth reset-password <user>` — reset password, revoke all tokens.
+  - `koan auth set-role <user> <role>` — change a user's role.
+  - `koan auth regenerate-keys` — regenerate Ed25519 keypair, invalidate all tokens.
+  - `koan auth reset` — nuclear option, wipe all auth state.
+  - Non-interactive setup via `KOAN_USERNAME` + `KOAN_PASSWORD` env vars.
+  - Auth enabled by default.

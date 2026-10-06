@@ -1,0 +1,1 @@
+- **CLI: `koan init` → `koan config init`** — config initialization is now a subcommand of `koan config`. `koan config` with no subcommand still shows resolved config ([#120](https://github.com/radiosilence/koan/pull/120))

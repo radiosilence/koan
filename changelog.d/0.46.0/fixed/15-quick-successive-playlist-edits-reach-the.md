@@ -1,0 +1,1 @@
+- **Quick successive playlist edits reach the server in order.** Each edit pushed on its own thread, so two in flight could create the playlist on the server twice or land out of order. Pushes of one playlist now run one at a time, each reading the playlist when its turn comes.

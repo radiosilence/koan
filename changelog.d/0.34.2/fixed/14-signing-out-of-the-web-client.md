@@ -1,0 +1,1 @@
+- **Signing out of the web client revokes the session.** The refresh cookie was scoped to `/auth/refresh`, so the browser never sent it to `/auth/logout`: the cookies were cleared and the token stayed valid for its full thirty days. It is scoped to `/auth`, and the old narrower one is cleared wherever the cookie is set.

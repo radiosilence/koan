@@ -1,0 +1,1 @@
+- **Batch ID collision** — `chrono_batch_id()` uses `as_nanos()` instead of `as_millis()` to prevent millisecond-resolution collisions ([#75](https://github.com/radiosilence/koan/pull/75))

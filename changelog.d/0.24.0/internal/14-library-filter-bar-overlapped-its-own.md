@@ -1,0 +1,1 @@
+- **Library filter bar overlapped its own click region** — the view reserves the bottom row for the filter input while focused, but hit-testing and scrolling used the full height, so clicking the input selected a node.

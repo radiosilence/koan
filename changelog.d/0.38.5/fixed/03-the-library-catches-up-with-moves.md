@@ -1,0 +1,1 @@
+- **The library catches up with moves the file watcher misses.** A scan that runs while a folder is half moved sees both the new files and the old, and with no later event the old paths stayed in the library, unplayable, until a restart. The watcher now also rescans every 15 minutes; unchanged files are skipped on mtime and size, so an idle rescan costs about a second.

@@ -1,0 +1,1 @@
+- **`just macos-signing-cert`** creates the self-signed certificate development builds sign with. Ad-hoc signing derives the app's identity from the binary's own hash, so every rebuild is a different application to macOS and keychain grants and TCC permissions are both forgotten. It does nothing for Gatekeeper — that needs Developer ID and notarisation.

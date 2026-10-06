@@ -1,0 +1,1 @@
+- **iOS: the Albums page can be sorted.** The sort menu lived only in the Mac's window toolbar. It is now in the navigation bar, with the reshuffle button beside it under Random.

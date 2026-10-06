@@ -1,0 +1,1 @@
+- **Seeking in Opus starts clean.** A seek now decodes from 80 ms before the target and discards that, as the Opus spec asks, so the decoder has settled by the first sample heard; it used to start cold at the target. A seek into the first 80 ms also drops the stream's encoder delay again, which it skipped before.
