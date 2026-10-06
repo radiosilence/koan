@@ -943,24 +943,34 @@ mod tests {
             .unwrap()
     }
 
+    /// A track also on the server outlives its folder being forgotten, as the
+    /// server's copy. Added back, the folder's file must be read again.
     #[test]
     fn a_forgotten_folder_added_back_is_read_again() {
         let dir = tempfile::tempdir().unwrap();
         let music = dir.path().join("music");
         std::fs::create_dir_all(&music).unwrap();
-        test_utils::generate_wav(&music.join("kept.wav"), 8000, 1, 0.1, 16);
+        let file = music.join("kept.wav");
+        test_utils::generate_wav(&file, 8000, 1, 0.1, 16);
         let db = test_db(dir.path());
-        assert_eq!(
-            scan_folder(&db, &music, ScanOptions::default(), None).added,
-            1
-        );
+        let mut both = metadata::read_metadata(&file).unwrap();
+        both.remote_id = Some("sub-1".into());
+        let track = queries::upsert_track(&db.conn, &both).unwrap();
+        let local = |db: &Database| -> Option<String> {
+            db.conn
+                .query_row("SELECT path FROM tracks WHERE id = ?1", [track], |r| {
+                    r.get(0)
+                })
+                .unwrap()
+        };
+        scan_folder(&db, &music, ScanOptions::default(), None);
 
         assert_eq!(crate::helpers::forget_folder(&db, &music).unwrap(), 1);
-        assert!(track_paths(&db).is_empty());
+        assert_eq!(local(&db), None, "kept as the server's copy");
 
         let again = scan_folder(&db, &music, ScanOptions::default(), None);
-        assert_eq!((again.added, again.skipped), (1, 0), "{:?}", again.errors);
-        assert_eq!(track_paths(&db).len(), 1);
+        assert_eq!(again.skipped, 0, "{:?}", again.errors);
+        assert_eq!(local(&db), Some(file.to_string_lossy().into_owned()));
     }
 
     #[test]

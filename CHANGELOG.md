@@ -8,7 +8,7 @@
 
 ### Fixed
 
-- **A library folder removed and added back left its tracks without files.** Forgetting a folder kept its files' scan cache entries, so a scan after re-adding it took every file as already read and skipped it. Forgetting a folder now clears them.
+- **A library folder removed and added back left its server-held tracks without their files.** A track also on the server outlives its folder being forgotten, as the server's copy, and kept its file's scan cache entry, so a scan after re-adding the folder took the file as already read and never linked it again. Forgetting a folder now clears the folder's entries.
 - **Full scans indexed what the folder watcher ignores.** Hidden files and directories (Syncthing's `.stversions` among them) and Syncthing's temporary files were indexed by a full scan and by a rescan of a directory, though the watcher skips them. Both now skip the same names. Tracks already indexed from such paths stay until their files go.
 
 ## 0.56.0
