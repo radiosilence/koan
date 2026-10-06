@@ -1404,3 +1404,35 @@ extension DevicesSettings {
     }
 }
 #endif
+
+#if os(macOS)
+/// The Settings panes, each a page of its own, for the evidence renderer: the
+/// window's tabs show one at a time, and the panes are private to this file.
+@MainActor
+enum SettingsEvidence {
+    static func pages(_ state: AppState) async -> [(name: String, size: CGSize, view: AnyView)] {
+        let model = await SettingsModel(engine: state.library.engine, activity: state.activity, art: state.art)
+        // What the Settings scene injects, so a pane renders as it does there.
+        func page(_ view: some View) -> AnyView {
+            AnyView(
+                view
+                    .environment(state)
+                    .environment(state.player)
+                    .environment(state.library)
+                    .environment(state.activity)
+                    .environment(state.art)
+                    .environment(state.mirror)
+                    .koanTheme(state.appearance)
+            )
+        }
+        let size = CGSize(width: 560, height: 760)
+        return [
+            ("settings-library", size, page(LibrarySettings(model: model))),
+            ("settings-server", size, page(RemoteSettings(model: model))),
+            ("settings-playback", size, page(PlaybackSettings(model: model))),
+            ("settings-devices", size, page(DevicesSettings(model: model))),
+            ("settings-appearance", size, page(AppearanceSettings())),
+        ]
+    }
+}
+#endif
