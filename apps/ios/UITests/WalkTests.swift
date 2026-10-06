@@ -44,6 +44,11 @@ final class WalkTests: XCTestCase {
         if open(app.buttons["Artists"]) {
             pause(3)
             snap("05-artists")
+            // The first artist, by where it sits, as the first sleeve above.
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.22)).tap()
+            pause(3)
+            snap("05b-artist")
+            back()
             back()
         }
 
