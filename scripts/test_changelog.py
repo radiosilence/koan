@@ -148,6 +148,11 @@ class Changelog(unittest.TestCase):
             "unreleased/fixed/4.md": "- **No newline.**",
             "unreleased/stray.md": "- **Not in a section.**\n",
             "0.8.0/fixed/unnumbered.md": "- **Released without a place.**\n",
+            "unreleased/fixed/5.md": "Not a bullet\nsecond line\n",
+            "unreleased/fixed/6.md": "- **Two lines.**\nmore\n",
+            "unreleased/fixed/901-no-suffix": "- **Dropped without a suffix.**\n",
+            "unreleased/_sections": "fixed\n",
+            "0.8.0/_sections": "fixed\nfixed\n",
             "0.x/fixed/01-a.md": "- **Not a version.**\n",
         }
         for path, text in cases.items():
@@ -157,6 +162,36 @@ class Changelog(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(path.split("/")[0], result.stderr)
                 shutil.rmtree((self.root / "changelog.d" / path).parent)
+
+    def test_two_released_fragments_with_one_number_are_refused(self):
+        self.write("0.9.0/fixed/01-other.md", "- **Other.**\n")
+        result = self.run_script("--check")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("numbered as", result.stderr)
+
+    def test_dotfiles_are_ignored_and_left_where_they_are(self):
+        self.write("unreleased/fixed/.DS_Store", "binary")
+        self.write("unreleased/fixed/1.md", "- **One.**\n")
+        self.write("0.10.0/added/.DS_Store", "binary")
+        self.assertEqual(self.run_script("--release", "0.11.0").returncode, 0)
+        self.assertTrue((self.root / "changelog.d/0.11.0/fixed/01-1.md").exists())
+        self.assertTrue((self.root / "changelog.d/unreleased/fixed/.DS_Store").exists())
+
+    def test_a_release_that_cannot_finish_moves_nothing(self):
+        tree = self.root / "changelog.d"
+        self.write("unreleased/fixed/1.md", "- **One.**\n")
+        self.write("unreleased/added/2.md", "- **Two.**\n")
+        for stray, text in [
+            ("unreleased/fixed/901-y", "- **No suffix.**\n"),
+            ("0.9.0/fixed/02-nine-again", "- **No suffix, released.**\n"),
+        ]:
+            with self.subTest(stray=stray):
+                self.write(stray, text)
+                before = sorted(p.relative_to(tree) for p in tree.rglob("*"))
+                self.assertNotEqual(self.run_script("--release", "0.11.0").returncode, 0)
+                self.assertEqual(sorted(p.relative_to(tree) for p in tree.rglob("*")), before)
+                self.assertFalse((self.root / "CHANGELOG.md").exists())
+                (tree / stray).unlink()
 
     def test_a_release_is_refused_twice_or_with_nothing_in_it(self):
         self.assertIn("nothing to release", self.run_script("--release", "0.11.0").stderr)

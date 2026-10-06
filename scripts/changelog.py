@@ -50,15 +50,23 @@ class Malformed(Exception):
     pass
 
 
+ENTRY = re.compile(r"- \S.*\n")
+
+
 def read(path, unreleased):
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     if not text.strip():
         raise Malformed(f"{path}: empty")
     if not text.endswith("\n"):
         raise Malformed(f"{path}: must end with a newline")
-    if unreleased and (text.endswith("\n\n") or text.startswith("\n")):
-        raise Malformed(f"{path}: no blank lines before or after the entry")
+    if unreleased and not ENTRY.fullmatch(text):
+        raise Malformed(f"{path}: an unreleased fragment is one `- **Lead.** Detail.` line")
     return text
+
+
+def listed(directory):
+    """A directory's entries, less dotfiles such as .DS_Store."""
+    return [p for p in directory.iterdir() if not p.name.startswith(".")]
 
 
 def unreleased_key(path):
@@ -66,37 +74,50 @@ def unreleased_key(path):
     return (int(number.group()) if number else float("inf"), path.name)
 
 
-def released_key(path):
-    number = re.match(r"(\d+)-", path.name)
-    if not number:
-        raise Malformed(f"{path}: a released fragment is named <nn>-<slug>.md")
-    return int(number.group(1))
+def fragments_in(section, unreleased):
+    """A section directory's fragments, in order."""
+    files = listed(section)
+    for path in files:
+        if not path.is_file() or path.suffix != ".md":
+            raise Malformed(f"{path}: a fragment is a .md file")
+    if unreleased:
+        return sorted(files, key=unreleased_key)
+    numbered = {}
+    for path in files:
+        number = re.match(r"(\d+)-", path.name)
+        if not number:
+            raise Malformed(f"{path}: a released fragment is named <nn>-<slug>.md")
+        if int(number.group(1)) in numbered:
+            raise Malformed(f"{path}: numbered as {numbered[int(number.group(1))].name} is")
+        numbered[int(number.group(1))] = path
+    return [numbered[n] for n in sorted(numbered)]
 
 
 def release(directory, unreleased):
-    """A release's sections, in order, each a list of its fragments' text."""
+    """A release's intro and sections, in order, each a list of its
+    fragments' text."""
     order = list(SECTIONS)
     if (directory / "_sections").exists():
-        order = (directory / "_sections").read_text().split()
-    present = {p.name for p in directory.iterdir() if p.is_dir()}
+        if unreleased:
+            raise Malformed(f"{directory}/_sections: unreleased sections go in the usual order")
+        order = (directory / "_sections").read_text(encoding="utf-8").split()
+        if len(set(order)) != len(order):
+            raise Malformed(f"{directory}/_sections: a section is listed twice")
+    present = {p.name for p in listed(directory) if p.is_dir()}
     for name in present | set(order):
         if name not in SECTIONS:
             raise Malformed(f"{directory / name}: not a section ({', '.join(SECTIONS)})")
     for name in present - set(order):
         raise Malformed(f"{directory}/_sections: {name} is missing")
-    for path in directory.iterdir():
+    for path in listed(directory):
         if path.is_file() and path.name not in ("_intro.md", "_sections"):
             raise Malformed(f"{path}: fragments go in a section directory")
     sections = []
     for name in order:
-        if name not in present:
-            continue
-        files = sorted(
-            (p for p in (directory / name).iterdir() if p.suffix == ".md"),
-            key=unreleased_key if unreleased else released_key,
-        )
-        if files:
-            sections.append((SECTIONS[name], [read(p, unreleased) for p in files]))
+        if name in present:
+            files = fragments_in(directory / name, unreleased)
+            if files:
+                sections.append((SECTIONS[name], [read(p, unreleased) for p in files]))
     intro = directory / "_intro.md"
     return (read(intro, False) if intro.exists() else None), sections
 
@@ -131,6 +152,8 @@ def released(text):
 
 
 def cut(fragments, version):
+    """Move the unreleased fragments into `version`, numbered in order.
+    Everything is checked before anything moves."""
     if not VERSION.match(version):
         raise Malformed(f"{version}: not a version")
     source, target = fragments / "unreleased", fragments / version
@@ -138,19 +161,21 @@ def cut(fragments, version):
         raise Malformed(f"{target}: already released")
     if not source.is_dir() or not any(source.rglob("*.md")):
         raise Malformed(f"{source}: nothing to release")
-    release(source, True)
-    target.mkdir()
+    render(fragments)
+    moves = []
     if (source / "_intro.md").exists():
-        (source / "_intro.md").rename(target / "_intro.md")
+        moves.append((source / "_intro.md", target / "_intro.md"))
     for name in SECTIONS:
-        files = sorted((source / name).glob("*.md"), key=unreleased_key) if (source / name).is_dir() else []
-        if not files:
-            continue
-        (target / name).mkdir()
-        width = max(2, len(str(len(files))))
-        for i, path in enumerate(files, 1):
-            path.rename(target / name / f"{i:0{width}}-{path.name}")
-        (source / name).rmdir()
+        if (source / name).is_dir():
+            files = fragments_in(source / name, True)
+            width = max(2, len(str(len(files))))
+            moves += [(p, target / name / f"{i:0{width}}-{p.name}") for i, p in enumerate(files, 1)]
+    for old, new in moves:
+        new.parent.mkdir(parents=True, exist_ok=True)
+        old.rename(new)
+    for name in SECTIONS:
+        if (source / name).is_dir() and not any((source / name).iterdir()):
+            (source / name).rmdir()
 
 
 def main():
@@ -173,15 +198,15 @@ def main():
         sys.stdout.write(text)
         return
     if args.lint:
-        if not changelog.exists() or released(changelog.read_text()) != released(text):
+        if not changelog.exists() or released(changelog.read_text(encoding="utf-8")) != released(text):
             sys.exit("changelog: a released version in CHANGELOG.md is not what changelog.d/ makes; edit its fragments instead")
         return
     if args.check:
-        if not changelog.exists() or changelog.read_text() != text:
+        if not changelog.exists() or changelog.read_text(encoding="utf-8") != text:
             sys.exit("changelog: CHANGELOG.md is not what changelog.d/ makes; run scripts/changelog.py")
         return
-    if not changelog.exists() or changelog.read_text() != text:
-        changelog.write_text(text)
+    if not changelog.exists() or changelog.read_text(encoding="utf-8") != text:
+        changelog.write_text(text, encoding="utf-8")
 
 
 if __name__ == "__main__":

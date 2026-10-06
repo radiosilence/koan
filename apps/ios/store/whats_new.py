@@ -31,8 +31,8 @@ PATIENCE = 45 * 60
 
 
 def notes(version):
-    # Generated rather than read, so a build between releases has the
-    # unreleased entries.
+    # Generated rather than read: the committed file has no Unreleased block,
+    # which the fallback below looks for.
     script = Path(__file__).parents[3] / "scripts" / "changelog.py"
     text = subprocess.run([sys.executable, script, "--stdout"], check=True, capture_output=True, text=True).stdout
     match = re.search(rf"^## {re.escape(version)}\n(.*?)(?=^## |\Z)", text, re.S | re.M)
