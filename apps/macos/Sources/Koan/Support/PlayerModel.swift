@@ -41,6 +41,19 @@ final class PlayerModel {
     private(set) var pendingMutations = 0
     var isBusy: Bool { pendingMutations > 0 }
 
+    /// What a play still finding its tracks is for, from the tap until the
+    /// engine holds the new queue: the transport names it, loading, at once.
+    /// Without it the bar went on showing the paused track for as long as a
+    /// playlist took to read, and a press of its play button in that time
+    /// resumed the old track.
+    private(set) var resolving: String?
+
+    /// The request most recently made of the engine. Each waits for the one
+    /// before, so requests arrive in the order they were made, a play still
+    /// finding its tracks included: a tap on pause or play cannot overtake it
+    /// and act on the queue it is about to replace.
+    @ObservationIgnored private var lastRequest: Task<Void, Never>?
+
     /// Set by `AppState`. Queue mutations register here alongside every other
     /// slow thing rather than tracking their own spinner.
     weak var activity: ActivityModel?
@@ -118,7 +131,7 @@ final class PlayerModel {
     /// screen to say so reads as a tap that did nothing. A wait paused by hand
     /// reads as paused, since it will open paused.
     var isWaitingForTrack: Bool {
-        mirror.playback.waiting && mirror.playback.state == .stopped
+        resolving != nil || (mirror.playback.waiting && mirror.playback.state == .stopped)
     }
     var currentTrackId: Int64? { mirror.playback.entry?.trackId }
     var currentItemId: String? { mirror.playback.queueItemId }
@@ -338,6 +351,29 @@ final class PlayerModel {
     /// The index goes with the command rather than following it as a separate
     /// `play`. Two commands meant the first track started before the cursor
     /// jumped, which showed as track one flashing as playing.
+    /// Replace the queue with what `resolve` finds, named `name` until it
+    /// lands: a record, an artist or a playlist, whose tracks are a database
+    /// read away. In turn with every other request, so nothing tapped while it
+    /// resolves reaches the engine first.
+    @discardableResult
+    func playNow(resolving name: String, _ resolve: @escaping () async -> [Int64]) -> Task<Void, Never> {
+        resolving = name
+        let engine = self.engine
+        pendingMutations += 1
+        return inTurn {
+            let ids = await resolve()
+            if !ids.isEmpty {
+                do {
+                    _ = try await engine.replaceQueue(trackIds: ids, startAt: 0)
+                } catch {
+                    self.lastError = String(describing: error)
+                }
+            }
+            self.resolving = nil
+            self.pendingMutations -= 1
+        }
+    }
+
     func playNow(trackIds: [Int64], startingAt index: Int = 0) {
         guard !trackIds.isEmpty else { return }
         let start = trackIds.indices.contains(index) ? index : 0
@@ -714,13 +750,25 @@ final class PlayerModel {
     /// Engine calls fail for real reasons (device vanished, track gone) but
     /// none of them are worth a modal. Surface it and carry on.
     private func attempt(_ body: @escaping () async throws -> Void) {
-        Task {
+        inTurn {
             do {
                 try await body()
             } catch {
-                lastError = String(describing: error)
+                self.lastError = String(describing: error)
             }
         }
+    }
+
+    /// Run `work` once every request made before it has been made.
+    @discardableResult
+    private func inTurn(_ work: @escaping @MainActor () async -> Void) -> Task<Void, Never> {
+        let before = lastRequest
+        let task = Task {
+            await before?.value
+            await work()
+        }
+        lastRequest = task
+        return task
     }
 
     /// A queue mutation, with the spinner and the error reporting every one of
@@ -734,14 +782,14 @@ final class PlayerModel {
         let engine = self.engine
         pendingMutations += 1
         let job = activity?.begin("Updating queue")
-        Task {
+        inTurn {
             do {
                 try await body(engine)
             } catch {
-                lastError = String(describing: error)
+                self.lastError = String(describing: error)
             }
-            if let job { activity?.end(job) }
-            pendingMutations -= 1
+            if let job { self.activity?.end(job) }
+            self.pendingMutations -= 1
         }
     }
 }

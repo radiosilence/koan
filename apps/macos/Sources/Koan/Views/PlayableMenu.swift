@@ -103,7 +103,7 @@ struct PlayableMenu: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Button { act { player.playNow(trackIds: $0) } } label: {
+        Button { playNow(shuffled: false) } label: {
             Label("Play", systemImage: Icon.play)
         }
         Button { act { player.playNext(trackIds: $0) } } label: {
@@ -113,7 +113,7 @@ struct PlayableMenu: View {
             Label("Add to Queue", systemImage: Icon.queue)
         }
         if playable.hasChildren {
-            Button { act { player.playNow(trackIds: $0.shuffled()) } } label: {
+            Button { playNow(shuffled: true) } label: {
                 Label("Shuffle", systemImage: Icon.shuffle)
             }
         }
@@ -211,6 +211,17 @@ struct PlayableMenu: View {
         case .album: return "Favourite Album"
         case .artist: return "Favourite Artist"
         case .playlist: return ""  // Never shown — see `isLibraryContent`.
+        }
+    }
+
+    /// Replace the queue with this, in turn with every other request: see
+    /// `PlayerModel.playNow(resolving:_:)`.
+    private func playNow(shuffled: Bool) {
+        let engine = library.engine
+        let playable = self.playable
+        player.playNow(resolving: playable.name) {
+            let ids = await playable.trackIds(using: engine)
+            return shuffled ? ids.shuffled() : ids
         }
     }
 
@@ -387,19 +398,23 @@ struct PlayableHeaderButton: View {
     @Environment(PlayerModel.self) private var player
     @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
-    @State private var loading = false
+
+    /// This play is still finding its tracks.
+    private var loading: Bool { player.resolving == playable.name }
 
     var body: some View {
         Button {
             guard !loading else { return }
-            loading = true
             let engine = library.engine
             let playable = self.playable
-            Task {
-                let ids = await playable.trackIds(using: engine)
-                loading = false
-                player.playNow(trackIds: ids)
-                if case .artist = playable { nav.showQueueWhenReady(watching: player) }
+            let done = player.playNow(resolving: playable.name) {
+                await playable.trackIds(using: engine)
+            }
+            if case .artist = playable {
+                Task {
+                    await done.value
+                    nav.showQueueWhenReady(watching: player)
+                }
             }
         } label: {
             ZStack {
