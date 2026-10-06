@@ -1676,6 +1676,9 @@ pub struct ConnectionInfo {
     /// The server can sign a device without a keyboard in, once someone here
     /// approves it.
     pub pairing: bool,
+    /// The server refused the stored credential (a revoked API key, a changed
+    /// password) when it was last used, and has not accepted it since.
+    pub sign_in_refused: bool,
 }
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]

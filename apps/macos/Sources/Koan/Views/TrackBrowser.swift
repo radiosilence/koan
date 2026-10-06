@@ -40,7 +40,11 @@ struct TrackBrowser: View {
                 EmptyState(
                     icon: Icon.track,
                     title: library.isNarrowed ? "No matches" : "No tracks yet",
-                    detail: library.isNarrowed ? nil : "Add a folder or sign in to a server in Settings."
+                    detail: library.isNarrowed
+                        ? nil
+                        : mirror.signInRefused
+                        ? EngineMirror.signInRefusedDetail
+                        : "Add a folder or sign in to a server in Settings."
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {

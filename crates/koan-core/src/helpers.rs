@@ -824,8 +824,9 @@ pub fn sync_remote(
     let _one_at_a_time = SYNCING.lock();
 
     let walked = sync::library_version(db, url);
-    let version = client
-        .library_modified(walked)
+    let modified = client.library_modified(walked);
+    crate::remote::refusal::observe(client.auth(), &modified);
+    let version = modified
         .inspect_err(|e| log::debug!("library version unavailable: {e}"))
         .ok()
         .flatten();
@@ -833,7 +834,11 @@ pub fn sync_remote(
         log::info!("library unchanged on the server; not walked");
         sync::SyncResult::default()
     } else {
-        let library = sync::sync_library(db, client, url, username, progress)?;
+        let library = sync::sync_library(db, client, url, username, progress).inspect_err(|e| {
+            if let sync::SyncError::Subsonic(e) = e {
+                crate::remote::refusal::observe_error(client.auth(), e);
+            }
+        })?;
         if library.is_complete()
             && let Some(version) = version
         {
@@ -1836,6 +1841,29 @@ pub fn remote_unavailable(cfg: &Config) -> String {
     "the remote server could not be reached".into()
 }
 
+/// What every front end says when the server refused the stored credential.
+pub const SIGN_IN_REFUSED: &str = "the remote server refused the stored sign-in; sign in again";
+
+/// Why the configured server cannot be used, if it cannot: no credential, or
+/// one the server has refused since (a revoked API key, a changed password).
+/// `None` when no server is configured, or the one that is works as far as
+/// anything has heard.
+pub fn remote_problem(cfg: &Config) -> Option<String> {
+    if !cfg.remote.enabled || cfg.remote.url.is_empty() {
+        return None;
+    }
+    match subsonic_auth(cfg) {
+        None => Some(remote_unavailable(cfg)),
+        Some(auth) if crate::remote::refusal::refused(&auth) => Some(SIGN_IN_REFUSED.into()),
+        Some(_) => None,
+    }
+}
+
+/// Whether the server refused the configured credential when it was last used.
+pub fn sign_in_refused(cfg: &Config) -> bool {
+    subsonic_auth(cfg).is_some_and(|auth| crate::remote::refusal::refused(&auth))
+}
+
 #[cfg(test)]
 mod year_tests {
     use super::year_of;
@@ -2602,5 +2630,100 @@ mod favourite_sync_tests {
         let sync = reconcile_favourites(&db, &SubsonicClient::new(&url, "u", "pw"));
         assert_eq!(sync.pushed, 1);
         assert_eq!(*stars.lock().unwrap(), ["s2"]);
+    }
+}
+
+#[cfg(test)]
+mod refusal_tests {
+    use super::*;
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+
+    /// A koan server holding API keys that can be revoked. `koanSignIn` with
+    /// `mate`'s password mints `second`.
+    fn serve(keys: Arc<Mutex<HashSet<String>>>) -> String {
+        use std::io::{BufRead, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                let mut request = String::new();
+                reader.read_line(&mut request).unwrap();
+                let mut line = String::new();
+                while reader.read_line(&mut line).unwrap_or(0) > 2 {
+                    line.clear();
+                }
+                let target = request.split_whitespace().nth(1).unwrap_or("");
+                let (path, query) = target.split_once('?').unwrap_or((target, ""));
+                let param = |name: &str| {
+                    query
+                        .split('&')
+                        .filter_map(|kv| kv.split_once('='))
+                        .find(|(k, _)| *k == name)
+                        .map(|(_, v)| v.to_owned())
+                        .unwrap_or_default()
+                };
+                let endpoint = path.rsplit('/').next().unwrap();
+                let body = if endpoint == "koanSignIn" {
+                    keys.lock().unwrap().insert("second".into());
+                    r#"{"subsonic-response":{"status":"ok","join":{"username":"mate","apiKey":"second"}}}"#.to_owned()
+                } else if !keys.lock().unwrap().contains(&param("apiKey")) {
+                    r#"{"subsonic-response":{"status":"failed","error":{"code":44,"message":"invalid API key"}}}"#.to_owned()
+                } else if endpoint == "getOpenSubsonicExtensions" {
+                    r#"{"subsonic-response":{"status":"ok","openSubsonicExtensions":[{"name":"koanSignIn","versions":[1]}]}}"#.to_owned()
+                } else {
+                    r#"{"subsonic-response":{"status":"ok","indexes":{"lastModified":1}}}"#
+                        .to_owned()
+                };
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn a_revoked_key_is_reported_until_signing_in_again() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        crate::config::set_config_dir(dir.path());
+        let keys = Arc::new(Mutex::new(HashSet::from(["first".to_owned()])));
+        let url = serve(keys.clone());
+        Config::persist(|c| {
+            c.remote.enabled = true;
+            c.remote.url = url.clone();
+            c.remote.username = "mate".into();
+            c.remote.api_key = "first".into();
+        })
+        .unwrap();
+
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let sync = || {
+            let cfg = Config::load().unwrap();
+            let client = SubsonicClient::from_auth(subsonic_auth(&cfg).unwrap());
+            let _ = sync_remote(&db, &client, Walk::IfChanged, &url, "mate", &|_| {});
+        };
+
+        sync();
+        assert_eq!(remote_problem(&Config::load().unwrap()), None);
+
+        keys.lock().unwrap().remove("first");
+        sync();
+        let cfg = Config::load().unwrap();
+        assert_eq!(remote_problem(&cfg).as_deref(), Some(SIGN_IN_REFUSED));
+        assert!(sign_in_refused(&cfg));
+
+        set_remote_credentials(&url, "mate", "hunter22").unwrap();
+        let cfg = Config::load().unwrap();
+        assert_eq!(cfg.remote.api_key, "second");
+        assert_eq!(remote_problem(&cfg), None, "a new credential starts clean");
+        sync();
+        assert_eq!(remote_problem(&Config::load().unwrap()), None);
     }
 }
