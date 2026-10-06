@@ -295,8 +295,11 @@ private struct SidebarFooter: View {
                 .koanText(.fine, .muted)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.bottom, 10)
+        // The rows' own inset at the sides, and clear of the window's rounded
+        // corner below: under a bar, nothing else keeps the text off the edge.
+        .padding(.horizontal, KoanTheme.Space.l)
+        .padding(.top, KoanTheme.Space.s)
+        .padding(.bottom, KoanTheme.Space.xl)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

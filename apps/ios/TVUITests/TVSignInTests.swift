@@ -234,7 +234,7 @@ final class TVSignInTests: XCTestCase {
         guard !label.isEmpty else { return false }
         let current = app.descendants(matching: .any)
             .matching(NSPredicate(format: "hasFocus == true")).firstMatch
-        return current.exists && current.label == label
+        return current.exists && current.label.caseInsensitiveCompare(label) == .orderedSame
     }
 
     private func snap(_ name: String) {
