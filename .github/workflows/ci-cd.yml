@@ -272,6 +272,41 @@ jobs:
       # built on every push. Rides in this job because it needs the same
       # bindings and nothing else -- no Rust iOS build, no simulator.
       - run: just ios-typecheck
+      # And for tvOS, for the same reasons: a SwiftUI change made for the Mac
+      # or the phone can use an API tvOS lacks.
+      - run: just tv-typecheck
+
+  tvos-app:
+    name: tvOS App
+    runs-on: macos-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    timeout-minutes: 45
+    concurrency:
+      group: tvos-app-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-tvos,aarch64-apple-tvos-sim
+      # The engine builds for tvOS into a target directory of its own (see
+      # `tv-ffi`), which rust-cache does not look in unless told.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: tvos-app
+          workspaces: |
+            . -> target/tv-26.0
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      - run: brew install xcodegen
+      # The device target as well as the simulator's: they take different
+      # cfgs in places, and only the simulator is built below.
+      - run: cargo check -p koan-ffi --target aarch64-apple-tvos --target-dir target/tv-26.0
+        env:
+          TVOS_DEPLOYMENT_TARGET: "26.0"
+      - run: just tv-build
 
   msrv:
     name: MSRV (1.89)
@@ -325,9 +360,10 @@ jobs:
     name: Container image
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [changes, check-version]
+    needs: [changes, check-version, fmt, clippy, test, audit]
     # check-version runs only on main, so it is skipped on pull requests and
-    # this must not require it to have succeeded.
+    # this must not require it to have succeeded. The checks are skipped when
+    # no code changed; an image is published only when none of them failed.
     if: ${{ !cancelled() && !failure() && needs.changes.outputs.docker == 'true' }}
     permissions:
       contents: read
@@ -405,20 +441,32 @@ jobs:
       version: ${{ steps.check.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
       - name: Check if release needed
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+        # A push releases only when it changes the version. Comparing with the
+        # latest GitHub release alone let any push that landed while a release
+        # was still running (the release appears at its end) release the same
+        # version a second time. A manual run releases whatever is unreleased,
+        # which is how a failed release is retried.
         run: |
-          CURRENT_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          version_of() { sed -n 's/^version = "\(.*\)"/\1/p' | head -1; }
+          CURRENT_VERSION=$(version_of < Cargo.toml)
+          PREVIOUS_VERSION=$(git show HEAD^:Cargo.toml 2>/dev/null | version_of || true)
           LATEST_RELEASE=$(gh release list --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || echo "")
           LATEST_VERSION=${LATEST_RELEASE#v}
-          if [ -z "$LATEST_RELEASE" ] || [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
-            echo "should_release=true" >> $GITHUB_OUTPUT
+          if [ "$CURRENT_VERSION" = "$LATEST_VERSION" ]; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT" = "workflow_dispatch" ] || [ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" ]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
           else
-            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "version=${CURRENT_VERSION}" >> $GITHUB_OUTPUT
+          echo "version=${CURRENT_VERSION}" >> "$GITHUB_OUTPUT"
           # Internal path deps carry a `version` for crates.io. If it drifts from
           # the workspace version, cargo publishes a crate pinned to a stale
           # sibling — path deps mask it locally and --no-verify masked it in CI.
@@ -584,8 +632,8 @@ jobs:
 
   testflight:
     name: Release (TestFlight)
-    needs: [check-version]
-    if: needs.check-version.outputs.should_release == 'true'
+    needs: [fmt, clippy, test, audit, check-version]
+    if: ${{ !cancelled() && !failure() && needs.check-version.outputs.should_release == 'true' }}
     uses: ./.github/workflows/ios.yml
     secrets: inherit
 

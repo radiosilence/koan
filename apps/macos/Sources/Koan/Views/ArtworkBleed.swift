@@ -104,6 +104,11 @@ extension View {
     /// instead of letting it fade out across the first few rows. Every list in
     /// the app sits in the wash, so every list gives its ground up.
     func washedGround() -> some View {
+        #if os(tvOS)
+        // A tvOS list paints no ground of its own.
+        self
+        #else
         scrollContentBackground(.hidden)
+        #endif
     }
 }

@@ -73,6 +73,7 @@ fn poll_loop(client: GraphQLClient, state: Arc<SharedPlayerState>) {
                     _ => PlaybackState::Stopped,
                 });
                 state.set_play_mode(np.mode);
+                state.set_sleep(np.sleep);
 
                 let current_track_id = np.queue_item_id.clone();
                 if current_track_id != last_track_id && current_track_id.is_some() {
@@ -186,6 +187,9 @@ fn command_loop(client: GraphQLClient, rx: Receiver<PlayerCommand>) {
             }
             PlayerCommand::SetRepeat(repeat) => {
                 client.set_repeat(*repeat).ok();
+            }
+            PlayerCommand::SetSleepTimer(timer) => {
+                client.set_sleep_timer(*timer).ok();
             }
             PlayerCommand::Play(id) => {
                 client.play(&id.0.to_string()).ok();

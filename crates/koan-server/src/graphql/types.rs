@@ -4,7 +4,9 @@ use async_graphql::connection::{DisableNodesField, EmptyFields};
 use async_graphql::dataloader::DataLoader;
 use async_graphql::{ComplexObject, Context, Enum, ID, InputObject, Object, SimpleObject};
 use koan_core::db::queries::{self, UidKind};
-use koan_core::player::state::{PlaybackState, QueueEntryStatus, Repeat, SharedPlayerState};
+use koan_core::player::state::{
+    PlaybackState, QueueEntryStatus, Repeat, SharedPlayerState, Sleep, SleepTimer,
+};
 
 use super::helpers::paginate;
 use super::jobs::{Job, JobState};
@@ -367,6 +369,76 @@ pub(super) struct GqlNowPlaying {
     /// random. The queue is the play order either way.
     pub shuffle: bool,
     pub repeat: GqlRepeat,
+    pub sleep: Option<GqlSleep>,
+}
+
+/// What a sleep timer waits for, other than a time.
+#[derive(Enum, Copy, Clone, Eq, PartialEq, Debug)]
+#[graphql(name = "SleepEnd")]
+pub(super) enum GqlSleepEnd {
+    Track,
+    Record,
+}
+
+/// A sleep timer that is set. When it goes off, playback fades out and
+/// pauses, the queue left as it was.
+#[derive(SimpleObject, Clone, Debug)]
+#[graphql(name = "SleepTimer")]
+pub(super) struct GqlSleep {
+    /// Unix milliseconds when it goes off; null when it waits for `endOf`.
+    pub ends_at_ms: Option<u64>,
+    /// How long until it goes off, now.
+    pub remaining_ms: Option<u64>,
+    /// The end of the track or record playing.
+    pub end_of: Option<GqlSleepEnd>,
+    /// Fading playback out now, in the run-up to going off.
+    pub fading: bool,
+}
+
+impl GqlSleep {
+    pub(super) fn of(s: Sleep, fading: bool) -> Self {
+        match s {
+            Sleep::At { unix_ms } => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                Self {
+                    ends_at_ms: Some(unix_ms),
+                    remaining_ms: Some(unix_ms.saturating_sub(now)),
+                    end_of: None,
+                    fading,
+                }
+            }
+            Sleep::EndOfTrack => Self {
+                ends_at_ms: None,
+                remaining_ms: None,
+                end_of: Some(GqlSleepEnd::Track),
+                fading,
+            },
+            Sleep::EndOfRecord => Self {
+                ends_at_ms: None,
+                remaining_ms: None,
+                end_of: Some(GqlSleepEnd::Record),
+                fading,
+            },
+        }
+    }
+}
+
+/// A sleep timer from the arguments a mutation takes: `minutes` or `endOf`.
+pub(super) fn sleep_timer(
+    minutes: Option<u32>,
+    end_of: Option<GqlSleepEnd>,
+) -> async_graphql::Result<SleepTimer> {
+    match (minutes, end_of) {
+        (Some(minutes), None) if minutes > 0 => Ok(SleepTimer::After { minutes }),
+        (None, Some(GqlSleepEnd::Track)) => Ok(SleepTimer::EndOfTrack),
+        (None, Some(GqlSleepEnd::Record)) => Ok(SleepTimer::EndOfRecord),
+        _ => Err(async_graphql::Error::new(
+            "give minutes (more than 0) or endOf, not both",
+        )),
+    }
 }
 
 /// What follows a track at its end.
@@ -464,6 +536,7 @@ impl GqlNowPlaying {
                 queue_item_id: None,
                 shuffle: mode.shuffle,
                 repeat: mode.repeat.into(),
+                sleep: state.sleep().map(|s| GqlSleep::of(s, state.sleep_fading())),
             };
         };
 
@@ -495,6 +568,7 @@ impl GqlNowPlaying {
             queue_item_id: Some(info.id.0.to_string()),
             shuffle: mode.shuffle,
             repeat: mode.repeat.into(),
+            sleep: state.sleep().map(|s| GqlSleep::of(s, state.sleep_fading())),
         }
     }
 }
@@ -618,6 +692,7 @@ pub(super) struct GqlClient {
     pub notified: bool,
     pub shuffle: bool,
     pub repeat: GqlRepeat,
+    pub sleep: Option<GqlSleep>,
 }
 
 #[derive(SimpleObject)]
@@ -666,6 +741,7 @@ impl From<crate::clients::ClientInfo> for GqlClient {
             notified: c.notified,
             shuffle: c.state.shuffle,
             repeat: c.state.repeat.into(),
+            sleep: c.state.sleep.map(|s| GqlSleep::of(s, c.state.sleep_fading)),
         }
     }
 }
@@ -765,6 +841,11 @@ pub(super) struct GqlPlaylist {
     pub duration_ms: i64,
     pub created_at: String,
     pub changed_at: String,
+    /// Its contents cannot be edited: a smart playlist, whose rules decide
+    /// them.
+    pub readonly: bool,
+    /// A smart playlist's rules, in the shape `createSmartPlaylist` takes.
+    pub rules: Option<async_graphql::Json<serde_json::Value>>,
 }
 
 impl From<koan_core::db::queries::PlaylistRow> for GqlPlaylist {
@@ -780,6 +861,12 @@ impl From<koan_core::db::queries::PlaylistRow> for GqlPlaylist {
             duration_ms: p.duration_ms,
             created_at: p.created_at,
             changed_at: p.changed_at,
+            readonly: p.readonly,
+            rules: p
+                .rules
+                .as_deref()
+                .and_then(|r| serde_json::from_str(r).ok())
+                .map(async_graphql::Json),
         }
     }
 }

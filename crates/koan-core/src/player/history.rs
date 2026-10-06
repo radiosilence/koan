@@ -23,6 +23,21 @@ use crate::db::queries;
 use crate::player::state::QueueItemId;
 use crate::remote::client::PlaybackReportState;
 
+/// Moves whenever the play history does: a play recorded, or plays deleted.
+/// Pages derived from history (Recently played, History) reload on it, rather
+/// than on a timer.
+static VERSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn version() -> u64 {
+    VERSION.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// The history changed: say so to whatever is watching the engine.
+pub fn changed() {
+    VERSION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    crate::signal::engine_changed().bump();
+}
+
 /// Last.fm's floor: a track shorter than this is never scrobbled.
 const SCROBBLE_MIN_TRACK_MS: u64 = 30_000;
 
@@ -204,7 +219,10 @@ impl Writer {
                 position_ms,
             } => {
                 match queries::record_play(&self.db.conn, queries::LOCAL_USER, track_id, None) {
-                    Ok(id) => self.open = Some((id, track_id)),
+                    Ok(id) => {
+                        self.open = Some((id, track_id));
+                        changed();
+                    }
                     Err(e) => {
                         self.open = None;
                         log::warn!("failed to record play of track {track_id}: {e}");
@@ -342,6 +360,7 @@ fn send_report(db: &Database, report: PlaybackReport) {
 }
 
 /// Scrobble a finished listen to the remote server, if it counts as a play.
+/// Held until the server takes it: see `remote::history`.
 fn scrobble_if_heard(db: &Database, track_id: i64, listened_ms: u64, at_ms: u64) {
     let Some((remote_id, duration_ms)) = remote_track(db, track_id) else {
         return;
@@ -349,12 +368,7 @@ fn scrobble_if_heard(db: &Database, track_id: i64, listened_ms: u64, at_ms: u64)
     if !counts_as_heard(listened_ms, duration_ms) {
         return;
     }
-    let Some(client) = remote_client() else {
-        return;
-    };
-    if let Err(e) = client.scrobble(&remote_id, at_ms) {
-        log::warn!("failed to report track {track_id} to remote: {e}");
-    }
+    crate::remote::history::scrobble(db, &remote_id, at_ms as i64);
 }
 
 #[cfg(test)]

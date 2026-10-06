@@ -215,6 +215,25 @@ impl SubsonicClient {
         resp.subsonic_response.ok()
     }
 
+    /// As `get_with_params`, for a parameter given more than once: Subsonic
+    /// batches by repeating `id` and `time`.
+    fn get_with_pairs(
+        &self,
+        endpoint: &str,
+        pairs: &[(&str, String)],
+    ) -> Result<SubsonicResponse, SubsonicError> {
+        let url = format!("{}/rest/{}", self.auth.base_url, endpoint);
+        let params = self.auth_params()?;
+        let resp: SubsonicResponseWrapper = self
+            .http
+            .get(&url)
+            .query(&params)
+            .query(pairs)
+            .send()?
+            .json()?;
+        resp.subsonic_response.ok()
+    }
+
     /// Detect a Subsonic error returned from an endpoint that should have sent
     /// binary data.
     ///
@@ -463,6 +482,17 @@ impl SubsonicClient {
             "scrobble",
             &[("id", track_id), ("submission", "true"), ("time", &at)],
         )?;
+        Ok(())
+    }
+
+    /// Scrobble several plays in one request, `(track id, started at ms)`.
+    pub fn scrobble_many(&self, plays: &[(&str, i64)]) -> Result<(), SubsonicError> {
+        let mut pairs = vec![("submission", "true".to_owned())];
+        for (id, at) in plays {
+            pairs.push(("id", (*id).to_owned()));
+            pairs.push(("time", at.to_string()));
+        }
+        self.get_with_pairs("scrobble", &pairs)?;
         Ok(())
     }
 
@@ -748,6 +778,24 @@ impl SubsonicClient {
         Ok(())
     }
 
+    /// The device waiting on pairing `pair`, an id or a code, and where it
+    /// asked from (`koanPairInfo`).
+    pub fn koan_pair_info(&self, pair: &str) -> Result<KoanPair, SubsonicError> {
+        self.get_with_params("koanPairInfo", &[("pair", pair)])?
+            .pair
+            .ok_or(SubsonicError::BadResponse)
+    }
+
+    /// Sign the device waiting on `pair` in as this account, or with
+    /// `decline`, turn it away (`koanPairApprove`). Answers with its name.
+    pub fn koan_pair_approve(&self, pair: &str, decline: bool) -> Result<String, SubsonicError> {
+        let decline = if decline { "true" } else { "false" };
+        self.get_with_params("koanPairApprove", &[("pair", pair), ("decline", decline)])?
+            .pair
+            .map(|p| p.device)
+            .ok_or(SubsonicError::BadResponse)
+    }
+
     pub fn koan_set_user_role(&self, username: &str, role: &str) -> Result<(), SubsonicError> {
         self.get_with_params("koanSetUserRole", &[("username", username), ("role", role)])?;
         Ok(())
@@ -762,6 +810,41 @@ impl SubsonicClient {
     /// `to` on this account: a koan extension, `koanDevices`.
     pub fn koan_command(&self, to: &str, command: &str) -> Result<(), SubsonicError> {
         self.get_with_params("koanCommand", &[("to", to), ("command", command)])?;
+        Ok(())
+    }
+
+    // -- Play history: koan servers offering `koanHistory` --
+
+    /// The account's plays and forgettings after `since`, at most `count` of
+    /// each.
+    pub fn koan_history(
+        &self,
+        since: crate::db::queries::HistoryCursor,
+        count: u32,
+    ) -> Result<KoanHistoryPage, SubsonicError> {
+        self.get_with_params(
+            "koanHistory",
+            &[("since", &since.to_string()), ("count", &count.to_string())],
+        )?
+        .koan_history
+        .ok_or(SubsonicError::BadResponse)
+    }
+
+    /// Forget these plays, `(track id, started at ms)`, for every device on
+    /// the account.
+    pub fn koan_forget_plays(&self, plays: &[(&str, i64)]) -> Result<(), SubsonicError> {
+        let mut pairs = Vec::new();
+        for (id, at) in plays {
+            pairs.push(("id", (*id).to_owned()));
+            pairs.push(("time", at.to_string()));
+        }
+        self.get_with_pairs("koanForgetPlays", &pairs)?;
+        Ok(())
+    }
+
+    /// Forget every play up to `at_ms`, for every device on the account.
+    pub fn koan_forget_plays_through(&self, at_ms: i64) -> Result<(), SubsonicError> {
+        self.get_with_params("koanForgetPlays", &[("through", &at_ms.to_string())])?;
         Ok(())
     }
 
@@ -810,6 +893,53 @@ struct SubsonicResponse {
     users: Option<KoanUsers>,
     invite: Option<KoanInvite>,
     join: Option<KoanJoined>,
+    pair: Option<KoanPair>,
+    koan_history: Option<KoanHistoryPage>,
+}
+
+/// A page of a koan server's play history (`koanHistory`).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct KoanHistoryPage {
+    /// Where the next page starts.
+    pub cursor: String,
+    #[serde(default)]
+    pub more: bool,
+    #[serde(default)]
+    pub play: Vec<KoanPlay>,
+    #[serde(default)]
+    pub forgotten: Vec<KoanForgotten>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KoanPlay {
+    /// The track's id.
+    pub id: String,
+    /// The play's place in the server's history.
+    #[serde(default)]
+    pub seq: Option<i64>,
+    /// When it started, in ms since the epoch.
+    pub played: i64,
+    pub listened_ms: Option<i64>,
+}
+
+/// A play forgotten, or with no `id` every play up to `played`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KoanForgotten {
+    pub id: Option<String>,
+    pub played: i64,
+}
+
+/// A pairing a koan server holds, as `koanPairInfo` and `koanPairApprove`
+/// describe it: the device, the address it asked from, and whether that
+/// address is on a private network.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KoanPair {
+    pub device: String,
+    #[serde(default)]
+    pub from: String,
+    #[serde(default)]
+    pub local: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -856,6 +986,53 @@ pub fn redeem_invite(
         .get(&url)
         .query(&[
             ("invite", token),
+            ("name", device),
+            ("v", API_VERSION),
+            ("c", CLIENT_NAME),
+            ("f", "json"),
+        ])
+        .send()?
+        .json()?;
+    resp.subsonic_response
+        .ok()?
+        .join
+        .ok_or(SubsonicError::BadResponse)
+}
+
+/// Whether the server at `base_url` lists `extension`, asked without
+/// credentials: OpenSubsonic answers `getOpenSubsonicExtensions` to anyone, so
+/// a client can learn what a server is before it sends a password to it.
+pub fn offers_unsigned(base_url: &str, extension: &str) -> Result<bool, SubsonicError> {
+    let url = format!(
+        "{}/rest/getOpenSubsonicExtensions",
+        base_url.trim_end_matches('/')
+    );
+    let resp: SubsonicResponseWrapper = download::api_client()?
+        .get(&url)
+        .query(&[("v", API_VERSION), ("c", CLIENT_NAME), ("f", "json")])
+        .send()?
+        .json()?;
+    Ok(resp.subsonic_response.ok()?.has_extension(extension))
+}
+
+/// Trade an account's password for an API key named for `device`
+/// (`koanSignIn`). The password goes as `p=enc:`, over plain HTTP too: this
+/// once, so that it is never sent again. Only for a server that offers
+/// `profile::SIGN_IN`.
+pub fn koan_sign_in(
+    base_url: &str,
+    username: &str,
+    password: &str,
+    device: &str,
+) -> Result<KoanJoined, SubsonicError> {
+    let url = format!("{}/rest/koanSignIn", base_url.trim_end_matches('/'));
+    let hex: String = password.bytes().map(|b| format!("{b:02x}")).collect();
+    let p = format!("enc:{hex}");
+    let resp: SubsonicResponseWrapper = download::api_client()?
+        .get(&url)
+        .query(&[
+            ("u", username),
+            ("p", &p),
             ("name", device),
             ("v", API_VERSION),
             ("c", CLIENT_NAME),
@@ -1073,6 +1250,10 @@ pub struct SubsonicPlaylist {
     pub duration: Option<i64>,
     pub created: Option<String>,
     pub changed: Option<String>,
+    /// OpenSubsonic: the server takes no edits to its contents (a smart
+    /// playlist).
+    #[serde(default)]
+    pub readonly: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

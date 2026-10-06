@@ -336,6 +336,7 @@ impl QueryRoot {
             min_duration_ms,
             max_duration_ms,
             favourites_of: favourites_only.then(|| super::user_id(ctx)),
+            ..Default::default()
         };
 
         let offset = page_offset(after.as_deref());
@@ -551,6 +552,7 @@ impl QueryRoot {
     async fn playlists(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<GqlPlaylist>> {
         let user = super::user_id(ctx);
         with_db(ctx, move |db| {
+            super::refresh_smart(db, user);
             let list = queries::list_playlists(&db.conn, user)
                 .map_err(|e| super::internal_error("db", e))?;
             Ok(list.into_iter().map(GqlPlaylist::from).collect())
@@ -568,6 +570,11 @@ impl QueryRoot {
         let user = super::user_id(ctx);
         with_db(ctx, move |db| {
             super::readable_playlist(db, user, id)?;
+            match queries::smart::refresh_if_due(&db.conn, id) {
+                Ok(true) => crate::clients::changed(),
+                Ok(false) => {}
+                Err(e) => log::warn!("smart playlist {id} not refreshed: {e}"),
+            }
             let rows = queries::playlist_tracks(&db.conn, id)
                 .map_err(|e| super::internal_error("db", e))?;
             Ok(rows.into_iter().map(|row| GqlTrack { row }).collect())
@@ -740,12 +747,14 @@ impl QueryRoot {
         blocking(move || {
             use base64::Engine;
 
-            match koan_core::index::metadata::extract_cover_art(std::path::Path::new(&path)) {
+            match koan_core::index::folder_art::cover_art(std::path::Path::new(&path)) {
                 Some(data) => {
                     let mime = if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
                         "image/png"
                     } else if data.starts_with(&[0xFF, 0xD8]) {
                         "image/jpeg"
+                    } else if data.len() >= 12 && &data[..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+                        "image/webp"
                     } else {
                         "application/octet-stream"
                     };

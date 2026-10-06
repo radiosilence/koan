@@ -44,6 +44,9 @@ final class LibraryModel {
     /// albums.
     struct Listing {
         let section: Section
+        /// The name filter it was read with: empty, unless a shelf's heading carried
+        /// one in.
+        let filter: String
         fileprivate let rows: Rows
     }
 
@@ -56,12 +59,16 @@ final class LibraryModel {
     func prepare(section: Section) async -> Listing? {
         guard section != self.section else { return nil }
         // Nothing carries over: a filter you left behind on another view is
-        // invisible here, and an apparently empty library is the result.
+        // invisible here, and an apparently empty library is the result. The
+        // one exception is a shelf's heading, which arrives with the shelf's query.
+        let filter = carried ?? ""
+        carried = nil
         return await Listing(
             section: section,
+            filter: filter,
             rows: Request(
-                section: section, filter: "", browse: browseFilter, sort: albumSort,
-                seed: shuffleSeed, engine: engine
+                section: section, filter: filter, browse: browseFilter, sort: albumSort,
+                trackSort: trackSort, seed: shuffleSeed, engine: engine
             ).detached()
         )
     }
@@ -73,11 +80,67 @@ final class LibraryModel {
         // Quietly: the rows for this section are already in hand, so emptying
         // the filter it arrives with is not a reason to ask for them again.
         adopting = true
-        filter = ""
+        filter = listing.filter
         adopting = false
         show(listing.rows)
         isLoading = false
+        continueTracks()
     }
+
+    // MARK: - Shelves
+
+    /// Which listing a shelf section opens.
+    enum ShelfList {
+        case artists, albums, tracks
+
+        var section: Section {
+            switch self {
+            case .artists: .artists
+            case .albums: .albums
+            case .tracks: .tracks
+            }
+        }
+    }
+
+    /// The name filter the next prepared section is read with. Set by a See
+    /// all, and spent by the move it makes.
+    @ObservationIgnored private var carried: String?
+
+    /// Point a browser at a shelf: its filters and sort set to the shelf's, so
+    /// the listing it opens on is the one the shelf's preview is the head of
+    /// and its count is the one the shelf gave. Returns the section to show.
+    ///
+    /// The filters replace whatever was set, as a link does, and stay set,
+    /// shown in the filter control and cleared from it like any other.
+    func browse(_ list: ShelfList, of shelf: ShelfKind) -> Section {
+        seeding = true
+        defer { seeding = false }
+        var filter = BrowseFilter.none
+        switch shelf {
+        case .favourites:
+            filter.favourites = true
+            albumSort = .artist
+            trackSort = .artist
+        case .recent:
+            filter.recent = true
+            albumSort = .lastPlayed
+            trackSort = .lastPlayed
+        case .search(let query):
+            carried = query
+            albumSort = .recentlyAdded
+            trackSort = .artist
+        case .downloaded:
+            filter.downloaded = true
+            albumSort = .downloaded
+            trackSort = .artist
+        }
+        browseFilter = filter
+        return list.section
+    }
+
+    /// True while a shelf's heading sets the browser up, which is one change and asks
+    /// for nothing until the move it precedes.
+    @ObservationIgnored private var seeding = false
 
     /// Substring filter over whatever the current section is showing. It
     /// narrows the query, not the answer.
@@ -101,6 +164,7 @@ final class LibraryModel {
         didSet {
             guard albumSort != oldValue else { return }
             UserDefaults.standard.set(albumSort.storageKey, forKey: "albumSort")
+            guard !seeding else { return }
             reload()
         }
     }
@@ -113,7 +177,17 @@ final class LibraryModel {
         didSet {
             guard browseFilter != oldValue else { return }
             UserDefaults.standard.set(browseFilter.stored, forKey: "browseFilter")
-            guard section == .albums || section == .artists else { return }
+            guard !seeding, section.isBrowser else { return }
+            reload()
+        }
+    }
+
+    /// How the track browser is ordered. Persisted as the album sort is.
+    var trackSort: TrackBrowseSort = .artist {
+        didSet {
+            guard trackSort != oldValue else { return }
+            UserDefaults.standard.set(trackSort.storageKey, forKey: "trackSort")
+            guard !seeding, section == .tracks else { return }
             reload()
         }
     }
@@ -165,10 +239,14 @@ final class LibraryModel {
     /// hundred times a frame.
     private(set) var visibleAlbums: [Album] = []
     private(set) var visibleArtists: [Artist] = []
-    private(set) var visibleFavourites: [Track] = []
-    private(set) var visibleFavouriteAlbums: [Album] = []
-    private(set) var visibleFavouriteArtists: [Artist] = []
     private(set) var visiblePlayHistory: [PlayHistoryEntry] = []
+    /// The shelf on screen: Favourites' or Recently Played's previews and
+    /// how many there are of each.
+    private(set) var visibleShelf: ShelfSummary?
+    /// The track browser's rows so far, and how many it will have. Read a page
+    /// at a time — see `continueTracks()`.
+    private(set) var visibleTracks: [Track] = []
+    private(set) var trackTotal: UInt64 = 0
 
     // Favourite state is read from here rather than from the copy baked into
     // each Track when it was fetched. A track appears in the album view, the
@@ -183,7 +261,18 @@ final class LibraryModel {
     func isFavourite(artist id: Int64) -> Bool { favouriteArtistIds.contains(id) }
 
     private(set) var stats: Stats?
+    /// Whether a server and its credential are set, loaded with `stats`: an
+    /// empty library means something different signed in and signed out.
+    private(set) var signedIn: Bool?
     private(set) var isLoading = false
+
+    /// What an empty page says on a phone or a television, whose library is a
+    /// server's.
+    var emptyLibraryDetail: String {
+        signedIn == true
+            ? "Nothing from your server yet. It appears here once kōan has synced; Settings → Server shows how that is going."
+            : "Sign in to your music server in Settings → Server."
+    }
 
     /// Where long tasks register, so one place can say what is happening and
     /// refuse a second task that would collide with a running one. Set by
@@ -204,6 +293,10 @@ final class LibraryModel {
         }
         if let stored = UserDefaults.standard.dictionary(forKey: "browseFilter") {
             browseFilter = BrowseFilter(stored: stored)
+        }
+        if let stored = UserDefaults.standard.string(forKey: "trackSort"),
+           let sort = TrackBrowseSort(storageKey: stored) {
+            trackSort = sort
         }
     }
 
@@ -230,14 +323,34 @@ final class LibraryModel {
             guard !Task.isCancelled else { return }
             show(rows)
             isLoading = false
+            continueTracks()
         }
     }
 
     private var request: Request {
         Request(
             section: section, filter: filter, browse: browseFilter, sort: albumSort,
-            seed: shuffleSeed, engine: engine
+            trackSort: trackSort, seed: shuffleSeed, engine: engine
         )
+    }
+
+    /// The rest of the track browser, a page at a time after the first, each
+    /// appended as it lands. Part of the load it follows: anything that
+    /// reloads cancels it, so a page of the old listing never lands on the new.
+    private func continueTracks() {
+        guard section == .tracks, UInt64(visibleTracks.count) < trackTotal else { return }
+        let request = self.request
+        let from = visibleTracks.count
+        loading = Task {
+            var offset = from
+            while !Task.isCancelled, UInt64(offset) < trackTotal {
+                guard let page = await request.tracks(offset: UInt32(offset)), !page.tracks.isEmpty
+                else { return }
+                guard !Task.isCancelled else { return }
+                visibleTracks.append(contentsOf: page.tracks)
+                offset += page.tracks.count
+            }
+        }
     }
 
     /// Publish what came back, and only where it differs from what is already
@@ -260,12 +373,13 @@ final class LibraryModel {
             if rows != visibleAlbums { visibleAlbums = rows }
         case .artists(let rows):
             if rows != visibleArtists { visibleArtists = rows }
-        case .favourites(let tracks, let albums, let artists):
-            if tracks != visibleFavourites { visibleFavourites = tracks }
-            if albums != visibleFavouriteAlbums { visibleFavouriteAlbums = albums }
-            if artists != visibleFavouriteArtists { visibleFavouriteArtists = artists }
+        case .shelf(let shelf):
+            if shelf != visibleShelf { visibleShelf = shelf }
         case .history(let rows):
             if rows != visiblePlayHistory { visiblePlayHistory = rows }
+        case .tracks(let listing):
+            if listing.total != trackTotal { trackTotal = listing.total }
+            if listing.tracks != visibleTracks { visibleTracks = listing.tracks }
         }
     }
 
@@ -292,6 +406,7 @@ final class LibraryModel {
         let engine = self.engine
         Task {
             stats = try? await engine.libraryStats()
+            signedIn = await engine.settings().remoteSignedIn
         }
     }
 
@@ -512,7 +627,7 @@ final class LibraryModel {
 
     /// The favourites page lists what the hearts say, so a toggle changes it.
     private func reloadFavourites() {
-        guard section == .favourites else { return }
+        guard section == .favourites || (section.isBrowser && browseFilter.favourites) else { return }
         reload()
     }
 
@@ -611,6 +726,30 @@ final class LibraryModel {
         refreshFavourites()
         reload()
     }
+
+    /// A play was recorded or forgotten: the sections derived from history
+    /// ask again, and nothing else does.
+    func historyChanged() {
+        switch section {
+        case .recentlyPlayed, .playHistory: reload()
+        case let section where section.isBrowser && browseFilter.recent: reload()
+        default: break
+        }
+    }
+}
+
+/// How many artists, records and tracks a shelf has in all, beside the
+/// first few it shows: what its headings say.
+struct ShelfTotals: Equatable {
+    let artists: UInt64
+    let albums: UInt64
+    let tracks: UInt64
+
+    init(_ summary: ShelfSummary) {
+        artists = summary.artistTotal
+        albums = summary.albumTotal
+        tracks = summary.trackTotal
+    }
 }
 
 /// Everything a section's query depends on, captured off the model so the
@@ -621,8 +760,21 @@ private struct Request: Sendable {
     let filter: String
     let browse: BrowseFilter
     let sort: AlbumSort
+    let trackSort: TrackBrowseSort
     let seed: Int64
     let engine: KoanEngine
+
+    /// How many tracks the browser reads at once.
+    static let trackPage: UInt32 = 1000
+
+    /// A page of the track browser.
+    func tracks(offset: UInt32) async -> TrackListing? {
+        await Task.detached(priority: .userInitiated) {
+            try? await engine.trackListing(
+                sort: trackSort, search: search, filter: browse, limit: Self.trackPage, offset: offset
+            )
+        }.value
+    }
 
     var search: String? { filter.isEmpty ? nil : filter }
 
@@ -651,19 +803,18 @@ private struct Request: Sendable {
             )
         case .artists:
             return .artists((try? await engine.artists(search: search, filter: browse)) ?? [])
+        case .tracks:
+            return (try? await engine.trackListing(
+                sort: trackSort, search: search, filter: browse, limit: Self.trackPage, offset: 0
+            )).map { .tracks($0) } ?? .none
         case .favourites:
-            // Three questions, asked at once — they are answers to the same
-            // one and the page shows them together.
-            async let tracks = engine.favourites(search: search)
-            async let albums = engine.favouriteAlbums(search: search)
-            async let artists = engine.favouriteArtists(search: search)
-            return .favourites(
-                tracks: (try? await tracks) ?? [],
-                albums: (try? await albums) ?? [],
-                artists: (try? await artists) ?? []
-            )
+            return (try? await engine.shelfSummary(shelf: .favourites)).map { .shelf($0) } ?? .none
         case .playHistory:
             return .history((try? await engine.playHistory(search: search)) ?? [])
+        case .recentlyPlayed:
+            return (try? await engine.shelfSummary(shelf: .recent)).map { .shelf($0) } ?? .none
+        case .onDevice:
+            return (try? await engine.shelfSummary(shelf: .downloaded)).map { .shelf($0) } ?? .none
         }
     }
 }
@@ -672,6 +823,7 @@ private enum Rows: Sendable {
     case none
     case albums([Album])
     case artists([Artist])
-    case favourites(tracks: [Track], albums: [Album], artists: [Artist])
+    case shelf(ShelfSummary)
     case history([PlayHistoryEntry])
+    case tracks(TrackListing)
 }

@@ -282,6 +282,10 @@ pub(crate) fn prune_if_empty(
                 "DELETE FROM favourite_albums WHERE album_id = ?1",
                 params![album_id],
             )?;
+            conn.execute(
+                "DELETE FROM album_ratings WHERE album_id = ?1",
+                params![album_id],
+            )?;
         }
     }
 
@@ -295,6 +299,10 @@ pub(crate) fn prune_if_empty(
         if stranded {
             conn.execute(
                 "DELETE FROM favourite_artists WHERE artist_id = ?1",
+                params![artist_id],
+            )?;
+            conn.execute(
+                "DELETE FROM artist_ratings WHERE artist_id = ?1",
                 params![artist_id],
             )?;
             conn.execute("DELETE FROM artists WHERE id = ?1", params![artist_id])?;
@@ -312,6 +320,23 @@ const STALE_CHECK_MIN_ROWS: i64 = 100;
 /// is treated as a mount failure rather than a deletion.
 const MAX_STALE_FRACTION: f64 = 0.2;
 
+/// Tell the apps' cover caches to forget what they hold for the albums and
+/// tracks under `folder`, whose files a rescan has just looked at: a cover
+/// image beside them may have been added, replaced or removed, and nothing
+/// in their rows says so. Returns how many records were named.
+pub fn evict_art_under(conn: &Connection, folder: &Path) -> Result<usize, DbError> {
+    let (lower, upper) = super::folder_prefix_range(folder);
+    Ok(conn.execute(
+        "INSERT INTO art_evictions (kind, id)
+         SELECT 'album', album_id FROM tracks
+          WHERE path >= ?1 AND path < ?2 AND album_id IS NOT NULL
+          GROUP BY album_id
+         UNION ALL
+         SELECT 'track', id FROM tracks WHERE path >= ?1 AND path < ?2",
+        params![lower, upper],
+    )?)
+}
+
 /// Forget the files under `folder` that no longer exist.
 ///
 /// A track the server also has keeps its row and streams from there; one that
@@ -324,7 +349,8 @@ const MAX_STALE_FRACTION: f64 = 0.2;
 /// tracks is refused with [`DbError::UnsafeBulkDelete`].
 ///
 /// `force_remove` lifts the second brake only, for the case where the files really
-/// were deleted. The IO-error check still applies, and the caller is still
+/// were deleted. The IO-error and dangling-symlink checks still apply (see
+/// [`crate::index::known_missing`]), and the caller is still
 /// responsible for not calling this at all when the folder yielded no files.
 ///
 /// Returns the paths removed or demoted, so a caller can show what it did.
@@ -349,9 +375,9 @@ pub fn remove_stale_tracks(
     let total = paths.len() as i64;
     let stale: Vec<String> = paths
         .into_iter()
-        // `Ok(false)` only: a permission error or an ailing mount reports Err,
-        // which is "cannot tell", not "deleted".
-        .filter(|path| matches!(Path::new(path).try_exists(), Ok(false)))
+        // A permission error, an ailing mount or a symlink whose target has
+        // gone away is "cannot tell", not "deleted".
+        .filter(|path| crate::index::known_missing(Path::new(path)))
         .collect();
 
     let count = stale.len();
@@ -386,6 +412,33 @@ pub fn remove_stale_tracks(
     }
 
     Ok(stale)
+}
+
+/// Give files gone from under `folder` their tracks back where a scan has
+/// just found them at new paths: `arrived` is the tracks it made. See
+/// `sources::adopt_moved`. Returns how many were given back.
+pub fn adopt_moved_files(
+    conn: &Connection,
+    folder: &Path,
+    arrived: &[i64],
+) -> Result<usize, DbError> {
+    if arrived.is_empty() {
+        return Ok(0);
+    }
+    let (lower, upper) = super::folder_prefix_range(folder);
+    let paths: Vec<String> = conn
+        .prepare("SELECT path FROM local_files WHERE path >= ?1 AND path < ?2")?
+        .query_map(params![lower, upper], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut adopted = 0;
+    for path in paths {
+        if crate::index::known_missing(Path::new(&path))
+            && sources::adopt_moved(conn, &path, arrived)?
+        {
+            adopted += 1;
+        }
+    }
+    Ok(adopted)
 }
 
 /// Get all tracks for an artist, ordered chronologically (album date, disc, track#).

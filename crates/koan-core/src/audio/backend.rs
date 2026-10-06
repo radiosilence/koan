@@ -119,6 +119,9 @@ pub trait AudioEngineHandle: Send {
     fn stop(&self) -> Result<(), BackendError>;
     fn is_running(&self) -> bool;
     fn fade_out(&self);
+    /// A sleep timer's gain on the output, glided to, or with `snap` taken
+    /// at once. Nothing where the output has no fader.
+    fn set_sleep_gain(&self, _gain: f32, _snap: bool) {}
     /// Ramp back to full volume, starting the unit if it was stopped.
     fn fade_in(&self) -> Result<(), BackendError>;
     fn is_silent(&self) -> bool;

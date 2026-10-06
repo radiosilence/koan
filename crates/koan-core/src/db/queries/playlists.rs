@@ -11,7 +11,7 @@
 //! because the same track may appear twice and both copies have to keep their
 //! place.
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use super::TrackRow;
 use super::auth::resolve_user;
@@ -46,12 +46,21 @@ pub struct PlaylistRow {
     pub synced_revision: Option<i64>,
     /// The server's `changed` as of the last push or pull.
     pub remote_changed: Option<String>,
+    /// A smart playlist's rules, as JSON (see `crate::smart`).
+    pub rules: Option<String>,
+    /// The file in a library folder it was read from. The file decides its
+    /// name and what it holds, so neither is edited here.
+    pub source_path: Option<String>,
+    /// Its contents are not for editing: a smart playlist, one read from a
+    /// file in the library, or one the server says is read-only.
+    pub readonly: bool,
 }
 
 const SELECT: &str = "SELECT p.id, p.name, p.comment, p.public, COALESCE(p.owner, u.username),
             p.remote_id, p.created_at, p.changed_at, p.sort_order, p.grouped,
             COUNT(pt.track_id), COALESCE(SUM(t.duration_ms), 0), p.user_id,
-            COALESCE(p.uid, CAST(p.id AS TEXT)), p.revision, p.synced_revision, p.remote_changed
+            COALESCE(p.uid, CAST(p.id AS TEXT)), p.revision, p.synced_revision, p.remote_changed,
+            p.rules, (p.readonly != 0 OR p.source_path IS NOT NULL), p.source_path
      FROM playlists p
      LEFT JOIN users u ON u.id = p.user_id
      LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id
@@ -76,6 +85,9 @@ fn row_to_playlist(row: &rusqlite::Row) -> rusqlite::Result<PlaylistRow> {
         revision: row.get(14)?,
         synced_revision: row.get(15)?,
         remote_changed: row.get(16)?,
+        readonly: row.get::<_, Option<String>>(17)?.is_some() || row.get::<_, i64>(18)? != 0,
+        rules: row.get(17)?,
+        source_path: row.get(19)?,
     })
 }
 
@@ -88,6 +100,12 @@ impl PlaylistRow {
     /// Whether `user` (resolved) may change it: their own only.
     pub fn editable_by(&self, user: i64) -> bool {
         self.user_id == user
+    }
+
+    /// Whether `user` (resolved) may change what it holds: their own, unless
+    /// its contents come from rules or the server will not take edits.
+    pub fn contents_editable_by(&self, user: i64) -> bool {
+        self.editable_by(user) && !self.readonly
     }
 
     /// Whether it has local edits the server has not had.
@@ -213,6 +231,16 @@ pub fn set_playlist_remote(
         params![id, remote_id, owner, public as i64, account],
     )?;
     super::adopt_uid(conn, super::UidKind::Playlist, id, remote_id)?;
+    Ok(())
+}
+
+/// Record whether the server will take edits to this playlist's contents
+/// (OpenSubsonic's `readonly`: a smart playlist there).
+pub fn set_playlist_readonly(conn: &Connection, id: i64, readonly: bool) -> Result<(), DbError> {
+    conn.execute(
+        "UPDATE playlists SET readonly = ?2 WHERE id = ?1",
+        params![id, readonly as i64],
+    )?;
     Ok(())
 }
 
@@ -474,6 +502,51 @@ pub fn set_playlist_tracks(conn: &Connection, id: i64, track_ids: &[i64]) -> Res
     })
 }
 
+/// Make the playlist hold exactly these tracks, in this order, keeping the
+/// ids of entries whose track stays. Whether anything changed: a list that
+/// already matches writes nothing and is not marked changed.
+///
+/// What a smart playlist's evaluation goes through, so a queue following it
+/// keeps the items whose tracks are still selected.
+pub(crate) fn replace_entries(
+    conn: &Connection,
+    id: i64,
+    track_ids: &[i64],
+) -> Result<bool, DbError> {
+    super::atomically(conn, || {
+        let existing = entry_snapshot(conn, id)?;
+        if existing.iter().map(|e| e.1).eq(track_ids.iter().copied()) {
+            return Ok(false);
+        }
+        let mut spare: std::collections::HashMap<i64, std::collections::VecDeque<i64>> =
+            std::collections::HashMap::new();
+        for &(entry, track) in &existing {
+            spare.entry(track).or_default().push_back(entry);
+        }
+        let merged: Vec<(Option<i64>, i64)> = track_ids
+            .iter()
+            .map(|&t| (spare.get_mut(&t).and_then(|q| q.pop_front()), t))
+            .collect();
+        let mut delete = conn.prepare_cached("DELETE FROM playlist_tracks WHERE id = ?1")?;
+        for entry in spare.into_values().flatten() {
+            delete.execute(params![entry])?;
+        }
+        let mut update =
+            conn.prepare_cached("UPDATE playlist_tracks SET position = ?2 WHERE id = ?1")?;
+        let mut insert = conn.prepare_cached(INSERT_ENTRY)?;
+        for (position, (entry, track)) in merged.iter().enumerate() {
+            let position = -(position as i64) - 1;
+            match entry {
+                Some(entry) => update.execute(params![entry, position])?,
+                None => insert.execute(params![id, position, track])?,
+            };
+        }
+        conn.execute(FLIP_NEGATIVE_POSITIONS, params![id])?;
+        touch(conn, id)?;
+        Ok(true)
+    })
+}
+
 /// A playlist's entries, in order: each one's id and its track. What an undo
 /// puts back — see [`restore_entries`].
 pub fn entry_snapshot(conn: &Connection, id: i64) -> Result<Vec<(i64, i64)>, DbError> {
@@ -603,10 +676,14 @@ pub fn playlist_cover_album_ids(conn: &Connection, id: i64) -> Result<Vec<i64>, 
     Ok(rows)
 }
 
-/// `user`'s playlists that have never been pushed to a server.
+/// `user`'s playlists that have never been pushed to a server. Smart ones
+/// and ones read from files are never pushed: the server would hold a copy
+/// that nothing keeps up to date.
 pub fn playlists_without_remote(conn: &Connection, user: i64) -> Result<Vec<PlaylistRow>, DbError> {
     let mut stmt = conn.prepare(&format!(
-        "{SELECT} WHERE p.remote_id IS NULL AND p.user_id = ?1 GROUP BY p.id ORDER BY p.sort_order"
+        "{SELECT} WHERE p.remote_id IS NULL AND p.user_id = ?1 AND p.rules IS NULL
+           AND p.source_path IS NULL
+         GROUP BY p.id ORDER BY p.sort_order"
     ))?;
     let rows = stmt
         .query_map([resolve_user(conn, user)?], row_to_playlist)?
@@ -628,7 +705,7 @@ pub fn track_ids_for_remote_ids(
     for remote_id in remote_ids {
         out.push(
             stmt.query_row(params![remote_id], |row| row.get::<_, i64>(0))
-                .ok(),
+                .optional()?,
         );
     }
     Ok(out)

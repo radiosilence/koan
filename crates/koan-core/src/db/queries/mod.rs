@@ -4,14 +4,18 @@ pub mod app_passwords;
 mod artists;
 pub mod auth;
 pub mod batch;
+mod bookmarks;
 mod favourites;
 pub mod history;
 pub mod lyrics;
 pub mod playback_state;
 pub mod playlists;
+mod ratings;
 mod scan_cache;
+pub mod scrobbling;
 mod search;
 pub mod shares;
+pub mod smart;
 pub(crate) mod sources;
 mod stats;
 pub mod tracks;
@@ -24,11 +28,13 @@ pub use albums::*;
 pub use artists::*;
 pub use auth::LOCAL_USER;
 pub use batch::*;
+pub use bookmarks::*;
 pub use favourites::*;
 pub use history::*;
 pub use lyrics::*;
 pub use playback_state::*;
 pub use playlists::*;
+pub use ratings::*;
 pub use scan_cache::*;
 pub use search::*;
 pub use stats::*;
@@ -140,6 +146,9 @@ pub struct AlbumRow {
     /// When the album entered the library — the server's `created` for remote
     /// albums, otherwise the time it was first indexed.
     pub added_at: Option<String>,
+    /// How much of it can play here, when the listing was narrowed to this
+    /// device or ordered by it.
+    pub on_device: Option<OnDevice>,
 }
 
 #[derive(Debug, Clone)]

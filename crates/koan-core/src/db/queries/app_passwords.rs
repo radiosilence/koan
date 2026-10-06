@@ -75,6 +75,9 @@ pub fn revoke_app_password(
         "DELETE FROM app_passwords WHERE id = ?1 AND user_id = ?2",
         params![id, user_id],
     )?;
+    if n > 0 {
+        auth::account_changed(user_id);
+    }
     Ok(n > 0)
 }
 
@@ -83,10 +86,14 @@ pub fn revoke_user_app_passwords(
     conn: &Connection,
     user_id: i64,
 ) -> Result<usize, rusqlite::Error> {
-    conn.execute(
+    let n = conn.execute(
         "DELETE FROM app_passwords WHERE user_id = ?1",
         params![user_id],
-    )
+    )?;
+    if n > 0 {
+        auth::account_changed(user_id);
+    }
+    Ok(n)
 }
 
 /// How a sign-in against `username`'s app passwords went.

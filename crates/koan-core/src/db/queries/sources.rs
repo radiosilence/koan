@@ -862,11 +862,16 @@ fn merge(conn: &Connection, winner: i64, loser: i64) -> Result<(), DbError> {
 }
 
 /// Move everything pointing at `loser` to `winner`, then delete it: sources,
-/// history, scan cache, organize log, playlist and share entries, lyrics where
-/// the winner has none, and the download where the winner has none.
+/// favourites, ratings, bookmarks, history, scan cache, organize log, playlist
+/// and share entries, lyrics where the winner has none, and the download where
+/// the winner has none.
 pub(crate) fn fold_rows(conn: &Connection, winner: i64, loser: i64) -> rusqlite::Result<()> {
-    conn.prepare_cached("UPDATE OR IGNORE favourites SET track_id = ?1 WHERE track_id = ?2")?
+    for table in ["favourites", "track_ratings", "bookmarks"] {
+        conn.prepare_cached(&format!(
+            "UPDATE OR IGNORE {table} SET track_id = ?1 WHERE track_id = ?2"
+        ))?
         .execute(params![winner, loser])?;
+    }
     for table in [
         "local_files",
         "remote_entries",
@@ -900,6 +905,8 @@ pub(crate) fn fold_rows(conn: &Connection, winner: i64, loser: i64) -> rusqlite:
     for sql in [
         "DELETE FROM lyrics_cache WHERE track_id = ?1",
         "DELETE FROM favourites WHERE track_id = ?1",
+        "DELETE FROM track_ratings WHERE track_id = ?1",
+        "DELETE FROM bookmarks WHERE track_id = ?1",
         "DELETE FROM tracks_fts WHERE rowid = ?1",
         "DELETE FROM tracks WHERE id = ?1",
     ] {
@@ -997,6 +1004,60 @@ fn as_kind(meta: &TrackMeta, kind: Kind) -> TrackMeta {
         }
     }
     meta
+}
+
+/// Give a file gone from `old` back its track, if it is one of `arrived`:
+/// tracks a scan has just made for files at new paths. The same file moved
+/// is the same MusicBrainz recording on the same release when both name
+/// one, or else the same slot and the same size or length, or failing that
+/// the same size, length and modification time, which a rename keeps and an
+/// untagged file's title (its name) does not. Only when exactly one arrival
+/// fits; several is ambiguity, and declined. Whether it was given back.
+///
+/// The old track survives, with its id, uid, history, favourites, ratings,
+/// playlist places and server partner; the arrival's file becomes its source
+/// and the arrival is folded into it.
+pub(crate) fn adopt_moved(conn: &Connection, old: &str, arrived: &[i64]) -> Result<bool, DbError> {
+    if arrived.is_empty() {
+        return Ok(false);
+    }
+    let Some((track, meta)) = load(conn, Kind::Local, old)? else {
+        return Ok(false);
+    };
+    let found: Vec<(String, i64)> = conn
+        .prepare_cached(
+            "SELECT f.path, f.track_id FROM local_files f
+              WHERE f.track_id IN (SELECT value FROM json_each(?1)) AND f.track_id != ?2
+                AND NOT EXISTS (SELECT 1 FROM remote_entries r WHERE r.track_id = f.track_id)
+                AND ((?3 IS NOT NULL AND ?4 IS NOT NULL AND f.mbid = ?3 AND f.album_mbid IS ?4)
+                  OR ((?3 IS NULL OR f.mbid IS NULL) AND f.slot_key = ?5
+                      AND (f.size_bytes = ?6 OR f.duration_ms = ?7))
+                  OR (f.size_bytes = ?6 AND f.duration_ms = ?7 AND f.mtime = ?8))",
+        )?
+        .query_map(
+            params![
+                super::json_list(arrived),
+                track,
+                nonempty(&meta.mbid),
+                nonempty(&meta.album_mbid),
+                slot_key(&meta),
+                meta.size_bytes,
+                meta.duration_ms,
+                meta.mtime,
+            ],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?
+        .collect::<rusqlite::Result<_>>()?;
+    let [(path, arrival)] = found.as_slice() else {
+        return Ok(false);
+    };
+    conn.prepare_cached("DELETE FROM local_files WHERE path = ?1")?
+        .execute(params![old])?;
+    conn.prepare_cached("DELETE FROM scan_cache WHERE path = ?1")?
+        .execute(params![old])?;
+    merge(conn, track, *arrival)?;
+    log::info!("{old} moved to {path}; it keeps track {track}");
+    Ok(true)
 }
 
 /// Record what a source says, linking and deriving as needed. Returns the

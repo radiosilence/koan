@@ -1,11 +1,16 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// How long pause takes to fall silent, and resume to come back.
 ///
 /// Long enough that a pause lands as a fade rather than a cut, short enough
 /// that it still reads as the key having been pressed.
 const FADE_SECONDS: f64 = 0.15;
+
+/// How long the callback takes to glide to a new sleep gain: the player sets
+/// one about this often while a sleep timer fades, so the level moves on
+/// without a step.
+const SLEEP_GLIDE_SECONDS: f64 = 0.1;
 
 /// What the player asks of a fade. Shared with the render callback, so atomics
 /// only.
@@ -19,14 +24,32 @@ pub struct FadeControl {
     /// Written by the callback once a fade out has reached silence. The unit
     /// can then be stopped without cutting anything off.
     silent: AtomicBool,
+    /// A sleep timer's gain, as `f32` bits: 1.0 but while one fades. Applied
+    /// on top of the pause ramp.
+    sleep_gain: AtomicU32,
+    /// Take `sleep_gain` at once rather than gliding to it.
+    sleep_snap: AtomicBool,
+    /// `playback.muted`: every sample zeroed after the ramps.
+    muted: AtomicBool,
 }
 
 impl FadeControl {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             audible: AtomicBool::new(true),
+            sleep_gain: AtomicU32::new(1.0f32.to_bits()),
             ..Default::default()
         })
+    }
+
+    /// A fade for an output unit, muted when `playback.muted` says so.
+    pub fn for_output() -> Arc<Self> {
+        let control = Self::new();
+        if crate::config::Config::cached().playback.muted {
+            log::info!("audio: muted (playback.muted)");
+            control.muted.store(true, Ordering::Release);
+        }
+        control
     }
 
     pub fn fade_out(&self) {
@@ -46,6 +69,16 @@ impl FadeControl {
     pub fn is_silent(&self) -> bool {
         self.silent.load(Ordering::Acquire)
     }
+
+    /// The sleep timer's gain, glided to over `SLEEP_GLIDE_SECONDS`, or with
+    /// `snap` taken at once.
+    pub fn set_sleep_gain(&self, gain: f32, snap: bool) {
+        if snap {
+            self.sleep_snap.store(true, Ordering::Release);
+        }
+        self.sleep_gain
+            .store(gain.clamp(0.0, 1.0).to_bits(), Ordering::Release);
+    }
 }
 
 /// The render callback's half of a fade: the gain itself, which only the
@@ -59,6 +92,12 @@ pub struct Fader {
     /// frames so a fade out ends on an exact frame.
     pos: usize,
     len: usize,
+    /// The sleep gain where the callback has it, the target it was last
+    /// given, and how far it moves each frame on the way there.
+    sleep: f32,
+    sleep_target: u32,
+    sleep_step: f32,
+    glide: f32,
 }
 
 impl Fader {
@@ -68,6 +107,10 @@ impl Fader {
             control,
             pos: len,
             len,
+            sleep: 1.0,
+            sleep_target: 1.0f32.to_bits(),
+            sleep_step: 0.0,
+            glide: ((sample_rate * SLEEP_GLIDE_SECONDS) as f32).max(1.0),
         }
     }
 
@@ -99,22 +142,61 @@ impl Fader {
         }
     }
 
-    /// Apply the ramp to interleaved samples just read from the ring.
-    pub fn apply(&mut self, samples: &mut [f32], channels: usize) {
-        let rising = self.control.audible.load(Ordering::Acquire);
-        if (rising && self.pos == self.len) || (!rising && self.pos == 0) {
+    /// Take up a sleep gain the player has set since the last callback.
+    fn follow_sleep(&mut self) {
+        let bits = self.control.sleep_gain.load(Ordering::Acquire);
+        let snap = self.control.sleep_snap.swap(false, Ordering::AcqRel);
+        if bits == self.sleep_target && !snap {
             return;
         }
+        self.sleep_target = bits;
+        let target = f32::from_bits(bits);
+        if snap {
+            self.sleep = target;
+            self.sleep_step = 0.0;
+        } else {
+            self.sleep_step = (target - self.sleep) / self.glide;
+        }
+    }
+
+    /// Apply the ramps to interleaved samples just read from the ring.
+    pub fn apply(&mut self, samples: &mut [f32], channels: usize) {
+        self.ramp(samples, channels);
+        if self.control.muted.load(Ordering::Relaxed) {
+            samples.fill(0.0);
+        }
+    }
+
+    fn ramp(&mut self, samples: &mut [f32], channels: usize) {
+        self.follow_sleep();
+        let rising = self.control.audible.load(Ordering::Acquire);
+        let pausing = !((rising && self.pos == self.len) || (!rising && self.pos == 0));
+        let sleeping = self.sleep != 1.0 || self.sleep_step != 0.0;
+        if !pausing && !sleeping {
+            return;
+        }
+        let target = f32::from_bits(self.sleep_target);
         for frame in samples.chunks_mut(channels.max(1)) {
-            self.pos = if rising {
-                (self.pos + 1).min(self.len)
-            } else {
-                self.pos.saturating_sub(1)
-            };
+            if pausing {
+                self.pos = if rising {
+                    (self.pos + 1).min(self.len)
+                } else {
+                    self.pos.saturating_sub(1)
+                };
+            }
+            if self.sleep_step != 0.0 {
+                self.sleep += self.sleep_step;
+                if (self.sleep_step > 0.0 && self.sleep >= target)
+                    || (self.sleep_step < 0.0 && self.sleep <= target)
+                {
+                    self.sleep = target;
+                    self.sleep_step = 0.0;
+                }
+            }
             // Squared, so the ear hears an even fade rather than one that
             // hangs loud and then drops away.
             let level = self.pos as f32 / self.len as f32;
-            let gain = level * level;
+            let gain = level * level * self.sleep;
             for s in frame {
                 *s *= gain;
             }
@@ -165,6 +247,16 @@ mod tests {
     }
 
     #[test]
+    fn muted_reads_on_and_plays_silence() {
+        let control = FadeControl::new();
+        control.muted.store(true, Ordering::Release);
+        let mut fader = Fader::new(control, RATE);
+        let out = render(&mut fader, 64);
+        assert_eq!(out.len(), 128, "the track moves on as if heard");
+        assert!(out.iter().all(|s| *s == 0.0));
+    }
+
+    #[test]
     fn fade_out_stops_reading_at_silence() {
         let control = FadeControl::new();
         let mut fader = Fader::new(control.clone(), RATE);
@@ -196,6 +288,32 @@ mod tests {
         assert!(out[0] < 0.01);
         assert!(out.windows(2).all(|w| w[1] >= w[0]), "gain only rises");
         assert_eq!(*out.last().unwrap(), 1.0);
+    }
+
+    /// A sleep gain is glided to, not stepped; full level is left alone,
+    /// which keeps the output bit-perfect outside a sleep timer's fade.
+    #[test]
+    fn a_sleep_gain_glides_and_full_level_is_untouched() {
+        let control = FadeControl::new();
+        let mut fader = Fader::new(control.clone(), RATE);
+        assert!(render(&mut fader, 10).iter().all(|s| *s == 1.0));
+
+        control.set_sleep_gain(0.5, false);
+        let glide = render(&mut fader, 100); // the whole glide, 0.1 s
+        assert!(glide.windows(2).all(|w| w[1] <= w[0]), "only falls");
+        assert!(glide[0] < 1.0 && glide[0] > 0.99, "no step: {}", glide[0]);
+        assert!((glide.last().unwrap() - 0.5).abs() < 1e-4);
+        assert!(
+            render(&mut fader, 10)
+                .iter()
+                .all(|s| (*s - 0.5).abs() < 1e-6)
+        );
+
+        control.set_sleep_gain(1.0, true);
+        assert!(
+            render(&mut fader, 10).iter().all(|s| *s == 1.0),
+            "snapped back"
+        );
     }
 
     #[test]

@@ -64,6 +64,9 @@ pub enum ArtistOrder {
     RecentlyAdded,
     /// Insertion order, for an offset walk that must not skip or repeat.
     Id,
+    /// Most recently played first. Only with `ArtistQuery::played`, which is
+    /// what knows when; without it, `Name`.
+    LastPlayed,
 }
 
 impl ArtistOrder {
@@ -73,6 +76,7 @@ impl ArtistOrder {
             Self::AlbumCount => "COUNT(DISTINCT al.id) DESC, a.name COLLATE LIBRARY",
             Self::RecentlyAdded => "COALESCE(MAX(al.added_at), '') DESC, a.name COLLATE LIBRARY",
             Self::Id => "a.id",
+            Self::LastPlayed => "MAX(p.last) DESC, MAX(p.last_id) DESC",
         }
     }
 }
@@ -87,6 +91,8 @@ pub struct ArtistQuery<'a> {
     pub search: Option<&'a str>,
     /// Only artists this user has favourited.
     pub favourites_of: Option<i64>,
+    /// Only artists with a record played since then, by its album artist.
+    pub played: Option<super::history::PlayedSince>,
     /// Albums that count; an artist with none left is not listed, and the
     /// counts are of what is left.
     pub filter: super::albums::AlbumFilter<'a>,
@@ -102,14 +108,52 @@ pub struct ArtistQuery<'a> {
 /// Artists with their album and track counts, narrowed, ordered and paged by
 /// the database.
 pub fn list_artists(conn: &Connection, q: &ArtistQuery) -> Result<Vec<ArtistRow>, DbError> {
+    let columns = if q.without_track_counts {
+        "a.id, a.name, a.sort_name, a.remote_id, COUNT(al.id), 0"
+    } else {
+        "a.id, a.name, a.sort_name, a.remote_id, COUNT(DISTINCT al.id), COUNT(t.id)"
+    };
+    let (body, mut params) = artist_body(conn, q)?;
+    let order = match q.order {
+        ArtistOrder::LastPlayed if q.played.is_none() => ArtistOrder::Name,
+        order => order,
+    };
+    let mut sql = format!("SELECT {columns} {body} ORDER BY {}", order.clause());
+    if let Some(limit) = q.limit {
+        params.push(Box::new(limit as i64));
+        params.push(Box::new(q.offset as i64));
+        sql.push_str(" LIMIT ? OFFSET ?");
+    }
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(params.iter()), artist_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// How many artists `list_artists` would list for `q`, ignoring its paging.
+pub fn count_artists(conn: &Connection, q: &ArtistQuery) -> Result<u64, DbError> {
+    let (body, params) = artist_body(conn, q)?;
+    let n: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) FROM (SELECT a.id {body})"),
+        rusqlite::params_from_iter(params.iter()),
+        |r| r.get(0),
+    )?;
+    Ok(n as u64)
+}
+
+/// The FROM, WHERE and GROUP BY that `list_artists` and `count_artists`
+/// share, and their parameters, in order.
+fn artist_body(
+    conn: &Connection,
+    q: &ArtistQuery,
+) -> Result<(String, Vec<Box<dyn rusqlite::ToSql>>), DbError> {
     let mut sql = String::from(if q.without_track_counts {
-        "SELECT a.id, a.name, a.sort_name, a.remote_id, COUNT(al.id), 0
-         FROM artists a
+        "FROM artists a
          INNER JOIN albums al ON al.artist_id = a.id"
     } else {
-        "SELECT a.id, a.name, a.sort_name, a.remote_id,
-                COUNT(DISTINCT al.id), COUNT(t.id)
-         FROM artists a
+        "FROM artists a
          INNER JOIN albums al ON al.artist_id = a.id
          LEFT JOIN tracks t ON t.album_id = al.id"
     });
@@ -117,6 +161,18 @@ pub fn list_artists(conn: &Connection, q: &ArtistQuery) -> Result<Vec<ArtistRow>
     if let Some(user) = q.favourites_of {
         params.push(Box::new(super::auth::resolve_user(conn, user)?));
         sql.push_str(" JOIN favourite_artists f ON f.artist_id = a.id AND f.user_id = ?");
+    }
+    if let Some(played) = q.played {
+        params.push(Box::new(super::auth::resolve_user(conn, played.user)?));
+        params.push(Box::new(played.since));
+        sql.push_str(
+            " JOIN (SELECT pal.artist_id AS id, MAX(h.played_at) AS last, MAX(h.id) AS last_id
+                      FROM play_history h
+                      JOIN tracks pt ON pt.id = h.track_id
+                      JOIN albums pal ON pal.id = pt.album_id
+                     WHERE h.user_id = ? AND h.played_at >= ?
+                     GROUP BY pal.artist_id) p ON p.id = a.id",
+        );
     }
     let mut wheres: Vec<String> = Vec::new();
     if let Some(ids) = q.ids {
@@ -132,19 +188,8 @@ pub fn list_artists(conn: &Connection, q: &ArtistQuery) -> Result<Vec<ArtistRow>
         sql.push_str(" WHERE ");
         sql.push_str(&wheres.join(" AND "));
     }
-    sql.push_str(" GROUP BY a.id ORDER BY ");
-    sql.push_str(q.order.clause());
-    if let Some(limit) = q.limit {
-        params.push(Box::new(limit as i64));
-        params.push(Box::new(q.offset as i64));
-        sql.push_str(" LIMIT ? OFFSET ?");
-    }
-
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt
-        .query_map(rusqlite::params_from_iter(params.iter()), artist_row)?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+    sql.push_str(" GROUP BY a.id");
+    Ok((sql, params))
 }
 
 fn artist_row(row: &rusqlite::Row) -> rusqlite::Result<ArtistRow> {

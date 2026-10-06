@@ -95,7 +95,11 @@ final class AudioSession {
             ) { [weak self] note in
                 let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
                 let options = note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+                #if os(tvOS)
+                let reason: UInt = 0
+                #else
                 let reason = note.userInfo?[AVAudioSessionInterruptionReasonKey] as? UInt ?? 0
+                #endif
                 guard let raw, let type = AVAudioSession.InterruptionType(rawValue: raw) else {
                     return
                 }

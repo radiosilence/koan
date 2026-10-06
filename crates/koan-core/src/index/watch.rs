@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 
 use notify::event::{CreateKind, EventKind, ModifyKind, RemoveKind};
 
+use super::folder_art::is_cover_file;
 use super::metadata::is_audio_file;
+use super::playlist_files::is_playlist_file;
 
 /// A library folder being watched.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,10 +53,11 @@ fn identity(path: &Path) -> Option<(u64, u64)> {
 /// The directory a scan must cover for this event path, if the event can
 /// change the index at all.
 ///
-/// An audio file's own directory, a directory itself, and a path that has gone
-/// without saying what it was: that may have been a directory of tracks, and a
-/// scan of a directory that is not there only removes the rows under it. The
-/// path is given back under the root's configured spelling.
+/// An audio file's, playlist's or cover image's own directory, a directory
+/// itself, and a path that has gone without saying what it was: that may have
+/// been a directory of tracks, and a scan of a directory that is not there only
+/// removes the rows under it. The path is given back under the root's
+/// configured spelling.
 pub fn scan_target(kind: &EventKind, path: &Path, roots: &[WatchedRoot]) -> Option<PathBuf> {
     if !can_change_index(kind) {
         return None;
@@ -72,7 +75,7 @@ pub fn scan_target(kind: &EventKind, path: &Path, roots: &[WatchedRoot]) -> Opti
     }
     let path = root.path.join(rel);
 
-    if is_audio_file(&path) {
+    if is_audio_file(&path) || is_playlist_file(&path) || is_cover_file(&path) {
         return path.parent().map(Path::to_path_buf);
     }
     match std::fs::metadata(&path) {
@@ -191,24 +194,44 @@ mod tests {
     }
 
     #[test]
-    fn non_audio_files_are_ignored() {
+    fn other_files_are_ignored() {
         let tmp = tempfile::tempdir().unwrap();
         let album = tmp.path().join("Album");
         std::fs::create_dir_all(&album).unwrap();
-        std::fs::write(album.join("cover.jpg"), b"").unwrap();
+        std::fs::write(album.join("back.jpg"), b"").unwrap();
         let roots = root(tmp.path());
 
         let any = EventKind::Modify(ModifyKind::Any);
-        assert_eq!(scan_target(&any, &album.join("cover.jpg"), &roots), None);
+        assert_eq!(scan_target(&any, &album.join("back.jpg"), &roots), None);
         // Removed, and the event says it was a file.
         assert_eq!(
             scan_target(
                 &EventKind::Remove(RemoveKind::File),
-                &album.join("folder.jpg"),
+                &album.join("notes.txt"),
                 &roots
             ),
             None
         );
+    }
+
+    #[test]
+    fn a_cover_image_names_its_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let album = tmp.path().join("Album");
+        std::fs::create_dir_all(&album).unwrap();
+        std::fs::write(album.join("Folder.JPG"), b"").unwrap();
+        let roots = root(tmp.path());
+
+        for kind in [
+            EventKind::Create(CreateKind::File),
+            EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+            EventKind::Remove(RemoveKind::File),
+        ] {
+            assert_eq!(
+                scan_target(&kind, &album.join("Folder.JPG"), &roots),
+                Some(album.clone())
+            );
+        }
     }
 
     #[test]

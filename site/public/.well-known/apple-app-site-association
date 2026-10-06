@@ -3,7 +3,11 @@
     "details": [
       {
         "appIDs": ["2256Q92VF2.cc.blit.koan"],
-        "components": [{ "/": "/join/*", "comment": "Invite links: the account is in the fragment" }]
+        "components": [
+          { "/": "/join/*", "comment": "Invite links: the account is in the fragment" },
+          { "/": "/pair", "comment": "Pairing links: the server and pairing are in the fragment" },
+          { "/": "/pair/*", "comment": "Pairing links: the server and pairing are in the fragment" }
+        ]
       }
     ]
   }

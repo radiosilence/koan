@@ -20,6 +20,18 @@ Everything is set up in Settings: **Library** adds folders and scans them, **Ser
 
 The iOS app plays from a server; a phone has no music folder to scan. Sign in under Settings → Server, or open an invite link from the server's admin. It needs iOS 26 or later.
 
+## History and Recently played
+
+Both apps keep what you play. **History** lists every play by day, and is where a play is forgotten. **Recently Played**, beside it in the Mac's sidebar and the iOS Library tab, answers "what was that record I had on yesterday": the records, artists and tracks of the last 30 days, each once however often it played, newest first. Both follow each play as it is recorded.
+
+Recently Played and Favourites show the first few of each kind. Each section's heading gives how many there are in all and opens the Albums, Artists or Tracks browser filtered to the shelf, in the shelf's order; the filter shows in the browser's filter control and is cleared there. Search's sections do the same. **Tracks**, beside Albums and Artists, lists every track in the library with the same filters.
+
+## Downloaded and offline
+
+**Downloaded**, in the Mac's sidebar and the iOS Library tab, is a shelf like Favourites: the artists, records and tracks with files on this device, records fully there first, each with a bar along the foot of its sleeve showing how much of it is. On the Mac every record in the library folder is whole.
+
+On iOS, when the server cannot be reached for a few seconds while the app is open, kōan goes offline: every list, from Albums and search to Favourites and playlists, shows only what is on the phone, the queue greys out tracks that are not, and the Library tab says so. It goes back online by itself when the server answers again. **Settings → Offline mode** turns it on by hand, for a train with a signal that comes and goes. A server without kōan's link (Navidrome) gives no signal for this, so there only the switch applies.
+
 ## The terminal UI
 
 ```bash
@@ -70,7 +82,11 @@ source <(COMPLETE=zsh koan)    # zsh; bash and fish take COMPLETE=bash and COMPL
 
 ## Removed files
 
-A scan removes tracks whose files have gone, along with their play history. It refuses when the pattern looks like a missing mount rather than a deletion: a folder with no audio files, a path it cannot read, or more than 20% of a folder of at least 100 tracks gone at once. `koan scan --force-remove` lifts the last of these after a deliberate mass deletion.
+A scan removes tracks whose files have gone, along with their play history. It refuses when the pattern looks like a missing mount rather than a deletion: a folder with no audio files, a path it cannot read, or more than 20% of a folder of at least 100 tracks gone at once. `koan scan --force-remove` lifts the last of these after a deliberate mass deletion. A file behind a symlink whose target has gone, such as an unmounted network share linked into the library, counts as unreachable rather than deleted.
+
+A file moved or renamed outside kōan keeps its track, and with it its play history, favourites and playlist places, when the scan that finds it at the new path also finds it gone from the old one: it must be the same MusicBrainz recording, the same disc and number on the same release with the same size or length, or, untagged, the same size, length and modification time. When more than one missing file fits, none is taken, and the new file is indexed as a new track. A full scan matches moves between library folders too; the folder watcher matches them within one batch of changes.
+
+On Linux, a file whose name is not valid UTF-8 is skipped with a warning, since its path cannot be stored as it is.
 
 ## Local and remote together
 

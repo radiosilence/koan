@@ -325,18 +325,24 @@ pub fn redeem(
         .filter(|u| u.username == claims.username)
         .filter(|u| password_mark(&u.password_hash) == claims.pwd)
         .ok_or(AccountError::BadInvite)?;
+    let (_, api_key) =
+        api_keys::create_api_key(conn, user.id, &device_name(device)).map_err(other)?;
+    Ok(Redeemed {
+        username: user.username,
+        api_key,
+    })
+}
+
+/// What a device calls itself, as the name of the API key made for it: no
+/// control characters, at most 100 characters, and `koan` for none.
+pub fn device_name(device: &str) -> String {
     let name: String = device
         .trim()
         .chars()
         .filter(|c| !c.is_control())
         .take(MAX_DEVICE_NAME)
         .collect();
-    let name = if name.is_empty() { "koan" } else { &name };
-    let (_, api_key) = api_keys::create_api_key(conn, user.id, name).map_err(other)?;
-    Ok(Redeemed {
-        username: user.username,
-        api_key,
-    })
+    if name.is_empty() { "koan".into() } else { name }
 }
 
 // ---------------------------------------------------------------------------

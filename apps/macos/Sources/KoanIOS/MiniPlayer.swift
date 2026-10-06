@@ -19,7 +19,9 @@ struct MiniPlayer: View {
             sleeve
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(entry?.title ?? "Nothing playing")
+                // A play still finding its tracks, named from the tap rather
+                // than leaving the paused track it replaces on show.
+                Text(player.resolving ?? entry?.title ?? "Nothing playing")
                     .font(.subheadline.weight(.medium))
                     .lineLimit(1)
                 if player.isControllingAnother {
@@ -29,7 +31,7 @@ struct MiniPlayer: View {
                         .font(.caption)
                         .foregroundStyle(Color.accentColor)
                         .lineLimit(1)
-                } else if let artist = entry?.artist, !artist.isEmpty {
+                } else if player.resolving == nil, let artist = entry?.artist, !artist.isEmpty {
                     Text(artist)
                         .font(.caption)
                         .foregroundStyle(.secondary)

@@ -42,7 +42,7 @@ final class EngineMirror: Observable {
     private var _playback = NowPlaying(
         state: .stopped, waiting: false, positionMs: 0, durationMs: 0,
         queueItemId: nil, entry: nil, format: nil, playlistVersion: 0,
-        shuffle: false, repeatMode: .off
+        shuffle: false, repeatMode: .off, sleep: nil, sleepFading: false
     )
     private var _playhead = Playhead(positionMs: 0, playing: false, at: .now)
     private var _seekableMs: UInt64 = 0
@@ -54,6 +54,7 @@ final class EngineMirror: Observable {
     private var _transfers: [Transfer] = []
     private var _figures: [Int64: TransferFigure] = [:]
     private var _libraryVersion: UInt64 = 0
+    private var _historyVersion: UInt64 = 0
     private var _scanning = false
     private var _syncing = false
     private var _syncProgress: SyncProgress?
@@ -140,6 +141,13 @@ final class EngineMirror: Observable {
         return _connection
     }
 
+    /// The server refused the credential this device signs in with: a revoked
+    /// key or a changed password. Until someone signs in again nothing more
+    /// arrives from it, so an empty page says this rather than waiting.
+    var signInRefused: Bool { connection?.signInRefused == true }
+
+    static let signInRefusedDetail = "Your server refused kōan's sign-in. Sign in again in Settings → Server."
+
     /// UPnP renderers on the network: amplifiers and streamers this device
     /// can play to.
     var renderers: [RendererInfo] {
@@ -215,6 +223,13 @@ final class EngineMirror: Observable {
     var libraryVersion: UInt64 {
         access(\.libraryVersion)
         return _libraryVersion
+    }
+
+    /// Moves when a play is recorded or plays are forgotten: the pages
+    /// derived from history ask again.
+    var historyVersion: UInt64 {
+        access(\.historyVersion)
+        return _historyVersion
     }
 
     // MARK: - Reading the fast slice
@@ -309,6 +324,8 @@ final class EngineMirror: Observable {
             }
         case .library(let version):
             mutate(\.libraryVersion) { _libraryVersion = version }
+        case .history(let version):
+            mutate(\.historyVersion) { _historyVersion = version }
         case .tasks(let scanning, let syncing):
             if scanning != _scanning || syncing != _syncing {
                 mutate(\.tasks) {

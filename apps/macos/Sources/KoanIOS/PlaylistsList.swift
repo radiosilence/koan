@@ -5,6 +5,12 @@ import SwiftUI
 /// The Mac lists them in its sidebar because it has the room. Here they are a
 /// page in the library, and each leads to the same `PlaylistView` the Mac shows.
 struct PlaylistsList: View {
+    #if os(tvOS)
+    private static let emptyDetail = "Playlists made on your phone, your computer or your server show up here."
+    #else
+    private static let emptyDetail = "Made here or on your server, they show up in both."
+    #endif
+
     @Environment(PlaylistsModel.self) private var playlists
 
     var body: some View {
@@ -13,7 +19,7 @@ struct PlaylistsList: View {
                 ContentUnavailableView(
                     "No playlists",
                     systemImage: Icon.playlist,
-                    description: Text("Made here or on your server, they show up in both.")
+                    description: Text(Self.emptyDetail)
                 )
             } else {
                 List(playlists.playlists, id: \.id) { playlist in
@@ -23,13 +29,18 @@ struct PlaylistsList: View {
                             covers: playlists.covers[playlist.id] ?? []
                         )
                     }
+                    .listLink()
                 }
             }
         }
         .navigationTitle("Playlists")
+        #if !os(tvOS)
+        // Playlists are made and edited on a phone or a computer; a television
+        // plays them.
         .toolbar {
             Button("New Playlist", systemImage: Icon.add) { playlists.naming = [] }
         }
+        #endif
         .task { playlists.load() }
     }
 }

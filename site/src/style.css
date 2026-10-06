@@ -162,6 +162,146 @@
 }
 
 /*
+ * The iPhone screenshots under the introduction, and the Apple TV ones in its section, drift past on their own. The
+ * track holds the set twice and moves by one set's width, so the loop is seamless. It pauses under the pointer, and
+ * stands still, scrollable, for anyone who has asked for reduced motion.
+ */
+@layer components {
+  .marquee {
+    overflow: hidden;
+    mask-image: linear-gradient(to right, transparent, #000 6%, #000 94%, transparent);
+  }
+
+  .marquee-track {
+    display: flex;
+    width: max-content;
+    animation: marquee 140s linear infinite;
+  }
+
+  .marquee:hover .marquee-track {
+    animation-play-state: paused;
+  }
+
+  .marquee-set {
+    display: flex;
+    gap: 1.25rem;
+    padding-right: 1.25rem;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .marquee {
+      overflow-x: auto;
+    }
+
+    .marquee-track {
+      animation: none;
+    }
+
+    .marquee-set[aria-hidden] {
+      display: none;
+    }
+  }
+
+  @keyframes marquee {
+    to {
+      transform: translateX(-50%);
+    }
+  }
+
+  /* The full-size view any screenshot opens. */
+  main :is(figure, .marquee) img {
+    cursor: zoom-in;
+  }
+
+  .zoom {
+    max-width: none;
+    max-height: none;
+    margin: auto;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: zoom-out;
+  }
+
+  .zoom::backdrop {
+    background: rgb(0 0 0 / 0.85);
+  }
+
+  .zoom img {
+    max-width: 95vw;
+    max-height: 92vh;
+    object-fit: contain;
+  }
+}
+
+/*
+ * The comparison tables at /compare/. Each scrolls in its own box, so the header row and the feature column stay in
+ * view on both axes. A cell holds a mark (yes, partial, no, unknown, in an open pull request, or planned) and an optional note.
+ */
+@layer components {
+  .cmp {
+    @apply my-6 max-h-[85vh] overflow-auto rounded-md border border-rule;
+  }
+
+  .cmp table {
+    @apply my-0 table w-max min-w-full text-[13px]/snug;
+  }
+
+  .cmp th,
+  .cmp td {
+    @apply max-w-40 min-w-28 border-e border-rule px-3 py-2 align-top last:border-e-0;
+  }
+
+  .cmp thead th {
+    @apply sticky top-0 z-10 bg-surface text-start font-semibold;
+  }
+
+  .cmp thead th:first-child {
+    @apply left-0 z-20;
+  }
+
+  .cmp thead small {
+    @apply block font-normal text-muted;
+  }
+
+  .cmp tbody th {
+    @apply sticky left-0 z-[5] max-w-56 min-w-48 bg-bg font-normal;
+  }
+
+  .cmp tbody tr.group th {
+    @apply pt-6 text-xs font-semibold tracking-wide text-muted uppercase;
+  }
+
+  .cmp td.us {
+    @apply bg-surface;
+  }
+
+  .cmp td small {
+    @apply mt-0.5 block text-muted;
+  }
+
+  .cmp :is(.y, .p, .n, .q, .s) {
+    @apply font-semibold;
+  }
+
+  .cmp .y {
+    @apply text-brand;
+  }
+
+  .cmp :is(.n, .q) {
+    @apply text-muted;
+  }
+
+  .cmp .s {
+    @apply rounded-sm border border-brand px-1 text-[11px] text-brand;
+  }
+
+  .cmp .l {
+    @apply rounded-sm border border-rule px-1 text-[11px] font-semibold;
+  }
+}
+
+/*
  * Code in the documentation, highlighted by pandoc. It marks tokens with short classes; four colours cover them:
  * keywords in the brand green, strings, literals and names, with comments muted as on the homepage.
  */

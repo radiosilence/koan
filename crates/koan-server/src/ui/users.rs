@@ -45,14 +45,15 @@ fn user_list(rows: &[UserRow], me: i64) -> String {
     let mut out = String::from("<ul id=users>");
     for u in rows {
         // Not on your own row: a new password signs out every session, this
-        // one included.
+        // one included. The name reaches the confirmation as data: escaped
+        // into the expression itself, it would be decoded back and run.
         let others = if u.id == me {
             String::new()
         } else {
             format!(
                 "<button class=\"quiet\" data-on:click=\"@post('/users/{id}/password/form')\">Password</button>\
-<button class=\"quiet\" data-on:click=\"confirm('Delete {name}? Their devices stop \
-working and their playlists and favourites go.') && @post('/users/{id}/delete')\">Delete</button>",
+<button class=\"quiet\" data-username=\"{name}\" data-on:click=\"confirm('Delete ' + el.dataset.username + \
+'? Their devices stop working and their playlists and favourites go.') && @post('/users/{id}/delete')\">Delete</button>",
                 name = escape(&u.username),
                 id = u.id,
             )

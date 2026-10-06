@@ -58,8 +58,9 @@ impl RateLimiter {
         }
     }
 
-    /// Returns false when `ip` has spent its allowance for the current window.
-    fn allow(&self, ip: IpAddr) -> bool {
+    /// Returns false when `ip`'s network (see [`network`]) has spent its
+    /// allowance for the current window.
+    pub(crate) fn allow(&self, ip: IpAddr) -> bool {
         let now = auth::now_unix();
         let mut windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -67,7 +68,7 @@ impl RateLimiter {
             windows.retain(|_, (start, _)| now.saturating_sub(*start) < self.window_secs);
         }
 
-        let entry = windows.entry(ip).or_insert((now, 0));
+        let entry = windows.entry(network(ip)).or_insert((now, 0));
         if now.saturating_sub(entry.0) >= self.window_secs {
             *entry = (now, 0);
         }
@@ -86,27 +87,57 @@ impl RateLimiter {
 /// peer is the client, and its header is not believed. Nor is it when the
 /// peer is unknown: a listener served without its connection info would
 /// otherwise let every client pick its own address.
+///
+/// IPv4-mapped IPv6 addresses come back as IPv4, so one client is one address
+/// whichever way a dual-stack listener or a proxy spelled it.
 pub(crate) fn client_ip(request: &axum::extract::Request) -> IpAddr {
-    let Some(ConnectInfo(peer)) = request.extensions().get::<ConnectInfo<SocketAddr>>() else {
+    address(request.extensions(), request.headers())
+}
+
+/// [`client_ip`] as an extractor, for handlers that also read the body.
+pub(crate) struct ClientIp(pub IpAddr);
+
+impl<S: Send + Sync> axum::extract::FromRequestParts<S> for ClientIp {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _: &S,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(Self(address(&parts.extensions, &parts.headers)))
+    }
+}
+
+fn address(extensions: &axum::http::Extensions, headers: &axum::http::HeaderMap) -> IpAddr {
+    let Some(ConnectInfo(peer)) = extensions.get::<ConnectInfo<SocketAddr>>() else {
         return IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
     };
-    let peer = peer.ip();
+    let peer = peer.ip().to_canonical();
     if !is_internal(peer) {
         return peer;
     }
-    request
-        .headers()
+    headers
         .get_all("x-forwarded-for")
         .iter()
         .filter_map(|v| v.to_str().ok())
         .flat_map(|v| v.split(','))
         .filter_map(|ip| ip.trim().parse::<IpAddr>().ok())
         .next_back()
-        .unwrap_or(peer)
+        .map_or(peer, |ip| ip.to_canonical())
+}
+
+/// The network an address counts against a per-address limit as: itself, or
+/// for IPv6 its /64, which one subscriber is usually given whole. Keyed on the
+/// full address, a client would have 2^64 fresh allowances.
+pub(crate) fn network(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V4(v4) => IpAddr::V4(v4),
+        IpAddr::V6(v6) => IpAddr::V6((u128::from(v6) & !((1u128 << 64) - 1)).into()),
+    }
 }
 
 fn is_internal(ip: IpAddr) -> bool {
-    match ip {
+    match ip.to_canonical() {
         IpAddr::V4(v4) => v4.is_private() || v4.is_loopback(),
         IpAddr::V6(v6) => v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00,
     }
@@ -128,6 +159,8 @@ pub struct AuthRouteState {
     /// setting this on a LAN deployment silently breaks cookie auth entirely.
     pub cookie_secure: bool,
     pub login_limiter: Arc<RateLimiter>,
+    /// The server's one password verifier; see `super::password`.
+    pub users: Arc<super::password::PasswordVerifier>,
 }
 
 impl AuthRouteState {
@@ -362,15 +395,18 @@ where
 /// JSON login and the web UI's sign-in form, so both are one implementation.
 ///
 /// On the blocking pool as a whole: the queries and argon2 both block, and on a runtime worker they stall every other request the server
-/// is handling.
+/// is handling. The password goes through the server's one verifier, so the
+/// ceiling on argon2 and the per-username budget on failures hold here as on
+/// every other door.
 pub(crate) async fn authenticate(
     state: &AuthRouteState,
     username: &str,
     password: &str,
+    from: IpAddr,
 ) -> Result<(auth_queries::UserRow, String, String), Box<Response>> {
     let state = state.clone();
     let (username, password) = (username.to_owned(), password.to_owned());
-    tokio::task::spawn_blocking(move || authenticate_blocking(&state, &username, &password))
+    tokio::task::spawn_blocking(move || authenticate_blocking(&state, &username, &password, from))
         .await
         .unwrap_or_else(|_| Err(Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response())))
 }
@@ -379,47 +415,50 @@ fn authenticate_blocking(
     state: &AuthRouteState,
     username: &str,
     password: &str,
+    from: IpAddr,
 ) -> Result<(auth_queries::UserRow, String, String), Box<Response>> {
+    use super::password::Refused;
+    let refused = |status, message: &str| {
+        Box::new(
+            (
+                status,
+                Json(MessageResponse {
+                    message: message.into(),
+                }),
+            )
+                .into_response(),
+        )
+    };
+    if state.users.spent(username, from) {
+        return Err(refused(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many failed sign-ins for this account; try again in a minute",
+        ));
+    }
+    let user = match state.users.verify(username, password) {
+        Ok(user) => {
+            state.users.signed_in(username, from);
+            user
+        }
+        Err(Refused::Wrong) => {
+            state.users.failed(username);
+            return Err(refused(
+                StatusCode::UNAUTHORIZED,
+                "invalid username or password",
+            ));
+        }
+        Err(Refused::Busy) => {
+            return Err(refused(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "busy; try again in a moment",
+            ));
+        }
+    };
+
     let db = match state.open_db() {
         Ok(db) => db,
         Err((status, msg)) => return Err(Box::new((status, msg).into_response())),
     };
-
-    let user = match auth_queries::get_user_by_username(&db.conn, username) {
-        Ok(Some(u)) => u,
-        Ok(None) => {
-            // Pay for a verify anyway, so response time doesn't say which
-            // usernames exist.
-            let _ = auth::verify_password(password, dummy_password_hash());
-            return Err(Box::new(
-                (
-                    StatusCode::UNAUTHORIZED,
-                    Json(MessageResponse {
-                        message: "invalid username or password".into(),
-                    }),
-                )
-                    .into_response(),
-            ));
-        }
-        Err(e) => {
-            log::error!("auth login db error: {}", e);
-            return Err(Box::new(
-                (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response(),
-            ));
-        }
-    };
-
-    if auth::verify_password(password, &user.password_hash).is_err() {
-        return Err(Box::new(
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(MessageResponse {
-                    message: "invalid username or password".into(),
-                }),
-            )
-                .into_response(),
-        ));
-    }
 
     let (access_token, refresh_token_id) = issue_session(state, &db, &user)?;
     Ok((user, access_token, refresh_token_id))
@@ -492,9 +531,13 @@ fn issue_session(
     Ok((access_token, refresh_token_id))
 }
 
-async fn login(State(state): State<AuthRouteState>, Json(req): Json<LoginRequest>) -> Response {
+async fn login(
+    State(state): State<AuthRouteState>,
+    ClientIp(from): ClientIp,
+    Json(req): Json<LoginRequest>,
+) -> Response {
     let (user, access_token, refresh_token_id) =
-        match authenticate(&state, &req.username, &req.password).await {
+        match authenticate(&state, &req.username, &req.password, from).await {
             Ok(session) => session,
             Err(resp) => return *resp,
         };
@@ -523,11 +566,18 @@ async fn login(State(state): State<AuthRouteState>, Json(req): Json<LoginRequest
 const REPLAY_GRACE_SECS: i64 = 30;
 
 /// Spend a refresh token for a new access token and a new refresh token. The
-/// error is the response to send. Shared by the JSON refresh and the web UI's
-/// session resume.
+/// error is the response to send. Shared by the JSON refresh, the web UI's
+/// session resume and OAuth.
+///
+/// A refresh is the account signing in from `from` as surely as a password
+/// is, so it marks that network as the account's (see
+/// `PasswordVerifier::signed_in`): a browser that keeps its session is how an
+/// account's own network stays known. `None` for an OAuth client, whose
+/// address is a service's, not the account's.
 pub(crate) fn rotate(
     state: &AuthRouteState,
     supplied: &str,
+    from: Option<IpAddr>,
 ) -> Result<(String, String), Box<Response>> {
     let db = match state.open_db() {
         Ok(db) => db,
@@ -624,11 +674,15 @@ pub(crate) fn rotate(
         ));
     }
 
+    if let Some(from) = from {
+        state.users.signed_in(&user.username, from);
+    }
     Ok((access_token, new_refresh_id))
 }
 
 async fn refresh(
     State(state): State<AuthRouteState>,
+    ClientIp(from): ClientIp,
     headers: axum::http::HeaderMap,
     body: Option<Json<RefreshRequest>>,
 ) -> Response {
@@ -644,7 +698,7 @@ async fn refresh(
     };
 
     let rotating = state.clone();
-    let rotated = tokio::task::spawn_blocking(move || rotate(&rotating, &supplied))
+    let rotated = tokio::task::spawn_blocking(move || rotate(&rotating, &supplied, Some(from)))
         .await
         .unwrap_or_else(|_| Err(Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response())));
     let (access_token, new_refresh_id) = match rotated {
@@ -721,6 +775,25 @@ mod tests {
 
         // Other callers are unaffected.
         assert!(limiter.allow("10.0.0.6".parse().unwrap()));
+    }
+
+    #[test]
+    fn an_ipv6_client_is_limited_by_its_64() {
+        let limiter = RateLimiter::default();
+        for n in 0..LOGIN_MAX_PER_WINDOW {
+            assert!(limiter.allow(format!("2001:db8:1:2::{n:x}").parse().unwrap()));
+        }
+        assert!(!limiter.allow("2001:db8:1:2:ffff::1".parse().unwrap()));
+        assert!(limiter.allow("2001:db8:1:3::1".parse().unwrap()));
+    }
+
+    #[test]
+    fn a_mapped_ipv4_address_is_the_ipv4_address() {
+        let r = request_from("[::ffff:198.51.100.4]", None);
+        assert_eq!(client_ip(&r), "198.51.100.4".parse::<IpAddr>().unwrap());
+        // A mapped private address is a proxy like any other.
+        let r = request_from("[::ffff:10.42.0.7]", Some("::ffff:203.0.113.9"));
+        assert_eq!(client_ip(&r), "203.0.113.9".parse::<IpAddr>().unwrap());
     }
 
     fn request_from(peer: &str, forwarded: Option<&str>) -> axum::extract::Request {
@@ -826,6 +899,9 @@ mod tests {
             refresh_ttl_secs: 60,
             cookie_secure,
             login_limiter: Arc::new(RateLimiter::default()),
+            users: Arc::new(crate::auth::password::PasswordVerifier::new(Arc::new(
+                Pool::new("/nonexistent/koan.db".into()),
+            ))),
         };
 
         let plain = state(false).access_cookie("tok");

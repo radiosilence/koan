@@ -129,6 +129,12 @@ pub struct PlaybackConfig {
     pub renderer: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub renderer_name: Option<String>,
+    /// Look for UPnP renderers on the network. Off, none is found, so none
+    /// can be played to.
+    pub renderers: bool,
+    /// Play silence: the output runs as usual, with every sample zeroed. For
+    /// automated runs on a machine someone is using.
+    pub muted: bool,
     /// Album art width in terminal columns (default: 24).
     /// Height is always width/2 (square via halfblock rendering).
     pub art_size: u16,
@@ -202,6 +208,8 @@ impl Default for PlaybackConfig {
             output_device: None,
             renderer: None,
             renderer_name: None,
+            renderers: true,
+            muted: false,
             art_size: 24,
             rate_switch_lead_in_ms: 1000,
         }
@@ -436,6 +444,12 @@ pub struct SubsonicConfig {
     /// config.local.toml, which is gitignored and `0600`.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub password: String,
+    /// Transcode `stream` for clients that ask for a lower bitrate or another
+    /// format. Off, every client gets the original file.
+    pub transcode: bool,
+    /// The `ffmpeg` transcoding runs, by name on `PATH` or by path. Without
+    /// one, originals are served.
+    pub ffmpeg: String,
 }
 
 impl Default for SubsonicConfig {
@@ -445,6 +459,8 @@ impl Default for SubsonicConfig {
             port: None,
             username: "koan".into(),
             password: String::new(),
+            transcode: true,
+            ffmpeg: "ffmpeg".into(),
         }
     }
 }
@@ -471,6 +487,12 @@ pub struct AuthConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DevicesConfig {
+    /// Take part in the local network at all: listen, announce, look for other
+    /// devices and dial them. Off, this device reaches others only through the
+    /// server. For a shared network, and for test runs that relaunch an app
+    /// over and over, which would otherwise announce it to every device in
+    /// the house each time.
+    pub nearby: bool,
     /// Listen on the local network and announce this device there, so any
     /// koan app on it can see what is playing and control it.
     pub discoverable: bool,
@@ -501,6 +523,7 @@ pub enum NearbyControl {
 impl Default for DevicesConfig {
     fn default() -> Self {
         Self {
+            nearby: true,
             discoverable: true,
             port: DEVICES_PORT,
             addresses: Vec::new(),
@@ -750,13 +773,18 @@ pub fn layer_of(path: &str) -> Layer {
         | "playback.output_device"
         | "playback.renderer"
         | "playback.renderer_name"
+        | "playback.renderers"
+        | "playback.muted"
         | "playback.rate_switch_lead_in_ms"
         // Which machine serves Subsonic, and as whom. Enabling a REST API is a
         // decision about one host, and the secret guarding it is per-machine.
         | "subsonic.enabled"
         | "subsonic.port"
         | "subsonic.username"
+        | "subsonic.transcode"
+        | "subsonic.ffmpeg"
         // Whether this machine is open to its network, and where others are.
+        | "devices.nearby"
         | "devices.discoverable"
         | "devices.port"
         | "devices.addresses"
@@ -1016,7 +1044,9 @@ fn write_document(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, contents)?;
+    fs::write(path, &contents)?;
+    #[cfg(target_os = "tvos")]
+    kept::written(path, contents.as_bytes());
     #[cfg(unix)]
     if secret {
         use std::os::unix::fs::PermissionsExt;
@@ -1155,7 +1185,7 @@ pub fn config_dir() -> PathBuf {
     platform_config_dir()
 }
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn platform_config_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -1171,7 +1201,119 @@ fn platform_config_dir() -> PathBuf {
     ios_library().join("Application Support").join("koan")
 }
 
-#[cfg(target_os = "ios")]
+/// A tvOS app has no persistent storage of its own: `Library/Caches` is the
+/// one directory it can write, and the system empties it when space runs short.
+/// The files live there, beside the download cache rather than inside it, which
+/// is trimmed; `kept` holds a copy that survives a purge.
+#[cfg(target_os = "tvos")]
+fn platform_config_dir() -> PathBuf {
+    let dir = ios_library().join("Caches").join("koan-config");
+    kept::restore(&dir);
+    dir
+}
+
+/// The configuration files of a tvOS app, mirrored into its preferences.
+///
+/// tvOS keeps an app's preferences (up to 500 KB) when it purges
+/// `Library/Caches`, and a purge would otherwise sign the television out and
+/// forget its settings. Every write to the platform directory is copied here,
+/// and the first look at the directory puts back a file that has gone. The
+/// Keychain would also survive, and is deliberately not used for credentials.
+/// The library database is not kept: the next sync rebuilds it.
+#[cfg(target_os = "tvos")]
+mod kept {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+    use std::sync::Once;
+
+    use core_foundation::base::TCFType;
+    use core_foundation::data::{CFData, CFDataRef};
+    use core_foundation::string::CFString;
+    use core_foundation_sys::base::{CFGetTypeID, CFRelease};
+    use core_foundation_sys::data::CFDataGetTypeID;
+    use core_foundation_sys::preferences::{
+        CFPreferencesAppSynchronize, CFPreferencesCopyAppValue, CFPreferencesSetAppValue,
+        kCFPreferencesCurrentApplication,
+    };
+
+    const FILES: [&str; 2] = ["config.toml", "config.local.toml"];
+
+    /// Once per process: a file that is missing comes back from the
+    /// preferences, and one that is present is copied into them, which is how
+    /// a configuration written before this existed starts being kept.
+    pub(super) fn restore(dir: &Path) {
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| {
+            for name in FILES {
+                let path = dir.join(name);
+                match fs::read(&path) {
+                    Ok(contents) => save(name, &contents),
+                    Err(_) => {
+                        let Some(contents) = load(name) else { continue };
+                        let _ = fs::create_dir_all(dir);
+                        if fs::write(&path, &contents).is_ok() {
+                            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+                            log::info!("config: restored {name} after the system cleared it");
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    /// Mirror a write, if it went to the platform directory rather than one a
+    /// test or `KOAN_CONFIG_DIR` chose.
+    pub(super) fn written(path: &Path, contents: &[u8]) {
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            return;
+        };
+        if FILES.contains(&name) && path.parent() == Some(super::platform_config_dir().as_path()) {
+            save(name, contents);
+        }
+    }
+
+    fn save(name: &str, contents: &[u8]) {
+        let key = CFString::new(name);
+        let data = CFData::from_buffer(contents);
+        // SAFETY: both are live CF objects for the length of the call, and the
+        // preferences retain what they keep.
+        unsafe {
+            CFPreferencesSetAppValue(
+                key.as_concrete_TypeRef(),
+                data.as_CFTypeRef(),
+                kCFPreferencesCurrentApplication,
+            );
+            CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication);
+        }
+    }
+
+    fn load(name: &str) -> Option<Vec<u8>> {
+        let key = CFString::new(name);
+        // SAFETY: a Copy function returns an owned reference or null. Anything
+        // but data is released here; data is owned by the wrapper.
+        unsafe {
+            let value = CFPreferencesCopyAppValue(
+                key.as_concrete_TypeRef(),
+                kCFPreferencesCurrentApplication,
+            );
+            if value.is_null() {
+                return None;
+            }
+            if CFGetTypeID(value) != CFDataGetTypeID() {
+                CFRelease(value);
+                return None;
+            }
+            Some(
+                CFData::wrap_under_create_rule(value as CFDataRef)
+                    .bytes()
+                    .to_vec(),
+            )
+        }
+    }
+}
+
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
 fn ios_library() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -1185,7 +1327,7 @@ fn ios_library() -> PathBuf {
 /// against someone's iCloud storage — and which iOS may clear when the device
 /// is short of space, which is what a cache is for.
 fn default_cache_dir() -> PathBuf {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     if CONFIG_DIR.read().is_none() && std::env::var_os("KOAN_CONFIG_DIR").is_none() {
         return ios_library().join("Caches").join("koan");
     }

@@ -25,6 +25,7 @@ import SwiftUI
 /// `NavigationStack`: koan navigates like a browser — any page from any page,
 /// with a linear history — and a stack navigates a hierarchy that does not
 /// exist here.
+#if !os(tvOS)
 struct RootView: View {
     /// Single-key shortcuts belong to a machine with a keyboard always attached
     /// — the split view itself does not, which is why this is the only thing in
@@ -36,6 +37,7 @@ struct RootView: View {
     @Environment(UIState.self) private var ui
     @Environment(CoverArtCache.self) private var art
     @Environment(LibraryModel.self) private var library
+    @Environment(EngineMirror.self) private var mirror
     @Environment(Navigator.self) private var nav
     @Environment(SearchModel.self) private var search
     /// Held for `reloading` below; nothing on it is read in this body.
@@ -72,10 +74,6 @@ struct RootView: View {
         .inspector(isPresented: $ui.showLyrics) {
             LyricsPanel()
                 .inspectorColumnWidth(min: 260, ideal: 280, max: 460)
-                // The column animates on its own; its contents do not come
-                // with it. Without this the stage slides over and the pane
-                // then appears whole in one frame, a fifth of a second later.
-                .transition(.move(edge: .trailing))
                 // The toggle belongs to the inspector rather than the window, so
                 // it sits at the pane's leading edge and moves with it. In the
                 // window's trailing group the pane would open out from
@@ -107,6 +105,12 @@ struct RootView: View {
             library.libraryChanged()
             playlists.load()
         }
+        // A play recorded, or plays forgotten: the pages derived from
+        // history ask again.
+        .onChange(of: mirror.historyVersion) { _, _ in library.historyChanged() }
+        // Offline narrows every listing to what can play here; going online
+        // widens it again.
+        .onChange(of: mirror.connection?.offline ?? false) { _, _ in library.libraryChanged() }
         // The toolbar paints its own ground over whatever is behind it, a hard
         // grey strip across the top of a queue washed in the colour of the
         // record. Hidden, the glass controls sit in that colour and the scroll
@@ -171,6 +175,7 @@ struct RootView: View {
         }
     }
 }
+#endif
 
 /// The filter field, and the only reader of what is typed into it.
 ///
@@ -307,6 +312,8 @@ struct RecordRoom: ViewModifier {
             // intent, and neither platform has the other's container.
             #if os(macOS)
             .containerBackground(for: .window) { washLayer }
+            #elseif os(tvOS)
+            .background { washLayer.ignoresSafeArea() }
             #else
             .containerBackground(for: .navigation) { washLayer }
             #endif
@@ -336,8 +343,12 @@ struct RecordRoom: ViewModifier {
             // Overrides the app-wide tint for everything below, which is every
             // control koan draws itself. What AppKit draws — list selection,
             // focus rings — keeps the declared accent, and that is deliberately
-            // a neutral so the two never argue.
+            // a neutral so the two never argue. A television's alerts take the
+            // tint too, as text on their white focused button, so there the
+            // colour goes to the room alone.
+            #if !os(tvOS)
             .tint(tint)
+            #endif
             .environment(\.roomTint, tint)
             .onChange(of: tint, initial: true) { _, now in worn = now }
     }
@@ -345,9 +356,9 @@ struct RecordRoom: ViewModifier {
 
 /// The transport, padded clear of the columns.
 ///
-/// Its own view because the widths it reads move while the sidebar is being
-/// dragged and on every frame the lyrics panel slides — read in the root, each
-/// of those frames would re-run the window.
+/// Its own view because the widths it reads move on every frame the sidebar
+/// is being dragged — read in the root, each of those frames would re-run
+/// the window.
 private struct TransportOverlay: View {
     let columns: NavigationSplitViewVisibility
 
@@ -488,11 +499,14 @@ private struct StageView: View {
         switch section {
         case .searchResults: SearchResultsView()
         case .favourites: FavouritesView()
+        case .recentlyPlayed: RecentlyPlayedView()
+        case .onDevice: OnDeviceView()
         case .playHistory: HistoryView()
         case .downloads: DownloadsView()
         case .playlist(let id): PlaylistView(playlistId: id)
         case .albums: AlbumBrowser()
         case .artists: ArtistBrowser()
+        case .tracks: TrackBrowser()
         case .queue: EmptyView()
         }
     }
@@ -603,6 +617,7 @@ private extension View {
 /// re-tile the toolbar, and a re-tile lays out the whole window — every page
 /// kept mounted behind the one on screen included, which is most of what a
 /// page switch cost.
+#if !os(tvOS)
 private struct PageToolbar: ToolbarContent {
     @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
@@ -647,18 +662,19 @@ private struct PageToolbar: ToolbarContent {
         ToolbarSpacer(.fixed, placement: .primaryAction)
 
         ToolbarItem(placement: .primaryAction) {
-            if nav.section == .albums || nav.section == .artists {
+            if nav.section?.isBrowser == true {
                 HStack(spacing: 2) {
                     BrowseFilterButton()
                     if nav.section == .albums {
                         AlbumSortControls()
                     }
+                    if nav.section == .tracks {
+                        TrackSortControls()
+                    }
                 }
             }
         }
-        .sharedBackgroundVisibility(
-            nav.section == .albums || nav.section == .artists ? .automatic : .hidden
-        )
+        .sharedBackgroundVisibility(nav.section?.isBrowser == true ? .automatic : .hidden)
 
         // Last, and apart from the filter: what you do with a pick is not part
         // of narrowing the grid, and next to the field the two read as one
@@ -682,6 +698,7 @@ private struct PageToolbar: ToolbarContent {
         return nil
     }
 }
+#endif
 
 /// The album grid's sort, and reshuffling when the sort is random.
 private struct AlbumSortControls: View {
@@ -697,7 +714,9 @@ private struct AlbumSortControls: View {
                     get: { library.albumSort },
                     set: { library.albumSort = $0 }
                 )) {
-                    ForEach(AlbumSort.all, id: \.self) { sort in
+                    ForEach(AlbumSort.offered(
+                    recent: library.browseFilter.recent, downloaded: library.browseFilter.downloaded
+                ), id: \.self) { sort in
                         Text(sort.label).tag(sort)
                     }
                 }
@@ -724,6 +743,30 @@ private struct AlbumSortControls: View {
                 .help("Shuffle again")
             }
         }
+    }
+}
+
+/// The track browser's sort.
+private struct TrackSortControls: View {
+    @Environment(LibraryModel.self) private var library
+
+    var body: some View {
+        Menu {
+            Picker("Sort", selection: Binding(
+                get: { library.trackSort },
+                set: { library.trackSort = $0 }
+            )) {
+                ForEach(TrackBrowseSort.offered(recent: library.browseFilter.recent), id: \.self) { sort in
+                    Text(sort.label).tag(sort)
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Label("Sort", systemImage: "arrow.up.arrow.down")
+        }
+        .tint(.primary)
+        .help("Sort tracks — \(library.trackSort.label)")
     }
 }
 

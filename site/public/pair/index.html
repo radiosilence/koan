@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in a device · kōan</title>
+  <meta name="description" content="A device waiting to be signed in to a kōan server.">
+  <meta name="robots" content="noindex">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#1e1e1e" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <link rel="icon" href="/icon-32.png" sizes="32x32">
+  <link rel="icon" href="/icon-192.png" sizes="192x192">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="preload" href="/geist-mono.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="mx-auto flex max-w-2xl items-center px-5 py-5">
+    <a class="flex items-center gap-3 text-ink no-underline" href="/"><img class="rounded-md" src="/icon-32.png" width="32" height="32" alt="">kōan</a>
+  </header>
+
+  <main id="main" class="mx-auto max-w-2xl px-5 pt-8 pb-12">
+    <div id="pair" hidden>
+      <h1 class="mb-4 text-4xl font-extralight">Sign in a device</h1>
+      <p>A device is waiting to be signed in to <strong id="server-name"></strong>. Approving it signs it in as you.</p>
+
+      <h2 class="mt-10">Approve it</h2>
+      <p>Sign in to your server's page, check the device's name, and approve it there.</p>
+      <p class="flex flex-wrap gap-3">
+        <a id="approve" class="rounded-full bg-brand px-4 py-2 font-semibold text-bg no-underline hover:text-bg hover:opacity-90" href="#">Continue to <span id="server-host"></span></a>
+      </p>
+      <p class="text-sm text-muted">With kōan installed on this phone or Mac, the link opens there instead, signed in as you already are. Approve only a device you are setting up yourself.</p>
+
+      <p class="mt-8 text-sm text-muted">These details never left your browser: they are in the part of the link after the #, which is not sent to koan.rocks.</p>
+    </div>
+
+    <div id="broken" hidden>
+      <h1 class="mb-4 text-4xl font-extralight">This link is incomplete</h1>
+      <p>The link is missing the server or the device. Scan the code on the device again, or type the code it shows into kōan's Settings.</p>
+    </div>
+  </main>
+
+  <script>
+    (() => {
+      const params = new URLSearchParams(location.hash.slice(1));
+      const server = params.get("s");
+      const pairing = params.get("p");
+      let url = null;
+      try { url = new URL(server); } catch {}
+      if (!url || !["http:", "https:"].includes(url.protocol) || !pairing) {
+        document.getElementById("broken").hidden = false;
+        return;
+      }
+      const text = (id, value) => { document.getElementById(id).textContent = value; };
+      text("server-name", url.host);
+      text("server-host", url.host);
+      const base = server.replace(/\/+$/, "");
+      document.getElementById("approve").href = base + "/pair/" + encodeURIComponent(pairing);
+      document.getElementById("pair").hidden = false;
+    })();
+  </script>
+</body>
+</html>

@@ -305,7 +305,7 @@ impl MutationRoot {
         require_role(ctx, Role::User)?;
         let user = super::user_id(ctx);
         with_db(ctx, move |db| {
-            super::editable_playlist(db, user, playlist_id).map(drop)
+            super::fillable_playlist(db, user, playlist_id).map(drop)
         })
         .await?;
         let order = crate::clients::Order {
@@ -395,6 +395,53 @@ impl MutationRoot {
         }
         let sent = sent.ok_or_else(|| async_graphql::Error::new("give shuffle, repeat or both"))?;
         Ok(GqlStatus::success(format!("sent to {}", reached(&sent))))
+    }
+
+    /// Stop the music on a linked koan app after `minutes`, or at the end of
+    /// the track or record it is playing (`endOf`): it fades out and pauses,
+    /// its queue left as it was. Replaces a timer already set.
+    async fn set_sleep_timer_on_client(
+        &self,
+        ctx: &Context<'_>,
+        minutes: Option<u32>,
+        end_of: Option<GqlSleepEnd>,
+        client: Option<String>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let timer = Some(sleep_timer(minutes, end_of)?);
+        let sent =
+            send_to_client(ctx, client.as_deref(), LinkCommand::SleepTimer { timer }).await?;
+        Ok(GqlStatus::success(format!("sent to {}", reached(&sent))))
+    }
+
+    async fn cancel_sleep_timer_on_client(
+        &self,
+        ctx: &Context<'_>,
+        client: Option<String>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let cmd = LinkCommand::SleepTimer { timer: None };
+        let sent = send_to_client(ctx, client.as_deref(), cmd).await?;
+        Ok(GqlStatus::success(format!("sent to {}", reached(&sent))))
+    }
+
+    /// `setSleepTimerOnClient` for this process's own player.
+    async fn set_sleep_timer(
+        &self,
+        ctx: &Context<'_>,
+        minutes: Option<u32>,
+        end_of: Option<GqlSleepEnd>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let timer = sleep_timer(minutes, end_of)?;
+        send_cmd(ctx, PlayerCommand::SetSleepTimer(Some(timer)))?;
+        Ok(GqlStatus::success("sleep timer set"))
+    }
+
+    async fn cancel_sleep_timer(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        send_cmd(ctx, PlayerCommand::SetSleepTimer(None))?;
+        Ok(GqlStatus::success("sleep timer cancelled"))
     }
 
     /// This process's own player. On a server nobody hears it: for the
@@ -731,6 +778,96 @@ impl MutationRoot {
         .await
     }
 
+    /// A playlist whose contents are a rule over the library, evaluated for
+    /// its owner (the caller) and kept up to date as the library and their
+    /// plays change. Subsonic clients see an ordinary, read-only playlist.
+    ///
+    /// `rules` is an object: `match` ("all" or "any", default "all"),
+    /// `rules` (conditions, or nested groups with their own `match` and
+    /// `rules`), `sort` (a list of `{field, desc}`; field "random" shuffles)
+    /// and `limit`. A condition is `{field, op, value}`:
+    ///
+    /// - text fields `title`, `artist`, `albumArtist`, `album`, `genre`,
+    ///   `format`, `path`: `is`, `isNot`, `contains`, `notContains`,
+    ///   `startsWith`, `endsWith` with a string, ignoring case;
+    /// - numbers `year`, `duration` (seconds), `bitDepth`, `sampleRate`,
+    ///   `trackNumber`, `discNumber`, `playCount`: `is`, `isNot`, `gt`, `lt`,
+    ///   or `inTheRange` with `[low, high]`;
+    /// - dates `lastPlayed`, `dateAdded`: `before`/`after` a "YYYY-MM-DD",
+    ///   `inTheRange` with two, or `inTheLast`/`notInTheLast` a number of
+    ///   days (never played counts as not in the last);
+    /// - `favourite`: `is`/`isNot` true or false.
+    ///
+    /// Example, the 50 most played tracks not heard in a month:
+    /// `{"rules": [{"field": "lastPlayed", "op": "notInTheLast", "value": 30}],
+    ///   "sort": [{"field": "playCount", "desc": true}], "limit": 50}`.
+    async fn create_smart_playlist(
+        &self,
+        ctx: &Context<'_>,
+        name: String,
+        rules: async_graphql::Json<serde_json::Value>,
+        comment: Option<String>,
+    ) -> async_graphql::Result<GqlPlaylist> {
+        require_role(ctx, Role::User)?;
+        let rules = koan_core::smart::Rules::from_value(rules.0)
+            .map_err(|e| async_graphql::Error::new(format!("rules: {e}")))?;
+        let user = super::user_id(ctx);
+        with_db(ctx, move |db| {
+            let id = queries::smart::create_smart_playlist(
+                &db.conn,
+                user,
+                &name,
+                comment.as_deref(),
+                &rules,
+            )
+            .map_err(|e| super::internal_error("db", e))?;
+            crate::clients::changed();
+            queries::get_playlist(&db.conn, id)
+                .map_err(|e| super::internal_error("db", e))?
+                .map(GqlPlaylist::from)
+                .ok_or_else(|| async_graphql::Error::new("playlist vanished as it was created"))
+        })
+        .await
+    }
+
+    /// Change a playlist's rules, in the shape `createSmartPlaylist` takes.
+    /// An ordinary playlist given rules becomes a smart one; `rules: null`
+    /// makes a smart playlist ordinary again, keeping what it holds.
+    async fn set_playlist_rules(
+        &self,
+        ctx: &Context<'_>,
+        id: async_graphql::ID,
+        rules: Option<async_graphql::Json<serde_json::Value>>,
+    ) -> async_graphql::Result<GqlPlaylist> {
+        let id = super::row_id(ctx, UidKind::Playlist, &id).await?;
+        require_role(ctx, Role::User)?;
+        let rules = rules
+            .map(|r| koan_core::smart::Rules::from_value(r.0))
+            .transpose()
+            .map_err(|e| async_graphql::Error::new(format!("rules: {e}")))?;
+        let user = super::user_id(ctx);
+        with_db(ctx, move |db| {
+            let list = super::renamable_playlist(db, user, id)?;
+            if list.rules.is_none() && list.readonly {
+                return Err(async_graphql::Error::new(format!(
+                    "playlist {id} is read-only on the server it came from"
+                )));
+            }
+            queries::smart::set_rules(&db.conn, id, rules.as_ref())
+                .map_err(|e| super::internal_error("db", e))?;
+            if rules.is_none() {
+                // Ordinary again, so the upstream may now hold it.
+                koan_core::playlists::push_to_remote(id);
+            }
+            crate::clients::changed();
+            queries::get_playlist(&db.conn, id)
+                .map_err(|e| super::internal_error("db", e))?
+                .map(GqlPlaylist::from)
+                .ok_or_else(|| async_graphql::Error::new(format!("playlist {id} not found")))
+        })
+        .await
+    }
+
     /// Keep the current queue under a name.
     async fn save_queue_as_playlist(
         &self,
@@ -761,7 +898,7 @@ impl MutationRoot {
         require_role(ctx, Role::User)?;
         let user = super::user_id(ctx);
         with_db(ctx, move |db| {
-            super::editable_playlist(db, user, id)?;
+            super::renamable_playlist(db, user, id)?;
             if !queries::rename_playlist(&db.conn, id, &name)
                 .map_err(|e| super::internal_error("db", e))?
             {
@@ -815,7 +952,7 @@ impl MutationRoot {
         require_role(ctx, Role::User)?;
         let user = super::user_id(ctx);
         with_db(ctx, move |db| {
-            super::editable_playlist(db, user, id)?;
+            super::fillable_playlist(db, user, id)?;
             let added = queries::add_tracks(&db.conn, id, &track_ids)
                 .map_err(|e| super::internal_error("db", e))?;
             koan_core::playlists::push_to_remote(id);
@@ -841,7 +978,7 @@ impl MutationRoot {
         require_role(ctx, Role::User)?;
         let user = super::user_id(ctx);
         with_db(ctx, move |db| {
-            super::editable_playlist(db, user, id)?;
+            super::fillable_playlist(db, user, id)?;
             queries::set_playlist_tracks(&db.conn, id, &track_ids)
                 .map_err(|e| super::internal_error("db", e))?;
             koan_core::playlists::push_to_remote(id);
@@ -1383,6 +1520,7 @@ async fn set_favourite(
         {
             sync_favourite_to_remote(db, track_id, now_starred);
         }
+        crate::clients::smart_activity(db, user, &[koan_core::smart::Field::Favourite]);
         Ok(GqlTrack { row: track })
     })
     .await

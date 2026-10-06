@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 16;
+pub const SCHEMA_VERSION: i64 = 19;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -168,7 +168,9 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
 
         -- Rows deleted from albums, artists and tracks, for front ends that
         -- cache by id: SQLite hands a freed id to the next row, and a cover
-        -- cached under it would be shown for the wrong record.
+        -- cached under it would be shown for the wrong record. Rows under a
+        -- rescanned folder are named too, since a cover image beside them
+        -- may have changed.
         CREATE TABLE IF NOT EXISTS art_evictions (
             seq   INTEGER PRIMARY KEY AUTOINCREMENT,
             kind  TEXT NOT NULL,
@@ -269,6 +271,42 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             PRIMARY KEY (user_id, artist_id)
         );
 
+        -- One to five, per account. See `queries::ratings`.
+        CREATE TABLE IF NOT EXISTS track_ratings (
+            user_id     INTEGER NOT NULL DEFAULT 0,
+            track_id    INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+            rating      INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+            changed_at  TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (user_id, track_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS album_ratings (
+            user_id     INTEGER NOT NULL DEFAULT 0,
+            album_id    INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+            rating      INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+            changed_at  TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (user_id, album_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS artist_ratings (
+            user_id     INTEGER NOT NULL DEFAULT 0,
+            artist_id   INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+            rating      INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+            changed_at  TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (user_id, artist_id)
+        );
+
+        -- Where an account is in a track. See `queries::bookmarks`.
+        CREATE TABLE IF NOT EXISTS bookmarks (
+            user_id      INTEGER NOT NULL DEFAULT 0,
+            track_id     INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+            position_ms  INTEGER NOT NULL,
+            comment      TEXT,
+            created_at   INTEGER NOT NULL,
+            changed_at   INTEGER NOT NULL,
+            PRIMARY KEY (user_id, track_id)
+        );
+
         CREATE TABLE IF NOT EXISTS playback_state (
             id          INTEGER PRIMARY KEY CHECK (id = 1),
             queue_json  TEXT NOT NULL DEFAULT '[]',
@@ -289,12 +327,36 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             updated_at    TEXT DEFAULT (datetime('now'))
         );
 
+        -- `AUTOINCREMENT` because ids are the cursor devices page a
+        -- server's history by: one handed out again would never reach them.
         CREATE TABLE IF NOT EXISTS play_history (
-            id          INTEGER PRIMARY KEY,
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
             track_id    INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
             played_at   INTEGER NOT NULL,
             duration_ms INTEGER,
             source      TEXT DEFAULT 'local'
+        );
+
+        -- Plays forgotten on a server, kept so the account's devices forget
+        -- them too: see `queries::history`. A row without a track forgets
+        -- every play up to `played_at`.
+        CREATE TABLE IF NOT EXISTS play_history_forgotten (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL,
+            track_uid   TEXT,
+            played_at   INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_play_history_forgotten_user
+            ON play_history_forgotten(user_id, id);
+
+        -- Plays and forgets waiting to reach the signed-in server, sent in
+        -- order once it answers. `remote_id` is the track's id there; a
+        -- `clear` has none and forgets every play up to `at_ms`.
+        CREATE TABLE IF NOT EXISTS history_outbox (
+            id          INTEGER PRIMARY KEY,
+            kind        TEXT NOT NULL CHECK (kind IN ('scrobble', 'forget', 'clear')),
+            remote_id   TEXT,
+            at_ms       INTEGER NOT NULL
         );
 
         -- With `played_at`, a track's last play is read off the index.
@@ -383,6 +445,35 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
 
         CREATE INDEX IF NOT EXISTS idx_app_passwords_user ON app_passwords(user_id);
 
+        -- Listening services an account forwards its plays to, with the
+        -- credential each takes. `error` is set when the service refuses the
+        -- credential; nothing is sent for the account until it connects again.
+        CREATE TABLE IF NOT EXISTS scrobble_services (
+            user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            service       TEXT NOT NULL,
+            token         TEXT NOT NULL,
+            account_name  TEXT NOT NULL,
+            connected_at  INTEGER NOT NULL,
+            error         TEXT,
+            PRIMARY KEY (user_id, service)
+        );
+
+        -- Plays waiting to reach a service. A row is deleted once the service
+        -- has accepted the play, so what is here survives a restart or an
+        -- outage and is sent when the service answers again.
+        CREATE TABLE IF NOT EXISTS scrobble_outbox (
+            id          INTEGER PRIMARY KEY,
+            user_id     INTEGER NOT NULL,
+            service     TEXT NOT NULL,
+            history_id  INTEGER NOT NULL REFERENCES play_history(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id, service)
+                REFERENCES scrobble_services(user_id, service) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_scrobble_outbox_service
+            ON scrobble_outbox(user_id, service);
+        CREATE INDEX IF NOT EXISTS idx_scrobble_outbox_history
+            ON scrobble_outbox(history_id);
+
         -- Share links this koan serves itself. The tracks are an explicit list,
         -- not a query: what a link names is all an anonymous visitor can play,
         -- so it must not grow when the library does.
@@ -412,6 +503,21 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     )?;
     conn.execute_batch(crate::db::queries::sources::SOURCE_TABLES)?;
     apply_migrations(conn, found)?;
+    // After the migrations: rebuilding `play_history` drops its triggers.
+    //
+    // A play a client reports is queued for every service its account
+    // forwards to, in the transaction that records it. koan's own playback
+    // records a play when the track starts, before it is known to have been
+    // heard, so only reported plays are forwarded as they happen.
+    conn.execute_batch(
+        "CREATE TRIGGER IF NOT EXISTS scrobble_reported_play AFTER INSERT ON play_history
+             WHEN new.source = 'subsonic'
+             BEGIN
+                 INSERT INTO scrobble_outbox (user_id, service, history_id)
+                 SELECT user_id, service, new.id FROM scrobble_services
+                  WHERE user_id = new.user_id;
+             END;",
+    )?;
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
     Ok(())
@@ -491,6 +597,17 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("albums", "title_key", "TEXT"),
     // Where a linked device last connected from: see koan-server's clients.rs.
     ("link_devices", "addr", "TEXT"),
+    // Smart playlists: the rules as JSON (see `crate::smart`), when they were
+    // last evaluated (unix seconds), and the file they were read from, if
+    // any. `readonly` is a server's word that a playlist there takes no
+    // edits, kept by clients that sync from it.
+    ("playlists", "rules", "TEXT"),
+    ("playlists", "refreshed_at", "INTEGER"),
+    ("playlists", "source_path", "TEXT"),
+    ("playlists", "readonly", "INTEGER NOT NULL DEFAULT 0"),
+    // How far this device has read the server's play history: see
+    // `remote::history`.
+    ("remote_servers", "history_cursor", "TEXT"),
 ];
 
 /// A UUIDv7 in SQL, for the triggers that give every new row its `uid`: a
@@ -612,6 +729,7 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
         [],
     )?;
     cascade_play_history(conn)?;
+    autoincrement_play_history(conn)?;
     snapshots_to_playlists(conn)?;
     per_user_favourites(conn)?;
     name_keys(conn)?;
@@ -637,8 +755,25 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
              DELETE FROM favourite_albums WHERE user_id = OLD.id;
              DELETE FROM favourite_artists WHERE user_id = OLD.id;
              DELETE FROM play_history WHERE user_id = OLD.id;
+             DELETE FROM play_history_forgotten WHERE user_id = OLD.id;
              DELETE FROM playlists WHERE user_id = OLD.id;
              DELETE FROM shares WHERE user_id = OLD.id;
+         END;",
+    )?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_track_ratings_track ON track_ratings(track_id);
+         CREATE INDEX IF NOT EXISTS idx_album_ratings_album ON album_ratings(album_id);
+         CREATE INDEX IF NOT EXISTS idx_artist_ratings_artist ON artist_ratings(artist_id);
+         CREATE TRIGGER IF NOT EXISTS users_ratings AFTER DELETE ON users BEGIN
+             DELETE FROM track_ratings WHERE user_id = OLD.id;
+             DELETE FROM album_ratings WHERE user_id = OLD.id;
+             DELETE FROM artist_ratings WHERE user_id = OLD.id;
+         END;",
+    )?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_bookmarks_track ON bookmarks(track_id);
+         CREATE TRIGGER IF NOT EXISTS users_bookmarks AFTER DELETE ON users BEGIN
+             DELETE FROM bookmarks WHERE user_id = OLD.id;
          END;",
     )?;
     crate::db::queries::auth::adopt_local_rows(conn)?;
@@ -1093,6 +1228,51 @@ fn cascade_play_history(conn: &Connection) -> rusqlite::Result<()> {
          CREATE INDEX IF NOT EXISTS idx_play_history_time ON play_history(played_at);
          COMMIT;",
     );
+    conn.pragma_update(None, "foreign_keys", "on")?;
+    rebuild
+}
+
+/// Give `play_history.id` `AUTOINCREMENT`, keeping every row and id.
+///
+/// A server's history is paged by id, so a device that has read up to an id
+/// asks only for those after it. Without the keyword SQLite hands the highest
+/// id out again once that play is forgotten, and the play given it would never
+/// reach a device that had already read past it.
+fn autoincrement_play_history(conn: &Connection) -> rusqlite::Result<()> {
+    let sql: String = conn.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'play_history'",
+        [],
+        |r| r.get(0),
+    )?;
+    if sql.to_ascii_uppercase().contains("AUTOINCREMENT") {
+        return Ok(());
+    }
+
+    // Pragma changes are no-ops inside a transaction, so this must bracket it.
+    conn.pragma_update(None, "foreign_keys", "off")?;
+    // Recreated by `apply_migrations`; see `per_user_favourites`. So are the
+    // indexes, which go with the table.
+    let rebuild = conn.execute_batch(
+        "DROP TRIGGER IF EXISTS users_personal_data;
+         BEGIN;
+         CREATE TABLE play_history_new (
+             id          INTEGER PRIMARY KEY AUTOINCREMENT,
+             track_id    INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
+             played_at   INTEGER NOT NULL,
+             duration_ms INTEGER,
+             source      TEXT DEFAULT 'local',
+             user_id     INTEGER NOT NULL DEFAULT 0
+         );
+         INSERT INTO play_history_new (id, track_id, played_at, duration_ms, source, user_id)
+             SELECT id, track_id, played_at, duration_ms, source, user_id FROM play_history;
+         DROP TABLE play_history;
+         ALTER TABLE play_history_new RENAME TO play_history;
+         CREATE INDEX IF NOT EXISTS idx_play_history_time ON play_history(played_at);
+         COMMIT;",
+    );
+    if rebuild.is_err() {
+        let _ = conn.execute_batch("ROLLBACK");
+    }
     conn.pragma_update(None, "foreign_keys", "on")?;
     rebuild
 }
@@ -1986,6 +2166,44 @@ mod tests {
     }
 
     #[test]
+    fn play_history_ids_are_never_handed_out_again_after_the_rebuild() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        super::create_tables(&conn).unwrap();
+        conn.execute_batch(
+            "DROP TABLE play_history;
+             CREATE TABLE play_history (
+                 id          INTEGER PRIMARY KEY,
+                 track_id    INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
+                 played_at   INTEGER NOT NULL,
+                 duration_ms INTEGER,
+                 source      TEXT DEFAULT 'local',
+                 user_id     INTEGER NOT NULL DEFAULT 0
+             );
+             INSERT INTO play_history (id, track_id, played_at) VALUES (1, NULL, 10), (2, NULL, 20);
+             PRAGMA user_version = 15;",
+        )
+        .unwrap();
+        super::create_tables(&conn).unwrap();
+        let ids: Vec<i64> = conn
+            .prepare("SELECT id FROM play_history ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(ids, [1, 2]);
+        conn.execute_batch(
+            "DELETE FROM play_history WHERE id = 2;
+             INSERT INTO play_history (track_id, played_at) VALUES (NULL, 30);",
+        )
+        .unwrap();
+        let newest: i64 = conn
+            .query_row("SELECT MAX(id) FROM play_history", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(newest, 3);
+    }
+
+    #[test]
     fn cascading_play_history_is_idempotent() {
         let conn = Connection::open_in_memory().unwrap();
         create_tables(&conn).unwrap();
@@ -2074,6 +2292,7 @@ mod tests {
         create_tables(&conn).unwrap();
         conn.execute_batch(
             "DROP TRIGGER users_personal_data;
+             DROP TRIGGER scrobble_reported_play;
              DROP INDEX idx_play_history_user;
              DROP INDEX idx_playlists_user;
              ALTER TABLE play_history DROP COLUMN user_id;

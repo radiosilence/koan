@@ -13,7 +13,7 @@ use serde::Deserialize;
 use koan_core::db::queries::auth as auth_queries;
 
 use super::{UiState, encode, html, pages, see_other};
-use crate::auth::routes::{authenticate, refresh_token_from, rotate, session_for};
+use crate::auth::routes::{ClientIp, authenticate, refresh_token_from, rotate, session_for};
 
 /// An authenticating reverse proxy in front of the web UI, whose header names
 /// the account signed in to it.
@@ -24,42 +24,62 @@ pub struct ProxyAuth {
 }
 
 impl ProxyAuth {
-    /// From `graphql.proxy_auth_header` and `graphql.proxy_auth_from`: none
-    /// unless both name something. An entry that is neither an address nor a
-    /// range is left out, which only narrows who is believed.
-    pub fn from_config(header: &str, from: &[String]) -> Option<Self> {
+    /// From `graphql.proxy_auth_header` and `graphql.proxy_auth_from`. Off
+    /// when neither is set; on when both are. Anything between is refused
+    /// rather than read as either: a header with no proxy to believe it from,
+    /// a proxy with no header, a header name or entry that does not parse, or
+    /// a range covering every address, which would let any client name any
+    /// account.
+    pub fn from_config(header: &str, from: &[String]) -> Result<Option<Self>, String> {
         let header = header.trim();
-        if header.is_empty() {
-            return None;
+        match (header.is_empty(), from.is_empty()) {
+            (true, true) => return Ok(None),
+            (false, true) => {
+                return Err(
+                    "graphql.proxy_auth_header is set but graphql.proxy_auth_from is empty; \
+                     name the addresses the authenticating proxy connects from"
+                        .into(),
+                );
+            }
+            (true, false) => {
+                return Err(
+                    "graphql.proxy_auth_from is set but graphql.proxy_auth_header is empty; \
+                     name the header the authenticating proxy sets"
+                        .into(),
+                );
+            }
+            (false, false) => {}
         }
-        let Ok(header) = HeaderName::from_bytes(header.as_bytes()) else {
-            log::error!("graphql.proxy_auth_header {header:?} is not a header name");
-            return None;
-        };
-        let from: Vec<IpNet> = from
+        let header = HeaderName::from_bytes(header.as_bytes())
+            .map_err(|_| format!("graphql.proxy_auth_header {header:?} is not a header name"))?;
+        let from = from
             .iter()
-            .map(|entry| entry.trim())
-            .filter_map(|entry| {
+            .map(|entry| {
+                let entry = entry.trim();
                 let net = entry
                     .parse::<IpNet>()
-                    .or_else(|_| entry.parse::<IpAddr>().map(IpNet::from));
-                if net.is_err() {
-                    log::error!("graphql.proxy_auth_from: {entry:?} is not an address or range");
+                    .or_else(|_| entry.parse::<IpAddr>().map(IpNet::from))
+                    .map_err(|_| {
+                        format!("graphql.proxy_auth_from: {entry:?} is not an address or range")
+                    })?;
+                if net.prefix_len() == 0 {
+                    return Err(format!(
+                        "graphql.proxy_auth_from: {entry:?} covers every address, so any client \
+                         could name any account; name the proxy's own address"
+                    ));
                 }
-                net.ok()
+                Ok(net)
             })
-            .collect();
-        if from.is_empty() {
-            log::error!(
-                "graphql.proxy_auth_header is set but proxy_auth_from names no proxy: proxy sign-in is off"
-            );
-            return None;
-        }
-        log::info!("web UI: signing in the account {header} names, from {from:?}");
-        Some(Self {
+            .collect::<Result<Vec<_>, String>>()?;
+        let ranges = from.iter().map(ToString::to_string).collect::<Vec<_>>();
+        log::info!(
+            "web UI: proxy sign-in on, believing {header} from {}",
+            ranges.join(", ")
+        );
+        Ok(Some(Self {
             header,
             from: Arc::new(from),
-        })
+        }))
     }
 
     /// The username the proxy vouches for: only on a connection from the
@@ -151,6 +171,7 @@ pub(super) async fn login_form(
 
 pub(super) async fn login(
     State(s): State<UiState>,
+    ClientIp(from): ClientIp,
     headers: HeaderMap,
     Form(f): Form<LoginForm>,
 ) -> Response {
@@ -158,7 +179,7 @@ pub(super) async fn login(
         return cross_site();
     }
     let next = local_path(&f.next);
-    match authenticate(&s.auth, &f.username, &f.password).await {
+    match authenticate(&s.auth, &f.username, &f.password, from).await {
         Ok((_, access, refresh)) => (
             StatusCode::SEE_OTHER,
             [(header::LOCATION, next.to_owned())],
@@ -167,10 +188,12 @@ pub(super) async fn login(
             .into_response(),
         Err(resp) => {
             let status = resp.status();
-            let message = if status == StatusCode::UNAUTHORIZED {
-                "Wrong username or password."
-            } else {
-                "Signing in failed. Try again."
+            let message = match status {
+                StatusCode::UNAUTHORIZED => "Wrong username or password.",
+                StatusCode::TOO_MANY_REQUESTS => {
+                    "Too many failed sign-ins for this account. Try again in a minute."
+                }
+                _ => "Signing in failed. Try again.",
             };
             html(status, pages::login(next, Some(message)))
         }
@@ -217,6 +240,7 @@ pub(super) async fn proxy_resume(
 /// access cookie has lapsed.
 pub(super) async fn resume(
     State(s): State<UiState>,
+    ClientIp(from): ClientIp,
     Query(q): Query<NextParam>,
     headers: HeaderMap,
 ) -> Response {
@@ -224,7 +248,7 @@ pub(super) async fn resume(
     if !s.auth_enabled {
         return see_other(&next);
     }
-    match rotate_from(&s, &headers).await {
+    match rotate_from(&s, &headers, from).await {
         Some((access, refresh)) => (
             StatusCode::SEE_OTHER,
             [
@@ -241,14 +265,18 @@ pub(super) async fn resume(
 /// Keep an open page's session alive past the access token's lifetime. Unlike
 /// `/auth/refresh` it answers with cookies only, so the tokens stay out of
 /// page script.
-pub(super) async fn renew(State(s): State<UiState>, headers: HeaderMap) -> Response {
+pub(super) async fn renew(
+    State(s): State<UiState>,
+    ClientIp(from): ClientIp,
+    headers: HeaderMap,
+) -> Response {
     if !same_origin(&headers) {
         return cross_site();
     }
     if !s.auth_enabled {
         return StatusCode::NO_CONTENT.into_response();
     }
-    match rotate_from(&s, &headers).await {
+    match rotate_from(&s, &headers, from).await {
         Some((access, refresh)) => (
             StatusCode::NO_CONTENT,
             s.auth.session_cookies(&access, &refresh),
@@ -270,10 +298,10 @@ fn unknown_account(name: &str) -> Response {
         .into_response()
 }
 
-async fn rotate_from(s: &UiState, headers: &HeaderMap) -> Option<(String, String)> {
+async fn rotate_from(s: &UiState, headers: &HeaderMap, from: IpAddr) -> Option<(String, String)> {
     let supplied = refresh_token_from(None, headers)?;
     let auth = s.auth.clone();
-    tokio::task::spawn_blocking(move || rotate(&auth, &supplied).ok())
+    tokio::task::spawn_blocking(move || rotate(&auth, &supplied, Some(from)).ok())
         .await
         .ok()
         .flatten()

@@ -25,6 +25,18 @@ pub const INVITE: &str = "koanInvite";
 /// from the device, `LinkCommand::Shares` back, and shared devices in a
 /// grantee's list.
 pub const SHARES: &str = "koanShares";
+/// Signing in a device without a keyboard: `/rest/koanPair` holds the device
+/// open until someone approves it with `/rest/koanPairApprove`. See
+/// `remote::pair`.
+pub const PAIR: &str = "koanPair";
+/// The account's play history as the record every device reads:
+/// `/rest/koanHistory` pages it, `/rest/koanForgetPlays` forgets from it, and
+/// `LinkCommand::HistoryChanged` says when it moved. See `remote::history`.
+pub const HISTORY: &str = "koanHistory";
+/// Signing in with a password ends in an API key: `/rest/koanSignIn`, signed
+/// with the account's own password, makes a key for the device, which keeps
+/// the key and not the password. See `helpers::set_remote_credentials`.
+pub const SIGN_IN: &str = "koanSignIn";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerProfile {
@@ -62,7 +74,9 @@ pub fn for_auth(auth: &SubsonicAuth) -> Option<ServerProfile> {
         return Some(profile.clone());
     }
     let client = crate::remote::client::SubsonicClient::from_auth(auth.clone());
-    let profile = match client.profile() {
+    let probed = client.profile();
+    crate::remote::refusal::observe(auth, &probed);
+    let profile = match probed {
         Ok(p) => p,
         Err(e) => {
             log::info!("profile: {} did not answer: {e}", auth.base_url);

@@ -4,7 +4,11 @@ use std::ptr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+#[cfg(not(target_os = "tvos"))]
 use coreaudio_sys::*;
+
+#[cfg(target_os = "tvos")]
+use super::toolbox::*;
 use thiserror::Error;
 
 #[cfg(target_os = "macos")]
@@ -77,8 +81,9 @@ pub struct AudioEngine {
 // The engine is created on one thread, moved to the player thread, then only used for
 // start/stop/drop — all of which are sequentially called from one thread at a time.
 // The AudioUnit and callback_data are accessed by the CoreAudio RT thread only through
-// the installed render callback, which Drop drains and uninitializes before freeing. AudioEngine is not Clone
-// and not shared — it has a single owner at all times.
+// the installed render callback; Drop frees callback_data only after the unit is
+// disposed, and leaks it otherwise. AudioEngine is not Clone and not shared — it has
+// a single owner at all times.
 unsafe impl Send for AudioEngine {}
 
 impl super::backend::AudioEngineHandle for AudioEngine {
@@ -96,6 +101,10 @@ impl super::backend::AudioEngineHandle for AudioEngine {
 
     fn fade_out(&self) {
         self.fade().fade_out();
+    }
+
+    fn set_sleep_gain(&self, gain: f32, snap: bool) {
+        self.fade().set_sleep_gain(gain, snap);
     }
 
     fn fade_in(&self) -> std::result::Result<(), super::backend::BackendError> {
@@ -132,7 +141,7 @@ impl AudioEngine {
     ) -> Result<Self> {
         let running = Arc::new(AtomicBool::new(false));
         let in_callback = Arc::new(AtomicBool::new(false));
-        let fade = FadeControl::new();
+        let fade = FadeControl::for_output();
         let lead_in = Arc::new(AtomicU64::new(0));
 
         let desc = AudioComponentDescription {
@@ -141,7 +150,7 @@ impl AudioEngine {
             componentSubType: kAudioUnitSubType_HALOutput,
             // AUHAL is declared inside `#if !TARGET_OS_IPHONE`; RemoteIO is what
             // the `#else` offers, and it is the only output unit iOS has.
-            #[cfg(target_os = "ios")]
+            #[cfg(any(target_os = "ios", target_os = "tvos"))]
             componentSubType: kAudioUnitSubType_RemoteIO,
             componentManufacturer: kAudioUnitManufacturer_Apple,
             componentFlags: 0,
@@ -273,16 +282,18 @@ impl Drop for AudioEngine {
 
         // Wait for any in-flight render callback to finish. AudioOutputUnitStop
         // is documented as synchronous, but during sample rate switches the
-        // callback can still be executing when stop() returns. Spin on the
-        // in_callback flag with a hard timeout to avoid hanging forever.
+        // callback can still be executing when stop() returns. The flag lives
+        // outside `callback_data`, so reading it here is sound whatever the
+        // callback is doing; the wait is bounded so a wedged IO thread cannot
+        // hang the player thread.
         let mut spins = 0u32;
+        let mut drained = true;
         while self.in_callback.load(Ordering::Acquire) {
             std::hint::spin_loop();
             spins += 1;
             if spins > 1_000_000 {
-                // ~10ms of spinning on a modern CPU. Give up — better to risk
-                // a crash than deadlock the player thread during shutdown.
                 log::warn!("AudioEngine drop: timed out waiting for render callback to drain");
+                drained = false;
                 break;
             }
         }
@@ -336,18 +347,46 @@ impl Drop for AudioEngine {
         // queue reached its end (#89, and again at the end of a playlist).
         //
         // `AudioUnitUninitialize` releases that buffer list, once, which is all
-        // that is wanted. Nothing can be mid-callback by then: `stop()` has
-        // cleared `running` so the callback only writes silence, and the
-        // spin-wait above has drained anything already executing.
+        // that is wanted.
 
         // SAFETY: AudioUnit was successfully created in new(). Uninitialize and
-        // Dispose are the documented teardown sequence. callback_data was created
-        // via Box::into_raw in new() and is not aliased — `stop()` has cleared
-        // `running` and the spin-wait above ensures no callback is in flight.
-        unsafe {
-            AudioUnitUninitialize(self.audio_unit);
-            AudioComponentInstanceDispose(self.audio_unit);
-            drop(Box::from_raw(self.callback_data));
+        // Dispose are the documented teardown sequence; the unit is not used
+        // after them.
+        let (uninit_status, dispose_status) = unsafe {
+            (
+                AudioUnitUninitialize(self.audio_unit),
+                AudioComponentInstanceDispose(self.audio_unit),
+            )
+        };
+
+        // The callback dereferences `callback_data` before it can raise
+        // `in_callback`, so the flag alone cannot show the allocation is
+        // unused. A successful dispose of a stopped unit can: CoreAudio makes
+        // no render call into a disposed instance. Short of every step
+        // succeeding the allocation is leaked, since a few hundred bytes lost
+        // is preferable to a render callback reading freed memory.
+        let quiesced = stop_status == 0
+            && drained
+            && last == (0, 0)
+            && uninit_status == 0
+            && dispose_status == 0
+            && !self.in_callback.load(Ordering::Acquire);
+        if quiesced {
+            // SAFETY: callback_data was created via Box::into_raw in new() and
+            // freed nowhere else. The unit was stopped, reported not running
+            // and was disposed without error, so no render callback can be
+            // executing or begin.
+            drop(unsafe { Box::from_raw(self.callback_data) });
+        } else {
+            log::warn!(
+                "AudioEngine drop: teardown not confirmed (stop {}, drained {}, IsRunning {:?}, \
+                 uninitialize {}, dispose {}); leaking the render callback's data",
+                stop_status,
+                drained,
+                last,
+                uninit_status,
+                dispose_status
+            );
         }
     }
 }
@@ -365,9 +404,9 @@ unsafe extern "C" fn render_callback(
     io_data: *mut AudioBufferList,
 ) -> OSStatus {
     // SAFETY: `in_ref_con` points to a heap-allocated CallbackData created via
-    // Box::into_raw in AudioEngine::new. It remains valid for the lifetime of the
-    // engine — the pointer is freed only in Drop, after the unit is uninitialized
-    // and the spin-wait on in_callback ensures no callbacks are in flight.
+    // Box::into_raw in AudioEngine::new. Drop frees it only once the unit has
+    // been stopped and disposed without error, after which CoreAudio makes no
+    // further render calls; on any failed step it is leaked instead.
     let data = unsafe { &mut *(in_ref_con as *mut CallbackData) };
     data.in_callback.store(true, Ordering::Release);
 

@@ -1,14 +1,22 @@
 name: iOS
 
-# Builds the iOS app for a device, signs it and uploads it to TestFlight.
+# Builds the iOS and tvOS apps for a device, signs them and uploads them to
+# TestFlight.
 #
 # Called by CI/CD when a release goes out, rather than listening for the
 # release event: releases are published with the workflow token, and events
 # raised by that token start no other workflows. Runnable by hand for a build
-# between releases.
+# between releases, for either platform: a dispatch from a branch should not
+# put its shared code on the other platform's TestFlight.
 on:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Which app to upload
+        type: choice
+        options: [both, ios, tvos]
+        default: both
 
 jobs:
   # Without the App Store Connect key and the team there is nothing to sign
@@ -34,7 +42,8 @@ jobs:
   testflight:
     name: TestFlight
     needs: signable
-    if: needs.signable.outputs.ready == 'true'
+    # A release calls this with no input, which means both.
+    if: needs.signable.outputs.ready == 'true' && (!inputs.platform || inputs.platform == 'both' || inputs.platform == 'ios')
     runs-on: macos-latest
     timeout-minutes: 60
     concurrency:
@@ -108,6 +117,76 @@ jobs:
       # The upload has happened by now; notes that fail to land are not a
       # failed release.
       - run: uv run apps/ios/store/whats_new.py "$KOAN_BUILD"
+        continue-on-error: true
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+      - if: always()
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
+
+  # The television app, as `testflight` does the phone's: the same record in
+  # App Store Connect, under its tvOS platform. Its own concurrency group, so it
+  # does not wait behind the phone's upload.
+  testflight-tv:
+    name: TestFlight (tvOS)
+    needs: signable
+    if: needs.signable.outputs.ready == 'true' && (!inputs.platform || inputs.platform == 'both' || inputs.platform == 'tvos')
+    runs-on: macos-latest
+    timeout-minutes: 60
+    concurrency:
+      group: testflight-tv
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-tvos
+      # As `testflight`, for `tv-ffi`'s target directory.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: tvos
+          cache-on-failure: true
+          workspaces: |
+            . -> target/tv-26.0
+            . -> target
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      - run: brew install xcodegen uv
+      - name: Stage the App Store Connect key
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          key="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$key"
+          echo "APPLE_API_KEY_PATH=$key" >> "$GITHUB_ENV"
+      # The phone's Apple Development certificate: it signs for any platform.
+      - name: Import the Apple Development certificate
+        env:
+          IOS_CERTIFICATE_P12: ${{ secrets.IOS_CERTIFICATE_P12 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+        if: env.IOS_CERTIFICATE_P12 != ''
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password=$(openssl rand -hex 24)
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$IOS_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" \
+            -P "$IOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$keychain" | grep -q "Apple Development" \
+            || { echo "::error::no Apple Development identity in IOS_CERTIFICATE_P12"; exit 1; }
+      - run: echo "KOAN_BUILD=$(date -u +%s)" >> "$GITHUB_ENV"
+      - run: just tv-testflight "$KOAN_BUILD"
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+      - run: uv run apps/ios/store/whats_new.py "$KOAN_BUILD" TV_OS
         continue-on-error: true
         env:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}

@@ -87,6 +87,7 @@ fn setup_full(
         refresh_ttl_secs: 3600,
         cookie_secure: true,
         login_limiter: Arc::new(RateLimiter::default()),
+        users: Arc::new(crate::auth::password::PasswordVerifier::new(pool.clone())),
     };
     Fixture {
         app: super::router(
@@ -423,7 +424,15 @@ async fn every_class_on_every_page_has_a_rule() {
         "/search?q=Wet".to_owned(),
         "/search?q=nothing-here".to_owned(),
         "/queue".to_owned(),
+        "/library".to_owned(),
+        "/favourites".to_owned(),
+        "/history".to_owned(),
+        "/recent".to_owned(),
+        "/tracks".to_owned(),
+        "/tracks?fav=1&recent=1&sort=played".to_owned(),
+        "/albums?recent=1".to_owned(),
         "/account".to_owned(),
+        "/scrobbling".to_owned(),
         "/users".to_owned(),
         "/connect".to_owned(),
     ] {
@@ -650,6 +659,217 @@ async fn sorting_and_filtering_live_in_the_query_string() {
         r.body.contains("<input type=hidden name=seed value="),
         "the shuffle is pinned"
     );
+}
+
+/// The `data-id`s of the track rows on a page, in order.
+fn row_ids(body: &str) -> Vec<String> {
+    body.split("<li tabindex=0 data-id=")
+        .skip(1)
+        .map(|r| r.split(' ').next().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_shelf_heading_opens_the_browser_its_preview_is_the_head_of() {
+    let f = setup(true);
+    {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        queries::add_favourite(&db.conn, 1, f.track_id).unwrap();
+        for n in 2..=12 {
+            let path = f.dir.path().join(format!("{n}.flac"));
+            std::fs::write(&path, b"x").unwrap();
+            let id =
+                queries::upsert_track(&db.conn, &meta(&path, &format!("Track {n:02}"), n)).unwrap();
+            queries::add_favourite(&db.conn, 1, id).unwrap();
+        }
+    }
+    let get = |uri: &str| authed(&f.state, uri).body(Body::empty()).unwrap();
+    let shelf = send(&f.app, get("/favourites")).await.body;
+    let preview = row_ids(&shelf);
+    assert_eq!(preview.len(), 10, "ten in the preview");
+    // The Tracks heading: a link, with the shelf's whole count in it.
+    let heading = shelf
+        .split("<h2>")
+        .skip(1)
+        .find(|h| h.contains(">Tracks<"))
+        .expect("a Tracks heading");
+    assert!(heading.contains(">12</span>"), "{heading}");
+    let link = heading
+        .split("href=\"")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap()
+        .replace("&amp;", "&");
+    assert!(link.starts_with("/tracks?"), "{link}");
+
+    let browser = send(&f.app, get(&link)).await.body;
+    assert!(browser.contains("12 tracks"), "the count the heading gave");
+    assert_eq!(
+        row_ids(&browser)[..10],
+        preview[..],
+        "the same tracks, in the same order"
+    );
+    assert!(
+        browser.contains("name=fav value=1 checked"),
+        "the filter shows, to be cleared"
+    );
+}
+
+#[tokio::test]
+async fn favourites_are_the_callers_own_as_a_shelf() {
+    let f = setup(true);
+    let artist = {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        let bob = queries::auth::create_user(&db.conn, "bob", "hunter3", Role::User).unwrap();
+        queries::add_favourite(&db.conn, bob, f.track_id).unwrap();
+        queries::set_favourite_album(&db.conn, bob, f.album_id, true).unwrap();
+        queries::tracks_by_ids(&db.conn, &[f.track_id]).unwrap()[0]
+            .artist_id
+            .unwrap()
+    };
+    let page = || authed(&f.state, "/favourites").body(Body::empty()).unwrap();
+
+    let r = send(&f.app, page()).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(
+        r.body.contains("Nothing favourited yet") && !r.body.contains("data-id="),
+        "another account's favourites are not alice's"
+    );
+
+    {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        queries::add_favourite(&db.conn, 1, f.track_id).unwrap();
+        queries::set_favourite_album(&db.conn, 1, f.album_id, true).unwrap();
+        queries::set_favourite_artist(&db.conn, 1, artist, true).unwrap();
+    }
+    let r = send(&f.app, page()).await;
+    assert!(
+        r.body.contains(&format!("href=\"/artist/{artist}\"")),
+        "the artist, as a pill"
+    );
+    assert!(
+        r.body.contains(&format!("href=\"/album/{}\"", f.album_id)),
+        "the record, as a tile"
+    );
+    assert!(
+        r.body.contains(&format!("data-id={}", f.track_id))
+            && r.body.contains("data-context=album")
+            && r.body.contains("Wet &lt;Moss&gt; &amp; Stone"),
+        "the track, in a list that plays on"
+    );
+
+    let r = send(
+        &f.app,
+        authed(&f.state, "/library").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert!(r.body.contains("href=\"/favourites\"") && r.body.contains("href=\"/playlists\""));
+}
+
+#[tokio::test]
+async fn history_lists_the_callers_own_plays_by_day_and_forgets_only_those() {
+    let f = setup(true);
+    let now = chrono::Utc::now().timestamp();
+    let (mine, theirs) = {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        let bob = queries::auth::create_user(&db.conn, "bob", "hunter3", Role::User).unwrap();
+        let mine = queries::record_play_at(&db.conn, 1, f.track_id, now, None, "local").unwrap();
+        queries::record_play_at(&db.conn, 1, f.track_id, now - 3 * 86_400, None, "local").unwrap();
+        let theirs =
+            queries::record_play_at(&db.conn, bob, f.track_id, now, None, "local").unwrap();
+        (mine, theirs)
+    };
+    let page = || {
+        authed(&f.state, "/history")
+            .header(header::COOKIE, "koan_tz=0")
+            .body(Body::empty())
+            .unwrap()
+    };
+    let r = send(&f.app, page()).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains(">Today</li>"), "grouped by day");
+    assert_eq!(
+        r.body.matches("type=checkbox").count(),
+        2,
+        "alice's two plays, not bob's"
+    );
+    assert!(
+        r.body.contains(&format!("value={mine}")) && !r.body.contains(&format!("value={theirs}"))
+    );
+
+    let forget = |ids: &str| {
+        Request::post("/history/forget")
+            .header(header::HOST, HOST)
+            .header(
+                header::COOKIE,
+                format!("koan_access={}", access_token(&f.state)),
+            )
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("datastar-request", "true")
+            .body(Body::from(format!("{{\"forget\":{ids}}}")))
+            .unwrap()
+    };
+    // Another account's play, named by id, is left alone.
+    let r = send(&f.app, forget(&format!("[\"{theirs}\"]"))).await;
+    assert_eq!(r.status, StatusCode::OK);
+    let r = send(&f.app, forget(&format!("[\"{mine}\"]"))).await;
+    assert!(r.body.contains("datastar-patch-elements") && r.body.contains("\"forget\":[]"));
+    let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+    let left: Vec<i64> = db
+        .conn
+        .prepare("SELECT id FROM play_history ORDER BY id")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .flatten()
+        .collect();
+    assert!(!left.contains(&mine), "alice's play is forgotten");
+    assert!(left.contains(&theirs), "bob's is not");
+    assert_eq!(left.len(), 2);
+    // Recorded, so the account's devices forget it too; bob's is not.
+    let forgotten: i64 = db
+        .conn
+        .query_row("SELECT COUNT(*) FROM play_history_forgotten", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(forgotten, 1);
+}
+
+#[tokio::test]
+async fn recently_played_is_the_callers_own_each_once() {
+    let f = setup(true);
+    let now = chrono::Utc::now().timestamp();
+    {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        let bob = queries::auth::create_user(&db.conn, "bob", "hunter3", Role::User).unwrap();
+        queries::record_play_at(&db.conn, bob, f.track_id, now, None, "local").unwrap();
+    }
+    let page = || authed(&f.state, "/recent").body(Body::empty()).unwrap();
+    let r = send(&f.app, page()).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(
+        r.body.contains("Nothing played in the last 30 days"),
+        "bob's play is not alice's"
+    );
+
+    {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        for ago in [0, 60, 120] {
+            queries::record_play_at(&db.conn, 1, f.track_id, now - ago, None, "local").unwrap();
+        }
+        // Older than the month, and not counted.
+        queries::record_play_at(&db.conn, 1, f.track_id, now - 40 * 86_400, None, "local").unwrap();
+    }
+    let r = send(&f.app, page()).await;
+    assert_eq!(
+        r.body.matches(&format!("data-id={}", f.track_id)).count(),
+        1,
+        "three plays, one track"
+    );
+    assert!(r.body.contains(&format!("href=\"/album/{}\"", f.album_id)));
 }
 
 #[tokio::test]
@@ -1094,6 +1314,80 @@ fn assert_closed(
     ));
 }
 
+#[tokio::test]
+async fn a_waiting_device_is_approved_from_the_pair_page() {
+    let f = setup(true);
+    let r = send(&f.app, get("/pair/ABCD-EFGH").body(Body::empty()).unwrap()).await;
+    assert_eq!(r.location(), "/auth/resume?next=%2Fpair%2FABCD-EFGH");
+
+    let opened = crate::pair::pairings()
+        .open("Living <room> TV", "10.0.0.8".parse().unwrap())
+        .unwrap();
+    let typed = opened.code.to_lowercase();
+    let r = send(
+        &f.app,
+        authed(&f.state, &format!("/pair?code={typed}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.location(), format!("/pair/{typed}"));
+    let r = send(
+        &f.app,
+        authed(&f.state, r.location()).body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(
+        r.body.contains("Sign in Living &lt;room&gt; TV?"),
+        "{}",
+        r.body
+    );
+    assert!(r.body.contains("<strong>alice</strong>"));
+    assert!(r.body.contains("Requested from 10.0.0.8, on your network."));
+    let far = crate::pair::pairings()
+        .open("Far TV", "2001:db8::7".parse().unwrap())
+        .unwrap();
+    let r = send(
+        &f.app,
+        authed(&f.state, &format!("/pair/{}", far.code))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        r.body
+            .contains("Requested from 2001:db8::7, from the internet."),
+        "{}",
+        r.body
+    );
+    drop(far);
+
+    let post = |origin: &str| {
+        Request::post(format!("/pair/{typed}/approve"))
+            .header(header::HOST, HOST)
+            .header(header::ORIGIN, origin)
+            .header(
+                header::COOKIE,
+                format!("koan_access={}", access_token(&f.state)),
+            )
+            .body(Body::empty())
+            .unwrap()
+    };
+    let r = send(&f.app, post("https://evil.test")).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    let r = send(&f.app, post(ORIGIN)).await;
+    assert!(r.body.contains("Signed in"), "{}", r.body);
+    let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+    let keys = queries::api_keys::list_api_keys(&db.conn, Some(1)).unwrap();
+    assert_eq!(keys[0].name, "Living <room> TV");
+
+    // Settled: the code no longer names anything.
+    let r = send(&f.app, post(ORIGIN)).await;
+    assert!(r.body.contains("Nothing to sign in"));
+    drop(opened);
+}
+
 mod oauth {
     use super::*;
     use base64::Engine as _;
@@ -1439,7 +1733,7 @@ async fn the_icon_is_where_favicon_fetchers_look() {
 /// Behind an authenticating proxy at 10.0.0.1 that names the account in
 /// `Remote-User`.
 fn setup_behind_proxy() -> Fixture {
-    let proxy = super::ProxyAuth::from_config("Remote-User", &["10.0.0.1".into()]);
+    let proxy = super::ProxyAuth::from_config("Remote-User", &["10.0.0.1".into()]).unwrap();
     setup_full(true, None, proxy)
 }
 
@@ -1638,15 +1932,54 @@ async fn a_session_for_another_account_than_the_proxy_names_is_resumed() {
 }
 
 #[test]
-fn proxy_auth_needs_a_header_and_a_proxy() {
-    use super::ProxyAuth;
-    assert!(ProxyAuth::from_config("", &["10.0.0.1".into()]).is_none());
-    assert!(ProxyAuth::from_config("Remote-User", &[]).is_none());
-    assert!(ProxyAuth::from_config("Remote-User", &["not an address".into()]).is_none());
-    assert!(ProxyAuth::from_config("Remote User", &["10.0.0.1".into()]).is_none());
+fn proxy_auth_is_off_unless_configured() {
+    assert!(super::ProxyAuth::from_config("", &[]).unwrap().is_none());
+    assert!(super::ProxyAuth::from_config("  ", &[]).unwrap().is_none());
+}
 
-    let proxy =
-        ProxyAuth::from_config("Remote-User", &["junk".into(), "172.18.0.0/16".into()]).unwrap();
+#[test]
+fn a_proxy_header_without_a_proxy_is_refused() {
+    let err = super::ProxyAuth::from_config("Remote-User", &[])
+        .err()
+        .unwrap();
+    assert!(err.contains("proxy_auth_from is empty"), "{err}");
+}
+
+#[test]
+fn a_proxy_without_a_header_is_refused() {
+    let err = super::ProxyAuth::from_config("", &["10.0.0.1".into()])
+        .err()
+        .unwrap();
+    assert!(err.contains("proxy_auth_header is empty"), "{err}");
+}
+
+#[test]
+fn a_proxy_range_covering_every_address_is_refused() {
+    for everyone in ["0.0.0.0/0", "::/0"] {
+        let err =
+            super::ProxyAuth::from_config("Remote-User", &["10.0.0.1".into(), everyone.into()])
+                .err()
+                .unwrap();
+        assert!(err.contains("covers every address"), "{everyone}: {err}");
+    }
+}
+
+#[test]
+fn a_bad_proxy_setting_is_refused_not_dropped() {
+    use super::ProxyAuth;
+    assert!(ProxyAuth::from_config("Remote User", &["10.0.0.1".into()]).is_err());
+    assert!(ProxyAuth::from_config("Remote-User", &["not an address".into()]).is_err());
+    assert!(
+        ProxyAuth::from_config("Remote-User", &["junk".into(), "172.18.0.0/16".into()]).is_err()
+    );
+}
+
+#[test]
+fn proxy_auth_believes_one_header_from_the_proxy() {
+    use super::ProxyAuth;
+    let proxy = ProxyAuth::from_config("Remote-User", &["172.18.0.0/16".into()])
+        .unwrap()
+        .unwrap();
     let mut headers = HeaderMap::new();
     headers.insert("remote-user", "alice".parse().unwrap());
     let at = |peer: &str| {
@@ -1664,4 +1997,222 @@ fn proxy_auth_needs_a_header_and_a_proxy() {
     assert_eq!(proxy.user(&headers, &at("172.19.0.5:1")), None);
     headers.insert("remote-user", "alice,admin".parse().unwrap());
     assert_eq!(proxy.user(&headers, &at("172.18.0.5:1")), None);
+}
+
+#[tokio::test]
+async fn hearts_favourite_for_the_caller_and_redraw_every_copy() {
+    let f = setup(true);
+    let (bob, viewer) = {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        let bob = queries::auth::create_user(&db.conn, "bob", "hunter3", Role::User).unwrap();
+        let viewer =
+            queries::auth::create_user(&db.conn, "viewer", "hunter4", Role::Readonly).unwrap();
+        (bob, viewer)
+    };
+    let as_user = |id: i64, name: &str, role: Role| {
+        format!(
+            "koan_access={}",
+            auth::mint_access_token(&f.state.private_pem, id, name, role, 900).unwrap()
+        )
+    };
+    let toggle = |cookie: String, uri: String| {
+        Request::post(uri)
+            .header(header::HOST, HOST)
+            .header(header::COOKIE, cookie)
+            .header("datastar-request", "true")
+            .body(Body::empty())
+            .unwrap()
+    };
+    let song = format!("data-fav=\"song-{}\"", f.track_id);
+    let album_page = format!("/album/{}", f.album_id);
+
+    let r = send(
+        &f.app,
+        authed(&f.state, &album_page).body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert!(r.body.contains(&format!("{song} aria-pressed=\"false\"")));
+
+    let r = send(
+        &f.app,
+        toggle(
+            as_user(1, "alice", Role::User),
+            format!("/favourite/song/{}?on=1", f.track_id),
+        ),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("datastar-patch-elements"));
+    assert!(r.body.contains(&format!("{song} aria-pressed=\"true\"")));
+    let r = send(
+        &f.app,
+        toggle(
+            as_user(1, "alice", Role::User),
+            format!("/favourite/album/{}?on=1", f.album_id),
+        ),
+    )
+    .await;
+    assert!(r.body.contains(&format!(
+        "data-fav=\"album-{}\" aria-pressed=\"true\"",
+        f.album_id
+    )));
+
+    let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+    assert!(
+        queries::load_favourites(&db.conn, 1)
+            .unwrap()
+            .contains(&f.track_id)
+    );
+    assert!(
+        queries::favourite_album_id_set(&db.conn, 1)
+            .unwrap()
+            .contains(&f.album_id)
+    );
+    assert!(
+        queries::load_favourites(&db.conn, bob).unwrap().is_empty(),
+        "alice's only"
+    );
+
+    let r = send(
+        &f.app,
+        authed(&f.state, &album_page).body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert!(
+        r.body.contains(&format!("{song} aria-pressed=\"true\"")),
+        "drawn on reload"
+    );
+    let r = send(
+        &f.app,
+        get(&album_page)
+            .header(header::COOKIE, as_user(bob, "bob", Role::User))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        r.body.contains(&format!("{song} aria-pressed=\"false\"")),
+        "bob's are his own"
+    );
+
+    // A read-only account is drawn no hearts, and its toggles change nothing.
+    let r = send(
+        &f.app,
+        get(&album_page)
+            .header(header::COOKIE, as_user(viewer, "viewer", Role::Readonly))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(!r.body.contains("data-fav="));
+    send(
+        &f.app,
+        toggle(
+            as_user(viewer, "viewer", Role::Readonly),
+            format!("/favourite/song/{}?on=1", f.track_id),
+        ),
+    )
+    .await;
+    assert!(
+        queries::load_favourites(&db.conn, viewer)
+            .unwrap()
+            .is_empty()
+    );
+
+    let r = send(
+        &f.app,
+        toggle(
+            as_user(1, "alice", Role::User),
+            format!("/favourite/song/{}?on=0", f.track_id),
+        ),
+    )
+    .await;
+    assert!(r.body.contains(&format!("{song} aria-pressed=\"false\"")));
+    assert!(queries::load_favourites(&db.conn, 1).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn track_rows_carry_what_the_track_menu_needs() {
+    let f = setup(true);
+    let r = send(
+        &f.app,
+        authed(&f.state, &format!("/album/{}", f.album_id))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        r.body.contains("<div id=track-menu popover"),
+        "the shell's one menu"
+    );
+    let row = r
+        .body
+        .split("<li tabindex=0 data-id=")
+        .nth(1)
+        .expect("a track row");
+    let row = &row[..row.find("</li>").unwrap()];
+    assert!(row.contains(&format!("data-album-id={}", f.album_id)));
+    assert!(row.contains("data-artist-id="), "for Go to Artist");
+    assert!(row.contains("data-act=menu"), "the phone's way in");
+    assert!(row.contains("data-fav="), "the heart the menu presses");
+    assert!(row.contains("data-act-share"), "the share the menu presses");
+}
+
+#[tokio::test]
+async fn a_spent_username_budget_refuses_strangers_but_not_the_accounts_network() {
+    let f = setup(true);
+    let from = |ip: [u8; 4]| {
+        let mut req = form("/login", "username=alice&password=hunter2");
+        req.extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                ip, 1234,
+            ))));
+        req
+    };
+    let home = [198, 51, 100, 4];
+    assert_eq!(send(&f.app, from(home)).await.status, StatusCode::SEE_OTHER);
+    // Spent by guesses from elsewhere.
+    for _ in 0..crate::auth::password::FAILURES_PER_USERNAME_PER_MINUTE {
+        f.state.users.failed("alice");
+    }
+    let r = send(&f.app, from([203, 0, 113, 9])).await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(
+        r.body
+            .contains("Too many failed sign-ins for this account.")
+    );
+    assert!(r.cookies().is_empty());
+    // The network alice signed in from still signs in.
+    assert_eq!(send(&f.app, from(home)).await.status, StatusCode::SEE_OTHER);
+}
+
+#[tokio::test]
+async fn a_username_reaches_the_delete_confirmation_as_data() {
+    let f = setup(true);
+    let db = Database::open(f.state.pool.path()).unwrap();
+    let boss = queries::auth::create_user(&db.conn, "boss", "sesame", Role::Admin).unwrap();
+    queries::auth::create_user(&db.conn, "x');alert(1)//", "sesame", Role::User).unwrap();
+    let admin =
+        auth::mint_access_token(&f.state.private_pem, boss, "boss", Role::Admin, 900).unwrap();
+    let r = send(
+        &f.app,
+        get("/users")
+            .header(header::COOKIE, format!("koan_access={admin}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let button = r
+        .body
+        .split("<button")
+        .find(|b| b.contains("data-username=\"x&#39;);alert(1)//\""))
+        .unwrap_or_else(|| panic!("{}", r.body));
+    let expression = button
+        .split("data-on:click=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap();
+    assert!(expression.contains("/delete')"), "{expression}");
+    assert!(!expression.contains("alert"), "{expression}");
 }

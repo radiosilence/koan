@@ -91,6 +91,7 @@ struct QueueRow: View {
     var artwork = false
 
     @Environment(PlayerModel.self) private var player
+    @Environment(EngineMirror.self) private var mirror
     /// Whether the List has this row selected. The List says so through the
     /// environment, which is what lets the list above never read its own
     /// selection: passed down as a value, every click would re-run the whole list.
@@ -196,7 +197,7 @@ struct QueueRow: View {
         // Fixed height so a row doesn't grow when a download indicator appears
         // and shrink when it finishes, reflowing the list each time. The same
         // heights as every other list's rows — see `RowMetrics`.
-        #if os(iOS)
+        #if os(iOS) || os(tvOS)
         .frame(minHeight: artwork ? RowMetrics.art : RowMetrics.text)
         #else
         .frame(height: artwork ? RowMetrics.art : RowMetrics.text)
@@ -208,7 +209,15 @@ struct QueueRow: View {
         // the Spacer between the title and the duration is a dead zone, and
         // clicks landing there select nothing.
         .contentShape(Rectangle())
-        .onHover { hovering = $0 }
+        .pointerHover { hovering = $0 }
+        // Offline, a track with no file here cannot play: it steps back and
+        // says so, rather than failing when tapped.
+        .opacity(unplayable ? 0.4 : 1)
+        .accessibilityHint(unplayable ? "Not on this device; plays when back online" : "")
+    }
+
+    private var unplayable: Bool {
+        mirror.connection?.offline == true && !item.onDisk
     }
 
     /// A played row steps back rather than disappears — and it does it in
@@ -234,6 +243,19 @@ struct QueueRow: View {
 
     @ViewBuilder
     private var statusIcon: some View {
+        // Offline is not a failure: whatever happened to the download, the
+        // reason this track cannot play now is that it is not here.
+        if unplayable, item.status != .playing {
+            Image(systemName: "icloud.slash")
+                .foregroundStyle(.tertiary)
+                .help("Not on this device")
+        } else {
+            statusSymbol
+        }
+    }
+
+    @ViewBuilder
+    private var statusSymbol: some View {
         switch item.status {
         case nil:
             // The queue has never heard of this track. Its column stays, so
@@ -256,7 +278,13 @@ struct QueueRow: View {
         case .played:
             Image(systemName: "checkmark").foregroundStyle(.tertiary)
         case .queued:
+            // On a desktop or a phone, where rows are picked out; a television
+            // has no selection for the mark to belong to.
+            #if os(tvOS)
+            Color.clear
+            #else
             Image(systemName: "circle.dotted").foregroundStyle(.quaternary)
+            #endif
         }
     }
 }

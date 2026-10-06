@@ -41,6 +41,9 @@ not that.
   playing from a different server can be controlled but not sent music, since
   its track ids mean nothing here. Settings → Devices turns this off for the
   device you are on, and sets how much they may do (below).
+  A device signed in to a server names that server in its announcement,
+  without the account, so a television not signed in yet can offer it on its
+  sign-in page instead of asking for the address to be typed.
 - **Devices by address.** A tailnet carries no Bonjour; add the other device's
   name and port (`mac-mini:5626`) under Settings → Devices.
 - **Devices shared with you.** Someone with another account on the same kōan
@@ -86,8 +89,12 @@ is not.
 
 A device is not dropped the moment it goes quiet. For one heartbeat (45
 seconds) it reads as reconnecting, so one missed signal does not mark it
-asleep; then it is listed as asleep with when it was last seen. A device heard
-from again is back at once. While nothing can reach it, it can be chosen only
+asleep. After that it stays listed, as asleep with when it was last seen, only
+if this device has used it: controlled it, or sent it music with **Play on** or
+**Move here**. A device never used from here is dropped once the heartbeat has
+passed, so phones that have moved on, test installs and devices that were
+merely on the same network do not pile up. A device heard from again is back
+at once, used or not. While nothing can reach it, it can be chosen only
 if it can be woken.
 
 - **One a push can wake**, a phone on your account that iOS has suspended,
@@ -97,7 +104,7 @@ if it can be woken.
   network or a Mac that has gone to sleep, is shown asleep and cannot be
   chosen.
 
-An asleep device stays listed until you forget it: right-click it in the
+An asleep device you have used stays listed until you forget it: right-click it in the
 Control menu on the Mac, or press and hold it on iOS, and choose **Forget**.
 One this device only knows of, such as a stranger's on the network, is
 forgotten here. One of your account's is forgotten by the server too, with the
@@ -247,6 +254,7 @@ uses one only where the server lists it:
 |-----------|------------|
 | `koanLink` | The app's standing WebSocket at `/rest/koanLink`: the server can command it, and it reports what it is playing. |
 | `koanShares` | Sharing a device with other accounts on the server: the grant from the device, the server's accounts to choose from, and shared devices in each grantee's list, relayed with their outputs for the playback set. |
+| `koanHistory` | The account's play history as every device's: `/rest/koanHistory` pages the plays and forgettings after a cursor, `/rest/koanForgetPlays` forgets plays for every device, and the link says when the history moved. See [Play history](remote-servers.md#play-history). |
 | `koanDevices` | The account's devices sent down each link, commands relayed between them, handoff, Live Activity pushes, and `/rest/koanCommand` for a device whose link is down. Each device's outputs travel with its state; a server older than the apps drops them, so the Output menu for another device needs the server updated too. |
 
 Settings → Server shows what the server said it is and the extensions it

@@ -127,6 +127,13 @@ The server binds to `127.0.0.1` by default. Use `--bind 0.0.0.0` or `bind = "0.0
 # same on a linked app, whose modes `clients { shuffle repeat }` reports.
 mutation { setPlayMode(shuffle: true, repeat: QUEUE) { ok } }
 
+# Stop after 30 minutes, fading out, or at the end of the record (endOf:
+# RECORD; TRACK for the track). It pauses and keeps the queue. The ...OnClient
+# forms set a linked app's; `nowPlaying { sleep { remainingMs endOf } }` and
+# `clients { sleep { ... } }` show what is set.
+mutation { setSleepTimerOnClient(minutes: 30) { ok } }
+mutation { cancelSleepTimerOnClient { ok } }
+
 # Queue management
 mutation { replaceQueue(trackIds: [42, 43, 44]) { ok, addedCount } }
 mutation { saveQueueAsPlaylist(name: "techno friday") { id, name, trackCount } }
@@ -138,6 +145,15 @@ mutation { addToPlaylist(id: 3, trackIds: [42, 43]) { ok } }
 # A reorder, a removal and a shuffle are all the same call: the list you want.
 mutation { setPlaylistTracks(id: 3, trackIds: [43, 42]) { ok } }
 mutation { playPlaylist(id: 3, shuffled: true) { ok } }
+
+# Smart playlists: rules instead of a list. See Smart playlists for the format.
+mutation {
+  createSmartPlaylist(name: "On repeat", rules: {
+    rules: [{ field: "lastPlayed", op: "inTheLast", value: 14 }]
+    sort: [{ field: "playCount", desc: true }], limit: 25
+  }) { id, trackCount, readonly, rules }
+}
+mutation { setPlaylistRules(id: 4, rules: null) { id, readonly } }
 ```
 
 ### Filtering

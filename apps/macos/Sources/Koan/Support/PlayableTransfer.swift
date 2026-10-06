@@ -93,7 +93,7 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
         case .artist:
             return (try? await engine.trackIds(albumId: nil, artistId: id)) ?? []
         case .playlist:
-            return (try? await engine.playlistTracks(playlistId: id))?.map(\.id) ?? []
+            return (try? await engine.playlistTracks(playlistId: id))?.map(\.track.id) ?? []
         case .file:
             return (try? await engine.importFiles(paths: [name]))?.trackIds ?? []
         }
@@ -107,6 +107,11 @@ extension View {
     /// threshold, so a press that never moves is still a click. `.onDrag` claims
     /// the press outright and any tap underneath it never fires.
     func draggablePlayable(_ playable: Playable) -> some View {
+        #if os(tvOS)
+        // Nothing is dragged with a remote.
+        self
+        #else
         draggable(PlayableTransfer(playable))
+        #endif
     }
 }

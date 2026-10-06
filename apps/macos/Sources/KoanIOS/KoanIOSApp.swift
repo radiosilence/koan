@@ -16,7 +16,9 @@ struct KoanIOSApp: App {
     /// A link opened before the engine was up, handled once it is.
     @State private var pendingURL: URL?
     @State private var session = AudioSession()
+    #if !os(tvOS)
     @State private var remoteActivity: RemoteActivityController?
+    #endif
     @Environment(\.scenePhase) private var scenePhase
     @State private var powerSaving = ProcessInfo.processInfo.isLowPowerModeEnabled
 
@@ -40,8 +42,19 @@ struct KoanIOSApp: App {
                         .environment(state.mirror)
                         .environment(\.powerSaving, powerSaving)
                         .modifier(InviteConfirmation(state: state))
+                        .modifier(PairingConfirmation(state: state))
                         .modifier(DspImportPrompts(dsp: state.dsp))
+                        // No app-wide accent on a television: it draws focus
+                        // as a white platter, and system alerts and toggle
+                        // rows that take the tint put green text on it.
+                        #if !os(tvOS)
                         .tint(.koanAccent)
+                        #endif
+                        #if os(tvOS)
+                        // The wash is drawn for a dark room; a television set
+                        // to light would grey it out.
+                        .preferredColorScheme(.dark)
+                        #endif
                 } else if let startupError {
                     ContentUnavailableView(
                         "kōan could not start",
@@ -90,7 +103,9 @@ struct KoanIOSApp: App {
                     let built = try await AppState()
                     await built.start()
                     PushDelegate.engine = built.player.engine
+                    #if !os(tvOS)
                     remoteActivity = RemoteActivityController(engine: built.player.engine, mirror: built.mirror, art: built.art)
+                    #endif
                     PushDelegate.requestAlertsIfSignedIn()
                     // The session goes up before anything can be asked to play:
                     // a RemoteIO unit on an inactive session produces silence

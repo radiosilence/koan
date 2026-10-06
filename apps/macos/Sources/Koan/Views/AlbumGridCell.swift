@@ -18,6 +18,42 @@ struct AlbumGridCell: View {
     @State private var hovering = false
 
     var body: some View {
+        #if os(tvOS)
+        television
+        #else
+        tile
+        #endif
+    }
+
+    #if os(tvOS)
+    /// The tile as one card a remote focuses and clicks to open the record.
+    /// Playing it is a click away on the record's page, or in the menu a long
+    /// press brings up.
+    private var television: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Button { nav.open(album: album.id) } label: {
+                AlbumArtwork(source: .album(album.id), size: .tile, cornerRadius: 10)
+            }
+            .buttonStyle(.card)
+            .contextMenu { PlayableMenu(playable: .album(album)) }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(album.title)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                Text([showArtist ? album.artistName : nil, album.year.map { String($0) }]
+                    .compactMap { $0 }
+                    .joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    #endif
+
+    private var tile: some View {
         VStack(alignment: .leading, spacing: 7) {
             PlayableArtwork(albumId: album.id)
                 .shadow(color: .black.opacity(0.28), radius: 7, y: 3)
@@ -43,6 +79,13 @@ struct AlbumGridCell: View {
                             .padding(6)
                     }
                 }
+                #if os(iOS)
+                .overlay {
+                    if album.onDevice != nil {
+                        DownloadedBar(album: album)
+                    }
+                }
+                #endif
                 .overlay(alignment: .bottomTrailing) {
                     AlbumTileHeart(albumId: album.id, hovering: hovering)
                 }
@@ -52,7 +95,7 @@ struct AlbumGridCell: View {
                 .underline(titleHovering)
                 .lineLimit(1)
                 .contentShape(.rect)
-                .onHover { titleHovering = $0 }
+                .pointerHover { titleHovering = $0 }
                 .onTapGesture { Trace.event("tap"); nav.open(album: album.id) }
 
             HStack(spacing: 4) {
@@ -66,7 +109,7 @@ struct AlbumGridCell: View {
                 }
             }
         }
-        .onHover { hovering = $0 }
+        .pointerHover { hovering = $0 }
         .animation(.smooth(duration: 0.18), value: hovering)
         // While selecting, the whole tile is one target that ticks it — the art
         // does not play and the links do not go anywhere.

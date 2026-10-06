@@ -9,9 +9,9 @@ struct SearchResultsView: View {
     @Environment(Navigator.self) private var nav
     @Environment(UIState.self) private var ui
     @Environment(\.onStage) private var onStage
+    @Environment(LibraryModel.self) private var library
     #if os(macOS)
     @Environment(PlayerModel.self) private var player
-    @Environment(LibraryModel.self) private var library
     @Environment(EngineMirror.self) private var mirror
     @Environment(CoverArtCache.self) private var art
     @Environment(PlayingLevels.self) private var levels
@@ -20,7 +20,7 @@ struct SearchResultsView: View {
     @AppStorage("graphics") private var graphics = Graphics.full
     #endif
 
-    private let columns = [GridItem(.adaptive(minimum: 140, maximum: 190), spacing: 16)]
+    private let columns = GridItem.tiles(minimum: 140, maximum: 190, spacing: 16)
 
     var body: some View {
         page
@@ -156,6 +156,8 @@ struct SearchResultsView: View {
                 },
                 pick: pick,
                 counts: true,
+                totals: search.totals,
+                openSection: { nav.show(library.browse($0, of: .search(query: search.query))) },
                 insets: insets
             )
         }
@@ -164,7 +166,9 @@ struct SearchResultsView: View {
 
     private var artistSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeading("Artists", count: search.artists.count)
+            SectionHeading("Artists", count: search.artists.count, total: search.totals?.artists) {
+                nav.show(library.browse(.artists, of: .search(query: search.query)))
+            }
             FlowLayout(spacing: 8) {
                 ForEach(search.artists, id: \.id) { artist in
                     ArtistPill(name: artist.name, artistId: artist.id, selection: search.selection)
@@ -175,7 +179,9 @@ struct SearchResultsView: View {
 
     private var albumSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeading("Albums", count: search.albums.count)
+            SectionHeading("Albums", count: search.albums.count, total: search.totals?.albums) {
+                nav.show(library.browse(.albums, of: .search(query: search.query)))
+            }
             LazyVGrid(columns: columns, spacing: 18) {
                 ForEach(search.albums, id: \.id) { album in
                     AlbumGridCell(album: album, selection: search.selection)
@@ -188,7 +194,9 @@ struct SearchResultsView: View {
 
     private var trackSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeading("Tracks", count: search.tracks.count)
+            SectionHeading("Tracks", count: search.tracks.count, total: search.totals?.tracks) {
+                nav.show(library.browse(.tracks, of: .search(query: search.query)))
+            }
             VStack(spacing: 0) {
                 ForEach(search.tracks, id: \.id) { track in
                     SearchTrackRow(track: track, selection: search.selection)
@@ -198,23 +206,38 @@ struct SearchResultsView: View {
     }
 }
 
+/// A results section's heading: its name, how many the library has (the
+/// results' own count until that is known), and a chevron, the whole of it
+/// opening the browser on the whole set.
 private struct SectionHeading: View {
     let title: String
     let count: Int
+    let total: UInt64?
+    let open: () -> Void
 
-    init(_ title: String, count: Int) {
+    init(_ title: String, count: Int, total: UInt64?, open: @escaping () -> Void) {
         self.title = title
         self.count = count
+        self.total = total
+        self.open = open
     }
 
     var body: some View {
-        HStack(spacing: 7) {
-            Text(title)
-                .font(.title3.weight(.semibold))
-            Text("\(count)")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.tertiary)
+        Button(action: open) {
+            HStack(spacing: 7) {
+                Text(title)
+                    .font(.title3.weight(.semibold))
+                Text("\(total ?? UInt64(count))")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
     }
 }
 
@@ -279,6 +302,6 @@ private struct SearchTrackRow: View {
             nav.open(album: albumId, highlighting: track.id)
         }
         .contextMenu { PlayableMenu(playable: .track(track)) }
-        .onHover { hovering = $0 }
+        .pointerHover { hovering = $0 }
     }
 }

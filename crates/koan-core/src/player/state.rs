@@ -129,6 +129,30 @@ impl PlayMode {
     }
 }
 
+/// A sleep timer as asked for: stop after a while, or at the end of the
+/// track or record playing. It pauses, fading out, and leaves the queue as it
+/// was, so playing again carries on from there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum SleepTimer {
+    After { minutes: u32 },
+    EndOfTrack,
+    EndOfRecord,
+}
+
+/// A sleep timer that is set, as clients show it. A time rather than what
+/// is left of one, so it says the same thing for as long as it stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Sleep {
+    /// Milliseconds since the Unix epoch.
+    At {
+        unix_ms: u64,
+    },
+    EndOfTrack,
+    EndOfRecord,
+}
+
 /// What follows `after` under `repeat`: `Some(None)` at the end of the queue,
 /// `None` when `after` is not in it — a removed item has nothing following it,
 /// whatever the mode, since wrapping from it would replay the queue from a
@@ -452,6 +476,11 @@ pub struct SharedPlayerState {
     /// `publish` alone; the queue's own reads (the lookahead, advancing)
     /// follow it.
     play_mode: AtomicU8,
+
+    /// The sleep timer, while one is set. Written by the player's `publish`.
+    sleep: parking_lot::RwLock<Option<Sleep>>,
+    /// The sleep timer is fading playback out.
+    sleep_fading: AtomicBool,
 }
 
 /// A renderer's playhead: `position_ms`, plus the time since `running` if it
@@ -487,6 +516,8 @@ impl SharedPlayerState {
             renderer_clock: parking_lot::Mutex::new(None),
             renderer: parking_lot::RwLock::new(None),
             play_mode: AtomicU8::new(0),
+            sleep: parking_lot::RwLock::new(None),
+            sleep_fading: AtomicBool::new(false),
         })
     }
 
@@ -823,6 +854,29 @@ impl SharedPlayerState {
         if self.play_mode.swap(mode.to_bits(), Ordering::AcqRel) != mode.to_bits() {
             self.content_version.fetch_add(1, Ordering::AcqRel);
             self.bump_version();
+        }
+    }
+
+    pub fn sleep(&self) -> Option<Sleep> {
+        *self.sleep.read()
+    }
+
+    pub fn set_sleep(&self, sleep: Option<Sleep>) {
+        let mut held = self.sleep.write();
+        if *held != sleep {
+            *held = sleep;
+            drop(held);
+            self.changed();
+        }
+    }
+
+    pub fn sleep_fading(&self) -> bool {
+        self.sleep_fading.load(Ordering::Acquire)
+    }
+
+    pub fn set_sleep_fading(&self, fading: bool) {
+        if self.sleep_fading.swap(fading, Ordering::AcqRel) != fading {
+            self.changed();
         }
     }
 

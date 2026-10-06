@@ -13,6 +13,9 @@ final class InviteTests: XCTestCase {
         else { throw XCTSkip("no invite given") }
 
         let app = XCUIApplication()
+        // Silent, and blind to UPnP renderers: tests share a machine with its owner.
+        app.launchEnvironment["KOAN_PLAYBACK__MUTED"] = "true"
+        app.launchEnvironment["KOAN_PLAYBACK__RENDERERS"] = "false"
         app.launch()
         app.open(url)
         // A custom scheme opened from outside the app asks first.

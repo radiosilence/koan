@@ -37,6 +37,10 @@ struct MixedCollection: NSViewRepresentable {
     var pick: PlayableSelection?
     /// How many are in each section, beside its title.
     var counts = false
+    /// How many there are of each kind in all, where the page shows the first
+    /// few: each heading then gives the count and opens its browser.
+    var totals: ShelfTotals?
+    var openSection: (LibraryModel.ShelfList) -> Void = { _ in }
     var selectAllToken = 0
     let insets: EdgeInsets
 
@@ -48,6 +52,14 @@ struct MixedCollection: NSViewRepresentable {
             case .artists: "Artists"
             case .albums: "Albums"
             case .tracks: "Tracks"
+            }
+        }
+
+        var list: LibraryModel.ShelfList {
+            switch self {
+            case .artists: .artists
+            case .albums: .albums
+            case .tracks: .tracks
             }
         }
     }
@@ -146,6 +158,15 @@ struct MixedCollection: NSViewRepresentable {
             self.environment = environment
             guard let collection else { return }
             let now = (parent.artists.map(\.id), parent.albums.map(\.id), parent.tracks.map(\.id))
+            // A total can move while the preview stays the same: one more
+            // favourite past the first few.
+            if now == shown {
+                for view in collection.visibleSupplementaryViews(ofKind: NSCollectionView.elementKindSectionHeader) {
+                    guard let header = view as? SectionHeader, let index = header.section,
+                          index < sections.count else { continue }
+                    configure(header, sections[index])
+                }
+            }
             if now != shown {
                 shown = now
                 shownKey = parent.contextKey
@@ -236,11 +257,31 @@ struct MixedCollection: NSViewRepresentable {
             let header = collectionView.makeSupplementaryView(
                 ofKind: kind, withIdentifier: SectionHeader.identifier, for: indexPath
             ) as? SectionHeader ?? SectionHeader()
-            let section = sections[indexPath.section]
-            header.title.stringValue = section.title
-            header.count.stringValue = parent?.counts == true ? "\(count(of: section))" : ""
-            header.needsLayout = true
+            header.section = indexPath.section
+            configure(header, sections[indexPath.section])
             return header
+        }
+
+        private func configure(_ header: SectionHeader, _ section: Section) {
+            header.title.stringValue = section.title
+            let total: UInt64? = switch section {
+            case .artists: parent?.totals?.artists
+            case .albums: parent?.totals?.albums
+            case .tracks: parent?.totals?.tracks
+            }
+            // Where the page knows how many there are in all, the heading
+            // says so and opens the browser on them; the preview may be fewer.
+            if let total {
+                header.count.stringValue = "\(total)"
+                let open = parent?.openSection
+                header.open = { open?(section.list) }
+            } else {
+                header.count.stringValue = parent?.counts == true ? "\(count(of: section))" : ""
+                header.open = nil
+            }
+            header.chevron.isHidden = header.open == nil
+            header.needsLayout = true
+            header.window?.invalidateCursorRects(for: header)
         }
 
         private func count(of section: Section) -> Int {
@@ -394,6 +435,8 @@ private final class MixedLayout: NSCollectionViewLayout {
     private var attributes: [IndexPath: NSCollectionViewLayoutAttributes] = [:]
     private var headers: [Int: NSCollectionViewLayoutAttributes] = [:]
     private var height: CGFloat = 0
+    /// The width the page was last laid out for.
+    private var laidOut: CGFloat = 0
 
     override func prepare() {
         super.prepare()
@@ -401,7 +444,8 @@ private final class MixedLayout: NSCollectionViewLayout {
         headers = [:]
         guard let collection = collectionView, let source else { return }
         let left = margin + leading
-        let width = max(collection.bounds.width - left - margin, 0)
+        laidOut = visibleWidth
+        let width = max(laidOut - left - margin, 0)
         let tileSpacing: CGFloat = 16
         let columns = max(1, ((width + tileSpacing) / (140 + tileSpacing)).rounded(.down))
         let tile = min(190, ((width - tileSpacing * (columns - 1)) / columns).rounded(.down))
@@ -449,7 +493,7 @@ private final class MixedLayout: NSCollectionViewLayout {
     }
 
     override var collectionViewContentSize: NSSize {
-        NSSize(width: collectionView?.bounds.width ?? 0, height: height)
+        NSSize(width: laidOut, height: height)
     }
 
     override func layoutAttributesForElements(in rect: NSRect) -> [NSCollectionViewLayoutAttributes] {
@@ -467,7 +511,7 @@ private final class MixedLayout: NSCollectionViewLayout {
     }
 
     override func shouldInvalidateLayout(forBoundsChange newBounds: NSRect) -> Bool {
-        newBounds.width != collectionView?.bounds.width
+        newBounds.width != laidOut
     }
 }
 
@@ -617,11 +661,17 @@ final class MixedCollectionView: NSCollectionView {
 
 // MARK: - Items
 
-/// A section's title.
+/// A section's heading: its title and count, and where a page offers it, a
+/// chevron and a link to the section's browser.
 private final class SectionHeader: NSView, NSCollectionViewElement {
     static let identifier = NSUserInterfaceItemIdentifier("SectionHeader")
     let title = NSTextField(labelWithString: "")
     let count = NSTextField(labelWithString: "")
+    let chevron = NSImageView()
+    /// Which section it heads, for refreshing it in place.
+    var section: Int?
+    /// Where the heading goes: the browser, filtered to the page's shelf.
+    var open: (() -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -631,6 +681,28 @@ private final class SectionHeader: NSView, NSCollectionViewElement {
         count.textColor = .tertiaryLabelColor
         addSubview(title)
         addSubview(count)
+        chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
+        chevron.contentTintColor = .secondaryLabelColor
+        chevron.isHidden = true
+        addSubview(chevron)
+        addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(follow)))
+    }
+
+    @objc private func follow() { open?() }
+
+    /// The title, its count and its chevron are the heading's link.
+    private var link: CGRect { title.frame.union(count.frame).union(chevron.frame) }
+
+    override func resetCursorRects() {
+        if open != nil { addCursorRect(link, cursor: .pointingHand) }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // Only the link takes clicks; the rest of the header is the gap
+        // between sections.
+        let local = convert(point, from: superview)
+        return open != nil && link.contains(local) ? self : nil
     }
 
     required init?(coder: NSCoder) { fatalError("not decoded") }
@@ -643,7 +715,9 @@ private final class SectionHeader: NSView, NSCollectionViewElement {
         let width = ceil(title.intrinsicContentSize.width)
         title.frame = CGRect(x: 0, y: bounds.height - height - 6, width: width, height: height)
         let countHeight = ceil(count.intrinsicContentSize.height)
-        count.frame = CGRect(x: width + 4, y: title.frame.maxY - countHeight - 1, width: 60, height: countHeight)
+        let countWidth = count.stringValue.isEmpty ? 0 : ceil(count.intrinsicContentSize.width) + 4
+        count.frame = CGRect(x: width + 4, y: title.frame.maxY - countHeight - 1, width: max(countWidth, 0), height: countHeight)
+        chevron.frame = CGRect(x: width + 4 + countWidth, y: title.frame.midY - 6, width: 10, height: 12)
     }
 }
 

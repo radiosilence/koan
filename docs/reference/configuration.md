@@ -28,7 +28,7 @@ Three kinds of setting are machine-scoped and always land in
 | Kind | Settings |
 |------|----------|
 | Secrets | `remote.password`, `subsonic.password` |
-| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username`, `remote.cache_dir`, `remote.cache_limit`, `playback.output_device`, `subsonic.enabled/port/username`, `devices.discoverable/port/addresses/nearby_control`, everything under `dsp` |
+| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username`, `remote.cache_dir`, `remote.cache_limit`, `playback.output_device/renderers/muted`, `subsonic.enabled/port/username/transcode/ffmpeg`, `devices.nearby/discoverable/port/addresses/nearby_control`, everything under `dsp` |
 | Volatile UI state -- flipped by a keypress or a mouse drag | `playback.art_size`, `visualizer.enabled`, `visualizer.mode`, `visualizer.matrix_overlay`, `visualizer.bass_shake` |
 
 Everything else is taste, travels between machines, and goes in `config.toml`.
@@ -141,6 +141,8 @@ show_fps = false            # FPS counter overlay in top-right corner (default: 
 # config.local.toml -- this machine's hardware and window
 art_size = 24               # album art width in terminal columns (default: 24)
 output_device = "My DAC"    # audio output device name (default: system default)
+renderers = true            # look for UPnP renderers on the network (default: true)
+muted = false               # play silence (default: false)
 ```
 
 ### ReplayGain
@@ -176,6 +178,10 @@ When a track needs the output device at a different sample rate, the device relo
 `output_device` selects an audio output by name. Press `Shift+D` in the TUI to browse available devices and switch live. The choice is saved to `config.local.toml` -- your DAC is not the next machine's. If the named device isn't available at startup, kōan falls back to the system default.
 
 Run `koan devices` to list available audio outputs.
+
+### Automated runs
+
+`muted` zeroes every sample in the render callback, so playback carries on, with its position, queue and gapless handover, but nothing is heard. `renderers = false` stops kōan looking for UPnP renderers, so none appears under Output and none can be played to. The app UI tests set both, as `KOAN_PLAYBACK__MUTED` and `KOAN_PLAYBACK__RENDERERS`, because they run on a machine someone is using, whose speakers and network renderers are theirs.
 
 ---
 
@@ -338,7 +344,7 @@ Auth is enabled by default. Run `koan auth setup` to create a keypair and admin 
 
 `cookie_secure` should stay `false` unless clients reach kōan over HTTPS. Browsers discard `Secure` cookies delivered over plain `http://` to anything but localhost, so setting it on a LAN deployment silently breaks cookie auth.
 
-`proxy_auth_header` and `proxy_auth_from` sign the web UI in through an authenticating reverse proxy; see [Behind an authenticating proxy](../guide/headless-server.md#behind-an-authenticating-proxy).
+`proxy_auth_header` and `proxy_auth_from` sign the web UI in through an authenticating reverse proxy. Both are set or neither: the server refuses to start with only one, with an entry it cannot parse, or with a range covering every address. See [Behind an authenticating proxy](../guide/headless-server.md#behind-an-authenticating-proxy).
 
 `allow_organize` gates `organizePreview`, `organizeExecute` and `organizeUndo`. They rename and move files on disk, which is not something a network API should offer by default.
 
@@ -354,9 +360,13 @@ kōan's Subsonic API, served at `/rest/*`. Clients sign in with a kōan account;
 enabled = false               # serve /rest/* on the main port (default: false)
 port = 4040                   # also serve it on a port of its own (default: none)
 username = "koan"             # the shared secret's username (default: koan)
+transcode = true              # transcode stream for clients that ask (default: true)
+ffmpeg = "ffmpeg"             # the ffmpeg transcoding runs, on PATH or a path (default: ffmpeg)
 ```
 
 `koan subsonic setup` enables it and generates a shared secret, written to `config.local.toml` and printed once. The secret signs in as `username` with `user` rights, for a client that has no account of its own; `koan play --server` streams with it. It is generated rather than chosen because Subsonic token auth sends `md5(secret + salt)` with every request, and a captured digest of a human-chosen password can be cracked offline.
+
+A client that asks `stream` for a `maxBitRate` below the file's bitrate, or for `format=opus`, `format=mp3` or `format=aac` (also `m4a`), gets a transcode made by `ffmpeg`: Opus unless another format was asked for, at the requested bitrate or 128 kbps (Opus) and 192 kbps (MP3, AAC). AAC is AAC-LC from ffmpeg's built-in encoder, sent as ADTS (`audio/aac`); a file already in the requested format and within the limit is sent as it is. `format=raw`, and `download`, always return the original. A transcode has no length until it ends, so it is sent without one, unless the client passes `estimateContentLength=true` (the body is then cut or padded to the bitrate times the duration), and without Range support; clients seek with `timeOffset`, offered as the OpenSubsonic `transcodeOffset` extension. The server runs at most one transcode per CPU core and three per account; beyond that, and whenever ffmpeg produces nothing, the original is served. Where `ffmpeg` does not run or has none of `libopus`, `libmp3lame` and `aac`, the server logs it once at startup and serves originals. The container image includes it.
 
 ---
 
@@ -426,7 +436,8 @@ reach each other through the server whatever this says. See
 ```toml
 # config.local.toml -- whether a machine is open to its network is its own business
 [devices]
-discoverable = true                 # listen, and announce this device over Bonjour
+nearby = true                       # take part in the local network at all; false reaches others only through the server
+discoverable = true                 # listen, and announce this device (and its server's address) over Bonjour
 port = 5626                         # fixed, so a typed address keeps working
 addresses = ["mac-mini:5626"]       # dialled directly: for a tailnet, which carries no Bonjour
 nearby_control = "full"             # "full" or "playback": what devices on the network may do here

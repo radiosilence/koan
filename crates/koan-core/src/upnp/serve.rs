@@ -236,11 +236,16 @@ fn handle(shared: &Shared, mut stream: TcpStream) -> std::io::Result<()> {
         }
         ("GET" | "HEAD", "art") => {
             let served = shared.tracks.lock().get(rest).cloned();
-            let art = served.and_then(|s| crate::index::metadata::extract_cover_art(s.art()));
+            let art = served.and_then(|s| crate::index::folder_art::cover_art(s.art()));
             match art {
                 Some(bytes) => {
                     let mime = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
                         "image/png"
+                    } else if bytes.len() >= 12
+                        && &bytes[..4] == b"RIFF"
+                        && &bytes[8..12] == b"WEBP"
+                    {
+                        "image/webp"
                     } else {
                         "image/jpeg"
                     };

@@ -40,7 +40,7 @@ struct SidebarView: View {
                     // work, and a target you have to hit precisely is no target.
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
-                    .dropDestination(for: PlayableTransfer.self) { dropped, _ in
+                    .dropTarget(for: PlayableTransfer.self) { dropped, _ in
                         player.acceptDrop(dropped)
                         return true
                     } isTargeted: { targeted in
@@ -58,8 +58,14 @@ struct SidebarView: View {
                     .sidebarRow(.albums)
                 Label("Artists", systemImage: Icon.artist)
                     .sidebarRow(.artists)
+                Label("Tracks", systemImage: Icon.track)
+                    .sidebarRow(.tracks)
                 Label("Favourites", systemImage: Icon.favourite)
                     .sidebarRow(.favourites)
+                Label("Recently Played", systemImage: Icon.recentlyPlayed)
+                    .sidebarRow(.recentlyPlayed)
+                Label("Downloaded", systemImage: Icon.onDevice)
+                    .sidebarRow(.onDevice)
                 Label("History", systemImage: Icon.history)
                     .sidebarRow(.playHistory)
                 DownloadsRowLabel()
@@ -74,7 +80,7 @@ struct SidebarView: View {
         // double-click does not steal the click that selects the row. Only
         // playlists answer to either — the other rows are places, and a place
         // has nothing to play or rename.
-        .contextMenu(forSelectionType: Navigator.Section.self) { sections in
+        .selectionMenu(for: Navigator.Section.self) { sections in
             if sections.count == 1,
                case .playlist(let id) = sections.first,
                let playlist = playlists.playlist(id: id) {
@@ -138,10 +144,10 @@ struct SidebarView: View {
                     // Dragging a playlist somewhere else means its tracks —
                     // onto the queue, onto another playlist. Dropping it back
                     // into this list means where it sits.
-                    .draggable(PlayableTransfer(
+                    .dragSource(PlayableTransfer(
                         kind: .playlist, id: playlist.id, name: playlist.name
                     ))
-                    .dropDestination(for: PlayableTransfer.self) { dropped, _ in
+                    .dropTarget(for: PlayableTransfer.self) { dropped, _ in
                         accept(dropped, on: playlist)
                         return true
                     } isTargeted: { targeted in
@@ -185,7 +191,7 @@ struct SidebarView: View {
             .onTapGesture { playlists.naming = [] }
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { playlists.naming = [] }
-            .dropDestination(for: PlayableTransfer.self) { dropped, _ in
+            .dropTarget(for: PlayableTransfer.self) { dropped, _ in
                 playlists.beginNaming(dropped: dropped)
                 return true
             } isTargeted: { newPlaylistDropTargeted = $0 }
@@ -201,6 +207,7 @@ struct SidebarView: View {
             renameTo = playlist.name
             renaming = playlist
         }
+        .disabled(playlist.fromFile)
         #if os(macOS)
         Button("Export as M3U8…") { export(playlist) }
         #endif

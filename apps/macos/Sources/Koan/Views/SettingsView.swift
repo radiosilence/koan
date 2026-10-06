@@ -28,10 +28,24 @@ struct SettingsView: View {
         @ViewBuilder _ content: @escaping () -> Content
     ) -> some View {
         NavigationLink {
-            content().navigationTitle(title)
+            content()
+                .navigationTitle(title)
+                #if os(tvOS)
+                .roomBackground()
+                #endif
         } label: {
+            #if os(tvOS)
+            // The symbols are of different widths; at television size a
+            // label's own spacing lets the wide ones touch their titles.
+            HStack(spacing: 24) {
+                Image(systemName: symbol).frame(width: 56)
+                Text(title)
+            }
+            #else
             Label(title, systemImage: symbol)
+            #endif
         }
+        .listLink()
     }
     #endif
 
@@ -63,9 +77,21 @@ struct SettingsView: View {
                     // an index to clear — all of it about music sitting on a
                     // disk koan can walk. Inside the iOS sandbox there is no
                     // such disk, and koan is a Subsonic client and nothing else.
-                    pane("Server", "server.rack") { RemoteSettings(model: model) }
-                    pane("Playback", "hifispeaker") { PlaybackSettings(model: model) }
-                    pane("Devices", "laptopcomputer.and.iphone") { DevicesSettings(model: model) }
+                    // Each pane carries the status line too: a pane pushed
+                    // over the list hides the list's, and with it the reason a
+                    // sign-in failed.
+                    pane("Server", "server.rack") {
+                        RemoteSettings(model: model)
+                            .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
+                    }
+                    pane("Playback", "hifispeaker") {
+                        PlaybackSettings(model: model)
+                            .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
+                    }
+                    pane("Devices", "laptopcomputer.and.iphone") {
+                        DevicesSettings(model: model)
+                            .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
+                    }
                     Section {} footer: {
                         Text(AppVersion.text)
                             .font(.caption)
@@ -128,7 +154,11 @@ private struct StatusLine: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 18)
         .padding(.vertical, 8)
+        #if os(tvOS)
+        .background(.regularMaterial)
+        #else
         .background(.bar)
+        #endif
     }
 }
 
@@ -258,7 +288,7 @@ private struct LibrarySettings: View {
         } message: {
             Text("Your files are not touched either way. Keeping them leaves records in the library that kōan will not scan again.")
         }
-        .fileImporter(
+        .filePicker(
             isPresented: $choosingFolder,
             allowedContentTypes: [.folder],
             allowsMultipleSelection: true
@@ -275,9 +305,11 @@ private struct RemoteSettings: View {
     @Bindable var model: SettingsModel
     @Environment(ActivityModel.self) private var activity
     @Environment(AppState.self) private var state
+    @Environment(EngineMirror.self) private var mirror
     @State private var url = ""
     @State private var username = ""
     @State private var confirmingSignOut = false
+    @State private var copiedServer = false
     /// The cache limit as typed, committed whole: "5" on the way to "50GB" is
     /// not a limit anyone set.
     @State private var cacheLimit: String?
@@ -296,12 +328,35 @@ private struct RemoteSettings: View {
         Form {
             if model.settings.remoteSignedIn {
                 Section("Signed in") {
+                    #if os(tvOS)
                     LabeledContent("Server", value: model.settings.remoteUrl)
+                    #else
+                    // The address is what another device or app asks for, so a
+                    // tap copies it.
+                    Button {
+                        Pasteboard.write(text: model.settings.remoteUrl)
+                        copiedServer = true
+                    } label: {
+                        LabeledContent("Server", value: copiedServer ? "Copied" : model.settings.remoteUrl)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy the server's address")
+                    .task(id: copiedServer) {
+                        guard copiedServer else { return }
+                        try? await Task.sleep(for: .seconds(1.5))
+                        copiedServer = false
+                    }
+                    #endif
                     LabeledContent("User", value: model.settings.remoteUsername)
                     LabeledContent(
                         "Tracks",
                         value: Format.count(Int64(model.settings.remoteTracks), "track")
                     )
+                    if mirror.signInRefused {
+                        Label(EngineMirror.signInRefusedDetail, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                    }
                     HStack {
                         // Only the syncs wait on the database writer. Signing
                         // out is a config write, and greying it out while a
@@ -314,7 +369,11 @@ private struct RemoteSettings: View {
                     }
                     .rowButtons()
                 }
+                // Accounts and pairings are managed from a device with a keyboard.
+                #if !os(tvOS)
                 PeopleSettings(signedInAs: model.settings.remoteUsername)
+                PairDevice()
+                #endif
                 ServerOffers()
             } else {
                 Section {
@@ -322,22 +381,36 @@ private struct RemoteSettings: View {
                     // prompt, so an example there leaves the field unlabelled.
                     TextField("Server URL", text: $url, prompt: Text("Server URL"))
                         .verbatimEntry(.url)
+                        .accessibilityIdentifier("server-url")
                     TextField("Username", text: $username, prompt: Text("Username"))
                         .verbatimEntry()
+                        .accessibilityIdentifier("username")
+                    Picker("Sign in with", selection: $model.withApiKey) {
+                        Text("Password").tag(false)
+                        Text("API key").tag(true)
+                    }
+                    #if os(tvOS)
+                    // Two choices side by side, rather than a page of their
+                    // own to go into and come back from.
+                    .pickerStyle(.segmented)
+                    #endif
                     SecureField(
-                        "Password",
+                        model.withApiKey ? "API key" : "Password",
                         text: $model.password,
-                        prompt: Text("Password")
+                        prompt: Text(model.withApiKey ? "API key" : "Password")
                     )
                     .verbatimEntry()
+                    .accessibilityIdentifier("secret")
                     HStack {
                         Button("Sign In") { model.signIn(url: url, username: username) }
                             .disabled(url.isEmpty || username.isEmpty || model.password.isEmpty)
                         Spacer()
+                        #if !os(tvOS)
                         PasteButton(payloadType: String.self) { strings in
                             Task { @MainActor in join(strings.first ?? "") }
                         }
                         .labelStyle(.titleAndIcon)
+                        #endif
                     }
                     .rowButtons()
                 } header: {
@@ -353,6 +426,24 @@ private struct RemoteSettings: View {
                     if state.engine.parseInvite(link: typed) != nil { join(typed) }
                 }
             }
+
+            #if os(iOS)
+            // Offline is from a server: nothing to be offline from before
+            // signing in, and the switch would sit between the form and its
+            // button.
+            if model.settings.remoteSignedIn {
+            Section {
+                Toggle("Offline mode", isOn: Binding(
+                    get: { mirror.connection?.offlineManual ?? false },
+                    set: { state.library.engine.setOffline(on: $0) }
+                ))
+            } footer: {
+                Text("Shows only what is on this iPhone. It turns on by itself when your server cannot be reached, and off again when it can.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            }
+            #endif
 
             Section {
                 Toggle("Keep the library in sync", isOn: model.binding(\.autoSync))
@@ -374,6 +465,15 @@ private struct RemoteSettings: View {
             }
 
             Section("Downloads") {
+                #if os(tvOS)
+                // tvOS has no stepper.
+                Picker("Parallel downloads", selection: Binding(
+                    get: { Int(model.settings.downloadWorkers) },
+                    set: { v in model.edit { $0.downloadWorkers = UInt32(v) } }
+                )) {
+                    ForEach(1...16, id: \.self) { Text("\($0)").tag($0) }
+                }
+                #else
                 Stepper(
                     "Parallel downloads: \(model.settings.downloadWorkers)",
                     value: Binding(
@@ -382,6 +482,7 @@ private struct RemoteSettings: View {
                     ),
                     in: 1...16
                 )
+                #endif
                 TextField("Cache limit, e.g. 50GB — blank for no limit", text: Binding(
                     get: { cacheLimit ?? model.settings.cacheLimit },
                     set: { cacheLimit = $0 }
@@ -415,7 +516,7 @@ private struct RemoteSettings: View {
             Button("Sign Out and Forget Its Tracks", role: .destructive) {
                 model.signOut(forgetTracks: true)
             }
-            Button("Sign Out, Keep Them in the Library") {
+            Button("Sign Out and Keep Its Tracks") {
                 model.signOut(forgetTracks: false)
             }
             Button("Cancel", role: .cancel) {}
@@ -474,12 +575,20 @@ private struct PlaybackSettings: View {
                     Text("Per album").tag("album")
                 }
                 if model.settings.replaygain != "off" {
+                    #if os(tvOS)
+                    Picker("Pre-amp", selection: model.binding(\.preAmpDb)) {
+                        ForEach(Array(stride(from: -15.0, through: 15.0, by: 0.5)), id: \.self) { db in
+                            Text("\(db, specifier: "%.1f") dB").tag(db)
+                        }
+                    }
+                    #else
                     Stepper(
                         "Pre-amp: \(model.settings.preAmpDb, specifier: "%.1f") dB",
                         value: model.binding(\.preAmpDb),
                         in: -15...15,
                         step: 0.5
                     )
+                    #endif
                 }
             } header: {
                 Text("Loudness")
@@ -547,7 +656,11 @@ private struct DspSettings: View {
                     #endif
                 }
             }
+            // Profiles come in as files, and a television has none: they are
+            // imported on another device, and the TV picks them by output.
+            #if !os(tvOS)
             Button("Import…") { importing = true }
+            #endif
             if let error = dsp.lastError {
                 Text(error)
                     .font(.caption)
@@ -560,7 +673,7 @@ private struct DspSettings: View {
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
-        .fileImporter(
+        .filePicker(
             isPresented: $importing,
             allowedContentTypes: [.item, .folder],
             allowsMultipleSelection: true
@@ -668,6 +781,41 @@ struct DspImportPrompts: ViewModifier {
     }
 }
 
+/// Signing in a device that has no keyboard, by the code it shows. Offered
+/// where the server lists `koanPair`.
+private struct PairDevice: View {
+    @Environment(AppState.self) private var state
+    @Environment(EngineMirror.self) private var mirror
+    @State private var code = ""
+
+    var body: some View {
+        if mirror.connection?.pairing == true {
+            Section {
+                HStack {
+                    TextField("Code", text: $code, prompt: Text("XXXX-XXXX"))
+                        .verbatimEntry()
+                        .onSubmit(approve)
+                    Button("Approve", action: approve)
+                        .disabled(code.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            } header: {
+                Text("Pair a device")
+            } footer: {
+                Text("A television or another device without a keyboard shows a code while it waits. Enter it here to sign it in as you, with a key of its own that can be revoked on the server.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private func approve() {
+        let typed = code.trimmingCharacters(in: .whitespaces)
+        guard !typed.isEmpty else { return }
+        code = ""
+        Task { await state.offerPairing(typed) }
+    }
+}
+
 // MARK: - Server
 
 /// What the server said it is when koan signed in, and what that turns on.
@@ -683,12 +831,13 @@ private struct ServerOffers: View {
                 LabeledContent("OpenSubsonic", value: c.openSubsonic ? "Yes" : "No")
                 LabeledContent("Your devices", value: devices(c))
                 if !c.extensions.isEmpty {
+                    #if os(tvOS)
+                    extensionList(c.extensions)
+                    #else
                     DisclosureGroup("Extensions (\(c.extensions.count))") {
-                        ForEach(c.extensions, id: \.name) { e in
-                            LabeledContent(e.name, value: e.versions.map { "v\($0)" }.joined(separator: ", "))
-                                .font(.callout)
-                        }
+                        extensionList(c.extensions)
                     }
+                    #endif
                 }
             } else {
                 Text("Not reached yet")
@@ -700,6 +849,13 @@ private struct ServerOffers: View {
             Text("Asked when kōan signs in and whenever its link to the server reconnects. Features beyond Subsonic are used only where the server lists them.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func extensionList(_ extensions: [ServerExtension]) -> some View {
+        ForEach(extensions, id: \.name) { e in
+            LabeledContent(e.name, value: e.versions.map { "v\($0)" }.joined(separator: ", "))
+                .font(.callout)
         }
     }
 
@@ -870,7 +1026,13 @@ private struct AppearanceSettings: View {
             Section {
                 // Positioned by where a step sits in the list, not by its raw
                 // value: the raw values are what is on disk and cannot be
-                // reordered, and the cheapest step was added last.
+                // reordered, and the cheapest step was added last. tvOS has
+                // no slider; a picker in the same order stands in.
+                #if os(tvOS)
+                Picker("Level", selection: $graphics) {
+                    ForEach(Graphics.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                #else
                 Slider(
                     value: Binding(
                         get: { Double(Graphics.allCases.firstIndex(of: graphics) ?? 0) },
@@ -885,6 +1047,7 @@ private struct AppearanceSettings: View {
                 } maximumValueLabel: {
                     Text(Graphics.allCases.last?.label ?? "").font(.caption)
                 }
+                #endif
                 Text("**\(graphics.label)** — \(graphics.detail)")
                     .font(.caption)
                     .foregroundStyle(.secondary)

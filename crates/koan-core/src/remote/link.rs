@@ -123,6 +123,10 @@ pub enum LinkCommand {
     Repeat {
         mode: crate::player::state::Repeat,
     },
+    /// Set the sleep timer, or with none cancel it.
+    SleepTimer {
+        timer: Option<crate::player::state::SleepTimer>,
+    },
     /// Send this device's queue and playhead to the device `to`, as a `play`,
     /// and pause here. The device holding the queue does it, so taking music
     /// from another device and sending it there are one command.
@@ -155,6 +159,10 @@ pub enum LinkCommand {
     Forgotten {
         device: String,
     },
+    /// The account's play history on the server moved: a play recorded or
+    /// forgotten on one of its devices. The device reads what changed
+    /// (`remote::history::sync`).
+    HistoryChanged,
     /// Play through this output from now on, carrying on from where the music
     /// is, as the device's own output menu would.
     SetOutput {
@@ -190,12 +198,13 @@ fn is_zero(n: &u64) -> bool {
 
 impl LinkCommand {
     /// What a device that is not this account's may have it do: play, pause,
-    /// skip and seek, change the queue, jump, set the volume, choose the
-    /// output and the preset, and move the music here or away. What it asks
-    /// for runs as the asker's request, never with this account's powers:
-    /// nothing here changes the library, the config beyond the output in
-    /// use, or the account's favourites, playlists or history, and a track it
-    /// names that the library lacks is not synced for (see `CommandSource`).
+    /// skip and seek, change the queue, jump, set the volume and the sleep
+    /// timer, choose the output and the preset, and move the music here or
+    /// away. What it asks for runs as the asker's request, never with this
+    /// account's powers: nothing here changes the library, the config beyond
+    /// the output in use, or the account's favourites, playlists or history,
+    /// and a track it names that the library lacks is not synced for (see
+    /// `CommandSource`).
     /// For a device shared with another account, and one on the local network
     /// under Full control.
     pub fn allowed_playback(&self) -> bool {
@@ -219,6 +228,7 @@ impl LinkCommand {
             | Self::Redo
             | Self::Shuffle { .. }
             | Self::Repeat { .. }
+            | Self::SleepTimer { .. }
             | Self::HandOff { .. }
             | Self::SetOutput { .. }
             | Self::SetRendererVolume { .. }
@@ -231,6 +241,7 @@ impl LinkCommand {
             | Self::Shares { .. }
             | Self::Shared { .. }
             | Self::Forgotten { .. }
+            | Self::HistoryChanged
             | Self::Levels { .. } => false,
         }
     }
@@ -259,6 +270,7 @@ impl LinkCommand {
                 | Self::Evict { .. }
                 | Self::Devices { .. }
                 | Self::Forgotten { .. }
+                | Self::HistoryChanged
                 | Self::Levels { .. }
                 | Self::SetOutput { .. }
                 | Self::SetRendererVolume { .. }
@@ -350,10 +362,12 @@ impl LinkCommand {
             | Self::Redo
             | Self::Shuffle { .. }
             | Self::Repeat { .. }
+            | Self::SleepTimer { .. }
             | Self::HandOff { .. }
             | Self::Devices { .. }
             | Self::Shares { .. }
             | Self::Forgotten { .. }
+            | Self::HistoryChanged
             | Self::WatchLevels { .. }
             | Self::Levels { .. }
             | Self::SetOutput { .. }
@@ -394,6 +408,11 @@ pub struct LinkState {
     pub shuffle: bool,
     #[serde(default, skip_serializing_if = "crate::player::state::Repeat::is_off")]
     pub repeat: crate::player::state::Repeat,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sleep: Option<crate::player::state::Sleep>,
+    /// The sleep timer is fading playback out.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sleep_fading: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -559,6 +578,8 @@ impl LinkIdentity {
     pub fn this_device(name: Option<String>) -> Self {
         let (platform, label) = if cfg!(target_os = "ios") {
             ("ios", "iPhone")
+        } else if cfg!(target_os = "tvos") {
+            ("tvos", "Apple TV")
         } else if cfg!(target_os = "macos") {
             ("macos", "Mac")
         } else {
@@ -940,7 +961,7 @@ pub fn sync(db: &crate::db::connection::Database, walk: crate::helpers::Walk) {
 /// well: deleting an app empties its container but not its Keychain items, so
 /// a reinstalled app keeps its id rather than appearing as a second device.
 fn device_id(dir: &Path) -> String {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     {
         use security_framework::passwords::{get_generic_password, set_generic_password};
         const SERVICE: &str = "cc.blit.koan.link";
@@ -955,7 +976,7 @@ fn device_id(dir: &Path) -> String {
         let _ = set_generic_password(SERVICE, "device-id", id.as_bytes());
         id
     }
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
     file_device_id(dir)
 }
 
@@ -1029,6 +1050,40 @@ mod tests {
         assert!(!relayed.allowed_nearby(), "only the server relays frames");
     }
     use super::*;
+
+    #[test]
+    fn a_sleep_timer_travels_as_playback_and_comes_back_in_the_state() {
+        use crate::player::state::{Sleep, SleepTimer};
+        let cmd: LinkCommand =
+            serde_json::from_str(r#"{"type":"sleepTimer","timer":{"kind":"after","minutes":30}}"#)
+                .unwrap();
+        assert_eq!(
+            cmd,
+            LinkCommand::SleepTimer {
+                timer: Some(SleepTimer::After { minutes: 30 })
+            }
+        );
+        let cancel: LinkCommand =
+            serde_json::from_str(r#"{"type":"sleepTimer","timer":null}"#).unwrap();
+        assert_eq!(cancel, LinkCommand::SleepTimer { timer: None });
+        for cmd in [cmd, cancel] {
+            assert!(cmd.allowed_playback() && cmd.allowed_nearby(), "{cmd:?}");
+        }
+
+        let state = LinkState {
+            sleep: Some(Sleep::EndOfRecord),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        assert!(json.contains(r#""sleep":{"kind":"endOfRecord"}"#), "{json}");
+        assert_eq!(serde_json::from_str::<LinkState>(&json).unwrap(), state);
+        assert!(
+            !serde_json::to_string(&LinkState::default())
+                .unwrap()
+                .contains("sleep"),
+            "nothing said with none set"
+        );
+    }
 
     /// Another account, or a device on the network under Full control, gets
     /// the playback set: more than a stranger (outputs, presets, volume,

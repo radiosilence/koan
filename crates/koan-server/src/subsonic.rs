@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::{Path as UrlPath, Query, RawQuery, Request, State};
@@ -24,6 +24,8 @@ use koan_core::db::queries::app_passwords::AppPasswordAuth;
 use koan_core::remote::client::SubsonicAuth;
 use serde::Deserialize;
 use tokio::io::AsyncReadExt as _;
+
+use crate::auth::password::{FailureLimiter, PasswordVerifier};
 
 const SUBSONIC_API_VERSION: &str = "1.16.1";
 const SUBSONIC_XMLNS: &str = "http://subsonic.org/restapi";
@@ -50,6 +52,9 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     (koan_core::remote::profile::DEVICES, &[1]),
     (koan_core::remote::profile::INVITE, &[1]),
     (koan_core::remote::profile::SHARES, &[1]),
+    (koan_core::remote::profile::PAIR, &[1]),
+    (koan_core::remote::profile::HISTORY, &[1]),
+    (koan_core::remote::profile::SIGN_IN, &[1]),
 ];
 
 /// Articles clients strip when sorting the artist index. Every real server
@@ -65,7 +70,7 @@ struct AppState {
     username: String,
     /// The `[subsonic]` shared secret; without one, only accounts sign in.
     password: Option<String>,
-    users: crate::auth::password::PasswordVerifier,
+    users: Arc<PasswordVerifier>,
     /// What app passwords are sealed under; `None` until the server has a
     /// signing key, and with it no app passwords.
     app_key: Option<[u8; 32]>,
@@ -82,6 +87,8 @@ struct AppState {
     covers: Arc<crate::covers::Covers>,
     /// What `getIndexes`'s `lastModified` was last worked out from.
     last_modified: parking_lot::Mutex<Option<LibraryModified>>,
+    /// `ffmpeg`, where transcoding is on and it was found at startup.
+    transcoder: Option<crate::transcode::Transcoder>,
 }
 
 /// When the library last changed, as far as this process has seen.
@@ -205,7 +212,7 @@ impl SubsonicError {
     fn token_auth_unsupported() -> Self {
         Self::auth(
             SubsonicErrorCode::TokenAuthUnsupported,
-            "Token authentication needs an app password for this account: make one on the API keys page of kōan's web UI, or sign in with your password or an API key",
+            "Token authentication needs an app password for this account: make one on the Account page of kōan's web UI, or sign in with your password or an API key",
         )
     }
 
@@ -383,43 +390,9 @@ struct AuthFailed;
 const AUTH_FAILURES_PER_MINUTE: u32 = 10;
 /// Failed sign-ins allowed per client, whatever the username, in a minute.
 const AUTH_FAILURES_PER_ADDRESS_PER_MINUTE: u32 = 30;
-const AUTH_WINDOW: Duration = Duration::from_secs(60);
 
-/// Failed sign-ins by key, in fixed one-minute windows.
-struct FailureLimiter<K> {
-    limit: u32,
-    windows: Mutex<HashMap<K, (std::time::Instant, u32)>>,
-}
-
-impl<K: std::hash::Hash + Eq> FailureLimiter<K> {
-    fn new(limit: u32) -> Self {
-        Self {
-            limit,
-            windows: Mutex::default(),
-        }
-    }
-
-    fn exhausted(&self, key: &K) -> bool {
-        let windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
-        windows
-            .get(key)
-            .is_some_and(|(start, count)| start.elapsed() < AUTH_WINDOW && *count >= self.limit)
-    }
-
-    fn record(&self, key: K) {
-        let mut windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
-        if windows.len() > 4096 {
-            windows.retain(|_, (start, _)| start.elapsed() < AUTH_WINDOW);
-        }
-        let entry = windows.entry(key).or_insert((std::time::Instant::now(), 0));
-        if entry.0.elapsed() >= AUTH_WINDOW {
-            *entry = (std::time::Instant::now(), 0);
-        }
-        entry.1 += 1;
-    }
-}
-
-/// Failed sign-ins counted two ways.
+/// Failed sign-ins counted three ways. An address is an IPv6 client's /64
+/// (see `routes::network`).
 ///
 /// By client address and username: behind a relay that does not pass
 /// addresses on, every outside client arrives from the relay's, and a tight
@@ -429,9 +402,13 @@ impl<K: std::hash::Hash + Eq> FailureLimiter<K> {
 ///
 /// By address alone, with a looser limit: otherwise a new username per request
 /// gets a fresh allowance every time.
+///
+/// By username alone, from every address and every door that takes a
+/// password, with the loosest: the verifier's `failures`.
 struct AuthThrottle {
     per_account: FailureLimiter<(std::net::IpAddr, String)>,
     per_address: FailureLimiter<std::net::IpAddr>,
+    users: Arc<PasswordVerifier>,
     /// The `[subsonic]` user, whose token is checked against a random 256-bit
     /// secret rather than a password. `None` without a secret: the name is then
     /// an ordinary account's, and its tokens are checked against its password.
@@ -439,10 +416,11 @@ struct AuthThrottle {
 }
 
 impl AuthThrottle {
-    fn new(shared_username: Option<String>) -> Self {
+    fn new(shared_username: Option<String>, users: Arc<PasswordVerifier>) -> Self {
         Self {
             per_account: FailureLimiter::new(AUTH_FAILURES_PER_MINUTE),
             per_address: FailureLimiter::new(AUTH_FAILURES_PER_ADDRESS_PER_MINUTE),
+            users,
             shared_username,
         }
     }
@@ -457,6 +435,11 @@ impl AuthThrottle {
 /// library is never slowed. API keys and the shared secret's token are random
 /// and not worth guessing, so they are never throttled: a flood of wrong
 /// passwords for an account cannot lock out the apps signed in with either.
+///
+/// The exemption follows `validate_auth` exactly. A request with an API key
+/// has no other credential checked; one for the shared username with both `t`
+/// and `s` is checked against the secret alone. Anything else — `t` without
+/// `s` falls through to `p` — is a password sign-in and counted.
 async fn throttle_auth(
     State(throttle): State<Arc<AuthThrottle>>,
     request: axum::extract::Request,
@@ -466,17 +449,21 @@ async fn throttle_auth(
     let username = params.get("u").unwrap_or_default().to_owned();
     let unguessable = params.get("apiKey").is_some()
         || (params.get("t").is_some()
+            && params.get("s").is_some()
             && throttle.shared_username.as_deref() == Some(username.as_str()));
     if unguessable {
         return next.run(request).await;
     }
 
-    let ip = crate::auth::routes::client_ip(&request);
+    let from = crate::auth::routes::client_ip(&request);
+    let ip = crate::auth::routes::network(from);
     let key = (ip, username);
     let refusal = if throttle.per_account.exhausted(&key) {
         Some("Too many failed sign-ins for this account from this address; try again in a minute")
     } else if throttle.per_address.exhausted(&ip) {
         Some("Too many failed sign-ins from this address; try again in a minute")
+    } else if throttle.users.spent(&key.1, from) {
+        Some("Too many failed sign-ins for this account; try again in a minute")
     } else {
         None
     };
@@ -489,10 +476,27 @@ async fn throttle_auth(
     }
     let response = next.run(request).await;
     if response.extensions().get::<AuthFailed>().is_some() {
+        throttle.users.failed(&key.1);
         throttle.per_account.record(key);
         throttle.per_address.record(ip);
+    } else if throttle.users.took_pass(&credential_digest(&params.auth())) {
+        throttle.users.signed_in(&key.1, from);
     }
     response
+}
+
+/// The credential a request signs in with besides an API key, as
+/// `validate_auth` and `throttle_auth` both name it.
+fn credential_digest(auth: &SubsonicParams) -> [u8; 32] {
+    use sha2::Digest as _;
+    let mut digest = sha2::Sha256::new();
+    for part in [&auth.u, &auth.p, &auth.t, &auth.s] {
+        match part {
+            Some(v) => digest.update([&[1u8][..], v.as_bytes(), &[0]].concat()),
+            None => digest.update([0u8]),
+        }
+    }
+    digest.finalize().into()
 }
 
 // ---------------------------------------------------------------------------
@@ -763,6 +767,19 @@ struct Caller {
     /// Whose favourites, playlists and history the request reads and writes:
     /// the account's, or the local user's for the shared secret.
     user_id: i64,
+    /// What signed the request.
+    via: Via,
+}
+
+/// How a request authenticated, for the endpoints that care.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Via {
+    ApiKey,
+    /// The account's own password, as `p=`.
+    Password,
+    AppPassword,
+    /// The `[subsonic]` shared secret, which is no account's.
+    SharedSecret,
 }
 
 impl Caller {
@@ -790,7 +807,18 @@ impl Caller {
 ///   cannot work against the account's own password, which is only a hash, so
 ///   an account without app passwords is refused with 41, the code that tells
 ///   a client to fall back to a password or a key.
+///
+/// A password or app password that signs in is noted for `throttle_auth`,
+/// which marks the client's network as the account's.
 fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, SubsonicError> {
+    let caller = check_credential(params, state)?;
+    if params.api_key.is_none() && caller.user_id != queries::LOCAL_USER {
+        state.users.passed(credential_digest(params));
+    }
+    Ok(caller)
+}
+
+fn check_credential(params: &SubsonicParams, state: &AppState) -> Result<Caller, SubsonicError> {
     use crate::auth::password::Refused;
     use subtle::ConstantTimeEq;
 
@@ -806,6 +834,7 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
             username: user.username,
             role: user.role,
             user_id: user.id,
+            via: Via::ApiKey,
         });
     }
 
@@ -813,11 +842,12 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
         .u
         .as_deref()
         .ok_or_else(|| SubsonicError::missing_param("u"))?;
-    let caller = |(user_id, role)| {
+    let caller = |(user_id, role), via| {
         Ok(Caller {
             username: username.to_owned(),
             role,
             user_id,
+            via,
         })
     };
     let shared = |given: &str| {
@@ -836,7 +866,7 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
         {
             let expected = format!("{:x}", md5::compute(format!("{secret}{salt}")));
             return if bool::from(token.as_bytes().ct_eq(expected.as_bytes())) {
-                caller((queries::LOCAL_USER, Role::User))
+                caller((queries::LOCAL_USER, Role::User), Via::SharedSecret)
             } else {
                 Err(SubsonicError::wrong_auth())
             };
@@ -852,6 +882,7 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
                 username: user.username,
                 role: user.role,
                 user_id: user.id,
+                via: Via::AppPassword,
             }),
             AppPasswordAuth::Wrong => Err(SubsonicError::wrong_auth()),
             AppPasswordAuth::NoneMade => Err(SubsonicError::token_auth_unsupported()),
@@ -866,7 +897,7 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
         None => p.to_string(),
     };
     if shared(&password) {
-        return caller((queries::LOCAL_USER, Role::User));
+        return caller((queries::LOCAL_USER, Role::User), Via::SharedSecret);
     }
     // An app password costs a decryption to check, the account's own an
     // argon2 hash, so the cheaper goes first.
@@ -878,10 +909,11 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
             username: user.username,
             role: user.role,
             user_id: user.id,
+            via: Via::AppPassword,
         });
     }
     match state.users.verify(username, &password) {
-        Ok(account) => caller(account),
+        Ok(account) => caller((account.id, account.role), Via::Password),
         Err(Refused::Busy) => Err(SubsonicError::busy()),
         Err(Refused::Wrong) => Err(SubsonicError::wrong_auth()),
     }
@@ -1034,7 +1066,7 @@ const ALBUM_PREFIX: &str = "al-";
 const SONG_PREFIX: &str = "mf-";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EntityKind {
+pub(crate) enum EntityKind {
     Artist,
     Album,
     Song,
@@ -1254,6 +1286,10 @@ fn track_node(track: &queries::TrackRow, tag: &str, extras: &SongExtras) -> XmlN
             "played",
             extras.played.get(&track.id).map(|&at| iso(at)).as_deref(),
         )
+        .attr_opt_int(
+            "userRating",
+            extras.rating.get(&track.id).map(|&r| r.into()),
+        )
         .list("genres", track.genre.iter().map(|g| genre_node(g)))
         .list(
             "artists",
@@ -1334,6 +1370,10 @@ fn album_to_xml_node(album: &queries::AlbumRow, extras: &AlbumExtras) -> XmlNode
             "played",
             extras.played.get(&album.id).map(|&at| iso(at)).as_deref(),
         )
+        .attr_opt_int(
+            "userRating",
+            extras.rating.get(&album.id).map(|&r| r.into()),
+        )
         .child(item_date("releaseDate", album.date.as_deref()))
         .list("genres", genres.iter().map(|g| genre_node(g)))
         .list(
@@ -1368,6 +1408,7 @@ fn artist_id3_node(id: i64, name: &str, extras: &ArtistExtras) -> XmlNode {
         .attr("coverArt", &uid)
         .attr("musicBrainzId", mbid.unwrap_or_default())
         .attr("sortName", sort_name.unwrap_or_default())
+        .attr_opt_int("userRating", extras.rating.get(&id).map(|&r| r.into()))
 }
 
 // ---------------------------------------------------------------------------
@@ -1411,6 +1452,8 @@ struct SongExtras {
     mbid: HashMap<i64, String>,
     /// Last play, seconds since the epoch.
     played: HashMap<i64, i64>,
+    /// The caller's rating, 1 to 5.
+    rating: HashMap<i64, u8>,
 }
 
 /// The caller's own history: when someone else last played a track is theirs
@@ -1456,7 +1499,23 @@ fn song_extras<'a>(
         )?
         .into_iter()
         .collect(),
+        rating: rated(
+            db,
+            user,
+            queries::RatingKind::Track,
+            tracks.iter().map(|t| t.id),
+        )?,
     })
+}
+
+/// The caller's ratings of these rows.
+fn rated(
+    db: &Database,
+    user: i64,
+    kind: queries::RatingKind,
+    ids: impl IntoIterator<Item = i64>,
+) -> Result<HashMap<i64, u8>, SubsonicError> {
+    queries::ratings(&db.conn, user, kind, ids).map_err(|e| SubsonicError::internal(e.to_string()))
 }
 
 /// What `AlbumID3` carries beyond `AlbumRow`.
@@ -1468,6 +1527,7 @@ struct AlbumExtras {
     genres: HashMap<i64, Vec<String>>,
     stats: HashMap<i64, queries::AlbumStats>,
     played: HashMap<i64, i64>,
+    rating: HashMap<i64, u8>,
 }
 
 /// `tracks`, when the caller already read every track of these albums, is
@@ -1533,6 +1593,12 @@ fn album_extras<'a>(
         )?
         .into_iter()
         .collect(),
+        rating: rated(
+            db,
+            user,
+            queries::RatingKind::Album,
+            album_ids.iter().copied(),
+        )?,
     })
 }
 
@@ -1564,15 +1630,18 @@ struct ArtistExtras {
     uids: Uids,
     /// MusicBrainz artist id and sort name.
     names: HashMap<i64, (Option<String>, Option<String>)>,
+    rating: HashMap<i64, u8>,
 }
 
 fn artist_extras(
     db: &Database,
+    user: i64,
     ids: impl IntoIterator<Item = i64>,
 ) -> Result<ArtistExtras, SubsonicError> {
     let ids: Vec<i64> = ids.into_iter().collect();
     Ok(ArtistExtras {
         uids: Uids::load(db, ids.iter().copied(), [], [])?,
+        rating: rated(db, user, queries::RatingKind::Artist, ids.iter().copied())?,
         names: by_id(
             db,
             "SELECT id, mbid, sort_name FROM artists WHERE id IN (SELECT value FROM json_each(?1))",
@@ -1766,9 +1835,9 @@ async fn get_artists(
     Query(params): Query<SubsonicParams>,
 ) -> Response {
     offload_response(move || {
-        respond_db(&state, &params, |db, b| {
+        respond_db_user(&state, &params, Role::Readonly, |db, user, b| {
             let index_map = artist_index(db)?;
-            let extras = artist_extras(db, index_map.values().flatten().map(|a| a.id))?;
+            let extras = artist_extras(db, user, index_map.values().flatten().map(|a| a.id))?;
 
             let mut artists_node = XmlNode::new("artists")
                 .attr("ignoredArticles", IGNORED_ARTICLES)
@@ -1914,7 +1983,7 @@ async fn get_artist(State(state): State<Arc<AppState>>, Query(params): Query<IdP
             let albums = queries::albums_for_artist(&db.conn, artist_id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
-            let artists = artist_extras(db, [artist.id])?;
+            let artists = artist_extras(db, user, [artist.id])?;
             let extras = album_extras(db, user, &albums, None)?;
             Ok(b.child(
                 artist_id3_node(artist.id, &artist.name, &artists)
@@ -1968,8 +2037,8 @@ fn album_list(
     let page = match params.list_type.as_deref().unwrap_or("alphabeticalByName") {
         "recent" => played(queries::PlayedOrder::Recent)?,
         "frequent" => played(queries::PlayedOrder::Frequent)?,
-        // koan keeps no ratings, so nothing is rated highest.
-        "highest" => Vec::new(),
+        "highest" => queries::highest_rated_albums(&db.conn, user, limit, offset)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?,
         list_type => {
             let q = queries::AlbumQuery {
                 limit: Some(limit),
@@ -2083,6 +2152,94 @@ async fn get_song(State(state): State<Arc<AppState>>, Query(params): Query<IdPar
                 .ok_or_else(|| SubsonicError::not_found("Song"))?;
             let extras = song_extras(db, user, [&track])?;
             Ok(b.child(track_to_xml_node(&track, &extras)))
+        })
+    })
+    .await
+}
+
+/// `getBookmarks`: the caller's places in tracks, most recently changed first,
+/// each with the track as its `entry`.
+async fn get_bookmarks(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    offload_response(move || {
+        respond_db_caller(&state, &params, Role::Readonly, |db, caller, b| {
+            let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
+            let marks = queries::bookmarks(&db.conn, caller.user_id).map_err(internal)?;
+            let ids: Vec<i64> = marks.iter().map(|m| m.track_id).collect();
+            let tracks: HashMap<i64, queries::TrackRow> = queries::tracks_by_ids(&db.conn, &ids)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .into_iter()
+                .map(|t| (t.id, t))
+                .collect();
+            let extras = song_extras(db, caller.user_id, tracks.values())?;
+            Ok(b.child(XmlNode::new("bookmarks").list(
+                "bookmark",
+                marks.iter().filter_map(|m| {
+                    let track = tracks.get(&m.track_id)?;
+                    Some(
+                        XmlNode::new("bookmark")
+                            .attr_int("position", m.position_ms)
+                            .attr("username", &caller.username)
+                            .attr_opt("comment", m.comment.as_deref())
+                            .attr("created", &iso(m.created_at))
+                            .attr("changed", &iso(m.changed_at))
+                            .child(track_node(track, "entry", &extras)),
+                    )
+                }),
+            )))
+        })
+    })
+    .await
+}
+
+/// A note on a place in a track. Longer is refused rather than cut, so a
+/// client never reads back something other than what it saved.
+const MAX_BOOKMARK_COMMENT: usize = 1024;
+
+/// `createBookmark`: save where the caller is in the song `id` names, as
+/// `position` milliseconds and an optional `comment`. One per song; a second
+/// replaces the first.
+async fn create_bookmark(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_user(&state, &auth, Role::User, |db, user, b| {
+            let track_id = require_id(db, params.get("id"), EntityKind::Song)?;
+            let position = params
+                .get("position")
+                .ok_or_else(|| SubsonicError::missing_param("position"))?
+                .parse::<i64>()
+                .ok()
+                .filter(|p| *p >= 0)
+                .ok_or_else(|| SubsonicError::bad_param("position"))?;
+            let comment = params.get("comment");
+            if comment.is_some_and(|c| c.chars().count() > MAX_BOOKMARK_COMMENT) {
+                return Err(SubsonicError::bad_param("comment"));
+            }
+            queries::get_track_row(&db.conn, track_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .ok_or_else(|| SubsonicError::not_found("Song"))?;
+            queries::save_bookmark(&db.conn, user, track_id, position, comment)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b)
+        })
+    })
+    .await
+}
+
+/// `deleteBookmark`: forget the caller's place in the song `id` names. One
+/// that was never saved is already forgotten, as Navidrome answers it.
+async fn delete_bookmark(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_user(&state, &auth, Role::User, |db, user, b| {
+            let track_id = require_id(db, params.get("id"), EntityKind::Song)?;
+            queries::delete_bookmark(&db.conn, user, track_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b)
         })
     })
     .await
@@ -2271,7 +2428,7 @@ async fn search3(
                 (artists, albums, songs)
             };
 
-            let artist_extras = artist_extras(db, artists.iter().map(|(id, _)| *id))?;
+            let artist_extras = artist_extras(db, user, artists.iter().map(|(id, _)| *id))?;
             let album_extras = album_extras(db, user, &albums, None)?;
             let song_extras = song_extras(db, user, &songs)?;
             let result_node = XmlNode::new("searchResult3")
@@ -2308,15 +2465,53 @@ struct StreamParams {
     /// deserialise with a plain-text HTTP 400 *before* the handler runs, which
     /// is neither a Subsonic envelope nor something a client can report.
     id: Option<String>,
+    /// Strings for the same reason as `id`. Read only by `stream`; `download`
+    /// is the original file by definition.
+    #[serde(rename = "maxBitRate")]
+    max_bit_rate: Option<String>,
+    format: Option<String>,
+    #[serde(rename = "timeOffset")]
+    time_offset: Option<String>,
+    #[serde(rename = "estimateContentLength")]
+    estimate_content_length: Option<String>,
+}
+
+/// What `stream_inner` may send in place of the file itself.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Delivery {
+    /// The original, always: `download`.
+    Original,
+    /// A transcode where the request asks for one.
+    Transcode,
+    /// The headers a transcode would have, without running one: `stream`'s HEAD.
+    TranscodeHead,
 }
 
 async fn stream(
+    State(state): State<Arc<AppState>>,
+    method: axum::http::Method,
+    Query(params): Query<StreamParams>,
+    headers: HeaderMap,
+) -> Response {
+    let json = params.auth.wants_json();
+    let delivery = if method == axum::http::Method::HEAD {
+        Delivery::TranscodeHead
+    } else {
+        Delivery::Transcode
+    };
+    match stream_inner(state, params, &headers, delivery).await {
+        Ok(resp) => resp,
+        Err(e) => SubsonicResponse::error(json, &e),
+    }
+}
+
+async fn download(
     State(state): State<Arc<AppState>>,
     Query(params): Query<StreamParams>,
     headers: HeaderMap,
 ) -> Response {
     let json = params.auth.wants_json();
-    match stream_inner(state, params, &headers).await {
+    match stream_inner(state, params, &headers, Delivery::Original).await {
         Ok(resp) => resp,
         Err(e) => SubsonicResponse::error(json, &e),
     }
@@ -2326,14 +2521,25 @@ async fn stream_inner(
     state: Arc<AppState>,
     params: StreamParams,
     headers: &HeaderMap,
+    delivery: Delivery,
 ) -> Result<Response, SubsonicError> {
     let lookup = state.clone();
-    let track = offload(move || {
-        let db = authed_db(&lookup, &params.auth)?;
-        let track_id = require_id(&db, params.id.as_deref(), EntityKind::Song)?;
-        queries::get_track_row(&db.conn, track_id)
+    let StreamParams {
+        auth,
+        id,
+        max_bit_rate,
+        format,
+        time_offset,
+        estimate_content_length,
+    } = params;
+    let (username, track) = offload(move || {
+        let caller = validate_auth(&auth, &lookup)?;
+        let db = lookup.open_db()?;
+        let track_id = require_id(&db, id.as_deref(), EntityKind::Song)?;
+        let track = queries::get_track_row(&db.conn, track_id)
             .map_err(|e| SubsonicError::internal(e.to_string()))?
-            .ok_or_else(|| SubsonicError::not_found("Track"))
+            .ok_or_else(|| SubsonicError::not_found("Track"))?;
+        Ok((caller.username, track))
     })
     .await?;
 
@@ -2356,6 +2562,37 @@ async fn stream_inner(
     }
 
     let path = local_path.unwrap();
+    if delivery != Delivery::Original
+        && let Some(transcoder) = &state.transcoder
+    {
+        let request = crate::transcode::Request {
+            max_bit_rate: max_bit_rate.as_deref(),
+            format: format.as_deref(),
+            time_offset: time_offset.as_deref(),
+        };
+        let source_kbps = track.bitrate.and_then(|b| u32::try_from(b).ok());
+        let plan = crate::transcode::plan(&request, track.codec.as_deref(), source_kbps)
+            .filter(|plan| transcoder.encodes(plan.codec));
+        if let Some(plan) = plan {
+            let length = (estimate_content_length.as_deref() == Some("true"))
+                .then(|| crate::transcode::estimated_length(&plan, track.duration_ms))
+                .flatten();
+            if delivery == Delivery::TranscodeHead {
+                return crate::transcode::Transcoder::head(&plan, length)
+                    .map_err(|e| SubsonicError::internal(e.to_string()));
+            }
+            match transcoder.permits(&username) {
+                None => log::info!("transcode: at the limit, serving {username} the original"),
+                Some(permits) => match transcoder.stream(&path, &plan, length, permits).await {
+                    Ok(Some(resp)) => return Ok(resp),
+                    Ok(None) => {}
+                    Err(e) => {
+                        log::warn!("transcode: could not start ffmpeg, serving the original: {e}")
+                    }
+                },
+            }
+        }
+    }
     serve_local_file(&path, headers).await.map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             SubsonicError::not_found("File not found on disk")
@@ -2569,7 +2806,7 @@ fn cover_art_inner(state: &AppState, params: &CoverArtParams) -> Result<Response
     let bytes = groups
         .iter()
         .find_map(|tracks| state.covers.cover(tracks, size))
-        .ok_or_else(|| SubsonicError::not_found("No cover art embedded"))?;
+        .ok_or_else(|| SubsonicError::not_found("Cover art"))?;
     Ok((
         StatusCode::OK,
         [
@@ -2581,9 +2818,9 @@ fn cover_art_inner(state: &AppState, params: &CoverArtParams) -> Result<Response
         .into_response())
 }
 
-/// The tracks whose embedded art answers a `getCoverArt` id, as groups tried
-/// in turn: an album's tracks, a song alone, or an artist's albums one by one.
-/// koan stores no standalone cover images.
+/// The tracks whose art answers a `getCoverArt` id, as groups tried in turn:
+/// an album's tracks, a song alone, or an artist's albums one by one. A
+/// track's art is the cover image beside it or, without one, its embedded art.
 fn cover_tracks(
     db: &Database,
     kind: Option<EntityKind>,
@@ -2663,8 +2900,12 @@ async fn set_starred(state: Arc<AppState>, raw: Option<String>, star: bool) -> R
             if targets.is_empty() {
                 return Err(SubsonicError::missing_param("id"));
             }
+            let songs = targets.iter().any(|(kind, _)| *kind == EntityKind::Song);
             for (kind, id) in targets {
                 set_star(db, user, kind, id, star)?;
+            }
+            if songs {
+                crate::clients::smart_activity(db, user, &[koan_core::smart::Field::Favourite]);
             }
             // The caller's other apps show hearts too: a track favourited on
             // a phone while it plays on the Mac should light up there.
@@ -2676,6 +2917,25 @@ async fn set_starred(state: Arc<AppState>, raw: Option<String>, star: bool) -> R
         })
     })
     .await
+}
+
+/// Favourite one artist, record or track for `user`, or stop, as `star` and
+/// `unstar` do, and tell the account's apps to pick it up. What the web UI's
+/// hearts call, so a heart there is the same favourite an app makes.
+pub(crate) fn favourite(
+    db: &Database,
+    user: i64,
+    username: &str,
+    kind: EntityKind,
+    id: i64,
+    star: bool,
+) -> Result<(), String> {
+    set_star(db, user, kind, id, star).map_err(|e| e.message)?;
+    crate::clients::registry().broadcast(
+        Some(username),
+        koan_core::remote::link::LinkCommand::Sync { full: false },
+    );
+    Ok(())
 }
 
 fn set_star(
@@ -2718,6 +2978,52 @@ fn set_star(
     Ok(())
 }
 
+/// `setRating`: `rating` 1 to 5 rates the song, album or artist `id` names,
+/// by its uid or prefix; 0 clears it.
+async fn set_rating(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_user(&state, &auth, Role::User, |db, user, b| {
+            let raw = params
+                .get("id")
+                .ok_or_else(|| SubsonicError::missing_param("id"))?;
+            let rating = params
+                .get("rating")
+                .ok_or_else(|| SubsonicError::missing_param("rating"))?
+                .parse::<u8>()
+                .ok()
+                .filter(|r| *r <= 5)
+                .ok_or_else(|| SubsonicError::bad_param("rating"))?;
+            let (kind, id) = resolve_entity(db, raw)?;
+            let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
+            let kind = match kind.unwrap_or(EntityKind::Song) {
+                EntityKind::Song => {
+                    queries::get_track_row(&db.conn, id)
+                        .map_err(|e| SubsonicError::internal(e.to_string()))?
+                        .ok_or_else(|| SubsonicError::not_found("Track"))?;
+                    queries::RatingKind::Track
+                }
+                EntityKind::Album => {
+                    queries::get_album(&db.conn, id)
+                        .map_err(|e| SubsonicError::internal(e.to_string()))?
+                        .ok_or_else(|| SubsonicError::not_found("Album"))?;
+                    queries::RatingKind::Album
+                }
+                EntityKind::Artist => {
+                    queries::get_artist(&db.conn, id)
+                        .map_err(|e| SubsonicError::internal(e.to_string()))?
+                        .ok_or_else(|| SubsonicError::not_found("Artist"))?;
+                    queries::RatingKind::Artist
+                }
+            };
+            queries::set_rating(&db.conn, user, kind, id, rating).map_err(internal)?;
+            Ok(b)
+        })
+    })
+    .await
+}
+
 async fn get_starred2(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
@@ -2748,7 +3054,7 @@ async fn get_starred2(
                 |r| Ok((r.get(0)?, r.get::<_, String>(1)?)),
             )?;
             let album_extras = album_extras(db, user, &albums, None)?;
-            let artist_extras = artist_extras(db, artists.iter().map(|(id, _)| *id))?;
+            let artist_extras = artist_extras(db, user, artists.iter().map(|(id, _)| *id))?;
 
             Ok(b.child(
                 XmlNode::new("starred2")
@@ -2775,7 +3081,8 @@ async fn scrobble(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -
     offload_response(move || {
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
-        respond_db_user(&state, &auth, Role::User, |db, user, b| {
+        respond_db_caller(&state, &auth, Role::User, |db, caller, b| {
+            let user = caller.user_id;
             // An offline session flushes hundreds at once: the uids among
             // them are resolved in one query rather than one each.
             let raws: Vec<&str> = params.all("id").collect();
@@ -2803,6 +3110,12 @@ async fn scrobble(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -
 
             // `submission=false` is a now-playing notice, not a play.
             if params.get("submission") == Some("false") {
+                if let (Ok(user), Some(&track_id)) = (
+                    queries::auth::resolve_user(&db.conn, user),
+                    track_ids.first(),
+                ) {
+                    koan_core::scrobbling::now_playing(user, track_id);
+                }
                 return Ok(b);
             }
 
@@ -2828,7 +3141,17 @@ async fn scrobble(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -
             // The foreign key is the existence check: one id that names no
             // track fails the batch, and the transaction leaves none of it.
             match queries::record_plays_at(&db.conn, user, &plays, queries::SOURCE_SUBSONIC) {
-                Ok(()) => Ok(b),
+                Ok(()) => {
+                    koan_core::scrobbling::wake();
+                    use koan_core::smart::Field;
+                    crate::clients::smart_activity(
+                        db,
+                        user,
+                        &[Field::PlayCount, Field::LastPlayed],
+                    );
+                    history_changed(&caller.username);
+                    Ok(b)
+                }
                 Err(koan_core::db::connection::DbError::Sqlite(
                     rusqlite::Error::SqliteFailure(e, _),
                 )) if e.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY => {
@@ -2836,6 +3159,120 @@ async fn scrobble(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -
                 }
                 Err(e) => Err(SubsonicError::from(format!("Database error: {}", e))),
             }
+        })
+    })
+    .await
+}
+
+/// Tell the account's linked apps that its play history moved, so each reads
+/// what changed (`koanHistory`).
+fn history_changed(username: &str) {
+    crate::clients::registry().broadcast(
+        Some(username),
+        koan_core::remote::link::LinkCommand::HistoryChanged,
+    );
+}
+
+/// The caller's play history after `since` (`play.forgotten`, from the last
+/// page; absent for the start), at most `count` plays and `count`
+/// forgettings: koan's `koanHistory`. Times are ms since the epoch.
+async fn koan_history(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_user(&state, &auth, Role::Readonly, |db, user, b| {
+            let since = match params.get("since") {
+                Some(raw) => queries::HistoryCursor::parse(raw)
+                    .ok_or_else(|| SubsonicError::bad_param("since"))?,
+                None => queries::HistoryCursor::default(),
+            };
+            let count = params
+                .get("count")
+                .and_then(|c| c.parse::<u32>().ok())
+                .unwrap_or(500)
+                .clamp(1, 1000);
+            let page = queries::history_since(&db.conn, user, since, count)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b.child(
+                XmlNode::new("koanHistory")
+                    .attr("cursor", &page.cursor.to_string())
+                    .attr_bool("more", page.more)
+                    .list(
+                        "play",
+                        page.plays.iter().map(|p| {
+                            XmlNode::new("play")
+                                .attr("id", &p.track_uid)
+                                .attr_int("seq", p.seq)
+                                .attr_int("played", p.played_at * 1000)
+                                .attr_opt_int("listenedMs", p.listened_ms)
+                        }),
+                    )
+                    .list(
+                        "forgotten",
+                        page.forgotten.iter().map(|f| {
+                            XmlNode::new("forgotten")
+                                .attr_opt("id", f.track_uid.as_deref())
+                                .attr_int("played", f.played_at * 1000)
+                        }),
+                    ),
+            ))
+        })
+    })
+    .await
+}
+
+/// Forget plays from the caller's history, for every one of the account's
+/// devices: each `id` with its `time` (ms, when the play started, as
+/// `scrobble` takes it), or with `through` every play up to then. koan's
+/// `koanForgetPlays`.
+async fn koan_forget_plays(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_caller(&state, &auth, Role::User, |db, caller, b| {
+            let failed =
+                |e: koan_core::db::connection::DbError| SubsonicError::internal(e.to_string());
+            if let Some(through) = params.get("through") {
+                let through: i64 = through
+                    .parse()
+                    .map_err(|_| SubsonicError::bad_param("through"))?;
+                queries::forget_shared_plays_through(&db.conn, caller.user_id, through / 1000)
+                    .map_err(failed)?;
+            } else {
+                let ids: Vec<&str> = params.all("id").collect();
+                let times: Vec<i64> = params
+                    .all("time")
+                    .map(|t| t.parse().map_err(|_| SubsonicError::bad_param("time")))
+                    .collect::<Result<_, _>>()?;
+                if ids.is_empty() {
+                    return Err(SubsonicError::missing_param("id"));
+                }
+                if ids.len() != times.len() {
+                    return Err(SubsonicError::missing_param("time"));
+                }
+                // A track that has left the library took its plays with it.
+                let plays: Vec<(i64, i64)> = ids
+                    .iter()
+                    .zip(&times)
+                    .filter_map(|(raw, time)| {
+                        resolve_as(db, raw, EntityKind::Song, "id")
+                            .ok()
+                            .map(|track| (track, time / 1000))
+                    })
+                    .collect();
+                queries::forget_shared_plays(&db.conn, caller.user_id, &plays).map_err(failed)?;
+            }
+            use koan_core::smart::Field;
+            crate::clients::smart_activity(
+                db,
+                caller.user_id,
+                &[Field::PlayCount, Field::LastPlayed],
+            );
+            history_changed(&caller.username);
+            Ok(b)
         })
     })
     .await
@@ -2924,11 +3361,20 @@ async fn get_user(
 
 /// Answered without authentication, as OpenSubsonic requires: a client asks
 /// before it knows which sign-in methods it may use.
-async fn get_open_subsonic_extensions(Query(params): Query<SubsonicParams>) -> Response {
+async fn get_open_subsonic_extensions(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    // `timeOffset` seeks a transcode, so it is offered only where one can run.
+    let transcode: &[(&str, &[i64])] = if state.transcoder.is_some() {
+        &[("transcodeOffset", &[1])]
+    } else {
+        &[]
+    };
     SubsonicResponse::ok(params.wants_json())
         .list(
             "openSubsonicExtensions",
-            EXTENSIONS.iter().map(|(name, versions)| {
+            EXTENSIONS.iter().chain(transcode).map(|(name, versions)| {
                 XmlNode::new("openSubsonicExtensions")
                     .attr("name", name)
                     .list(
@@ -3032,6 +3478,7 @@ async fn get_playlists(
 ) -> Response {
     offload_response(move || {
         respond_db_user(&state, &params, Role::Readonly, |db, user, b| {
+            refresh_smart(db, user);
             let lists = queries::list_playlists(&db.conn, user)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
@@ -3060,7 +3507,9 @@ fn playlist_attrs(node: XmlNode, list: &queries::PlaylistRow, username: &str) ->
         .attr("owner", list.owner.as_deref().unwrap_or(username))
         .attr_bool("public", list.public)
         .attr("created", &list.created_at)
-        .attr("changed", &list.changed_at);
+        .attr("changed", &list.changed_at)
+        // OpenSubsonic: a smart playlist takes no edits to its contents.
+        .attr_bool("readonly", list.readonly);
     match &list.comment {
         Some(comment) => node.attr("comment", comment),
         None => node,
@@ -3108,6 +3557,29 @@ fn playlist_for(
     Ok(list)
 }
 
+/// Evaluate the smart playlists `user` can see that are due, and have every
+/// device pull any whose contents moved. A failure leaves the last contents
+/// in place, which is what a read should serve anyway.
+fn refresh_smart(db: &Database, user: i64) {
+    match queries::smart::refresh_due(&db.conn, user) {
+        Ok(changed) if !changed.is_empty() => crate::clients::changed(),
+        Ok(_) => {}
+        Err(e) => log::warn!("smart playlists not refreshed: {e}"),
+    }
+}
+
+/// A smart playlist's contents are its rules', and a file's are the file's:
+/// neither is for editing.
+fn refuse_smart(list: &queries::PlaylistRow) -> Result<(), SubsonicError> {
+    if list.readonly {
+        return Err(SubsonicError::new(
+            SubsonicErrorCode::NotAuthorized,
+            "This playlist is read-only: its rules or its file decide what it holds",
+        ));
+    }
+    Ok(())
+}
+
 /// After a playlist write: push it to the upstream, if there is one, and have
 /// the account's devices pull it, as the GraphQL mutations do. A koan app's
 /// own edits arrive through these endpoints.
@@ -3131,6 +3603,12 @@ async fn get_playlist(
     offload_response(move || {
         respond_db_user(&state, &params.auth, Role::Readonly, |db, user, b| {
             let id = playlist_id(db, params.id.as_deref())?;
+            playlist_for(db, user, id, false)?;
+            match queries::smart::refresh_if_due(&db.conn, id) {
+                Ok(true) => crate::clients::changed(),
+                Ok(false) => {}
+                Err(e) => log::warn!("smart playlist {id} not refreshed: {e}"),
+            }
             let list = playlist_for(db, user, id, false)?;
             Ok(b.child(playlist_node(db, user, &list, &state.username)?))
         })
@@ -3153,7 +3631,7 @@ async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
             let id = queries::atomically(&db.conn, || match params.get("playlistId") {
                 Some(existing) => {
                     let id = playlist_id(db, Some(existing))?;
-                    playlist_for(db, user, id, true)?;
+                    refuse_smart(&playlist_for(db, user, id, true)?)?;
                     if let Some(name) = params.get("name") {
                         queries::rename_playlist(&db.conn, id, name)
                             .map_err(|e| SubsonicError::internal(e.to_string()))?;
@@ -3195,7 +3673,18 @@ async fn update_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
 
         respond_db_user(&state, &auth, Role::User, |db, user, b| {
             let id = playlist_id(db, params.get("playlistId").or_else(|| params.get("id")))?;
-            playlist_for(db, user, id, true)?;
+            let list = playlist_for(db, user, id, true)?;
+            if params.get("name").is_some() && list.source_path.is_some() {
+                return Err(SubsonicError::new(
+                    SubsonicErrorCode::NotAuthorized,
+                    "This playlist is named by its file in the library: rename the file",
+                ));
+            }
+            if params.all("songIdToAdd").next().is_some()
+                || params.all("songIndexToRemove").next().is_some()
+            {
+                refuse_smart(&list)?;
+            }
             let added = song_ids(db, params.all("songIdToAdd"));
 
             // One transaction: the indexes to remove are against the list as
@@ -3651,6 +4140,37 @@ async fn koan_revoke_key(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
     .await
 }
 
+/// Trade the account's password, proved by this request, for an API key
+/// named `name`: what a koan app does once on signing in with a password, so
+/// it keeps a key of the device's own and never sends the password again.
+/// Answers as `koanJoin` does. Only the account's own password will do: a key
+/// or app password is already a credential of its own, and the shared secret
+/// is no account's. The key replaces any of the account's with the same name,
+/// so a device that signs in again holds the one key.
+async fn koan_sign_in(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_caller(&state, &auth, Role::Readonly, |db, caller, b| {
+            if caller.via != Via::Password {
+                return Err(SubsonicError::new(
+                    SubsonicErrorCode::NotAuthorized,
+                    "sign in with the account's own password to be given a key",
+                ));
+            }
+            let name = koan_core::invite::device_name(params.get("name").unwrap_or_default());
+            let (_, api_key) = queries::api_keys::replace_api_key(&db.conn, caller.user_id, &name)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b.child(
+                XmlNode::new("join")
+                    .attr("username", &caller.username)
+                    .attr("apiKey", &api_key),
+            ))
+        })
+    })
+    .await
+}
+
 /// Trade an invite token for an API key named `name`. The token is the
 /// credential, so this alone of koan's endpoints asks for no other.
 async fn koan_join(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
@@ -3719,6 +4239,69 @@ async fn koan_delete_user(State(state): State<Arc<AppState>>, RawQuery(raw): Raw
     .await
 }
 
+// ---------------------------------------------------------------------------
+// Pairing (koan extension)
+// ---------------------------------------------------------------------------
+
+/// A pairing as an approver sees it: the device's name, the address it asked
+/// from, and whether that address is on a private network.
+fn pair_node(info: &crate::pair::PairInfo) -> XmlNode {
+    XmlNode::new("pair")
+        .attr("device", &info.device)
+        .attr("from", &info.from.to_string())
+        .attr_bool("local", info.local())
+}
+
+/// The device waiting on `pair`, an id or a code, and where it asked from: for
+/// an app to ask whether to sign it in.
+async fn koan_pair_info(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        respond(&state, &params.auth(), |_, b| {
+            let pair = params
+                .get("pair")
+                .ok_or_else(|| SubsonicError::missing_param("pair"))?;
+            let info = crate::pair::pairings()
+                .info(pair)
+                .ok_or_else(|| SubsonicError::not_found("Pairing"))?;
+            Ok(b.child(pair_node(&info)))
+        })
+    })
+    .await
+}
+
+/// Sign the device waiting on `pair` in as the caller, with an API key of its
+/// own, or with `decline=true` turn it away. Any role: a device is signed in
+/// to the caller's own account, with no more than the caller can do.
+async fn koan_pair_approve(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        respond_db_caller(&state, &params.auth(), Role::Readonly, |db, caller, b| {
+            let pair = params
+                .get("pair")
+                .ok_or_else(|| SubsonicError::missing_param("pair"))?;
+            let decline = params.get("decline") == Some("true");
+            if !decline && caller.user_id == queries::LOCAL_USER {
+                return Err(SubsonicError::new(
+                    SubsonicErrorCode::Generic,
+                    "sign in with an account to sign a device in as it",
+                ));
+            }
+            let info = crate::pair::pairings()
+                .settle(&db.conn, pair, caller.user_id, &caller.username, decline)
+                .map_err(|e| match e {
+                    crate::pair::SettleError::NotFound => SubsonicError::not_found("Pairing"),
+                    crate::pair::SettleError::Internal(e) => SubsonicError::internal(e),
+                })?;
+            Ok(b.child(pair_node(&info)))
+        })
+    })
+    .await
+}
+
 /// OpenSubsonic `formPost`: the parameters of an
 /// `application/x-www-form-urlencoded` POST body are appended to the query
 /// string, so every handler reads one set of parameters however they were
@@ -3780,6 +4363,7 @@ async fn koan_link(
     let addr = crate::auth::routes::client_ip(&request);
     let params = RawParams::parse(raw.as_deref());
     let json = params.auth().wants_json();
+    let mark = koan_core::auth::account_mark();
     let caller = {
         let auth = params.auth();
         match tokio::task::spawn_blocking(move || validate_auth(&auth, &state)).await {
@@ -3796,10 +4380,16 @@ async fn koan_link(
         .map(str::to_owned)
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
     let wants_devices = params.get("devices") == Some("1");
+    let lease = crate::auth::Lease {
+        user_id: caller.user_id,
+        mark,
+        expires: None,
+    };
     ws.on_upgrade(move |socket| {
         link_session(
             socket,
             caller.username,
+            lease,
             LinkPeer {
                 name,
                 platform,
@@ -3850,8 +4440,16 @@ const LINK_CHECK: Duration = Duration::from_secs(15);
 /// Over twice the client's idle ping interval.
 const LINK_SILENCE: Duration = Duration::from_secs(100);
 
-async fn link_session(mut socket: axum::extract::ws::WebSocket, username: String, peer: LinkPeer) {
-    use axum::extract::ws::Message;
+/// A link until the device goes, a newer link from it replaces this one, or
+/// the account changes (see `Lease`). The device reconnects after that last,
+/// as it does after any close, and is authenticated afresh.
+async fn link_session(
+    mut socket: axum::extract::ws::WebSocket,
+    username: String,
+    lease: crate::auth::Lease,
+    peer: LinkPeer,
+) {
+    use axum::extract::ws::{CloseFrame, Message, close_code};
     let LinkPeer {
         name,
         platform,
@@ -3888,8 +4486,19 @@ async fn link_session(mut socket: axum::extract::ws::WebSocket, username: String
     // has suspended never closes its socket, so one that goes quiet is gone.
     let mut last_heard = tokio::time::Instant::now();
     let mut check = tokio::time::interval(LINK_CHECK);
+    let ended = lease.ended();
+    tokio::pin!(ended);
     loop {
         tokio::select! {
+            _ = &mut ended => {
+                let _ = socket
+                    .send(Message::Close(Some(CloseFrame {
+                        code: close_code::NORMAL,
+                        reason: "sign in again".into(),
+                    })))
+                    .await;
+                break;
+            }
             _ = check.tick() => {
                 if last_heard.elapsed() > LINK_SILENCE {
                     break;
@@ -4013,6 +4622,17 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         // koan's own: a koan client's standing connection, for the server to
         // command it. See `crate::clients`.
         .route("/rest/koanLink", get(koan_link))
+        // A device without a keyboard waiting to be signed in, and the
+        // endpoints that sign it in. See `crate::pair`.
+        .route("/rest/koanPair", get(crate::pair::route))
+        .route(
+            "/rest/koanPairInfo",
+            get(koan_pair_info).post(koan_pair_info),
+        )
+        .route(
+            "/rest/koanPairApprove",
+            get(koan_pair_approve).post(koan_pair_approve),
+        )
         .route("/rest/koanUsers", get(koan_users).post(koan_users))
         .route(
             "/rest/koanCreateUser",
@@ -4020,6 +4640,7 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         )
         .route("/rest/koanInvite", get(koan_invite).post(koan_invite))
         .route("/rest/koanJoin", get(koan_join).post(koan_join))
+        .route("/rest/koanSignIn", get(koan_sign_in).post(koan_sign_in))
         .route(
             "/rest/koanRevokeKey",
             get(koan_revoke_key).post(koan_revoke_key),
@@ -4033,6 +4654,19 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
             get(koan_delete_user).post(koan_delete_user),
         )
         .route("/rest/koanCommand", get(koan_command).post(koan_command))
+        .route("/rest/koanHistory", get(koan_history).post(koan_history))
+        .route(
+            "/rest/koanHistory.view",
+            get(koan_history).post(koan_history),
+        )
+        .route(
+            "/rest/koanForgetPlays",
+            get(koan_forget_plays).post(koan_forget_plays),
+        )
+        .route(
+            "/rest/koanForgetPlays.view",
+            get(koan_forget_plays).post(koan_forget_plays),
+        )
         .route(
             "/rest/koanCommand.view",
             get(koan_command).post(koan_command),
@@ -4119,8 +4753,8 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         .route("/rest/stream.view", get(stream).post(stream))
         // `download` is the untranscoded original, which is all `stream` ever
         // serves here. koan's own download queue fetches through it.
-        .route("/rest/download", get(stream).post(stream))
-        .route("/rest/download.view", get(stream).post(stream))
+        .route("/rest/download", get(download).post(download))
+        .route("/rest/download.view", get(download).post(download))
         .route("/rest/getCoverArt", get(get_cover_art).post(get_cover_art))
         .route(
             "/rest/getCoverArt.view",
@@ -4136,6 +4770,29 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
             "/rest/getStarred2.view",
             get(get_starred2).post(get_starred2),
         )
+        .route("/rest/getBookmarks", get(get_bookmarks).post(get_bookmarks))
+        .route(
+            "/rest/getBookmarks.view",
+            get(get_bookmarks).post(get_bookmarks),
+        )
+        .route(
+            "/rest/createBookmark",
+            get(create_bookmark).post(create_bookmark),
+        )
+        .route(
+            "/rest/createBookmark.view",
+            get(create_bookmark).post(create_bookmark),
+        )
+        .route(
+            "/rest/deleteBookmark",
+            get(delete_bookmark).post(delete_bookmark),
+        )
+        .route(
+            "/rest/deleteBookmark.view",
+            get(delete_bookmark).post(delete_bookmark),
+        )
+        .route("/rest/setRating", get(set_rating).post(set_rating))
+        .route("/rest/setRating.view", get(set_rating).post(set_rating))
         .route("/rest/scrobble", get(scrobble).post(scrobble))
         .route("/rest/scrobble.view", get(scrobble).post(scrobble))
         .route(
@@ -4215,6 +4872,7 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
 fn subsonic_app(state: Arc<AppState>) -> axum::Router {
     let throttle = Arc::new(AuthThrottle::new(
         state.password.is_some().then(|| state.username.clone()),
+        state.users.clone(),
     ));
     register_subsonic_routes(axum::Router::new())
         .with_state(state)
@@ -4234,6 +4892,7 @@ fn subsonic_app(state: Arc<AppState>) -> axum::Router {
 pub fn subsonic_router(
     pool: Arc<Pool>,
     covers: Arc<crate::covers::Covers>,
+    users: Arc<PasswordVerifier>,
 ) -> Option<axum::Router> {
     let cfg = Config::load().unwrap_or_default();
 
@@ -4247,8 +4906,23 @@ pub fn subsonic_router(
         log::info!("Subsonic: no shared secret, so only koan accounts sign in (with p=).");
     }
 
+    let transcoder = cfg
+        .subsonic
+        .transcode
+        .then(|| {
+            let found = crate::transcode::Transcoder::find(&cfg.subsonic.ffmpeg);
+            if found.is_none() {
+                log::info!(
+                    "Subsonic: {} did not run, so clients asking for a lower bitrate get the original.",
+                    cfg.subsonic.ffmpeg
+                );
+            }
+            found
+        })
+        .flatten();
+
     let state = Arc::new(AppState {
-        users: crate::auth::password::PasswordVerifier::new(pool.clone()),
+        users,
         pool,
         username: cfg.subsonic.username.clone(),
         password,
@@ -4264,6 +4938,7 @@ pub fn subsonic_router(
             .unwrap_or_default(),
         covers,
         last_modified: Default::default(),
+        transcoder,
     });
 
     Some(subsonic_app(state))
@@ -4296,7 +4971,7 @@ mod tests {
 
         let pool = Arc::new(Pool::new(db_path));
         let state = Arc::new(AppState {
-            users: crate::auth::password::PasswordVerifier::new(pool.clone()),
+            users: Arc::new(PasswordVerifier::new(pool.clone())),
             pool,
             username: "testuser".into(),
             password: Some("testpass".into()),
@@ -4305,6 +4980,7 @@ mod tests {
             http: reqwest::Client::new(),
             covers: Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
             last_modified: Default::default(),
+            transcoder: None,
         });
         (state, dir)
     }
@@ -4355,7 +5031,12 @@ mod tests {
         }
         axum::Router::new().route("/rest/ping", get(refuse)).layer(
             axum::middleware::from_fn_with_state(
-                Arc::new(AuthThrottle::new(shared_username.map(str::to_owned))),
+                Arc::new(AuthThrottle::new(
+                    shared_username.map(str::to_owned),
+                    Arc::new(PasswordVerifier::new(Arc::new(Pool::new(
+                        "/nonexistent/koan.db".into(),
+                    )))),
+                )),
                 throttle_auth,
             ),
         )
@@ -4374,6 +5055,163 @@ mod tests {
             "{}",
             body
         );
+    }
+
+    #[tokio::test]
+    async fn a_token_without_a_salt_is_a_password_sign_in() {
+        // `validate_auth` checks `p` when `s` is missing, so the shared
+        // username's exemption must not cover it.
+        let guess = "/rest/ping?u=koan&t=0123&p=guess";
+        let app = refusing_app(Some("koan"));
+        for _ in 0..AUTH_FAILURES_PER_MINUTE {
+            let (_, body) = get_response(app.clone(), guess).await;
+            assert!(body.contains("code=\"40\""), "{}", body);
+        }
+        let (_, body) = get_response(app, guess).await;
+        assert!(body.contains("Too many failed sign-ins"), "{}", body);
+    }
+
+    #[tokio::test]
+    async fn failures_are_also_counted_per_username_from_every_address() {
+        let app = refusing_app(None);
+        let from = |n: u32, query: &str| {
+            let mut request = Request::builder()
+                .uri(format!("/rest/ping?{query}"))
+                .body(Body::empty())
+                .unwrap();
+            request.extensions_mut().insert(axum::extract::ConnectInfo(
+                std::net::SocketAddr::from(([198, 51, (n / 256) as u8, (n % 256) as u8], 1234)),
+            ));
+            request
+        };
+        let body = |response: Response| async {
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            String::from_utf8_lossy(&bytes).into_owned()
+        };
+        // One guess from each address stays under every per-address limit.
+        for n in 0..crate::auth::password::FAILURES_PER_USERNAME_PER_MINUTE {
+            let response = app.clone().oneshot(from(n, "u=mate&p=x")).await.unwrap();
+            assert!(body(response).await.contains("code=\"40\""));
+        }
+        let response = app.clone().oneshot(from(999, "u=mate&p=x")).await.unwrap();
+        assert!(
+            body(response)
+                .await
+                .contains("Too many failed sign-ins for this account;")
+        );
+        // Another account, and an API key, are untouched.
+        let response = app.clone().oneshot(from(999, "u=other&p=x")).await.unwrap();
+        assert!(body(response).await.contains("code=\"40\""));
+        let response = app.oneshot(from(999, "apiKey=k")).await.unwrap();
+        assert!(body(response).await.contains("code=\"40\""));
+    }
+
+    #[tokio::test]
+    async fn a_spent_username_budget_spares_the_accounts_own_network() {
+        let (state, _dir) = test_state();
+        let users = state.users.clone();
+        let app = subsonic_app(state);
+        let from = |ip: [u8; 4]| {
+            let mut request = Request::builder()
+                .uri("/rest/ping?u=mate&p=hunter22&v=1.16.1&c=test")
+                .body(Body::empty())
+                .unwrap();
+            request.extensions_mut().insert(axum::extract::ConnectInfo(
+                std::net::SocketAddr::from((ip, 1234)),
+            ));
+            request
+        };
+        let body = |response: Response| async {
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            String::from_utf8_lossy(&bytes).into_owned()
+        };
+        let home = [198, 51, 100, 4];
+        let r = body(app.clone().oneshot(from(home)).await.unwrap()).await;
+        assert!(r.contains("status=\"ok\""), "{r}");
+        for _ in 0..crate::auth::password::FAILURES_PER_USERNAME_PER_MINUTE {
+            users.failed("mate");
+        }
+        let r = body(app.clone().oneshot(from([203, 0, 113, 9])).await.unwrap()).await;
+        assert!(
+            r.contains("Too many failed sign-ins for this account;"),
+            "{r}"
+        );
+        let r = body(app.oneshot(from(home)).await.unwrap()).await;
+        assert!(r.contains("status=\"ok\""), "{r}");
+    }
+
+    #[tokio::test]
+    async fn an_ipv6_client_is_throttled_by_its_64() {
+        let app = refusing_app(None);
+        for n in 0..AUTH_FAILURES_PER_ADDRESS_PER_MINUTE {
+            let mut request = Request::builder()
+                .uri(format!("/rest/ping?u=user{n}&p=x"))
+                .body(Body::empty())
+                .unwrap();
+            let ip: std::net::Ipv6Addr = format!("2001:db8:1:2::{n:x}").parse().unwrap();
+            request.extensions_mut().insert(axum::extract::ConnectInfo(
+                std::net::SocketAddr::from((ip, 1234)),
+            ));
+            app.clone().oneshot(request).await.unwrap();
+        }
+        let mut request = Request::builder()
+            .uri("/rest/ping?u=fresh&p=x")
+            .body(Body::empty())
+            .unwrap();
+        let ip: std::net::Ipv6Addr = "2001:db8:1:2:abcd::1".parse().unwrap();
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                ip, 1234,
+            ))));
+        let response = app.oneshot(request).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(String::from_utf8_lossy(&bytes).contains("from this address"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_link_closes_when_its_account_changes() {
+        let (state, _dir) = test_state();
+        let pool = state.pool.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, build_test_router(state)).await });
+        let url = format!(
+            "ws://{addr}/rest/koanLink?u=mate&p=hunter22&v=1.16.1&c=test&device=account-change-test"
+        );
+        let mut socket = tokio::task::spawn_blocking(move || {
+            let (socket, _) = tungstenite::connect(url.as_str()).unwrap();
+            if let tungstenite::stream::MaybeTlsStream::Plain(tcp) = socket.get_ref() {
+                tcp.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+            }
+            socket
+        })
+        .await
+        .unwrap();
+        tokio::task::spawn_blocking(move || {
+            let db = pool.get().unwrap();
+            queries::auth::update_role(&db.conn, "mate", Role::User).unwrap();
+        })
+        .await
+        .unwrap();
+        let closed = tokio::task::spawn_blocking(move || {
+            loop {
+                match socket.read() {
+                    Ok(tungstenite::Message::Close(_)) => return true,
+                    Ok(_) => continue,
+                    Err(_) => return false,
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(closed, "the link outlived a change to its account");
     }
 
     #[tokio::test]
@@ -4804,6 +5642,168 @@ mod tests {
         )
         .await;
         assert!(body.contains("adminRole=\"true\""), "{body}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pairing_is_refused_to_web_pages() {
+        let (state, _dir) = test_state();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, build_test_router(state)).await });
+        let url = format!("ws://{addr}/rest/koanPair?name=tv");
+        tokio::task::spawn_blocking(move || {
+            use tungstenite::client::IntoClientRequest as _;
+            let mut from_page = url.as_str().into_client_request().unwrap();
+            from_page
+                .headers_mut()
+                .insert(header::ORIGIN, "https://evil.example".parse().unwrap());
+            match tungstenite::connect(from_page) {
+                Err(tungstenite::Error::Http(r)) => assert_eq!(r.status(), StatusCode::FORBIDDEN),
+                other => panic!("a page was let in: {:?}", other.map(|_| ())),
+            }
+            // As the apps connect: tungstenite sends no Origin.
+            let (mut socket, _) = tungstenite::connect(url.as_str()).unwrap();
+            let first = socket.read().unwrap();
+            let message: koan_core::remote::pair::PairMessage =
+                serde_json::from_str(first.to_text().unwrap()).unwrap();
+            assert!(
+                matches!(
+                    message,
+                    koan_core::remote::pair::PairMessage::Pending { .. }
+                ),
+                "{message:?}"
+            );
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_waiting_device_is_paired_with_the_approvers_account() {
+        let (state, _dir) = test_state();
+        let call = |path: String| {
+            let state = state.clone();
+            async move { get_response(build_test_router(state), &path).await.1 }
+        };
+        let mate = "u=mate&p=hunter22&v=1.16.1&c=test&f=json";
+        let opened = crate::pair::pairings()
+            .open("Den TV", "198.51.100.7".parse().unwrap())
+            .unwrap();
+        let code = opened.code.replace('-', "").to_lowercase();
+
+        let body = call(format!("/rest/koanPairInfo?pair={code}")).await;
+        assert!(body.contains("code=\"10\""), "{body}");
+        let body = call(format!("/rest/koanPairInfo?pair={code}&{mate}")).await;
+        assert!(
+            body.contains("\"device\":\"Den TV\",\"from\":\"198.51.100.7\",\"local\":false"),
+            "{body}"
+        );
+
+        let body = call(format!("/rest/koanPairApprove?pair={}&{mate}", opened.id)).await;
+        assert!(body.contains("\"device\":\"Den TV\""), "{body}");
+        let body = call(format!("/rest/koanPairApprove?pair={}&{mate}", opened.id)).await;
+        assert!(body.contains("\"code\":70"), "{body}");
+        let body = call(format!("/rest/koanPairInfo?pair=ABCD-EFGH&{mate}")).await;
+        assert!(body.contains("\"code\":70"), "{body}");
+        drop(opened);
+    }
+
+    #[tokio::test]
+    async fn a_password_sign_in_is_traded_for_a_key_of_the_accounts_own() {
+        let (state, _dir) = test_state();
+        let call = |path: String| {
+            let state = state.clone();
+            async move { get_response(build_test_router(state), &path).await.1 }
+        };
+        let enc = |p: &str| p.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+
+        let body = call("/rest/getOpenSubsonicExtensions?f=json".to_owned()).await;
+        assert!(
+            body.contains("koanSignIn"),
+            "listed for clients to find: {body}"
+        );
+
+        let body = call(format!(
+            "/rest/koanSignIn?u=mate&p=enc:{}&name=Mate%27s%20iPhone&v=1.16.1&c=test&f=json",
+            enc("hunter22")
+        ))
+        .await;
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["subsonic-response"]["join"]["username"], "mate", "{body}");
+        let key = v["subsonic-response"]["join"]["apiKey"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let body = call(format!("/rest/ping?apiKey={key}&v=1.16.1&c=test")).await;
+        assert!(body.contains("status=\"ok\""), "{body}");
+        let db = state.open_db().unwrap();
+        let mate = koan_core::db::queries::auth::get_user_by_username(&db.conn, "mate")
+            .unwrap()
+            .unwrap();
+        let keys = queries::api_keys::list_api_keys(&db.conn, Some(mate.id)).unwrap();
+        assert_eq!(
+            keys.iter().map(|k| k.name.as_str()).collect::<Vec<_>>(),
+            ["Mate's iPhone"],
+            "the account's own key, named for the device"
+        );
+
+        // Signing in again from the same device replaces its key.
+        let body = call(format!(
+            "/rest/koanSignIn?u=mate&p=enc:{}&name=Mate%27s%20iPhone&v=1.16.1&c=test&f=json",
+            enc("hunter22")
+        ))
+        .await;
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let again = v["subsonic-response"]["join"]["apiKey"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_ne!(again, key);
+        let body = call(format!("/rest/ping?apiKey={key}&v=1.16.1&c=test")).await;
+        assert!(body.contains("code=\"44\""), "the old key is gone: {body}");
+        let keys = queries::api_keys::list_api_keys(&db.conn, Some(mate.id)).unwrap();
+        assert_eq!(keys.len(), 1, "one key per device name");
+        let key = again;
+
+        // Only the account's own password: not a key it already holds, not an
+        // app password, not the shared secret, which is no account's, and not
+        // a wrong password.
+        let body = call(format!(
+            "/rest/koanSignIn?apiKey={key}&name=more&v=1.16.1&c=test"
+        ))
+        .await;
+        assert!(body.contains("code=\"50\""), "{body}");
+        let app_password = queries::app_passwords::create_app_password(
+            &db.conn,
+            state.app_key.as_ref().unwrap(),
+            mate.id,
+            "arpeggi",
+        )
+        .unwrap()
+        .1;
+        let body = call(format!(
+            "/rest/koanSignIn?u=mate&p=enc:{}&name=more&v=1.16.1&c=test",
+            enc(&app_password)
+        ))
+        .await;
+        assert!(body.contains("code=\"50\""), "{body}");
+        let body =
+            call("/rest/koanSignIn?u=testuser&p=testpass&name=shared&v=1.16.1&c=test".to_owned())
+                .await;
+        assert!(body.contains("code=\"50\""), "{body}");
+        let body = call(format!(
+            "/rest/koanSignIn?u=mate&p=enc:{}&name=guess&v=1.16.1&c=test",
+            enc("wrong")
+        ))
+        .await;
+        assert!(body.contains("code=\"40\""), "{body}");
+        assert_eq!(
+            queries::api_keys::list_api_keys(&db.conn, None)
+                .unwrap()
+                .len(),
+            1,
+            "no key made for any of them"
+        );
     }
 
     #[tokio::test]
@@ -5353,6 +6353,128 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ratings_set_clear_and_order_highest() {
+        let (state, _dir) = test_state();
+        let [alpha, _, gamma] = seed_shelves(&state)[..] else {
+            unreachable!()
+        };
+        let album_of = |track| {
+            let db = Database::open(state.pool.path()).unwrap();
+            let album = queries::get_track_row(&db.conn, track)
+                .unwrap()
+                .unwrap()
+                .album_id
+                .unwrap();
+            uid_of(&state, queries::UidKind::Album, album)
+        };
+        let rate = |id: String, rating: &'static str| {
+            let state = state.clone();
+            async move {
+                json_of(
+                    build_test_router(state),
+                    &format!(
+                        "/rest/setRating?{}&id={id}&rating={rating}",
+                        auth_query("f=json")
+                    ),
+                )
+                .await
+            }
+        };
+
+        let (alpha_album, gamma_album) = (album_of(alpha), album_of(gamma));
+        rate(alpha_album.clone(), "3").await;
+        rate(gamma_album.clone(), "5").await;
+        assert_eq!(
+            album_list2(&state, "type=highest").await,
+            ["Gamma", "Alpha"]
+        );
+        let v = json_of(
+            build_test_router(state.clone()),
+            &format!("/rest/getAlbum?{}&id={alpha_album}", auth_query("f=json")),
+        )
+        .await;
+        assert_eq!(v["album"]["userRating"], 3, "{v}");
+
+        let song = uid_of(&state, queries::UidKind::Track, alpha);
+        rate(song.clone(), "4").await;
+        let song_rating = |state: Arc<AppState>, song: String| async move {
+            json_of(
+                build_test_router(state),
+                &format!("/rest/getSong?{}&id={song}", auth_query("f=json")),
+            )
+            .await["song"]["userRating"]
+                .clone()
+        };
+        assert_eq!(song_rating(state.clone(), song.clone()).await, 4);
+        rate(song.clone(), "0").await;
+        assert!(song_rating(state.clone(), song.clone()).await.is_null());
+
+        let v = rate(song, "6").await;
+        assert_eq!(v["error"]["code"], 10, "a rating above 5 is refused");
+
+        rate(gamma_album, "0").await;
+        assert_eq!(album_list2(&state, "type=highest").await, ["Alpha"]);
+    }
+
+    #[tokio::test]
+    async fn bookmarks_save_replace_list_and_delete() {
+        let (state, _dir) = test_state();
+        let [alpha, beta, _] = seed_shelves(&state)[..] else {
+            unreachable!()
+        };
+        let call = |path: String| {
+            let state = state.clone();
+            async move {
+                json_of(
+                    build_test_router(state),
+                    &format!("/rest/{path}&{}", auth_query("f=json")),
+                )
+                .await
+            }
+        };
+        let (alpha, beta) = (
+            uid_of(&state, queries::UidKind::Track, alpha),
+            uid_of(&state, queries::UidKind::Track, beta),
+        );
+
+        call(format!(
+            "createBookmark?id={alpha}&position=1000&comment=intro"
+        ))
+        .await;
+        call(format!("createBookmark?id={beta}&position=5000")).await;
+        call(format!("createBookmark?id={alpha}&position=2500")).await;
+        let v = call("getBookmarks?".into()).await;
+        let marks = v["bookmarks"]["bookmark"].as_array().unwrap();
+        assert_eq!(marks.len(), 2, "{v}");
+        let mark = marks.iter().find(|m| m["entry"]["id"] == alpha).unwrap();
+        assert_eq!(
+            mark["position"], 2500,
+            "a second bookmark replaces the first"
+        );
+        assert!(mark["comment"].is_null());
+        assert_eq!(mark["username"], "testuser");
+        assert!(mark["created"].is_string() && mark["changed"].is_string());
+
+        let v = call(format!("createBookmark?id={alpha}")).await;
+        assert_eq!(v["error"]["code"], 10, "position is required");
+
+        call(format!("deleteBookmark?id={alpha}")).await;
+        let v = call("getBookmarks?".into()).await;
+        assert_eq!(v["bookmarks"]["bookmark"].as_array().unwrap().len(), 1);
+        let v = call(format!("deleteBookmark?id={alpha}")).await;
+        assert_eq!(v["status"], "ok", "deleting twice is not an error");
+
+        let long = "x".repeat(MAX_BOOKMARK_COMMENT + 1);
+        let v = call(format!(
+            "createBookmark?id={beta}&position=1&comment={long}"
+        ))
+        .await;
+        assert_eq!(v["error"]["code"], 10, "an overlong comment is refused");
+        let v = call("getBookmarks?".into()).await;
+        assert_eq!(v["bookmarks"]["bookmark"][0]["position"], 5000, "{v}");
+    }
+
+    #[tokio::test]
     async fn random_songs_filter_in_sql() {
         let (state, _dir) = test_state();
         seed_shelves(&state);
@@ -5449,7 +6571,10 @@ mod tests {
         let app = build_test_router(state);
         let (_, body) = get_response(
             app,
-            &format!("/rest/getBookmarks.view?{}", auth_query("f=json")),
+            &format!(
+                "/rest/getInternetRadioStations.view?{}",
+                auth_query("f=json")
+            ),
         )
         .await;
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -5916,6 +7041,87 @@ mod tests {
         assert_eq!(left, vec![c, a]);
     }
 
+    /// A smart playlist is served like any other, marked read-only, and its
+    /// contents refuse edits while its name does not.
+    #[tokio::test]
+    async fn smart_playlists_are_served_read_only() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+
+        let db = Database::open(state.pool.path()).unwrap();
+        let tracks = queries::all_tracks(&db.conn).unwrap();
+        let rules = koan_core::smart::Rules::parse(r#"{"rules":[]}"#).unwrap();
+        let row = queries::smart::create_smart_playlist(
+            &db.conn,
+            queries::LOCAL_USER,
+            "Everything",
+            None,
+            &rules,
+        )
+        .unwrap();
+        let id = queries::get_playlist(&db.conn, row).unwrap().unwrap().uid;
+        drop(db);
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(app, &format!("/rest/getPlaylists?{}", auth_query(""))).await;
+        assert!(body.contains("name=\"Everything\""), "{body}");
+        assert!(body.contains("readonly=\"true\""), "{body}");
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!("/rest/getPlaylist?{}&id={id}", auth_query("")),
+        )
+        .await;
+        assert_eq!(body.matches("<entry ").count(), tracks.len(), "{body}");
+
+        for edit in [
+            format!(
+                "updatePlaylist?playlistId={id}&songIdToAdd={}",
+                tracks[0].id
+            ),
+            format!("updatePlaylist?playlistId={id}&songIndexToRemove=0"),
+            format!("createPlaylist?playlistId={id}&songId={}", tracks[0].id),
+        ] {
+            let (path, query) = edit.split_once('?').unwrap();
+            let app = build_test_router(state.clone());
+            let (_, body) =
+                get_response(app, &format!("/rest/{path}?{}&{query}", auth_query(""))).await;
+            assert!(body.contains("status=\"failed\""), "{edit}: {body}");
+        }
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!(
+                "/rest/updatePlaylist?{}&playlistId={id}&name=All",
+                auth_query("")
+            ),
+        )
+        .await;
+        assert!(
+            body.contains("status=\"ok\""),
+            "a rename is allowed: {body}"
+        );
+
+        // One read from a file is named by it.
+        let db = Database::open(state.pool.path()).unwrap();
+        db.conn
+            .execute("UPDATE playlists SET source_path = '/music/All.nsp'", [])
+            .unwrap();
+        drop(db);
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!(
+                "/rest/updatePlaylist?{}&playlistId={id}&name=Other",
+                auth_query("")
+            ),
+        )
+        .await;
+        assert!(body.contains("status=\"failed\""), "{body}");
+    }
+
     #[tokio::test]
     async fn test_scrobble() {
         let (state, _dir) = test_state();
@@ -5958,6 +7164,28 @@ mod tests {
         );
     }
 
+    /// A client that lost the answer to a batch sends it again; each play is
+    /// recorded once.
+    #[tokio::test]
+    async fn a_scrobble_batch_sent_twice_records_each_play_once() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+        let db = Database::open(state.pool.path()).unwrap();
+        let track_id = queries::all_tracks(&db.conn).unwrap()[0].id;
+        let path = format!(
+            "/rest/scrobble?{}&id={track_id}&time=1000000&id={track_id}&time=2000000",
+            auth_query("f=json")
+        );
+        for _ in 0..2 {
+            let v = json_of(build_test_router(state.clone()), &path).await;
+            assert_eq!(v["status"], "ok", "{v}");
+        }
+        assert_eq!(
+            queries::play_count(&db.conn, koan_core::db::queries::LOCAL_USER, track_id).unwrap(),
+            2
+        );
+    }
+
     /// A batch naming one track that does not exist records none of it, so a
     /// client retrying after fixing the batch does not double the rest.
     #[tokio::test]
@@ -5980,6 +7208,110 @@ mod tests {
             queries::play_count(&db.conn, koan_core::db::queries::LOCAL_USER, track_id).unwrap(),
             0
         );
+    }
+
+    /// Plays scrobbled come back from `koanHistory` after the cursor; a play
+    /// forgotten goes from the history and comes back as forgotten, and the
+    /// next page from the cursor holds only what changed since.
+    #[tokio::test]
+    async fn history_pages_plays_and_forgettings_after_a_cursor() {
+        let (state, _dir) = test_state();
+        let shelves = seed_shelves(&state);
+        let db = Database::open(state.pool.path()).unwrap();
+        let (a, b) = (shelves[0], shelves[1]);
+        let (a_uid, b_uid) = (
+            uid_of(&state, queries::UidKind::Track, a),
+            uid_of(&state, queries::UidKind::Track, b),
+        );
+        let get = |path: String| {
+            let state = state.clone();
+            async move { json_of(build_test_router(state), &path).await }
+        };
+
+        get(format!(
+            "/rest/scrobble?{}&id={a_uid}&time=1000000&id={b_uid}&time=2000000",
+            auth_query("f=json")
+        ))
+        .await;
+        let v = get(format!("/rest/koanHistory?{}", auth_query("f=json"))).await;
+        let page = &v["koanHistory"];
+        let plays: Vec<(String, i64)> = page["play"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| {
+                (
+                    p["id"].as_str().unwrap().to_owned(),
+                    p["played"].as_i64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            plays,
+            [(a_uid.clone(), 1_000_000), (b_uid.clone(), 2_000_000)]
+        );
+        assert_eq!(page["more"], false);
+        let cursor = page["cursor"].as_str().unwrap().to_owned();
+
+        // Forgotten a second off: a play is named by when it started, and the
+        // device that recorded it read its clock a moment apart.
+        let v = get(format!(
+            "/rest/koanForgetPlays?{}&id={a_uid}&time=1001000",
+            auth_query("f=json")
+        ))
+        .await;
+        assert_eq!(v["status"], "ok", "{v}");
+        assert_eq!(
+            queries::play_count(&db.conn, koan_core::db::queries::LOCAL_USER, a).unwrap(),
+            0
+        );
+        let v = get(format!(
+            "/rest/koanHistory?{}&since={cursor}",
+            auth_query("f=json")
+        ))
+        .await;
+        let page = &v["koanHistory"];
+        assert!(page["play"].as_array().is_none_or(|p| p.is_empty()), "{v}");
+        assert_eq!(page["forgotten"][0]["id"], a_uid.as_str());
+        assert_eq!(page["forgotten"][0]["played"], 1_001_000);
+
+        // Forgetting a play nobody has records nothing.
+        let cursor = page["cursor"].as_str().unwrap().to_owned();
+        get(format!(
+            "/rest/koanForgetPlays?{}&id={a_uid}&time=9000000",
+            auth_query("f=json")
+        ))
+        .await;
+        let v = get(format!(
+            "/rest/koanHistory?{}&since={cursor}",
+            auth_query("f=json")
+        ))
+        .await;
+        assert!(
+            v["koanHistory"]["forgotten"]
+                .as_array()
+                .is_none_or(|f| f.is_empty()),
+            "{v}"
+        );
+
+        // `through` forgets everything up to then, as one entry with no track.
+        get(format!(
+            "/rest/koanForgetPlays?{}&through=5000000",
+            auth_query("f=json")
+        ))
+        .await;
+        assert_eq!(
+            queries::play_count(&db.conn, koan_core::db::queries::LOCAL_USER, b).unwrap(),
+            0
+        );
+        let v = get(format!(
+            "/rest/koanHistory?{}&since={cursor}",
+            auth_query("f=json")
+        ))
+        .await;
+        let forgotten = &v["koanHistory"]["forgotten"][0];
+        assert!(forgotten.get("id").is_none_or(|id| id.is_null()), "{v}");
+        assert_eq!(forgotten["played"], 5_000_000);
     }
 
     #[tokio::test]
@@ -6266,6 +7598,61 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    /// A library that keeps its covers as `folder.jpg` beside the tracks, with
+    /// nothing embedded, answers `getCoverArt` from the image.
+    #[tokio::test]
+    async fn test_cover_art_from_a_folder_image() {
+        let (state, dir) = test_state();
+        let album = dir.path().join("Album");
+        std::fs::create_dir_all(&album).unwrap();
+        let track = album.join("01.flac");
+        std::fs::write(&track, b"no tags here").unwrap();
+        let jpeg = {
+            let mut out = Vec::new();
+            image::codecs::jpeg::JpegEncoder::new(&mut out)
+                .encode_image(&image::RgbImage::from_pixel(
+                    64,
+                    64,
+                    image::Rgb([200, 30, 30]),
+                ))
+                .unwrap();
+            out
+        };
+        std::fs::write(album.join("folder.jpg"), &jpeg).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
+        queries::upsert_track(
+            &db.conn,
+            &track_meta(track.to_str().unwrap(), "Song", "Album", 1),
+        )
+        .unwrap();
+        let track_id = queries::track_id_by_path(&db.conn, track.to_str().unwrap())
+            .unwrap()
+            .unwrap();
+        let album_id = queries::get_track_row(&db.conn, track_id)
+            .unwrap()
+            .unwrap()
+            .album_id
+            .unwrap();
+        let app = build_test_router(state);
+        for id in [format!("al-{album_id}"), format!("mf-{track_id}")] {
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/rest/getCoverArt?{}&id={id}", auth_query("")))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.headers()[header::CONTENT_TYPE], "image/jpeg");
+            let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert_eq!(&body[..], &jpeg[..], "a small JPEG is served as it is");
+        }
     }
 
     #[tokio::test]

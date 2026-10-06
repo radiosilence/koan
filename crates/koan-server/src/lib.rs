@@ -9,9 +9,11 @@ pub mod covers;
 pub mod graphql;
 pub mod mcp;
 pub mod origin;
+pub mod pair;
 pub mod push;
 pub mod share;
 pub mod subsonic;
+mod transcode;
 pub mod ui;
 
 // Re-exports for downstream convenience.

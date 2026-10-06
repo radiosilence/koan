@@ -3,6 +3,8 @@
 (() => {
   const main = document.getElementById("content");
   document.documentElement.classList.add("js");
+  // The server groups history by day, and only the browser knows whose day.
+  document.cookie = `koan_tz=${-new Date().getTimezoneOffset()}; path=/; max-age=31536000; samesite=lax`;
   const all = (sel, root = document) => [...root.querySelectorAll(sel)];
   const fmt = (s) => {
     s = Math.max(0, Math.floor(s || 0));
@@ -173,6 +175,10 @@
       case "shuffle": return player.play(shuffle(albumRows()), 0);
       case "queue": return player.append(albumRows());
       case "add": return player.append([trackOf(row)]);
+      case "menu": {
+        const r = el.getBoundingClientRect();
+        return openMenu(row, r.right, r.bottom);
+      }
       case "remove": return player.remove(Number(row.dataset.q));
       case "clear": return player.clear();
     }
@@ -187,6 +193,116 @@
     }
     player.playNow([trackOf(li)]);
   }
+
+  // --- Track menu ------------------------------------------------------------
+  // What the apps' context menu offers on a track, for any track row: opened by
+  // right-click, a long press, or the row's ⋯ on a phone. Favourite and share
+  // press the row's own buttons, so they behave as those do.
+  const menu = document.getElementById("track-menu");
+  function item(label, run) {
+    const b = document.createElement("button");
+    b.className = "quiet";
+    b.setAttribute("role", "menuitem");
+    b.textContent = label;
+    b.addEventListener("click", () => { menu.hidePopover(); run(); });
+    return b;
+  }
+  const group = (items) => (items.length ? [document.createElement("hr"), ...items] : []);
+  function openMenu(li, x, y) {
+    if (!menu) return;
+    const t = trackOf(li);
+    const d = li.dataset;
+    const heart = li.querySelector("[data-fav]");
+    const share = li.querySelector("[data-act-share]");
+    const mine = [];
+    if (heart) {
+      const on = heart.getAttribute("aria-pressed") === "true";
+      mine.push(item(on ? "Remove Favourite" : "Favourite Track", () => heart.click()));
+    }
+    if (share) mine.push(item("Share Track", () => share.click()));
+    // A play in History: forgotten through the page's own Forget, as the
+    // apps' Remove from History is, so it is the one way plays leave.
+    const play = li.closest("#history") && li.querySelector("input[type=checkbox][value]");
+    const forget = play
+      ? [item("Remove from History", () => {
+          for (const box of all("#history input:checked")) box.checked = false;
+          play.checked = true;
+          play.dispatchEvent(new Event("change", { bubbles: true }));
+          document.querySelector("[data-act-forget]")?.click();
+        })]
+      : [];
+    const go = [];
+    if (Number(d.albumId)) go.push(item("Go to Album", () => navigate(`/album/${d.albumId}`, true)));
+    if (Number(d.artistId)) go.push(item("Go to Artist", () => navigate(`/artist/${d.artistId}`, true)));
+    const head = document.createElement("p");
+    head.textContent = [t.title, t.artist].filter(Boolean).join(" · ");
+    menu.replaceChildren(
+      head,
+      item("Play", () => pick(li)),
+      item("Play Next", () => player.playNext([t])),
+      item("Add to Queue", () => player.append([t])),
+      ...group(mine),
+      ...group(go),
+      ...group(forget),
+    );
+    if (!menu.matches(":popover-open")) menu.showPopover();
+    if (wide.matches) {
+      const r = menu.getBoundingClientRect();
+      menu.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`;
+      menu.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
+    } else {
+      menu.style.left = menu.style.top = "";
+    }
+    menu.querySelector("button").focus();
+  }
+  // A manual popover: the press that opens it ends on the row (a touch stays
+  // captured by what it went down on), which a light-dismissing popover would
+  // take for a click outside. It closes on the next press outside it, Escape,
+  // or leaving the page; the press that closes it does nothing else, as with
+  // the apps' menus.
+  let dismissed = false;
+  const closeMenu = () => {
+    if (!menu || !menu.matches(":popover-open")) return false;
+    menu.hidePopover();
+    return true;
+  };
+  document.addEventListener("pointerdown", (e) => {
+    if (menu && !menu.contains(e.target) && closeMenu()) dismissed = true;
+  }, true);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenu(); });
+  const menuRow = (e) => e.target.closest && e.target.closest("li[data-id]");
+  document.addEventListener("contextmenu", (e) => {
+    const li = menuRow(e);
+    if (!li || e.target.closest("a, input")) return;
+    e.preventDefault();
+    // The keyboard's menu key has no pointer: open it at the row.
+    const r = li.getBoundingClientRect();
+    openMenu(li, e.clientX || r.left + 24, e.clientY || r.bottom);
+  });
+  // iOS fires no contextmenu on a long press, so a touch held still opens it,
+  // and the click that follows the lift is not a pick.
+  let press = 0, pressed = false, pressAt = null;
+  document.addEventListener("pointerdown", (e) => {
+    const li = e.pointerType === "touch" && menuRow(e);
+    if (!li || e.target.closest("a, button, input, label")) return;
+    pressAt = [e.clientX, e.clientY];
+    pressed = false;
+    press = setTimeout(() => { pressed = true; openMenu(li, e.clientX, e.clientY); }, 500);
+  });
+  document.addEventListener("pointermove", (e) => {
+    if (pressAt && Math.hypot(e.clientX - pressAt[0], e.clientY - pressAt[1]) > 10) clearTimeout(press);
+  });
+  for (const type of ["pointerup", "pointercancel", "scroll"]) {
+    document.addEventListener(type, () => {
+      clearTimeout(press);
+      pressAt = null;
+      // Not every browser sends that click, so the guard lapses on its own.
+      if (pressed || dismissed) setTimeout(() => { pressed = dismissed = false; }, 350);
+    }, { passive: true, capture: true });
+  }
+  document.addEventListener("click", (e) => {
+    if (pressed || dismissed) { pressed = dismissed = false; e.preventDefault(); e.stopPropagation(); }
+  }, true);
 
   // --- Invites ---------------------------------------------------------------
   // The email goes out as rich text where the clipboard takes it, so pasting
@@ -238,7 +354,7 @@
     const a = e.target.closest("[data-act]");
     if (a) { e.preventDefault(); act(a.dataset.act, a); return; }
     const li = e.target.closest("li[data-id], li[data-q]");
-    if (li && !e.target.closest("a, button")) pick(li);
+    if (li && !e.target.closest("a, button, input, label")) pick(li);
   });
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Enter" && e.key !== " ") return;
@@ -263,7 +379,7 @@
   }, true);
 
   // --- Navigation ------------------------------------------------------------
-  const INTERNAL = /^\/(albums|album\/\d+|artists|artist\/\d+|search|queue|account)?$/;
+  const INTERNAL = /^\/(albums|tracks|album\/\d+|artists|artist\/\d+|search|queue|account|library|favourites|history|recent|scrobbling)?$/;
   let navigating = 0;
 
   async function navigate(url, push) {
@@ -279,6 +395,7 @@
     if (!r.ok) { location.href = url; return; }
     const html = await r.text();
     if (n !== navigating) return;
+    closeMenu();
     main.innerHTML = html;
     if (push) history.pushState(null, "", url);
     settle();
@@ -292,7 +409,8 @@
     const section = { "": "albums", album: "albums", artist: "artists", playlist: "playlists" }[location.pathname.split("/")[1]]
       ?? location.pathname.split("/")[1];
     for (const a of all("a[data-nav]")) {
-      if (a.dataset.nav === section) a.setAttribute("aria-current", "page");
+      // A phone's Library tab stands for several of the sidebar's links.
+      if (a.dataset.nav.split(" ").includes(section)) a.setAttribute("aria-current", "page");
       else a.removeAttribute("aria-current");
     }
     const focus = main.querySelector("[autofocus]");

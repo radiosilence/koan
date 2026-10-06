@@ -128,7 +128,16 @@ struct TransportBar: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                if let entry = player.currentEntry {
+                // A play still finding its tracks, named from the tap rather
+                // than leaving the track it replaces on show.
+                if let name = player.resolving {
+                    Text(name)
+                        .font(.callout.weight(.medium))
+                        .lineLimit(1)
+                    Text("Loading…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let entry = player.currentEntry {
                     Text(entry.title)
                         .font(.callout.weight(.medium))
                         .lineLimit(1)
@@ -238,6 +247,9 @@ struct TransportBar: View {
                     .help(Format.outputExplanation(format))
             }
 
+            SleepButton()
+                .font(.caption)
+
             if player.hasOtherDevices || player.isControllingAnother {
                 ControlButton(open: $showingControl, labelled: !compact, iconSize: 17)
                     .font(.caption)
@@ -317,7 +329,9 @@ struct SeekBar: View {
                 // thumb does not follow the pointer then — a head that moves
                 // and springs back is a worse answer than one that stays put —
                 // but the attempt is still worth answering, so releasing says
-                // why nothing happened.
+                // why nothing happened. tvOS has no drag; the remote seeks
+                // through the system's Now Playing.
+                #if !os(tvOS)
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { value in
@@ -329,6 +343,7 @@ struct SeekBar: View {
                             player.seek(fraction: (value.location.x / geo.size.width).clamped())
                         }
                 )
+                #endif
             }
             .frame(height: Self.reach)
 
@@ -563,6 +578,68 @@ struct RepeatButton: View {
         case .off: "Off"
         case .queue: "Queue"
         case .one: "One track"
+        }
+    }
+}
+
+/// The sleep timer: the fixed choices, and while one is set what is left
+/// beside the moon. The engine says when it goes off rather than what is
+/// left, so the countdown is the system's to draw and nothing here ticks.
+struct SleepButton: View {
+    @Environment(PlayerModel.self) private var player
+
+    var body: some View {
+        let sleep = player.sleep
+        Menu {
+            ForEach([15, 30, 45, 60], id: \.self) { minutes in
+                Button("\(minutes) Minutes") { player.setSleepTimer(.after(minutes: UInt32(minutes))) }
+            }
+            Divider()
+            Button("End of Track") { player.setSleepTimer(.endOfTrack) }
+            Button("End of Record") { player.setSleepTimer(.endOfRecord) }
+            if sleep != nil {
+                Divider()
+                Button("Cancel Sleep Timer", role: .destructive) { player.cancelSleepTimer() }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: sleep == nil ? "moon" : "moon.zzz.fill")
+                switch sleep {
+                case _ where player.sleepFading: Text("Fading")
+                case .at(let unixMs):
+                    let now = Date.now
+                    Text(timerInterval: now...max(now, Self.date(unixMs)), countsDown: true)
+                        .monospacedDigit()
+                case .endOfTrack: Text("Track")
+                case .endOfRecord: Text("Record")
+                case nil: EmptyView()
+                }
+            }
+            .foregroundStyle(sleep == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
+        }
+        // A plain button's label keeps its own colour, as shuffle's and
+        // repeat's do; a borderless menu draws it in the accent whatever it
+        // says, which lit the moon with no timer set.
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(sleep == nil ? "Sleep timer" : "Sleep timer: \(value(sleep))")
+        .accessibilityLabel("Sleep timer")
+        .accessibilityValue(value(sleep))
+    }
+
+    private static func date(_ unixMs: UInt64) -> Date {
+        Date(timeIntervalSince1970: Double(unixMs) / 1000)
+    }
+
+    private func value(_ sleep: SleepState?) -> String {
+        switch sleep {
+        case _ where player.sleepFading: "Fading out"
+        case .at(let unixMs): "Stops at \(Self.date(unixMs).formatted(date: .omitted, time: .shortened))"
+        case .endOfTrack: "Stops at the end of the track"
+        case .endOfRecord: "Stops at the end of the record"
+        case nil: "Off"
         }
     }
 }

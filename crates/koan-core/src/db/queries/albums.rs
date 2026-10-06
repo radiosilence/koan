@@ -18,6 +18,7 @@ fn album_row(row: &rusqlite::Row) -> rusqlite::Result<AlbumRow> {
         label: row.get(8)?,
         remote_id: row.get(9)?,
         added_at: row.get(10)?,
+        on_device: None,
     })
 }
 
@@ -138,8 +139,8 @@ pub fn get_or_create_album(
     Ok(conn.last_insert_rowid())
 }
 
-/// Fold album `gone` into `keep`: its tracks, favourites and shares move
-/// across, `keep` fills its gaps from it, and it is deleted. The koan server's
+/// Fold album `gone` into `keep`: its tracks, favourites, ratings and
+/// shares move across, `keep` fills its gaps from it, and it is deleted. The koan server's
 /// uid goes with the server's id, so the album stays one id on every device.
 pub(crate) fn merge_albums(conn: &Connection, keep: i64, gone: i64) -> rusqlite::Result<()> {
     let server_uid: Option<String> = conn
@@ -155,6 +156,7 @@ pub(crate) fn merge_albums(conn: &Connection, keep: i64, gone: i64) -> rusqlite:
         for sql in [
             "UPDATE tracks SET album_id = ?1 WHERE album_id = ?2",
             "UPDATE OR IGNORE favourite_albums SET album_id = ?1 WHERE album_id = ?2",
+            "UPDATE OR IGNORE album_ratings SET album_id = ?1 WHERE album_id = ?2",
             "UPDATE shares SET subject_id = ?1 WHERE kind = 'album' AND subject_id = ?2",
             "UPDATE albums SET
                  remote_id = COALESCE(remote_id, (SELECT remote_id FROM albums WHERE id = ?2)),
@@ -173,6 +175,7 @@ pub(crate) fn merge_albums(conn: &Connection, keep: i64, gone: i64) -> rusqlite:
         }
         for sql in [
             "DELETE FROM favourite_albums WHERE album_id = ?1",
+            "DELETE FROM album_ratings WHERE album_id = ?1",
             "DELETE FROM albums WHERE id = ?1",
         ] {
             conn.execute(sql, params![gone])?;
@@ -214,9 +217,15 @@ pub enum AlbumOrder {
     /// Seeded, so every page of one shuffle belongs to the same shuffle. A new
     /// seed is a new order — that is what the reshuffle button asks for.
     Random(i64),
+    /// Most recently played first. Only with `AlbumQuery::played`, which is
+    /// what knows when; without it, `RecentlyAdded`.
+    LastPlayed,
     /// Insertion order. The one order a new album cannot land in the middle
     /// of, which is what makes an offset walk over the whole list exact.
     Id,
+    /// Fully on this device first, then by how much is, then the most
+    /// recently downloaded.
+    Downloaded,
 }
 
 impl AlbumOrder {
@@ -235,13 +244,33 @@ impl AlbumOrder {
                                a.name COLLATE LIBRARY, al.title COLLATE LIBRARY"
             }
             Self::Random(_) => "koan_shuffle(al.id, ?)",
+            Self::LastPlayed => "p.last DESC, p.last_id DESC",
             Self::Id => "al.id",
+            Self::Downloaded => {
+                "have = total DESC, CAST(have AS REAL) / total DESC, fetched DESC, al.id"
+            }
         }
     }
 }
 
 /// Codecs that lose nothing, as the indexer names them.
 pub const LOSSLESS_CODECS: [&str; 5] = ["FLAC", "ALAC", "WAV", "AIFF", "PCM"];
+
+/// How much of a record is on this device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OnDevice {
+    /// Tracks with a file here: downloaded, or in the library.
+    pub have: u32,
+    pub total: u32,
+}
+
+/// What a listing narrowed to the device selects after the album columns, and
+/// what `AlbumOrder::Downloaded` sorts by. Correlated rather than joined, so
+/// only the records that pass the narrowing are counted.
+const ON_DEVICE_COLUMNS: &str = ",
+    (SELECT SUM(COALESCE(d.cached_path, d.path) IS NOT NULL) FROM tracks d WHERE d.album_id = al.id) AS have,
+    (SELECT COUNT(*) FROM tracks d WHERE d.album_id = al.id) AS total,
+    (SELECT MAX(COALESCE(d.cache_download_date, 0)) FROM tracks d WHERE d.album_id = al.id) AS fetched";
 
 /// Narrowing by what the records are, shared by the album and artist listings:
 /// an artist passes when any of their albums does.
@@ -257,6 +286,9 @@ pub struct AlbumFilter<'a> {
     pub year_to: Option<i32>,
     /// Records with at least one track tagged with this genre.
     pub genre: Option<&'a str>,
+    /// Records with at least one track that can play here: downloaded, or a
+    /// file in the library. What offline narrows to.
+    pub on_device: bool,
 }
 
 impl AlbumFilter<'_> {
@@ -290,6 +322,13 @@ impl AlbumFilter<'_> {
             wheres.push(format!("al.date IS NOT NULL AND {year} <= ?"));
             params.push(Box::new(to));
         }
+        if self.on_device {
+            wheres.push(
+                "EXISTS (SELECT 1 FROM tracks d WHERE d.album_id = al.id
+                         AND COALESCE(d.cached_path, d.path) IS NOT NULL)"
+                    .into(),
+            );
+        }
         if let Some(genre) = self.genre {
             wheres.push(
                 "EXISTS (SELECT 1 FROM tracks g WHERE g.album_id = al.id AND g.genre = ? COLLATE NOCASE)"
@@ -312,6 +351,8 @@ pub struct AlbumQuery<'a> {
     pub order: AlbumOrder,
     /// Only records this user has favourited.
     pub favourites_of: Option<i64>,
+    /// Only records with a track played since then.
+    pub played: Option<super::history::PlayedSince>,
     pub filter: AlbumFilter<'a>,
     /// `None` for the whole listing. A client that scrolls should page.
     pub limit: Option<u32>,
@@ -327,17 +368,82 @@ pub struct AlbumQuery<'a> {
 /// fold accented letters, so `MOTLEY` finds `Motley` but `MÖTLEY` does not find
 /// `Mötley`.
 pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, DbError> {
-    let mut sql = String::from(
+    let (body, mut params) = album_body(conn, q)?;
+    let counted = q.filter.on_device || q.order == AlbumOrder::Downloaded;
+    let mut sql = format!(
         "SELECT al.id, al.title, al.artist_id, a.name, al.date,
                 al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id,
-                al.added_at
-         FROM albums al
+                al.added_at{}
+         {body} ORDER BY ",
+        if counted { ON_DEVICE_COLUMNS } else { "" }
+    );
+    let order = match q.order {
+        AlbumOrder::LastPlayed if q.played.is_none() => AlbumOrder::RecentlyAdded,
+        order => order,
+    };
+    if let AlbumOrder::Random(seed) = order {
+        params.push(Box::new(seed));
+    }
+    sql.push_str(order.clause());
+
+    if let Some(limit) = q.limit {
+        params.push(Box::new(limit as i64));
+        params.push(Box::new(q.offset as i64));
+        sql.push_str(" LIMIT ? OFFSET ?");
+    }
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+            let mut album = album_row(row)?;
+            if counted {
+                album.on_device = Some(OnDevice {
+                    have: row.get(11)?,
+                    total: row.get(12)?,
+                });
+            }
+            Ok(album)
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// How many albums `list_albums` would list for `q`, ignoring its paging: what
+/// a "See all" says, from the same narrowing as the list it opens.
+pub fn count_albums(conn: &Connection, q: &AlbumQuery) -> Result<u64, DbError> {
+    let (body, params) = album_body(conn, q)?;
+    let n: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) {body}"),
+        rusqlite::params_from_iter(params.iter()),
+        |r| r.get(0),
+    )?;
+    Ok(n as u64)
+}
+
+/// The FROM and WHERE that `list_albums` and `count_albums` share, and their
+/// parameters, in order.
+fn album_body(
+    conn: &Connection,
+    q: &AlbumQuery,
+) -> Result<(String, Vec<Box<dyn rusqlite::ToSql>>), DbError> {
+    let mut sql = String::from(
+        "FROM albums al
          LEFT JOIN artists a ON al.artist_id = a.id",
     );
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
     if let Some(user) = q.favourites_of {
         params.push(Box::new(super::auth::resolve_user(conn, user)?));
         sql.push_str(" JOIN favourite_albums f ON f.album_id = al.id AND f.user_id = ?");
+    }
+    if let Some(played) = q.played {
+        params.push(Box::new(super::auth::resolve_user(conn, played.user)?));
+        params.push(Box::new(played.since));
+        sql.push_str(
+            " JOIN (SELECT t.album_id AS id, MAX(h.played_at) AS last, MAX(h.id) AS last_id
+                      FROM play_history h JOIN tracks t ON t.id = h.track_id
+                     WHERE h.user_id = ? AND h.played_at >= ? AND t.album_id IS NOT NULL
+                     GROUP BY t.album_id) p ON p.id = al.id",
+        );
     }
     let mut wheres: Vec<String> = Vec::new();
     if let Some(ids) = q.ids {
@@ -365,24 +471,7 @@ pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, D
         sql.push_str(" WHERE ");
         sql.push_str(&wheres.join(" AND "));
     }
-
-    sql.push_str(" ORDER BY ");
-    if let AlbumOrder::Random(seed) = q.order {
-        params.push(Box::new(seed));
-    }
-    sql.push_str(q.order.clause());
-
-    if let Some(limit) = q.limit {
-        params.push(Box::new(limit as i64));
-        params.push(Box::new(q.offset as i64));
-        sql.push_str(" LIMIT ? OFFSET ?");
-    }
-
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt
-        .query_map(rusqlite::params_from_iter(params.iter()), album_row)?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+    Ok((sql, params))
 }
 
 /// How `played_albums` orders a user's listening.
@@ -421,6 +510,34 @@ pub fn played_albums(
          LIMIT ?2 OFFSET ?3"
     );
     let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(
+            params![super::auth::resolve_user(conn, user)?, limit, offset],
+            album_row,
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// `user`'s rated albums, highest first and, within a rating, most recently
+/// rated first: Subsonic's `highest` list.
+pub fn highest_rated_albums(
+    conn: &Connection,
+    user: i64,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<AlbumRow>, DbError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT al.id, al.title, al.artist_id, a.name, al.date,
+                al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id,
+                al.added_at
+         FROM album_ratings r
+         JOIN albums al ON al.id = r.album_id
+         LEFT JOIN artists a ON al.artist_id = a.id
+         WHERE r.user_id = ?1
+         ORDER BY r.rating DESC, r.changed_at DESC, al.id
+         LIMIT ?2 OFFSET ?3",
+    )?;
     let rows = stmt
         .query_map(
             params![super::auth::resolve_user(conn, user)?, limit, offset],
@@ -568,6 +685,71 @@ mod tests {
             crate::db::queries::upsert_track(&db.conn, &meta).unwrap();
         }
         db
+    }
+
+    /// A record fully downloaded comes before one half there, and a record
+    /// with nothing here is neither counted nor offered offline.
+    #[test]
+    fn on_device_counts_what_can_play_here() {
+        let db = test_db();
+        for (title, album) in [
+            ("X1", "Whole"),
+            ("X2", "Whole"),
+            ("Y1", "Half"),
+            ("Y2", "Half"),
+            ("Z1", "None"),
+        ] {
+            let mut meta = crate::db::queries::sample_meta(title, "Artist", album);
+            meta.path = Some(format!("/music/{title}.flac"));
+            crate::db::queries::upsert_track(&db.conn, &meta).unwrap();
+        }
+        // Remote tracks, as a phone has them, two records' worth downloaded.
+        db.conn
+            .execute("UPDATE tracks SET path = NULL", [])
+            .unwrap();
+        db.conn
+            .execute(
+                "UPDATE tracks SET cached_path = '/cache/' || title WHERE title IN ('X1', 'X2', 'Y1')",
+                [],
+            )
+            .unwrap();
+        let album = |title: &str| -> i64 {
+            db.conn
+                .query_row("SELECT id FROM albums WHERE title = ?1", [title], |r| {
+                    r.get(0)
+                })
+                .unwrap()
+        };
+
+        let downloaded = list_albums(
+            &db.conn,
+            &AlbumQuery {
+                filter: AlbumFilter {
+                    on_device: true,
+                    ..Default::default()
+                },
+                order: AlbumOrder::Downloaded,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            downloaded
+                .iter()
+                .map(|a| (a.id, a.on_device))
+                .collect::<Vec<_>>(),
+            vec![
+                (album("Whole"), Some(OnDevice { have: 2, total: 2 })),
+                (album("Half"), Some(OnDevice { have: 1, total: 2 })),
+            ]
+        );
+        let offline = AlbumFilter {
+            on_device: true,
+            ..Default::default()
+        };
+        let mut listed = titles(&db, offline);
+        listed.sort();
+        assert_eq!(listed, vec!["Half", "Whole"]);
     }
 
     fn titles(db: &Database, filter: AlbumFilter) -> Vec<String> {

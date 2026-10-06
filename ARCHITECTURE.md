@@ -300,8 +300,12 @@ A transfer nothing wants any more stops, mid-transfer included; it asks every 25
 | `queries/scan_cache.rs` | Mtime+size change detection to skip unchanged files |
 | `queries/stats.rs` | Library statistics |
 | `queries/lyrics.rs` | Lyrics caching (synced + plain, per-track) |
+| `queries/bookmarks.rs` | Subsonic bookmarks: one saved position (and note) per account and track, for resuming long tracks. Followed through track merges |
+| `queries/ratings.rs` | One-to-five ratings of tracks, albums and artists, per account, by row id. Subsonic's `setRating`, `userRating` and the `highest` album list. No rating is no row |
+| `queries/scrobbling.rs` | Accounts' scrobbling services and the outbox of plays waiting for them. A trigger on `play_history` queues reported plays as they are recorded; connecting queues the heard history |
 | `queries/favourites.rs` | Favourite/star status by row id (syncs with Navidrome). Favourites, playlists, play history and shares carry a `user_id`: each account on a server has its own, as Navidrome keeps them. `LOCAL_USER` (0) is the caller with no account — the apps, the TUI, auth-disabled mode, the Subsonic shared secret — and resolves to the first admin once one exists, so a local library and a single-user server behave the same (`queries/auth.rs`) |
-| `queries/history.rs` | Play history — one row per play, written when a track starts |
+| `queries/smart.rs` | Smart playlists: rules (`crate::smart`) compiled to one parameterised query over tracks, the owner's plays and favourites. The selection is written into the playlist's entries, so every reader sees an ordinary playlist; reads re-evaluate one older than a minute (a random order, a day) and write only when the selection moved, keeping entry ids. A scrobble or favourite on the server re-evaluates at once the owner's playlists whose rules read it, and `clients::changed` has devices pull any that moved. A read never waits for the write lock: behind a scan it serves the last contents, and the refusal is remembered for the minute so each read does not evaluate again |
+| `queries/history.rs` | Play history — one row per play, written when a track starts. On a server, also forgettings (`play_history_forgotten`) and the pages devices read after a cursor of two `AUTOINCREMENT` ids; on a device, the outbox of scrobbles and forgettings waiting for the server |
 | `queries/playback_state.rs` | Queue and playback position persistence across sessions |
 
 **Indexes and the planner.** Every question the library is asked about a handful of rows is answerable from an index, so a query plan that says `SCAN` is a defect unless the query genuinely means "all of them". Two shapes defeat an index and neither one fails, so both only ever show up as cost: an `OR` spanning different columns or different tables — a track is reachable by `path`, `cached_path` or `remote_url`, and an artist by their own credit or their album's — and a `LIKE` pattern or a collation the index was not built with. The first is written as a union of indexed lookups; the second as a range over the indexed column. `db/schema.rs::tests::hot_queries_do_not_scan` asserts the plans, because a rewrite that quietly loses its index reads the same.
@@ -318,7 +322,7 @@ Which track a source belongs to is decided only by `sources::link`, on one norma
 
 **Album and artist identity:** an artist is its folded name (`artists.name_key`). An album is its folded title (`albums.title_key`), its album artist and its MusicBrainz release when one is known, so two editions with their own release ids are two albums; a track naming no release joins the album of its names that has none either. A release id is filled once and never overwritten, so files of two editions cannot trade it. A track only the server has joins the album holding the server's id for its record, and an album's server id is the one most of its entries give. When an album of files takes a server id that a server-only album already holds, that album is folded into the one with files, which is how a record the server names one way and the files another becomes one album.
 
-**Favourites** name rows by id (`favourites.track_id`, `favourite_albums.album_id`, `favourite_artists.artist_id`) and follow them through merges. `rebuild_index` forgets what the sources said and keeps the rows: the next scan and sync read every source again and each reclaims its row by path or server id, so favourites, history and playlists survive it.
+**Favourites** name rows by id (`favourites.track_id`, `favourite_albums.album_id`, `favourite_artists.artist_id`) and follow them through merges, as ratings (`track_ratings`, `album_ratings`, `artist_ratings`) and bookmarks do. `rebuild_index` forgets what the sources said and keeps the rows: the next scan and sync read every source again and each reclaims its row by path or server id, so favourites, history and playlists survive it.
 
 ### `index/`
 
@@ -326,6 +330,8 @@ Which track a source belongs to is decided only by `sources::link`, on one norma
 |---|---|
 | `scanner.rs` | Streaming library scan: walkdir → rayon tag reads → bounded channel → one DB transaction per 1000 files, reads and writes running at the same time |
 | `metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, etc.), codec detection from extension |
+| `folder_art.rs` | Covers kept as image files beside the tracks: `cover.*`, `folder.*`, `front.*` in that order (Navidrome's default), any case, from a disc folder's parent when the disc folder has none, then embedded art. `cover_art` is the one lookup every front end and the server use. Each directory's listing is kept against its mtime. A watcher rescan of a folder writes its albums and tracks to `art_evictions`, so the apps' caches drop covers an image change made stale |
+| `playlist_files.rs` | Playlist files the scan walk finds: Navidrome `.nsp` into smart playlists, `.m3u`/`.m3u8` into ordinary ones resolved by path. The file stays authoritative: changed, it rewrites the rules; gone from a directory the scan covered completely, it deletes the playlist |
 | `id3v2_pictures.rs` | MP3 tag reads with the embedded art held back — walks the ID3v2 frame headers and serves lofty zeros over the picture frames it would only discard |
 
 ### `format` (from sift)
@@ -343,6 +349,7 @@ fb2k-compatible template engine, re-exported from [sift](https://github.com/radi
 | `sync.rs` | Library sync: stable `alphabeticalByName` album list (500/page), then every song via empty-query `search3` (500/page, four in flight) joined to it, one transaction per page. Servers that list no songs that way fetch albums one at a time with rayon. Reports progress per page. Whether to walk at all is `helpers::sync_remote`'s: koan's own syncs walk only when the server's `getIndexes` `lastModified` has moved since the last complete walk (`remote_servers.library_version`) |
 | `lrclib.rs` | LRCLIB API client for lyrics fetching (synced LRC + plain text) |
 | `profile.rs` | What the signed-in server is: `ping` and `getOpenSubsonicExtensions`, probed once per sign-in. koan's features are gated on the extensions listed (`koanLink`, `koanDevices`), not on the server's name |
+| `history.rs` | Play history shared through a koan server offering `koanHistory`: flushes the outbox, adopts other devices' plays after a cursor (leaving out this device's own, which come back within `SAME_PLAY_SECS`), applies forgettings. Part of every sync; `LinkCommand::HistoryChanged` runs it alone |
 | `link.rs` | The client's WebSocket to a koan server (`/rest/koanLink`): `LinkCommand`s down, `LinkReport`s up (state, push token, relayed commands, Live Activity token). The wire format every device speaks, LAN connections included |
 | `levels.rs` | A controlled device's audio levels on its controller. `Feed` reads the analyser for every link session watching (`watchLevels`) and only while one is; `Interp` draws received frames behind the controller's estimate of the remote playhead, keyed by position; `Remote` is the controller's subscription and its display-rate ticker |
 | `wire.rs` | Runs a WebSocket session event-driven: one `poll` on the socket and a pipe the engine's change signal rings, so a link reports a change at once and sleeps otherwise |
@@ -357,6 +364,7 @@ fb2k-compatible template engine, re-exported from [sift](https://github.com/radi
 | `signal.rs` | `Wake` — a generation counter a reader can wait on, and the process-wide one every front end waits on. What lets koan hold state in versions and atomics without anyone having to look again |
 | `organize.rs` | File renaming using format strings. Preview/execute/undo, all planned by one `plan()` so a preview and the execute that follows it agree. Scoped by track id or by path. Refuses to overwrite; database rows (track paths, scan cache, favourites, playback state) are rewritten in the same transaction as the move. Playlists need no rewriting — they point at library rows, not at paths. Every move is logged for undo. Moves ancillary files (cover art, cue sheets). |
 | `lyrics.rs` | LRCLIB lyrics fetching and parsing (synced LRC + plain text). Cached per-track in SQLite. |
+| `scrobbling.rs` | Forwarding plays to ListenBrainz: one sleeping thread, woken when a play is queued, sending the durable `scrobble_outbox` in batches and backing off only while the service is unreachable. Now-playing notices are best effort |
 
 ## koan-cli modules
 
@@ -372,7 +380,7 @@ Thin binary crate. `main.rs` has the clap CLI struct definitions, match dispatch
 | `queue.rs` | `QueueView` widget: album-grouped display with headers, status icons, selection markers, drag target line |
 | `library.rs` | `LibraryState` + `LibraryView`: flattened tree (artist->album->track), expand/collapse, substring filter with cached artist list |
 | `picker.rs` | `PickerState`: Nucleo fuzzy search engine, multi-select, colored result parts. Sentinel helpers for artist drill-down. |
-| `cover_art.rs` | Halfblock rendering: extract from tags -> resize with Lanczos3 -> 2 pixels per terminal cell (upper half block char with FG/BG colors). Forces even pixel height to prevent black bar artifacts. |
+| `cover_art.rs` | Halfblock rendering: the cover (folder image or tags, see `index/folder_art.rs`) -> resize with Lanczos3 -> 2 pixels per terminal cell (upper half block char with FG/BG colors). Forces even pixel height to prevent black bar artifacts. |
 | `track_info.rs` | `TrackInfoOverlay`: modal with full metadata fields + embedded album art |
 | `theme.rs` | Color palette. Cyan for active/cursor, green for albums, DarkGray for hints. |
 | `context_menu.rs` | `ContextMenuOverlay` widget: action list popup (play, remove, favourite, track info, organize, copy share link) |

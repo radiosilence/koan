@@ -264,6 +264,7 @@ title artist current } }` to see each device, what it is playing and what it has
 command about the user's music goes to a device:
 - `controlClient(action: PAUSE|RESUME|NEXT|PREVIOUS)`, `seekOnClient(positionMs)`
 - `setPlayModeOnClient(shuffle, repeat: OFF|QUEUE|ONE)`: shuffle reorders the rest of the device's queue, and turning it off puts the queue back; `clients { shuffle repeat }` reports each device's modes
+- `setSleepTimerOnClient(minutes)` or `setSleepTimerOnClient(endOf: TRACK|RECORD)` (\"stop the music in 30 minutes\", \"after this album\"): it fades out and pauses, the queue kept; `cancelSleepTimerOnClient`; `clients { sleep { remainingMs endOf } }` shows what is set
 - `playOnClient(trackIds, startAt)` replaces the queue and plays; `enqueue: true` appends. \
 A phone iOS has suspended is not linked but is still reached. Music comes up there as a \
 notification to tap, since iOS lets no app start audio on its own from sleep; queue and \
@@ -307,6 +308,10 @@ integers in queries; pass them to the client mutations as strings.
 - Favourites: `favourite`, `unfavourite`, `toggleFavourite`, `favouritesOnly: true` on queries
 - Playlists: `playlists`, `playlistTracks`, `createPlaylist`, `addToPlaylist`, \
 `setPlaylistTracks`, `renamePlaylist`, `deletePlaylist`
+- Smart playlists stay up to date by themselves (\"what I played most last month\", \
+\"favourites I have not heard in a while\"): `createSmartPlaylist(name, rules)` and \
+`setPlaylistRules`; the rule format is in the schema's description of `createSmartPlaylist`. \
+Their contents cannot be edited (`readonly`); change the rules instead.
 - History: `playHistory`
 - Sharing: `createShare(trackIds, description)` makes a public link anyone can open without an \
 account; confirm with the user first. `shares`, `updateShare`, `deleteShare` manage them.
@@ -334,7 +339,9 @@ duration, favourites), `randomTracks`, `fuzzySearch`
     choosing_by_style!(),
     "- Favourites: `favourite`, `unfavourite`, `toggleFavourite`, `favouritesOnly: true` on queries
 - Playlists: `playlists`, `playlistTracks`, `createPlaylist`, `saveQueueAsPlaylist`, \
-`addToPlaylist`, `setPlaylistTracks`, `renamePlaylist`, `deletePlaylist`, `playPlaylist`
+`addToPlaylist`, `setPlaylistTracks`, `renamePlaylist`, `deletePlaylist`, `playPlaylist`; \
+`createSmartPlaylist(name, rules)` and `setPlaylistRules` for ones that stay up to date by \
+themselves (rule format in the schema)
 - History: `playHistory`
 - Sharing: `createShare(trackIds, description)` makes a public link; confirm with the user first.
 

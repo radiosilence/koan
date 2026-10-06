@@ -73,6 +73,24 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 - Work in PRs, never push to main.
 - Don't rebase on merge — we squash PRs.
 
+## Docs and site
+
+`docs/` is the user guide and reference, and koan.rocks is built from it (`site/src/docs.sh`, deployed by `site.yml`). A change in behaviour, a setting, a CLI flag or a supported platform updates the matching page in the same PR, as does `CHANGELOG.md` under `## Unreleased`. Before a release, check that the guide still describes what the code does, since screenshots and settings drift fastest.
+
+## Supervising sessions
+
+If you are told you are the foreman, supervisor, manager, boss or guvnor of the koan sessions, in any wording, this section is your brief: read it before doing anything else. Other sessions skip it.
+
+The manager coordinates and does not write features. It keeps the context, makes the decisions and hands each piece of work to another session as a self-contained task: the exact branch, the exact change, the command that verifies it, and what to report back.
+
+- **Orient first.** Run `date`, then `gh pr list`, `gh issue list`, `git worktree list`, `gh release list --limit 3` and `ListAgents`. The open PRs and their CI state are the work in flight. Main's last `release: vX.Y.Z` commit tells you what has shipped since.
+- **Workers.** Sessions named `worker-<name>` each run in `../worktrees/koan/worker-<name>` and switch to whichever PR branch they are given. Other named sessions own their own area, such as the Apple TV app, and get status requests and briefs rather than unrelated tasks. A session that has hit its context limit is cleared by the user and then re-briefed by the manager with everything it needs in one message. A compacted session loses detail, so prefer clearing.
+- **Merging.** The manager merges green PRs when the user asks it to (`gh pr merge --squash`). When PRs conflict, typically in `CHANGELOG.md`, merge main into the branch, keep both entries and push. The manager's token cannot merge a PR that changes `.github/workflows/`, so the user merges those.
+- **Releasing.** Cut a release once the in-flight PRs the user wants are on main, using the `release` skill. Merging the release PR is what publishes it: CI releases from main when the version in `Cargo.toml` moves. When the release is published, trigger the server deploy by hand and confirm the TestFlight builds uploaded.
+- **Docs.** Before cutting a release, have a session check `docs/` and the site against what merged since the last one.
+- **Housekeeping.** Remove a PR's worktree and its `target/` once it merges or is abandoned; Cargo target directories run to gigabytes each. Keep at most one booted simulator across all sessions, never drive or capture the user's live screen, and stop only the processes you started.
+- **Secrets.** Signing and App Store Connect credentials come from the 1Password service account (`op`). Export a key to the scratchpad only for the command that needs it, and delete it afterwards. Never write a credential into the repo, a PR or an issue.
+
 ## Build & check
 
 ```bash
@@ -93,6 +111,16 @@ just ios-signin DEV URL USER PASS # sign a simulator in through Settings, as App
 just ios-use DEV      # use the app like a listener and check each step; run before submitting
 just ios-store-shots SRC OUT [captions-ipad] # frame a walk's screenshots for the App Store
 just ios-store [iphone=DIR ipad=DIR] # push apps/ios/store/listing.toml (+ screenshots) to App Store Connect
+just tv-run         # build and launch on an Apple TV simulator
+just tv-device      # install on the Apple TV paired with Xcode
+just tv-walk [LIBRARY] # walk every page with the remote, into target/tv-walk; a folder is served from a throwaway koan
+just tv-join LINK [tv] # sign the simulator, or the paired Apple TV, in through an invite
+just tv-kept        # clear Caches/koan-config as tvOS does, check the TV is still signed in
+just tv-pair [OUTCOME] # pair a signed-out TV simulator, approved (or declined, or left to expire) over the API
+just tv-signin [ROUTES] # each other way onto the TV and its failures, from fresh installs, against KOAN_SIGNIN_*
+just tv-pair-qr     # the same, approved by an iPhone simulator that reads the QR code off the TV
+just tv-discover    # a signed-out TV simulator finds a server the Mac announces as a signed-in device would, and pairs
+just tv-testflight BUILD # archive, sign and upload the tvOS app to TestFlight (needs the ASC key)
 ```
 
 The macOS app needs `just macos-ffi` to have run at least once — it generates the Swift bindings that `swift build` compiles against. `macos-build` does this for you.
@@ -113,7 +141,8 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 |--------|------|
 | `audio/backend.rs` | `AudioBackend` + `AudioEngineHandle` traits — platform-agnostic audio output |
 | `audio/coreaudio_backend.rs` | macOS `CoreAudioBackend` impl (wraps engine.rs + device.rs) |
-| `audio/ios_backend.rs` | iOS `IosAudioBackend` impl — the route is the only device; the session belongs to the app |
+| `audio/ios_backend.rs` | iOS and tvOS `IosAudioBackend` impl — the route is the only device; the session belongs to the app |
+| `audio/toolbox.rs` | The AudioToolbox names the engine uses, declared by hand for tvOS: `coreaudio-sys`'s build script knows only macOS and iOS |
 | `audio/cpal_backend.rs` | Linux `CpalBackend` impl (ALSA/PipeWire/PulseAudio via cpal) |
 | `audio/engine.rs` | CoreAudio output setup, render callback. AUHAL on macOS, RemoteIO on iOS — two properties apart |
 | `audio/buffer.rs` | `PlaybackTimeline`, track boundaries, decode thread entry points (`start_decode`, `decode_queue_loop`, `decode_single`) |
@@ -132,16 +161,20 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `db/schema.rs` | DDL: artists, albums, tracks, scan_cache, remote_servers, organize_log, tracks_fts (FTS5) |
 | `db/connection.rs` | `Database::open()`, WAL mode, pragmas |
 | `db/pool.rs` | Connections opened once and kept. What every front end reads through — `Database::open` checks the schema and checkpoints the WAL, which is not a thing to do per query |
-| `db/queries/` | Row types, upsert, `sources` (track identity: source rows, link, derive), FTS5 search, scan cache, stats, playlists, `batch` (SQL-side track filtering, batched parent→child reads) |
+| `db/queries/` | Row types, upsert, `sources` (track identity: source rows, link, derive), FTS5 search, scan cache, stats, playlists, `smart` (smart playlist rules compiled to SQL, evaluated on read into the playlist's entries), `batch` (SQL-side track filtering, batched parent→child reads) |
 | `index/scanner.rs` | Streaming library scan: walkdir → rayon tag reads → bounded channel → batched DB transactions. `ScanOptions` carries a cancel flag and an optional progress sink. `import_paths` indexes named files where they lie (Finder drops), removing nothing; `scan_dirs` rescans named directories inside the library, removals included — what the folder watcher runs |
+| `index/playlist_files.rs` | Playlist files found by scans, keyed by `source_path`: Navidrome `.nsp` into smart playlists, `.m3u`/`.m3u8` into read-only ordinary ones. A file gone from a settled directory deletes its playlist |
 | `index/watch.rs` | Which filesystem events can change the index, and the directory each one means a scan of. Drops access, metadata, hidden and Syncthing paths, partial downloads |
 | `index/metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, APE), codec detection |
+| `index/folder_art.rs` | Covers as image files beside the tracks (`cover.*`, `folder.*`, `front.*`, Navidrome's order), ahead of embedded art. `cover_art` is what every cover lookup calls. Directory listings kept against the directory's mtime |
 | `index/id3v2_pictures.rs` | MP3 tag reads with the embedded art held back — walks the ID3v2 frame headers and serves lofty zeros over the picture frames it would only discard |
 | `format` | fb2k-compatible template engine, re-exported from sift (`sift-music`) — the tagger shared with other importers. Change it there |
 | `remote/client.rs` | Subsonic/Navidrome HTTP client (reqwest blocking, MD5+salt auth) |
 | `remote/download.rs` | Streaming downloads: `.part` → verify → atomic rename, progress, retries. All disk-bound remote bytes go through here |
 | `remote/sync.rs` | Library sync: album list, then songs paged in bulk via empty-query `search3` (per-album `getAlbum` for servers that cannot), one transaction per page, progress per page. Every sync walks everything; `helpers::sync_remote` decides whether to walk, by the server's `getIndexes` `lastModified` |
+| `remote/history.rs` | Play history shared through a koan server: the outbox of scrobbles and forgettings (offline plays reach the server dated to when they started), and adopting the account's other devices' plays after a cursor. Gated on `koanHistory` |
 | `remote/link.rs` | The standing WebSocket a client keeps to a koan server (`/rest/koanLink`), and the `LinkCommand`s the server sends down it: play, enqueue, pause, skip. Reconnects on its own; ids are resolved to local tracks, syncing first if one is new |
+| `remote/pair.rs` | A device without a keyboard signing in: opens `/rest/koanPair`, shows the code and `koan.rocks/pair/` link, and blocks until the server sends the outcome; an approved key is stored as an invite's is. Also the approver's calls (`info`, `approve`, `decline`) and `PairLink` |
 | `remote/profile.rs` | What the signed-in server is: `ping` + `getOpenSubsonicExtensions`, once per sign-in. Gate koan features on the extension (`koanLink`, `koanDevices`), never on the server's name |
 | `remote/devices.rs` | The devices this one can play on — the account's from the link, the network's from `nearby` — which one the app controls, and getting a command to it |
 | `remote/nearby.rs` | LAN control: listener on `devices.port`, Bonjour via `dns_sd`, a connection per device found or listed by address. Strangers get playback and the queue only (`LinkCommand::allowed_nearby`) |
@@ -153,9 +186,12 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `quiet.rs` | What runs in the background on iOS: nothing nobody asked for. Link, nearby browse and dial, sync and rescans wait here; a phone playing stays findable. Lifted by controlling another device or a push |
 | `config.rs` | Figment-based layered config: defaults → config.toml → config.local.toml → KOAN_* env vars |
 | `helpers.rs` | Shared by every front end: sign-in, favourite reconciliation, sharing, auto-sync and folder watching, forget-folder/forget-remote, cache and index maintenance |
-| `playlists.rs` | Playlists beyond the database: two-way Subsonic reconciliation, background pushes, M3U8 export |
+| `playlists.rs` | Playlists beyond the database: two-way Subsonic reconciliation, background pushes, M3U8 export. Read-only playlists (smart ones here, `readonly` ones there) are never pushed |
+| `smart.rs` | Smart playlist rules: the typed model and its JSON, checked with errors that name the problem, and Navidrome `.nsp` parsing into it |
+| `shelves.rs` | Favourites, Recently played and a search as filters on the album, artist and track listings (`AlbumQuery`, `ArtistQuery`, `TrackFilter`). A shelf page's previews are the head of those listings, with counts from the same query, so a preview and its "See all" agree. What each shelf holds, its window and its order live here; front ends ask by name |
 | `organize.rs` | File rename using format strings. Preview/execute/undo — one `PlanEntry` per file carrying its destination and outcome. Moves ancillary files |
 | `lyrics.rs` | LRCLIB lyrics fetching and parsing (synced LRC + plain) |
+| `scrobbling.rs` | Forwarding plays to ListenBrainz: one sleeping thread, woken when a play is queued, sending the durable `scrobble_outbox` in batches and backing off only while the service is unreachable. Now-playing notices are best effort |
 | `artist_info.rs` | Artist bio and photo: MusicBrainz id → Wikidata → Wikipedia/Commons. Resolved by id, never by name alone; cached per artist, misses included |
 
 ### koan-tui (`crates/koan-tui/src/`)
@@ -190,8 +226,12 @@ Swift bindings are generated, not checked in — `just macos-ffi` builds the lib
 
 ### apps/macos (`apps/macos/Sources/`)
 
-`Koan/` is the app: models, pages and rows, shared by both platforms. `KoanIOS/`
-is the iOS scene root and audio session — the phone's shell over the same state.
+`Koan/` is the app: models, pages and rows, shared by every platform. `KoanIOS/`
+is the iOS scene root and audio session — the phone's shell over the same state,
+which tvOS uses too. `KoanTV/` holds what only a television has: Now Playing as
+a page, share links as codes to scan. What tvOS lacks — hover, drag, the
+pasteboard, sliders, keyboard shortcuts, selection menus — goes through small
+shims in `Support/Platform.swift` that leave a view as it is there.
 The directory is still called `macos` because the macOS app is what it builds
 with SwiftPM. iOS device builds and the UI walk go through an Xcode project that
 XcodeGen generates from `apps/ios/project.yml` (`just ios-project`); it is not
@@ -206,6 +246,7 @@ follows the top of the stack in front — see `TabShell`.
 | `KoanApp.swift` | `@main`, `AppState`, menu commands, keyboard shortcuts |
 | `KoanIOS/PushDelegate.swift` | Push: registers for a token and sends it up the link; wakes to link on a background push; runs the command a tapped notification carries |
 | `Support/ActivityModel.swift` | The one place that knows what koan is busy with. Each task declares what it holds — files on disk, local rows, remote rows, downloads — and a new one is disabled only where those overlap |
+| `Support/Pairing.swift` | Approving a device that is waiting to sign in: a `koan.rocks/pair/` link arriving through `AppState.open(url:)`, or a code typed in Settings, asks the server for the device's name and then the person, as invites do |
 | `Support/SettingsModel.swift` | Settings state over `config.toml`. Commits on edit, re-reads on focus |
 | `Support/EngineMirror.swift` | The engine's state as SwiftUI sees it. `Observable` by hand: one property per slice, invalidated only where a slice actually moved |
 | `Support/PlayerModel.swift` | What the app *does* to the player — commands, and the little that is genuinely local. Reads everything through the mirror |
@@ -258,9 +299,11 @@ follows the top of the stack in front — see `TabShell`.
 | `clients.rs` | Linked koan apps by account, and sending them `LinkCommand`s — what `clients`, `playOnClient` and `controlClient` use. Sends each link the account's other devices as they change, relays commands between them (`koanCommand` too), pushes Live Activity updates |
 | `mcp.rs` | MCP server (schema_sdl + graphql tools): stdio for `koan mcp`, `/mcp` on the main port behind koan's own tokens, admin capped at `user` |
 | `push.rs` | Apple push notifications to the iOS app: ES256 token auth, HTTP/2 to APNs. A background push wakes a suspended app to link; a play request becomes a notification to tap |
+| `pair.rs` | Pairings waiting to be approved, in memory: id, Crockford code, device name, ten-minute lapse, the socket route that holds the device, and `settle`, which mints the approver's key and sends it down. `/rest/koanPairInfo` and `/rest/koanPairApprove` in `subsonic.rs` and the web UI's `/pair` (`ui/pair.rs`) settle through it |
+| `transcode.rs` | Subsonic `stream` transcoding: whether a request gets the original or an `ffmpeg` Opus, MP3 or AAC encode, and running it |
 | `share.rs` | Public share pages and their audio, answering for a share's own tracks only |
 | `../styles/` | Tailwind sources for `assets/ui.css` and `assets/share.css`, on the theme koan.rocks uses (`site/src/theme.css`). The pages are styled with utilities in the templates; these hold element defaults and the rules for classes the scripts toggle or build (`playing`, `busy`, `missing`, the queue's rows). Quote every `class` attribute: Tailwind does not read an unquoted one. Run `just css` after changing either; the compiled files are committed because the crate embeds them |
-| `ui/` | Web UI: server-rendered pages + Datastar, cookie-session gate, sign-in/resume/renew/sign-out, stream and cover routes. `assets/player.js` is the browser player both it and the share page use. `ui/oauth.rs` is the OAuth 2.1 authorization server for `/mcp`: discovery, stateless registration, consent, PKCE token exchange; `ui/connect.rs` the page explaining how to connect an assistant |
+| `ui/` | Web UI: server-rendered pages + Datastar, cookie-session gate, sign-in/resume/renew/sign-out, stream and cover routes. `assets/player.js` is the browser player both it and the share page use. `ui/oauth.rs` is the OAuth 2.1 authorization server for `/mcp`: discovery, stateless registration, consent, PKCE token exchange; `ui/connect.rs` the page explaining how to connect an assistant; `ui/scrobbling.rs` the page connecting an account to ListenBrainz |
 
 ### koan-cli (`crates/koan-cli/src/`)
 

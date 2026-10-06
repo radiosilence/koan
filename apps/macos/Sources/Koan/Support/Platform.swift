@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 #if canImport(AppKit)
 import AppKit
 #else
@@ -95,11 +96,51 @@ extension View {
     ///
     /// macOS keeps its bordered buttons: a row there is not a control, so there
     /// is nothing to opt out of.
+    /// A television's borderless button is bare text until focused, which in a
+    /// settings row reads as the row's value; there they keep their platters.
     func rowButtons() -> some View {
         #if os(macOS)
         self
+        #elseif os(tvOS)
+        buttonStyle(TelevisionButton())
         #else
         buttonStyle(.borderless)
+        #endif
+    }
+}
+
+extension View {
+    /// A control drawn as its glyph alone on the Mac and the phone. A
+    /// television gives it the round platter its neighbours have: a bare glyph
+    /// shows no focus, and cannot be found from across the room.
+    func controlButton() -> some View {
+        #if os(tvOS)
+        buttonStyle(TelevisionButton())
+        #else
+        buttonStyle(.plain)
+        #endif
+    }
+
+    /// A button or menu in a toolbar. On tvOS it takes the system's toolbar
+    /// style back from the shell's `TelevisionButton`, which would draw it as a
+    /// capsule with its symbol at text size, and shows the symbol alone: a
+    /// television's toolbar truncates a title to a letter or two.
+    func toolbarButton() -> some View {
+        #if os(tvOS)
+        buttonStyle(.automatic).labelStyle(.iconOnly)
+        #else
+        self
+        #endif
+    }
+
+    /// A `NavigationLink` in a list. On tvOS it is drawn as a full-width row:
+    /// the shell's button style would otherwise make it a capsule the size of
+    /// its label.
+    func listLink() -> some View {
+        #if os(tvOS)
+        buttonStyle(TelevisionRow(resting: 0.08))
+        #else
+        self
         #endif
     }
 }
@@ -115,11 +156,55 @@ extension View {
     ///
     /// A phone has neither. Touch has no double-click, and a `List` selection
     /// on iOS only exists in edit mode, so here the row takes the tap itself.
+    ///
+    /// A television has no touch either: only what can take focus can be
+    /// clicked, so there the row is a button.
+    @ViewBuilder
     func primaryTap(_ action: @escaping () -> Void) -> some View {
         #if os(macOS)
         self
+        #elseif os(tvOS)
+        Button(action: action) { contentShape(Rectangle()) }
+            .buttonStyle(TelevisionRow())
         #else
         contentShape(Rectangle()).onTapGesture(perform: action)
+        #endif
+    }
+}
+
+extension View {
+    /// `contextMenu(forSelectionType:menu:primaryAction:)`, which tvOS does not
+    /// have: a list there has no selection to act on, and its rows take their
+    /// primary action through `primaryTap`.
+    func selectionMenu<I: Hashable, M: View>(
+        for type: I.Type,
+        @ViewBuilder menu: @escaping (Set<I>) -> M,
+        primaryAction: ((Set<I>) -> Void)? = nil
+    ) -> some View {
+        #if os(tvOS)
+        self
+        #else
+        contextMenu(forSelectionType: type, menu: menu, primaryAction: primaryAction)
+        #endif
+    }
+}
+
+extension View {
+    /// `primaryTap`, with the row's menu. A list hands rows their menus through
+    /// its selection on the Mac and the phone; a television's list has none,
+    /// so there the menu goes on the row's own button, where a long press of
+    /// the remote finds it.
+    @ViewBuilder
+    func primaryTap<Menu: View>(
+        _ action: @escaping () -> Void,
+        @ViewBuilder menu: @escaping () -> Menu
+    ) -> some View {
+        #if os(tvOS)
+        Button(action: action) { contentShape(Rectangle()) }
+            .buttonStyle(TelevisionRow())
+            .contextMenu { menu() }
+        #else
+        primaryTap(action)
         #endif
     }
 }
@@ -310,9 +395,227 @@ extension View {
 /// white, in dark mode, under a white knob.
 struct SystemSwitch: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
+        #if os(tvOS)
+        // A television's toggle is a row that says On or Off. Its label takes
+        // the tint, which the room sets to the record's colour; the primary
+        // colour lets a focused row draw it dark on white as other rows do.
+        Toggle(configuration)
+            .tint(.primary)
+        #else
         Toggle(configuration)
             .toggleStyle(.switch)
             .tint(.green)
+        #endif
+    }
+}
+#endif
+
+extension View {
+    /// `onHover`, which tvOS does not have: nothing hovers under a remote.
+    func pointerHover(perform action: @escaping (Bool) -> Void) -> some View {
+        #if os(tvOS)
+        self
+        #else
+        onHover(perform: action)
+        #endif
+    }
+
+    /// The inset list, or the plain one on tvOS, which has no inset style.
+    func insetList() -> some View {
+        #if os(tvOS)
+        listStyle(.plain)
+        #else
+        listStyle(.inset)
+        #endif
+    }
+
+    /// `navigationSubtitle`, which tvOS does not have: its tab pages carry no
+    /// title bar to put one under.
+    func pageSubtitle(_ subtitle: String) -> some View {
+        #if os(tvOS)
+        self
+        #else
+        navigationSubtitle(subtitle)
+        #endif
+    }
+}
+
+/// Drag and drop, text selection and row separators, none of which tvOS has.
+/// On tvOS each leaves the view as it is.
+extension View {
+    func dragSource<T: Transferable>(_ payload: @autoclosure @escaping () -> T) -> some View {
+        #if os(tvOS)
+        self
+        #else
+        draggable(payload())
+        #endif
+    }
+
+    func dropTarget<T: Transferable>(
+        for type: T.Type,
+        action: @escaping ([T], CGPoint) -> Bool,
+        isTargeted: @escaping (Bool) -> Void = { _ in }
+    ) -> some View {
+        #if os(tvOS)
+        self
+        #else
+        dropDestination(for: type, action: action, isTargeted: isTargeted)
+        #endif
+    }
+
+    func rowSeparator(_ visibility: Visibility) -> some View {
+        #if os(tvOS)
+        self
+        #else
+        listRowSeparator(visibility)
+        #endif
+    }
+
+    func selectableText() -> some View {
+        #if os(tvOS)
+        self
+        #else
+        textSelection(.enabled)
+        #endif
+    }
+
+    /// The grabber on a sheet, which a remote has no use for.
+    func sheetGrabber() -> some View {
+        #if os(tvOS)
+        self
+        #else
+        presentationDragIndicator(.visible)
+        #endif
+    }
+}
+
+extension View {
+    /// The system file picker, which tvOS does not have: there are no files to
+    /// pick on a television.
+    func filePicker(
+        isPresented: Binding<Bool>,
+        allowedContentTypes: [UTType],
+        allowsMultipleSelection: Bool,
+        onCompletion: @escaping (Result<[URL], any Error>) -> Void
+    ) -> some View {
+        #if os(tvOS)
+        self
+        #else
+        fileImporter(
+            isPresented: isPresented,
+            allowedContentTypes: allowedContentTypes,
+            allowsMultipleSelection: allowsMultipleSelection,
+            onCompletion: onCompletion
+        )
+        #endif
+    }
+}
+
+extension View {
+    /// The bordered text field, or the system's own on tvOS, which has no
+    /// rounded-border style.
+    func borderedField() -> some View {
+        #if os(tvOS)
+        textFieldStyle(.automatic)
+        #else
+        textFieldStyle(.roundedBorder)
+        #endif
+    }
+}
+
+/// Keyboard shortcuts, which tvOS does not have.
+extension View {
+    func shortcut(_ key: KeyEquivalent, modifiers: EventModifiers = .command) -> some View {
+        #if os(tvOS)
+        self
+        #else
+        keyboardShortcut(key, modifiers: modifiers)
+        #endif
+    }
+
+    /// A sheet's default or cancel button. Its own type, because tvOS does not
+    /// have `KeyboardShortcut` either.
+    func shortcut(_ role: ShortcutRole?) -> some View {
+        #if os(tvOS)
+        self
+        #else
+        keyboardShortcut(role.map { $0 == .defaultAction ? .defaultAction : .cancelAction })
+        #endif
+    }
+}
+
+enum ShortcutRole {
+    case defaultAction, cancelAction
+}
+
+#if os(tvOS)
+/// A button as a television draws one: a white label on a soft pill at rest,
+/// and focused, a white platter with the label drawn as on a light screen.
+/// The system's own style takes the label's colour from the tint, which the
+/// app sets to its accent and the room to the record's colour, so a label
+/// could be mint on grey at rest and vanish into a tinted platter on focus.
+struct TelevisionButton: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Pill(label: configuration.label, pressed: configuration.isPressed)
+    }
+
+    private struct Pill<Label: View>: View {
+        let label: Label
+        let pressed: Bool
+        @Environment(\.isFocused) private var focused
+        @Environment(\.isEnabled) private var enabled
+
+        var body: some View {
+            label
+                .foregroundStyle(.primary)
+                .environment(\.colorScheme, focused ? .light : .dark)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 14)
+                .background(
+                    Capsule().fill(.white.opacity(focused ? 1 : 0.14))
+                        .shadow(color: .black.opacity(focused ? 0.35 : 0), radius: 18, y: 8)
+                )
+                .opacity(enabled ? 1 : 0.45)
+                .scaleEffect(pressed ? 0.97 : focused ? 1.06 : 1)
+                .animation(.easeOut(duration: 0.15), value: focused)
+        }
+    }
+}
+
+/// A list row as a television draws one: the row's own colours at rest, and
+/// focused, a white platter with the row drawn as it would be on a light
+/// screen, so secondary text stays readable on it. A plain button would tint
+/// every label with the accent instead.
+struct TelevisionRow: ButtonStyle {
+    /// The platter's opacity at rest: none for a row of content, a little for
+    /// a link, so a list of places reads as rows before one is focused.
+    var resting: Double = 0
+
+    func makeBody(configuration: Configuration) -> some View {
+        Row(label: configuration.label, pressed: configuration.isPressed, resting: resting)
+    }
+
+    private struct Row<Label: View>: View {
+        let label: Label
+        let pressed: Bool
+        let resting: Double
+        @Environment(\.isFocused) private var focused
+
+        var body: some View {
+            label
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .foregroundStyle(.primary)
+                .environment(\.colorScheme, focused ? .light : .dark)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(.white.opacity(focused ? 1 : resting))
+                        .shadow(color: .black.opacity(focused ? 0.35 : 0), radius: 18, y: 8)
+                )
+                .scaleEffect(pressed ? 0.98 : focused ? 1.02 : 1)
+                .animation(.easeOut(duration: 0.15), value: focused)
+        }
     }
 }
 #endif

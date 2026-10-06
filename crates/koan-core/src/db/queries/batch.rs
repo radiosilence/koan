@@ -76,6 +76,7 @@ pub fn albums_for_artists(
             label: row.get(8)?,
             remote_id: row.get(9)?,
             added_at: row.get(10)?,
+            on_device: None,
         })
     })?;
 
@@ -323,6 +324,8 @@ pub enum TrackOrder {
     Artist,
     Album,
     Duration,
+    /// When last played, by `TrackFilter::played`; without it, `Title`.
+    LastPlayed,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -347,6 +350,10 @@ pub struct TrackFilter {
     pub max_duration_ms: Option<i64>,
     /// Only tracks this user has favourited.
     pub favourites_of: Option<i64>,
+    /// Only tracks played since then.
+    pub played: Option<super::history::PlayedSince>,
+    /// Only tracks that can play here: downloaded, or a file in the library.
+    pub on_device: bool,
 }
 
 /// Fetch a page of tracks matching `filter`.
@@ -361,12 +368,77 @@ pub fn filter_tracks(
     limit: u32,
     offset: u32,
 ) -> Result<Vec<TrackRow>, DbError> {
+    let Some((body, mut binds)) = track_body(conn, filter)? else {
+        return Ok(Vec::new());
+    };
+    let order = match order {
+        TrackOrder::LastPlayed if filter.played.is_none() => TrackOrder::Title,
+        order => order,
+    };
+    let dir = if descending { "DESC" } else { "ASC" };
+    let order_by = match order {
+        TrackOrder::ArtistAlbumDiscTrack => format!(
+            "a.name {dir}, al.date {dir}, al.title {dir}, t.disc {dir}, t.track_number {dir}"
+        ),
+        TrackOrder::Title => format!("t.title {dir}"),
+        TrackOrder::Artist => {
+            format!("a.name {dir}, al.date {dir}, t.disc {dir}, t.track_number {dir}")
+        }
+        TrackOrder::Album => format!("al.title {dir}, t.disc {dir}, t.track_number {dir}"),
+        TrackOrder::Duration => format!("t.duration_ms {dir}"),
+        TrackOrder::LastPlayed => format!("p.last {dir}, p.last_id {dir}"),
+    };
+    let sql = format!(
+        "SELECT {TRACK_COLUMNS} {body}
+         ORDER BY {order_by}, t.id {dir} LIMIT ? OFFSET ?"
+    );
+    binds.push(Box::new(limit));
+    binds.push(Box::new(offset));
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(params_from_iter(binds.iter()), row_to_track_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// How many tracks `filter_tracks` would list for `filter`, ignoring paging.
+pub fn count_tracks(conn: &Connection, filter: &TrackFilter) -> Result<u64, DbError> {
+    let Some((body, binds)) = track_body(conn, filter)? else {
+        return Ok(0);
+    };
+    let n: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) {body}"),
+        params_from_iter(binds.iter()),
+        |r| r.get(0),
+    )?;
+    Ok(n as u64)
+}
+
+/// The FROM and WHERE that `filter_tracks` and `count_tracks` share, and their
+/// parameters in order. `None` when nothing can match: an empty id list.
+#[allow(clippy::type_complexity)]
+fn track_body(
+    conn: &Connection,
+    filter: &TrackFilter,
+) -> Result<Option<(String, Vec<Box<dyn ToSql>>)>, DbError> {
     let mut clauses: Vec<String> = Vec::new();
     let mut binds: Vec<Box<dyn ToSql>> = Vec::new();
+    let mut joins = String::from(TRACK_JOINS);
+    if let Some(played) = filter.played {
+        // In the FROM, so bound before anything the WHERE binds.
+        binds.push(Box::new(super::auth::resolve_user(conn, played.user)?));
+        binds.push(Box::new(played.since));
+        joins.push_str(
+            " JOIN (SELECT track_id AS id, MAX(played_at) AS last, MAX(id) AS last_id
+                      FROM play_history WHERE user_id = ? AND played_at >= ?
+                     GROUP BY track_id) p ON p.id = t.id",
+        );
+    }
 
     if let Some(ids) = &filter.ids {
         if ids.is_empty() {
-            return Ok(Vec::new());
+            return Ok(None);
         }
         clauses.push(format!("t.id IN {IN_LIST}"));
         binds.push(Box::new(json_list(ids)));
@@ -377,6 +449,10 @@ pub fn filter_tracks(
         binds.push(Box::new(super::search::sanitize_fts_query(query)));
     }
 
+    if filter.on_device {
+        clauses.push("COALESCE(t.cached_path, t.path) IS NOT NULL".to_string());
+    }
+
     if let Some(album_id) = filter.album_id {
         clauses.push("t.album_id = ?".to_string());
         binds.push(Box::new(album_id));
@@ -384,7 +460,7 @@ pub fn filter_tracks(
 
     if let Some(ids) = &filter.artist_ids {
         if ids.is_empty() {
-            return Ok(Vec::new());
+            return Ok(None);
         }
         // The album-artist half as a subquery on `albums`, as in
         // `tracks_for_artists`: an `OR` across two tables cannot use an index.
@@ -470,38 +546,12 @@ pub fn filter_tracks(
         binds.push(Box::new(super::auth::resolve_user(conn, user)?));
     }
 
-    let dir = if descending { "DESC" } else { "ASC" };
-    let order_by = match order {
-        TrackOrder::ArtistAlbumDiscTrack => format!(
-            "a.name {dir}, al.date {dir}, al.title {dir}, t.disc {dir}, t.track_number {dir}"
-        ),
-        TrackOrder::Title => format!("t.title {dir}"),
-        TrackOrder::Artist => {
-            format!("a.name {dir}, al.date {dir}, t.disc {dir}, t.track_number {dir}")
-        }
-        TrackOrder::Album => format!("al.title {dir}, t.disc {dir}, t.track_number {dir}"),
-        TrackOrder::Duration => format!("t.duration_ms {dir}"),
-    };
-
     let where_clause = if clauses.is_empty() {
         String::new()
     } else {
         format!("WHERE {}", clauses.join(" AND "))
     };
-
-    let sql = format!(
-        "SELECT {TRACK_COLUMNS} {TRACK_JOINS} {where_clause}
-         ORDER BY {order_by}, t.id {dir} LIMIT ? OFFSET ?"
-    );
-
-    binds.push(Box::new(limit));
-    binds.push(Box::new(offset));
-
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt
-        .query_map(params_from_iter(binds.iter()), row_to_track_row)?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+    Ok(Some((format!("{joins} {where_clause}"), binds)))
 }
 
 #[cfg(test)]

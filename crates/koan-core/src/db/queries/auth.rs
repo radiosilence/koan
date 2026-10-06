@@ -1,6 +1,6 @@
 //! Auth queries: user CRUD, refresh token management.
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::auth::{self, Role};
 
@@ -98,7 +98,12 @@ pub fn adopt_local_rows(conn: &Connection) -> Result<(), rusqlite::Error> {
         "favourites",
         "favourite_albums",
         "favourite_artists",
+        "track_ratings",
+        "album_ratings",
+        "artist_ratings",
+        "bookmarks",
         "play_history",
+        "play_history_forgotten",
         "playlists",
         "shares",
     ] {
@@ -212,6 +217,9 @@ pub fn list_users(conn: &Connection) -> Result<Vec<UserRow>, rusqlite::Error> {
 /// Delete a user by ID. Returns true if a row was deleted.
 pub fn delete_user(conn: &Connection, user_id: i64) -> Result<bool, rusqlite::Error> {
     let count = conn.execute("DELETE FROM users WHERE id = ?1", params![user_id])?;
+    if count > 0 {
+        auth::account_changed(user_id);
+    }
     Ok(count > 0)
 }
 
@@ -234,6 +242,7 @@ pub fn update_password(
             revoke_all_user_tokens(conn, user.id)?;
             super::api_keys::revoke_user_api_keys(conn, user.id)?;
             super::app_passwords::revoke_user_app_passwords(conn, user.id)?;
+            auth::account_changed(user.id);
         }
     }
     Ok(updated > 0)
@@ -245,12 +254,18 @@ pub fn update_role(
     username: &str,
     role: crate::auth::Role,
 ) -> Result<bool, rusqlite::Error> {
-    let updated = conn.execute(
-        "UPDATE users SET role = ?1 WHERE username = ?2",
-        params![role.as_str(), username],
-    )?;
+    let updated: Option<i64> = conn
+        .query_row(
+            "UPDATE users SET role = ?1 WHERE username = ?2 RETURNING id",
+            params![role.as_str(), username],
+            |row| row.get(0),
+        )
+        .optional()?;
     adopt_local_rows(conn)?;
-    Ok(updated > 0)
+    if let Some(id) = updated {
+        auth::account_changed(id);
+    }
+    Ok(updated.is_some())
 }
 
 /// Check if any users exist (for first-run detection).
@@ -670,7 +685,18 @@ mod tests {
             queries::add_favourite(&db.conn, user, track).unwrap();
             queries::set_favourite_album(&db.conn, user, row.album_id.unwrap(), true).unwrap();
             queries::set_favourite_artist(&db.conn, user, row.artist_id.unwrap(), true).unwrap();
+            for (kind, id) in [
+                (queries::RatingKind::Track, track),
+                (queries::RatingKind::Album, row.album_id.unwrap()),
+                (queries::RatingKind::Artist, row.artist_id.unwrap()),
+            ] {
+                queries::set_rating(&db.conn, user, kind, id, 4).unwrap();
+            }
+            queries::save_bookmark(&db.conn, user, track, 1_000, None).unwrap();
             queries::record_play(&db.conn, user, track, None).unwrap();
+            queries::record_play_at(&db.conn, user, track, 1, None, queries::SOURCE_SUBSONIC)
+                .unwrap();
+            queries::forget_shared_plays(&db.conn, user, &[(track, 1)]).unwrap();
             queries::create_playlist(&db.conn, user, "List", None).unwrap();
             queries::shares::create_share(
                 &db.conn,
@@ -690,7 +716,12 @@ mod tests {
             "favourites",
             "favourite_albums",
             "favourite_artists",
+            "track_ratings",
+            "album_ratings",
+            "artist_ratings",
+            "bookmarks",
             "play_history",
+            "play_history_forgotten",
             "playlists",
             "shares",
         ] {

@@ -1,7 +1,7 @@
 import KoanFFI
 import SwiftUI
 
-/// The album and artist browsers' filters, behind one control that says how
+/// The album, artist and track browsers' filters, behind one control that says how
 /// many are on: a popover on the Mac, a sheet on iOS. The same filters as the
 /// web UI's toolbar, answered by the same query.
 struct BrowseFilterButton: View {
@@ -10,16 +10,22 @@ struct BrowseFilterButton: View {
 
     var body: some View {
         let count = library.browseFilter.activeCount
+        let symbol = count > 0
+            ? "line.3.horizontal.decrease.circle.fill"
+            : "line.3.horizontal.decrease.circle"
         Button { open = true } label: {
+            #if os(tvOS)
+            // In a row above the listing, with room for the name.
+            Label(count > 0 ? "Filters (\(count))" : "Filters", systemImage: symbol)
+            #else
             HStack(spacing: 3) {
-                Image(systemName: count > 0
-                    ? "line.3.horizontal.decrease.circle.fill"
-                    : "line.3.horizontal.decrease.circle")
+                Image(systemName: symbol)
                 if count > 0 {
                     Text("\(count)").monospacedDigit()
                 }
             }
             .accessibilityLabel(count > 0 ? "Filters, \(count) on" : "Filters")
+            #endif
         }
         .help(count > 0 ? "Filters — \(count) on" : "Filters")
         #if os(macOS)
@@ -33,10 +39,13 @@ struct BrowseFilterButton: View {
             NavigationStack {
                 BrowseFilterForm()
                     .navigationTitle("Filter")
+                    #if !os(tvOS)
                     .navigationBarTitleDisplayMode(.inline)
+                    #endif
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
                             Button("Done") { open = false }
+                                .toolbarButton()
                         }
                     }
             }
@@ -54,7 +63,13 @@ private struct BrowseFilterForm: View {
         Form {
             Section {
                 Toggle("Favourites", isOn: $library.browseFilter.favourites)
-                Toggle("Lossless", isOn: $library.browseFilter.lossless)
+                Toggle("Recently Played", isOn: $library.browseFilter.recent)
+                Toggle("Downloaded", isOn: $library.browseFilter.downloaded)
+                // A track's codec says this already, and the track listing
+                // filters by codec rather than by what its record is in.
+                if library.section != .tracks {
+                    Toggle("Lossless", isOn: $library.browseFilter.lossless)
+                }
             }
             Section {
                 Picker("Codec", selection: $library.browseFilter.codec) {

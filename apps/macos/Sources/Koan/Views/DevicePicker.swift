@@ -33,6 +33,8 @@ enum DevicePicker {
     static var platform: String {
         #if os(iOS)
         "ios"
+        #elseif os(tvOS)
+        "tvos"
         #else
         "macos"
         #endif
@@ -41,6 +43,8 @@ enum DevicePicker {
     static var deviceNoun: String {
         #if os(iOS)
         UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+        #elseif os(tvOS)
+        "Apple TV"
         #else
         "Mac"
         #endif
@@ -49,6 +53,7 @@ enum DevicePicker {
     static func icon(for platform: String) -> String {
         switch platform {
         case "ios": "iphone"
+        case "tvos": "appletv"
         case "macos": "laptopcomputer"
         default: "desktopcomputer"
         }
@@ -230,10 +235,11 @@ struct OutputPicker: View {
     @ViewBuilder private func rows(_ outputs: OutputsInfo) -> some View {
         // A phone's own output is its route, which the system chooses: the
         // row says which, and picking it brings the sound back from a renderer.
-        let phone = (outputs.owner == nil ? DevicePicker.platform : player.controlled?.platform) == "ios"
-        if phone {
+        // An Apple TV's is too.
+        let platform = outputs.owner == nil ? DevicePicker.platform : player.controlled?.platform
+        if platform == "ios" || platform == "tvos" {
             ForEach(outputs.devices, id: \.id) { device in
-                OutputChoiceRow(output: device, outputs: outputs, choice: .default, icon: DevicePicker.icon(for: "ios"), none: "Off")
+                OutputChoiceRow(output: device, outputs: outputs, choice: .default, icon: DevicePicker.icon(for: platform ?? "ios"), none: "Off")
             }
         } else {
             OutputChoiceRow(output: nil, outputs: outputs, choice: .default, icon: "speaker.wave.2", none: "Off")
@@ -312,6 +318,19 @@ private struct RendererVolume: View {
         VStack(alignment: .leading, spacing: 4) {
             if let volume {
                 HStack(spacing: 8) {
+                    #if os(tvOS)
+                    // No slider on tvOS: a step either way, as a remote's own
+                    // volume buttons do.
+                    Button("Quieter", systemImage: "speaker.fill") {
+                        player.setOutputVolume(UInt8(max(0, Int(volume) - 5)))
+                    }
+                    Text("\(volume)")
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                    Button("Louder", systemImage: "speaker.wave.3.fill") {
+                        player.setOutputVolume(UInt8(min(100, Int(volume) + 5)))
+                    }
+                    #else
                     Image(systemName: "speaker.fill")
                         .foregroundStyle(.secondary)
                     Slider(
@@ -330,6 +349,7 @@ private struct RendererVolume: View {
                     .accessibilityLabel("Volume on \(name)")
                     Image(systemName: "speaker.wave.3.fill")
                         .foregroundStyle(.secondary)
+                    #endif
                 }
             }
             if here {
@@ -516,7 +536,7 @@ private struct DeviceChoiceRow: View {
 }
 
 enum LocalNetwork {
-    #if os(iOS)
+    #if os(iOS) || os(tvOS)
     static let settings = "Settings"
     #else
     static let settings = "System Settings"
@@ -630,7 +650,7 @@ struct OutputButton: View {
                 }
             }
         }
-        .buttonStyle(.plain)
+        .controlButton()
         .help(help)
         .accessibilityLabel(help)
         #if os(macOS)
@@ -650,14 +670,7 @@ struct OutputButton: View {
     /// "Controlling MacBook · playing through Arcam", or where this device
     /// plays.
     private var help: String {
-        let current: String? = {
-            guard let outputs = player.outputs else { return nil }
-            switch outputs.current {
-            case .renderer(let udn): return outputs.renderers.first { $0.id == udn }?.name
-            case .device(let name): return name
-            case .default: return outputs.owner == nil ? player.currentDevice : nil
-            }
-        }()
+        let current = player.outputName
         var parts: [String] = []
         if player.isControllingAnother {
             parts.append("Controlling \(player.controlled?.name ?? "another device")")
@@ -672,14 +685,32 @@ struct OutputButton: View {
     }
 }
 
-#if os(iOS)
+extension PlayerModel {
+    /// What the device in view plays through, by name: a renderer, a device
+    /// chosen by name, or this device's own default. `None` for another
+    /// device's default, which it does not name.
+    var outputName: String? {
+        guard let outputs else { return nil }
+        switch outputs.current {
+        case .renderer(let udn): return outputs.renderers.first { $0.id == udn }?.name
+        case .device(let name): return name
+        // A phone's one device is its route, named even before the engine
+        // has reported a current device.
+        case .default:
+            guard outputs.owner == nil else { return nil }
+            return currentDevice ?? (outputs.devices.count == 1 ? outputs.devices.first?.name : nil)
+        }
+    }
+}
+
+#if os(iOS) || os(tvOS)
 extension View {
     /// The sheets the buttons open, attached to a view that outlives them.
     func controlSheet(isPresented: Binding<Bool>) -> some View {
         sheet(isPresented: isPresented) {
             ScrollView { ControlPicker() }
                 .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+                .sheetGrabber()
         }
     }
 
@@ -687,7 +718,7 @@ extension View {
         sheet(isPresented: isPresented) {
             ScrollView { OutputPicker() }
                 .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+                .sheetGrabber()
         }
     }
 }

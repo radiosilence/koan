@@ -69,7 +69,11 @@ struct PlaylistView: View {
                 EmptyState(
                     icon: "music.note.list",
                     title: playlists.isLoading ? "Loading…" : "Nothing in here yet",
-                    detail: "Drag records, artists or tracks onto it — or onto its row in the sidebar."
+                    detail: playlist?.smart == true
+                        ? "Nothing in the library matches its rules yet."
+                        : playlist?.readonly == true
+                        ? "None of its tracks are in the library."
+                        : "Drag records, artists or tracks onto it — or onto its row in the sidebar."
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -82,9 +86,9 @@ struct PlaylistView: View {
                     }
                     endOfList
                 }
-                .listStyle(.inset)
+                .insetList()
                 .washedGround()
-                .contextMenu(forSelectionType: String.self) { ids in
+                .selectionMenu(for: String.self) { ids in
                     menu(forRows: ids)
                 } primaryAction: { ids in
                     play(rowIds: ids)
@@ -105,7 +109,7 @@ struct PlaylistView: View {
         }
         // On the whole page, not the List: an empty playlist is exactly when
         // you want to drop something on it, and it has no rows to land on.
-        .dropDestination(for: PlayableTransfer.self) { dropped, _ in
+        .dropTarget(for: PlayableTransfer.self) { dropped, _ in
             playlists.add(dropped: dropped, to: playlistId)
             return true
         }
@@ -137,12 +141,12 @@ struct PlaylistView: View {
                     sleeveSize: 44
                 )))
             case .entry(let entry, let position):
-                let isCurrent = current == entry.id
+                let isCurrent = current == entry.entryId
                 return QueueLine(id: row.id, kind: .track(
                     QueueRowContent(
                         entry: entry,
                         position: position + 1,
-                        queued: mirror.queuedByPlaylistEntry[entry.id],
+                        queued: mirror.queuedByPlaylistEntry[entry.entryId],
                         isCurrent: isCurrent
                     ),
                     isCurrent: isCurrent,
@@ -263,9 +267,11 @@ struct PlaylistView: View {
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 12) {
+                #if !os(tvOS)
                 if let playable {
                     PlayableHeaderButton(playable: playable)
                 }
+                #endif
                 Text(playlist?.name ?? "Playlist")
                     .font(.system(size: 26, weight: .semibold))
                     .lineLimit(2)
@@ -274,6 +280,12 @@ struct PlaylistView: View {
             Text(summary)
                 .font(.callout)
                 .foregroundStyle(.secondary)
+            #if os(tvOS)
+            if let playable {
+                PlayableHeaderButton(playable: playable)
+                    .padding(.top, 12)
+            }
+            #endif
         }
     }
 
@@ -306,6 +318,7 @@ struct PlaylistView: View {
                     renameTo = playlist?.name ?? ""
                     renaming = true
                 }
+                .disabled(playlist?.fromFile == true)
                 Divider()
                 Button("Delete Playlist", role: .destructive) {
                     playlists.delete(id: playlistId)
@@ -353,11 +366,11 @@ struct PlaylistView: View {
             dropTarget(
                 PlaylistEntryRow(entry: entry, position: position, artwork: !grouped)
                     .rowBehaviour()
-                    .primaryTap { play(rowIds: [row.id]) }
+                    .primaryTap { play(rowIds: [row.id]) } menu: { menu(forRows: [row.id]) }
                     // Carries where it came from, so dropping it back into this
                     // playlist is a move of *this* row rather than of its track —
                     // and dropping it anywhere else is just a track.
-                    .draggable(PlayableTransfer(
+                    .dragSource(PlayableTransfer(
                         kind: .track,
                         id: entry.track.id,
                         name: entry.track.title,
@@ -377,7 +390,7 @@ struct PlaylistView: View {
         dropTarget(
             Color.clear
                 .frame(height: 28)
-                .listRowSeparator(.hidden)
+                .rowSeparator(.hidden)
                 .listRowBackground(Color.clear)
                 .selectionDisabled(),
             before: entries.count
@@ -389,7 +402,7 @@ struct PlaylistView: View {
     private func dropTarget(_ row: some View, before position: Int) -> some View {
         row
             .insertionLine(showing: dropBefore == position)
-            .dropDestination(for: PlayableTransfer.self) { dropped, _ in
+            .dropTarget(for: PlayableTransfer.self) { dropped, _ in
                 dropBefore = nil
                 return accept(dropped, before: position)
             } isTargeted: { targeted in
@@ -422,7 +435,7 @@ struct PlaylistView: View {
         guard let first = positions(in: rowIds).min(), let entry = entries[safe: first] else {
             return
         }
-        start(at: entry.id)
+        start(at: entry.entryId)
     }
 
     /// Expand a set of row ids to the playlist positions they stand for. An
@@ -432,7 +445,7 @@ struct PlaylistView: View {
     }
 
     private func entryIds(in rowIds: Set<String>) -> [Int64] {
-        positions(in: rowIds).sorted().compactMap { entries[safe: $0]?.id }
+        positions(in: rowIds).sorted().compactMap { entries[safe: $0]?.entryId }
     }
 
     private func trackIds(in rowIds: Set<String>) -> [Int64] {
@@ -505,11 +518,11 @@ struct PlaylistView: View {
             let moving = Set(mine.map(\.position))
             // The row dropped onto, by identity: its index shifts once the
             // moved rows are lifted out of the list.
-            let anchor = entries[safe: position]?.id
+            let anchor = entries[safe: position]?.entryId
             var order = entries.enumerated()
                 .filter { !moving.contains($0.offset) }
-                .map(\.element.id)
-            let lifted = moving.sorted().compactMap { entries[safe: $0]?.id }
+                .map(\.element.entryId)
+            let lifted = moving.sorted().compactMap { entries[safe: $0]?.entryId }
             let at = anchor.flatMap { order.firstIndex(of: $0) } ?? order.count
             order.insert(contentsOf: lifted, at: at)
             playlists.reorder(entryIds: order, in: playlistId)
@@ -540,7 +553,7 @@ extension PlaylistView {
         var id: String {
             switch self {
             case .album(let id, _): id
-            case .entry(let entry, _): "entry:\(entry.id)"
+            case .entry(let entry, _): "entry:\(entry.entryId)"
             }
         }
 
@@ -572,7 +585,7 @@ extension PlaylistView {
                 }
                 let run = entries[index...].prefix { sameRecord($0.track, first.track) }
                 rows.append(.album(
-                    id: "album:\(first.id)",
+                    id: "album:\(first.entryId)",
                     group: PlaylistGroup(
                         album: first.track.albumTitle,
                         artist: first.track.albumArtistName,
@@ -617,14 +630,14 @@ private struct PlaylistEntryRow: View {
     @Environment(EngineMirror.self) private var mirror
 
     var body: some View {
-        let isCurrent = player.currentPlaylistEntryId == entry.id
+        let isCurrent = player.currentPlaylistEntryId == entry.entryId
         QueueRow(
             item: QueueRowContent(
                 entry: entry,
                 position: position + 1,
                 // Found by entry, not by track: two copies of one song are
                 // two rows, and each wears its own queue item's state.
-                queued: mirror.queuedByPlaylistEntry[entry.id],
+                queued: mirror.queuedByPlaylistEntry[entry.entryId],
                 isCurrent: isCurrent
             ),
             isCurrent: isCurrent,

@@ -99,7 +99,7 @@ With auth disabled, anything that can reach the port is an admin; see [Recovery 
 
 ## Web UI
 
-The server answers `http://host:4000/` with a browser UI: albums, artists, playlists, search, a play queue and share links, laid out for a phone as well as a desktop. Albums and artists sort and filter (name, favourites, lossless or codec, years, genre) through the page URL, the same filters the macOS and iOS apps offer, so a filtered view can be bookmarked or sent. Playlists are the account's own and anyone's public ones, played or queued like an album; they are edited from the apps. Playback happens in the browser, streaming from the server; the server's own player is not involved.
+The server answers `http://host:4000/` with a browser UI: albums, artists, playlists, search, a play queue and share links, laid out for a phone as well as a desktop. Albums, artists and tracks sort and filter (name, favourites, recently played, lossless or codec, years, genre) through the page URL, the same filters the macOS and iOS apps offer, so a filtered view can be bookmarked or sent. Playlists are the account's own and anyone's public ones, played or queued like an album; they are edited from the apps. Favourites lists the signed-in account's favourite artists, records and tracks, as the apps' page does; Recently played what it played in the last 30 days, each once; each page showing the first few of each kind under a heading that gives the whole count and opens the matching filtered browser; and History its plays by day, any of which can be ticked and forgotten. On a phone these sit under a Library tab with Playlists, since the tab bar has room for six. Hearts on tracks, records and artists favourite them for the signed-in account, as the apps do. A track row's menu (right-click, press and hold on a phone, or its ⋯) offers what the apps' does: play next, queue, favourite, share, and the album and artist. Playback happens in the browser, streaming from the server; the server's own player is not involved.
 
 Sign in with a kōan account (`koan auth create-user`). The session is the same pair of `HttpOnly` cookies the JSON login sets, so behind plain HTTP the UI needs `cookie_secure = false`, and a hostname it is reached by must be in `allowed_hosts`. The access cookie lasts `access_token_ttl`; an open page renews it from the refresh cookie, and a page loaded after it lapsed renews on the way in. With `auth_enabled = false` the UI is open to anyone who can reach the port. Covers are resized once and kept in `covers/` in the config directory; deleting it only costs regenerating them.
 
@@ -110,10 +110,14 @@ When a proxy such as Authelia, Authentik or oauth2-proxy signs people in before 
 ```toml
 [graphql]
 proxy_auth_header = "Remote-User"
-proxy_auth_from = ["172.18.0.0/16"]   # where the proxy connects from
+proxy_auth_from = ["172.18.0.5"]     # the proxy's own address
 ```
 
-The header is believed only on a connection whose address is in `proxy_auth_from`, which names the proxy itself, not the clients behind it, and only when it carries a single value. The account must already exist in kōan: a name the server has no account for is refused, not created. The UI follows the proxy, so a browser whose proxy sign-in changes to another account is handed over to that account, and signing out is done at the proxy. Both settings must be set for any of this to apply.
+The header is believed only on a connection whose address is in `proxy_auth_from`, which names the proxy itself, not the clients behind it, and only when it carries a single value. The account must already exist in kōan: a name the server has no account for is refused, not created. The UI follows the proxy, so a browser whose proxy sign-in changes to another account is handed over to that account, and signing out is done at the proxy.
+
+Proxy sign-in is on only when both settings are set. The server refuses to start, naming the problem, when one is set without the other, when the header is not a header name or an entry is neither an address nor a range, and when an entry covers every address (`0.0.0.0/0`, `::/0`). When it is on, the server logs the header and the addresses it believes it from.
+
+Name the proxy's own address rather than its network where you can. Anything else that connects from inside `proxy_auth_from` can name any account. Under Docker that includes the network's gateway (`172.18.0.1` on `172.18.0.0/16`), through which connections to a published port can arrive: from the host itself through `docker-proxy`, and from every client under rootless Docker or Docker Desktop. Do not publish kōan's port when it sits behind the proxy, and give the proxy a fixed address on the network (`ipv4_address` in Compose).
 
 kōan reads the header only on web UI pages and the MCP consent page (`/oauth/authorize`), which the proxy must cover. Subsonic clients, kōan's apps and MCP clients cannot pass through an interactive proxy sign-in, so the proxy must let these through without its sign-in, and no others:
 
@@ -157,6 +161,23 @@ http:
         customRequestHeaders:
           Remote-User: ""
 ```
+
+## Subsonic clients
+
+Besides playing, browsing and favourites, Subsonic clients get:
+
+- **Ratings.** `setRating` keeps a rating of one to five per account for songs, albums and artists, returned as `userRating`, and `getAlbumList2?type=highest` lists rated albums best first. kōan's own apps do not show ratings.
+- **Bookmarks.** `createBookmark`, `getBookmarks` and `deleteBookmark` keep one position and note per account and track, for clients that resume long tracks. kōan's own apps do not use them.
+- **Transcoding.** A client that asks `stream` for a lower `maxBitRate` than the file's, or for `format=opus`, `mp3` or `aac`, gets an encode made by `ffmpeg`, so a lossless library does not cost full bandwidth on mobile data. `format=raw` and `download` return the original. The limits, formats and fallbacks are in [Configuration](../reference/configuration.md#subsonic).
+- **Smart playlists**, read-only, as ordinary playlists. See [Smart playlists](smart-playlists.md).
+
+Sign-in, and which credential each kind of client should use, is in [Authentication](authentication.md#subsonic-api).
+
+## Scrobbling
+
+Each account can forward its plays to ListenBrainz from the web UI's Scrobbling page, linked from Account: paste the user token from ListenBrainz's settings and the server checks it, then sends the plays already in the account's history and, from then on, every play kōan's apps and other Subsonic clients report (`scrobble`), with now-playing notices. It is the server that sends, so no client needs configuring, and a play reported once is forwarded once whichever device made it.
+
+Plays wait in the database until ListenBrainz accepts them, so a restart or an outage delays them rather than losing them; the page shows how many are waiting. A token ListenBrainz stops accepting is shown there, and plays are kept until the account connects again. Plays the server's own player records are forwarded in the history sent on connecting, when they were listened to for half the track or four minutes, but not as they happen. Tracks without an artist or title are not sent.
 
 ## Sharing
 

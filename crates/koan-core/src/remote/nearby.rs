@@ -42,6 +42,9 @@ struct Running {
     /// (announced, or remembered from a previous run), `bonjour:<name>` when
     /// an announcement carried none, or the address as typed.
     dialers: HashMap<String, Dialer>,
+    /// `devices.nearby` was off when last applied, so turning it on knows to
+    /// start looking again.
+    off: bool,
 }
 
 struct Dialer {
@@ -75,6 +78,9 @@ pub struct Found {
     /// Its device id, from the announcement.
     pub id: Option<String>,
     pub platform: Option<String>,
+    /// The server it is signed in to, as it announces it: what a device that
+    /// is not signed in yet offers to sign in to.
+    pub server: Option<String>,
     pub problem: Option<String>,
 }
 
@@ -87,6 +93,102 @@ static BLOCKED: AtomicBool = AtomicBool::new(false);
 /// Every device announced here or listed by address that is not this one.
 pub fn found() -> Vec<Found> {
     FOUND.lock().iter().map(|(_, f)| f.clone()).collect()
+}
+
+/// The servers devices on this network are signed in to, each with the names
+/// of the devices that announced it, in the order they were found.
+pub fn servers() -> Vec<(String, Vec<String>)> {
+    let mut out: Vec<(String, Vec<String>)> = Vec::new();
+    for (_, f) in FOUND.lock().iter() {
+        let Some(server) = f.server.as_deref().filter(|s| is_server(s)) else {
+            continue;
+        };
+        match out.iter_mut().find(|(s, _)| s == server) {
+            Some((_, names)) => names.push(f.name.clone()),
+            None => out.push((server.to_string(), vec![f.name.clone()])),
+        }
+    }
+    out
+}
+
+/// An address worth offering as a server: http or https, nothing more than an
+/// address, and not this machine's own. Checked on both sides: anyone on the
+/// network can announce anything, and what this device announces is heard by
+/// everyone on it.
+fn is_server(s: &str) -> bool {
+    url::Url::parse(s).is_ok_and(|u| {
+        matches!(u.scheme(), "http" | "https")
+            && u.username().is_empty()
+            && u.password().is_none()
+            && u.query().is_none()
+            && u.fragment().is_none()
+            && match u.host() {
+                Some(url::Host::Domain(d)) => {
+                    let d = d.trim_end_matches('.').to_ascii_lowercase();
+                    d != "localhost" && !d.ends_with(".localhost")
+                }
+                Some(url::Host::Ipv4(ip)) => !ip.is_loopback() && !ip.is_unspecified(),
+                Some(url::Host::Ipv6(ip)) => !ip.is_loopback() && !ip.is_unspecified(),
+                None => false,
+            }
+    })
+}
+
+/// The longest a TXT entry can be. An address that does not fit is not
+/// announced: cut short, it could still read as a different, valid address.
+#[cfg(any(target_vendor = "apple", test))]
+const TXT_ENTRY_MAX: usize = 255;
+
+/// What this device would announce for the server it is signed in to: the
+/// address if it is one to offer and fits whole in the announcement, and
+/// nothing otherwise.
+#[cfg(any(target_vendor = "apple", test))]
+fn announceable(url: &str) -> Option<String> {
+    let url = url.trim().trim_end_matches('/');
+    (is_server(url) && "server=".len() + url.len() <= TXT_ENTRY_MAX).then(|| url.to_string())
+}
+
+/// The server this device announces: the one it is signed in to, without the
+/// account, or nothing while it is signed out.
+#[cfg(target_vendor = "apple")]
+fn announced_server() -> String {
+    let cfg = Config::cached();
+    if crate::helpers::remote_credential(&cfg).is_none() {
+        return String::new();
+    }
+    announceable(&cfg.remote.url).unwrap_or_default()
+}
+
+/// This device's announcement, while it is listening.
+#[cfg(target_vendor = "apple")]
+static ADVERT: Mutex<Option<bonjour::Advert>> = Mutex::new(None);
+
+/// Announce this device again, after it signed in or out: its announcement
+/// names the server it is signed in to.
+pub fn readvertise() {
+    #[cfg(target_vendor = "apple")]
+    {
+        let Some(port) = *PORT.lock() else { return };
+        let identity = match RUNNING.lock().as_ref() {
+            Some(r) if r.listener.is_some() => r.local.identity.clone(),
+            _ => return,
+        };
+        let mut advert = ADVERT.lock();
+        if advert.is_none() {
+            return;
+        }
+        // Withdrawn first: the responder would rename a second registration
+        // under the same name rather than replace the first.
+        *advert = None;
+        let server = announced_server();
+        *advert = bonjour::advertise(port, &identity, &server);
+        // Silent until the next launch would be worse than announcing without
+        // the server.
+        if advert.is_none() && !server.is_empty() {
+            log::warn!("nearby: cannot announce the server; announcing this device without it");
+            *advert = bonjour::advertise(port, &identity, "");
+        }
+    }
 }
 
 /// Whether the system is keeping this app off the local network. The fix is
@@ -122,7 +224,7 @@ fn note(key: &str, problem: Option<String>) {
 /// link-local address.
 fn locally_refused(error: &str) -> bool {
     let e = error.to_lowercase();
-    cfg!(target_os = "ios")
+    cfg!(any(target_os = "ios", target_os = "tvos"))
         && (e.contains("no route to host") || e.contains("network is unreachable"))
 }
 
@@ -237,7 +339,13 @@ pub fn start(local: Local) {
         local,
         listener: None,
         dialers: HashMap::new(),
+        off: false,
     });
+    // Paused before it starts when the network is off, so it never browses.
+    #[cfg(target_vendor = "apple")]
+    if !enabled() {
+        bonjour::pause();
+    }
     reconfigure();
     dial_remembered();
     #[cfg(target_vendor = "apple")]
@@ -245,6 +353,11 @@ pub fn start(local: Local) {
         .name("koan-bonjour".into())
         .spawn(bonjour::browse_forever)
         .expect("failed to spawn the Bonjour thread");
+}
+
+/// `devices.nearby`: whether this device takes part in the local network.
+fn enabled() -> bool {
+    Config::load().map(|c| c.devices.nearby).unwrap_or(true)
 }
 
 /// Stop looking for other devices, and hang up on them: a phone in the
@@ -264,6 +377,9 @@ pub fn suspend() {
 
 /// Look for other devices again, as at startup.
 pub fn wake() {
+    if !enabled() {
+        return;
+    }
     reconfigure();
     dial_remembered();
     #[cfg(target_vendor = "apple")]
@@ -273,7 +389,7 @@ pub fn wake() {
 /// Dial the devices reached before, at the addresses they were reached at,
 /// which answers before Bonjour has said anything.
 fn dial_remembered() {
-    if !crate::quiet::awake() {
+    if !crate::quiet::awake() || !enabled() {
         return;
     }
     if let Some(r) = RUNNING.lock().as_mut() {
@@ -289,6 +405,7 @@ fn dial_remembered() {
                     bonjour: None,
                     id: Some(seen.id),
                     platform: Some(seen.platform),
+                    server: None,
                     problem: None,
                 },
             ));
@@ -303,6 +420,25 @@ pub fn reconfigure() {
     let cfg = Config::load().unwrap_or_default();
     let mut running = RUNNING.lock();
     let Some(r) = running.as_mut() else { return };
+    // Off: no listener, no dialers, no browsing, until it is turned on again.
+    if !cfg.devices.nearby {
+        if let Some(stop) = r.listener.take() {
+            stop.stop();
+        }
+        for (_, d) in r.dialers.drain() {
+            d.stop.stop();
+        }
+        FOUND.lock().clear();
+        if !r.off {
+            log::info!("nearby: off (devices.nearby = false)");
+            r.off = true;
+            devices::touch();
+            #[cfg(target_vendor = "apple")]
+            bonjour::pause();
+        }
+        return;
+    }
+    let turned_on = std::mem::replace(&mut r.off, false);
     match (
         &r.listener,
         cfg.devices.discoverable && crate::quiet::findable(),
@@ -345,6 +481,13 @@ pub fn reconfigure() {
         if !r.dialers.contains_key(&addr) {
             spawn_dialer(r, addr.clone(), addr);
         }
+    }
+    if turned_on {
+        log::info!("nearby: on");
+        drop(running);
+        dial_remembered();
+        #[cfg(target_vendor = "apple")]
+        bonjour::restart();
     }
 }
 
@@ -416,7 +559,7 @@ fn listen_once(local: &Local, port: u16, stop: &Arc<Stop>) -> Result<(), String>
     devices::touch();
     log::info!("nearby: listening on {port}");
     #[cfg(target_vendor = "apple")]
-    let _advert = bonjour::advertise(port, &local.identity);
+    let _advert = Announced::new(port, &local.identity);
 
     while !stop.stopped() {
         match listener.accept() {
@@ -601,6 +744,7 @@ fn spawn_dialer(r: &mut Running, key: String, addr: String) {
                     bonjour: None,
                     id: None,
                     platform: None,
+                    server: None,
                     problem: None,
                 },
             ));
@@ -812,8 +956,34 @@ impl wire::Session for Controlling<'_> {
     }
 }
 
+/// This device's announcement for as long as the listener holds it.
 #[cfg(target_vendor = "apple")]
-fn announced(name: String, host: String, port: u16, id: Option<String>, platform: Option<String>) {
+struct Announced;
+
+#[cfg(target_vendor = "apple")]
+impl Announced {
+    fn new(port: u16, identity: &crate::remote::link::LinkIdentity) -> Self {
+        *ADVERT.lock() = bonjour::advertise(port, identity, &announced_server());
+        Self
+    }
+}
+
+#[cfg(target_vendor = "apple")]
+impl Drop for Announced {
+    fn drop(&mut self) {
+        *ADVERT.lock() = None;
+    }
+}
+
+#[cfg(target_vendor = "apple")]
+fn announced(
+    name: String,
+    host: String,
+    port: u16,
+    id: Option<String>,
+    platform: Option<String>,
+    server: Option<String>,
+) {
     // A resolve that finished after browsing was paused.
     if !crate::quiet::awake() || id.is_some() && id == devices::this_id() {
         return;
@@ -838,6 +1008,7 @@ fn announced(name: String, host: String, port: u16, id: Option<String>, platform
                 bonjour: Some(name),
                 id,
                 platform,
+                server: server.filter(|s| !s.is_empty()),
                 problem,
             },
         ));
@@ -958,13 +1129,19 @@ mod bonjour {
         }
     }
 
-    pub fn advertise(port: u16, identity: &LinkIdentity) -> Option<Advert> {
+    /// `server` is the address it is signed in to, announced so that a device
+    /// not signed in yet can offer it; empty, it is left out.
+    pub fn advertise(port: u16, identity: &LinkIdentity, server: &str) -> Option<Advert> {
         let name = CString::new(identity.name.as_str()).ok()?;
         let regtype = CString::new(super::SERVICE).ok()?;
-        let txt = txt_record(&[
-            ("id", &identity.device_id),
-            ("platform", &identity.platform),
-        ]);
+        let mut pairs = vec![
+            ("id", identity.device_id.as_str()),
+            ("platform", identity.platform.as_str()),
+        ];
+        if !server.is_empty() {
+            pairs.push(("server", server));
+        }
+        let txt = txt_record(&pairs);
         let mut sd: Ref = std::ptr::null_mut();
         // SAFETY: every pointer is live for the call; a null callback is
         // allowed, and the responder renames on a conflict by itself.
@@ -1224,15 +1401,15 @@ mod bonjour {
                     continue;
                 }
                 std::thread::spawn(move || {
-                    if let Some((host, port, id, platform)) = resolve(&s) {
-                        super::announced(name, host, port, id, platform);
+                    if let Some((host, port, id, platform, server)) = resolve(&s) {
+                        super::announced(name, host, port, id, platform, server);
                     }
                 });
             }
         }
     }
 
-    type Resolved = Option<(String, u16, Option<String>, Option<String>)>;
+    type Resolved = Option<(String, u16, Option<String>, Option<String>, Option<String>)>;
 
     extern "C" fn on_resolve(
         _: Ref,
@@ -1259,6 +1436,7 @@ mod bonjour {
                 u16::from_be(port),
                 txt_value(txt, "id"),
                 txt_value(txt, "platform"),
+                txt_value(txt, "server"),
             ));
         }
     }
@@ -1306,6 +1484,19 @@ mod bonjour {
             assert_eq!(txt_value(&txt, "platform").as_deref(), Some("ios"));
             assert_eq!(txt_value(&txt, "name"), None);
         }
+
+        #[test]
+        fn a_txt_record_carries_the_server() {
+            let txt = txt_record(&[
+                ("id", "abc"),
+                ("platform", "ios"),
+                ("server", "https://music.example.com"),
+            ]);
+            assert_eq!(
+                txt_value(&txt, "server").as_deref(),
+                Some("https://music.example.com")
+            );
+        }
     }
 }
 
@@ -1330,6 +1521,56 @@ mod dial_tests {
     #[test]
     fn a_redial_skips_the_wait() {
         assert_eq!(next_wait(RETRY_MAX, false, true), RETRY_MIN);
+    }
+}
+
+#[cfg(test)]
+mod server_tests {
+    use super::is_server;
+
+    /// What another device announces is offered as a server to sign in to,
+    /// so only a bare http(s) address is.
+    #[test]
+    fn a_device_announces_only_an_address_fit_to_offer() {
+        use super::announceable;
+        assert_eq!(
+            announceable("https://music.example.com/").as_deref(),
+            Some("https://music.example.com")
+        );
+        for url in [
+            "",
+            "https://user:secret@music.example.com",
+            "https://music.example.com/?u=me&p=secret",
+            "http://127.0.0.1:4799",
+            "http://localhost:4799",
+        ] {
+            assert_eq!(announceable(url), None, "{url}");
+        }
+        // Too long to announce whole, so not announced at all.
+        let long = format!("https://music.example.com/{}", "a".repeat(240));
+        assert_eq!(announceable(&long), None);
+    }
+
+    #[test]
+    fn only_a_bare_web_address_is_offered() {
+        assert!(is_server("https://music.example.com"));
+        assert!(is_server("http://192.168.1.20:4533/koan"));
+        for s in [
+            "",
+            "music.example.com",
+            "ftp://music.example.com",
+            "javascript:alert(1)",
+            "https://user:secret@music.example.com",
+            "https://music.example.com/?u=me&p=secret",
+            "https://music.example.com/#p=secret",
+            "http://127.0.0.1:4799",
+            "http://localhost:4799",
+            "http://music.localhost",
+            "http://[::1]:4799",
+            "http://0.0.0.0:4799",
+        ] {
+            assert!(!is_server(s), "{s}");
+        }
     }
 }
 

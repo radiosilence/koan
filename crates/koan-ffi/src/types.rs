@@ -86,6 +86,16 @@ pub struct Album {
     /// When it entered the library. Sortable text — the server's ISO `created`
     /// for remote albums, SQLite's `datetime('now')` for locally scanned ones.
     pub added_at: Option<String>,
+    /// How much of it can play here: set where a listing is narrowed to this
+    /// device, the Downloaded shelf and offline.
+    pub on_device: Option<AlbumOnDevice>,
+}
+
+/// Of a record's tracks, how many can play here.
+#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AlbumOnDevice {
+    pub have: u32,
+    pub total: u32,
 }
 
 impl From<AlbumRow> for Album {
@@ -102,6 +112,10 @@ impl From<AlbumRow> for Album {
             total_discs: r.total_discs,
             total_tracks: r.total_tracks,
             added_at: r.added_at,
+            on_device: r.on_device.map(|d| AlbumOnDevice {
+                have: d.have,
+                total: d.total,
+            }),
         }
     }
 }
@@ -135,6 +149,34 @@ pub struct Track {
     /// Present once the file exists on disk, locally or in the cache.
     pub path: Option<String>,
     pub is_favourite: bool,
+}
+
+/// What was played lately, each once and newest first by its latest play.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct RecentlyPlayed {
+    pub albums: Vec<Album>,
+    pub artists: Vec<Artist>,
+    pub tracks: Vec<Track>,
+}
+
+/// Which shelf: see `koan_core::shelves::Shelf`.
+#[derive(uniffi::Enum, Debug, Clone)]
+pub enum ShelfKind {
+    Favourites,
+    Recent,
+    Search { query: String },
+    Downloaded,
+}
+
+/// The first few of each kind on a shelf, and how many there are in all.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct ShelfSummary {
+    pub artists: Vec<Artist>,
+    pub artist_total: u64,
+    pub albums: Vec<Album>,
+    pub album_total: u64,
+    pub tracks: Vec<Track>,
+    pub track_total: u64,
 }
 
 /// One play, with the track it played.
@@ -256,6 +298,52 @@ pub struct NowPlaying {
     /// random, and turning it off puts it back.
     pub shuffle: bool,
     pub repeat_mode: RepeatMode,
+    /// The sleep timer, while one is set.
+    pub sleep: Option<SleepState>,
+    /// The sleep timer is fading playback out: not bit-perfect meanwhile.
+    pub sleep_fading: bool,
+}
+
+/// A sleep timer to set: stop after a while, or at the end of the track or
+/// record playing.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SleepTimer {
+    After { minutes: u32 },
+    EndOfTrack,
+    EndOfRecord,
+}
+
+impl From<SleepTimer> for koan_core::player::state::SleepTimer {
+    fn from(t: SleepTimer) -> Self {
+        match t {
+            SleepTimer::After { minutes } => Self::After { minutes },
+            SleepTimer::EndOfTrack => Self::EndOfTrack,
+            SleepTimer::EndOfRecord => Self::EndOfRecord,
+        }
+    }
+}
+
+/// A sleep timer that is set. A time rather than what is left, so a client
+/// counts down for itself.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SleepState {
+    /// Milliseconds since the Unix epoch.
+    At {
+        unix_ms: u64,
+    },
+    EndOfTrack,
+    EndOfRecord,
+}
+
+impl From<koan_core::player::state::Sleep> for SleepState {
+    fn from(s: koan_core::player::state::Sleep) -> Self {
+        use koan_core::player::state::Sleep;
+        match s {
+            Sleep::At { unix_ms } => Self::At { unix_ms },
+            Sleep::EndOfTrack => Self::EndOfTrack,
+            Sleep::EndOfRecord => Self::EndOfRecord,
+        }
+    }
 }
 
 /// What follows a track at its end.
@@ -333,6 +421,8 @@ pub struct QueueItem {
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct Transfer {
     pub track_id: i64,
+    /// The record it belongs to, so a record's tile can say it is downloading.
+    pub album_id: Option<i64>,
     pub title: String,
     pub artist: String,
     pub state: TransferState,
@@ -373,10 +463,11 @@ impl TransferState {
 }
 
 impl Transfer {
-    pub(crate) fn of(d: &koan_core::remote::downloads::Download) -> Self {
+    pub(crate) fn of(d: &koan_core::remote::downloads::Download, album_id: Option<i64>) -> Self {
         use koan_core::remote::downloads::DownloadState;
         Self {
             track_id: d.track_id,
+            album_id,
             title: d.title.clone(),
             artist: d.artist.clone(),
             state: match &d.state {
@@ -623,6 +714,14 @@ pub struct Playlist {
     pub changed_at: String,
     /// How this machine likes to look at it. `None` follows the app default.
     pub grouped: Option<bool>,
+    /// Its contents are not for editing: rules or a playlist file decide
+    /// them, here or on the server. Adds, removals and reorders are refused.
+    pub readonly: bool,
+    /// Rules here decide its contents (a smart playlist on this machine,
+    /// rather than one mirrored from a server).
+    pub smart: bool,
+    /// Read from a file in the library, which decides its name and contents.
+    pub from_file: bool,
 }
 
 impl From<queries::PlaylistRow> for Playlist {
@@ -639,6 +738,9 @@ impl From<queries::PlaylistRow> for Playlist {
             created_at: p.created_at,
             changed_at: p.changed_at,
             grouped: p.grouped,
+            readonly: p.readonly,
+            smart: p.rules.is_some(),
+            from_file: p.source_path.is_some(),
         }
     }
 }
@@ -657,11 +759,12 @@ pub enum QueueLock {
 
 /// One row of a playlist: the track, and the entry it sits in.
 ///
-/// The id is the entry's. It is what a queue item remembers, so a client can
-/// tell which of two copies of a song is the one playing.
+/// `entry_id` is the entry's own, not the track's: it is what a queue item
+/// remembers, so a client can tell which of two copies of a song is the one
+/// playing. Named so that a list of them cannot be read as track ids.
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct PlaylistEntry {
-    pub id: i64,
+    pub entry_id: i64,
     pub track: Track,
 }
 
@@ -890,6 +993,12 @@ pub enum AlbumSort {
     /// order, page after page; a new seed is a new order — which is the point,
     /// it's for turning up records you'd forgotten.
     Random,
+    /// Most recently played first. Only with [`BrowseFilter::recent`], which
+    /// is what knows when; without it, `RecentlyAdded`.
+    LastPlayed,
+    /// Fully on this device first, then by how much is: the Downloaded
+    /// shelf's order.
+    Downloaded,
 }
 
 /// Narrowing the album and artist browsers by what the records are. The web
@@ -898,6 +1007,11 @@ pub enum AlbumSort {
 #[derive(uniffi::Record, Debug, Clone, Default, PartialEq, Eq)]
 pub struct BrowseFilter {
     pub favourites: bool,
+    /// Only what was played in the last `koan_core::shelves::RECENT_DAYS`:
+    /// the Recently Played shelf as a filter.
+    pub recent: bool,
+    /// Only what can play on this device: the Downloaded shelf as a filter.
+    pub downloaded: bool,
     /// Only records in a lossless codec.
     pub lossless: bool,
     /// Only records in this codec, as `BrowseChoices::codecs` names it.
@@ -915,6 +1029,27 @@ pub struct BrowseFilter {
 pub struct BrowseChoices {
     pub codecs: Vec<String>,
     pub genres: Vec<String>,
+}
+
+/// How the track browser orders the library.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrackBrowseSort {
+    /// Artist, then record, disc and track: the library as it would be shelved.
+    Artist,
+    Title,
+    /// By record title, then in running order.
+    Album,
+    Duration,
+    /// Most recently played first. Only with [`BrowseFilter::recent`]; without
+    /// it, by title.
+    LastPlayed,
+}
+
+/// A page of the track browser, and how many tracks pass its filters in all.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct TrackListing {
+    pub tracks: Vec<Track>,
+    pub total: u64,
 }
 
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -1262,6 +1397,35 @@ pub struct Invite {
     pub mailto: String,
 }
 
+/// A pairing this device opened: the code to show, and the link that
+/// approves it.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct PairingCode {
+    pub id: String,
+    /// `XXXX-XXXX`.
+    pub code: String,
+    pub link: String,
+}
+
+/// A device waiting to be signed in, as the server describes it to an
+/// approver.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct PairingInfo {
+    pub device: String,
+    /// The address the request came from, as the server sees it.
+    pub from: String,
+    /// The address is on a private network (RFC 1918, link-local, unique
+    /// local, loopback) rather than the internet.
+    pub local: bool,
+}
+
+/// A pairing link: which server another device is waiting on, and its id.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct PairingLink {
+    pub server: String,
+    pub id: String,
+}
+
 impl From<koan_core::invite::Invite> for Invite {
     fn from(i: koan_core::invite::Invite) -> Self {
         Self {
@@ -1505,6 +1669,28 @@ pub struct ConnectionInfo {
     pub share_error: Option<String>,
     /// The server's other accounts, to share with.
     pub share_accounts: Vec<String>,
+    /// The library is narrowed to what can play here: turned on by hand, or
+    /// the server out of reach.
+    pub offline: bool,
+    /// Turned on by hand, rather than by the server being out of reach.
+    pub offline_manual: bool,
+    /// The server can sign a device without a keyboard in, once someone here
+    /// approves it.
+    pub pairing: bool,
+    /// The server refused the stored credential (a revoked API key, a changed
+    /// password) when it was last used, and has not accepted it since.
+    pub sign_in_refused: bool,
+    /// The servers devices on this network are signed in to, announced over
+    /// Bonjour: what a device not signed in yet offers to sign in to.
+    pub nearby_servers: Vec<NearbyServer>,
+}
+
+/// A server another device on this network announced it is signed in to.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct NearbyServer {
+    pub url: String,
+    /// The devices that announced it, by name.
+    pub devices: Vec<String>,
 }
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
