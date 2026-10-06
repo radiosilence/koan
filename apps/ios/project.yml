@@ -187,6 +187,9 @@ targets:
         # A layered icon and the Top Shelf banners, drawn by
         # `apps/ios/tv-brand.swift`.
         ASSETCATALOG_COMPILER_APPICON_NAME: App Icon & Top Shelf Image
+        # No global accent: the shared catalog's green tints system alerts,
+        # which a television draws as green text on a white focused button.
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: ""
         LIBRARY_SEARCH_PATHS: $(SRCROOT)/../../target/tv-link/$(PLATFORM_NAME)
         OTHER_LDFLAGS: -lkoan_ffi
     # A background push is how the server reaches a TV tvOS has suspended,
