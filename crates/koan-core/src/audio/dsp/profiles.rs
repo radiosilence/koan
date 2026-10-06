@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use super::import::Imported;
 use super::{Setup, convolver, raw};
-use crate::config::{self, Config, DspProfile, DspScope};
+use crate::config::{self, Config, DspEar, DspMeasurement, DspProfile, DspRole, DspScope};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Summary {
@@ -22,6 +22,9 @@ pub struct Summary {
     pub rates: Vec<u32>,
     /// Why the profile would not load, if it would not.
     pub problem: Option<String>,
+    pub role: DspRole,
+    /// Built from a measurement.
+    pub measured: bool,
     /// For a group: its members, in order, and the one playing.
     pub members: Vec<String>,
     pub playing: Option<String>,
@@ -82,6 +85,8 @@ pub fn overview_for(device: Option<String>) -> Overview {
                     layers: p.layers.len(),
                     rates,
                     problem,
+                    role: shown_role(p, &cfg.dsp.profiles),
+                    measured: p.measurement.is_some(),
                     members: if p.group {
                         p.layers.iter().map(|l| l.profile.clone()).collect()
                     } else {
@@ -207,6 +212,19 @@ pub struct Detail {
     pub everywhere: bool,
     /// Where it is kept was chosen, rather than following from what it is.
     pub scope_set: bool,
+    pub role: DspRole,
+    pub role_set: bool,
+    /// A chain correcting twice, made before that was refused: which, and
+    /// what to do.
+    pub corrects_twice: Option<String>,
+    /// The chain in a line each: see [`summary`].
+    pub corrects: Option<String>,
+    pub corrects_baked: bool,
+    pub tunings: Vec<String>,
+    /// For each of `layers`, what it is for; `None` where it is missing.
+    pub layer_roles: Vec<Option<DspRole>>,
+    pub measured: bool,
+    pub made_for: Option<String>,
 }
 
 /// Everything in the profile `name`.
@@ -266,6 +284,7 @@ pub fn detail(name: &str) -> Option<Detail> {
         problem = Some(problem.map_or(note.clone(), |p| format!("{p}. {note}")));
     }
     let preamp_db = setup.map_or(0.0, |s| s.preamp_db(preamp_rate, 2));
+    let chain_summary = summary(name).unwrap_or_default();
     Some(Detail {
         name: profile.name.clone(),
         devices: profile.devices.clone(),
@@ -280,6 +299,25 @@ pub fn detail(name: &str) -> Option<Detail> {
         problem,
         everywhere: scope(profile, &cfg.dsp.profiles) == DspScope::Everywhere,
         scope_set: profile.scope.is_some(),
+        role: shown_role(profile, &cfg.dsp.profiles),
+        role_set: profile.role.is_some(),
+        corrects_twice: corrects_twice(profile, &cfg.dsp.profiles),
+        corrects: chain_summary.correction,
+        corrects_baked: chain_summary.baked,
+        tunings: chain_summary.tunings,
+        layer_roles: profile
+            .layers
+            .iter()
+            .map(|l| {
+                cfg.dsp
+                    .profiles
+                    .iter()
+                    .find(|p| p.name == l.profile)
+                    .map(role)
+            })
+            .collect(),
+        measured: profile.measurement.is_some(),
+        made_for: profile.target.as_ref().map(|t| t.made_for.clone()),
     })
 }
 
@@ -352,24 +390,89 @@ pub fn dir(name: &str) -> PathBuf {
     config::config_dir().join("dsp").join(slug(name))
 }
 
-/// Record the target `name`'s correction was made for, keeping any target
-/// chosen in its place.
+/// Record the target `name`'s correction was made for: one that ships,
+/// since a move is worked out against it. A target chosen in its place is
+/// kept where it is for the same kind of headphone. Refused for a
+/// correction built from a measurement, which is made for the target it is
+/// corrected to.
 pub fn set_made_for(name: &str, made_for: Option<&str>) -> Result<(), String> {
+    use super::targets;
+    let cfg = Config::cached();
+    let p = cfg
+        .dsp
+        .profiles
+        .iter()
+        .find(|p| p.name == name)
+        .ok_or_else(|| format!("No profile called {name}"))?;
+    if p.measurement.is_some() {
+        return Err(format!(
+            "{name} is built from a measurement: choose the target it is corrected to instead"
+        ));
+    }
+    let made = match made_for {
+        Some(id) => Some(targets::shipped(id).ok_or_else(|| format!("No target called {id}"))?),
+        None => None,
+    };
+    let chosen = p
+        .target
+        .as_ref()
+        .and_then(|t| t.chosen.clone())
+        .filter(|c| made.is_some_and(|m| targets::shipped(c).is_none_or(|t| t.ear == m.ear)));
     persist(|cfg| {
         if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name) {
-            p.target = made_for.map(|m| crate::config::DspTarget {
-                made_for: m.to_owned(),
-                chosen: p.target.as_ref().and_then(|t| t.chosen.clone()),
+            p.target = made.map(|m| crate::config::DspTarget {
+                made_for: m.id.to_owned(),
+                chosen,
             });
         }
     })
-    .map_err(|e| e.to_string())
+}
+
+/// The headphone `p` corrects, as measured, and the target it is corrected
+/// to, for drawing: an AutoEQ result's own two curves, its target moved as a
+/// chosen target moves it; or a measurement and its target, levelled at
+/// 1 kHz so they are drawn against each other.
+fn headphone(p: &DspProfile) -> Option<(super::targets::Curve, super::targets::Curve)> {
+    use super::targets;
+    let folder = dir(&p.name);
+    if let Some(m) = &p.measurement {
+        let level = |c: targets::Curve| {
+            let k = targets::at(&c, 1000.0);
+            c.into_iter()
+                .map(|(hz, db)| (hz, db - k))
+                .collect::<targets::Curve>()
+        };
+        return Some((
+            level(targets::measurement(&folder)?),
+            level(targets::choice_curve(&m.target)?),
+        ));
+    }
+    let (raw, made_for) = targets::autoeq_measurement(&folder)?;
+    let moved = p
+        .target
+        .as_ref()
+        .and_then(|t| Some((t.chosen.as_ref()?, &t.made_for)))
+        .and_then(|(to, from)| {
+            Some(targets::difference(
+                &targets::choice_curve(from)?,
+                &targets::choice_curve(to)?,
+            ))
+        });
+    Some((
+        raw,
+        match moved {
+            Some(step) => targets::moved(&made_for, &step),
+            None => made_for,
+        },
+    ))
 }
 
 /// What `name` offers to move its correction to.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TargetChoices {
-    pub made_for: &'static super::targets::Target,
+    /// The target an AutoEQ correction or a ready-made EQ was made for;
+    /// none for one built from a measurement, which is made for `chosen`.
+    pub made_for: Option<&'static super::targets::Target>,
     pub chosen: Option<String>,
     /// The shipped targets for the same kind of headphone, then those added.
     pub choices: Vec<TargetChoice>,
@@ -379,6 +482,8 @@ pub struct TargetChoices {
 pub struct TargetChoice {
     pub id: String,
     pub name: String,
+    /// What it does, in a few plain words; empty for one added.
+    pub does: String,
     /// What it sounds like; empty for one added.
     pub character: String,
 }
@@ -388,31 +493,41 @@ pub struct TargetChoice {
 pub fn target_choices(name: &str) -> Option<TargetChoices> {
     use super::targets;
     let cfg = Config::cached();
-    let t = cfg
-        .dsp
-        .profiles
-        .iter()
-        .find(|p| p.name == name)?
-        .target
-        .clone()?;
-    let made_for = targets::shipped(&t.made_for)?;
+    let p = cfg.dsp.profiles.iter().find(|p| p.name == name)?;
+    let (made_for, chosen, ear) = match (&p.measurement, &p.target) {
+        (Some(m), _) => (
+            None,
+            Some(m.target.clone()),
+            match m.ear {
+                DspEar::In => targets::Ear::In,
+                DspEar::Over => targets::Ear::Over,
+            },
+        ),
+        (None, Some(t)) => {
+            let made_for = targets::shipped(&t.made_for)?;
+            (Some(made_for), t.chosen.clone(), made_for.ear)
+        }
+        (None, None) => return None,
+    };
     let mut choices: Vec<TargetChoice> = targets::TARGETS
         .iter()
-        .filter(|c| c.ear == made_for.ear)
+        .filter(|c| c.ear == ear)
         .map(|c| TargetChoice {
             id: c.id.into(),
             name: c.name.into(),
+            does: c.does.into(),
             character: c.character.into(),
         })
         .collect();
     choices.extend(targets::added().into_iter().map(|a| TargetChoice {
         id: a.id,
         name: a.name,
+        does: String::new(),
         character: String::new(),
     }));
     Some(TargetChoices {
         made_for,
-        chosen: t.chosen,
+        chosen,
         choices,
     })
 }
@@ -428,13 +543,15 @@ pub fn choose_target(name: &str, chosen: Option<&str>) -> Result<(), String> {
         return Err(format!("No target {c} for {name}"));
     }
     persist(|cfg| {
-        if let Some(t) = cfg
-            .dsp
-            .profiles
-            .iter_mut()
-            .find(|p| p.name == name)
-            .and_then(|p| p.target.as_mut())
-        {
+        let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name) else {
+            return;
+        };
+        if let Some(m) = p.measurement.as_mut() {
+            // Built from a measurement: it is made for the target chosen.
+            if let Some(c) = chosen {
+                m.target = c.to_owned();
+            }
+        } else if let Some(t) = p.target.as_mut() {
             t.chosen = chosen.filter(|c| *c != t.made_for).map(str::to_owned);
         }
     })
@@ -567,6 +684,11 @@ pub struct Response {
     pub predicted: Option<Vec<f64>>,
     /// The gain ahead of it all at `rate`.
     pub preamp_db: f64,
+    /// For a chain with both a correction and tuning: what the correction
+    /// does, and what the tuning on top does, so each can be drawn as its
+    /// own. `total` is the two together.
+    pub correction: Option<Vec<f64>>,
+    pub tuning: Option<Vec<f64>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -595,6 +717,32 @@ pub fn response(name: &str, rate: u32) -> Option<Response> {
         .filter(|f| matches!(f, crate::config::DspFilter::Band(_)))
         .map(|f| curve(std::slice::from_ref(f)))
         .collect();
+    // The correction alone, where the chain has tuning besides.
+    let corrector = corrections_in(profile, all)
+        .first()
+        .and_then(|c| all.iter().find(|p| &p.name == c))
+        .filter(|c| c.name != profile.name || !profile.layers.is_empty());
+    let correction = corrector.and_then(|c| {
+        let alone = DspProfile {
+            layers: Vec::new(),
+            ..c.clone()
+        };
+        Setup::load(&alone, all, &config::config_dir())
+            .ok()
+            .flatten()
+            .map(|s| s.response(&freqs, rate))
+    });
+    let tuning = correction
+        .as_ref()
+        .map(|c| {
+            total
+                .iter()
+                .zip(c)
+                .map(|(t, c)| t - c)
+                .collect::<Vec<f64>>()
+        })
+        .filter(|t| t.iter().any(|db| db.abs() > 0.05));
+    let correction = correction.filter(|_| tuning.is_some());
     let layers = profile
         .layers
         .iter()
@@ -609,8 +757,8 @@ pub fn response(name: &str, rate: u32) -> Option<Response> {
         })
         .collect();
 
-    // The measurement kept with an AutoEQ correction: this profile's, or the
-    // first of its layers that has one.
+    // The headphone this chain corrects, as measured, and the target it is
+    // corrected to: this profile's, or the first of its layers that has one.
     let measured = std::iter::once(profile)
         .chain(
             profile
@@ -619,36 +767,13 @@ pub fn response(name: &str, rate: u32) -> Option<Response> {
                 .filter(|l| l.on)
                 .filter_map(|l| all.iter().find(|p| p.name == l.profile)),
         )
-        .find_map(|p| {
-            let text = std::fs::read_to_string(targets::result_path(&dir(&p.name))).ok()?;
-            let raw = targets::result_column(&text, "raw");
-            let target = targets::result_column(&text, "target");
-            (!raw.is_empty() && !target.is_empty()).then_some((p, raw, target))
-        });
+        .find_map(headphone);
     let (measurement, target, predicted) = match measured {
-        Some((p, raw, made_for)) => {
+        Some((raw, aim)) => {
             let raw: Vec<f64> = freqs.iter().map(|&hz| targets::at(&raw, hz)).collect();
-            // The target it plays to: the one in the result, moved as the
-            // chosen target moves it.
-            let moved = p
-                .target
-                .as_ref()
-                .and_then(|t| Some((t.chosen.as_ref()?, &t.made_for)))
-                .and_then(|(to, from)| {
-                    Some(targets::difference(
-                        &targets::choice_curve(from)?,
-                        &targets::choice_curve(to)?,
-                    ))
-                });
-            let target: Vec<f64> = freqs
-                .iter()
-                .map(|&hz| {
-                    targets::at(&made_for, hz)
-                        + moved.as_ref().map_or(0.0, |g| targets::at(&g.points, hz))
-                })
-                .collect();
+            let aim: Vec<f64> = freqs.iter().map(|&hz| targets::at(&aim, hz)).collect();
             let predicted = raw.iter().zip(&total).map(|(r, t)| r + t).collect();
-            (Some(raw), Some(target), Some(predicted))
+            (Some(raw), Some(aim), Some(predicted))
         }
         None => (None, None, None),
     };
@@ -662,6 +787,8 @@ pub fn response(name: &str, rate: u32) -> Option<Response> {
         target,
         predicted,
         preamp_db,
+        correction,
+        tuning,
     })
 }
 
@@ -788,7 +915,7 @@ fn scope_in(profile: &DspProfile, all: &[DspProfile], seen: &mut Vec<String>) ->
     if !profile.impulses.is_empty() {
         return DspScope::Device;
     }
-    if profile.target.is_some() {
+    if profile.target.is_some() || profile.measurement.is_some() {
         return DspScope::Everywhere;
     }
     if !profile.layers.is_empty() {
@@ -880,6 +1007,285 @@ pub fn set_scope(name: &str, to: DspScope) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+/// What `profile` is for: as set, or a correction where it was installed
+/// from AutoEQ, built from a measurement or said to be made for a target,
+/// and a tuning otherwise.
+pub fn role(profile: &DspProfile) -> DspRole {
+    profile.role.unwrap_or(
+        if profile.target.is_some() || profile.measurement.is_some() {
+            DspRole::Correction
+        } else {
+            DspRole::Tuning
+        },
+    )
+}
+
+/// What `profile` is for, as shown: a stack with nothing of its own is what
+/// it plays, a correction where it holds one, as that correction is.
+pub fn shown_role(profile: &DspProfile, all: &[DspProfile]) -> DspRole {
+    let own = !profile.filters.is_empty() || !profile.impulses.is_empty();
+    if profile.role.is_some() || own || profile.layers.is_empty() {
+        return role(profile);
+    }
+    corrections_in(profile, all)
+        .first()
+        .and_then(|c| all.iter().find(|p| &p.name == c))
+        .map_or(DspRole::Tuning, role)
+}
+
+/// The corrections a chain plays, `profile` and its layers switched on, in
+/// the order they play.
+pub fn corrections_in(profile: &DspProfile, all: &[DspProfile]) -> Vec<String> {
+    fn walk(p: &DspProfile, all: &[DspProfile], seen: &mut Vec<String>, out: &mut Vec<String>) {
+        if seen.contains(&p.name) || seen.len() > 64 {
+            return;
+        }
+        seen.push(p.name.clone());
+        // A group plays one member, so only it counts.
+        let played: Vec<&DspProfile> = if p.group {
+            super::playing(p, all).into_iter().collect()
+        } else {
+            p.layers
+                .iter()
+                .filter(|l| l.on)
+                .filter_map(|l| all.iter().find(|q| q.name == l.profile))
+                .collect()
+        };
+        for q in played {
+            walk(q, all, seen, out);
+        }
+        if role(p).corrects() && !out.contains(&p.name) {
+            out.push(p.name.clone());
+        }
+    }
+    let mut out = Vec::new();
+    walk(profile, all, &mut Vec::new(), &mut out);
+    out
+}
+
+/// A correction by name and kind, as a warning names it: "Cantor (AutoEQ)".
+fn correction_label(p: &DspProfile) -> String {
+    let kind = if role(p) == DspRole::Baked {
+        "baked"
+    } else if p.measurement.is_some() {
+        "measured"
+    } else if super::targets::autoeq_measurement(&dir(&p.name)).is_some() {
+        "AutoEQ"
+    } else if p.target.is_some() {
+        "ready-made"
+    } else {
+        "correction"
+    };
+    if p.name.to_lowercase().contains(&kind.to_lowercase()) {
+        p.name.clone()
+    } else {
+        format!("{} ({kind})", p.name)
+    }
+}
+
+/// What a chain correcting more than once says: each undoes the same
+/// headphone, so it plays twice the correction. Stacks made before that was
+/// refused still play, and say so.
+pub fn corrects_twice(profile: &DspProfile, all: &[DspProfile]) -> Option<String> {
+    let c = corrections_in(profile, all);
+    if c.len() < 2 {
+        return None;
+    }
+    let labels: Vec<String> = c
+        .iter()
+        .filter_map(|n| all.iter().find(|p| &p.name == n))
+        .map(correction_label)
+        .collect();
+    let (last, rest) = labels.split_last()?;
+    Some(format!(
+        "This stack corrects twice: {} and {last}. Keep one.",
+        rest.join(", ")
+    ))
+}
+
+/// Why a chain with more than one correction is refused.
+pub fn two_corrections(corrections: &[String]) -> String {
+    format!(
+        "This stack already corrects for {}. Remove that correction first, or add {} as a tuning instead.",
+        corrections[0],
+        corrections.get(1).map_or("this", String::as_str)
+    )
+}
+
+/// Say what `name` is for. Always taken, since it is what the profile is:
+/// a stack it makes correct twice says so on its page (`corrects_twice`),
+/// and gains no further correction.
+pub fn set_role(name: &str, to: DspRole) -> Result<(), String> {
+    if !Config::cached().dsp.profiles.iter().any(|p| p.name == name) {
+        return Err(format!("No profile called {name}"));
+    }
+    persist(|cfg| {
+        if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name) {
+            p.role = Some(to);
+        }
+    })
+}
+
+/// A target's name, by id: one that ships, one added, or the id itself.
+pub fn target_name(id: &str) -> String {
+    use super::targets;
+    targets::shipped(id).map_or_else(
+        || {
+            targets::added()
+                .into_iter()
+                .find(|a| a.id == id)
+                .map_or_else(|| id.to_owned(), |a| a.name)
+        },
+        |t| t.name.to_owned(),
+    )
+}
+
+/// What a chain does, in a line each: the headphone it corrects and how,
+/// and the tunings on top.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ChainSummary {
+    pub correction: Option<String>,
+    /// The correction has a tuning baked in.
+    pub baked: bool,
+    pub tunings: Vec<String>,
+}
+
+pub fn summary(name: &str) -> Option<ChainSummary> {
+    use super::targets;
+    let cfg = Config::cached();
+    let all = &cfg.dsp.profiles;
+    let profile = all.iter().find(|p| p.name == name)?;
+    let mut chain: Vec<&DspProfile> = profile
+        .layers
+        .iter()
+        .filter(|l| l.on)
+        .filter_map(|l| all.iter().find(|p| p.name == l.profile))
+        .collect();
+    chain.push(profile);
+    let mut out = ChainSummary::default();
+    for p in chain {
+        match role(p) {
+            DspRole::Tuning => {
+                if !p.filters.is_empty() || !p.impulses.is_empty() {
+                    out.tunings.push(p.name.clone());
+                }
+                continue;
+            }
+            DspRole::Baked => {
+                if out.correction.is_none() {
+                    out.correction = Some(format!("{} (correction + tuning in one)", p.name));
+                    out.baked = true;
+                }
+                continue;
+            }
+            DspRole::Correction => {}
+        }
+        let line = if let Some(m) = &p.measurement {
+            format!("{} → {} (from measurement)", p.name, target_name(&m.target))
+        } else if let Some(t) = &p.target {
+            let autoeq = targets::autoeq_measurement(&dir(&p.name)).is_some();
+            match (&t.chosen, autoeq) {
+                (Some(c), true) => format!(
+                    "{} → {} (rebuilt from AutoEQ's measurement)",
+                    p.name,
+                    target_name(c)
+                ),
+                (Some(c), false) => format!("{} → {}", p.name, target_name(c)),
+                (None, true) => format!("{} → {}", p.name, target_name(&t.made_for)),
+                (None, false) => format!(
+                    "{}: ready-made EQ (made for {})",
+                    p.name,
+                    target_name(&t.made_for)
+                ),
+            }
+        } else {
+            format!("{}: ready-made EQ (made for an unknown target)", p.name)
+        };
+        out.correction.get_or_insert(line);
+    }
+    Some(out)
+}
+
+/// A measurement, checked: frequency and level pairs covering the audible
+/// band, as squig.link and REW export them.
+pub fn read_measurement(text: &str) -> Result<super::targets::Curve, String> {
+    super::targets::covering(text, "A measurement")
+}
+
+/// What a measurement corrected to a target would do, before anything is
+/// saved: the curves the Headphone view draws, and the EQ's own.
+pub fn preview_measurement(text: &str, target: &str, rate: u32) -> Result<Response, String> {
+    use super::targets;
+    let measured = read_measurement(text)?;
+    let aim = targets::choice_curve(target).ok_or_else(|| format!("No target {target}"))?;
+    let freqs = targets::grid();
+    let filters = [config::DspFilter::Graphic(targets::correction(
+        &measured, &aim,
+    ))];
+    let total = super::response(&filters, &freqs, rate);
+    let level = |c: &targets::Curve| {
+        let k = targets::at(c, 1000.0);
+        freqs
+            .iter()
+            .map(|&hz| targets::at(c, hz) - k)
+            .collect::<Vec<f64>>()
+    };
+    let raw = level(&measured);
+    let predicted = raw.iter().zip(&total).map(|(r, t)| r + t).collect();
+    Ok(Response {
+        bands: Vec::new(),
+        layers: Vec::new(),
+        measurement: Some(raw),
+        target: Some(level(&aim)),
+        predicted: Some(predicted),
+        preamp_db: 0.0,
+        correction: None,
+        tuning: None,
+        total,
+        freqs,
+    })
+}
+
+/// Save a correction built from a measurement: the headphone `name`,
+/// measured as `text`, corrected to `target`. A correction, kept everywhere
+/// like any headphone's.
+pub fn save_measured(name: &str, text: &str, ear: DspEar, target: &str) -> Result<String, String> {
+    use super::targets;
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("A profile needs a name".into());
+    }
+    if Config::cached().dsp.profiles.iter().any(|p| p.name == name) {
+        return Err(format!("There is already a profile called {name}"));
+    }
+    let measured = read_measurement(text)?;
+    if targets::choice_curve(target).is_none() {
+        return Err(format!("No target {target}"));
+    }
+    let folder = dir(name);
+    if folder.exists() {
+        return Err(format!("{} is in the way", folder.display()));
+    }
+    std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+    std::fs::write(
+        targets::measurement_path(&folder),
+        targets::on_grid(&measured),
+    )
+    .map_err(|e| e.to_string())?;
+    persist(|cfg| {
+        cfg.dsp.profiles.push(DspProfile {
+            name: name.to_owned(),
+            role: Some(DspRole::Correction),
+            measurement: Some(DspMeasurement {
+                ear,
+                target: target.to_owned(),
+            }),
+            ..Default::default()
+        })
+    })?;
+    Ok(name.to_owned())
+}
+
 /// Make `name` a stack of `layers`, in order, creating it if there is none.
 /// Refused where it could not play: a layer missing, a layer of itself, one
 /// with impulse responses, one kept on this device under a stack kept
@@ -902,9 +1308,40 @@ pub fn set_layers(name: &str, layers: Vec<crate::config::DspLayer>) -> Result<()
     let probe = profile_mut(&mut all, name);
     probe.layers = layers.clone();
     // Every layer, on or off: one switched off now is one switched on later.
+    // A group's members are alternatives, one playing whichever is picked.
     let mut check = probe.clone();
-    for l in &mut check.layers {
-        l.on = true;
+    if !check.group {
+        for l in &mut check.layers {
+            l.on = true;
+        }
+    }
+    let corrections = corrections_in(&check, &all);
+    // Every correction it had, on or off: a stack that already corrects
+    // twice can still be edited, but gains no other.
+    let before = cfg
+        .dsp
+        .profiles
+        .iter()
+        .find(|p| p.name == name)
+        .map(|p| {
+            let mut p = p.clone();
+            if !p.group {
+                for l in &mut p.layers {
+                    l.on = true;
+                }
+            }
+            corrections_in(&p, &cfg.dsp.profiles)
+        })
+        .unwrap_or_default();
+    if corrections.len() > 1 && corrections.iter().any(|c| !before.contains(c)) {
+        // The one it had first, then the one being added.
+        let mut named: Vec<String> = before
+            .iter()
+            .filter(|c| corrections.contains(c))
+            .cloned()
+            .collect();
+        named.extend(corrections.iter().filter(|c| !before.contains(c)).cloned());
+        return Err(two_corrections(&named));
     }
     super::chain(&check, &all, &mut Vec::new()).map_err(|e| e.to_string())?;
     if everywhere_by_choice(&all, name)
@@ -1640,5 +2077,376 @@ mod tests {
         set_scope("Desk", DspScope::Device).unwrap();
         set_scope("Bass", DspScope::Device).unwrap();
         assert_eq!(kept("Bass"), DspScope::Device);
+    }
+
+    /// A measurement as text: flat, with `bump` dB at 3 kHz.
+    fn measured(bump: f64) -> String {
+        let mut text = String::from("frequency,raw\n");
+        for hz in super::super::targets::grid() {
+            let db = bump * (-((hz / 3000.0).log2() * 3.0).powi(2)).exp();
+            text.push_str(&format!("{hz:.2},{db:.2}\n"));
+        }
+        text
+    }
+
+    /// A headphone measured and corrected to a target: a correction, kept
+    /// everywhere, playing target minus measurement, said in one line.
+    #[test]
+    fn a_measurement_is_corrected_to_its_target() {
+        use super::super::targets;
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let text = measured(6.0);
+        assert!(
+            read_measurement("1000,0\n").is_err(),
+            "too little to correct from"
+        );
+        let preview = preview_measurement(&text, "harman-in-ear-2019", 48000).unwrap();
+        assert!(preview.predicted.is_some() && preview.measurement.is_some());
+
+        save_measured("AFUL Performer 8S", &text, DspEar::In, "harman-in-ear-2019").unwrap();
+        assert!(
+            save_measured("AFUL Performer 8S", &text, DspEar::In, "harman-in-ear-2019").is_err()
+        );
+        let cfg = Config::cached();
+        let p = cfg
+            .dsp
+            .profiles
+            .iter()
+            .find(|p| p.name == "AFUL Performer 8S")
+            .unwrap()
+            .clone();
+        assert_eq!(role(&p), DspRole::Correction);
+        assert_eq!(scope(&p, &cfg.dsp.profiles), DspScope::Everywhere);
+        assert_eq!(
+            summary("AFUL Performer 8S").unwrap().correction.as_deref(),
+            Some("AFUL Performer 8S → Harman in-ear 2019 (from measurement)")
+        );
+
+        // What plays is the correction from the measurement to the target.
+        let r = response("AFUL Performer 8S", 48000).unwrap();
+        let at = |curve: &[f64], hz: f64| curve[r.freqs.iter().position(|f| *f >= hz).unwrap()];
+        let wanted = targets::correction(
+            &targets::parse(&text),
+            &targets::choice_curve("harman-in-ear-2019").unwrap(),
+        );
+        let expect = targets::at(&wanted.points, 3000.0);
+        assert!(
+            (at(&r.total, 3000.0) - expect).abs() < 1.0,
+            "{} vs {expect}",
+            at(&r.total, 3000.0)
+        );
+        // Held to ±3 dB in the treble, where rigs disagree.
+        assert!(
+            wanted
+                .points
+                .iter()
+                .filter(|(hz, _)| *hz >= 10_000.0)
+                .all(|(_, db)| db.abs() <= 3.0)
+        );
+
+        // Another target: the same measurement, corrected to it.
+        let choices = target_choices("AFUL Performer 8S").unwrap();
+        assert!(choices.made_for.is_none());
+        choose_target("AFUL Performer 8S", Some("harman-in-ear-2019-without-bass")).unwrap();
+        assert_eq!(
+            summary("AFUL Performer 8S").unwrap().correction.as_deref(),
+            Some("AFUL Performer 8S → Harman in-ear 2019, no bass shelf (from measurement)")
+        );
+    }
+
+    /// One correction to a chain: a second layer is refused, naming the one
+    /// already there, and one made so by its role is warned of; tuning on
+    /// top is fine.
+    #[test]
+    fn a_chain_corrects_once() {
+        use crate::config::{DspLayer, DspTarget};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        persist(|c| {
+            for (name, target) in [("HD 650", true), ("HD 600", true), ("Warm", false)] {
+                c.dsp.profiles.push(DspProfile {
+                    name: name.into(),
+                    filters: vec![band(100.0)],
+                    target: target.then(|| DspTarget {
+                        made_for: "harman-over-ear-2018".into(),
+                        chosen: None,
+                    }),
+                    ..Default::default()
+                });
+            }
+        })
+        .unwrap();
+        let layer = |p: &str| DspLayer {
+            profile: p.into(),
+            on: true,
+        };
+        set_layers("Desk", vec![layer("HD 650"), layer("Warm")]).unwrap();
+        let s = summary("Desk").unwrap();
+        assert_eq!(
+            s.correction.as_deref(),
+            Some("HD 650: ready-made EQ (made for Harman over-ear 2018)")
+        );
+        assert_eq!(s.tunings, vec!["Warm".to_string()]);
+        let refused = set_layers(
+            "Desk",
+            vec![layer("HD 650"), layer("Warm"), layer("HD 600")],
+        )
+        .unwrap_err();
+        assert_eq!(
+            refused,
+            "This stack already corrects for HD 650. Remove that correction first, or add HD 600 as a tuning instead."
+        );
+        // Said to be a correction, it is one: the stack says so.
+        set_role("Warm", DspRole::Correction).unwrap();
+        assert_eq!(
+            detail("Desk").unwrap().corrects_twice.as_deref(),
+            Some("This stack corrects twice: HD 650 (ready-made) and Warm (correction). Keep one.")
+        );
+        set_role("Warm", DspRole::Tuning).unwrap();
+        set_role("HD 600", DspRole::Tuning).unwrap();
+        set_layers(
+            "Desk",
+            vec![layer("HD 650"), layer("Warm"), layer("HD 600")],
+        )
+        .unwrap();
+    }
+
+    /// What a ready-made EQ was made for is a target that ships, said of a
+    /// profile that is there and not built from a measurement; a target
+    /// chosen for another kind of headphone goes with the old one.
+    #[test]
+    fn made_for_is_checked() {
+        use crate::config::{DspEar, DspMeasurement};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Preset".into(),
+                filters: vec![band(100.0)],
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Measured".into(),
+                measurement: Some(DspMeasurement {
+                    ear: DspEar::In,
+                    target: "harman-in-ear-2019".into(),
+                }),
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        assert!(set_made_for("Nobody", Some("harman-in-ear-2019")).is_err());
+        assert!(set_made_for("Preset", Some("made-up")).is_err());
+        assert!(set_made_for("Measured", Some("harman-in-ear-2019")).is_err());
+        let target = || {
+            Config::cached()
+                .dsp
+                .profiles
+                .iter()
+                .find(|p| p.name == "Preset")
+                .unwrap()
+                .target
+                .clone()
+        };
+        assert_eq!(target(), None);
+        set_made_for("Preset", Some("harman-in-ear-2019")).unwrap();
+        choose_target("Preset", Some("diffuse-field-iso-11904-1")).unwrap();
+        set_made_for("Preset", Some("harman-over-ear-2018")).unwrap();
+        let t = target().unwrap();
+        assert_eq!(t.made_for, "harman-over-ear-2018");
+        assert_eq!(t.chosen, None, "an in-ear target is no move for over-ears");
+        set_made_for("Preset", None).unwrap();
+        assert_eq!(target(), None);
+    }
+
+    /// A correction with a tuning baked in is the chain's correction. A stack
+    /// made before a second correction was refused still plays, says so,
+    /// and can be edited, but gains no other correction.
+    #[test]
+    fn a_baked_preset_is_the_correction() {
+        use crate::config::{DspLayer, DspTarget};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let layer = |p: &str, on: bool| DspLayer {
+            profile: p.into(),
+            on,
+        };
+        persist(|c| {
+            let autoeq = || {
+                Some(DspTarget {
+                    made_for: "harman-in-ear-2019".into(),
+                    chosen: None,
+                })
+            };
+            c.dsp.profiles.push(DspProfile {
+                name: "Cantor".into(),
+                filters: vec![band(100.0)],
+                target: autoeq(),
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "HD 600".into(),
+                filters: vec![band(100.0)],
+                target: autoeq(),
+                ..Default::default()
+            });
+            for name in ["Performer 8S", "Warm"] {
+                c.dsp.profiles.push(DspProfile {
+                    name: name.into(),
+                    filters: vec![band(200.0)],
+                    ..Default::default()
+                });
+            }
+            // As 0.59 allowed: two corrections in one stack.
+            c.dsp.profiles.push(DspProfile {
+                name: "Old".into(),
+                layers: vec![layer("Cantor", true), layer("Performer 8S", true)],
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        // AutoEQ's measurement, kept beside Cantor as an install keeps it.
+        let folder = super::dir("Cantor");
+        std::fs::create_dir_all(&folder).unwrap();
+        let mut csv = String::from("frequency,raw,target\n");
+        for hz in super::super::targets::grid() {
+            csv.push_str(&format!("{hz:.2},0.0,0.0\n"));
+        }
+        std::fs::write(super::super::targets::result_path(&folder), csv).unwrap();
+        let cfg = Config::cached();
+        let named = |n: &str| cfg.dsp.profiles.iter().find(|p| p.name == n).unwrap();
+        assert_eq!(
+            role(named("Cantor")),
+            DspRole::Correction,
+            "an AutoEQ install"
+        );
+        assert_eq!(role(named("Warm")), DspRole::Tuning, "anything else");
+        assert_eq!(
+            shown_role(named("Old"), &cfg.dsp.profiles),
+            DspRole::Correction,
+            "a stack is what it corrects with"
+        );
+        assert_eq!(corrects_twice(named("Old"), &cfg.dsp.profiles), None);
+
+        set_role("Performer 8S", DspRole::Baked).unwrap();
+        let d = detail("Old").unwrap();
+        assert_eq!(
+            d.corrects_twice.as_deref(),
+            Some("This stack corrects twice: Cantor (AutoEQ) and Performer 8S (baked). Keep one.")
+        );
+        assert_eq!(
+            d.layer_roles,
+            vec![Some(DspRole::Correction), Some(DspRole::Baked)]
+        );
+        // It still plays, and can be edited towards one correction.
+        let cfg = Config::cached();
+        let old = cfg.dsp.profiles.iter().find(|p| p.name == "Old").unwrap();
+        assert!(super::super::chain(old, &cfg.dsp.profiles, &mut Vec::new()).is_ok());
+        set_layers(
+            "Old",
+            vec![layer("Cantor", true), layer("Performer 8S", false)],
+        )
+        .unwrap();
+        let refused = set_layers(
+            "Old",
+            vec![
+                layer("Cantor", true),
+                layer("Performer 8S", false),
+                layer("HD 600", true),
+            ],
+        )
+        .unwrap_err();
+        assert!(
+            refused.starts_with("This stack already corrects"),
+            "{refused}"
+        );
+
+        // A baked preset is a stack's correction: another is refused.
+        set_layers(
+            "Desk",
+            vec![layer("Performer 8S", true), layer("Warm", true)],
+        )
+        .unwrap();
+        let s = summary("Desk").unwrap();
+        assert_eq!(
+            s.correction.as_deref(),
+            Some("Performer 8S (correction + tuning in one)")
+        );
+        assert!(s.baked);
+        assert_eq!(s.tunings, vec!["Warm".to_string()]);
+        let refused = set_layers(
+            "Desk",
+            vec![
+                layer("Performer 8S", true),
+                layer("Warm", true),
+                layer("Cantor", true),
+            ],
+        )
+        .unwrap_err();
+        assert_eq!(
+            refused,
+            "This stack already corrects for Performer 8S. Remove that correction first, or add Cantor as a tuning instead."
+        );
+    }
+
+    /// An AutoEQ correction moved to another target is rebuilt from the
+    /// measurement AutoEQ kept, rather than played as its bands and a step.
+    #[test]
+    fn autoeq_moved_to_another_target_is_rebuilt() {
+        use crate::config::{DspFilter, DspTarget};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let folder = super::dir("HD 650");
+        std::fs::create_dir_all(&folder).unwrap();
+        let mut csv = String::from("frequency,raw,target\n");
+        for hz in super::super::targets::grid() {
+            csv.push_str(&format!("{hz:.2},0.0,0.0\n"));
+        }
+        std::fs::write(super::super::targets::result_path(&folder), csv).unwrap();
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "HD 650".into(),
+                filters: vec![band(100.0), band(1000.0)],
+                target: Some(DspTarget {
+                    made_for: "harman-over-ear-2018".into(),
+                    chosen: None,
+                }),
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        let chain = || {
+            let cfg = Config::cached();
+            let p = cfg.dsp.profiles[0].clone();
+            super::super::chain(&p, &cfg.dsp.profiles, &mut Vec::new()).unwrap()
+        };
+        assert_eq!(chain().len(), 2, "AutoEQ's bands, as made");
+        choose_target("HD 650", Some("harman-over-ear-2018-without-bass")).unwrap();
+        let rebuilt = chain();
+        assert_eq!(rebuilt.len(), 1, "{rebuilt:?}");
+        assert!(matches!(rebuilt[0], DspFilter::Graphic(_)));
+        assert!(
+            summary("HD 650")
+                .unwrap()
+                .correction
+                .unwrap()
+                .contains("rebuilt from AutoEQ's measurement")
+        );
     }
 }

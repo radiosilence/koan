@@ -53,6 +53,9 @@ pub enum DspError {
     /// with impulse responses.
     #[error("{0}")]
     Layer(String),
+    /// A correction built from a measurement whose file is not there.
+    #[error("{0}'s measurement is missing")]
+    Measurement(String),
 }
 
 /// How deep layers may nest: a stack of stacks of stacks, and so on.
@@ -180,16 +183,37 @@ fn resolve(
             return Err(too_many(stack));
         }
     }
-    // As played: within `config::dsp_bounds`, whatever the config says.
-    out.extend(profile.sanitized().filters);
-    // Another target than the one the correction was made for: their
-    // difference, after the correction.
-    if let Some(t) = &profile.target
-        && let Some(chosen) = t.chosen.as_ref().filter(|c| **c != t.made_for)
-    {
-        let curve = |id: &str| targets::choice_curve(id).ok_or(DspError::Target(id.into()));
-        let (from, to) = (curve(&t.made_for)?, curve(chosen)?);
-        out.push(DspFilter::Graphic(targets::difference(&from, &to)));
+    let dir = profiles::dir(&profile.name);
+    let curve = |id: &str| targets::choice_curve(id).ok_or(DspError::Target(id.into()));
+    // Another target than the one an AutoEQ correction was made for. With
+    // the measurement AutoEQ kept, the correction is rebuilt from it to the
+    // target moved; without, the targets' difference plays after AutoEQ's.
+    let moved = profile.target.as_ref().and_then(|t| {
+        Some((
+            t.chosen.as_ref().filter(|c| **c != t.made_for)?,
+            &t.made_for,
+        ))
+    });
+    let rebuilt = moved.and_then(|_| targets::autoeq_measurement(&dir));
+    if rebuilt.is_none() {
+        // As played: within `config::dsp_bounds`, whatever the config says.
+        out.extend(profile.sanitized().filters);
+    }
+    if let Some((chosen, made_for)) = moved {
+        let step = targets::difference(&curve(made_for)?, &curve(chosen)?);
+        out.push(DspFilter::Graphic(match rebuilt {
+            Some((raw, target)) => targets::correction(&raw, &targets::moved(&target, &step)),
+            None => step,
+        }));
+    }
+    // A correction built from a measurement, to its target.
+    if let Some(m) = &profile.measurement {
+        let measured = targets::measurement(&dir)
+            .ok_or_else(|| DspError::Measurement(profile.name.clone()))?;
+        out.push(DspFilter::Graphic(targets::correction(
+            &measured,
+            &curve(&m.target)?,
+        )));
     }
     if out.len() > MAX_CHAIN_FILTERS && stack.len() > 1 {
         return Err(too_many(stack));
