@@ -1324,5 +1324,87 @@ mod tests {
             [100.0],
             "the first switched on keeps playing"
         );
+
+        // None on, as a hand edit can leave it: the first plays.
+        persist(|c| {
+            let p = c.dsp.profiles.iter_mut().find(|p| p.name == "Presets");
+            for l in &mut p.unwrap().layers {
+                l.on = false;
+            }
+        })
+        .unwrap();
+        assert_eq!(freqs("Presets"), [100.0]);
+    }
+
+    /// A group of room corrections plays the chosen one's responses, since
+    /// only one plays; a stack cannot layer such a group, as it cannot a
+    /// response.
+    #[test]
+    fn a_group_plays_its_members_responses() {
+        use crate::config::DspLayer;
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let mut paths = Vec::new();
+        for rate in [44100, 48000] {
+            let path = dir.path().join(format!("{rate}.wav"));
+            super::super::raw::write_wav(&path, rate, &[vec![1.0, 0.0]]).unwrap();
+            paths.push(path);
+        }
+        persist(|c| {
+            for (name, path) in [("Room 44", &paths[0]), ("Room 48", &paths[1])] {
+                c.dsp.profiles.push(DspProfile {
+                    name: name.into(),
+                    impulses: vec![path.clone()],
+                    ..Default::default()
+                });
+            }
+        })
+        .unwrap();
+        make_group("Room", &["Room 44".into(), "Room 48".into()]).unwrap();
+        let rates = || {
+            let cfg = Config::cached();
+            let p = cfg.dsp.profiles.iter().find(|p| p.name == "Room").unwrap();
+            super::super::Setup::load(p, &cfg.dsp.profiles, dir.path())
+                .unwrap()
+                .unwrap()
+                .rates()
+        };
+        assert_eq!(rates(), [44100]);
+        select("Room", "Room 48").unwrap();
+        assert_eq!(rates(), [48000]);
+        let refused = set_layers(
+            "Desk",
+            vec![DspLayer {
+                profile: "Room".into(),
+                on: true,
+            }],
+        )
+        .unwrap_err();
+        assert!(refused.contains("only EQ can be a layer"), "{refused}");
+    }
+
+    /// A name already taken, or one whose files would go in a folder that is,
+    /// is numbered: nothing is written over.
+    #[test]
+    fn a_free_name_takes_nothing() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        assert_eq!(free_name("Room"), "Room");
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Room".into(),
+                filters: vec![band(100.0)],
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        assert_eq!(free_name("Room"), "Room 2");
+        assert_eq!(free_name("room!"), "room! 2", "the same folder as Room's");
     }
 }
