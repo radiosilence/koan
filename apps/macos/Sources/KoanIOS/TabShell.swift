@@ -106,6 +106,9 @@ struct TabShell: View {
         .shareCodes(player)
         .onChange(of: selection) { Task { await checkSignedIn() } }
         .onChange(of: mirror.connection?.linked) { Task { await checkSignedIn() } }
+        .onReceive(NotificationCenter.default.publisher(for: .koanSignedOut)) { _ in
+            Task { await checkSignedIn() }
+        }
         #endif
         .controlSheet(isPresented: $showingDevices)
         // What the app is busy with. The Mac stacks these at the foot of the
