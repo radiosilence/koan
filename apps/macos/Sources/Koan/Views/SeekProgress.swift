@@ -80,7 +80,7 @@ struct SeekProgress: PlatformViewRepresentable {
 
         private func paint() {
             played.backgroundColor = resolved(tint ?? .label)
-            head.backgroundColor = resolved(KoanTheme.isOn ? .koanInk : .label)
+            head.backgroundColor = resolved(.koanLabel)
         }
 
         /// Put both layers where the fraction says, then — if the track is

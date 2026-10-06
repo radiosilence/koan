@@ -276,11 +276,11 @@ struct QueueView: View {
                     cornerRadius: KoanTheme.radius(4)
                 )
                 .frame(width: 34, height: 34)
-                .shadow(color: .black.opacity(KoanTheme.isOn ? 0 : 0.25), radius: 3, y: 1)
+                .koanShadow(0.25, radius: 3, y: 1)
             case .album(let album):
                 AlbumArtwork(source: .album(album.id), size: .thumb, cornerRadius: KoanTheme.radius(4))
                     .frame(width: 34, height: 34)
-                    .shadow(color: .black.opacity(KoanTheme.isOn ? 0 : 0.25), radius: 3, y: 1)
+                    .koanShadow(0.25, radius: 3, y: 1)
             case nil:
                 EmptyView()
             }
@@ -908,7 +908,7 @@ private struct QueueAlbumHeader: View {
             if let sleeve = group.items.first?.sleeve {
                 AlbumArtwork(source: sleeve, size: .thumb, cornerRadius: KoanTheme.radius(5))
                     .frame(width: Self.sleeve, height: Self.sleeve)
-                    .shadow(color: .black.opacity(KoanTheme.isOn ? 0 : 0.28), radius: 4, y: 2)
+                    .koanShadow(0.28, radius: 4, y: 2)
             }
 
             VStack(alignment: .leading, spacing: 2) {

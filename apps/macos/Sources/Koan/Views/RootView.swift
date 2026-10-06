@@ -313,11 +313,7 @@ struct RecordRoom: ViewModifier {
         // background rather than sitting on it — a half-transparent wash on its
         // own leaves you looking through the app at the desktop.
         let washLayer = ZStack {
-            if KoanTheme.isOn {
-                Rectangle().fill(Color.koanBg)
-            } else {
-                Rectangle().fill(.background)
-            }
+            Rectangle().fill(KoanTheme.ground(.background))
             WindowWash(source: wash, player: player)
                 .environment(artCache)
                 .environment(appearanceModel)

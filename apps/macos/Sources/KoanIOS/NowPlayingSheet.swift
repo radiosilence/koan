@@ -39,11 +39,7 @@ struct NowPlayingSheet: View {
         // over — this is the one screen that is only about that record.
         .presentationBackground {
             ZStack {
-                if KoanTheme.isOn {
-                    Rectangle().fill(Color.koanBg)
-                } else {
-                    Rectangle().fill(.background)
-                }
+                Rectangle().fill(KoanTheme.ground(.background))
                 ArtworkBleed(source: player.currentArtwork, drifts: player.isPlaying)
             }
         }
@@ -66,7 +62,7 @@ struct NowPlayingSheet: View {
                 .transition(.opacity)
         } else if let source = player.currentArtwork {
             AlbumArtwork(source: source, size: .tile, cornerRadius: KoanTheme.radius(12))
-                .shadow(color: .black.opacity(KoanTheme.isOn ? 0 : 0.25), radius: 24, y: 12)
+                .koanShadow(0.25, radius: 24, y: 12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .transition(.opacity)
         } else {
@@ -290,8 +286,8 @@ struct RoutePicker: UIViewRepresentable {
     func makeUIView(context: Context) -> AVRoutePickerView {
         let picker = AVRoutePickerView()
         picker.prioritizesVideoDevices = false
-        picker.tintColor = KoanTheme.isOn ? .koanMuted : .secondaryLabel
-        picker.activeTintColor = KoanTheme.isOn ? .koanInk : .label
+        picker.tintColor = .koanSecondaryLabel
+        picker.activeTintColor = .koanLabel
         return picker
     }
 

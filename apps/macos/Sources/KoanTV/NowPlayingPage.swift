@@ -82,7 +82,7 @@ struct NowPlayingPage: View {
                 .transition(.opacity)
         } else if let source = player.currentArtwork {
             AlbumArtwork(source: source, size: .tile, cornerRadius: KoanTheme.radius(16))
-                .shadow(color: .black.opacity(Double(KoanTheme.shadow(0.35))), radius: 40, y: 20)
+                .koanShadow(0.35, radius: 40, y: 20)
                 .transition(.opacity)
         } else {
             RoundedRectangle(cornerRadius: KoanTheme.radius(16))

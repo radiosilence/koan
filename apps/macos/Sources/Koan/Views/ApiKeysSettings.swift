@@ -83,7 +83,7 @@ struct ApiKeysSettings: View {
             KoanSectionHeader("API keys")
         } footer: {
             Text(model?.error ?? "A key signs another Subsonic app in as you, without your password. Each device kōan is signed in on has one too; revoking it signs that device out.")
-                .koanText(.fine, model?.error == nil ? .muted : (KoanTheme.isOn ? .bad : .ink))
+                .koanText(.fine, model?.error == nil ? .muted : .bad)
         }
         .sheet(item: Binding(
             get: { model?.made.map(MadeKey.init) },
