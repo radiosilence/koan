@@ -715,6 +715,9 @@ pub struct Response {
     /// own. `total` is the two together.
     pub correction: Option<Vec<f64>>,
     pub tuning: Option<Vec<f64>>,
+    /// For a split's preview: the baked EQ it comes from, which `total`
+    /// plays the same as.
+    pub original: Option<Vec<f64>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -826,6 +829,7 @@ fn response_of(profile: &DspProfile, all: &[DspProfile], rate: u32) -> Option<Re
         preamp_db,
         correction,
         tuning,
+        original: None,
     })
 }
 
@@ -1368,9 +1372,123 @@ pub fn preview_measurement(text: &str, target: &str, rate: u32) -> Result<Respon
         preamp_db: 0.0,
         correction: None,
         tuning: None,
+        original: None,
         total,
         freqs,
     })
+}
+
+/// A baked EQ taken apart, given the headphones' measurement and the target
+/// that counts as neutral: the correction, target − measurement, and what
+/// the EQ does beyond it, its taste, as a curve. The reverse of what
+/// squig.link does to make one.
+struct Split {
+    taste: crate::config::GraphicEq,
+    freqs: Vec<f64>,
+    original: Vec<f64>,
+    correction: Vec<f64>,
+    tuning: Vec<f64>,
+}
+
+fn split(name: &str, text: &str, target: &str, rate: u32) -> Result<Split, String> {
+    use super::targets;
+    use crate::config::DspFilter;
+    let cfg = Config::cached();
+    let all = &cfg.dsp.profiles;
+    let p = all
+        .iter()
+        .find(|p| p.name == name)
+        .ok_or_else(|| format!("No profile called {name}"))?;
+    if !super::responses(p, all).is_empty() {
+        return Err(format!(
+            "{name} has impulse responses: only an EQ splits into a correction and a tuning"
+        ));
+    }
+    let measured = read_measurement(text)?;
+    let aim = targets::choice_curve(target).ok_or_else(|| format!("No target {target}"))?;
+    let freqs = targets::grid();
+    let filters = super::chain(p, all, &mut Vec::new()).map_err(|e| e.to_string())?;
+    let original = super::response(&filters, &freqs, rate);
+    let correction = super::response(
+        &[DspFilter::Graphic(targets::correction(&measured, &aim))],
+        &freqs,
+        rate,
+    );
+    let curve =
+        |db: &[f64]| -> targets::Curve { freqs.iter().copied().zip(db.iter().copied()).collect() };
+    let taste = targets::difference(&curve(&correction), &curve(&original));
+    let tuning = super::response(&[DspFilter::Graphic(taste.clone())], &freqs, rate);
+    Ok(Split {
+        taste,
+        freqs,
+        original,
+        correction,
+        tuning,
+    })
+}
+
+/// What splitting the baked EQ `name` would give, before anything is saved:
+/// the correction and the tuning, their sum as `total`, and the EQ itself as
+/// `original`, which the sum follows but for the treble a correction holds
+/// back.
+pub fn preview_split(name: &str, text: &str, target: &str, rate: u32) -> Result<Response, String> {
+    let s = split(name, text, target, rate)?;
+    let total = s
+        .correction
+        .iter()
+        .zip(&s.tuning)
+        .map(|(c, t)| c + t)
+        .collect();
+    Ok(Response {
+        bands: Vec::new(),
+        layers: Vec::new(),
+        measurement: None,
+        target: None,
+        predicted: None,
+        preamp_db: 0.0,
+        correction: Some(s.correction),
+        tuning: Some(s.tuning),
+        original: Some(s.original),
+        total,
+        freqs: s.freqs,
+    })
+}
+
+/// Split the baked EQ `name` into a correction built from the headphones'
+/// measurement, to `target`, and a tuning holding the rest, made against
+/// `target` so it carries to other headphones. Every output that played
+/// `name` plays the two instead; `name` itself is kept. The new profiles'
+/// names, correction then tuning.
+pub fn split_baked(
+    name: &str,
+    text: &str,
+    ear: DspEar,
+    target: &str,
+) -> Result<(String, String), String> {
+    let s = split(name, text, target, 48_000)?;
+    let devices = Config::cached()
+        .dsp
+        .profiles
+        .iter()
+        .find(|p| p.name == name)
+        .map(|p| p.devices.clone())
+        .unwrap_or_default();
+    let correction = save_measured(&free_name(&format!("{name} correction")), text, ear, target)?;
+    let tuning = free_name(&format!("{name} tuning"));
+    persist(|cfg| {
+        cfg.dsp.profiles.push(DspProfile {
+            name: tuning.clone(),
+            filters: vec![crate::config::DspFilter::Graphic(s.taste)],
+            role: Some(DspRole::Tuning),
+            tuned_for: Some(target.to_owned()),
+            ..Default::default()
+        })
+    })?;
+    for device in devices {
+        assign(Some(&correction), &device)?;
+        set_tuning(&device, Some(&tuning))?;
+    }
+    Ok((correction, tuning))
 }
 
 /// Save a correction built from a measurement: the headphone `name`,
@@ -2398,6 +2516,67 @@ mod tests {
         assert_eq!(t.chosen, None, "an in-ear target is no move for over-ears");
         set_made_for("Preset", None).unwrap();
         assert_eq!(target(), None);
+    }
+
+    /// A baked EQ, a correction and a bass band in one, splits back into the
+    /// two: the correction from the measurement, the band as the tuning,
+    /// made against the target, and the output that played it plays them.
+    #[test]
+    fn a_baked_eq_splits_into_correction_and_tuning() {
+        use super::super::targets;
+        use crate::config::DspFilter;
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let mut text = String::from("frequency,raw\n");
+        for hz in targets::grid() {
+            let peak = 6.0 * (-(hz / 3000.0).log2().powi(2) / 0.1).exp();
+            text.push_str(&format!("{hz:.2},{:.2}\n", 90.0 + peak));
+        }
+        let target = "harman-in-ear-2019";
+        let measured = read_measurement(&text).unwrap();
+        let correction = targets::correction(&measured, &targets::choice_curve(target).unwrap());
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Lush".into(),
+                filters: vec![DspFilter::Graphic(correction), band(80.0)],
+                role: Some(DspRole::Baked),
+                devices: vec!["Desk DAC".into()],
+                ..Default::default()
+            })
+        })
+        .unwrap();
+
+        let r = preview_split("Lush", &text, target, 48_000).unwrap();
+        let at = |db: &[f64], hz: f64| {
+            let i = r.freqs.iter().position(|&f| f >= hz).unwrap();
+            db[i]
+        };
+        let tuning = r.tuning.as_ref().unwrap();
+        assert!((at(tuning, 80.0) - 3.0).abs() < 1.0, "{}", at(tuning, 80.0));
+        assert!(at(tuning, 3000.0).abs() < 0.7, "{}", at(tuning, 3000.0));
+        let original = r.original.as_ref().unwrap();
+        for hz in [50.0, 200.0, 1000.0, 4000.0] {
+            assert!((at(&r.total, hz) - at(original, hz)).abs() < 1.0, "{hz} Hz");
+        }
+
+        let (c, t) = split_baked("Lush", &text, DspEar::In, target).unwrap();
+        assert_eq!((c.as_str(), t.as_str()), ("Lush correction", "Lush tuning"));
+        let cfg = Config::cached();
+        assert_eq!(cfg.dsp.profile_for("Desk DAC").unwrap().name, c);
+        assert_eq!(tuning_for("Desk DAC").as_deref(), Some(t.as_str()));
+        let made = cfg.dsp.profiles.iter().find(|p| p.name == t).unwrap();
+        assert_eq!(made.tuned_for.as_deref(), Some(target));
+        assert_eq!(role(made), DspRole::Tuning);
+        assert!(cfg.dsp.profiles.iter().any(|p| p.name == "Lush"), "kept");
+        // On its own target, no difference to play: the tuning's curve and
+        // the correction's.
+        let chain = super::super::output_chain(&cfg.dsp, "Desk DAC").unwrap();
+        let played = super::super::chain(&chain.profile, &chain.all, &mut Vec::new()).unwrap();
+        assert_eq!(played.len(), 2);
+        assert!(split_baked("Lush", &text, DspEar::In, "made-up").is_err());
     }
 
     /// An output plays its tuning on top of its correction, with the
