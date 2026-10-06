@@ -19,24 +19,30 @@ struct AlbumBrowser: View {
     /// carry the grid to wherever it landed.
     @State private var position = ScrollPosition()
 
-    private let columns = [GridItem(.adaptive(minimum: 150, maximum: 210), spacing: 18)]
+    private let columns = GridItem.tiles(minimum: 150, maximum: 210, spacing: 18)
     #endif
 
     #if os(macOS)
     private static let emptyDetail = "Add a music folder in Settings → Library, or sign in to a server in Settings → Server."
-    #else
-    private static let emptyDetail = "Sign in to your music server in Settings → Server."
     #endif
 
     var body: some View {
         albums
             // Once narrowed, how many: the count a shelf's heading gave.
-            .navigationSubtitle(library.isNarrowed ? Format.count(Int64(library.visibleAlbums.count), "album") : "")
+            .pageSubtitle(library.isNarrowed ? Format.count(Int64(library.visibleAlbums.count), "album") : "")
             // ⌘A picks everything the filter is showing, starting a selection
             // if there was none. Escape and leaving the page drop it.
             .onChange(of: ui.selectAllToken) { _, _ in library.selection.selectAll() }
             .onChange(of: ui.clearSelectionToken) { _, _ in library.selection.end() }
             .onDisappear { library.selection.end() }
+    }
+
+    private var emptyDetail: String {
+        #if os(macOS)
+        Self.emptyDetail
+        #else
+        library.emptyLibraryDetail
+        #endif
     }
 
     private var empty: some View {
@@ -45,9 +51,10 @@ struct AlbumBrowser: View {
             title: library.isNarrowed ? "Nothing matches" : "No albums yet",
             detail: library.isNarrowed
                 ? "Try a different filter."
-                : mirror.signInRefused ? EngineMirror.signInRefusedDetail : Self.emptyDetail
+                : mirror.signInRefused ? EngineMirror.signInRefusedDetail : emptyDetail
         )
         .frame(maxWidth: .infinity, minHeight: 340)
+        .task { if library.signedIn == nil { library.loadStats() } }
     }
 
     #if os(macOS)

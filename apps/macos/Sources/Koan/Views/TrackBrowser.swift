@@ -136,14 +136,14 @@ struct TrackBrowser: View {
                     allTrackIds: allTrackIds
                 )
                 .rowBehaviour(playable: .track(track))
-                .primaryTap { play([track.id]) }
+                .primaryTap { play([track.id]) } menu: { menu(for: [track.id]) }
                 .accessibilityIdentifier("track-\(track.id)")
             }
         }
-        .listStyle(.inset)
+        .insetList()
         .washedGround()
         .clearsSelection($selection)
-        .contextMenu(forSelectionType: Int64.self) { ids in
+        .selectionMenu(for: Int64.self) { ids in
             menu(for: ids)
         } primaryAction: { ids in
             play(ids)

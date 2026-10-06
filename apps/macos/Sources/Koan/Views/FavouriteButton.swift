@@ -24,7 +24,7 @@ struct FavouriteButton: View {
                 // hand when something becomes a favourite.
                 .symbolEffect(.bounce.up.byLayer, options: .speed(1.4), value: isOn)
         }
-        .buttonStyle(.plain)
+        .controlButton()
         #if os(iOS)
         .sensoryFeedback(trigger: isOn) { _, on in on ? .impact(weight: .light) : nil }
         #endif

@@ -20,7 +20,7 @@ struct SearchResultsView: View {
     @AppStorage("graphics") private var graphics = Graphics.full
     #endif
 
-    private let columns = [GridItem(.adaptive(minimum: 140, maximum: 190), spacing: 16)]
+    private let columns = GridItem.tiles(minimum: 140, maximum: 190, spacing: 16)
 
     var body: some View {
         page
@@ -302,6 +302,6 @@ private struct SearchTrackRow: View {
             nav.open(album: albumId, highlighting: track.id)
         }
         .contextMenu { PlayableMenu(playable: .track(track)) }
-        .onHover { hovering = $0 }
+        .pointerHover { hovering = $0 }
     }
 }

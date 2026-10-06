@@ -25,6 +25,7 @@ import SwiftUI
 /// `NavigationStack`: koan navigates like a browser — any page from any page,
 /// with a linear history — and a stack navigates a hierarchy that does not
 /// exist here.
+#if !os(tvOS)
 struct RootView: View {
     /// Single-key shortcuts belong to a machine with a keyboard always attached
     /// — the split view itself does not, which is why this is the only thing in
@@ -174,6 +175,7 @@ struct RootView: View {
         }
     }
 }
+#endif
 
 /// The filter field, and the only reader of what is typed into it.
 ///
@@ -310,6 +312,8 @@ struct RecordRoom: ViewModifier {
             // intent, and neither platform has the other's container.
             #if os(macOS)
             .containerBackground(for: .window) { washLayer }
+            #elseif os(tvOS)
+            .background { washLayer.ignoresSafeArea() }
             #else
             .containerBackground(for: .navigation) { washLayer }
             #endif
@@ -339,8 +343,12 @@ struct RecordRoom: ViewModifier {
             // Overrides the app-wide tint for everything below, which is every
             // control koan draws itself. What AppKit draws — list selection,
             // focus rings — keeps the declared accent, and that is deliberately
-            // a neutral so the two never argue.
+            // a neutral so the two never argue. A television's alerts take the
+            // tint too, as text on their white focused button, so there the
+            // colour goes to the room alone.
+            #if !os(tvOS)
             .tint(tint)
+            #endif
             .environment(\.roomTint, tint)
             .onChange(of: tint, initial: true) { _, now in worn = now }
     }
@@ -609,6 +617,7 @@ private extension View {
 /// re-tile the toolbar, and a re-tile lays out the whole window — every page
 /// kept mounted behind the one on screen included, which is most of what a
 /// page switch cost.
+#if !os(tvOS)
 private struct PageToolbar: ToolbarContent {
     @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
@@ -689,6 +698,7 @@ private struct PageToolbar: ToolbarContent {
         return nil
     }
 }
+#endif
 
 /// The album grid's sort, and reshuffling when the sort is random.
 private struct AlbumSortControls: View {

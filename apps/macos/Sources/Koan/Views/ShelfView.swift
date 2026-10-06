@@ -170,10 +170,10 @@ struct ShelfView: View {
                     if !albums.isEmpty { albumSection }
                     if !tracks.isEmpty { trackSection }
                 }
-                .listStyle(.inset)
+                .insetList()
                 .washedGround()
                 .clearsSelection($selection)
-                .contextMenu(forSelectionType: Int64.self) { ids in
+                .selectionMenu(for: Int64.self) { ids in
                     menu(for: ids)
                 } primaryAction: { ids in
                     play(ids)
@@ -187,8 +187,11 @@ struct ShelfView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 1) {
+            // A television's navigation title already names the page, above.
+            #if !os(tvOS)
             Text(title)
                 .font(.title2.weight(.semibold))
+            #endif
             Text(counts)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -301,7 +304,7 @@ struct ShelfView: View {
                     allTrackIds: allTrackIds
                 )
                 .rowBehaviour(playable: .track(track))
-                .primaryTap { play([track.id]) }
+                .primaryTap { play([track.id]) } menu: { menu(for: [track.id]) }
                 .accessibilityIdentifier("track-\(track.id)")
             }
         } header: {

@@ -51,7 +51,7 @@ struct LyricsPanel: View {
                     .font(.callout)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(18)
-                    .textSelection(.enabled)
+                    .selectableText()
             }
         } else if loading {
             Color.clear

@@ -86,9 +86,9 @@ struct PlaylistView: View {
                     }
                     endOfList
                 }
-                .listStyle(.inset)
+                .insetList()
                 .washedGround()
-                .contextMenu(forSelectionType: String.self) { ids in
+                .selectionMenu(for: String.self) { ids in
                     menu(forRows: ids)
                 } primaryAction: { ids in
                     play(rowIds: ids)
@@ -109,7 +109,7 @@ struct PlaylistView: View {
         }
         // On the whole page, not the List: an empty playlist is exactly when
         // you want to drop something on it, and it has no rows to land on.
-        .dropDestination(for: PlayableTransfer.self) { dropped, _ in
+        .dropTarget(for: PlayableTransfer.self) { dropped, _ in
             playlists.add(dropped: dropped, to: playlistId)
             return true
         }
@@ -267,9 +267,11 @@ struct PlaylistView: View {
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 12) {
+                #if !os(tvOS)
                 if let playable {
                     PlayableHeaderButton(playable: playable)
                 }
+                #endif
                 Text(playlist?.name ?? "Playlist")
                     .font(.system(size: 26, weight: .semibold))
                     .lineLimit(2)
@@ -278,6 +280,12 @@ struct PlaylistView: View {
             Text(summary)
                 .font(.callout)
                 .foregroundStyle(.secondary)
+            #if os(tvOS)
+            if let playable {
+                PlayableHeaderButton(playable: playable)
+                    .padding(.top, 12)
+            }
+            #endif
         }
     }
 
@@ -358,11 +366,11 @@ struct PlaylistView: View {
             dropTarget(
                 PlaylistEntryRow(entry: entry, position: position, artwork: !grouped)
                     .rowBehaviour()
-                    .primaryTap { play(rowIds: [row.id]) }
+                    .primaryTap { play(rowIds: [row.id]) } menu: { menu(forRows: [row.id]) }
                     // Carries where it came from, so dropping it back into this
                     // playlist is a move of *this* row rather than of its track —
                     // and dropping it anywhere else is just a track.
-                    .draggable(PlayableTransfer(
+                    .dragSource(PlayableTransfer(
                         kind: .track,
                         id: entry.track.id,
                         name: entry.track.title,
@@ -382,7 +390,7 @@ struct PlaylistView: View {
         dropTarget(
             Color.clear
                 .frame(height: 28)
-                .listRowSeparator(.hidden)
+                .rowSeparator(.hidden)
                 .listRowBackground(Color.clear)
                 .selectionDisabled(),
             before: entries.count
@@ -394,7 +402,7 @@ struct PlaylistView: View {
     private func dropTarget(_ row: some View, before position: Int) -> some View {
         row
             .insertionLine(showing: dropBefore == position)
-            .dropDestination(for: PlayableTransfer.self) { dropped, _ in
+            .dropTarget(for: PlayableTransfer.self) { dropped, _ in
                 dropBefore = nil
                 return accept(dropped, before: position)
             } isTargeted: { targeted in

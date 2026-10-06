@@ -169,7 +169,7 @@ A full-screen Ratatui player on macOS and Linux: album art, an album-grouped que
 ## Planned
 
 - **Tag editing**: inline editing, bulk operations and a vimv-style external editor.
-- **The Apple TV app**, signed in by pairing ([#752](https://github.com/radiosilence/koan/pull/752), [#782](https://github.com/radiosilence/koan/pull/782)).
+- **Signing the Apple TV in by pairing** ([#782](https://github.com/radiosilence/koan/pull/782)).
 - **Similar artists**, from MusicBrainz and Last.fm.
 
 ## Documentation
@@ -184,7 +184,7 @@ File -> Symphonia -> f32 samples -> rtrb ring buffer -> CoreAudio/cpal callback 
 
 Five crates: `koan-core` (audio engine, player, database, indexer), `koan-tui` (Ratatui TUI, visualizers, media keys), `koan-server` (GraphQL, Subsonic REST, MCP), `koan-ffi` (uniffi bindings for native clients), and `koan-cli` (the `koan` binary). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
 
-The macOS app ([`apps/macos`](apps/macos)) links `koan-core` in-process through `koan-ffi` rather than talking to a server, and shares one library and config with the terminal UI. The iOS app is the same SwiftUI sources and engine in a phone's shell; its output crosses the system mixer, so bit-perfect is a claim for the Mac and Linux only.
+The macOS app ([`apps/macos`](apps/macos)) links `koan-core` in-process through `koan-ffi` rather than talking to a server, and shares one library and config with the terminal UI. The iOS app is the same SwiftUI sources and engine in a phone's shell; its output crosses the system mixer, so bit-perfect is a claim for the Mac and Linux only. The Apple TV app is the same again, built around the remote and mostly played to from a phone or a Mac; tvOS keeps app files only in a cache it may empty, so the configuration is mirrored into the app's preferences, which survive.
 
 ## Dev
 
@@ -196,6 +196,8 @@ just macos-run   # build and launch the macOS app
 just macos-dmg   # package the macOS app for release
 just ios-run     # build and launch the iOS app on a simulator
 just ios-phone   # install on the iPhone plugged in, signed with your personal team
+just tv-run      # build and launch the Apple TV app on a simulator
+just tv-device   # install on the Apple TV paired with Xcode
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

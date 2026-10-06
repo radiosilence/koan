@@ -20,9 +20,9 @@ struct QueueView: View {
         if mirror.signInRefused {
             return EngineMirror.signInRefusedDetail
         }
-        #if os(iOS)
+        #if os(iOS) || os(tvOS)
         if library.stats?.totalTracks == 0 {
-            return "Sign in to your music server in Settings → Server."
+            return library.emptyLibraryDetail
         }
         #endif
         return Self.emptyDetail
@@ -33,7 +33,9 @@ struct QueueView: View {
     @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
     @Environment(OrganizeModel.self) private var organize
+    #if os(macOS)
     @Environment(\.openWindow) private var openWindow
+    #endif
     @Environment(UIState.self) private var ui
     @Environment(PlaylistsModel.self) private var playlists
     /// The queue outlives the page you are on — see `StageView`. Anything
@@ -94,7 +96,7 @@ struct QueueView: View {
                     detail: emptyDetail
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                #if os(iOS)
+                #if os(iOS) || os(tvOS)
                 .task { if library.stats == nil { library.loadStats() } }
                 #endif
             } else {
@@ -107,7 +109,7 @@ struct QueueView: View {
         }
         // On the whole stage, not the List: an empty queue is exactly when you
         // want to drop a folder on it, and it has no rows to land on.
-        .dropDestination(for: URL.self) { urls, _ in
+        .dropTarget(for: URL.self) { urls, _ in
             player.importFiles(urls)
             return true
         }
@@ -205,7 +207,7 @@ struct QueueView: View {
                         }
                         .onMove(perform: move)
                     }
-                    .listStyle(.inset)
+                    .insetList()
                     #if os(iOS)
                     .environment(\.editMode, $editMode)
                     .onChange(of: editMode) { _, mode in
@@ -236,7 +238,7 @@ struct QueueView: View {
                     }
                     // Double-click and context menu both come from the List, keyed
                     // on the rows under the pointer rather than on a gesture.
-                    .contextMenu(forSelectionType: String.self) { ids in
+                    .selectionMenu(for: String.self) { ids in
                         menu(forRows: ids)
                     } primaryAction: { ids in
                         play(rowIds: ids)
@@ -348,23 +350,40 @@ struct QueueView: View {
                 }
                 .disabled(player.queue.isEmpty)
                 #endif
+                // Playlists are made elsewhere; a television plays them.
+                #if !os(tvOS)
                 Button {
                     playlists.naming = player.queue.compactMap(\.trackId)
                 } label: {
                     Label("Save as Playlist…", systemImage: Icon.playlist)
                 }
                 Divider()
+                #endif
                 Button(role: .destructive) { player.clearQueue() } label: {
                     Label("Clear Queue", systemImage: Icon.clear)
                 }
             } label: {
+                #if os(tvOS)
+                Image(systemName: "ellipsis")
+                #else
                 Image(systemName: "ellipsis.circle")
+                #endif
             }
+            #if os(tvOS)
+            .accessibilityLabel("More")
+            #else
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .frame(width: 22)
+            #endif
         }
+        // A television's controls are the size of its other buttons: a
+        // borderless glyph is too small to find from across the room.
+        #if os(tvOS)
+        .buttonStyle(TelevisionButton())
+        #else
         .buttonStyle(.borderless)
+        #endif
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
     }
@@ -404,7 +423,7 @@ struct QueueView: View {
                 artwork: true
             )
             .rowBehaviour()
-            .primaryTap { play(rowIds: [item.queueItemId]) }
+            .primaryTap { play(rowIds: [item.queueItemId]) } menu: { menu(forRows: [item.queueItemId]) }
         case .track(let item):
             QueueRow(
                 item: QueueRowContent(item: item),
@@ -419,7 +438,7 @@ struct QueueView: View {
                 artwork: !grouped
             )
             .rowBehaviour()
-            .primaryTap { play(rowIds: [item.queueItemId]) }
+            .primaryTap { play(rowIds: [item.queueItemId]) } menu: { menu(forRows: [item.queueItemId]) }
         }
     }
 
@@ -452,7 +471,11 @@ struct QueueView: View {
                 player: player
             )
         } label: {
+            #if os(tvOS)
+            Label("Share Album…", systemImage: Icon.share)
+            #else
             Label("Copy Album Share Link", systemImage: Icon.share)
+            #endif
         }
     }
 
@@ -513,7 +536,7 @@ struct QueueView: View {
                     player: player
                 )
             } label: {
-                Label("Copy Share Link", systemImage: Icon.share)
+                Label(Share.label, systemImage: Icon.share)
             }
         }
     }
@@ -848,7 +871,7 @@ private struct JumpToPlayingButton: View {
                 )
                 .contentShape(Circle())
         }
-        #if os(iOS)
+        #if os(iOS) || os(tvOS)
         // A default button tints its label on a phone whatever the label
         // asks for, which left the button lit after following stopped.
         .buttonStyle(.plain)
@@ -867,6 +890,16 @@ private struct JumpToPlayingButton: View {
 private struct QueueAlbumHeader: View {
     let group: QueueGroup
 
+    // A fixed size reads as a heading on a desktop; a television scales the
+    // text styles beneath it and left the record smaller than its artist.
+    #if os(tvOS)
+    private static let titleFont = Font.title3.weight(.semibold)
+    private static let sleeve: CGFloat = 96
+    #else
+    private static let titleFont = Font.system(size: 14, weight: .semibold)
+    private static let sleeve: CGFloat = 52
+    #endif
+
     var body: some View {
         HStack(spacing: 12) {
             // No tap-to-view here, unlike the album page: this cover sits in a
@@ -874,13 +907,13 @@ private struct QueueAlbumHeader: View {
             // click that selects the row.
             if let sleeve = group.items.first?.sleeve {
                 AlbumArtwork(source: sleeve, size: .thumb, cornerRadius: 5)
-                    .frame(width: 52, height: 52)
+                    .frame(width: Self.sleeve, height: Self.sleeve)
                     .shadow(color: .black.opacity(0.28), radius: 4, y: 2)
             }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(Format.title(group.title))
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(Self.titleFont)
                     .foregroundStyle(.primary)
                     .lineLimit(Format.titleLines)
 

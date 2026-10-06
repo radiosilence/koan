@@ -14,7 +14,7 @@ enum Format {
 
     /// How many lines a title may take in a list. A phone is narrow enough
     /// that one line cuts most mix and live-set titles down to their date.
-    #if os(iOS)
+    #if os(iOS) || os(tvOS)
     static let titleLines = 2
     #else
     static let titleLines = 1

@@ -4,7 +4,11 @@ use std::ptr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+#[cfg(not(target_os = "tvos"))]
 use coreaudio_sys::*;
+
+#[cfg(target_os = "tvos")]
+use super::toolbox::*;
 use thiserror::Error;
 
 #[cfg(target_os = "macos")]
@@ -146,7 +150,7 @@ impl AudioEngine {
             componentSubType: kAudioUnitSubType_HALOutput,
             // AUHAL is declared inside `#if !TARGET_OS_IPHONE`; RemoteIO is what
             // the `#else` offers, and it is the only output unit iOS has.
-            #[cfg(target_os = "ios")]
+            #[cfg(any(target_os = "ios", target_os = "tvos"))]
             componentSubType: kAudioUnitSubType_RemoteIO,
             componentManufacturer: kAudioUnitManufacturer_Apple,
             componentFlags: 0,

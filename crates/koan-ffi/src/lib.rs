@@ -2432,7 +2432,7 @@ impl KoanEngine {
     /// The name of the port iOS routes audio to, on each route change: what
     /// profiles are chosen by on a phone. Does nothing elsewhere.
     pub async fn set_audio_route(self: Arc<Self>, name: String) -> Result<(), KoanError> {
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "tvos"))]
         {
             offload::sequenced(move || {
                 koan_core::audio::ios_backend::set_route(name);
@@ -2440,7 +2440,7 @@ impl KoanEngine {
             })
             .await
         }
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
         {
             let _ = name;
             Ok(())
@@ -2581,6 +2581,23 @@ impl KoanEngine {
     ) -> Result<(), KoanError> {
         offload::offload(move || {
             koan_core::helpers::set_remote_credentials(&url, &username, &password).map_err(|e| {
+                KoanError::BadArgument {
+                    message: e.to_string(),
+                }
+            })
+        })
+        .await
+    }
+
+    /// Sign in to a koan server with an API key the account already holds.
+    pub async fn sign_in_remote_with_key(
+        self: Arc<Self>,
+        url: String,
+        username: String,
+        api_key: String,
+    ) -> Result<(), KoanError> {
+        offload::offload(move || {
+            koan_core::helpers::set_remote_api_key(&url, &username, &api_key).map_err(|e| {
                 KoanError::BadArgument {
                     message: e.to_string(),
                 }

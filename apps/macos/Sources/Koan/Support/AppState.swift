@@ -37,8 +37,9 @@ final class AppState {
     init() async throws {
         // The name the person gave the phone needs Apple's
         // user-assigned-device-name entitlement; without it this is "iPhone".
-        // A Mac names itself by its hostname.
-        #if os(iOS)
+        // A Mac names itself by its hostname; an Apple TV by the name it was
+        // given in its settings.
+        #if os(iOS) || os(tvOS)
         let engine = try await KoanEngine(deviceName: UIDevice.current.name)
         #else
         let engine = try await KoanEngine(deviceName: nil)

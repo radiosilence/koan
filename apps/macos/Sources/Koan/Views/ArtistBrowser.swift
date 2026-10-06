@@ -21,7 +21,7 @@ struct ArtistBrowser: View {
             #endif
         }
         // Once narrowed, how many: the count a shelf's heading gave.
-        .navigationSubtitle(library.isNarrowed ? Format.count(Int64(library.visibleArtists.count), "artist") : "")
+        .pageSubtitle(library.isNarrowed ? Format.count(Int64(library.visibleArtists.count), "artist") : "")
     }
 
     #if os(macOS)
@@ -80,7 +80,9 @@ struct ArtistBrowser: View {
         ScrollViewReader { proxy in
         List(library.visibleArtists, id: \.id, selection: $selection) { artist in
             ArtistRow(artist: artist)
-                .primaryTap { nav.open(artist: artist.id) }
+                .primaryTap { nav.open(artist: artist.id) } menu: {
+                    PlayableMenu(playable: .artist(id: artist.id, name: artist.name))
+                }
                 .onAppear { library.artistsShown.insert(artist.id) }
                 .onDisappear { library.artistsShown.remove(artist.id) }
         }
@@ -108,7 +110,7 @@ struct ArtistBrowser: View {
         }
         .clearsSelection($selection)
         .washedGround()
-        .contextMenu(forSelectionType: Int64.self) { ids in
+        .selectionMenu(for: Int64.self) { ids in
             // A set has no first; with several picked, no one artist is meant.
             if ids.count == 1, let id = ids.first,
                let artist = library.visibleArtists.first(where: { $0.id == id }) {
@@ -168,7 +170,7 @@ private struct ArtistRow: View {
             .frame(width: 18, height: 18)
             // The name is the way in — a link, so a single click opens the
             // artist while the rest of the row selects.
-            #if os(iOS)
+            #if os(iOS) || os(tvOS)
             // Too narrow for count columns: they would take the name's room.
             VStack(alignment: .leading, spacing: 2) {
                 LinkText(
@@ -206,8 +208,8 @@ private struct ArtistRow: View {
                 .frame(width: 78, alignment: .trailing)
             #endif
         }
-        .onHover { hovered = $0 }
-        #if os(iOS)
+        .pointerHover { hovered = $0 }
+        #if os(iOS) || os(tvOS)
         .frame(minHeight: RowMetrics.line)
         #else
         .frame(height: RowMetrics.line)
@@ -242,7 +244,7 @@ struct ArtistDetailView: View {
     private var albums: [Album] { record?.albums ?? [] }
     private var info: ArtistInfo? { record?.info }
 
-    private let columns = [GridItem(.adaptive(minimum: 150, maximum: 210), spacing: 18)]
+    private let columns = GridItem.tiles(minimum: 150, maximum: 210, spacing: 18)
 
     var body: some View {
         if let record, record.albums.isEmpty, !record.appearances.isEmpty {
@@ -275,14 +277,21 @@ struct ArtistDetailView: View {
                     }
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(alignment: .firstTextBaseline, spacing: 14) {
+                            #if !os(tvOS)
                             if let artist {
                                 PlayableHeaderButton(
                                     playable: .artist(id: artist.id, name: artist.name)
                                 )
                                 .alignmentGuide(.firstTextBaseline) { $0[.bottom] * 0.78 }
                             }
+                            #endif
                             Text(artist?.name ?? "Artist")
+                                // The album page's title size, on each platform.
+                                #if os(tvOS)
+                                .font(.system(size: 48, weight: .semibold))
+                                #else
                                 .font(.system(size: 26, weight: .semibold))
+                                #endif
                         }
                         Text(Format.count(Int64(albums.count), "album"))
                             .font(.callout)
@@ -361,11 +370,18 @@ private struct ArtistBio: View {
             Text(bio.replacingOccurrences(of: "\n", with: "\n\n"))
                 .foregroundStyle(.secondary)
                 .lineSpacing(3)
-                .textSelection(.enabled)
+                .selectableText()
                 .frame(maxWidth: 680, alignment: .leading)
             HStack(spacing: 12) {
                 if let url = source.flatMap(URL.init(string:)) {
+                    #if os(tvOS)
+                    // A television opens no web pages; the credit stands as text.
+                    Text("From Wikipedia")
+                        .foregroundStyle(.tertiary)
+                        .accessibilityHint(url.absoluteString)
+                    #else
                     Link("From Wikipedia", destination: url)
+                    #endif
                 }
                 if let imageCredit {
                     Text("Photo: \(imageCredit)")

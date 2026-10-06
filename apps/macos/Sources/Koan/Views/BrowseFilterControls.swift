@@ -10,18 +10,28 @@ struct BrowseFilterButton: View {
 
     var body: some View {
         let count = library.browseFilter.activeCount
+        let symbol = count > 0
+            ? "line.3.horizontal.decrease.circle.fill"
+            : "line.3.horizontal.decrease.circle"
         Button { open = true } label: {
+            #if os(tvOS)
+            // The symbol alone: a television's toolbar draws a `Label`'s title
+            // as well, cut to a letter or two. The filled symbol says filters
+            // are on.
+            Image(systemName: symbol)
+                .accessibilityLabel(count > 0 ? "Filters, \(count) on" : "Filters")
+            #else
             HStack(spacing: 3) {
-                Image(systemName: count > 0
-                    ? "line.3.horizontal.decrease.circle.fill"
-                    : "line.3.horizontal.decrease.circle")
+                Image(systemName: symbol)
                 if count > 0 {
                     Text("\(count)").monospacedDigit()
                 }
             }
             .accessibilityLabel(count > 0 ? "Filters, \(count) on" : "Filters")
+            #endif
         }
         .help(count > 0 ? "Filters — \(count) on" : "Filters")
+        .toolbarButton()
         #if os(macOS)
         .tint(.primary)
         .popover(isPresented: $open, arrowEdge: .bottom) {
@@ -33,10 +43,13 @@ struct BrowseFilterButton: View {
             NavigationStack {
                 BrowseFilterForm()
                     .navigationTitle("Filter")
+                    #if !os(tvOS)
                     .navigationBarTitleDisplayMode(.inline)
+                    #endif
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
                             Button("Done") { open = false }
+                                .toolbarButton()
                         }
                     }
             }

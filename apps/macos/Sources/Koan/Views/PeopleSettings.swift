@@ -201,6 +201,7 @@ struct InviteSheet: View {
                 Section {
                     Text("Opening the link on a phone, tablet or Mac with kōan installed signs in and loads the library, on each device, for a week.")
                         .foregroundStyle(.secondary)
+                    #if !os(tvOS)
                     ShareLink(
                         item: invite.emailText,
                         subject: Text(invite.emailSubject),
@@ -208,6 +209,7 @@ struct InviteSheet: View {
                     ) {
                         Label("Send Invite…", systemImage: "square.and.arrow.up")
                     }
+                    #endif
                     if let mail = URL(string: invite.mailto) {
                         Link(destination: mail) { Label("Open in Mail", systemImage: "envelope") }
                     }
@@ -236,7 +238,7 @@ struct InviteSheet: View {
                     } footer: {
                         Text("Shown this once: the server keeps only its hash.")
                     }
-                    .textSelection(.enabled)
+                    .selectableText()
                 }
             }
             .formStyle(.grouped)
