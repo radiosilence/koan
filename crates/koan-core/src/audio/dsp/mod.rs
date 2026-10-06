@@ -55,16 +55,38 @@ pub enum DspError {
     Layer(String),
 }
 
+/// How deep layers may nest: a stack of stacks of stacks, and so on.
+const MAX_LAYER_DEPTH: usize = 8;
+/// The most filters a stack may expand to. A layer played twice, or a
+/// diamond of stacks sharing layers, copies its filters each time; past this
+/// the stack is refused rather than grown without bound.
+const MAX_CHAIN_FILTERS: usize = 256;
+/// The most layers a stack may visit while resolving, however few filters
+/// they hold: a diamond of empty stacks costs time if not memory.
+const MAX_LAYER_VISITS: usize = 1024;
+
 /// The filters `profile` plays: each layer that is on, in order, as that
 /// layer plays it, then its own, then the step moving it to another target.
 /// `stack` holds the profiles being resolved, which a cycle would come back
 /// to. A layer is EQ alone: impulse responses belong to the profile that
 /// plays them, and two stacks of responses would make one profile's rates
-/// another's.
+/// another's. Refused past `MAX_LAYER_DEPTH`, `MAX_CHAIN_FILTERS` or
+/// `MAX_LAYER_VISITS`, so no stack, however edited, can grow the chain
+/// without bound.
 pub fn chain(
     profile: &DspProfile,
     all: &[DspProfile],
     stack: &mut Vec<String>,
+) -> Result<Vec<DspFilter>, DspError> {
+    let mut visits = 0;
+    resolve(profile, all, stack, &mut visits)
+}
+
+fn resolve(
+    profile: &DspProfile,
+    all: &[DspProfile],
+    stack: &mut Vec<String>,
+    visits: &mut usize,
 ) -> Result<Vec<DspFilter>, DspError> {
     if stack.contains(&profile.name) {
         return Err(DspError::Layer(format!(
@@ -73,8 +95,27 @@ pub fn chain(
             stack.join(" → ")
         )));
     }
+    if stack.len() >= MAX_LAYER_DEPTH {
+        return Err(DspError::Layer(format!(
+            "{} nests layers more than {MAX_LAYER_DEPTH} deep",
+            stack[0]
+        )));
+    }
+    *visits += 1;
+    if *visits > MAX_LAYER_VISITS {
+        return Err(DspError::Layer(format!(
+            "{} reaches its layers more than {MAX_LAYER_VISITS} times over",
+            stack.first().unwrap_or(&profile.name)
+        )));
+    }
     stack.push(profile.name.clone());
     let mut out = Vec::new();
+    let too_many = |stack: &[String]| {
+        DspError::Layer(format!(
+            "{} comes to more than {MAX_CHAIN_FILTERS} filters with its layers",
+            stack[0]
+        ))
+    };
     for layer in profile.layers.iter().filter(|l| l.on) {
         let p = all
             .iter()
@@ -91,7 +132,10 @@ pub fn chain(
                 p.name
             )));
         }
-        out.extend(chain(p, all, stack)?);
+        out.extend(resolve(p, all, stack, visits)?);
+        if out.len() > MAX_CHAIN_FILTERS {
+            return Err(too_many(stack));
+        }
     }
     out.extend(profile.filters.iter().cloned());
     // Another target than the one the correction was made for: their
@@ -102,6 +146,9 @@ pub fn chain(
         let curve = |id: &str| targets::choice_curve(id).ok_or(DspError::Target(id.into()));
         let (from, to) = (curve(&t.made_for)?, curve(chosen)?);
         out.push(DspFilter::Graphic(targets::difference(&from, &to)));
+    }
+    if out.len() > MAX_CHAIN_FILTERS && stack.len() > 1 {
+        return Err(too_many(stack));
     }
     stack.pop();
     Ok(out)

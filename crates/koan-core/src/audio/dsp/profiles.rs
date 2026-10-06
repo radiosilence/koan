@@ -441,6 +441,14 @@ pub fn set_layers(name: &str, layers: Vec<crate::config::DspLayer>) -> Result<()
     if name.is_empty() {
         return Err("A profile needs a name".into());
     }
+    if let Some(twice) = layers
+        .iter()
+        .enumerate()
+        .find(|(i, l)| layers[..*i].iter().any(|e| e.profile == l.profile))
+        .map(|(_, l)| &l.profile)
+    {
+        return Err(format!("{twice} is in {name} twice; a layer plays once"));
+    }
     let cfg = Config::cached();
     let mut all = cfg.dsp.profiles.clone();
     let probe = profile_mut(&mut all, name);
@@ -708,5 +716,69 @@ mod tests {
             set_layers("EQ", vec![layer("Desk", false)]).is_err(),
             "cycle"
         );
+    }
+
+    /// Shared layers resolve, each where it is played; a ladder of them that
+    /// would copy its filters exponentially is refused when set, and as a
+    /// stack edited by hand it reports the problem and does not load, rather
+    /// than growing the chain until the process aborts.
+    #[test]
+    fn a_stack_cannot_grow_without_bound() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "D".into(),
+                filters: vec![band(100.0)],
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        // A diamond: B and C both play D.
+        set_layers("B", vec![layer("D", true)]).unwrap();
+        set_layers("C", vec![layer("D", true)]).unwrap();
+        set_layers("A", vec![layer("B", true), layer("C", true)]).unwrap();
+        assert_eq!(
+            response("A", 48000).map(|r| r.layers.len()),
+            Some(2),
+            "a diamond resolves"
+        );
+        assert!(
+            set_layers("X", vec![layer("D", true), layer("D", true)]).is_err(),
+            "twice"
+        );
+
+        // A ladder, as a hand edit could leave it: each rung plays the two
+        // below, 2^30 copies of D at the top.
+        persist(|c| {
+            for i in 0..30 {
+                let below = |n: i32| {
+                    if n < 0 {
+                        "D".to_string()
+                    } else {
+                        format!("L{n}")
+                    }
+                };
+                c.dsp.profiles.push(DspProfile {
+                    name: format!("L{i}"),
+                    layers: vec![layer(&below(i - 1), true), layer(&below(i - 2), true)],
+                    ..Default::default()
+                });
+            }
+        })
+        .unwrap();
+        let cfg = Config::cached();
+        let top = cfg.dsp.profiles.iter().find(|p| p.name == "L29").unwrap();
+        let err = Setup::load(top, &cfg.dsp.profiles, dir.path())
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("L29"), "{err}");
+        let summary = overview_for(None);
+        let l29 = summary.profiles.iter().find(|p| p.name == "L29").unwrap();
+        assert!(l29.problem.is_some(), "Settings shows why it does not play");
+        assert!(set_layers("L30", vec![layer("L29", true)]).is_err());
     }
 }
