@@ -803,6 +803,23 @@ fn run(
         }
     }
 
+    let moved = db
+        .conn
+        .prepare("SELECT from_path, to_path FROM organize_log WHERE batch_id = ?1")
+        .and_then(|mut stmt| {
+            stmt.query_map(params![batch_id], |r| {
+                Ok((
+                    PathBuf::from(r.get::<_, String>(0)?),
+                    PathBuf::from(r.get::<_, String>(1)?),
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()
+        });
+    match moved {
+        Ok(moved) => follow_playlist_files(db, &moved),
+        Err(e) => log::warn!("organize: could not read back what moved: {e}"),
+    }
+
     Ok(result)
 }
 
@@ -955,14 +972,76 @@ fn rewrite_path_references(conn: &Connection, old: &Path, new: &Path) -> Result<
         "UPDATE playback_position SET cursor_id = ?1 WHERE cursor_id = ?2",
         params![new_path, old_path],
     )?;
+    // A playlist read from a file is keyed by the file: left at the old path,
+    // the next scan would read it as deleted and make a new one.
+    conn.execute(
+        "UPDATE playlists SET source_path = ?1 WHERE source_path = ?2",
+        params![new_path, old_path],
+    )?;
     rewrite_queue_json(conn, old_path, new_path)?;
     Ok(())
 }
 
-/// Rewrite paths inside the saved session's serialized queue.
+/// Point M3U files at where the files they name went: entries naming a file
+/// that moved, and the relative entries of a list that moved itself. Covers
+/// every list a playlist was read from and any list that moved. A list
+/// rewritten here has its `organize_log` rows given its new size and time, so
+/// undoing the move that took it there still recognises it.
 ///
-/// Playlists need no equivalent: they point at library rows, and a row's path
-/// changing is a column this function has already updated.
+/// Playlists read from files are the only ones that need this. The others
+/// point at library rows, whose paths [`rewrite_path_references`] has already
+/// updated.
+fn follow_playlist_files(db: &Database, moved: &[(PathBuf, PathBuf)]) {
+    use crate::index::playlist_files::{follow_moves, is_m3u};
+    if moved.is_empty() {
+        return;
+    }
+    let new_place: HashMap<PathBuf, PathBuf> = moved.iter().cloned().collect();
+    let came_from: HashMap<&PathBuf, &PathBuf> = moved.iter().map(|(f, t)| (t, f)).collect();
+    let mut lists: Vec<PathBuf> = match db
+        .conn
+        .prepare("SELECT source_path FROM playlists WHERE source_path IS NOT NULL")
+        .and_then(|mut stmt| {
+            stmt.query_map([], |r| r.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()
+        }) {
+        Ok(sources) => sources.into_iter().map(PathBuf::from).collect(),
+        Err(e) => {
+            log::warn!("organize: could not list playlist files to update: {e}");
+            Vec::new()
+        }
+    };
+    lists.extend(moved.iter().map(|(_, to)| to.clone()));
+    lists.retain(|list| is_m3u(list) && list.is_file());
+    lists.sort();
+    lists.dedup();
+
+    for list in lists {
+        let was_at = came_from.get(&list).map_or(list.as_path(), |p| p.as_path());
+        match follow_moves(&list, was_at, &new_place) {
+            Ok(true) => {
+                let meta = std::fs::metadata(&list).ok();
+                if let Err(e) = db.conn.execute(
+                    "UPDATE organize_log SET size_bytes = ?2, mtime = ?3 WHERE to_path = ?1",
+                    params![
+                        list.to_string_lossy().as_ref(),
+                        meta.as_ref().map(|m| m.len() as i64),
+                        meta.as_ref().and_then(mtime_secs),
+                    ],
+                ) {
+                    log::warn!("organize: undo may not recognise {}: {e}", list.display());
+                }
+            }
+            Ok(false) => {}
+            Err(e) => log::warn!(
+                "organize: {} still names files at their old paths: {e}",
+                list.display()
+            ),
+        }
+    }
+}
+
+/// Rewrite paths inside the saved session's serialized queue.
 fn rewrite_queue_json(
     conn: &Connection,
     old_path: &str,
@@ -1053,7 +1132,9 @@ fn execute_single_move(
                     anc_to,
                     meta.as_ref().map(|m| m.len()),
                     meta.as_ref().and_then(mtime_secs),
-                ) {
+                )
+                .and_then(|()| rewrite_path_references(&tx, anc_from, anc_to))
+                {
                     failure = Some(e);
                     break;
                 }
@@ -1094,6 +1175,11 @@ fn execute_single_move(
 /// is still the one that was logged. Anything else is reported and left in the log, so
 /// a single blocked file doesn't strand the rest of the batch.
 pub fn undo(db: &Database) -> Result<UndoResult, OrganizeError> {
+    undo_within(db, &cleanup_floors(None))
+}
+
+/// [`undo`], with the library folders given rather than read from the config.
+fn undo_within(db: &Database, floors: &[PathBuf]) -> Result<UndoResult, OrganizeError> {
     // Newest batch by primary key: created_at only has one-second resolution, so two
     // batches in the same second would tie.
     let batch_id: String = db
@@ -1123,17 +1209,27 @@ pub fn undo(db: &Database) -> Result<UndoResult, OrganizeError> {
         .collect::<Result<Vec<_>, _>>()?;
     drop(stmt);
 
-    let floors = cleanup_floors(None);
     let mut result = UndoResult::default();
+    let mut restored = Vec::new();
 
     for (log_id, from_path, to_path, size, mtime) in &entries {
         let to = Path::new(to_path);
         let from = Path::new(from_path);
 
-        if !to.exists() {
-            // Already moved back or deleted — drop the log row.
-            db.conn
-                .execute("DELETE FROM organize_log WHERE id = ?1", params![log_id])?;
+        if !matches!(to.try_exists(), Ok(true)) {
+            // Gone while the place it was moved to is still there: moved back
+            // or deleted by hand, so there is nothing to undo. Anything less
+            // certain — a volume unplugged, a share away, an IO error — keeps
+            // the row for an undo once it is back.
+            if crate::index::known_missing(to) && destination_reachable(to, floors) {
+                db.conn
+                    .execute("DELETE FROM organize_log WHERE id = ?1", params![log_id])?;
+            } else {
+                result.errors.push((
+                    to.to_path_buf(),
+                    "cannot be reached; kept for an undo once it is back".into(),
+                ));
+            }
             continue;
         }
 
@@ -1181,13 +1277,44 @@ pub fn undo(db: &Database) -> Result<UndoResult, OrganizeError> {
         }
 
         if let Some(parent) = to.parent() {
-            remove_empty_dirs(parent, &floors);
+            remove_empty_dirs(parent, floors);
         }
 
         result.restored += 1;
+        restored.push((to.to_path_buf(), from.to_path_buf()));
     }
+    follow_playlist_files(db, &restored);
 
     Ok(result)
+}
+
+/// Whether what a logged destination was moved into is there: the library
+/// folder holding it, readable and not empty, or else the volume it is on.
+/// Not its own folder, which a user deleting an album by hand removes too.
+fn destination_reachable(to: &Path, floors: &[PathBuf]) -> bool {
+    match floors
+        .iter()
+        .filter(|floor| to.starts_with(floor))
+        .max_by_key(|floor| floor.as_os_str().len())
+    {
+        Some(floor) => std::fs::read_dir(floor).is_ok_and(|mut d| d.next().is_some()),
+        None => matches!(volume_root(to).try_exists(), Ok(true)),
+    }
+}
+
+/// The root of the volume a path is on, as far as the path can tell: one
+/// mounted under `/Volumes`, `/mnt`, `/media/<user>` or `/run/media/<user>`,
+/// or else the root filesystem, which is always there.
+fn volume_root(path: &Path) -> PathBuf {
+    let parts: Vec<_> = path.components().collect();
+    let name = |i: usize| parts.get(i).and_then(|c| c.as_os_str().to_str());
+    let depth = match (name(1), name(2)) {
+        (Some("Volumes" | "mnt"), _) => 3,
+        (Some("media"), _) => 4,
+        (Some("run"), Some("media")) => 5,
+        _ => 1,
+    };
+    parts.iter().take(depth).collect()
 }
 
 /// Confirm the file at a logged destination is still the file that was moved there.
@@ -2311,6 +2438,179 @@ mod tests {
         assert_eq!(undone.errors.len(), 1);
         assert!(!source.exists());
         assert!(dest.exists());
+    }
+
+    /// A destination on a volume that has been unplugged cannot be told from
+    /// one deleted, so its undo is kept for when the volume is back.
+    #[test]
+    fn undo_keeps_moves_onto_a_volume_that_is_away() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("src/test.flac");
+        add_track(&db, &source, "Airbag", 1);
+        let volume = tmp.path().join("volume");
+        std::fs::create_dir_all(&volume).unwrap();
+
+        execute(&db, "%album artist%/%album%/%title%", Some(&volume)).unwrap();
+        let away = tmp.path().join("away");
+        std::fs::rename(&volume, &away).unwrap();
+
+        let floors = [volume.clone()];
+        let undone = undo_within(&db, &floors).unwrap();
+        assert_eq!((undone.restored, undone.errors.len()), (0, 1));
+        assert_eq!(log_rows(&db).len(), 1, "kept for when the volume is back");
+
+        std::fs::rename(&away, &volume).unwrap();
+        assert_eq!(undo_within(&db, &floors).unwrap().restored, 1);
+        assert!(source.exists());
+    }
+
+    /// An organized album deleted by hand leaves nothing to undo, and must
+    /// not hold the batches before it hostage.
+    #[test]
+    fn undo_forgets_an_album_deleted_by_hand() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let library = tmp.path().join("library");
+        let older = tmp.path().join("src/older.flac");
+        add_track(&db, &older, "Airbag", 1);
+        std::fs::create_dir_all(library.join("keep")).unwrap();
+        execute(&db, "%album artist%/%album%/%title%", Some(&library)).unwrap();
+
+        let newer = tmp.path().join("src/newer.flac");
+        let mut meta = sample_meta("Lucky", "Radiohead", "OK Computer");
+        meta.path = Some(newer.to_string_lossy().into_owned());
+        // The first run emptied src/, and organize removes a directory it empties.
+        std::fs::create_dir_all(newer.parent().unwrap()).unwrap();
+        std::fs::write(&newer, b"lucky").unwrap();
+        queries::upsert_track(&db.conn, &meta).unwrap();
+        let result = run(
+            &db,
+            Selection::Paths(std::slice::from_ref(&newer)),
+            "%album artist%/Elsewhere/%title%",
+            &library,
+        )
+        .unwrap();
+        let dest = result.moves().next().unwrap().dest().to_path_buf();
+        std::fs::remove_dir_all(dest.parent().unwrap()).unwrap();
+
+        let floors = [library.clone()];
+        let undone = undo_within(&db, &floors).unwrap();
+        assert_eq!((undone.restored, undone.errors.len()), (0, 0));
+        assert_eq!(undo_within(&db, &floors).unwrap().restored, 1);
+        assert!(older.exists());
+    }
+
+    /// A run that stopped after moving files but before rewriting the lists
+    /// that name them leaves those lists as they were; undoing it must not
+    /// rewrite them against where they were taken.
+    #[test]
+    fn undoing_an_interrupted_run_leaves_its_lists_intact() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("src/Album");
+        add_track(&db, &album.join("01.flac"), "Airbag", 1);
+        add_track(&db, &album.join("02.flac"), "Paranoid Android", 2);
+        let list = album.join("album.m3u");
+        std::fs::write(&list, "01.flac\n02.flac\n").unwrap();
+
+        // The first move, with the list beside it, and then nothing more.
+        let base = tmp.path().join("library");
+        let planned = plan(
+            &db,
+            Selection::All,
+            "%album artist%/%album%/%title%",
+            &base,
+            true,
+        )
+        .unwrap();
+        let first = planned
+            .entries
+            .iter()
+            .filter_map(PlanEntry::as_move)
+            .find(|m| m.ancillary.iter().any(|(from, _)| from == &list))
+            .expect("the list travels with one of the moves");
+        execute_single_move(
+            &db,
+            &first,
+            "batch-interrupted",
+            std::slice::from_ref(&base),
+        )
+        .unwrap();
+
+        let undone = undo_within(&db, &[base]).unwrap();
+        assert!(undone.errors.is_empty(), "{:?}", undone.errors);
+        assert_eq!(
+            std::fs::read_to_string(&list).unwrap(),
+            "01.flac\n02.flac\n"
+        );
+    }
+
+    /// An M3U names its tracks by path. Moved with the album, or left where
+    /// it is while the album moves, it is rewritten to follow, so the next
+    /// scan finds the same playlist with every entry, and undo puts it back.
+    #[test]
+    fn playlist_files_follow_what_organize_moves() {
+        use crate::index::playlist_files;
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("src/Album");
+        let first = album.join("01.flac");
+        let second = album.join("02.flac");
+        let a = add_track(&db, &first, "Airbag", 1);
+        let b = add_track(&db, &second, "Paranoid Android", 2);
+        let beside = album.join("album.m3u");
+        std::fs::write(&beside, "#EXTM3U\n01.flac\n02.flac\n").unwrap();
+        let elsewhere = tmp.path().join("lists/mix.m3u8");
+        std::fs::create_dir_all(elsewhere.parent().unwrap()).unwrap();
+        std::fs::write(&elsewhere, format!("{}\n", second.display())).unwrap();
+        playlist_files::import(&db, &[beside.clone(), elsewhere.clone()], &[]);
+
+        let lists = |db: &Database| -> Vec<(i64, String, String, Vec<i64>)> {
+            queries::list_playlists(&db.conn, queries::LOCAL_USER)
+                .unwrap()
+                .into_iter()
+                .map(|p| {
+                    let tracks = queries::playlist_track_ids(&db.conn, p.id).unwrap();
+                    (p.id, p.uid, p.source_path.unwrap(), tracks)
+                })
+                .collect()
+        };
+        let before = lists(&db);
+        assert_eq!(before.len(), 2);
+
+        let base = tmp.path().join("library");
+        execute(&db, "%album artist%/%album%/%title%", Some(&base)).unwrap();
+        let moved_list = base.join("Radiohead/OK Computer/album.m3u");
+        assert_eq!(
+            std::fs::read_to_string(&moved_list).unwrap(),
+            "#EXTM3U\nAirbag.flac\nParanoid Android.flac\n"
+        );
+
+        // What the next scan does with both files.
+        playlist_files::import(
+            &db,
+            &[moved_list.clone(), elsewhere.clone()],
+            &[tmp.path().to_path_buf()],
+        );
+        let after = lists(&db);
+        assert_eq!(after.len(), 2, "{after:#?}");
+        for (was, now) in before.iter().zip(&after) {
+            assert_eq!((was.0, &was.1, &was.3), (now.0, &now.1, &now.3));
+        }
+        assert!(after.iter().any(|l| Path::new(&l.2) == moved_list));
+        assert!(after.iter().any(|l| l.3 == [a, b]));
+
+        let undone = undo(&db).unwrap();
+        assert!(undone.errors.is_empty(), "{:?}", undone.errors);
+        assert_eq!(
+            std::fs::read_to_string(&beside).unwrap(),
+            "#EXTM3U\n01.flac\n02.flac\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&elsewhere).unwrap(),
+            format!("{}\n", second.display())
+        );
     }
 
     /// `created_at` has one-second resolution, so batches are ordered by primary key.
