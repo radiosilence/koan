@@ -410,6 +410,9 @@ const NOT_HEADPHONE_WORDS: &[&str] = &[
     "monitor",
     "monitors",
     "output",
+    "soundbar",
+    "soundlink",
+    "soundtouch",
     "speaker",
     "speakers",
     "tv",
@@ -418,15 +421,15 @@ const NOT_HEADPHONE_WORDS: &[&str] = &[
 
 /// What to search AutoEQ for, for an output whose name says roughly which
 /// headphone it is but not which entry: "AirPods Pro" for "Jo's AirPods Pro",
-/// whose generations AutoEQ lists apart, or "Bose" for "Bose QC45", which the
-/// index spells another way. Offered where `suggest` offers nothing, so the
-/// person picks the variant themselves.
+/// whose generations AutoEQ lists apart, or "Bose QuietComfort" for "Bose
+/// QC45", which the index spells out. Offered where `suggest` offers nothing,
+/// so the person picks the variant themselves.
 ///
 /// The end of the name, up to four words, that begins some entry's model, the
 /// longest that does; it must hold a word of four letters or more, and a
-/// single word six, so "M2", "4i4" or "Solo" alone never count. Failing that, one of `MAKER_SEARCHES` the
-/// name begins with. A
-/// name with a word like "speakers", "display" or "USB" in it is not
+/// single word six, so "M2", "4i4" or "Solo" alone never count. Failing that,
+/// a headphone line named by its abbreviation (`ABBREVIATED`). A name with a
+/// word like "speakers", "display", "USB" or "SoundLink" in it is not
 /// headphones and gets nothing.
 pub fn search_for(entries: &[Entry], device: &str) -> Option<String> {
     let spelt = tokens(device);
@@ -460,18 +463,23 @@ pub fn search_for(entries: &[Entry], device: &str) -> Option<String> {
             return Some(spelt[spelt.len() - len..].join(" "));
         }
     }
-    let first = device.first()?;
-    MAKER_SEARCHES
-        .iter()
-        .find(|m| m.eq_ignore_ascii_case(first))
-        .map(|m| (*m).to_owned())
+    ABBREVIATED.iter().find_map(|(maker, starts, search)| {
+        let rest = device.strip_prefix(&[maker.to_string()])?;
+        rest.iter()
+            .any(|w| starts.iter().any(|s| w.starts_with(s)))
+            .then(|| (*search).to_owned())
+    })
 }
 
-/// Makers whose headphones name themselves in a way the index does not
-/// spell ("Bose QC45" for the QuietComfort 45), so the maker alone is the
-/// search. Only makers of headphones alone: one that also makes DACs and
-/// interfaces would be offered for those too.
-const MAKER_SEARCHES: &[&str] = &["Bose"];
+/// Headphone lines whose devices name themselves by an abbreviation the
+/// index spells out: the maker, the beginnings of the words that mark the
+/// line ("qc" for "QC45", "QC Ultra"), and what to search for. A line and
+/// not a maker, since a maker's speakers and soundbars carry the maker's
+/// name too.
+const ABBREVIATED: &[(&str, &[&str], &str)] = &[
+    ("bose", &["qc", "quietcomfort"], "Bose QuietComfort"),
+    ("bose", &["nc", "700"], "Bose Noise Cancelling"),
+];
 
 /// Makers whose names are more than one word, as the index spells them, and
 /// that neither rule in `maker_of` finds.
@@ -742,7 +750,18 @@ Filter 3: ON PK Fc 118 Hz Gain -3.1 dB Q 0.50
         assert_eq!(search("Jo's AirPods Pro").as_deref(), Some("AirPods Pro"));
         assert_eq!(search("AirPods").as_deref(), Some("AirPods"));
         assert_eq!(search("Jo’s AirPods 4").as_deref(), Some("AirPods 4"));
-        assert_eq!(search("Bose QC45").as_deref(), Some("Bose"));
+        assert_eq!(search("Bose QC45").as_deref(), Some("Bose QuietComfort"));
+        assert_eq!(
+            search("Bose QC Ultra Headphones").as_deref(),
+            Some("Bose QuietComfort")
+        );
+        assert_eq!(
+            search("Bose NC 700").as_deref(),
+            Some("Bose Noise Cancelling")
+        );
+        assert_eq!(search("Bose SoundLink Flex"), None, "a speaker");
+        assert_eq!(search("Bose Color II SoundLink"), None, "a speaker");
+        assert_eq!(search("Bose Smart Soundbar 600"), None);
         assert_eq!(search("MOTU M2"), None, "a short model is not enough");
         assert_eq!(search("Scarlett 4i4 USB"), None);
         assert_eq!(search("LG UltraFine Display Audio"), None);
@@ -1032,6 +1051,14 @@ Filter 3: ON PK Fc 118 Hz Gain -3.1 dB Q 0.50
             "Schiit Modi",
             "External Headphones",
             "Headphones",
+            "Bose SoundLink Flex",
+            "Bose SoundLink Micro",
+            "Bose SoundLink Revolve+ II",
+            "Bose Solo 5",
+            "Bose Smart Soundbar 600",
+            "Bose Color II SoundLink",
+            "Bose Revolve+ II SoundLink",
+            "Bose Micro SoundLink",
         ]
         .iter()
         .filter_map(|d| search_for(&entries, d).map(|q| format!("{d} → {q}")))
@@ -1042,7 +1069,10 @@ Filter 3: ON PK Fc 118 Hz Gain -3.1 dB Q 0.50
             search_for(&entries, "Jo's AirPods Pro").as_deref(),
             Some("AirPods Pro")
         );
-        assert_eq!(search_for(&entries, "Bose QC45").as_deref(), Some("Bose"));
+        assert_eq!(
+            search_for(&entries, "Bose QC45").as_deref(),
+            Some("Bose QuietComfort")
+        );
         // Every entry in the curated list is one the index has.
         for name in MAKERLESS {
             assert!(
