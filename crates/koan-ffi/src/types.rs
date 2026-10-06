@@ -1109,6 +1109,9 @@ pub struct DspTargetOption {
     /// What `dspChooseTarget` takes.
     pub id: String,
     pub name: String,
+    /// What it does, said against neutral; empty for neutral and one a
+    /// person added.
+    pub does: String,
     /// What it sounds like, in a line; empty for one a person added.
     pub character: String,
 }
@@ -1116,7 +1119,9 @@ pub struct DspTargetOption {
 /// The target a correction was made for, the one chosen, and the others.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct DspTargets {
-    pub made_for: DspTargetOption,
+    /// None for a correction built from a measurement, which is made for
+    /// `chosen`.
+    pub made_for: Option<DspTargetOption>,
     /// Unset when it plays as made.
     pub chosen: Option<String>,
     pub choices: Vec<DspTargetOption>,
@@ -1127,6 +1132,7 @@ impl From<koan_core::audio::dsp::profiles::TargetChoice> for DspTargetOption {
         Self {
             id: c.id,
             name: c.name,
+            does: c.does,
             character: c.character,
         }
     }
@@ -1186,6 +1192,39 @@ pub struct DspProfileSummary {
     pub rates: Vec<u32>,
     /// Why it would not load, if it would not.
     pub problem: Option<String>,
+    pub role: DspRole,
+}
+
+/// What a profile is for. A chain corrects a headphone once.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DspRole {
+    /// Brings a headphone to a target, neutral.
+    Correction,
+    /// Taste on top of a correction.
+    Tuning,
+    /// A correction with a tuning already in it.
+    Baked,
+}
+
+impl From<koan_core::config::DspRole> for DspRole {
+    fn from(r: koan_core::config::DspRole) -> Self {
+        use koan_core::config::DspRole as R;
+        match r {
+            R::Correction => Self::Correction,
+            R::Tuning => Self::Tuning,
+            R::Baked => Self::Baked,
+        }
+    }
+}
+
+impl From<DspRole> for koan_core::config::DspRole {
+    fn from(r: DspRole) -> Self {
+        match r {
+            DspRole::Correction => Self::Correction,
+            DspRole::Tuning => Self::Tuning,
+            DspRole::Baked => Self::Baked,
+        }
+    }
 }
 
 /// A curve on `DspResponse.freqs`, in dB.
@@ -1218,6 +1257,9 @@ pub struct DspResponse {
     pub target: Option<Vec<f64>>,
     pub predicted: Option<Vec<f64>>,
     pub preamp_db: f64,
+    /// For a chain with both: the correction alone, and the tuning on top.
+    pub correction: Option<Vec<f64>>,
+    pub tuning: Option<Vec<f64>>,
 }
 
 impl From<koan_core::audio::dsp::profiles::Response> for DspResponse {
@@ -1239,6 +1281,8 @@ impl From<koan_core::audio::dsp::profiles::Response> for DspResponse {
             target: r.target,
             predicted: r.predicted,
             preamp_db: r.preamp_db,
+            correction: r.correction,
+            tuning: r.tuning,
         }
     }
 }
@@ -1275,6 +1319,25 @@ pub struct DspProfileDetail {
     pub sync_problem: Option<String>,
     /// What syncing did to it: a rename, and why.
     pub sync_note: Option<String>,
+    pub role: DspRole,
+    /// What it is for was said, rather than following from what it is.
+    pub role_set: bool,
+    /// A chain that corrects twice, made before that was refused: which,
+    /// and what to do.
+    pub corrects_twice: Option<String>,
+    /// The chain in a line each: the headphone it corrects and how, and the
+    /// tunings on top.
+    pub corrects: Option<String>,
+    /// The correction has a tuning baked in.
+    pub corrects_baked: bool,
+    pub tunings: Vec<String>,
+    /// For each of `layers`, what it is for; `None` where it is missing.
+    pub layer_roles: Vec<Option<DspRole>>,
+    /// Built from a measurement, to `DspTargets.chosen`.
+    pub measured: bool,
+    /// For a ready-made correction: the target it was made for, by id, if
+    /// that is known.
+    pub made_for: Option<String>,
 }
 
 /// One of a profile's filters, in the order they run.
@@ -1421,6 +1484,19 @@ impl From<koan_core::audio::dsp::profiles::Detail> for DspProfileDetail {
             scope_set: d.scope_set,
             sync_problem: None,
             sync_note: None,
+            role: d.role.into(),
+            role_set: d.role_set,
+            corrects_twice: d.corrects_twice,
+            corrects: d.corrects,
+            corrects_baked: d.corrects_baked,
+            tunings: d.tunings,
+            layer_roles: d
+                .layer_roles
+                .into_iter()
+                .map(|r| r.map(Into::into))
+                .collect(),
+            measured: d.measured,
+            made_for: d.made_for,
         }
     }
 }
@@ -1441,6 +1517,7 @@ impl From<koan_core::audio::dsp::profiles::Overview> for DspOverview {
                     bands: p.bands as u32,
                     layers: p.layers as u32,
                     rates: p.rates,
+                    role: p.role.into(),
                     problem: p.problem,
                 })
                 .collect(),

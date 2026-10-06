@@ -28,6 +28,9 @@ final class DspModel {
     /// phone. Set on each route change; nil on the Mac.
     private(set) var route: String?
     var lastError: String?
+    /// A profile just imported from a file or text, whose role is asked: a
+    /// finished EQ for the headphones, or a tuning on top.
+    var askRole: String?
     /// An import waiting on the rate of what it was given.
     var needsRate: Pending?
     /// AutoEQ's results for the last search.
@@ -102,6 +105,7 @@ final class DspModel {
         do {
             imported = try await run()
             lastError = nil
+            askRole = imported
         } catch KoanError.NeedsSampleRate {
             needsRate = pending
         } catch {
@@ -246,6 +250,35 @@ final class DspModel {
     /// Make `name` a stack of `layers`, in order; creates it if there is none.
     func setLayers(_ name: String, _ layers: [DspLayerInfo]) {
         act { try await $0.dspSetLayers(name: name, layers: layers) }
+    }
+
+    /// Say whether `name` corrects a headphone or tunes on top of one.
+    func setRole(_ name: String, _ role: DspRole) {
+        act { try await $0.dspSetRole(name: name, role: role) }
+    }
+
+    /// The target a ready-made EQ was made for, or nil for Unknown.
+    func setMadeFor(_ name: String, _ target: String?) {
+        act { try await $0.dspSetMadeFor(name: name, target: target) }
+    }
+
+    /// The targets for in-ear or over-ear headphones, each with what it
+    /// sounds like.
+    func targetsFor(inEar: Bool) async -> [DspTargetOption] {
+        await engine.dspTargetsFor(inEar: inEar)
+    }
+
+    /// What correcting a measurement to a target would do, before saving.
+    func previewMeasurement(_ text: String, target: String) async throws -> DspResponse {
+        try await engine.dspPreviewMeasurement(text: text, target: target)
+    }
+
+    /// Save a headphone's measurement corrected to a target, as a profile.
+    func saveMeasured(name: String, text: String, inEar: Bool, target: String) async throws -> String {
+        let saved = try await engine.dspSaveMeasured(name: name, text: text, inEar: inEar, target: target)
+        imported = saved
+        await changed()
+        return saved
     }
 
     /// Keep `name` on every device of the account, or on this one alone.

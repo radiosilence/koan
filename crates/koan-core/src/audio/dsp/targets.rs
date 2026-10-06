@@ -32,17 +32,29 @@ pub enum Ear {
 pub struct Target {
     pub id: &'static str,
     pub name: &'static str,
+    /// What it does, said against neutral; empty for neutral itself.
+    pub does: &'static str,
     /// What it sounds like, in a line.
     pub character: &'static str,
     pub ear: Ear,
     data: &'static str,
 }
 
-/// The targets offered, over-ear then in-ear, the most chosen first.
+/// The targets offered, over-ear then in-ear: neutral first, then each
+/// preference added to it, the most chosen first.
 pub const TARGETS: &[Target] = &[
+    Target {
+        id: "diffuse-field-gras-kemar",
+        name: "Neutral (diffuse field)",
+        does: "",
+        character: "Neutral: sound arriving evenly from every direction, as a room without reflections would give, with no bass or treble preference. Brighter than Harman.",
+        ear: Ear::Over,
+        data: include_str!("targets/diffuse-field-gras-kemar.csv"),
+    },
     Target {
         id: "harman-over-ear-2018",
         name: "Harman over-ear 2018",
+        does: "neutral plus preferred bass and treble",
         character: "What most listeners in Harman's research preferred: a warm bass shelf, a forward upper midrange and a soft top end.",
         ear: Ear::Over,
         data: include_str!("targets/harman-over-ear-2018.csv"),
@@ -50,6 +62,7 @@ pub const TARGETS: &[Target] = &[
     Target {
         id: "harman-over-ear-2018-without-bass",
         name: "Harman over-ear 2018, no bass shelf",
+        does: "neutral plus preferred treble",
         character: "Harman's curve with a flat low end: leaner bass, the same mids and treble.",
         ear: Ear::Over,
         data: include_str!("targets/harman-over-ear-2018-without-bass.csv"),
@@ -57,20 +70,23 @@ pub const TARGETS: &[Target] = &[
     Target {
         id: "oratory1990-over-ear",
         name: "oratory1990 over-ear",
+        does: "neutral plus oratory1990's preference",
         character: "oratory1990's target for over-ears, close to Harman's.",
         ear: Ear::Over,
         data: include_str!("targets/oratory1990-over-ear.csv"),
     },
     Target {
-        id: "diffuse-field-gras-kemar",
-        name: "Diffuse field",
-        character: "Even sound from every direction, as a room without reflections would give: no bass shelf, and brighter than Harman.",
-        ear: Ear::Over,
-        data: include_str!("targets/diffuse-field-gras-kemar.csv"),
+        id: "diffuse-field-iso-11904-1",
+        name: "Neutral (diffuse field)",
+        does: "",
+        character: "Neutral: the ear's response to sound arriving evenly from every direction (ISO 11904-1), with no bass or treble preference.",
+        ear: Ear::In,
+        data: include_str!("targets/diffuse-field-iso-11904-1.csv"),
     },
     Target {
         id: "harman-in-ear-2019",
         name: "Harman in-ear 2019",
+        does: "neutral plus preferred bass and treble",
         character: "Harman's in-ear preference target: a bigger bass shelf than over-ear, and more treble.",
         ear: Ear::In,
         data: include_str!("targets/harman-in-ear-2019.csv"),
@@ -78,6 +94,7 @@ pub const TARGETS: &[Target] = &[
     Target {
         id: "harman-in-ear-2019-without-bass",
         name: "Harman in-ear 2019, no bass shelf",
+        does: "neutral plus preferred treble",
         character: "Harman's in-ear curve with a flat low end.",
         ear: Ear::In,
         data: include_str!("targets/harman-in-ear-2019-without-bass.csv"),
@@ -85,6 +102,7 @@ pub const TARGETS: &[Target] = &[
     Target {
         id: "autoeq-in-ear",
         name: "AutoEQ in-ear",
+        does: "neutral plus AutoEQ's preference",
         character: "AutoEQ's own in-ear target.",
         ear: Ear::In,
         data: include_str!("targets/autoeq-in-ear.csv"),
@@ -92,6 +110,7 @@ pub const TARGETS: &[Target] = &[
     Target {
         id: "oratory1990-in-ear",
         name: "oratory1990 in-ear",
+        does: "neutral plus oratory1990's preference",
         character: "oratory1990's target for in-ears.",
         ear: Ear::In,
         data: include_str!("targets/oratory1990-in-ear.csv"),
@@ -332,16 +351,7 @@ pub fn add(path: &Path) -> Result<Added, String> {
         return Err("A target file is a few kilobytes; this one is over a megabyte".into());
     }
     let text = String::from_utf8_lossy(&bytes);
-    let curve = parse(&text);
-    let (Some(first), Some(last)) = (curve.first(), curve.last()) else {
-        return Err("No frequency and level pairs in it".into());
-    };
-    if curve.len() < 20 || first.0 > 100.0 || last.0 < 10_000.0 {
-        return Err(
-            "A target needs points from below 100 Hz to above 10 kHz, at least twenty of them"
-                .into(),
-        );
-    }
+    let curve = covering(&text, "A target")?;
     let name: String = path
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
@@ -353,17 +363,100 @@ pub fn add(path: &Path) -> Result<Added, String> {
     if name.is_empty() || name.starts_with('.') {
         return Err("The file needs a name to call the target by".into());
     }
-    let mut out = String::from("frequency,raw\n");
-    for hz in grid() {
-        out.push_str(&format!("{hz:.2},{:.2}\n", at(&curve, hz)));
-    }
     let dir = added_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join(format!("{name}.csv")), out).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join(format!("{name}.csv")), on_grid(&curve)).map_err(|e| e.to_string())?;
     Ok(Added {
         id: format!("{ADDED}{name}"),
         name,
     })
+}
+
+/// The curve in `text`, if it covers the audible band well enough to correct
+/// from or to: points from below 100 Hz to above 10 kHz, at least twenty.
+/// `what` names it in the refusal.
+pub fn covering(text: &str, what: &str) -> Result<Curve, String> {
+    if text.len() as u64 > FILE_CAP {
+        return Err(format!(
+            "{what} is a few kilobytes; this is over a megabyte"
+        ));
+    }
+    let curve = parse(text);
+    let (Some(first), Some(last)) = (curve.first(), curve.last()) else {
+        return Err("No frequency and level pairs in it".into());
+    };
+    if curve.len() < 20 || first.0 > 100.0 || last.0 < 10_000.0 {
+        return Err(format!(
+            "{what} needs points from below 100 Hz to above 10 kHz, at least twenty of them"
+        ));
+    }
+    Ok(curve)
+}
+
+/// `curve` on AutoEQ's grid, as a CSV of frequency and level.
+pub fn on_grid(curve: &[(f64, f64)]) -> String {
+    let mut out = String::from("frequency,raw\n");
+    for hz in grid() {
+        out.push_str(&format!("{hz:.2},{:.2}\n", at(curve, hz)));
+    }
+    out
+}
+
+/// Where a correction built from a measurement keeps it.
+pub fn measurement_path(dsp_dir: &Path) -> PathBuf {
+    dsp_dir.join("measurement.csv")
+}
+
+/// The headphone's measurement kept in `dsp_dir`, if there is one.
+pub fn measurement(dsp_dir: &Path) -> Option<Curve> {
+    let text = std::fs::read_to_string(measurement_path(dsp_dir)).ok()?;
+    Some(parse(&text)).filter(|c| !c.is_empty())
+}
+
+/// Above here, measurements of one headphone on different rigs disagree
+/// most, and a correction is held to `TREBLE_DB`; it narrows to that from
+/// `TREBLE_FROM` on.
+const TREBLE_FROM: f64 = 6_000.0;
+const TREBLE_AT: f64 = 10_000.0;
+const TREBLE_DB: f64 = 3.0;
+
+/// What brings a headphone measured as `measurement` to `target`: their
+/// difference, made as a target swap's is (levelled at 1 kHz, smoothed,
+/// within ±12 dB), and held to ±3 dB in the treble, where a measurement
+/// says least about the headphone and most about the rig.
+pub fn correction(measurement: &[(f64, f64)], target: &[(f64, f64)]) -> GraphicEq {
+    let mut g = difference(measurement, target);
+    for (hz, db) in &mut g.points {
+        let limit = if *hz <= TREBLE_FROM {
+            MAX_DB
+        } else if *hz >= TREBLE_AT {
+            TREBLE_DB
+        } else {
+            let t = (*hz / TREBLE_FROM).ln() / (TREBLE_AT / TREBLE_FROM).ln();
+            MAX_DB + (TREBLE_DB - MAX_DB) * t
+        };
+        *db = db.clamp(-limit, limit);
+    }
+    g
+}
+
+/// What an AutoEQ install in `dsp_dir` kept of its result: the headphone as
+/// measured, and the target it was corrected to, on the rig it was measured
+/// on.
+pub fn autoeq_measurement(dsp_dir: &Path) -> Option<(Curve, Curve)> {
+    let text = std::fs::read_to_string(result_path(dsp_dir)).ok()?;
+    let (raw, target) = (result_column(&text, "raw"), result_column(&text, "target"));
+    (!raw.is_empty() && !target.is_empty()).then_some((raw, target))
+}
+
+/// `target` moved by `step`: a result's own target, rig and all, taken to
+/// another target by the two targets' difference, which is what a rebuilt
+/// correction aims at.
+pub fn moved(target: &[(f64, f64)], step: &GraphicEq) -> Curve {
+    target
+        .iter()
+        .map(|&(hz, db)| (hz, db + at(&step.points, hz)))
+        .collect()
 }
 
 /// The curve a chosen target id names: one that ships, or one added.
@@ -629,7 +722,7 @@ mod tests {
         assert_eq!(loaded(), vec![band.clone()]);
 
         let choices = profiles::target_choices(name).unwrap();
-        assert_eq!(choices.made_for.id, "harman-over-ear-2018");
+        assert_eq!(choices.made_for.unwrap().id, "harman-over-ear-2018");
         assert!(
             choices
                 .choices

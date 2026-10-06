@@ -161,6 +161,9 @@ koan dsp target NAME [--use TARGET | --reset]               # move an AutoEQ cor
 koan dsp add-target FILE                                    # a target from a CSV or squig.link export
 koan dsp stack NAME LAYER...                                # play other profiles first, in order
 koan dsp layer STACK LAYER on|off
+koan dsp measure FILE --name NAME --ear in|over --target TARGET  # correct a headphone from its measurement
+koan dsp role NAME correction|tuning|baked                  # a stack holds one correction; baked counts as one
+koan dsp made-for NAME TARGET|unknown                       # the target a ready-made EQ was made for
 koan dsp off | on                               # bypass every profile, or stop bypassing
 ```
 

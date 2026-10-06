@@ -180,8 +180,15 @@ pub fn cmd_dsp_target(name: &str, target: Option<&str>, reset: bool) {
             "{name} has no known target: only corrections installed from AutoEQ can move"
         ));
     };
-    let current = t.chosen.clone().unwrap_or_else(|| t.made_for.id.into());
-    println!("{} {}", "made for:".cyan(), t.made_for.name.bold());
+    let current = t
+        .chosen
+        .clone()
+        .or_else(|| t.made_for.map(|m| m.id.to_owned()))
+        .unwrap_or_default();
+    match t.made_for {
+        Some(m) => println!("{} {}", "made for:".cyan(), m.name.bold()),
+        None => println!("{} {}", "made for:".cyan(), "unknown".dimmed()),
+    }
     for c in &t.choices {
         let marker = if c.id == current {
             "*".yellow().bold().to_string()
@@ -230,6 +237,51 @@ pub fn cmd_dsp_add_target(path: &std::path::Path) {
         added.name.bold(),
         added.id
     );
+}
+
+/// Correct the headphone `name` from the measurement at `path` to `target`.
+pub fn cmd_dsp_measure(path: &std::path::Path, name: &str, in_ear: bool, target: &str) {
+    use koan_core::config::DspEar;
+    let text =
+        std::fs::read_to_string(path).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())));
+    let ear = if in_ear { DspEar::In } else { DspEar::Over };
+    let saved = profiles::save_measured(name, &text, ear, target).unwrap_or_else(|e| fail(e));
+    println!(
+        "{} '{}', corrected to {}",
+        "measured".green(),
+        saved.bold(),
+        profiles::target_name(target)
+    );
+}
+
+/// Say what `name` is for: `correction`, `tuning` or `baked`.
+pub fn cmd_dsp_role(name: &str, role: &str) {
+    use koan_core::config::DspRole;
+    let to = match role {
+        "correction" => DspRole::Correction,
+        "baked" => DspRole::Baked,
+        _ => DspRole::Tuning,
+    };
+    profiles::set_role(name, to).unwrap_or_else(|e| fail(e));
+    let what = match to {
+        DspRole::Correction => "a neutral correction",
+        DspRole::Tuning => "a tuning",
+        DspRole::Baked => "a correction with a tuning baked in",
+    };
+    println!("'{}' is {what}", name.bold());
+}
+
+/// The target the ready-made EQ `name` was made for, or `None` for unknown.
+pub fn cmd_dsp_made_for(name: &str, target: Option<&str>) {
+    profiles::set_made_for(name, target).unwrap_or_else(|e| fail(e));
+    match target {
+        Some(t) => println!(
+            "'{}' was made for {}",
+            name.bold(),
+            profiles::target_name(t)
+        ),
+        None => println!("'{}' was made for an unknown target", name.bold()),
+    }
 }
 
 pub fn cmd_dsp_remove(name: &str) {

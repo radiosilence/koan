@@ -322,6 +322,30 @@ enum DspCommands {
     /// Add a target to choose from: a CSV of frequency and level, or a
     /// squig.link export
     AddTarget { path: PathBuf },
+    /// Correct a headphone from its measurement (a CSV of frequency and
+    /// level, or a squig.link export) to a target
+    Measure {
+        path: PathBuf,
+        /// The headphone, as the profile's name
+        #[arg(long)]
+        name: String,
+        #[arg(long, value_parser = ["in", "over"])]
+        ear: String,
+        /// A target id, as `koan dsp target` lists them
+        #[arg(long)]
+        target: String,
+    },
+    /// Say what a profile is for: a neutral headphone correction, a tuning
+    /// on top of one, or a correction with a tuning baked in. A stack holds
+    /// one correction, and a baked one counts
+    Role {
+        name: String,
+        #[arg(value_parser = ["correction", "tuning", "baked"])]
+        role: String,
+    },
+    /// The target a ready-made EQ was made for, or `unknown`, which leaves
+    /// target switching off
+    MadeFor { name: String, target: String },
     /// Make a profile a stack of others, played in the order given: a
     /// headphone's correction, then taste on top. Creates it if need be
     Stack { name: String, layers: Vec<String> },
@@ -614,6 +638,16 @@ fn main() {
                 reset,
             } => commands::cmd_dsp_target(&name, target.as_deref(), reset),
             DspCommands::AddTarget { path } => commands::cmd_dsp_add_target(&path),
+            DspCommands::Measure {
+                path,
+                name,
+                ear,
+                target,
+            } => commands::cmd_dsp_measure(&path, &name, ear == "in", &target),
+            DspCommands::Role { name, role } => commands::cmd_dsp_role(&name, &role),
+            DspCommands::MadeFor { name, target } => {
+                commands::cmd_dsp_made_for(&name, Some(target.as_str()).filter(|t| *t != "unknown"))
+            }
             DspCommands::Stack { name, layers } => commands::cmd_dsp_stack(&name, &layers),
             DspCommands::Layer {
                 stack,
