@@ -200,12 +200,23 @@ final class TVSignInTests: XCTestCase {
         guard element.waitForExistence(timeout: 10) else { return false }
         for direction in [XCUIRemote.Button.down, .up, .right, .left] {
             for _ in 0..<12 {
-                if element.hasFocus { return true }
+                if focused(element) { return true }
                 remote.press(direction)
                 Thread.sleep(forTimeInterval: 0.4)
             }
         }
-        return element.hasFocus
+        return focused(element)
+    }
+
+    /// A button with a style of its own reports focus on what it draws rather
+    /// than on itself; the focused element with its label is it.
+    private func focused(_ element: XCUIElement) -> Bool {
+        if element.hasFocus { return true }
+        let label = element.label
+        guard !label.isEmpty else { return false }
+        let current = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "hasFocus == true")).firstMatch
+        return current.exists && current.label == label
     }
 
     private func snap(_ name: String) {
