@@ -96,9 +96,16 @@ final class AppearanceModel {
         didSet { if showIcons != oldValue { engine.setThemeIcons(on: showIcons) } }
     }
 
+    /// The theme chosen in Settings, which may not be the one drawn: it takes
+    /// effect on the next launch (`KoanTheme.isOn` is the one drawn).
+    var koan: Bool {
+        didSet { if koan != oldValue { engine.setTheme(koan: koan) } }
+    }
+
     init(engine: KoanEngine, appearance: Appearance) {
         self.engine = engine
         self.showIcons = appearance.icons
+        self.koan = appearance.koan
     }
 }
 
@@ -218,6 +225,13 @@ extension NSColor {
     static let koanStrong = koan(dark: 0xFFFFFF, light: 0x111111)
     static let koanMuted = koan(dark: 0x919191, light: 0x666666)
 
+    /// The label colours AppKit-drawn rows use, as whichever look is on: the
+    /// theme's tokens, or the system's label colours they stand in for.
+    @MainActor static var koanLabel: NSColor { KoanTheme.isOn ? koanInk : .labelColor }
+    @MainActor static var koanSecondaryLabel: NSColor { KoanTheme.isOn ? koanMuted : .secondaryLabelColor }
+    @MainActor static var koanTertiaryLabel: NSColor { KoanTheme.isOn ? koanMuted : .tertiaryLabelColor }
+    @MainActor static var koanQuaternaryLabel: NSColor { KoanTheme.isOn ? koanRule : .quaternaryLabelColor }
+
     fileprivate static func rgb(_ hex: UInt32) -> NSColor {
         NSColor(
             srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
@@ -251,7 +265,8 @@ enum KoanTone {
 
 /// The accent for a record, tone-mapped as the spec sets out: the sleeve's hue
 /// kept, its lightness and chroma moved into a band per appearance in OKLCH,
-/// clear of `bad`'s hue. Mint when there is no record or no usable hue.
+/// clear of `bad`'s hue. Mint when there is no record or no usable hue. The
+/// room's tint in both looks, not only the kōan theme's.
 ///
 /// Built from the colour `Color.dominant` already works out for the room, so
 /// there is one analysis of a sleeve, not two.
@@ -466,6 +481,31 @@ extension Font {
     static func koan(_ role: KoanType) -> Font {
         .custom("Geist Mono", size: role.size, relativeTo: role.scalesWith).weight(role.weight)
     }
+
+    /// A role as whichever look is on: Geist Mono in the theme, the role's
+    /// text style otherwise. For views that take a font rather than a modifier.
+    @MainActor
+    static func role(_ role: KoanType) -> Font {
+        KoanTheme.isOn ? .koan(role) : .system(role.scalesWith)
+    }
+}
+
+extension KoanTheme {
+    /// A tone as a style, for glyphs and shapes: the token in the theme, the
+    /// nearest semantic style otherwise. Text takes `.koanText`, which also
+    /// keeps a record's accent off text that it cannot reach 4.5:1 as.
+    static func style(_ tone: KoanTone) -> AnyShapeStyle {
+        switch (isOn, tone) {
+        case (true, .ink): AnyShapeStyle(Color.koanInk)
+        case (true, .strong): AnyShapeStyle(Color.koanStrong)
+        case (true, .muted): AnyShapeStyle(Color.koanMuted)
+        case (true, .bad): AnyShapeStyle(Color.koanBad)
+        case (_, .accent): AnyShapeStyle(.tint)
+        case (false, .ink), (false, .strong): AnyShapeStyle(.primary)
+        case (false, .muted): AnyShapeStyle(.secondary)
+        case (false, .bad): AnyShapeStyle(.red)
+        }
+    }
 }
 
 #if canImport(AppKit)
@@ -487,6 +527,13 @@ extension NSFont {
             .traits: [NSFontDescriptor.TraitKey.weight: wanted],
         ])
         return NSFont(descriptor: descriptor, size: role.size) ?? base
+    }
+
+    /// A role as whichever look is on: Geist Mono in the theme, the given
+    /// system font otherwise.
+    @MainActor
+    static func role(_ role: KoanType, system: @autoclosure () -> NSFont) -> NSFont {
+        KoanTheme.isOn ? koan(role) : system()
     }
 }
 #endif
@@ -530,10 +577,30 @@ extension View {
         modifier(KoanRowRole(selected: selected))
     }
 
+    /// A navigation row, as the sidebar's: `body` in `muted`, or in the accent
+    /// with a 2-point accent rule on its leading edge when it is where you are.
+    /// The platform's sidebar row otherwise.
+    func koanNavRow(selected: Bool) -> some View {
+        modifier(KoanNavRowRole(selected: selected))
+    }
+
     /// Focus on tvOS, as the theme shows it: a ring in the accent. Elsewhere, and
     /// in the platform's look, the system's own.
     func koanFocus() -> some View {
         modifier(KoanFocusRole())
+    }
+
+    /// A small fact set apart, such as a format: `fine` in `ink` inside a
+    /// square `rule` outline. A tinted capsule in the platform's look.
+    func koanBadge() -> some View {
+        modifier(KoanBadgeRole())
+    }
+
+    /// A bar along the window's foot, such as the transport: flat `bg` with a
+    /// rule along its top, full width. In the platform's look, a floating slab
+    /// of glass with the given corner radius, inset from the window's edges.
+    func koanBar(radius: CGFloat, inset: CGFloat) -> some View {
+        modifier(KoanBarRole(radius: radius, inset: inset))
     }
 
     /// A sheet's chrome: `bg` beneath, no material, the theme's type for
@@ -586,7 +653,7 @@ private struct KoanTextRole: ViewModifier {
         switch tone {
         case .ink, .strong: AnyShapeStyle(.primary)
         case .muted: AnyShapeStyle(.secondary)
-        case .accent: AnyShapeStyle(.tint)
+        case .accent: accent.shade(scheme).readsAsText ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary)
         case .bad: AnyShapeStyle(.red)
         }
     }
@@ -645,7 +712,8 @@ private struct KoanButtonRole: ViewModifier {
             switch kind {
             case .primary: content.buttonStyle(.borderedProminent)
             case .secondary: content.buttonStyle(.bordered)
-            case .text, .icon, .iconOutlined: content.buttonStyle(.borderless)
+            case .text: content.buttonStyle(.borderless)
+            case .icon, .iconOutlined: content.buttonStyle(.plain)
             }
         }
     }
@@ -709,13 +777,20 @@ struct KoanButtonStyle: ButtonStyle {
         switch kind {
         case .primary, .secondary: EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16)
         case .text: EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0)
-        case .icon, .iconOutlined: EdgeInsets()
+        case .icon: EdgeInsets()
+        case .iconOutlined: EdgeInsets(top: 7, leading: 7, bottom: 7, trailing: 7)
         }
     }
 
     private var hit: CGFloat? {
         switch kind {
+        #if os(macOS)
+        // A pointer, not a finger: the transport's glyphs sit two to a zone
+        // the height of the seek bar and the controls together.
+        case .icon, .iconOutlined: nil
+        #else
         case .icon, .iconOutlined: 44
+        #endif
         default: nil
         }
     }
@@ -847,6 +922,25 @@ private struct KoanRowRole: ViewModifier {
     }
 }
 
+private struct KoanNavRowRole: ViewModifier {
+    let selected: Bool
+
+    func body(content: Content) -> some View {
+        if KoanTheme.isOn {
+            content
+                .font(.koan(.body))
+                .foregroundStyle(KoanTheme.style(selected ? .accent : .muted))
+                .listRowBackground(
+                    Rectangle().fill(.clear).overlay(alignment: .leading) {
+                        if selected { Rectangle().fill(.tint).frame(width: 2) }
+                    }
+                )
+        } else {
+            content
+        }
+    }
+}
+
 private struct KoanFocusRole: ViewModifier {
     #if os(tvOS)
     @Environment(\.isFocused) private var focused
@@ -873,6 +967,44 @@ extension View {
             if on {
                 Rectangle().strokeBorder(.tint, lineWidth: 2).padding(-4)
             }
+        }
+    }
+}
+
+private struct KoanBadgeRole: ViewModifier {
+    func body(content: Content) -> some View {
+        if KoanTheme.isOn {
+            content
+                .font(.koan(.fine))
+                .foregroundStyle(Color.koanInk)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .overlay { Rectangle().strokeBorder(Color.koanRule, lineWidth: KoanTheme.hairline) }
+        } else {
+            content
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(.quaternary, in: Capsule())
+        }
+    }
+}
+
+private struct KoanBarRole: ViewModifier {
+    let radius: CGFloat
+    let inset: CGFloat
+
+    func body(content: Content) -> some View {
+        if KoanTheme.isOn {
+            content
+                .background(Color.koanBg)
+                .koanRule(.top)
+        } else {
+            content
+                .glass(.regular, fallback: .regularMaterial, in: .rect(cornerRadius: radius))
+                .padding(.horizontal, inset)
+                .padding(.bottom, 14)
         }
     }
 }

@@ -249,7 +249,13 @@ struct RecordRoom: ViewModifier {
     /// cannot take this one — easing it over two seconds is a hundred and
     /// twenty renders of the whole window, each one a commit, and each commit a
     /// synchronous round trip to the render server.
-    private static let tintEase = Animation.easeInOut(duration: 2)
+    ///
+    /// The kōan theme eases for a third of a second: its accent is the colour
+    /// of every selection and indicator, and a two-second drift there reads as
+    /// something wrong rather than a room changing.
+    @MainActor private static var tintEase: Animation {
+        .easeInOut(duration: KoanTheme.isOn ? 0.35 : 2)
+    }
 
     /// Read straight through the cache on every pass, the way `AlbumArtwork`
     /// reads its bitmap: a colour the app already holds lands in the same commit
@@ -265,14 +271,20 @@ struct RecordRoom: ViewModifier {
         return .some(fetchedTint.colour)
     }
 
-    /// The colour to put on: the record's once it is known, and until then
-    /// the one already on.
-    private var tint: Color {
+    /// The record's colour once it is known, and until then the one already
+    /// on; `nil` is a record with none, or nothing playing.
+    private var record: Color? {
         switch recordTint {
-        case .some(let colour): colour ?? .koanAccent
-        case .none: worn ?? .koanAccent
+        case .some(let colour): colour
+        case .none: worn
         }
     }
+
+    /// The accent for that record, tone-mapped to its bands — in either look.
+    private var accent: KoanAccent { KoanAccent(record: record) }
+
+    /// The colour to put on.
+    private var tint: Color { accent.color }
 
     private var colourSource: AlbumArtwork.Source? {
         switch nav.current {
@@ -299,7 +311,11 @@ struct RecordRoom: ViewModifier {
         // background rather than sitting on it — a half-transparent wash on its
         // own leaves you looking through the app at the desktop.
         let washLayer = ZStack {
-            Rectangle().fill(.background)
+            if KoanTheme.isOn {
+                Rectangle().fill(Color.koanBg)
+            } else {
+                Rectangle().fill(.background)
+            }
             WindowWash(source: wash, player: player)
                 .environment(artCache)
         }
@@ -353,7 +369,8 @@ struct RecordRoom: ViewModifier {
             .tint(tint)
             #endif
             .environment(\.roomTint, tint)
-            .onChange(of: tint, initial: true) { _, now in worn = now }
+            .environment(\.koanAccent, accent)
+            .onChange(of: record, initial: true) { _, now in worn = now }
     }
 }
 

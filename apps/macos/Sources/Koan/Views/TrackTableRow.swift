@@ -82,19 +82,19 @@ final class TrackTableRow: NSTableCellView, TableRow {
     static let artHeight = RowMetrics.art + 2 * RowMetrics.padding
     static let headingHeight: CGFloat = 28
 
-    private static let titleFont = NSFont.preferredFont(forTextStyle: .body)
-    private static let captionFont = NSFont.preferredFont(forTextStyle: .caption1)
-    private static let numberFont = NSFont.monospacedDigitSystemFont(ofSize: captionFont.pointSize, weight: .regular)
-    private static let qualityFont = NSFont.monospacedSystemFont(
+    private static let titleFont = NSFont.role(.body, system: NSFont.preferredFont(forTextStyle: .body))
+    private static let captionFont = NSFont.role(.meta, system: NSFont.preferredFont(forTextStyle: .caption1))
+    private static let numberFont = NSFont.role(.meta, system: NSFont.monospacedDigitSystemFont(ofSize: captionFont.pointSize, weight: .regular))
+    private static let qualityFont = NSFont.role(.fine, system: NSFont.monospacedSystemFont(
         ofSize: NSFont.preferredFont(forTextStyle: .caption2).pointSize, weight: .regular
-    )
+    ))
     private static let spacing: CGFloat = 12
 
     private enum Part { case lead, artist, album, heart, elsewhere }
 
-    private static let headingFont = NSFont.systemFont(
+    private static let headingFont = NSFont.role(.fine, system: NSFont.systemFont(
         ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .semibold
-    )
+    ))
 
     private let number = NSTextField(labelWithString: "")
     private let mark = CALayer()
@@ -217,7 +217,7 @@ final class TrackTableRow: NSTableCellView, TableRow {
     /// favourites, downloads and the room's colour.
     private func restyle() {
         guard let item, let context, let track = item.track else {
-            heading.textColor = .secondaryLabelColor
+            heading.textColor = .koanSecondaryLabel
             return
         }
         let selected = backgroundStyle == .emphasized
@@ -230,28 +230,28 @@ final class TrackTableRow: NSTableCellView, TableRow {
         let ticked = context.picked.contains(Playable.track(track).key)
         let showsMark = hovered != nil || context.picking
         number.isHidden = showsMark || current
-        number.textColor = selected ? onAccent : .tertiaryLabelColor
+        number.textColor = selected ? onAccent : .koanTertiaryLabel
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         mark.isHidden = !showsMark
         if context.picking {
             markImage = ticked
                 ? Symbol.image("checkmark.circle.fill", size: 13, colours: [.white, context.tint], appearance: appearance)
-                : Symbol.image("circle", size: 13, colours: [.tertiaryLabelColor], appearance: appearance)
+                : Symbol.image("circle", size: 13, colours: [.koanTertiaryLabel], appearance: appearance)
         } else if showsMark {
             markImage = Symbol.image("play.circle.fill", size: 15, colours: [selected ? .white : context.tint], appearance: appearance)
         }
         CATransaction.commit()
         showBars(current && !showsMark, live: context.barsLive && context.isPlaying, context: context, selected: selected)
 
-        title.textColor = current && !selected ? context.tint : (selected ? onAccent : .labelColor)
+        title.textColor = current && !selected ? context.tint : (selected ? onAccent : .koanLabel)
         let artistLinked = hovered == .artist && track.artistId != nil
         let albumLinked = hovered == .album && track.albumId != nil
         style(artist, linked: artistLinked, selected: selected)
         style(album, linked: albumLinked, selected: selected)
-        dot.textColor = selected ? onAccent : .tertiaryLabelColor
-        quality.textColor = selected ? onAccent : .tertiaryLabelColor
-        duration.textColor = selected ? onAccent : .secondaryLabelColor
+        dot.textColor = selected ? onAccent : .koanTertiaryLabel
+        quality.textColor = selected ? onAccent : .koanTertiaryLabel
+        duration.textColor = selected ? onAccent : .koanSecondaryLabel
 
         availability.isHidden = !context.columns.contains(.availability)
         if context.columns.contains(.availability) {
@@ -269,7 +269,7 @@ final class TrackTableRow: NSTableCellView, TableRow {
         CATransaction.setDisableActions(true)
         note.isHidden = item.note == nil
         if item.note != nil {
-            noteImage = Symbol.image("antenna.radiowaves.left.and.right", size: 10, colours: [selected ? .white : .tertiaryLabelColor], appearance: appearance)
+            noteImage = Symbol.image("antenna.radiowaves.left.and.right", size: 10, colours: [selected ? .white : .koanTertiaryLabel], appearance: appearance)
         }
         CATransaction.commit()
         toolTip = item.note ?? toolTip
@@ -280,7 +280,7 @@ final class TrackTableRow: NSTableCellView, TableRow {
         heart.isHidden = !context.columns.contains(.heart) || !(favourite || hovered != nil)
         heartImage = Symbol.image(
             favourite ? "heart.fill" : "heart", size: 12,
-            colours: [favourite ? .systemRed : (selected ? .white : .tertiaryLabelColor)], appearance: appearance
+            colours: [favourite ? .systemRed : (selected ? .white : .koanTertiaryLabel)], appearance: appearance
         )
         CATransaction.commit()
         needsLayout = true
@@ -291,7 +291,7 @@ final class TrackTableRow: NSTableCellView, TableRow {
             .font: Self.captionFont,
             .foregroundColor: selected
                 ? NSColor.alternateSelectedControlTextColor
-                : (linked ? NSColor.labelColor : NSColor.secondaryLabelColor),
+                : (linked ? NSColor.koanLabel : NSColor.koanSecondaryLabel),
         ]
         if linked { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
         label.attributedStringValue = NSAttributedString(string: label.stringValue, attributes: attributes)
@@ -352,9 +352,9 @@ final class TrackTableRow: NSTableCellView, TableRow {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            sleeve.backgroundColor = sleeve.contents == nil ? NSColor.quaternaryLabelColor.cgColor : nil
-            placeholder.strokeColor = NSColor.tertiaryLabelColor.cgColor
-            noRecord.contents = Symbol.image("music.note", size: 10, colours: [.tertiaryLabelColor], appearance: effectiveAppearance)
+            sleeve.backgroundColor = sleeve.contents == nil ? NSColor.koanQuaternaryLabel.cgColor : nil
+            placeholder.strokeColor = NSColor.koanTertiaryLabel.cgColor
+            noRecord.contents = Symbol.image("music.note", size: 10, colours: [.koanTertiaryLabel], appearance: effectiveAppearance)
             CATransaction.commit()
         }
     }

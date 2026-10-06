@@ -52,6 +52,7 @@ struct ArtworkBleed: View {
     }
 
     @Environment(\.powerSaving) private var powerSaving
+    @Environment(\.colorScheme) private var scheme
     /// Whether the wash is moving: something to breathe to, a setting that
     /// allows it, and a system that has not asked for less motion.
     private var breathes: Bool { drifts && graphics.drifts && !reduceMotion && !powerSaving }
@@ -69,19 +70,35 @@ struct ArtworkBleed: View {
     /// this view is animated: the drift, the blur and the dissolve between
     /// records belong to the compositor, and this view's body runs when a
     /// record changes and at no other time.
+    @ViewBuilder
     private var bleed: some View {
-        DriftingWash(image: answered ?? nil, pending: answered == nil, drifts: breathes)
-            .opacity(0.5)
-            .mask(
-                LinearGradient(
-                    colors: [.black, .black, .clear],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+        if KoanTheme.isOn {
+            // The kōan theme's wash: toned so no text over it loses contrast,
+            // at the theme's strength, the whole height of the bare ground.
+            // Flat surfaces cover the rest; nothing glass extends it under them.
+            DriftingWash(
+                image: answered ?? nil,
+                pending: answered == nil,
+                drifts: breathes,
+                tone: scheme == .dark ? .dark : .light
             )
-            .backgroundExtensionEffect()
+            .opacity(KoanTheme.wash)
             .allowsHitTesting(false)
             .task(id: source) { await load() }
+        } else {
+            DriftingWash(image: answered ?? nil, pending: answered == nil, drifts: breathes)
+                .opacity(0.5)
+                .mask(
+                    LinearGradient(
+                        colors: [.black, .black, .clear],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .backgroundExtensionEffect()
+                .allowsHitTesting(false)
+                .task(id: source) { await load() }
+        }
     }
 
     /// Only for a cover the cache could not already answer for. The usual path
