@@ -141,7 +141,7 @@ impl AudioEngine {
     ) -> Result<Self> {
         let running = Arc::new(AtomicBool::new(false));
         let in_callback = Arc::new(AtomicBool::new(false));
-        let fade = FadeControl::new();
+        let fade = FadeControl::for_output();
         let lead_in = Arc::new(AtomicU64::new(0));
 
         let desc = AudioComponentDescription {

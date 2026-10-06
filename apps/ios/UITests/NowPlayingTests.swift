@@ -12,6 +12,9 @@ final class NowPlayingTests: XCTestCase {
     override func setUp() async throws {
         continueAfterFailure = true
         app = XCUIApplication()
+        // Silent, and blind to UPnP renderers: tests share a machine with its owner.
+        app.launchEnvironment["KOAN_PLAYBACK__MUTED"] = "true"
+        app.launchEnvironment["KOAN_PLAYBACK__RENDERERS"] = "false"
         app.launch()
     }
 

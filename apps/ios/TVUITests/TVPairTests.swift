@@ -23,6 +23,9 @@ final class TVPairTests: XCTestCase {
 
         let discover = env["KOAN_PAIR_DISCOVER"] != nil
         let app = XCUIApplication()
+        // Silent, and blind to UPnP renderers: tests share a machine with its owner.
+        app.launchEnvironment["KOAN_PLAYBACK__MUTED"] = "true"
+        app.launchEnvironment["KOAN_PLAYBACK__RENDERERS"] = "false"
         if !discover {
             app.launchEnvironment["KOAN_REMOTE__URL"] = server
             // Nothing here needs the local network; see `TVWalkTests`.

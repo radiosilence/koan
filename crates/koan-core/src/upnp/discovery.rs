@@ -170,8 +170,12 @@ pub(crate) fn forget(udn: &str) {
 
 /// Search the network for renderers, starting discovery if it has not
 /// started, and ask the ones already known whether they are in use. Answers
-/// arrive over the next couple of seconds.
+/// arrive over the next couple of seconds. Nothing, with `playback.renderers`
+/// off.
 pub fn search() {
+    if !crate::config::Config::cached().playback.renderers {
+        return;
+    }
     let Some(socket) = SEARCH.get_or_init(start) else {
         return;
     };

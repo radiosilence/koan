@@ -14,6 +14,9 @@ final class SignInTests: XCTestCase {
         else { throw XCTSkip("no server given") }
 
         let app = XCUIApplication()
+        // Silent, and blind to UPnP renderers: tests share a machine with its owner.
+        app.launchEnvironment["KOAN_PLAYBACK__MUTED"] = "true"
+        app.launchEnvironment["KOAN_PLAYBACK__RENDERERS"] = "false"
         app.launch()
 
         tab(app, "Settings")

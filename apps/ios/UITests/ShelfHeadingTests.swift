@@ -19,6 +19,9 @@ final class ShelfHeadingTests: XCTestCase {
             return true
         }
         app = XCUIApplication()
+        // Silent, and blind to UPnP renderers: tests share a machine with its owner.
+        app.launchEnvironment["KOAN_PLAYBACK__MUTED"] = "true"
+        app.launchEnvironment["KOAN_PLAYBACK__RENDERERS"] = "false"
         app.launch()
     }
 

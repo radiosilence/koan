@@ -16,6 +16,9 @@ final class TVInviteTests: XCTestCase {
         else { throw XCTSkip("no invite given") }
 
         let app = XCUIApplication()
+        // Silent, and blind to UPnP renderers: tests share a machine with its owner.
+        app.launchEnvironment["KOAN_PLAYBACK__MUTED"] = "true"
+        app.launchEnvironment["KOAN_PLAYBACK__RENDERERS"] = "false"
         // Nothing here needs the local network; see `TVWalkTests`.
         app.launchEnvironment["KOAN_DEVICES__NEARBY"] = "false"
         app.launch()

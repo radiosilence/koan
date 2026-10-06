@@ -29,6 +29,8 @@ pub struct FadeControl {
     sleep_gain: AtomicU32,
     /// Take `sleep_gain` at once rather than gliding to it.
     sleep_snap: AtomicBool,
+    /// `playback.muted`: every sample zeroed after the ramps.
+    muted: AtomicBool,
 }
 
 impl FadeControl {
@@ -38,6 +40,16 @@ impl FadeControl {
             sleep_gain: AtomicU32::new(1.0f32.to_bits()),
             ..Default::default()
         })
+    }
+
+    /// A fade for an output unit, muted when `playback.muted` says so.
+    pub fn for_output() -> Arc<Self> {
+        let control = Self::new();
+        if crate::config::Config::cached().playback.muted {
+            log::info!("audio: muted (playback.muted)");
+            control.muted.store(true, Ordering::Release);
+        }
+        control
     }
 
     pub fn fade_out(&self) {
@@ -149,6 +161,13 @@ impl Fader {
 
     /// Apply the ramps to interleaved samples just read from the ring.
     pub fn apply(&mut self, samples: &mut [f32], channels: usize) {
+        self.ramp(samples, channels);
+        if self.control.muted.load(Ordering::Relaxed) {
+            samples.fill(0.0);
+        }
+    }
+
+    fn ramp(&mut self, samples: &mut [f32], channels: usize) {
         self.follow_sleep();
         let rising = self.control.audible.load(Ordering::Acquire);
         let pausing = !((rising && self.pos == self.len) || (!rising && self.pos == 0));
@@ -225,6 +244,16 @@ mod tests {
         let out = render(&mut fader, 64);
         assert_eq!(out.len(), 128);
         assert!(out.iter().all(|s| *s == 1.0));
+    }
+
+    #[test]
+    fn muted_reads_on_and_plays_silence() {
+        let control = FadeControl::new();
+        control.muted.store(true, Ordering::Release);
+        let mut fader = Fader::new(control, RATE);
+        let out = render(&mut fader, 64);
+        assert_eq!(out.len(), 128, "the track moves on as if heard");
+        assert!(out.iter().all(|s| *s == 0.0));
     }
 
     #[test]

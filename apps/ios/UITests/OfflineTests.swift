@@ -20,6 +20,9 @@ final class OfflineTests: XCTestCase {
         guard let step = ProcessInfo.processInfo.environment["KOAN_OFFLINE_STEP"] else {
             throw XCTSkip("no step given")
         }
+        // Silent, and blind to UPnP renderers: tests share a machine with its owner.
+        app.launchEnvironment["KOAN_PLAYBACK__MUTED"] = "true"
+        app.launchEnvironment["KOAN_PLAYBACK__RENDERERS"] = "false"
         app.launch()
         switch step {
         case "signin":
