@@ -125,7 +125,9 @@ extension View {
         // A tvOS list paints no ground of its own.
         self
         #else
+        // And in the theme, the theme's list: rows on the ground, ruled.
         scrollContentBackground(.hidden)
+            .koanList()
         #endif
     }
 }
