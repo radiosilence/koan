@@ -2891,11 +2891,11 @@ impl KoanEngine {
         offload::offload(move || {
             let mut detail: DspProfileDetail =
                 koan_core::audio::dsp::profiles::detail(&name)?.into();
-            if detail.everywhere {
-                detail.sync_problem = self
-                    .db()
-                    .ok()
-                    .and_then(|db| koan_core::remote::dsp_sync::refusal(&db, &name));
+            if let Ok(db) = self.db() {
+                if detail.everywhere {
+                    detail.sync_problem = koan_core::remote::dsp_sync::refusal(&db, &name);
+                }
+                detail.sync_note = koan_core::remote::dsp_sync::note(&db, &name);
             }
             Some(detail)
         })
@@ -4744,6 +4744,8 @@ impl KoanEngine {
             .provide(engine.viz.clone(), move || playhead.position_ms());
         let held =
             std::sync::Mutex::new(None::<(u64, Vec<koan_core::remote::link::LinkQueueEntry>)>);
+        // Profiles of one name from two devices are told apart by it.
+        koan_core::remote::dsp_sync::set_device_name(device_name.clone());
         koan_core::remote::devices::start(koan_core::remote::link::Local {
             identity: koan_core::remote::link::LinkIdentity::this_device(device_name),
             // What a command may cost, and where it may go, depends on who

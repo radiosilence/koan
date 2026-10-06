@@ -526,7 +526,8 @@ fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
             uid        TEXT PRIMARY KEY,
             hash       TEXT NOT NULL,
             edited_at  INTEGER NOT NULL,
-            refused    TEXT
+            refused    TEXT,
+            note       TEXT
         );
 
         CREATE TABLE IF NOT EXISTS scrobble_services (

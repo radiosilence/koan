@@ -1273,6 +1273,8 @@ pub struct DspProfileDetail {
     pub scope_set: bool,
     /// Why the server would not keep it, while it would not.
     pub sync_problem: Option<String>,
+    /// What syncing did to it: a rename, and why.
+    pub sync_note: Option<String>,
 }
 
 /// One of a profile's filters, in the order they run.
@@ -1418,6 +1420,7 @@ impl From<koan_core::audio::dsp::profiles::Detail> for DspProfileDetail {
             everywhere: d.everywhere,
             scope_set: d.scope_set,
             sync_problem: None,
+            sync_note: None,
         }
     }
 }

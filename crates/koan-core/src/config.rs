@@ -632,6 +632,10 @@ pub struct DspProfile {
     /// change; this does not.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uid: Option<String>,
+    /// The device that first shared it, by name: what tells two different
+    /// profiles of one name apart when they meet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 /// The bounds a profile must keep to be played: what any real correction
@@ -901,6 +905,13 @@ impl DspProfile {
             dropped.push(format!("layers past {} dropped", b::LAYERS));
         }
         self.layers.retain(|l| l.profile.chars().count() <= b::NAME);
+        if self
+            .origin
+            .as_ref()
+            .is_some_and(|o| o.chars().count() > b::NAME)
+        {
+            self.origin = None;
+        }
         if let Some(t) = &mut self.target {
             let long = |s: &str| s.chars().count() > b::NAME;
             if long(&t.made_for) {
@@ -2529,6 +2540,7 @@ fps = 30
             layers: vec![],
             scope: None,
             uid: None,
+            origin: None,
         };
         Config::persist(|cfg| cfg.dsp.profiles.push(profile.clone())).unwrap();
 

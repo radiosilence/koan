@@ -208,6 +208,7 @@ pub fn doc_of(profile: &DspProfile) -> Result<(SyncDoc, HashMap<String, PathBuf>
     travelling.scope = None;
     travelling.uid = None;
     travelling.source.clear();
+    travelling.origin = profile.origin.clone().or_else(|| Some(this_device()));
     travelling.impulses = profile
         .impulses
         .iter()
@@ -233,6 +234,146 @@ pub fn doc_of(profile: &DspProfile) -> Result<(SyncDoc, HashMap<String, PathBuf>
     };
     doc.check()?;
     Ok((doc, paths))
+}
+
+/// This device's name, as the apps give it when the engine starts, for
+/// telling apart two profiles of one name that came from different devices.
+static DEVICE_NAME: parking_lot::RwLock<Option<String>> = parking_lot::RwLock::new(None);
+
+pub fn set_device_name(name: Option<String>) {
+    *DEVICE_NAME.write() = name.filter(|n| !n.trim().is_empty());
+}
+
+fn this_device() -> String {
+    DEVICE_NAME
+        .read()
+        .clone()
+        .unwrap_or_else(|| crate::remote::link::LinkIdentity::this_device(None).name)
+}
+
+/// Whether two profiles would sound the same, whatever else differs: their
+/// names, where they are kept, which device made them, when. Gains, the
+/// preamp and Q match within what no one hears (±0.05 dB, ±0.5%), and
+/// frequencies within 0.1%. Parametric bands on the same channels commute,
+/// so their order between delays, mixes and graphic curves does not count;
+/// those, and the order around them, do. Files match by content, impulse
+/// responses by the content of the file each names. Layers match when the
+/// profiles they name, found by `member`, sound the same in turn.
+pub fn sounds_same(a: &SyncDoc, b: &SyncDoc, member: &dyn Fn(&str) -> Option<SyncDoc>) -> bool {
+    same(a, b, member, 0)
+}
+
+fn same(a: &SyncDoc, b: &SyncDoc, member: &dyn Fn(&str) -> Option<SyncDoc>, depth: usize) -> bool {
+    use crate::config::DspFilter;
+    let (pa, pb) = (&a.profile, &b.profile);
+    let close =
+        |x: f64, y: f64, abs: f64, rel: f64| (x - y).abs() <= abs.max(rel * x.abs().max(y.abs()));
+    let db = |x: f64, y: f64| close(x, y, 0.05, 0.0);
+    let preamp = match (pa.preamp_db, pb.preamp_db) {
+        (Some(x), Some(y)) => db(x, y),
+        (None, None) => true,
+        _ => false,
+    };
+    if !preamp || pa.target != pb.target {
+        return false;
+    }
+    let mut files = |d: &SyncDoc| {
+        let mut h: Vec<&str> = d.files.iter().map(|f| f.sha256.as_str()).collect();
+        h.sort_unstable();
+        h
+    };
+    if files(a) != files(b) {
+        return false;
+    }
+    let named = |d: &SyncDoc| -> Vec<String> {
+        d.profile
+            .impulses
+            .iter()
+            .filter_map(|ir| {
+                d.files
+                    .iter()
+                    .find(|f| Some(f.name.as_str()) == ir.to_str())
+            })
+            .map(|f| f.sha256.clone())
+            .collect()
+    };
+    if named(a) != named(b) {
+        return false;
+    }
+    // Filters in runs between those whose order counts; each run's bands
+    // sorted, since bands on the same channels commute.
+    let runs = |filters: &[DspFilter]| -> Vec<Vec<DspFilter>> {
+        let mut out = vec![Vec::new()];
+        for f in filters {
+            if matches!(f, DspFilter::Band(_)) {
+                out.last_mut().expect("one at least").push(f.clone());
+            } else {
+                out.push(vec![f.clone()]);
+                out.push(Vec::new());
+            }
+        }
+        for run in &mut out {
+            run.sort_by(|x, y| match (x, y) {
+                (DspFilter::Band(x), DspFilter::Band(y)) => (&x.channels, x.freq)
+                    .partial_cmp(&(&y.channels, y.freq))
+                    .unwrap_or(std::cmp::Ordering::Equal),
+                _ => std::cmp::Ordering::Equal,
+            });
+        }
+        out.retain(|r| !r.is_empty());
+        out
+    };
+    let alike = |x: &DspFilter, y: &DspFilter| match (x, y) {
+        (DspFilter::Band(x), DspFilter::Band(y)) => {
+            x.kind == y.kind
+                && x.channels == y.channels
+                && close(x.freq, y.freq, 0.0, 0.001)
+                && db(x.gain_db, y.gain_db)
+                && close(x.q, y.q, 0.0, 0.005)
+        }
+        (DspFilter::Delay(x), DspFilter::Delay(y)) => {
+            x.channels == y.channels
+                && close(x.ms, y.ms, 0.001, 0.001)
+                && close(x.samples, y.samples, 0.5, 0.0)
+                && x.subsample == y.subsample
+        }
+        (DspFilter::Mix(x), DspFilter::Mix(y)) => {
+            x.outputs.len() == y.outputs.len()
+                && x.outputs.iter().zip(&y.outputs).all(|(p, q)| {
+                    p.len() == q.len()
+                        && p.iter()
+                            .zip(q)
+                            .all(|((c, g), (d, h))| c == d && close(*g, *h, 0.001, 0.005))
+                })
+        }
+        (DspFilter::Graphic(x), DspFilter::Graphic(y)) => {
+            x.channels == y.channels
+                && x.points.len() == y.points.len()
+                && x.points
+                    .iter()
+                    .zip(&y.points)
+                    .all(|((f, g), (e, h))| close(*f, *e, 0.0, 0.001) && db(*g, *h))
+        }
+        _ => false,
+    };
+    let (ra, rb) = (runs(&pa.filters), runs(&pb.filters));
+    let filters = ra.len() == rb.len()
+        && ra
+            .iter()
+            .zip(&rb)
+            .all(|(x, y)| x.len() == y.len() && x.iter().zip(y).all(|(f, g)| alike(f, g)));
+    if !filters || pa.layers.len() != pb.layers.len() {
+        return false;
+    }
+    pa.layers.iter().zip(&pb.layers).all(|(x, y)| {
+        x.on == y.on
+            && (x.profile == y.profile
+                || depth < 8
+                    && match (member(&x.profile), member(&y.profile)) {
+                        (Some(m), Some(n)) => same(&m, &n, member, depth + 1),
+                        _ => false,
+                    })
+    })
 }
 
 /// The server, as syncing uses it: what tests stand in for.
@@ -349,6 +490,19 @@ pub fn changed() {
     if let Err(e) = spawned {
         log::warn!("dsp sync: could not start: {e}");
     }
+}
+
+/// What syncing did to `name` that its page says, if anything: a rename.
+pub fn note(db: &Database, name: &str) -> Option<String> {
+    let cfg = Config::cached();
+    let uid = cfg
+        .dsp
+        .profiles
+        .iter()
+        .find(|p| p.name == name)?
+        .uid
+        .clone()?;
+    rows::local_edits(&db.conn).ok()?.remove(&uid)?.note
 }
 
 /// Why the server refused to keep `name`, if it did.
@@ -512,10 +666,24 @@ fn pull(
         // The same profile made here before this device first synced, such
         // as one headphone installed from AutoEQ on two devices: one profile.
         if let Some(doc) = row.doc.as_deref().and_then(|j| SyncDoc::parse(j).ok()) {
-            let hash = doc.hash();
+            let folder = crate::audio::dsp::profiles::dir(&doc.profile.name);
+            let member = |name: &str| {
+                let cfg = Config::cached();
+                cfg.dsp
+                    .profiles
+                    .iter()
+                    .find(|p| p.name == name)
+                    .and_then(|p| doc_of(p).ok())
+                    .map(|(d, _)| d)
+            };
             let twin = locals
                 .iter()
-                .find(|(uid, l)| **uid != row.uid && l.hash == hash && !synced.contains_key(*uid))
+                .find(|(uid, l)| {
+                    **uid != row.uid
+                        && !synced.contains_key(*uid)
+                        && crate::audio::dsp::profiles::dir(&l.doc.profile.name) == folder
+                        && sounds_same(&l.doc, &doc, &member)
+                })
                 .map(|(uid, _)| uid.clone());
             if let Some(twin) = twin {
                 Config::persist(|c| {
@@ -576,7 +744,15 @@ fn pull(
             }
             let reused: HashMap<String, PathBuf> =
                 local.map(|l| l.paths.clone()).unwrap_or_default();
-            adopt(&row.uid, &doc, fetched, &reused)?;
+            for (renamed, old, new) in adopt(&row.uid, &doc, fetched, &reused)? {
+                let why = format!(
+                    "Renamed from “{old}”: it met a different profile of that name from another device, so each is named for where it came from"
+                );
+                log::info!("dsp sync: {old} is now {new}");
+                if let Some(uid) = renamed {
+                    rows::set_note(&db.conn, &uid, &why)?;
+                }
+            }
             let hash = doc.hash();
             rows::set_synced(&db.conn, url, &row.uid, row.rev, &hash)?;
             rows::set_local_edit(&db.conn, &row.uid, &hash, row.edited_at)?;
@@ -693,12 +869,15 @@ impl From<std::io::Error> for Failed {
 /// it. Another profile here holding its name, not yet synced, gives the name
 /// up and is renamed. Its folder is made to hold exactly the doc's files:
 /// `fetched` by content, the rest from `reused`.
+/// Renamed profiles, each by uid where it has one: its old name and new.
+type Renamed = Vec<(Option<String>, String, String)>;
+
 fn adopt(
     uid: &str,
     doc: &SyncDoc,
     fetched: Vec<(String, Vec<u8>)>,
     reused: &HashMap<String, PathBuf>,
-) -> Result<(), Failed> {
+) -> Result<Renamed, Failed> {
     use crate::audio::dsp::profiles;
     let cfg = Config::cached();
     let name = doc.profile.name.clone();
@@ -710,6 +889,8 @@ fn adopt(
     // Another profile whose folder this one's name maps to gives the name
     // up, so its files are never written over: folders are keyed by the
     // name's slug, not the name.
+    let mut name = name;
+    let mut renamed = Vec::new();
     let folder = profiles::dir(&name);
     if let Some(holder) = cfg
         .dsp
@@ -717,8 +898,28 @@ fn adopt(
         .iter()
         .find(|p| profiles::dir(&p.name) == folder && p.uid.as_deref() != Some(uid))
     {
-        let free = free_name(&cfg.dsp.profiles, &holder.name);
-        profiles::rename(&holder.name, &free).map_err(io_failed)?;
+        // Two different profiles of one name: each is named for the device
+        // it came from, so neither looks like the other.
+        let here = this_device();
+        let mine = by_device(&cfg.dsp.profiles, &holder.name, &here);
+        profiles::rename(&holder.name, &mine).map_err(io_failed)?;
+        renamed.push((holder.uid.clone(), holder.name.clone(), mine));
+        let theirs = match doc.profile.origin.as_deref() {
+            Some(origin) if origin != here => format!("{name} ({origin})"),
+            _ => free_name(&Config::cached().dsp.profiles, &name),
+        };
+        let theirs = if Config::cached()
+            .dsp
+            .profiles
+            .iter()
+            .any(|p| p.name == theirs)
+        {
+            free_name(&Config::cached().dsp.profiles, &theirs)
+        } else {
+            theirs
+        };
+        renamed.push((Some(uid.to_owned()), name.clone(), theirs.clone()));
+        name = theirs;
     }
     if let Some(current) = current
         && current.name != name
@@ -754,6 +955,7 @@ fn adopt(
     let relative = Path::new("dsp").join(dir.file_name().expect("a profile's folder has a name"));
     Config::persist(|c| {
         let mut incoming = doc.profile.clone();
+        incoming.name = name.clone();
         incoming.impulses = incoming.impulses.iter().map(|f| relative.join(f)).collect();
         incoming.uid = Some(uid.to_owned());
         incoming.scope = Some(DspScope::Everywhere);
@@ -770,7 +972,18 @@ fn adopt(
             None => c.dsp.profiles.push(incoming),
         }
     })?;
-    Ok(())
+    Ok(renamed)
+}
+
+/// `name` with `device` after it, as a profile here may be called: numbered
+/// as well if even that is taken.
+fn by_device(profiles: &[DspProfile], name: &str, device: &str) -> String {
+    let wanted = format!("{name} ({device})");
+    if profiles.iter().any(|p| p.name == wanted) {
+        free_name(profiles, &wanted)
+    } else {
+        wanted
+    }
 }
 
 /// Delete the profile here with `uid`, and its folder. A stack that played
@@ -940,21 +1153,28 @@ mod tests {
     struct Device {
         dir: tempfile::TempDir,
         db: Database,
+        name: &'static str,
     }
 
     impl Device {
         fn new() -> Self {
+            Self::named("Device")
+        }
+
+        fn named(name: &'static str) -> Self {
             let conn = rusqlite::Connection::open_in_memory().unwrap();
             crate::db::schema::create_tables(&conn).unwrap();
             Self {
                 dir: tempfile::tempdir().unwrap(),
                 db: Database { conn },
+                name,
             }
         }
 
         /// Make this the device the config belongs to.
         fn on(&self) -> &Self {
             config::set_config_dir(self.dir.path());
+            set_device_name(Some(self.name.to_owned()));
             self
         }
 
@@ -1120,17 +1340,34 @@ mod tests {
 
     /// The same headphone installed on two devices before either synced is
     /// one profile; another holding a synced profile's name gives it up.
+    /// Two devices with a profile of one name: one profile where they would
+    /// sound the same, bands in another order and all; each renamed for its
+    /// device where they would not, with a note saying why.
     #[test]
     fn a_name_is_shared_once() {
         let _guard = lock();
         let server = Server::new();
-        let (a, b) = (Device::new(), Device::new());
+        let (a, b) = (Device::named("Mac Studio"), Device::named("iPhone"));
         for (d, gain) in [(&a, 1.0), (&b, 2.0)] {
             d.on();
+            let mut hp = headphone();
+            hp.filters = vec![
+                band(3.0),
+                DspFilter::Band(EqFilter {
+                    kind: EqFilterKind::LowShelf,
+                    freq: 100.0,
+                    gain_db: 2.0 + if d.name == "iPhone" { 0.04 } else { 0.0 },
+                    q: 0.7,
+                    channels: vec![],
+                }),
+            ];
+            if d.name == "iPhone" {
+                hp.filters.reverse();
+            }
             Config::persist(|c| {
-                c.dsp.profiles.push(headphone());
+                c.dsp.profiles.push(hp);
                 c.dsp.profiles.push(DspProfile {
-                    name: "Bass".into(),
+                    name: "Lush".into(),
                     filters: vec![band(gain)],
                     scope: Some(DspScope::Everywhere),
                     ..Default::default()
@@ -1146,14 +1383,97 @@ mod tests {
             n.sort();
             n
         };
-        let all = vec!["Bass", "Bass 2", "HD 650 (AutoEQ, oratory1990)"];
+        let all = vec![
+            "HD 650 (AutoEQ, oratory1990)",
+            "Lush (Mac Studio)",
+            "Lush (iPhone)",
+        ];
         assert_eq!(names(&a), all);
         assert_eq!(names(&b), all);
         assert_eq!(
             a.profile("HD 650 (AutoEQ, oratory1990)").unwrap().uid,
-            b.profile("HD 650 (AutoEQ, oratory1990)").unwrap().uid
+            b.profile("HD 650 (AutoEQ, oratory1990)").unwrap().uid,
+            "reordered bands, 0.04 dB apart: the same profile"
         );
-        assert_eq!(b.profile("Bass 2").unwrap().filters, vec![band(2.0)]);
+        assert_eq!(b.profile("Lush (iPhone)").unwrap().filters, vec![band(2.0)]);
+        assert_eq!(
+            a.profile("Lush (Mac Studio)").unwrap().filters,
+            vec![band(1.0)]
+        );
+        b.on();
+        let note = note(&b.db, "Lush (iPhone)").unwrap();
+        assert!(note.starts_with("Renamed from “Lush”"), "{note}");
+    }
+
+    fn doc(filters: Vec<DspFilter>, files: Vec<SyncFile>) -> SyncDoc {
+        SyncDoc {
+            profile: DspProfile {
+                name: "X".into(),
+                filters,
+                ..Default::default()
+            },
+            files,
+        }
+    }
+
+    /// What two profiles play, not how they are written down.
+    #[test]
+    fn profiles_that_would_sound_the_same_are_the_same() {
+        let none = |_: &str| None;
+        let peak = |hz: f64, db: f64| {
+            DspFilter::Band(EqFilter {
+                kind: EqFilterKind::Peaking,
+                freq: hz,
+                gain_db: db,
+                q: 1.0,
+                channels: vec![],
+            })
+        };
+        let a = doc(vec![peak(100.0, 3.0), peak(1000.0, -2.0)], vec![]);
+        let reordered = doc(vec![peak(1000.0, -2.0), peak(100.0, 3.0)], vec![]);
+        assert!(sounds_same(&a, &reordered, &none), "bands commute");
+        let close = doc(vec![peak(100.0, 3.04), peak(1000.0, -2.0)], vec![]);
+        assert!(sounds_same(&a, &close, &none), "0.04 dB is nothing heard");
+        let extra = doc(
+            vec![peak(100.0, 3.0), peak(1000.0, -2.0), peak(5000.0, 1.0)],
+            vec![],
+        );
+        assert!(!sounds_same(&a, &extra, &none), "one band more");
+        let mut renamed = a.clone();
+        renamed.profile.name = "Y".into();
+        renamed.profile.origin = Some("iPhone".into());
+        assert!(sounds_same(&a, &renamed, &none), "names and origins aside");
+
+        // Around a delay, order counts.
+        let delay = DspFilter::Delay(crate::config::Delay {
+            ms: 1.0,
+            ..Default::default()
+        });
+        let before = doc(
+            vec![peak(100.0, 3.0), delay.clone(), peak(1000.0, -2.0)],
+            vec![],
+        );
+        let after = doc(vec![peak(1000.0, -2.0), delay, peak(100.0, 3.0)], vec![]);
+        assert!(!sounds_same(&before, &after, &none));
+
+        // Impulse responses by content.
+        let ir = |sha: char| {
+            let mut d = doc(
+                vec![],
+                vec![SyncFile {
+                    name: "48000.wav".into(),
+                    sha256: sha.to_string().repeat(64),
+                    size: 10,
+                }],
+            );
+            d.profile.impulses = vec!["48000.wav".into()];
+            d
+        };
+        assert!(sounds_same(&ir('a'), &ir('a'), &none));
+        assert!(
+            !sounds_same(&ir('a'), &ir('b'), &none),
+            "a different response"
+        );
     }
 
     #[test]

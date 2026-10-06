@@ -338,6 +338,11 @@ private struct ScopeSection: View {
                 Label(problem, systemImage: "exclamationmark.icloud")
                     .foregroundStyle(.orange)
             }
+            if let note = detail.syncNote {
+                Label(note, systemImage: "arrow.triangle.2.circlepath")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
         } header: {
             Text("Kept")
         } footer: {

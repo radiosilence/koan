@@ -248,10 +248,12 @@ pub struct LocalEdit {
     pub hash: String,
     pub edited_at: i64,
     pub refused: Option<String>,
+    /// What syncing did to it that its page says: a rename, and why.
+    pub note: Option<String>,
 }
 
 pub fn local_edits(conn: &Connection) -> Result<HashMap<String, LocalEdit>, DbError> {
-    let mut stmt = conn.prepare("SELECT uid, hash, edited_at, refused FROM dsp_local")?;
+    let mut stmt = conn.prepare("SELECT uid, hash, edited_at, refused, note FROM dsp_local")?;
     Ok(stmt
         .query_map([], |r| {
             Ok((
@@ -260,6 +262,7 @@ pub fn local_edits(conn: &Connection) -> Result<HashMap<String, LocalEdit>, DbEr
                     hash: r.get(1)?,
                     edited_at: r.get(2)?,
                     refused: r.get(3)?,
+                    note: r.get(4)?,
                 },
             ))
         })?
@@ -287,6 +290,15 @@ pub fn set_refused(conn: &Connection, uid: &str, refused: Option<&str>) -> Resul
     conn.execute(
         "UPDATE dsp_local SET refused = ?2 WHERE uid = ?1",
         params![uid, refused],
+    )?;
+    Ok(())
+}
+
+pub fn set_note(conn: &Connection, uid: &str, note: &str) -> Result<(), DbError> {
+    conn.execute(
+        "INSERT INTO dsp_local (uid, hash, edited_at, note) VALUES (?1, '', 0, ?2)
+         ON CONFLICT (uid) DO UPDATE SET note = excluded.note",
+        params![uid, note],
     )?;
     Ok(())
 }
