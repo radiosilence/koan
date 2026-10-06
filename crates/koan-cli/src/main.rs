@@ -308,6 +308,20 @@ enum DspCommands {
     },
     /// Delete a profile
     Remove { name: String },
+    /// Move an AutoEQ correction to another target, or back to its own
+    Target {
+        /// The profile
+        name: String,
+        /// The target to use: an id from the list this prints without it
+        #[arg(long = "use")]
+        target: Option<String>,
+        /// Play it as it was made, for the target it was made for
+        #[arg(long, conflicts_with = "target")]
+        reset: bool,
+    },
+    /// Add a target to choose from: a CSV of frequency and level, or a
+    /// squig.link export
+    AddTarget { path: PathBuf },
     /// Find a headphone's correction in AutoEQ's results and install it
     Autoeq {
         #[command(subcommand)]
@@ -584,6 +598,12 @@ fn main() {
             DspCommands::Use { name, device } => commands::cmd_dsp_use(&name, device),
             DspCommands::Clear { device } => commands::cmd_dsp_clear(device),
             DspCommands::Remove { name } => commands::cmd_dsp_remove(&name),
+            DspCommands::Target {
+                name,
+                target,
+                reset,
+            } => commands::cmd_dsp_target(&name, target.as_deref(), reset),
+            DspCommands::AddTarget { path } => commands::cmd_dsp_add_target(&path),
             DspCommands::Autoeq { command } => match command {
                 AutoeqCommands::Search {
                     query,

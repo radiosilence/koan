@@ -25,6 +25,7 @@ pub mod impulse;
 pub mod profiles;
 pub mod raw;
 mod steps;
+pub mod targets;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -45,6 +46,9 @@ use crate::config::{DspFilter, DspProfile};
 pub enum DspError {
     #[error("{}: {reason}", path.display())]
     Impulse { path: PathBuf, reason: String },
+    /// A target the profile was made for or moved to that cannot be read.
+    #[error("no target called {0}")]
+    Target(String),
 }
 
 /// What is being done to the audio, for the format badge.
@@ -80,16 +84,23 @@ impl Setup {
                 impulses.entry(impulse.rate).or_default().push(impulse);
             }
         }
-        if profile.filters.is_empty()
-            && impulses.is_empty()
-            && profile.preamp_db.unwrap_or(0.0) == 0.0
+        let mut filters = profile.filters.clone();
+        // Another target than the one the correction was made for: their
+        // difference, after the correction.
+        if let Some(t) = &profile.target
+            && let Some(chosen) = t.chosen.as_ref().filter(|c| **c != t.made_for)
         {
+            let curve = |id: &str| targets::choice_curve(id).ok_or(DspError::Target(id.into()));
+            let (from, to) = (curve(&t.made_for)?, curve(chosen)?);
+            filters.push(DspFilter::Graphic(targets::difference(&from, &to)));
+        }
+        if filters.is_empty() && impulses.is_empty() && profile.preamp_db.unwrap_or(0.0) == 0.0 {
             return Ok(None);
         }
         Ok(Some(Self {
             name: profile.name.clone(),
             preamp_db: profile.preamp_db,
-            filters: profile.filters.clone(),
+            filters,
             impulses,
         }))
     }

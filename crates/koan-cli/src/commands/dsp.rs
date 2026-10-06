@@ -167,6 +167,42 @@ pub fn cmd_dsp_autoeq_install(wanted: &str, source: Option<&str>, device: Option
     }
 }
 
+/// Show the targets `name` can move to, or move it.
+pub fn cmd_dsp_target(name: &str, target: Option<&str>, reset: bool) {
+    if target.is_some() || reset {
+        profiles::choose_target(name, target).unwrap_or_else(|e| fail(e));
+    }
+    let Some(t) = profiles::target_choices(name) else {
+        fail(format!(
+            "{name} has no known target: only corrections installed from AutoEQ can move"
+        ));
+    };
+    let current = t.chosen.clone().unwrap_or_else(|| t.made_for.id.into());
+    println!("{} {}", "made for:".cyan(), t.made_for.name.bold());
+    for c in &t.choices {
+        let marker = if c.id == current {
+            "*".yellow().bold().to_string()
+        } else {
+            " ".into()
+        };
+        println!("{marker} {}  {}", c.id.bold(), c.name.dimmed());
+        if !c.character.is_empty() {
+            println!("    {}", c.character.dimmed());
+        }
+    }
+}
+
+/// Add a target to choose from.
+pub fn cmd_dsp_add_target(path: &std::path::Path) {
+    let added = koan_core::audio::dsp::targets::add(path).unwrap_or_else(|e| fail(e));
+    println!(
+        "{} '{}' as {}",
+        "added".green(),
+        added.name.bold(),
+        added.id
+    );
+}
+
 pub fn cmd_dsp_remove(name: &str) {
     profiles::remove(name).unwrap_or_else(|e| fail(e));
     println!("{} '{}'", "removed".green(), name.bold());

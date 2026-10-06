@@ -2494,6 +2494,57 @@ impl KoanEngine {
         .await
     }
 
+    /// The targets `name`'s correction can be moved to, for one installed
+    /// from AutoEQ whose target is known.
+    pub async fn dsp_targets(self: Arc<Self>, name: String) -> Option<DspTargets> {
+        offload::offload(move || {
+            let t = koan_core::audio::dsp::profiles::target_choices(&name)?;
+            Some(DspTargets {
+                made_for: DspTargetOption {
+                    id: t.made_for.id.into(),
+                    name: t.made_for.name.into(),
+                    character: t.made_for.character.into(),
+                },
+                chosen: t.chosen,
+                choices: t.choices.into_iter().map(Into::into).collect(),
+            })
+        })
+        .await
+    }
+
+    /// Move `name`'s correction to the target `id`, or with `None` back to the
+    /// one it was made for.
+    pub async fn dsp_choose_target(
+        self: Arc<Self>,
+        name: String,
+        id: Option<String>,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::choose_target(&name, id.as_deref())
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// Add a target from a CSV of frequency and level, or a squig.link
+    /// export, to choose from for every correction of its kind.
+    pub async fn dsp_add_target(
+        self: Arc<Self>,
+        path: String,
+    ) -> Result<DspTargetOption, KoanError> {
+        offload::offload(move || {
+            let added = koan_core::audio::dsp::targets::add(std::path::Path::new(&path))
+                .map_err(|message| KoanError::BadArgument { message })?;
+            Ok(DspTargetOption {
+                id: added.id,
+                name: added.name,
+                character: String::new(),
+            })
+        })
+        .await
+    }
+
     pub async fn dsp_detail(self: Arc<Self>, name: String) -> Option<DspProfileDetail> {
         offload::offload(move || koan_core::audio::dsp::profiles::detail(&name).map(Into::into))
             .await

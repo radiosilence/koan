@@ -52,6 +52,17 @@ impl Entry {
     }
 
     /// Where its ParametricEQ.txt is: always under [`RESULTS`], or `None`.
+    /// Where its result's CSV is: the measurement, the target and the
+    /// corrections on AutoEQ's grid.
+    fn csv_url(&self) -> Option<String> {
+        let parametric = self.parametric_url()?;
+        let folder = self.path.rsplit('/').next().unwrap_or_default();
+        Some(parametric.replace(
+            &format!("/{folder}%20ParametricEQ.txt"),
+            &format!("/{folder}.csv"),
+        ))
+    }
+
     fn parametric_url(&self) -> Option<String> {
         if !safe_path(&self.path) {
             return None;
@@ -178,6 +189,8 @@ pub enum Freshness {
 const INDEX_CAP: u64 = 8 << 20;
 /// The largest ParametricEQ.txt accepted. They are about 1 KB.
 const PARAMETRIC_CAP: u64 = 64 << 10;
+/// The largest result CSV accepted. They are about 70 KB.
+const RESULT_CAP: u64 = 1 << 20;
 
 /// The index as last read, and when, so a search per keystroke does not
 /// read and parse 850 KB each time.
@@ -639,7 +652,36 @@ pub fn install(entry: &Entry) -> Result<String, String> {
     }
     let text =
         body(resp, PARAMETRIC_CAP).map_err(|e| format!("AutoEQ's file for {}: {e}", entry.name))?;
-    profiles::save(imported(entry, &text)?, None)
+    let name = profiles::save(imported(entry, &text)?, None)?;
+    // The result's measurement and target, for moving it to another target
+    // and drawing it. Without them the correction still plays as made.
+    match keep_result(entry, &name) {
+        Ok(made_for) => profiles::set_made_for(&name, made_for)?,
+        Err(e) => log::info!("autoeq: {}: no measurement kept: {e}", entry.name),
+    }
+    Ok(name)
+}
+
+/// Fetch `entry`'s result CSV and keep it beside the profile `name`. Answers
+/// with the shipped target it was made for, when it is one.
+fn keep_result(entry: &Entry, name: &str) -> Result<Option<&'static str>, String> {
+    let url = entry.csv_url().ok_or("no address for the result")?;
+    let resp = http()?
+        .get(url)
+        .send()
+        .map_err(|e| e.without_url().to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("GitHub answered {}", resp.status()));
+    }
+    let text = body(resp, RESULT_CAP)?;
+    let target = super::targets::result_column(&text, "target");
+    if target.is_empty() {
+        return Err("the result has no target column".into());
+    }
+    let dir = profiles::dir(name);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::write(super::targets::result_path(&dir), &text).map_err(|e| e.to_string())?;
+    Ok(super::targets::identify(&target).map(|t| t.id))
 }
 
 #[cfg(test)]

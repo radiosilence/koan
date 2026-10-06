@@ -1092,6 +1092,35 @@ pub enum AutoEqOffer {
     Search { query: String },
 }
 
+/// A headphone target a correction can be moved to.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspTargetOption {
+    /// What `dspChooseTarget` takes.
+    pub id: String,
+    pub name: String,
+    /// What it sounds like, in a line; empty for one a person added.
+    pub character: String,
+}
+
+/// The target a correction was made for, the one chosen, and the others.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspTargets {
+    pub made_for: DspTargetOption,
+    /// Unset when it plays as made.
+    pub chosen: Option<String>,
+    pub choices: Vec<DspTargetOption>,
+}
+
+impl From<koan_core::audio::dsp::profiles::TargetChoice> for DspTargetOption {
+    fn from(c: koan_core::audio::dsp::profiles::TargetChoice) -> Self {
+        Self {
+            id: c.id,
+            name: c.name,
+            character: c.character,
+        }
+    }
+}
+
 /// A maker in AutoEQ's index.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct AutoEqMaker {

@@ -10,6 +10,8 @@ struct DspProfilePage: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var detail: DspProfileDetail?
+    @State private var targets: DspTargets?
+    @State private var addingTarget = false
     @State private var editingName = ""
     @State private var confirmingDelete = false
 
@@ -41,6 +43,10 @@ struct DspProfilePage: View {
                             Button("Use for \(dsp.label(device))") { dsp.use(d.name) }
                         }
                     }
+                }
+
+                if let t = targets {
+                    TargetSection(dsp: dsp, profile: d.name, targets: t, adding: $addingTarget)
                 }
 
                 if !d.impulses.isEmpty {
@@ -93,6 +99,17 @@ struct DspProfilePage: View {
         .formStyle(.grouped)
         .navigationTitle(name)
         .task(id: dsp.version) { await load() }
+        #if !os(tvOS)
+        .filePicker(
+            isPresented: $addingTarget,
+            allowedContentTypes: [.commaSeparatedText, .plainText, .text, .item],
+            allowsMultipleSelection: false
+        ) { result in
+            if case let .success(urls) = result, let url = urls.first {
+                Task { await dsp.addTarget(url) }
+            }
+        }
+        #endif
         .confirmationDialog(
             "Delete \(name)?",
             isPresented: $confirmingDelete,
@@ -109,6 +126,7 @@ struct DspProfilePage: View {
 
     private func load() async {
         detail = await dsp.detail(name)
+        targets = await dsp.targets(name)
         editingName = name
     }
 
@@ -124,6 +142,44 @@ struct DspProfilePage: View {
             } else {
                 editingName = name
             }
+        }
+    }
+}
+
+/// The target an AutoEQ correction was made for, and another to move it to:
+/// their difference plays after the correction.
+private struct TargetSection: View {
+    let dsp: DspModel
+    let profile: String
+    let targets: DspTargets
+    @Binding var adding: Bool
+
+    private var current: String { targets.chosen ?? targets.madeFor.id }
+
+    var body: some View {
+        Section {
+            Picker("Target", selection: Binding(
+                get: { current },
+                set: { id in dsp.chooseTarget(profile, id == targets.madeFor.id ? nil : id) }
+            )) {
+                ForEach(targets.choices, id: \.id) { c in
+                    Text(c.name).tag(c.id)
+                }
+            }
+            if let c = targets.choices.first(where: { $0.id == current }), !c.character.isEmpty {
+                Text(c.character)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            #if !os(tvOS)
+            Button("Add a Target…") { adding = true }
+            #endif
+        } header: {
+            Text("Target")
+        } footer: {
+            Text("Made for \(targets.madeFor.name). Another target plays as the difference between the two, after the correction. A target you add is a CSV of frequency and level, or a squig.link export.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
         }
     }
 }

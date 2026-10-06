@@ -213,6 +213,30 @@ final class DspModel {
         }
     }
 
+    /// The targets `name`'s correction can be moved to.
+    func targets(_ name: String) async -> DspTargets? {
+        await engine.dspTargets(name: name)
+    }
+
+    /// Move `name`'s correction to `id`, or with nil back to its own target.
+    func chooseTarget(_ name: String, _ id: String?) {
+        act { try await $0.dspChooseTarget(name: name, id: id) }
+    }
+
+    /// Add a target from a file, picked or shared: security-scoped, readable
+    /// only while held open.
+    func addTarget(_ url: URL) async {
+        let held = url.startAccessingSecurityScopedResource()
+        defer { if held { url.stopAccessingSecurityScopedResource() } }
+        do {
+            _ = try await engine.dspAddTarget(path: url.path)
+            lastError = nil
+            await changed()
+        } catch {
+            lastError = SettingsModel.describe(error)
+        }
+    }
+
     func detail(_ name: String) async -> DspProfileDetail? {
         await engine.dspDetail(name: name)
     }

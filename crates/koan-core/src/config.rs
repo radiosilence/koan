@@ -582,6 +582,21 @@ pub struct DspProfile {
     /// from. Nothing reads them again.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source: Vec<String>,
+    /// For a correction installed from AutoEQ: the target it was made for,
+    /// and another to move it to. See `audio::dsp::targets`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<DspTarget>,
+}
+
+/// The target a correction was made for, and the one chosen in its place.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DspTarget {
+    /// One of the targets koan ships, by id.
+    pub made_for: String,
+    /// A target koan ships, or one added (`added:<name>`). Unset, or the same
+    /// as `made_for`, the correction plays as it was made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chosen: Option<String>,
 }
 
 /// One step of a profile's processing. Bands on different channels commute;
@@ -2136,6 +2151,7 @@ fps = 30
             ],
             impulses: vec![],
             source: vec![],
+            target: None,
         };
         Config::persist(|cfg| cfg.dsp.profiles.push(profile.clone())).unwrap();
 

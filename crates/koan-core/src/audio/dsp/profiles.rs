@@ -291,6 +291,100 @@ fn persist(
     Ok(())
 }
 
+/// Where `name` keeps its files: responses, and an AutoEQ result's CSV.
+pub fn dir(name: &str) -> PathBuf {
+    config::config_dir().join("dsp").join(slug(name))
+}
+
+/// Record the target `name`'s correction was made for, keeping any target
+/// chosen in its place.
+pub fn set_made_for(name: &str, made_for: Option<&str>) -> Result<(), String> {
+    persist(|cfg| {
+        if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name) {
+            p.target = made_for.map(|m| crate::config::DspTarget {
+                made_for: m.to_owned(),
+                chosen: p.target.as_ref().and_then(|t| t.chosen.clone()),
+            });
+        }
+    })
+    .map_err(|e| e.to_string())
+}
+
+/// What `name` offers to move its correction to.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TargetChoices {
+    pub made_for: &'static super::targets::Target,
+    pub chosen: Option<String>,
+    /// The shipped targets for the same kind of headphone, then those added.
+    pub choices: Vec<TargetChoice>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TargetChoice {
+    pub id: String,
+    pub name: String,
+    /// What it sounds like; empty for one added.
+    pub character: String,
+}
+
+/// The targets `name` can move to, for a correction installed from AutoEQ
+/// whose target is known.
+pub fn target_choices(name: &str) -> Option<TargetChoices> {
+    use super::targets;
+    let cfg = Config::cached();
+    let t = cfg
+        .dsp
+        .profiles
+        .iter()
+        .find(|p| p.name == name)?
+        .target
+        .clone()?;
+    let made_for = targets::shipped(&t.made_for)?;
+    let mut choices: Vec<TargetChoice> = targets::TARGETS
+        .iter()
+        .filter(|c| c.ear == made_for.ear)
+        .map(|c| TargetChoice {
+            id: c.id.into(),
+            name: c.name.into(),
+            character: c.character.into(),
+        })
+        .collect();
+    choices.extend(targets::added().into_iter().map(|a| TargetChoice {
+        id: a.id,
+        name: a.name,
+        character: String::new(),
+    }));
+    Some(TargetChoices {
+        made_for,
+        chosen: t.chosen,
+        choices,
+    })
+}
+
+/// Move `name`'s correction to `chosen`, or with `None` back to the target it
+/// was made for.
+pub fn choose_target(name: &str, chosen: Option<&str>) -> Result<(), String> {
+    let choices =
+        target_choices(name).ok_or_else(|| format!("{name} has no target to move from"))?;
+    if let Some(c) = chosen
+        && !choices.choices.iter().any(|x| x.id == c)
+    {
+        return Err(format!("No target {c} for {name}"));
+    }
+    persist(|cfg| {
+        if let Some(t) = cfg
+            .dsp
+            .profiles
+            .iter_mut()
+            .find(|p| p.name == name)
+            .and_then(|p| p.target.as_mut())
+        {
+            t.chosen = chosen.filter(|c| *c != t.made_for).map(str::to_owned);
+        }
+    })
+    .map_err(|e| e.to_string())
+}
+
 /// Play `device` through `name`, or untouched with `None`.
 pub fn assign(name: Option<&str>, device: &str) -> Result<(), String> {
     if let Some(name) = name
