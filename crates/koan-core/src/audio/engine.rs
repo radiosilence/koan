@@ -118,6 +118,23 @@ impl super::backend::AudioEngineHandle for AudioEngine {
         super::backend::AudioEngineHandle::start(self)
     }
 
+    fn fade_out_quickly(&self) {
+        self.fade().fade_out_quickly();
+    }
+
+    fn period(&self) -> std::time::Duration {
+        self.fade().period()
+    }
+
+    fn fade_in_quickly(&self) -> std::result::Result<(), super::backend::BackendError> {
+        if AudioEngine::is_running(self) {
+            self.fade().fade_in_quickly(false);
+            return Ok(());
+        }
+        self.fade().fade_in_quickly(true);
+        super::backend::AudioEngineHandle::start(self)
+    }
+
     fn is_silent(&self) -> bool {
         self.fade().is_silent()
     }
