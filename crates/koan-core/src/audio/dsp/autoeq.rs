@@ -550,8 +550,10 @@ pub fn maker(name: &str) -> &str {
 fn fold_makers(text: &str) -> String {
     let mut out = text.to_owned();
     for (alias, canonical) in MAKER_ALIASES {
-        let lower = out.to_lowercase();
-        let wanted = alias.to_lowercase();
+        // ASCII lowering keeps every byte where it was, so offsets found in
+        // it are offsets in `out`; the aliases are ASCII.
+        let lower = out.to_ascii_lowercase();
+        let wanted = alias.to_ascii_lowercase();
         let mut from = 0;
         while let Some(at) = lower[from..].find(&wanted).map(|i| i + from) {
             let end = at + wanted.len();
@@ -1134,6 +1136,15 @@ Filter 3: ON PK Fc 118 Hz Gain -3.1 dB Q 0.50
             fold_makers("AFULAcoustics X"),
             "AFULAcoustics X",
             "on word boundaries"
+        );
+        // Characters whose lower case is longer or shorter than they are.
+        assert_eq!(
+            fold_makers("İzel's AFUL Acoustics Cantor"),
+            "İzel's AFUL Cantor"
+        );
+        assert_eq!(
+            fold_makers("\u{212A} AFUL Acoustics Cantor"),
+            "\u{212A} AFUL Cantor"
         );
     }
 
