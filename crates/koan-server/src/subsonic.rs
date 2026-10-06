@@ -4494,9 +4494,11 @@ fn answer_once(
         if answered.swap(true, std::sync::atomic::Ordering::AcqRel) {
             return;
         }
-        let _ = crate::clients::registry().send(
-            Some(&username),
-            Some(&device),
+        // News, like levels: to the asker's link if it is still there, and
+        // never a push to wake it for.
+        crate::clients::registry().send_live(
+            &username,
+            &device,
             koan_core::remote::link::LinkCommand::Acked {
                 from: to.clone(),
                 ack,
@@ -4595,7 +4597,6 @@ async fn link_session(
                 Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                 Some(Ok(msg)) => {
                     last_heard = tokio::time::Instant::now();
-                    registry.heard(&username, &device);
                     use koan_core::remote::link::LinkReport;
                     if let Message::Text(text) = msg {
                         match serde_json::from_str(&text) {
@@ -4647,6 +4648,9 @@ async fn link_session(
                                         }
                                     }
                                 });
+                            }
+                            Ok(LinkReport::Received { ack }) => {
+                                registry.received(&device, ack);
                             }
                             Ok(LinkReport::Ack { ack, outcome }) => {
                                 let device = device.clone();

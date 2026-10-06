@@ -8,10 +8,12 @@
 //! answers with the id and an `AckOutcome`.
 //!
 //! A sender that hears nothing tries the next way through with the same id,
-//! so a command can arrive twice. Ids start from a random value each run, so
-//! one is never reused across a sender's restarts, and a target remembers the
-//! ids it has taken for a minute: a repeat is answered with the first one's
-//! outcome and not acted on again.
+//! so a command can arrive twice. Each id is drawn at random, so none is
+//! reused across a sender's restarts and none can be guessed from another
+//! seen on the network, and a target remembers the ids it has taken for a
+//! minute: a repeat is answered with the first one's outcome and not acted on
+//! again. Only a command the target accepts from its source takes an id, so a
+//! stranger's refused command cannot reserve one.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -47,6 +49,13 @@ pub struct Envelope {
     pub ack: Option<u64>,
 }
 
+impl Envelope {
+    /// A command as a push carries it: the same JSON as over the link.
+    pub fn parse(json: &str) -> Result<Self, String> {
+        serde_json::from_str(json).map_err(|e| e.to_string())
+    }
+}
+
 impl From<LinkCommand> for Envelope {
     fn from(command: LinkCommand) -> Self {
         Self { command, ack: None }
@@ -58,16 +67,16 @@ const REMEMBERED: Duration = Duration::from_secs(60);
 
 // --- Sending ----------------------------------------------------------------
 
-static NEXT: LazyLock<AtomicU64> = LazyLock::new(|| {
-    let mut seed = [0u8; 8];
-    let _ = getrandom::fill(&mut seed);
-    // Kept well clear of wrapping within a run.
-    AtomicU64::new(u64::from_le_bytes(seed) >> 1)
-});
-
-/// A fresh id for a command that wants an answer.
+/// A fresh id for a command that wants an answer: random, and never 0.
 pub fn next_id() -> u64 {
-    NEXT.fetch_add(1, Ordering::Relaxed)
+    let mut bytes = [0u8; 8];
+    if getrandom::fill(&mut bytes).is_err() {
+        // No randomness to be had: unguessable no longer, but still unique
+        // within the run.
+        static FALLBACK: AtomicU64 = AtomicU64::new(1);
+        return FALLBACK.fetch_add(1, Ordering::Relaxed) | (1 << 63);
+    }
+    u64::from_le_bytes(bytes).max(1)
 }
 
 static WAITING: LazyLock<Mutex<HashMap<u64, crossbeam_channel::Sender<AckOutcome>>>> =
@@ -225,10 +234,11 @@ mod tests {
     }
 
     #[test]
-    fn ids_do_not_start_from_zero_and_do_not_repeat() {
-        let (a, b) = (next_id(), next_id());
-        assert_ne!(a, b);
-        assert!(a > 1_000_000, "a random start, not a counter from 0: {a}");
+    fn ids_are_random_not_counted() {
+        let ids: Vec<u64> = (0..8).map(|_| next_id()).collect();
+        assert!(ids.iter().all(|id| *id != 0));
+        let consecutive = ids.windows(2).filter(|w| w[1] == w[0] + 1).count();
+        assert_eq!(consecutive, 0, "one id says nothing of the next: {ids:?}");
     }
 
     #[test]

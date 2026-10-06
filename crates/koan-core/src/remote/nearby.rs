@@ -708,35 +708,76 @@ impl wire::Session for Serving<'_> {
             }
         };
         let (answers, waker) = (self.answers.clone(), self.waker.clone());
-        let Some((command, pending)) = crate::remote::acks::take(envelope, move |ack, outcome| {
+        let answer = move |ack, outcome| {
             answers.lock().push(LinkReport::Ack { ack, outcome });
             waker.wake();
-        }) else {
-            return;
         };
-        match command {
-            LinkCommand::WatchLevels { on } => {
+        match admit(envelope, full_control(), answer) {
+            Admitted::Levels(on, pending) => {
                 self.levels = on.then(|| crate::remote::levels::feed().watch(&self.waker));
                 if let Some(pending) = pending {
                     pending.finish(AckOutcome::Done);
                 }
             }
-            cmd => match cmd.from_the_network(full_control()) {
-                Some(source) => (self.local.on_command)(cmd, source, pending),
-                None => {
-                    log::warn!("nearby: refused {cmd:?}");
-                    if let Some(pending) = pending {
-                        pending.finish(AckOutcome::Refused {
-                            reason: "not allowed from this network".into(),
-                        });
-                    }
-                }
-            },
+            Admitted::Command(cmd, source, pending) => {
+                (self.local.on_command)(cmd, source, pending)
+            }
+            Admitted::Neither => {}
         }
     }
 
     fn done(&self) -> bool {
         self.stop.stopped()
+    }
+}
+
+/// What a command from the network comes to here.
+enum Admitted {
+    Levels(bool, Option<crate::remote::acks::Pending>),
+    Command(
+        LinkCommand,
+        crate::remote::link::CommandSource,
+        Option<crate::remote::acks::Pending>,
+    ),
+    /// Refused, or a repeat already answered.
+    Neither,
+}
+
+/// Admit a command from the network: checked against what this device lets
+/// the network do (`full` control or a stranger's set) before its id is
+/// taken, so a refused command answers `refused` and leaves the id free. A
+/// stranger who has seen one of this person's ids then cannot spend it ahead
+/// of the real command.
+fn admit(
+    envelope: Envelope,
+    full: bool,
+    answer: impl FnOnce(u64, AckOutcome) + Send + 'static,
+) -> Admitted {
+    let source = match &envelope.command {
+        LinkCommand::WatchLevels { .. } => None,
+        cmd => match cmd.from_the_network(full) {
+            Some(source) => Some(source),
+            None => {
+                log::warn!("nearby: refused {cmd:?}");
+                if let Some(ack) = envelope.ack {
+                    answer(
+                        ack,
+                        AckOutcome::Refused {
+                            reason: "not allowed from this network".into(),
+                        },
+                    );
+                }
+                return Admitted::Neither;
+            }
+        },
+    };
+    let Some((command, pending)) = crate::remote::acks::take(envelope, answer) else {
+        return Admitted::Neither;
+    };
+    match (command, source) {
+        (LinkCommand::WatchLevels { on }, _) => Admitted::Levels(on, pending),
+        (cmd, Some(source)) => Admitted::Command(cmd, source, pending),
+        (_, None) => Admitted::Neither,
     }
 }
 
@@ -1635,5 +1676,40 @@ mod tests {
         let playback = super::for_the_network(state, false);
         assert!(playback.playing);
         assert_eq!(playback.outputs, None);
+    }
+}
+
+#[cfg(test)]
+mod admit_tests {
+    use super::*;
+    use crate::remote::acks;
+
+    /// A stranger who has seen one of this person's ids sends a command it may
+    /// not, under that id. It is refused, and the id is still free for the
+    /// person's own command when it comes.
+    #[test]
+    fn a_stranger_cannot_spend_an_id_ahead_of_the_real_command() {
+        let id = acks::next_id();
+        let refused = std::sync::Arc::new(parking_lot::Mutex::new(None));
+        let got = refused.clone();
+        let forged = Envelope {
+            command: LinkCommand::Sync { full: true },
+            ack: Some(id),
+        };
+        assert!(matches!(
+            admit(forged, false, move |_, o| *got.lock() = Some(o)),
+            Admitted::Neither
+        ));
+        assert!(matches!(*refused.lock(), Some(AckOutcome::Refused { .. })));
+
+        // The real one, under the same id, is acted on.
+        let real = Envelope {
+            command: LinkCommand::Pause,
+            ack: Some(id),
+        };
+        assert!(matches!(
+            admit(real, false, |_, _| {}),
+            Admitted::Command(LinkCommand::Pause, _, Some(_))
+        ));
     }
 }
