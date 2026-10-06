@@ -347,7 +347,7 @@ koan subsonic disable
 Signed-in users manage their own keys in the web UI under **API keys**, and in
 the apps under Settings → Server → API keys, where the server lists the
 `koanApiKeys` extension (`/rest/koanApiKeys`, and `koanCreateApiKey` and
-`koanRevokeApiKey` by POST). Both list each key's name, when it was made and
+`koanRevokeApiKey` by POST), signed with an API key or the account's own password: an app password cannot make or revoke keys, so one that leaks cannot outlive its revocation. Both list each key's name, when it was made and
 when it was last used, never the key itself. A new key is shown once. Each
 device signed in to kōan has a key of its own, so revoking one is how a lost
 phone is cut off; the apps mark their own key and leave revoking it to

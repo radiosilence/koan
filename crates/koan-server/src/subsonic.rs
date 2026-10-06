@@ -785,6 +785,21 @@ enum Via {
 }
 
 impl Caller {
+    /// Refuse a request about the account's own credentials, its password and
+    /// API keys, unless it is signed with one of them: an API key or the
+    /// account's password. An app password is a credential handed to one
+    /// client, which must not mint or revoke others; the shared secret is no
+    /// account's.
+    fn may_manage_credentials(&self) -> Result<(), SubsonicError> {
+        match self.via {
+            Via::ApiKey | Via::Password => Ok(()),
+            Via::AppPassword | Via::SharedSecret => Err(SubsonicError::new(
+                SubsonicErrorCode::NotAuthorized,
+                "sign in with the account's password or an API key to manage its credentials",
+            )),
+        }
+    }
+
     /// Whose shares the caller may list and change: their own, or everyone's
     /// for an admin.
     fn share_owner(&self) -> Option<i64> {
@@ -4149,12 +4164,7 @@ async fn koan_set_user_password(
     offload_response(move || {
         let params = RawParams::parse(raw.as_deref());
         respond_db_caller(&state, &params.auth(), Role::Readonly, |db, caller, b| {
-            if !matches!(caller.via, Via::ApiKey | Via::Password) {
-                return Err(SubsonicError::new(
-                    SubsonicErrorCode::NotAuthorized,
-                    "sign in with the account's password or an API key to set a password",
-                ));
-            }
+            caller.may_manage_credentials()?;
             let username = params
                 .get("username")
                 .map_or(caller.username.as_str(), str::trim);
@@ -4219,6 +4229,7 @@ async fn koan_api_keys(State(state): State<Arc<AppState>>, RawQuery(raw): RawQue
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
         respond_db_caller(&state, &auth, Role::Readonly, |db, caller, b| {
+            caller.may_manage_credentials()?;
             let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
             let keys = queries::api_keys::list_api_keys(&db.conn, Some(caller.user_id))
                 .map_err(internal)?;
@@ -4253,6 +4264,7 @@ async fn koan_create_api_key(
     offload_response(move || {
         let params = RawParams::parse(raw.as_deref());
         respond_db_caller(&state, &params.auth(), Role::Readonly, |db, caller, b| {
+            caller.may_manage_credentials()?;
             let name = params
                 .get("name")
                 .map(koan_core::invite::device_name)
@@ -4280,6 +4292,7 @@ async fn koan_revoke_api_key(
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
         respond_db_caller(&state, &auth, Role::Readonly, |db, caller, b| {
+            caller.may_manage_credentials()?;
             let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
             let id: i64 = params
                 .get("id")
@@ -6275,6 +6288,50 @@ mod tests {
             list().await["apiKeys"]["apiKey"].as_array().unwrap().len(),
             1
         );
+    }
+
+    /// An app password must not mint keys that outlive it, nor revoke the
+    /// account's devices; the shared secret is no account's.
+    #[tokio::test]
+    async fn only_a_key_or_the_password_itself_may_manage_api_keys() {
+        let (state, _dir) = test_state();
+        let db = state.open_db().unwrap();
+        let mate = queries::auth::get_user_by_username(&db.conn, "mate")
+            .unwrap()
+            .unwrap();
+        let (phone, _) = queries::api_keys::replace_api_key(&db.conn, mate.id, "phone").unwrap();
+        let app_password = queries::app_passwords::create_app_password(
+            &db.conn,
+            state.app_key.as_ref().unwrap(),
+            mate.id,
+            "arpeggi",
+        )
+        .unwrap()
+        .1;
+        let salt = "c0ffee";
+        let token = format!("{:x}", md5::compute(format!("{app_password}{salt}")));
+        let callers = [
+            ("app password as p", format!("u=mate&p={app_password}")),
+            (
+                "app password as a token",
+                format!("u=mate&t={token}&s={salt}"),
+            ),
+            ("the shared secret", auth_query("")),
+        ];
+        for (who, auth) in &callers {
+            let auth = format!("{auth}&v=1.16.1&c=test");
+            for (path, form) in [
+                ("/rest/koanCreateApiKey", format!("name=x&{auth}")),
+                ("/rest/koanRevokeApiKey", format!("id={phone}&{auth}")),
+                ("/rest/koanApiKeys", auth.clone()),
+            ] {
+                let body = post_form(build_test_router(state.clone()), path, &form).await;
+                assert!(body.contains("code=\"50\""), "{who} on {path}: {body}");
+            }
+        }
+        let keys = queries::api_keys::list_api_keys(&db.conn, None).unwrap();
+        assert_eq!(keys.len(), 1, "none made, none revoked");
+        assert_eq!(keys[0].id, phone);
     }
 
     #[tokio::test]
