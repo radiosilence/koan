@@ -303,7 +303,7 @@ Refresh tokens are stored in the database as `sha256(token)`, so a database read
 
 ## Sockets
 
-A socket is authenticated once, when it opens, so `/graphql/ws` and an app's link at `/rest/koanLink` close whenever something about their account changes that can narrow what it may do: its role, its password, its deletion, or a key or app password revoked. Signing out does not: no socket rests on a refresh token, so the account's other devices stay connected. A subscription socket also closes when the token it opened with expires. The client reconnects and is authenticated as things then stand. A change made by another process, such as `koan auth` at a terminal while the server runs, reaches sockets when they next reconnect.
+A socket is authenticated once, when it opens, so `/graphql/ws` and an app's link at `/rest/koanLink` close whenever something about their account changes that can narrow what it may do: its role, its password, its deletion, a key or app password revoked, or a device's key replaced when it signs in again. Signing out does not: no socket rests on a refresh token, so the account's other devices stay connected. A subscription socket also closes when the token it opened with expires. The client reconnects and is authenticated as things then stand. A change made by another process, such as `koan auth` at a terminal while the server runs, reaches sockets when they next reconnect.
 
 ## Subsonic API
 
