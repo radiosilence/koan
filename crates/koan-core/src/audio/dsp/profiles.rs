@@ -232,7 +232,13 @@ pub fn detail(name: &str) -> Option<Detail> {
     // What it plays is adjusted to stay within bounds: say how.
     let mut adjusted = profile.clone().sanitize();
     match super::chain_noted(profile, &cfg.dsp.profiles, &mut Vec::new()) {
-        Ok((_, notes)) => adjusted.extend(notes.into_iter().filter(|n| !adjusted.contains(n))),
+        Ok((_, notes)) => {
+            for n in notes {
+                if !adjusted.contains(&n) {
+                    adjusted.push(n);
+                }
+            }
+        }
         Err(e) => problem = Some(e.to_string()),
     }
     let setup = Setup::load(profile, &cfg.dsp.profiles, &base)
