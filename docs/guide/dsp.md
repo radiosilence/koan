@@ -236,8 +236,12 @@ was made, so a change made offline keeps its time. A deletion reaches every
 device; so does moving a profile to one device, which removes it from the
 others. A stack elsewhere that layered it reports the missing layer. The same
 profile made on two devices before either synced, such as one headphone
-installed from AutoEQ on both, becomes one profile; two different profiles of
-one name keep both, the second renamed with a number.
+installed from AutoEQ on both, becomes one profile. "The same" is what they
+play, not how they are written: bands in another order, or a gain a few
+hundredths of a decibel apart, are the same profile. Two profiles of one name
+that would sound different are both kept, each renamed for the device it came
+from ("Lush (Mac Studio)", "Lush (iPhone)"), and each profile's page says
+why. Stacks that play them follow the new names.
 
 A file may be up to 32 MB, and an account's files up to 256 MB together. A
 profile past either stays on its device, and its page says it could not be
