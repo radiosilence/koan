@@ -38,11 +38,17 @@ enum EvidenceRenderer {
         }
         // The transport's popovers, as their content: a popover is not drawn in
         // a window that is never shown.
+        // In the room's accent, as they open over the transport.
+        var sleeve: Color?
+        if let source = state.player.currentArtwork { sleeve = await state.art.dominantColour(for: source) }
+        let room = KoanAccent(record: sleeve)
         pages.append(("popover-output", CGSize(width: 340, height: 420), AnyView(
             OutputPicker().koanSurface().appEnvironment(state)
+                .tint(room.color).environment(\.koanAccent, room).environment(\.roomTint, room.color)
         )))
         pages.append(("popover-control", CGSize(width: 340, height: 320), AnyView(
             ControlPicker().koanSurface().appEnvironment(state)
+                .tint(room.color).environment(\.koanAccent, room).environment(\.roomTint, room.color)
         )))
         if KoanTheme.isOn {
             let warm = KoanAccent(record: Color(red: 0.94, green: 0.54, blue: 0.36)) // theme: raw — a sleeve's colour, as input
@@ -261,4 +267,5 @@ extension View {
             .koanTheme(state.appearance)
     }
 }
+
 #endif
