@@ -27,29 +27,6 @@ pub fn remote_credential(cfg: &Config) -> Option<Credential> {
     (!cfg.remote.password.is_empty()).then(|| Credential::Password(cfg.remote.password.clone()))
 }
 
-/// Index files that appear in the library folders while koan is running.
-///
-/// One incremental scan shortly after startup — the walk is a fraction of a
-/// second even across fifty thousand files, and everything unchanged is skipped
-/// on its mtime and size — then a scan of whatever the folders say changed.
-///
-/// Only the directories events name are scanned: walking the whole library for
-/// one new album costs a spinning disk minutes. Events that cannot change the
-/// index — access, metadata, Syncthing's bookkeeping, partial downloads — are
-/// dropped before they count (see `index::watch`). The whole library is scanned
-/// only when the watcher reports it lost events, or when so many directories
-/// changed at once that walking them one by one would cost more.
-///
-/// Changes are debounced: copying an album in produces a burst of events, and
-/// scanning once per file would be both slow and pointless. A scan that lands
-/// halfway through a move is corrected by the scan the rest of the move's
-/// events bring, since a directory scan removes what is no longer under it.
-///
-/// The folder list is re-read and each folder's identity checked every half
-/// minute, so a folder added in settings is watched without a restart, and a
-/// volume unmounted and mounted again is watched afresh and rescanned.
-///
-/// `on_state` reports whether a scan is running, so a UI can show it.
 /// The right to scan and watch the library at `db_path`, held by one process
 /// at a time: an exclusive `flock` on `watch.lock` beside the database. Two
 /// servers share a database while one replaces the other, and two scanners
@@ -81,6 +58,29 @@ fn watch_lock_file(db_path: &Path) -> std::io::Result<std::fs::File> {
         .open(db_path.with_file_name("watch.lock"))
 }
 
+/// Index files that appear in the library folders while koan is running.
+///
+/// One incremental scan shortly after startup — the walk is a fraction of a
+/// second even across fifty thousand files, and everything unchanged is skipped
+/// on its mtime and size — then a scan of whatever the folders say changed.
+///
+/// Only the directories events name are scanned: walking the whole library for
+/// one new album costs a spinning disk minutes. Events that cannot change the
+/// index — access, metadata, Syncthing's bookkeeping, partial downloads — are
+/// dropped before they count (see `index::watch`). The whole library is scanned
+/// only when the watcher reports it lost events, or when so many directories
+/// changed at once that walking them one by one would cost more.
+///
+/// Changes are debounced: copying an album in produces a burst of events, and
+/// scanning once per file would be both slow and pointless. A scan that lands
+/// halfway through a move is corrected by the scan the rest of the move's
+/// events bring, since a directory scan removes what is no longer under it.
+///
+/// The folder list is re-read and each folder's identity checked every half
+/// minute, so a folder added in settings is watched without a restart, and a
+/// volume unmounted and mounted again is watched afresh and rescanned.
+///
+/// `on_state` reports whether a scan is running, so a UI can show it.
 pub fn spawn_library_watch(
     db_path: std::path::PathBuf,
     on_state: impl Fn(bool) + Send + Sync + 'static,
