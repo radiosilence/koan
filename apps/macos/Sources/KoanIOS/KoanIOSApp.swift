@@ -44,7 +44,13 @@ struct KoanIOSApp: App {
                         .modifier(InviteConfirmation(state: state))
                         .modifier(PairingConfirmation(state: state))
                         .modifier(DspImportPrompts(dsp: state.dsp))
+                        #if os(tvOS)
+                        // No app-wide accent: a television draws focus as a
+                        // white platter, and system alerts and toggle rows
+                        // that take the tint put green text on it.
+                        #else
                         .tint(.koanAccent)
+                        #endif
                         #if os(tvOS)
                         // The wash is drawn for a dark room; a television set
                         // to light would grey it out.
