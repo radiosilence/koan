@@ -8,6 +8,10 @@
 
 ### Fixed
 
+- **Seeking or skipping at the end of the queue could freeze playback.** When the player was busy, the decoder reporting the end of the queue and the player stopping that decoder could wait on each other indefinitely.
+- **A rare crash when the Mac or iOS app changes track or output.** When CoreAudio could not confirm the output had fully stopped, its playback data was freed while the audio thread might still read it. It is now kept instead.
+- **One failed command no longer stops the Mac and iOS apps' controls.** An error such as importing a malformed EQ or convolution file stopped every later play, queue and transport command until the app was relaunched; the failing command now reports an error and the rest carry on.
+- **The iOS Live Activity no longer busies the app for a record without art.** Controlling another device playing a record with no cover, or whose cover could not be fetched, asked for the cover again continuously.
 - **The sleep timer's moon is lit only while a timer is set.** On the Mac it showed in the accent colour with no timer set.
 
 ## 0.54.1
