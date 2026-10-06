@@ -136,11 +136,13 @@ fn is_server(s: &str) -> bool {
 
 /// The longest a TXT entry can be. An address that does not fit is not
 /// announced: cut short, it could still read as a different, valid address.
+#[cfg(any(target_vendor = "apple", test))]
 const TXT_ENTRY_MAX: usize = 255;
 
 /// What this device would announce for the server it is signed in to: the
 /// address if it is one to offer and fits whole in the announcement, and
 /// nothing otherwise.
+#[cfg(any(target_vendor = "apple", test))]
 fn announceable(url: &str) -> Option<String> {
     let url = url.trim().trim_end_matches('/');
     (is_server(url) && "server=".len() + url.len() <= TXT_ENTRY_MAX).then(|| url.to_string())

@@ -943,11 +943,12 @@ tv-discover: (tv-ffi "appletvsimulator") (ios-ffi "iphonesimulator") ios-project
     xcodebuild build-for-testing -quiet \
         -project apps/ios/Koan.xcodeproj -scheme Koan \
         -destination "id=$phone" -derivedDataPath target/ios-build
-    url=$(just _demo-server "" "$out")
+    # On the network rather than loopback, and named by the Mac's address
+    # there, which both simulators reach: a loopback address is never
+    # announced.
+    url=$(KOAN_GRAPHQL__BIND=0.0.0.0 just _demo-server "" "$out")
     cleanup+=("just _demo-server-stop '$out'")
     password=$(cat "$out/server.password")
-    # By the Mac's address on the network, which both simulators reach: a
-    # loopback address is never announced.
     lan=$(ipconfig getifaddr en0 || ipconfig getifaddr en1)
     url=${url/127.0.0.1/$lan}
     for sim in "$tv" "$phone"; do
