@@ -383,6 +383,7 @@ impl LinkCommand {
             | Self::HistoryChanged
             | Self::WatchLevels { .. }
             | Self::Levels { .. }
+            | Self::Acked { .. }
             | Self::SetOutput { .. }
             | Self::SetRendererVolume { .. }
             | Self::SetPreset { .. }
