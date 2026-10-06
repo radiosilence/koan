@@ -441,20 +441,32 @@ jobs:
       version: ${{ steps.check.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
       - name: Check if release needed
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+        # A push releases only when it changes the version. Comparing with the
+        # latest GitHub release alone let any push that landed while a release
+        # was still running (the release appears at its end) release the same
+        # version a second time. A manual run releases whatever is unreleased,
+        # which is how a failed release is retried.
         run: |
-          CURRENT_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          version_of() { sed -n 's/^version = "\(.*\)"/\1/p' | head -1; }
+          CURRENT_VERSION=$(version_of < Cargo.toml)
+          PREVIOUS_VERSION=$(git show HEAD^:Cargo.toml 2>/dev/null | version_of || true)
           LATEST_RELEASE=$(gh release list --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || echo "")
           LATEST_VERSION=${LATEST_RELEASE#v}
-          if [ -z "$LATEST_RELEASE" ] || [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
-            echo "should_release=true" >> $GITHUB_OUTPUT
+          if [ "$CURRENT_VERSION" = "$LATEST_VERSION" ]; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT" = "workflow_dispatch" ] || [ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" ]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
           else
-            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "version=${CURRENT_VERSION}" >> $GITHUB_OUTPUT
+          echo "version=${CURRENT_VERSION}" >> "$GITHUB_OUTPUT"
           # Internal path deps carry a `version` for crates.io. If it drifts from
           # the workspace version, cargo publishes a crate pinned to a stale
           # sibling — path deps mask it locally and --no-verify masked it in CI.

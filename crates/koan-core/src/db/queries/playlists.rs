@@ -11,7 +11,7 @@
 //! because the same track may appear twice and both copies have to keep their
 //! place.
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use super::TrackRow;
 use super::auth::resolve_user;
@@ -705,7 +705,7 @@ pub fn track_ids_for_remote_ids(
     for remote_id in remote_ids {
         out.push(
             stmt.query_row(params![remote_id], |row| row.get::<_, i64>(0))
-                .ok(),
+                .optional()?,
         );
     }
     Ok(out)

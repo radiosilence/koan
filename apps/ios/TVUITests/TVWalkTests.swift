@@ -99,6 +99,19 @@ final class TVWalkTests: XCTestCase {
             pause(4)
             snap(name)
             if place == 1 {
+                // The browser's own controls sit above the listing, and each
+                // must open something: in a toolbar they took focus and did
+                // nothing.
+                press(.down)
+                snap("12a-controls")
+                press(.select)
+                pause(2)
+                snap("12b-control-opened")
+                let opened = app.switches["Favourites"].exists
+                    || app.buttons["Recently Added"].exists || app.buttons["Artist"].exists
+                XCTAssertTrue(opened, "a browser control opens its filters or its sort")
+                press(.menu)
+                pause(1)
                 press(.down)
                 press(.select)
                 pause(4)
