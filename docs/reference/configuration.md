@@ -28,7 +28,7 @@ Three kinds of setting are machine-scoped and always land in
 | Kind | Settings |
 |------|----------|
 | Secrets | `remote.password`, `subsonic.password` |
-| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username`, `remote.cache_dir`, `remote.cache_limit`, `playback.output_device`, `subsonic.enabled/port/username/transcode/ffmpeg`, `devices.nearby/discoverable/port/addresses/nearby_control`, everything under `dsp` |
+| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username`, `remote.cache_dir`, `remote.cache_limit`, `playback.output_device/renderers/muted`, `subsonic.enabled/port/username/transcode/ffmpeg`, `devices.nearby/discoverable/port/addresses/nearby_control`, everything under `dsp` |
 | Volatile UI state -- flipped by a keypress or a mouse drag | `playback.art_size`, `visualizer.enabled`, `visualizer.mode`, `visualizer.matrix_overlay`, `visualizer.bass_shake` |
 
 Everything else is taste, travels between machines, and goes in `config.toml`.
@@ -141,6 +141,8 @@ show_fps = false            # FPS counter overlay in top-right corner (default: 
 # config.local.toml -- this machine's hardware and window
 art_size = 24               # album art width in terminal columns (default: 24)
 output_device = "My DAC"    # audio output device name (default: system default)
+renderers = true            # look for UPnP renderers on the network (default: true)
+muted = false               # play silence (default: false)
 ```
 
 ### ReplayGain
@@ -176,6 +178,10 @@ When a track needs the output device at a different sample rate, the device relo
 `output_device` selects an audio output by name. Press `Shift+D` in the TUI to browse available devices and switch live. The choice is saved to `config.local.toml` -- your DAC is not the next machine's. If the named device isn't available at startup, kōan falls back to the system default.
 
 Run `koan devices` to list available audio outputs.
+
+### Automated runs
+
+`muted` zeroes every sample in the render callback, so playback carries on, with its position, queue and gapless handover, but nothing is heard. `renderers = false` stops kōan looking for UPnP renderers, so none appears under Output and none can be played to. The app UI tests set both, as `KOAN_PLAYBACK__MUTED` and `KOAN_PLAYBACK__RENDERERS`, because they run on a machine someone is using, whose speakers and network renderers are theirs.
 
 ---
 

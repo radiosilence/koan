@@ -188,7 +188,7 @@ impl AudioBackend for CpalBackend {
 
         let running = Arc::new(AtomicBool::new(false));
         let running_cb = running.clone();
-        let fade = FadeControl::new();
+        let fade = FadeControl::for_output();
         let mut fader = Fader::new(fade.clone(), sample_rate);
         let channels = channels as usize;
 

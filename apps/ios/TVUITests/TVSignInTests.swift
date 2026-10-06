@@ -28,6 +28,9 @@ final class TVSignInTests: XCTestCase {
         continueAfterFailure = false
         // Nothing here needs the local network; see `TVWalkTests`.
         app.launchEnvironment["KOAN_DEVICES__NEARBY"] = "false"
+        // Silent, and blind to UPnP renderers: tests share a machine with its owner.
+        app.launchEnvironment["KOAN_PLAYBACK__MUTED"] = "true"
+        app.launchEnvironment["KOAN_PLAYBACK__RENDERERS"] = "false"
         app.launch()
         XCTAssertTrue(app.buttons["Get a Code"].waitForExistence(timeout: 30), "a fresh install starts signed out")
         snap("\(route)-01-signed-out")

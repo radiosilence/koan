@@ -129,6 +129,12 @@ pub struct PlaybackConfig {
     pub renderer: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub renderer_name: Option<String>,
+    /// Look for UPnP renderers on the network. Off, none is found, so none
+    /// can be played to.
+    pub renderers: bool,
+    /// Play silence: the output runs as usual, with every sample zeroed. For
+    /// automated runs on a machine someone is using.
+    pub muted: bool,
     /// Album art width in terminal columns (default: 24).
     /// Height is always width/2 (square via halfblock rendering).
     pub art_size: u16,
@@ -202,6 +208,8 @@ impl Default for PlaybackConfig {
             output_device: None,
             renderer: None,
             renderer_name: None,
+            renderers: true,
+            muted: false,
             art_size: 24,
             rate_switch_lead_in_ms: 1000,
         }
@@ -753,6 +761,8 @@ pub fn layer_of(path: &str) -> Layer {
         | "playback.output_device"
         | "playback.renderer"
         | "playback.renderer_name"
+        | "playback.renderers"
+        | "playback.muted"
         | "playback.rate_switch_lead_in_ms"
         // Which machine serves Subsonic, and as whom. Enabling a REST API is a
         // decision about one host, and the secret guarding it is per-machine.

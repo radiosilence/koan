@@ -19,6 +19,9 @@ final class TVWalkTests: XCTestCase {
     override func setUp() async throws {
         continueAfterFailure = true
         app = XCUIApplication()
+        // Silent, and blind to UPnP renderers: tests share a machine with its owner.
+        app.launchEnvironment["KOAN_PLAYBACK__MUTED"] = "true"
+        app.launchEnvironment["KOAN_PLAYBACK__RENDERERS"] = "false"
         // The account, passed through from `just tv-walk`: the test runner
         // sees `TEST_RUNNER_KOAN_*` as `KOAN_*`, and the app sees nothing it
         // is not handed.
