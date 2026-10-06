@@ -2170,23 +2170,26 @@ async fn a_cross_site_renewal_through_the_proxy_is_refused() {
 /// refresh cookie from before proxy mode cannot keep a session going.
 #[tokio::test]
 async fn pages_say_when_the_proxy_renews_them() {
-    let page = |f: Fixture| async move {
-        send(
-            &f.app,
-            from_peer(authed(&f.state, "/albums"), "10.0.0.1")
-                .header("remote-user", "alice")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .body
-    };
-    assert!(
-        page(setup_behind_proxy())
-            .await
-            .contains("<body data-proxied>")
-    );
-    assert!(!page(setup(true)).await.contains("data-proxied"));
+    let f = setup_behind_proxy();
+    let r = send(
+        &f.app,
+        from_peer(authed(&f.state, "/albums"), "10.0.0.1")
+            .header("remote-user", "alice")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("<body data-proxied>"));
+
+    let f = setup(true);
+    let r = send(
+        &f.app,
+        authed(&f.state, "/albums").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(!r.body.contains("data-proxied"));
 }
 
 /// Off the proxy, a password sign-in keeps its refresh cookie.
