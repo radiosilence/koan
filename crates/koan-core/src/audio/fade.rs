@@ -381,21 +381,27 @@ mod tests {
                 .map(|i| (phase + std::f64::consts::TAU * 1000.0 * i as f64 / rate).sin() as f32)
                 .collect::<Vec<f32>>()
         };
-        let callback = |fader: &mut Fader, input: &[f32]| {
-            let take = fader.readable(input.len(), 1);
-            let mut out = input[..take].to_vec();
+        // One render callback: as much of `source` from `at` as the fader
+        // reads, ramped.
+        let callback = |fader: &mut Fader, source: &[f32], at: &mut usize, frames: usize| {
+            let take = fader.readable(frames, 1);
+            let mut out = source[*at..*at + take].to_vec();
+            *at += take;
             fader.apply(&mut out, 1);
             out
         };
 
         let old = FadeControl::new();
         let mut fader = Fader::new(old.clone(), rate);
-        let mut heard = callback(&mut fader, &sine(0.0, 480));
+        let playing = sine(0.0, 48000);
+        let mut at = 0;
+        // 492 frames: a quarter cycle past a whole one, so the fade starts at
+        // the peak, where a cut would be a step of 1.
+        let mut heard = callback(&mut fader, &playing, &mut at, 492);
         old.fade_out_quickly();
-        // Mid-waveform, near the peak: a cut here would be a step of 1.
         let mut tail = Vec::new();
         for _ in 0..20 {
-            tail.extend(callback(&mut fader, &sine(1.4, 512)));
+            tail.extend(callback(&mut fader, &playing, &mut at, 512));
             if old.is_silent() {
                 break;
             }
@@ -408,8 +414,8 @@ mod tests {
         let new = FadeControl::new();
         let mut fader = Fader::new(new.clone(), rate);
         new.fade_in_quickly(true);
-        let rise = callback(&mut fader, &sine(2.9, 2048));
-        heard.extend(rise);
+        let next = sine(2.9, 2048);
+        heard.extend(callback(&mut fader, &next, &mut 0, 2048));
 
         // The ramp's own slope adds a little where the sine is near its peak.
         let natural = (std::f64::consts::TAU * 1000.0 / rate) as f32 * 1.05;
@@ -425,7 +431,7 @@ mod tests {
         // Quick fades are for DSP changes only: a pause after one takes the
         // ordinary length.
         new.fade_out();
-        let pause = callback(&mut fader, &sine(0.0, 48000));
+        let pause = callback(&mut fader, &playing, &mut 0, 48000);
         assert_eq!(pause.len(), (rate * FADE_SECONDS) as usize);
     }
 }
