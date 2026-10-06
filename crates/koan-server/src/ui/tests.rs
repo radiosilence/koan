@@ -1990,7 +1990,7 @@ async fn a_header_from_the_proxy_naming_no_one_lets_no_session_through() {
         let r = send(
             &f.app,
             req.method("POST")
-                .uri("/auth/renew")
+                .uri("/ui/renew")
                 .header(header::ORIGIN, ORIGIN)
                 .body(Body::empty())
                 .unwrap(),
@@ -2073,7 +2073,7 @@ fn proxied_requests(user: &str) -> Vec<Request<Body>> {
             .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
             .body(Body::from("username=alice&password=hunter2"))
             .unwrap(),
-        from_proxy(Request::post("/auth/renew"))
+        from_proxy(Request::post("/ui/renew"))
             .body(Body::empty())
             .unwrap(),
     ]

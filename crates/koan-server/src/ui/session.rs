@@ -327,20 +327,12 @@ pub(super) async fn renew(
     State(s): State<UiState>,
     ClientIp(from): ClientIp,
     headers: HeaderMap,
-    ext: Extensions,
 ) -> Response {
     if !same_origin(&headers) {
         return cross_site();
     }
     if !s.auth_enabled {
         return StatusCode::NO_CONTENT.into_response();
-    }
-    let vouch = vouched(&s, &headers, &ext);
-    if vouch != Vouch::Absent {
-        return match proxied(&s, vouch).await {
-            Ok(access) => (StatusCode::NO_CONTENT, s.auth.proxied_cookies(&access)).into_response(),
-            Err(refused) => refused,
-        };
     }
     match rotate_from(&s, &headers, from).await {
         Some((access, refresh)) => (
@@ -349,6 +341,27 @@ pub(super) async fn renew(
         )
             .into_response(),
         None => StatusCode::UNAUTHORIZED.into_response(),
+    }
+}
+
+/// Keep an open page's session alive behind an authenticating proxy, which
+/// issues no refresh cookie: a fresh access cookie for the account the header
+/// names. The page asks here when `/auth/renew` cannot renew. A UI path, like
+/// `PROXY_RESUME`, so nothing under `/auth` reads the header.
+pub(super) async fn proxy_renew(
+    State(s): State<UiState>,
+    headers: HeaderMap,
+    ext: Extensions,
+) -> Response {
+    if !same_origin(&headers) {
+        return cross_site();
+    }
+    match vouched(&s, &headers, &ext) {
+        Vouch::Absent => StatusCode::UNAUTHORIZED.into_response(),
+        vouch => match proxied(&s, vouch).await {
+            Ok(access) => (StatusCode::NO_CONTENT, s.auth.proxied_cookies(&access)).into_response(),
+            Err(refused) => refused,
+        },
     }
 }
 

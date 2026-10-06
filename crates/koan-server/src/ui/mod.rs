@@ -224,6 +224,7 @@ pub fn router(
         .route("/login", sign_in)
         .route("/auth/resume", get(session::resume))
         .route(session::PROXY_RESUME, get(session::proxy_resume))
+        .route("/ui/renew", post(session::proxy_renew))
         .route("/auth/renew", post(session::renew))
         .route("/auth/signout", post(session::signout))
         .route("/ui/assets/{name}", get(ui_asset))
