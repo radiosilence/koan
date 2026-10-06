@@ -1812,8 +1812,8 @@ mod tests {
 
     // --- Proof, from the listening end -------------------------------------
 
+    use super::*;
     use crate::remote::link::LinkDeviceKey;
-    use crate::remote::proof;
 
     /// A listener "mac", signed in and holding a key list, with what it ran.
     struct Rig {
