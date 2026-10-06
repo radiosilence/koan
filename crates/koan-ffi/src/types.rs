@@ -1109,8 +1109,7 @@ pub struct DspTargetOption {
     /// What `dspChooseTarget` takes.
     pub id: String,
     pub name: String,
-    /// What it does, said against neutral; empty for neutral and one a
-    /// person added.
+    /// What it does, in a few plain words; empty for one a person added.
     pub does: String,
     /// What it sounds like, in a line; empty for one a person added.
     pub character: String,

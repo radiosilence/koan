@@ -32,7 +32,7 @@ pub enum Ear {
 pub struct Target {
     pub id: &'static str,
     pub name: &'static str,
-    /// What it does, said against neutral; empty for neutral itself.
+    /// What it does, in a few plain words: neutral, or what it adds.
     pub does: &'static str,
     /// What it sounds like, in a line.
     pub character: &'static str,
@@ -46,7 +46,7 @@ pub const TARGETS: &[Target] = &[
     Target {
         id: "diffuse-field-gras-kemar",
         name: "Neutral (diffuse field)",
-        does: "",
+        does: "flat, no preference",
         character: "Neutral: sound arriving evenly from every direction, as a room without reflections would give, with no bass or treble preference. Brighter than Harman.",
         ear: Ear::Over,
         data: include_str!("targets/diffuse-field-gras-kemar.csv"),
@@ -54,7 +54,7 @@ pub const TARGETS: &[Target] = &[
     Target {
         id: "harman-over-ear-2018",
         name: "Harman over-ear 2018",
-        does: "neutral plus preferred bass and treble",
+        does: "neutral plus Harman's bass shelf and brighter treble",
         character: "What most listeners in Harman's research preferred: a warm bass shelf, a forward upper midrange and a soft top end.",
         ear: Ear::Over,
         data: include_str!("targets/harman-over-ear-2018.csv"),
@@ -62,7 +62,7 @@ pub const TARGETS: &[Target] = &[
     Target {
         id: "harman-over-ear-2018-without-bass",
         name: "Harman over-ear 2018, no bass shelf",
-        does: "neutral plus preferred treble",
+        does: "Harman's treble, no extra bass",
         character: "Harman's curve with a flat low end: leaner bass, the same mids and treble.",
         ear: Ear::Over,
         data: include_str!("targets/harman-over-ear-2018-without-bass.csv"),
@@ -70,7 +70,7 @@ pub const TARGETS: &[Target] = &[
     Target {
         id: "oratory1990-over-ear",
         name: "oratory1990 over-ear",
-        does: "neutral plus oratory1990's preference",
+        does: "oratory1990's preference, close to Harman's",
         character: "oratory1990's target for over-ears, close to Harman's.",
         ear: Ear::Over,
         data: include_str!("targets/oratory1990-over-ear.csv"),
@@ -78,7 +78,7 @@ pub const TARGETS: &[Target] = &[
     Target {
         id: "diffuse-field-iso-11904-1",
         name: "Neutral (diffuse field)",
-        does: "",
+        does: "flat, no preference",
         character: "Neutral: the ear's response to sound arriving evenly from every direction (ISO 11904-1), with no bass or treble preference.",
         ear: Ear::In,
         data: include_str!("targets/diffuse-field-iso-11904-1.csv"),
@@ -86,7 +86,7 @@ pub const TARGETS: &[Target] = &[
     Target {
         id: "harman-in-ear-2019",
         name: "Harman in-ear 2019",
-        does: "neutral plus preferred bass and treble",
+        does: "neutral plus Harman's bass shelf and brighter treble",
         character: "Harman's in-ear preference target: a bigger bass shelf than over-ear, and more treble.",
         ear: Ear::In,
         data: include_str!("targets/harman-in-ear-2019.csv"),
@@ -94,7 +94,7 @@ pub const TARGETS: &[Target] = &[
     Target {
         id: "harman-in-ear-2019-without-bass",
         name: "Harman in-ear 2019, no bass shelf",
-        does: "neutral plus preferred treble",
+        does: "Harman's treble, no extra bass",
         character: "Harman's in-ear curve with a flat low end.",
         ear: Ear::In,
         data: include_str!("targets/harman-in-ear-2019-without-bass.csv"),
@@ -102,7 +102,7 @@ pub const TARGETS: &[Target] = &[
     Target {
         id: "autoeq-in-ear",
         name: "AutoEQ in-ear",
-        does: "neutral plus AutoEQ's preference",
+        does: "AutoEQ's own in-ear neutral",
         character: "AutoEQ's own in-ear target.",
         ear: Ear::In,
         data: include_str!("targets/autoeq-in-ear.csv"),
@@ -110,7 +110,7 @@ pub const TARGETS: &[Target] = &[
     Target {
         id: "oratory1990-in-ear",
         name: "oratory1990 in-ear",
-        does: "neutral plus oratory1990's preference",
+        does: "oratory1990's preference",
         character: "oratory1990's target for in-ears.",
         ear: Ear::In,
         data: include_str!("targets/oratory1990-in-ear.csv"),

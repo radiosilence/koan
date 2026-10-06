@@ -440,7 +440,7 @@ pub struct TargetChoices {
 pub struct TargetChoice {
     pub id: String,
     pub name: String,
-    /// What it does, said against neutral; empty for neutral and one added.
+    /// What it does, in a few plain words; empty for one added.
     pub does: String,
     /// What it sounds like; empty for one added.
     pub character: String,

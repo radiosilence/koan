@@ -339,8 +339,29 @@ struct RoleTag: View {
 }
 
 extension DspTargetOption {
-    /// Its name, and what it does against neutral where it does more.
+    /// Its name, and what it does in a few plain words.
     var label: String { does.isEmpty ? name : "\(name): \(does)" }
+}
+
+/// A target in a picker: on a phone, its name with what it does beneath, in
+/// a list of its own; on the Mac, both in the menu's one line.
+struct TargetRow: View {
+    let target: DspTargetOption
+
+    var body: some View {
+        #if os(macOS)
+        Text(target.label)
+        #else
+        VStack(alignment: .leading, spacing: 2) {
+            Text(target.name)
+            if !target.does.isEmpty {
+                Text(target.does)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        #endif
+    }
 }
 
 /// What a profile is for, and for a correction, the target it corrects to:
@@ -375,9 +396,12 @@ private struct RoleSection: View {
                         set: { id in dsp.chooseTarget(detail.name, id == madeFor ? nil : id) }
                     )) {
                         ForEach(targets.choices, id: \.id) { c in
-                            Text(c.label).tag(c.id)
+                            TargetRow(target: c).tag(c.id)
                         }
                     }
+                    #if os(iOS)
+                    .pickerStyle(.navigationLink)
+                    #endif
                     if let c = targets.choices.first(where: { $0.id == current }), !c.character.isEmpty {
                         Text(c.character)
                             .font(.callout)
@@ -394,9 +418,12 @@ private struct RoleSection: View {
                     )) {
                         Text("Unknown").tag("")
                         ForEach(madeForChoices, id: \.id) { t in
-                            Text(t.label).tag(t.id)
+                            TargetRow(target: t).tag(t.id)
                         }
                     }
+                    #if os(iOS)
+                    .pickerStyle(.navigationLink)
+                    #endif
                 }
             }
         } header: {
