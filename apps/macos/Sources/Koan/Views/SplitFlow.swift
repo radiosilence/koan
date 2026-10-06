@@ -69,6 +69,10 @@ struct SplitFlow: View {
                             .koanText(.meta, .bad)
                     }
                 }
+                Section {
+                    Text("Split makes “\(name) correction” and “\(name) tuning”. The outputs that play \(name) will play the correction with the tuning on top, and \(name) itself is kept.")
+                        .koanText(.meta, .muted)
+                }
             }
             .navigationTitle("Split \(name)")
             .toolbar {

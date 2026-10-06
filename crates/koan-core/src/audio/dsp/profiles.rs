@@ -1414,6 +1414,23 @@ fn split(name: &str, text: &str, target: &str, rate: u32) -> Result<Split, Strin
             "{name} has impulse responses: only an EQ splits into a correction and a tuning"
         ));
     }
+    // What is split is one EQ, the same on every channel: a stack or group
+    // would lose its layers, and a mix, a delay or one side's bands would be
+    // folded into a curve for both.
+    if !p.layers.is_empty() || p.group {
+        return Err(format!(
+            "{name} plays other profiles: split the baked one among them instead"
+        ));
+    }
+    if p.filters.iter().any(|f| match f {
+        DspFilter::Band(b) => !b.channels.is_empty(),
+        DspFilter::Graphic(g) => !g.channels.is_empty(),
+        DspFilter::Mix(_) | DspFilter::Delay(_) => true,
+    }) {
+        return Err(format!(
+            "{name} treats its channels differently: only an EQ the same on every channel splits"
+        ));
+    }
     let measured = read_measurement(text)?;
     let aim = targets::choice_curve(target).ok_or_else(|| format!("No target {target}"))?;
     let freqs = targets::grid();
@@ -1426,7 +1443,15 @@ fn split(name: &str, text: &str, target: &str, rate: u32) -> Result<Split, Strin
     );
     let curve =
         |db: &[f64]| -> targets::Curve { freqs.iter().copied().zip(db.iter().copied()).collect() };
-    let taste = targets::difference(&curve(&correction), &curve(&original));
+    // The taste is what the EQ does beyond target minus measurement whole,
+    // its treble too, so it carries to other headphones; the correction
+    // saved holds the treble back where measurements disagree.
+    let neutral = super::response(
+        &[DspFilter::Graphic(targets::difference(&measured, &aim))],
+        &freqs,
+        rate,
+    );
+    let taste = targets::difference(&curve(&neutral), &curve(&original));
     let tuning = super::response(&[DspFilter::Graphic(taste.clone())], &freqs, rate);
     Ok(Split {
         taste,
@@ -1483,28 +1508,56 @@ pub fn split_baked(
         .find(|p| p.name == name)
         .map(|p| p.devices.clone())
         .unwrap_or_default();
-    let correction = save_measured(&free_name(&format!("{name} correction")), text, ear, target)?;
+    let mut correction =
+        measured_profile(&free_name(&format!("{name} correction")), text, ear, target)?;
     let tuning = free_name(&format!("{name} tuning"));
-    persist(|cfg| {
+    let made = (correction.name.clone(), tuning.clone());
+    // One write: both profiles, and every output moved to them, or nothing.
+    correction.devices = devices.clone();
+    let written = persist(|cfg| {
+        for p in &mut cfg.dsp.profiles {
+            p.devices.retain(|d| !devices.contains(d));
+        }
+        cfg.dsp.tunings.retain(|t| !devices.contains(&t.device));
+        cfg.dsp
+            .tunings
+            .extend(devices.iter().map(|d| crate::config::DspOutputTuning {
+                device: d.clone(),
+                tuning: tuning.clone(),
+            }));
+        cfg.dsp.profiles.push(correction);
         cfg.dsp.profiles.push(DspProfile {
             name: tuning.clone(),
             filters: vec![crate::config::DspFilter::Graphic(s.taste)],
             role: Some(DspRole::Tuning),
             tuned_for: Some(target.to_owned()),
             ..Default::default()
-        })
-    })?;
-    for device in devices {
-        assign(Some(&correction), &device)?;
-        set_tuning(&device, Some(&tuning))?;
+        });
+    });
+    if written.is_err() {
+        let _ = std::fs::remove_dir_all(dir(&made.0));
     }
-    Ok((correction, tuning))
+    written.map(|()| made)
 }
 
 /// Save a correction built from a measurement: the headphone `name`,
 /// measured as `text`, corrected to `target`. A correction, kept everywhere
 /// like any headphone's.
 pub fn save_measured(name: &str, text: &str, ear: DspEar, target: &str) -> Result<String, String> {
+    let profile = measured_profile(name, text, ear, target)?;
+    let name = profile.name.clone();
+    persist(|cfg| cfg.dsp.profiles.push(profile))?;
+    Ok(name)
+}
+
+/// The profile `save_measured` keeps, its measurement written to its folder
+/// and the profile itself not yet.
+fn measured_profile(
+    name: &str,
+    text: &str,
+    ear: DspEar,
+    target: &str,
+) -> Result<DspProfile, String> {
     use super::targets;
     let name = name.trim();
     if name.is_empty() {
@@ -1527,18 +1580,15 @@ pub fn save_measured(name: &str, text: &str, ear: DspEar, target: &str) -> Resul
         targets::on_grid(&measured),
     )
     .map_err(|e| e.to_string())?;
-    persist(|cfg| {
-        cfg.dsp.profiles.push(DspProfile {
-            name: name.to_owned(),
-            role: Some(DspRole::Correction),
-            measurement: Some(DspMeasurement {
-                ear,
-                target: target.to_owned(),
-            }),
-            ..Default::default()
-        })
-    })?;
-    Ok(name.to_owned())
+    Ok(DspProfile {
+        name: name.to_owned(),
+        role: Some(DspRole::Correction),
+        measurement: Some(DspMeasurement {
+            ear,
+            target: target.to_owned(),
+        }),
+        ..Default::default()
+    })
 }
 
 /// Make `name` a stack of `layers`, in order, creating it if there is none.
@@ -2542,12 +2592,16 @@ mod tests {
         config::set_config_dir(dir.path());
         let mut text = String::from("frequency,raw\n");
         for hz in targets::grid() {
-            let peak = 6.0 * (-(hz / 3000.0).log2().powi(2) / 0.1).exp();
-            text.push_str(&format!("{hz:.2},{:.2}\n", 90.0 + peak));
+            let peak = |at: f64, db: f64| db * (-(hz / at).log2().powi(2) / 0.1).exp();
+            text.push_str(&format!(
+                "{hz:.2},{:.2}\n",
+                90.0 + peak(3000.0, 6.0) + peak(8000.0, 5.0)
+            ));
         }
         let target = "harman-in-ear-2019";
         let measured = read_measurement(&text).unwrap();
-        let correction = targets::correction(&measured, &targets::choice_curve(target).unwrap());
+        // As a squig.link export bakes it: target minus measurement whole.
+        let correction = targets::difference(&measured, &targets::choice_curve(target).unwrap());
         persist(|c| {
             c.dsp.profiles.push(DspProfile {
                 name: "Lush".into(),
@@ -2567,6 +2621,8 @@ mod tests {
         let tuning = r.tuning.as_ref().unwrap();
         assert!((at(tuning, 80.0) - 3.0).abs() < 1.0, "{}", at(tuning, 80.0));
         assert!(at(tuning, 3000.0).abs() < 0.7, "{}", at(tuning, 3000.0));
+        // The headphones' treble is the correction's, not the taste's.
+        assert!(at(tuning, 8000.0).abs() < 1.0, "{}", at(tuning, 8000.0));
         let original = r.original.as_ref().unwrap();
         for hz in [50.0, 200.0, 1000.0, 4000.0] {
             assert!((at(&r.total, hz) - at(original, hz)).abs() < 1.0, "{hz} Hz");
@@ -2587,6 +2643,37 @@ mod tests {
         let played = super::super::chain(&chain.profile, &chain.all, &mut Vec::new()).unwrap();
         assert_eq!(played.len(), 2);
         assert!(split_baked("Lush", &text, DspEar::In, "made-up").is_err());
+
+        // One EQ the same on every channel splits; nothing else does.
+        let stack = |c: &mut Config| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Stack".into(),
+                layers: vec![crate::config::DspLayer {
+                    profile: "Lush".into(),
+                    on: true,
+                }],
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Left".into(),
+                filters: vec![DspFilter::Band(crate::config::EqFilter {
+                    kind: crate::config::EqFilterKind::Peaking,
+                    freq: 100.0,
+                    gain_db: 2.0,
+                    q: 1.0,
+                    channels: vec![0],
+                })],
+                ..Default::default()
+            });
+        };
+        persist(stack).unwrap();
+        let refused = preview_split("Stack", &text, target, 48_000).unwrap_err();
+        assert!(refused.contains("plays other profiles"), "{refused}");
+        let refused = preview_split("Left", &text, target, 48_000).unwrap_err();
+        assert!(
+            refused.contains("treats its channels differently"),
+            "{refused}"
+        );
     }
 
     /// An output plays its tuning on top of its correction, with the

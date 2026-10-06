@@ -508,7 +508,7 @@ private struct RoleSection: View {
                 #endif
             }
             #if !os(tvOS)
-            if detail.role == .baked, detail.impulses.isEmpty {
+            if detail.role == .baked, detail.impulses.isEmpty, detail.layers.isEmpty {
                 Button("Split into Correction + Tuning…") { splitting = true }
             }
             #endif
