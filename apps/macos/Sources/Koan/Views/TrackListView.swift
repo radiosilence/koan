@@ -22,6 +22,7 @@ struct TrackListView: View {
     @Environment(LibraryModel.self) private var library
     @Environment(\.horizontalSizeClass) private var width
     @State private var selection: Set<Int64> = []
+    @State private var headerShown = true
     #if os(macOS)
     @Environment(EngineMirror.self) private var mirror
     @Environment(CoverArtCache.self) private var art
@@ -34,12 +35,24 @@ struct TrackListView: View {
     @AppStorage("graphics") private var graphics = Graphics.full
     #endif
 
+    /// Whether the header scrolls with the tracks, as on a phone, where a
+    /// fixed one would take a third of the screen from the list.
+    private var headerScrolls: Bool {
+        #if os(iOS)
+        width == .compact && !tracks.isEmpty
+        #else
+        false
+        #endif
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            header
-                .padding(.horizontal, 24)
-                .padding(.top, 18)
-                .padding(.bottom, 16)
+            if !headerScrolls {
+                header
+                    .padding(.horizontal, 24)
+                    .padding(.top, 18)
+                    .padding(.bottom, 16)
+            }
 
             if tracks.isEmpty {
                 EmptyState(icon: "music.note.list", title: emptyTitle)
@@ -124,6 +137,15 @@ struct TrackListView: View {
                     // would allocate a fresh copy of the whole thing for each one.
                     let allTrackIds = tracks.map(\.id)
                     List(selection: $selection) {
+                        if headerScrolls {
+                            header
+                                .padding(.vertical, KoanTheme.Space.s)
+                                .listRowSeparator(.hidden)
+                                .selectionDisabled()
+                                .washedRow()
+                                .onAppear { headerShown = true }
+                                .onDisappear { headerShown = false }
+                        }
                         ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
                             TrackRow(
                                 track: track,
@@ -137,6 +159,19 @@ struct TrackListView: View {
                     }
                     .insetList()
                     .washedGround()
+                    #if os(iOS)
+                    // The title moves into the bar once the header has
+                    // scrolled away.
+                    .toolbar {
+                        if headerScrolls && !headerShown {
+                            ToolbarItem(placement: .principal) {
+                                Text(Format.title(title))
+                                    .font(.role(.control, system: .headline))
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+                    #endif
 
                     // The List's own double-click hook. Wired into selection
                     // rather than the gesture system, so it doesn't steal the
@@ -214,7 +249,8 @@ struct TrackListView: View {
             // anywhere else in either app.
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            HStack(alignment: .bottom, spacing: 18) {
+            // Top-aligned: the sleeve's top edge meets the title's first line.
+            HStack(alignment: .top, spacing: 18) {
                 sleeve
                 titleBlock
                 Spacer(minLength: 0)
@@ -222,10 +258,15 @@ struct TrackListView: View {
         }
     }
 
+    /// Smaller on a phone, where it sits above the title rather than beside.
+    private var sleeveSize: CGFloat {
+        width == .compact ? Columns.compactSleeve : Columns.sleeve
+    }
+
     @ViewBuilder private var sleeve: some View {
         if let artwork {
             AlbumArtwork(source: artwork, cornerRadius: KoanTheme.radius(8))
-                .frame(width: Columns.sleeve, height: Columns.sleeve)
+                .frame(width: sleeveSize, height: sleeveSize)
                 .koanShadow(0.3, radius: 10, y: 4)
                 .showsArtworkFullSize(
                     source: artwork,
@@ -464,12 +505,14 @@ private enum Columns {
     static let duration = 96.0
     static let headerGap = 32.0
     static let sleeve = 260.0
+    static let compactSleeve = 260.0
     static let title = 48.0
     #else
     static let quality = 92.0
     static let duration = 48.0
     static let headerGap = 12.0
     static let sleeve = 132.0
+    static let compactSleeve = 96.0
     static let title = 26.0
     #endif
 }

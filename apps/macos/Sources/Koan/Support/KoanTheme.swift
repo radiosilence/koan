@@ -1401,7 +1401,10 @@ private struct KoanFormRole: ViewModifier {
             content
             #else
             // Rows give up their ground through `washedRow`, on the content.
-            content.scrollContentBackground(.hidden)
+            content
+                .scrollContentBackground(.hidden)
+                .font(.koan(.body))
+                .foregroundStyle(Color.koanInk)
             #endif
         } else {
             content.formStyle(.grouped)

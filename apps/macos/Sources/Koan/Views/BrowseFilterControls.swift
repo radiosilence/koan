@@ -49,6 +49,7 @@ struct BrowseFilterButton: View {
                         }
                     }
             }
+            .koanSheet()
             .presentationDetents([.medium, .large])
         }
         #endif

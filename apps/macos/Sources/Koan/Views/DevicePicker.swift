@@ -433,7 +433,7 @@ private struct SectionHeading: View {
             if let move {
                 Button("Move here", action: move)
                     .font(.role(.fine, system: .caption))
-                    .buttonStyle(.bordered)
+                    .koanButton(.standard, system: .bordered)
                     .controlSize(.small)
                     .help("Bring what the other device is playing back here")
             }
@@ -531,7 +531,7 @@ private struct DeviceChoiceRow: View {
             if canMove {
                 Button("Move here", action: onMove)
                     .font(.role(.fine, system: .caption))
-                    .buttonStyle(.bordered)
+                    .koanButton(.standard, system: .bordered)
                     .controlSize(.small)
                     .help("Send what is playing to \(name), and control it there")
             }
@@ -718,6 +718,7 @@ extension View {
     func controlSheet(isPresented: Binding<Bool>) -> some View {
         sheet(isPresented: isPresented) {
             ScrollView { ControlPicker() }
+                .koanSheet()
                 .presentationDetents([.medium, .large])
                 .sheetGrabber()
         }
@@ -726,6 +727,7 @@ extension View {
     func outputSheet(isPresented: Binding<Bool>) -> some View {
         sheet(isPresented: isPresented) {
             ScrollView { OutputPicker() }
+                .koanSheet()
                 .presentationDetents([.medium, .large])
                 .sheetGrabber()
         }

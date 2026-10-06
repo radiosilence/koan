@@ -1009,6 +1009,7 @@ private struct AutoEqSearch: View {
             .navigationTitle(KoanTheme.label("AutoEQ"))
             .sheet(isPresented: $measuring) {
                 MeasurementFlow(dsp: dsp, name: query) { _ in dismiss() }
+                    .koanSheet()
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -1084,7 +1085,7 @@ private struct ProfileRow: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(profile.name)
                     RoleTag(role: ProfileRole(profile.role))
                 }
