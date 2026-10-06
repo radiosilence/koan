@@ -336,14 +336,15 @@ fn words(name: &str) -> Vec<String> {
 
 /// Headphones whose model name alone, without the maker, says which one it
 /// is, as their own Bluetooth names give it: "WH-1000XM4", "Jo's AirPods Max".
-/// Each model is one AutoEQ entry and names its generation. Left out on
+/// Each model is one AutoEQ entry, under exactly this name, and names its
+/// generation; a model AutoEQ lists only by its modes (the AirPods Pro 2's
+/// ANC and transparency) is not one. Left out on
 /// purpose: plain "AirPods" and "AirPods Pro", which every generation calls
 /// itself, so the name cannot say which correction fits; and models whose
 /// devices go by an abbreviation the index does not use ("Bose QC45").
 const MAKERLESS: &[&str] = &[
     "Apple AirPods 4",
     "Apple AirPods Max",
-    "Apple AirPods Pro 2",
     "Samsung Galaxy Buds2",
     "Samsung Galaxy Buds2 Pro",
     "Samsung Galaxy Buds3",
@@ -789,7 +790,8 @@ Filter 3: ON PK Fc 118 Hz Gain -3.1 dB Q 0.50
         // Models that say which they are without the maker.
         assert_eq!(named("WH-1000XM4"), Some(("Sony WH-1000XM4", "b")));
         assert_eq!(named("Jo's AirPods Max"), Some(("Apple AirPods Max", "a")));
-        assert_eq!(named("AirPods Pro 2"), Some(("Apple AirPods Pro 2", "a")));
+        // Not on the list: AutoEQ has only its modes, never the plain model.
+        assert_eq!(named("AirPods Pro 2"), None);
         // Every generation calls itself these.
         assert_eq!(named("Jo's AirPods Pro"), None);
         assert_eq!(named("AirPods"), None);

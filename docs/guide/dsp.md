@@ -55,8 +55,8 @@ worse than none: a name with a generation the index lacks ("Apple AirPods
 Pro 3") is offered nothing, and so are audio interfaces and DACs whose model
 happens to share a headphone's ("MOTU M2", "Hugo 2"). A short list of models
 that name their own generation may leave the maker out, as their Bluetooth
-names do: Sony's WH-1000X and WF-1000X lines and LinkBuds, AirPods Max,
-AirPods 4 and AirPods Pro 2, and Samsung's Galaxy Buds2 and Buds3. Plain
+names do: Sony's WH-1000X and WF-1000X lines and LinkBuds, AirPods Max and
+AirPods 4, and Samsung's Galaxy Buds2 and Buds3. Plain
 "AirPods" and "AirPods Pro" are not on it, since every generation calls
 itself that. Find in AutoEQ… covers the rest. Nothing is
 applied until you choose to, and turning the offer down for a device is
