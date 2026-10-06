@@ -98,6 +98,9 @@ struct SettingsView: View {
                         DevicesSettings(model: model)
                             .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                     }
+                    pane("Appearance", "paintpalette") {
+                        AppearanceSettings()
+                    }
                     Section {} footer: {
                         Text(AppVersion.text)
                             .koanText(.fine, .muted)
