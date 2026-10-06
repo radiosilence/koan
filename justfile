@@ -849,8 +849,8 @@ tv-walk library="": (tv-ffi "appletvsimulator") ios-project
         url=$(just _demo-server "{{library}}" "$out")
         cleanup+=("just _demo-server-stop '$out'")
         export KOAN_REMOTE__ENABLED=true KOAN_REMOTE__URL=$url KOAN_REMOTE__USERNAME=owner \
-            KOAN_REMOTE__PASSWORD=$(cat "$out/server.password")
-        unset KOAN_REMOTE__API_KEY
+            KOAN_REMOTE__API_KEY=$(cat "$out/server.key")
+        unset KOAN_REMOTE__PASSWORD
         export KOAN_WALK_SEARCH=${KOAN_WALK_SEARCH:-Harbour}
     fi
     sim=$(xcrun simctl list devices available -j \
@@ -874,7 +874,8 @@ tv-walk library="": (tv-ffi "appletvsimulator") ios-project
 
 # A throwaway koan for the simulator recipes: `library` (or nothing) served on
 # a free port from a configuration of its own, with an owner account whose
-# password lands in `out`/server.password. Prints the server's address.
+# password lands in `out`/server.password and an API key in server.key. Prints
+# the server's address.
 # `_demo-server-stop` ends it.
 _demo-server library out:
     #!/usr/bin/env bash
@@ -890,6 +891,10 @@ _demo-server library out:
         nohup target/debug/koan --headless --port "$port" >"{{out}}/server.log" 2>&1 &
     echo "$! $dir" > "{{out}}/server.pid"
     echo "$password" > "{{out}}/server.password"
+    # A key as well: a koan server refuses token auth with a password, which is
+    # all an account given through the environment can use.
+    KOAN_CONFIG_DIR=$dir target/debug/koan auth api-key create --username owner --name simulator </dev/null 2>/dev/null \
+        | sed 's/\x1b\[[0-9;]*m//g' | awk 'NF == 1 && length($1) > 30 { print $1 }' > "{{out}}/server.key"
     for _ in $(seq 60); do
         curl -sf "http://127.0.0.1:$port/rest/ping?f=json" >/dev/null && break
         sleep 0.5
@@ -900,7 +905,7 @@ _demo-server-stop out:
     #!/usr/bin/env bash
     read -r pid dir < "{{out}}/server.pid" || exit 0
     kill "$pid" 2>/dev/null || true
-    rm -rf "$dir" "{{out}}/server.pid" "{{out}}/server.password"
+    rm -rf "$dir" "{{out}}/server.pid" "{{out}}/server.password" "{{out}}/server.key"
 
 # Clear the configuration as tvOS does when it runs short of space, and check
 # the television is still signed in. Plants a sign-in in the simulator's copy
