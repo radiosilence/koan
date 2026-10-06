@@ -609,6 +609,7 @@ private struct PlaybackSettings: View {
 private struct DspSettings: View {
     @Environment(AppState.self) private var app
     @State private var importing = false
+    @State private var findingAutoEq = false
     /// The profile whose page is open, on the Mac, where settings has no
     /// navigation stack to push it onto.
     @State private var showing: String?
@@ -633,6 +634,11 @@ private struct DspSettings: View {
                     }
                     .disabled(!o.enabled)
                 }
+                #if !os(tvOS)
+                if let s = dsp.suggestion, o.device != nil {
+                    AutoEqSuggestion(entry: s, dsp: dsp)
+                }
+                #endif
                 ForEach(o.profiles, id: \.name) { p in
                     #if os(iOS)
                     NavigationLink {
@@ -660,6 +666,7 @@ private struct DspSettings: View {
             // imported on another device, and the TV picks them by output.
             #if !os(tvOS)
             Button("Import…") { importing = true }
+            Button("Find in AutoEQ…") { findingAutoEq = true }
             #endif
             if let error = dsp.lastError {
                 Text(error)
@@ -669,7 +676,7 @@ private struct DspSettings: View {
         } header: {
             Text("EQ and convolution")
         } footer: {
-            Text("AutoEQ and Equalizer APO text, impulse WAVs, Roon zips, Convolver .cfg and CamillaDSP configs. Importing into a profile of the same name adds to it. An output without a profile plays untouched.")
+            Text("AutoEQ and Equalizer APO text, impulse WAVs, Roon zips, Convolver .cfg and CamillaDSP configs, or a headphone found in AutoEQ by name. Importing into a profile of the same name adds to it. An output without a profile plays untouched.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
@@ -683,6 +690,11 @@ private struct DspSettings: View {
             }
         }
         .task { dsp.reload() }
+        #if !os(tvOS)
+        .sheet(isPresented: $findingAutoEq) {
+            AutoEqSearch(dsp: dsp)
+        }
+        #endif
         #if os(macOS)
         .sheet(item: Binding(
             get: { showing.map(ShownProfile.init) },
@@ -701,6 +713,85 @@ private struct DspSettings: View {
         #endif
     }
 }
+
+#if !os(tvOS)
+/// The output in use, recognised by its name as a headphone AutoEQ has
+/// measured. Offered once, quietly; nothing is applied until asked.
+private struct AutoEqSuggestion: View {
+    let entry: AutoEqEntry
+    let dsp: DspModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("AutoEQ has a profile for \(entry.name). Use it?")
+                .foregroundStyle(.secondary)
+            HStack {
+                Button("Use") { dsp.installAutoEq(entry) }
+                Button("Not for This Device") { dsp.dismissSuggestion() }
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .buttonStyle(.borderless)
+        }
+        .font(.callout)
+    }
+}
+
+/// AutoEQ's results by headphone name. Choosing one installs it and plays the
+/// output in use through it.
+private struct AutoEqSearch: View {
+    let dsp: DspModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+
+    var body: some View {
+        NavigationStack {
+            List(dsp.autoEqResults, id: \.profileName) { entry in
+                Button {
+                    dsp.installAutoEq(entry)
+                    dismiss()
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(entry.name)
+                        Text(entry.measuredBy)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .overlay {
+                if query.isEmpty {
+                    ContentUnavailableView(
+                        "Find in AutoEQ",
+                        systemImage: "headphones",
+                        description: Text("Type a headphone's name. Where several people measured it, the first is the one AutoEQ recommends.")
+                    )
+                } else if dsp.autoEqResults.isEmpty {
+                    ContentUnavailableView.search(text: query)
+                }
+            }
+            .searchable(text: $query, prompt: "Headphone")
+            .navigationTitle("AutoEQ")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+            // Debounced: a search runs once typing pauses, not per keystroke.
+            .task(id: query) {
+                try? await Task.sleep(for: .milliseconds(250))
+                guard !Task.isCancelled else { return }
+                await dsp.searchAutoEq(query)
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 420, minHeight: 460)
+        #endif
+    }
+}
+#endif
 
 private struct ShownProfile: Identifiable {
     let name: String

@@ -24,6 +24,11 @@ final class DspModel {
     var lastError: String?
     /// An import waiting on the rate of what it was given.
     var needsRate: Pending?
+    /// AutoEQ's results for the last search.
+    private(set) var autoEqResults: [AutoEqEntry] = []
+    /// AutoEQ's profile for the output in use, by its name, while the output
+    /// has none and the offer has not been turned down.
+    private(set) var suggestion: AutoEqEntry?
 
     enum Pending {
         case files([URL], name: String?)
@@ -35,7 +40,10 @@ final class DspModel {
     }
 
     func reload() {
-        Task { overview = await engine.dspOverview() }
+        Task {
+            overview = await engine.dspOverview()
+            suggestion = await engine.autoeqSuggestion()
+        }
     }
 
     /// The route changed: what the Now Playing preset names and assigns to
@@ -94,6 +102,41 @@ final class DspModel {
     private func changed() async {
         overview = await engine.dspOverview()
         version += 1
+    }
+
+    // MARK: - AutoEQ
+
+    /// Search AutoEQ by headphone name. The view debounces; this runs once
+    /// per settled query.
+    func searchAutoEq(_ query: String) async {
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else {
+            autoEqResults = []
+            return
+        }
+        do {
+            autoEqResults = try await engine.autoeqSearch(query: trimmed, limit: 40)
+            lastError = nil
+        } catch {
+            lastError = SettingsModel.describe(error)
+        }
+    }
+
+    /// Install `entry` as a profile and play the output in use through it.
+    func installAutoEq(_ entry: AutoEqEntry) {
+        let device = overview?.device
+        act {
+            _ = try await $0.autoeqInstall(
+                name: entry.name, measuredBy: entry.measuredBy, device: device
+            )
+        }
+        suggestion = nil
+    }
+
+    /// Stop offering AutoEQ's profile for the output in use.
+    func dismissSuggestion() {
+        suggestion = nil
+        act { try await $0.autoeqDismiss() }
     }
 
     // MARK: - Choosing

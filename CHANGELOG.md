@@ -4,6 +4,7 @@
 
 ### Added
 
+- **AutoEQ in the apps.** *Find in AutoEQ…* in the Mac and iOS apps' EQ settings searches AutoEQ by headphone name and installs a result for the output in use. An output whose name says which headphone it is, as Bluetooth headphones' names often do, is offered AutoEQ's profile for it; the offer can be turned down per device.
 - **AutoEQ search from the command line.** `koan dsp autoeq search` finds a headphone in AutoEQ's index by name, and `koan dsp autoeq install` saves its parametric EQ as a profile, optionally for an output device. The index is kept beside the config and refreshed at most daily.
 - **`playback.muted` and `playback.renderers`.** Muted, playback runs as usual and plays silence; with renderers off, no UPnP renderer is looked for. The iOS and tvOS UI tests set both, so a walk on a shared machine is not heard through its speakers and cannot reach a renderer on its network.
 

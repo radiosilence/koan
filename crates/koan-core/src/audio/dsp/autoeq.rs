@@ -8,11 +8,14 @@
 //! file handed over by hand.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+
+use parking_lot::Mutex;
 
 use super::import::{self, Imported};
 use super::profiles;
-use crate::config;
+use crate::config::{self, Config};
 
 const RESULTS: &str = "https://raw.githubusercontent.com/jaakkopasanen/AutoEq/master/results";
 
@@ -176,9 +179,31 @@ const INDEX_CAP: u64 = 8 << 20;
 /// The largest ParametricEQ.txt accepted. They are about 1 KB.
 const PARAMETRIC_CAP: u64 = 64 << 10;
 
+/// The index as last read, and when, so a search per keystroke does not
+/// read and parse 850 KB each time.
+static READ: Mutex<Option<(SystemTime, Arc<Vec<Entry>>)>> = Mutex::new(None);
+
 /// AutoEQ's index, as `freshness` allows. The copy kept is used whenever
 /// GitHub does not answer, or answers with something that is not an index.
-pub fn index(freshness: Freshness) -> Result<Vec<Entry>, String> {
+pub fn index(freshness: Freshness) -> Result<Arc<Vec<Entry>>, String> {
+    if let Some((at, entries)) = READ.lock().as_ref() {
+        let fresh = match freshness {
+            Freshness::Daily => SystemTime::now()
+                .duration_since(*at)
+                .is_ok_and(|age| age < FRESH_FOR),
+            Freshness::Refresh => false,
+            Freshness::Kept => true,
+        };
+        if fresh {
+            return Ok(entries.clone());
+        }
+    }
+    let entries = Arc::new(read_index(freshness)?);
+    *READ.lock() = Some((SystemTime::now(), entries.clone()));
+    Ok(entries)
+}
+
+fn read_index(freshness: Freshness) -> Result<Vec<Entry>, String> {
     let dir = cache_dir();
     let file = dir.join("INDEX.md");
     let etag_file = dir.join("INDEX.etag");
@@ -284,6 +309,76 @@ fn fetch_index(etag: Option<&str>) -> Result<Fetched, String> {
         .map(str::to_owned);
     let text = body(resp, INDEX_CAP)?;
     Ok(Fetched::New { text, etag })
+}
+
+/// The lowercase letters-and-digits runs of a name: `WH-1000XM4` →
+/// `wh`, `1000xm4`.
+fn words(name: &str) -> Vec<String> {
+    name.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
+
+fn contains_run(haystack: &[String], needle: &[String]) -> bool {
+    !needle.is_empty() && haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+/// The entry an output device is, judged from its name alone, or `None`
+/// unless the match is beyond doubt. The device's name must hold the
+/// headphone's whole name as a run of words, or the whole name less its
+/// first word (the maker, which "AirPods Pro" and "WH-1000XM4" leave out)
+/// when what remains is distinctive: two words or more, or one with a digit
+/// in it. A single plain word ("AirPods", "Pro") is never enough, nor is a
+/// variant's qualifier left unmentioned, so "Sony WH-1000XM4" does not match
+/// "WH-1000XM4 (ANC off)". The longest name matched wins, and between
+/// sources AutoEQ's preferred one.
+pub fn suggest<'a>(entries: &'a [Entry], device: &str) -> Option<&'a Entry> {
+    let device = words(device);
+    let mut best: Option<(usize, &Entry)> = None;
+    for e in entries {
+        let name = words(&e.name);
+        let model = name.get(1..).unwrap_or_default();
+        let distinctive =
+            model.len() >= 2 || model.iter().any(|w| w.chars().any(|c| c.is_ascii_digit()));
+        let matched = if contains_run(&device, &name) {
+            name.len()
+        } else if distinctive && contains_run(&device, model) {
+            model.len()
+        } else {
+            continue;
+        };
+        if best.is_none_or(|(n, _)| matched > n) {
+            best = Some((matched, e));
+        }
+    }
+    best.map(|(_, e)| e)
+}
+
+/// The AutoEQ entry to offer for `device`: none once it has a profile, or
+/// once its suggestion was turned down.
+pub fn suggestion(device: &str) -> Result<Option<Entry>, String> {
+    let dsp = &Config::cached().dsp;
+    if dsp.autoeq_dismissed.iter().any(|d| d == device)
+        || dsp
+            .profiles
+            .iter()
+            .any(|p| p.devices.iter().any(|d| d == device))
+    {
+        return Ok(None);
+    }
+    Ok(suggest(&index(Freshness::Daily)?, device).cloned())
+}
+
+/// Stop offering AutoEQ's profile for `device`. Kept with the machine's
+/// devices, in `config.local.toml`.
+pub fn dismiss(device: &str) -> Result<(), String> {
+    Config::persist(|cfg| {
+        if !cfg.dsp.autoeq_dismissed.iter().any(|d| d == device) {
+            cfg.dsp.autoeq_dismissed.push(device.to_owned());
+        }
+    })
+    .map_err(|e| e.to_string())
 }
 
 /// `entry`'s parametric EQ, as AutoEQ writes it, made into a profile import
@@ -464,5 +559,27 @@ Filter 3: ON PK Fc 118 Hz Gain -3.1 dB Q 0.50
         assert_eq!(detail.filters.len(), 3);
         assert!(detail.problem.is_none(), "{:?}", detail.problem);
         assert!(imported(entry, "Preamp: -1 dB\n").is_err());
+    }
+
+    #[test]
+    fn a_device_is_suggested_a_profile_only_when_its_name_says_which() {
+        let entries = parse_index(
+            "- [Apple AirPods](./a/in-ear/Apple%20AirPods) by a
+- [Apple AirPods Pro](./a/in-ear/Apple%20AirPods%20Pro) by a
+- [Apple AirPods Pro 2](./a/in-ear/Apple%20AirPods%20Pro%202) by a
+- [Sony WH-1000XM4](./b/over-ear/Sony%20WH-1000XM4) by b
+- [Sony WH-1000XM4](./c/over-ear/Sony%20WH-1000XM4) by c
+- [Sony WH-1000XM4 (ANC off)](./b/over-ear/Sony%20WH-1000XM4%20(ANC%20off)) by b
+",
+        );
+        let named =
+            |device: &str| suggest(&entries, device).map(|e| (e.name.as_str(), e.source.as_str()));
+        assert_eq!(named("Jo's AirPods Pro"), Some(("Apple AirPods Pro", "a")));
+        assert_eq!(named("AirPods Pro 2"), Some(("Apple AirPods Pro 2", "a")));
+        assert_eq!(named("WH-1000XM4"), Some(("Sony WH-1000XM4", "b")));
+        assert_eq!(named("AirPods"), None, "one plain word is not enough");
+        assert_eq!(named("MacBook Pro Speakers"), None);
+        assert_eq!(named("Scarlett 4i4 USB"), None);
+        assert_eq!(named("Topping E30"), None);
     }
 }

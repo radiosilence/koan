@@ -2376,6 +2376,83 @@ impl KoanEngine {
         .await
     }
 
+    /// AutoEQ's results whose names match `query`, best first. The first
+    /// search of the day may fetch the index.
+    pub async fn autoeq_search(
+        self: Arc<Self>,
+        query: String,
+        limit: u32,
+    ) -> Result<Vec<AutoEqEntry>, KoanError> {
+        offload::offload(move || {
+            use koan_core::audio::dsp::autoeq;
+            let entries = autoeq::index(autoeq::Freshness::Daily)
+                .map_err(|message| KoanError::Remote { message })?;
+            Ok(autoeq::search(&entries, &query, limit as usize)
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
+    /// Install the AutoEQ result `name`, measured by `measured_by`, as a
+    /// profile, and play `device` through it if given. Answers with the
+    /// profile's name.
+    pub async fn autoeq_install(
+        self: Arc<Self>,
+        name: String,
+        measured_by: String,
+        device: Option<String>,
+    ) -> Result<String, KoanError> {
+        offload::sequenced(move || {
+            use koan_core::audio::dsp::autoeq;
+            let entries = autoeq::index(autoeq::Freshness::Kept)
+                .map_err(|message| KoanError::Remote { message })?;
+            let entry = autoeq::find(&entries, &name, Some(&measured_by)).ok_or_else(|| {
+                KoanError::NotFound {
+                    message: format!("{name} is no longer in AutoEQ's index"),
+                }
+            })?;
+            let profile =
+                autoeq::install(entry).map_err(|message| KoanError::Remote { message })?;
+            match device {
+                Some(device) => self.assign_dsp(Some(profile.clone()), &device)?,
+                None => self.send_local(PlayerCommand::ReloadDsp)?,
+            }
+            Ok(profile)
+        })
+        .await
+    }
+
+    /// The AutoEQ result the output in use is, by its name, while it has no
+    /// profile and the suggestion has not been turned down. `None` for a
+    /// renderer, whose name is the user's to choose.
+    pub async fn autoeq_suggestion(self: Arc<Self>) -> Option<AutoEqEntry> {
+        offload::offload(move || {
+            if self.state.renderer().is_some() {
+                return None;
+            }
+            let device = koan_core::audio::dsp::profiles::current_device()?;
+            koan_core::audio::dsp::autoeq::suggestion(&device)
+                .ok()
+                .flatten()
+                .map(|e| (&e).into())
+        })
+        .await
+    }
+
+    /// Stop suggesting an AutoEQ profile for the output in use.
+    pub async fn autoeq_dismiss(self: Arc<Self>) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            let device = self.dsp_device().ok_or(KoanError::Audio {
+                message: "no output device".into(),
+            })?;
+            koan_core::audio::dsp::autoeq::dismiss(&device)
+                .map_err(|message| KoanError::BadArgument { message })
+        })
+        .await
+    }
+
     pub async fn dsp_detail(self: Arc<Self>, name: String) -> Option<DspProfileDetail> {
         offload::offload(move || koan_core::audio::dsp::profiles::detail(&name).map(Into::into))
             .await

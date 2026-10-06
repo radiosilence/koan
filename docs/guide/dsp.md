@@ -43,7 +43,20 @@ koan dsp import "Harman 780.zip" --device "Topping E30"
 ### From AutoEQ
 
 AutoEQ's corrections can be found by headphone name instead of downloaded by
-hand. `koan dsp autoeq search` matches names fuzzily against AutoEQ's index and
+hand. In the Mac and iOS apps, **Find in AutoEQ…** under EQ and convolution
+searches as you type; choosing a result installs it and plays the output in
+use through it.
+
+When the output's own name says which headphone it is, as Bluetooth headphones'
+names often do ("Jo's AirPods Pro", "WH-1000XM4"), the same section offers
+AutoEQ's profile for it. The name must hold the model's whole name, its maker
+aside, and something distinctive: a single plain word such as "AirPods" is not
+enough, so a USB DAC or a computer's speakers are never matched. Nothing is
+applied until you choose to, and turning the offer down for a device is
+remembered in `config.local.toml` (`dsp.autoeq_dismissed`). An output with a
+profile of its own is not offered one.
+
+From the command line, `koan dsp autoeq search` matches names fuzzily against AutoEQ's index and
 lists each result with who measured it; `install` takes a result's number, or
 its exact name, and saves its parametric EQ as a profile named
 `<model> (AutoEQ, <source>)`:

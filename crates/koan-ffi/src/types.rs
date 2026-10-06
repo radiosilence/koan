@@ -1083,6 +1083,27 @@ pub enum KoanError {
     NeedsSampleRate { message: String },
 }
 
+/// A headphone's result in AutoEQ's index.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct AutoEqEntry {
+    pub name: String,
+    /// Who measured it, and on which rig where they used several: what tells
+    /// two results for one headphone apart, and what installing names.
+    pub measured_by: String,
+    /// What the profile installed from it is called.
+    pub profile_name: String,
+}
+
+impl From<&koan_core::audio::dsp::autoeq::Entry> for AutoEqEntry {
+    fn from(e: &koan_core::audio::dsp::autoeq::Entry) -> Self {
+        Self {
+            name: e.name.clone(),
+            measured_by: e.measured_by(),
+            profile_name: e.profile_name(),
+        }
+    }
+}
+
 /// The DSP profiles, and which the current output plays through.
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct DspOverview {

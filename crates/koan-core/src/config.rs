@@ -533,6 +533,10 @@ pub struct DspConfig {
     /// Off bypasses every profile without forgetting any of them.
     pub enabled: bool,
     pub profiles: Vec<DspProfile>,
+    /// Output devices whose AutoEQ suggestion was turned down. See
+    /// `audio::dsp::autoeq::suggest`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub autoeq_dismissed: Vec<String>,
 }
 
 impl Default for DspConfig {
@@ -540,6 +544,7 @@ impl Default for DspConfig {
         Self {
             enabled: true,
             profiles: Vec::new(),
+            autoeq_dismissed: Vec::new(),
         }
     }
 }
