@@ -1467,6 +1467,7 @@ enum SettingsEvidence {
             ("settings-library", size, page(LibrarySettings(model: model))),
             ("settings-server", size, page(RemoteSettings(model: model))),
             ("settings-playback", size, page(PlaybackSettings(model: model))),
+            ("settings-eq", size, page(EqSettings())),
             ("settings-devices", size, page(DevicesSettings(model: model))),
             ("settings-appearance", size, page(AppearanceSettings())),
         ]
