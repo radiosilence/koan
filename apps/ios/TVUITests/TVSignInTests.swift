@@ -24,6 +24,8 @@ final class TVSignInTests: XCTestCase {
 
     func testRoute() throws {
         guard let route = env["KOAN_SIGNIN_ROUTE"] else { throw XCTSkip("no route given") }
+        // A remote that missed its mark types into whatever has focus.
+        continueAfterFailure = false
         // Nothing here needs the local network; see `TVWalkTests`.
         app.launchEnvironment["KOAN_DEVICES__NEARBY"] = "false"
         app.launch()
@@ -62,10 +64,11 @@ final class TVSignInTests: XCTestCase {
         type(server, into: app.textFields["server-url"])
         type(user, into: app.textFields["username"])
         if apiKey {
-            let picker = app.buttons["Sign in with"]
+            // tvOS lists a form's picker twice over.
+            let picker = app.buttons["Sign in with"].firstMatch
             XCTAssertTrue(focus(picker))
             remote.press(.select)
-            XCTAssertTrue(focus(app.buttons["API key"]))
+            XCTAssertTrue(focus(app.buttons["API key"].firstMatch))
             remote.press(.select)
             sleep(1)
         }
