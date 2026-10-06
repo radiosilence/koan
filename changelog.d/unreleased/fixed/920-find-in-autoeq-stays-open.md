@@ -1,0 +1,1 @@
+- **Find in AutoEQ stays open on iOS.** Opened for the first time from Settings → EQ, it closed itself as AutoEQ's index arrived.
