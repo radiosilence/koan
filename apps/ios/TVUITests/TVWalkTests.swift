@@ -160,7 +160,7 @@ final class TVWalkTests: XCTestCase {
 
         start(at: .settings)
         snap("22-settings")
-        for (offset, name) in ["23-settings-server", "24-settings-playback", "25-settings-devices", "26-settings-appearance"].enumerated() {
+        for (offset, name) in ["23-settings-server", "24-settings-playback", "25-settings-eq", "26-settings-devices", "27-settings-appearance"].enumerated() {
             start(at: .settings)
             press(.down, times: offset + 1)
             press(.select)
