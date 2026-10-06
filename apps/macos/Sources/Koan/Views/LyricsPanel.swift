@@ -18,14 +18,14 @@ struct LyricsPanel: View {
         VStack(spacing: 0) {
             HStack {
                 Text("Lyrics")
-                    .font(.headline)
+                    .font(.role(.body, system: .headline))
                 Spacer()
                 if loading {
                     ProgressView().controlSize(.small)
                 } else if let source = lyrics?.source {
                     Text(source)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .font(.role(.fine, system: .caption2))
+                        .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                 }
             }
             .padding(.horizontal, 16)
@@ -48,7 +48,7 @@ struct LyricsPanel: View {
         } else if let lyrics, !lyrics.content.isEmpty {
             ScrollView {
                 Text(lyrics.content)
-                    .font(.callout)
+                    .font(.role(.control, system: .callout))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(18)
                     .selectableText()

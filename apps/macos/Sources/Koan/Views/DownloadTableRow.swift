@@ -15,9 +15,9 @@ final class DownloadTableRow: NSTableCellView, TableRow, TransferGauge {
     static let identifier = NSUserInterfaceItemIdentifier("DownloadTableRow")
     static let height: CGFloat = 60
 
-    private static let titleFont = NSFont.preferredFont(forTextStyle: .body)
-    private static let captionFont = NSFont.preferredFont(forTextStyle: .caption1)
-    private static let figureFont = NSFont.monospacedDigitSystemFont(ofSize: captionFont.pointSize, weight: .regular)
+    private static let titleFont = NSFont.role(.body, system: NSFont.preferredFont(forTextStyle: .body))
+    private static let captionFont = NSFont.role(.meta, system: NSFont.preferredFont(forTextStyle: .caption1))
+    private static let figureFont = NSFont.role(.meta, system: NSFont.monospacedDigitSystemFont(ofSize: captionFont.pointSize, weight: .regular))
 
     private let sleeve = CALayer()
     private let track = CALayer()
@@ -149,9 +149,9 @@ final class DownloadTableRow: NSTableCellView, TableRow, TransferGauge {
         guard let transfer else { return }
         let selected = backgroundStyle == .emphasized
         let onAccent: NSColor = .alternateSelectedControlTextColor
-        title.textColor = selected ? onAccent : .labelColor
-        figure.textColor = selected ? onAccent : .secondaryLabelColor
-        subtitle.textColor = selected ? onAccent : (transfer.state == .failed ? .systemOrange : .secondaryLabelColor)
+        title.textColor = selected ? onAccent : .koanLabel
+        figure.textColor = selected ? onAccent : .koanSecondaryLabel
+        subtitle.textColor = selected ? onAccent : (transfer.state == .failed ? .systemOrange : .koanSecondaryLabel)
         link.isHidden = !hovered
         var attributes: [NSAttributedString.Key: Any] = [
             .font: Self.captionFont, .foregroundColor: selected ? onAccent : NSColor.linkColor,
@@ -164,7 +164,7 @@ final class DownloadTableRow: NSTableCellView, TableRow, TransferGauge {
             // The quiet end is what has not arrived, the same way round as the
             // seek bar, so a finished transfer reads as full.
             track.backgroundColor = NSColor.quaternaryLabelColor.cgColor
-            filled.backgroundColor = (selected ? NSColor.white : NSColor.labelColor).cgColor
+            filled.backgroundColor = (selected ? NSColor.white : NSColor.koanLabel).cgColor
             CATransaction.commit()
         }
         needsLayout = true

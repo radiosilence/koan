@@ -48,13 +48,13 @@ private struct ActivityRow: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
                 Text(task.label)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.role(.fine, system: .caption))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 Spacer(minLength: 4)
                 if let counts = task.counts {
                     Text(counts)
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.tertiary)
+                        .font(.role(.fine, system: .caption2.monospacedDigit()))
+                        .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                 }
             }
 
@@ -71,7 +71,7 @@ private struct ActivityRow: View {
                 if task.cancellable {
                     Button(action: cancel) {
                         Image(systemName: "xmark.circle")
-                            .font(.caption2)
+                            .font(.role(.fine, system: .caption2))
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(hovering ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
@@ -83,8 +83,8 @@ private struct ActivityRow: View {
             // alone does not give during a slow step.
             if let detail = task.detail {
                 Text(detail)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .font(.role(.fine, system: .caption2))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                     .lineLimit(1)
                     .truncationMode(.middle)
             }

@@ -259,7 +259,7 @@ struct PlaylistView: View {
     }
 
     private var artwork: some View {
-        PlaylistArtwork(sources: playlists.covers[playlistId] ?? [], cornerRadius: 8)
+        PlaylistArtwork(sources: playlists.covers[playlistId] ?? [], cornerRadius: KoanTheme.radius(8))
             .frame(width: 132, height: 132)
             .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
     }
@@ -278,8 +278,8 @@ struct PlaylistView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Text(summary)
-                .font(.callout)
-                .foregroundStyle(.secondary)
+                .font(.role(.control, system: .callout))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             #if os(tvOS)
             if let playable {
                 PlayableHeaderButton(playable: playable)
@@ -658,8 +658,8 @@ private struct PlaylistSelectionHeader: View {
         if !selection.isEmpty {
             HStack(spacing: 8) {
                 Text("\(PlaylistView.Row.positions(in: selection, of: rows).count) selected")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.role(.fine, system: .caption))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 Button("Remove", role: .destructive, action: remove)
                 Button("Clear") { selection = [] }
             }
@@ -677,7 +677,7 @@ private struct PlaylistAlbumHeader: View {
             // and asking by track fetches the same sleeve once per run.
             if let track = group.entries.first?.track {
                 AlbumArtwork(
-                    source: track.albumId.map { .album($0) } ?? .track(track.id), cornerRadius: 5
+                    source: track.albumId.map { .album($0) } ?? .track(track.id), cornerRadius: KoanTheme.radius(5)
                 )
                     .frame(width: 44, height: 44)
                     .shadow(color: .black.opacity(0.28), radius: 4, y: 2)
@@ -687,8 +687,8 @@ private struct PlaylistAlbumHeader: View {
                     .font(.system(size: 14, weight: .semibold))
                     .lineLimit(1)
                 Text(group.artist.isEmpty ? "Unknown Artist" : group.artist)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.role(.fine, system: .caption))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     .lineLimit(1)
             }
             Spacer()

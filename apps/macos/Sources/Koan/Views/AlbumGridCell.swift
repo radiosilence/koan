@@ -32,20 +32,20 @@ struct AlbumGridCell: View {
     private var television: some View {
         VStack(alignment: .leading, spacing: 14) {
             Button { nav.open(album: album.id) } label: {
-                AlbumArtwork(source: .album(album.id), size: .tile, cornerRadius: 10)
+                AlbumArtwork(source: .album(album.id), size: .tile, cornerRadius: KoanTheme.radius(10))
             }
             .buttonStyle(.card)
             .contextMenu { PlayableMenu(playable: .album(album)) }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(album.title)
-                    .font(.callout.weight(.medium))
+                    .font(.role(.control, system: .callout.weight(.medium)))
                     .lineLimit(1)
                 Text([showArtist ? album.artistName : nil, album.year.map { String($0) }]
                     .compactMap { $0 }
                     .joined(separator: " · "))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.role(.fine, system: .caption))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     .lineLimit(1)
             }
         }
@@ -91,7 +91,7 @@ struct AlbumGridCell: View {
                 }
 
             Text(album.title)
-                .font(.callout.weight(.medium))
+                .font(.role(.control, system: .callout.weight(.medium)))
                 .underline(titleHovering)
                 .lineLimit(1)
                 .contentShape(.rect)
@@ -104,8 +104,8 @@ struct AlbumGridCell: View {
                 }
                 if let year = album.year {
                     Text(showArtist ? "· \(String(year))" : String(year))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.role(.fine, system: .caption))
+                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 }
             }
         }
@@ -172,7 +172,7 @@ private struct SelectionMark: View {
 
     var body: some View {
         let selected = selection.contains(key)
-        RoundedRectangle(cornerRadius: 6)
+        RoundedRectangle(cornerRadius: KoanTheme.radius(6))
             .strokeBorder(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), lineWidth: 3)
             .overlay(alignment: .topLeading) {
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")

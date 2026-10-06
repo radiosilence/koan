@@ -182,14 +182,14 @@ struct EmptyState: View {
         VStack(spacing: 10) {
             Image(systemName: icon)
                 .font(.system(size: 32, weight: .light))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
             Text(title)
-                .font(.title3)
-                .foregroundStyle(.secondary)
+                .font(.role(.titleSmall, system: .title3))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             if let detail {
                 Text(detail)
-                    .font(.callout)
-                    .foregroundStyle(.tertiary)
+                    .font(.role(.control, system: .callout))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
             }
         }
     }

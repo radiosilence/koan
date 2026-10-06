@@ -39,11 +39,11 @@ struct SourceBadges: View {
                     .help(onDisk ? "On your server, downloaded" : "On your server — downloads on play")
             } else if onDisk {
                 Image(systemName: "internaldrive")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     .help("Local file")
             }
         }
-        .font(.caption2)
+        .font(.role(.fine, system: .caption2))
         .imageScale(.small)
         // Fixed, so a row does not shift as the mark changes under it — every
         // state has to occupy the same space as every other.

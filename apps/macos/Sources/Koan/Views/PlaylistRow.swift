@@ -10,15 +10,15 @@ struct PlaylistRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            PlaylistArtwork(sources: covers, cornerRadius: 3)
+            PlaylistArtwork(sources: covers, cornerRadius: KoanTheme.radius(3))
                 .frame(width: 24, height: 24)
 
             VStack(alignment: .leading, spacing: 0) {
                 Text(playlist.name)
                     .lineLimit(1)
                 Text(Format.count(Int64(playlist.trackCount), "track"))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .font(.role(.fine, system: .caption2))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             }
         }
         // Full width, so the drop target is the row rather than the text — the

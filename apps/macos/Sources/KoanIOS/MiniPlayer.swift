@@ -22,19 +22,19 @@ struct MiniPlayer: View {
                 // A play still finding its tracks, named from the tap rather
                 // than leaving the paused track it replaces on show.
                 Text(player.resolving ?? entry?.title ?? "Nothing playing")
-                    .font(.subheadline.weight(.medium))
+                    .font(.role(.meta, system: .subheadline.weight(.medium)))
                     .lineLimit(1)
                 if player.isControllingAnother {
                     // Where it is playing matters more than who by, when it
                     // is not here.
                     Label(player.controlled?.name ?? "Another device", systemImage: "laptopcomputer.and.iphone")
-                        .font(.caption)
+                        .font(.role(.fine, system: .caption))
                         .foregroundStyle(Color.accentColor)
                         .lineLimit(1)
                 } else if player.resolving == nil, let artist = entry?.artist, !artist.isEmpty {
                     Text(artist)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.role(.fine, system: .caption))
+                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                         .lineLimit(1)
                 }
             }
@@ -45,7 +45,7 @@ struct MiniPlayer: View {
                 // is most likely to be wanted as a remote.
                 if player.hasOtherDevices || player.isControllingAnother {
                     ControlButton(open: $showingDevices, labelled: false)
-                        .font(.body)
+                        .font(.role(.body, system: .body))
                         .frame(width: Self.target, height: Self.target)
                 }
 
@@ -57,7 +57,7 @@ struct MiniPlayer: View {
                             ProgressView()
                         } else {
                             Image(systemName: player.isPlaying ? "pause.fill" : Icon.play)
-                                .font(.title3)
+                                .font(.role(.titleSmall, system: .title3))
                                 .contentTransition(.symbolEffect(.replace))
                         }
                     }
@@ -69,7 +69,7 @@ struct MiniPlayer: View {
 
                 Button { player.next() } label: {
                     Image(systemName: Icon.next)
-                        .font(.body)
+                        .font(.role(.body, system: .body))
                         .frame(width: Self.target, height: Self.target)
                         .contentShape(Rectangle())
                 }
@@ -96,13 +96,13 @@ struct MiniPlayer: View {
 
     @ViewBuilder private var sleeve: some View {
         if let source = player.currentArtwork {
-            AlbumArtwork(source: source, size: .thumb, cornerRadius: 7)
+            AlbumArtwork(source: source, size: .thumb, cornerRadius: KoanTheme.radius(7))
                 .frame(width: Self.sleeveSide, height: Self.sleeveSide)
         } else {
-            RoundedRectangle(cornerRadius: 7)
+            RoundedRectangle(cornerRadius: KoanTheme.radius(7))
                 .fill(.quaternary)
                 .frame(width: Self.sleeveSide, height: Self.sleeveSide)
-                .overlay { Image(systemName: "music.note").font(.caption) }
+                .overlay { Image(systemName: "music.note").font(.role(.fine, system: .caption)) }
         }
     }
 }

@@ -377,7 +377,13 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         guard let caches = FileManager.default.urls(
             for: .cachesDirectory, in: .userDomainMask
         ).first else { return nil }
-        let root = caches.appendingPathComponent("cc.blit.koan/artwork", isDirectory: true)
+        // An instance on a configuration of its own (`KOAN_CONFIG_DIR`: a test
+        // library, the evidence renderer) keeps its artwork beside it. Files
+        // are named by record id, and ids from another library would show
+        // that library's covers in this one.
+        let root = ProcessInfo.processInfo.environment["KOAN_CONFIG_DIR"]
+            .map { URL(fileURLWithPath: $0).appendingPathComponent("artwork", isDirectory: true) }
+            ?? caches.appendingPathComponent("cc.blit.koan/artwork", isDirectory: true)
         let dir = root.appendingPathComponent(scheme, isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -410,7 +416,9 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// cached under an old album's id would otherwise be shown for a new one.
     /// Records whose cover image on disk may have changed are named too.
     func applyEvictions() async {
-        let mark = "artEvictionSeq"
+        // Per configuration, as the files are.
+        let mark = ProcessInfo.processInfo.environment["KOAN_CONFIG_DIR"].map { "artEvictionSeq-\($0)" }
+            ?? "artEvictionSeq"
         let after = Int64(UserDefaults.standard.integer(forKey: mark))
         guard let gone = try? await engine.artEvictions(after: after) else { return }
         let sources: [AlbumArtwork.Source] =

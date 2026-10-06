@@ -149,7 +149,7 @@ struct ControlPicker: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Control")
-                .font(.headline)
+                .font(.role(.body, system: .headline))
                 .padding(.horizontal, 14)
                 .padding(.top, 12)
                 .padding(.bottom, 4)
@@ -176,8 +176,8 @@ struct ControlPicker: View {
 
             if mirror.devices.isEmpty {
                 Text(emptyExplanation)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.role(.fine, system: .caption))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
@@ -204,11 +204,11 @@ struct OutputPicker: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 1) {
                 Text("Output")
-                    .font(.headline)
+                    .font(.role(.body, system: .headline))
                 if let owner = player.outputs?.owner {
                     Text("On \(owner)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.role(.fine, system: .caption))
+                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 }
             }
             .padding(.horizontal, 14)
@@ -219,8 +219,8 @@ struct OutputPicker: View {
                 rows(outputs)
             } else {
                 Text("\(player.controlled?.name ?? "That device") has not said what it plays through. It may need updating.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.role(.fine, system: .caption))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
@@ -331,13 +331,13 @@ private struct RendererVolume: View {
                     }
                     Text("\(volume)")
                         .monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     Button("Louder", systemImage: "speaker.wave.3.fill") {
                         player.setOutputVolume(UInt8(min(100, Int(volume) + 5)))
                     }
                     #else
                     Image(systemName: "speaker.fill")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     Slider(
                         value: Binding(
                             get: { dragging ?? Double(volume) },
@@ -353,14 +353,14 @@ private struct RendererVolume: View {
                     )
                     .accessibilityLabel("Volume on \(name)")
                     Image(systemName: "speaker.wave.3.fill")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     #endif
                 }
             }
             if here {
                 Text(sent)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.role(.fine, system: .caption))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -414,21 +414,21 @@ private struct SectionHeading: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: glyph)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.role(.fine, system: .caption))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .font(.role(.fine, system: .caption.weight(.semibold)))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     .textCase(.uppercase)
                 Text(detail)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .font(.role(.fine, system: .caption2))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
             }
             Spacer(minLength: 0)
             if let move {
                 Button("Move here", action: move)
-                    .font(.caption)
+                    .font(.role(.fine, system: .caption))
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .help("Bring what the other device is playing back here")
@@ -465,18 +465,18 @@ private struct DeviceChoiceRow: View {
             Button(action: onSelect) {
                 HStack(spacing: 12) {
                     Image(systemName: icon)
-                        .font(.title3)
+                        .font(.role(.titleSmall, system: .title3))
                         .frame(width: 28)
                         .foregroundStyle(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 5) {
                             Text(name)
-                                .font(.body.weight(selected ? .semibold : .regular))
+                                .font(.role(.body, system: .body.weight(selected ? .semibold : .regular)))
                                 .lineLimit(1)
                             if let reach {
                                 Image(systemName: reach)
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
+                                    .font(.role(.fine, system: .caption2))
+                                    .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                                     .help(reachHelp ?? "")
                                     .accessibilityLabel(reachHelp ?? "")
                             }
@@ -484,7 +484,7 @@ private struct DeviceChoiceRow: View {
                         // A row with nothing to add is one line, centred.
                         if !detail.isEmpty {
                             Text(detail)
-                                .font(.caption)
+                                .font(.role(.fine, system: .caption))
                                 .foregroundStyle(
                                     unreachable || warning ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary)
                                 )
@@ -494,13 +494,13 @@ private struct DeviceChoiceRow: View {
                     Spacer(minLength: 0)
                     if selected {
                         Image(systemName: "checkmark")
-                            .font(.body.weight(.semibold))
+                            .font(.role(.body, system: .body.weight(.semibold)))
                             .foregroundStyle(.tint)
                             .accessibilityLabel(action.selectedLabel)
                     } else if !canMove {
                         Image(systemName: action.glyph)
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                            .font(.role(.fine, system: .caption))
+                            .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                             .help(action.help)
                             .accessibilityHidden(true)
                     }
@@ -513,7 +513,7 @@ private struct DeviceChoiceRow: View {
             if let presets {
                 PresetMenu(presets: presets) {
                     Image(systemName: "slider.horizontal.3")
-                        .font(.caption)
+                        .font(.role(.fine, system: .caption))
                         .foregroundStyle(presets.current == nil ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.secondary))
                 }
                 #if os(macOS)
@@ -526,7 +526,7 @@ private struct DeviceChoiceRow: View {
 
             if canMove {
                 Button("Move here", action: onMove)
-                    .font(.caption)
+                    .font(.role(.fine, system: .caption))
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .help("Send what is playing to \(name), and control it there")
@@ -555,10 +555,10 @@ private struct LocalNetworkBlocked: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Label("kōan can't see this network", systemImage: "wifi.exclamationmark")
-                .font(.callout.weight(.medium))
+                .font(.role(.control, system: .callout.weight(.medium)))
             Text("Allow Local Network for kōan in \(LocalNetwork.settings) → Privacy & Security to find devices here.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.role(.fine, system: .caption))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 .fixedSize(horizontal: false, vertical: true)
             #if os(iOS)
             Button("Open Settings") {
@@ -566,14 +566,14 @@ private struct LocalNetworkBlocked: View {
                     UIApplication.shared.open(url)
                 }
             }
-            .font(.caption)
+            .font(.role(.fine, system: .caption))
             .buttonStyle(.bordered)
             .controlSize(.small)
             #endif
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: KoanTheme.radius(10)))
     }
 }
 
@@ -601,7 +601,7 @@ struct ControlButton: View {
                 if labelled, let name = controlled {
                     Text(name)
                         .lineLimit(1)
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(KoanTheme.style(.ink, system: .primary))
                 }
             }
         }
@@ -651,7 +651,7 @@ struct OutputButton: View {
                 if labelled, let name = elsewhere {
                     Text(name)
                         .lineLimit(1)
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(KoanTheme.style(.ink, system: .primary))
                 }
             }
         }

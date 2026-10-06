@@ -191,8 +191,8 @@ private struct Splash: View {
             // so cannot say it: the ensō stays put, and this arrives under it.
             .overlay(alignment: .bottom) {
                 Text(AppVersion.text)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.role(.fine, system: .caption))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     .padding(.bottom, 24)
             }
     }

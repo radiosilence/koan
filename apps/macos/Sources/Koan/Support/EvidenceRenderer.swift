@@ -37,8 +37,8 @@ enum EvidenceRenderer {
             )))
         }
         if KoanTheme.isOn {
-            let warm = KoanAccent(record: Color(red: 0.94, green: 0.54, blue: 0.36))
-            let navy = KoanAccent(record: Color(red: 0.04, green: 0.10, blue: 0.23))
+            let warm = KoanAccent(record: Color(red: 0.94, green: 0.54, blue: 0.36)) // theme: raw — a sleeve's colour, as input
+            let navy = KoanAccent(record: Color(red: 0.04, green: 0.10, blue: 0.23)) // theme: raw — a sleeve's colour, as input
             for (name, accent) in [("mint", KoanAccent.mint), ("warm", warm), ("navy", navy)] {
                 pages.append(("theme-\(name)", CGSize(width: 760, height: 1100), AnyView(
                     KoanThemeSheet(accent: accent)
@@ -83,7 +83,7 @@ enum EvidenceRenderer {
             for dark in [false, true] {
                 let file = dir.appending(path: "\(window.name)-\(dark ? "dark" : "light").png")
                 await snapshot(
-                    AnyView(RootView(hotkeys: state.hotkeys).appEnvironment(state)),
+                    AnyView(RootView(hotkeys: state.hotkeys).appEnvironment(state).environment(\.drawnOffscreen, true)),
                     size: CGSize(width: 1440, height: 900), dark: dark, to: file
                 )
             }

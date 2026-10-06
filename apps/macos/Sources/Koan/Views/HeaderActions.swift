@@ -29,7 +29,7 @@ struct HeaderActions: View {
                         PlayableMenu(playable: playable)
                     } label: {
                         Image(systemName: "ellipsis")
-                            .font(.body)
+                            .font(.role(.body, system: .body))
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()

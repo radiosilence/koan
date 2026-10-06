@@ -204,6 +204,8 @@ extension EnvironmentValues {
     /// drawing in it has to be handed the colour. Set beside the tint, by the
     /// same modifier, so the two cannot disagree.
     @Entry var roomTint: Color = .koanAccent
+    /// Drawn by the evidence renderer, in a window no scene manages.
+    @Entry var drawnOffscreen = false
 }
 
 /// The room around the page: the wash on the window and the tint on the
@@ -230,6 +232,7 @@ struct RecordRoom: ViewModifier {
     /// Read for the wash a playlist page sits in: its colour is the first
     /// record in it, since a playlist has no cover of its own.
     @Environment(PlaylistsModel.self) private var playlists
+    @Environment(\.drawnOffscreen) private var offscreen
 
     /// The colour of a record the cache could not already answer for, and which
     /// record it was worked out for. Only consulted when the cache cannot.
@@ -331,6 +334,8 @@ struct RecordRoom: ViewModifier {
             // intent, and neither platform has the other's container.
             #if os(macOS)
             .containerBackground(for: .window) { washLayer }
+            // A window the renderer draws has no scene to hand that to.
+            .background { if offscreen { washLayer } }
             #elseif os(tvOS)
             .background { washLayer.ignoresSafeArea() }
             #else
@@ -577,13 +582,13 @@ private struct ErrorToast: View {
             Image(systemName: kind.symbol)
                 .foregroundStyle(kind.tint)
             Text(message)
-                .font(.callout)
+                .font(.role(.control, system: .callout))
                 .lineLimit(2)
             Button(action: dismiss) {
                 Image(systemName: "xmark")
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 11)

@@ -163,8 +163,8 @@ private struct ArtistRow: View {
                     RowPlayButton(playable: playable, visible: true)
                 } else {
                     Image(systemName: "music.mic")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .font(.role(.fine, system: .caption))
+                        .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                 }
             }
             .frame(width: 18, height: 18)
@@ -182,8 +182,8 @@ private struct ArtistRow: View {
                 Text(
                     "\(Format.count(artist.albumCount, "album")) · \(Format.count(artist.trackCount, "track"))"
                 )
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .font(.role(.fine, system: .caption.monospacedDigit()))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             }
             Spacer(minLength: 0)
             ArtistHeart(artistId: artist.id, showing: hovered, size: .caption)
@@ -199,12 +199,12 @@ private struct ArtistRow: View {
                 .frame(width: 16)
             Spacer(minLength: 12)
             Text(Format.count(artist.albumCount, "album"))
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .font(.role(.fine, system: .caption.monospacedDigit()))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 .frame(width: 78, alignment: .trailing)
             Text(Format.count(artist.trackCount, "track"))
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.tertiary)
+                .font(.role(.fine, system: .caption.monospacedDigit()))
+                .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                 .frame(width: 78, alignment: .trailing)
             #endif
         }
@@ -271,7 +271,7 @@ struct ArtistDetailView: View {
                 // indented into a column beside it.
                 HStack(alignment: .center, spacing: 20) {
                     if info?.hasImage == true {
-                        AlbumArtwork(source: .artist(artistId), size: .tile, cornerRadius: 56)
+                        AlbumArtwork(source: .artist(artistId), size: .tile, cornerRadius: KoanTheme.radius(56))
                             .frame(width: 112, height: 112)
                             .transition(.opacity)
                     }
@@ -294,8 +294,8 @@ struct ArtistDetailView: View {
                                 #endif
                         }
                         Text(Format.count(Int64(albums.count), "album"))
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+                            .font(.role(.control, system: .callout))
+                            .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                         if let artist {
                             let playable = Playable.artist(id: artist.id, name: artist.name)
                             HeaderActions(playable: playable, shuffle: shufflePlay)
@@ -321,8 +321,8 @@ struct ArtistDetailView: View {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
                         Text("Looking up biography…")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+                            .font(.role(.control, system: .callout))
+                            .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     }
                     .transition(.opacity)
                 }
@@ -365,10 +365,10 @@ private struct ArtistBio: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("About")
-                .font(.headline)
+                .font(.role(.body, system: .headline))
             // The extract separates paragraphs with a single newline.
             Text(bio.replacingOccurrences(of: "\n", with: "\n\n"))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 .lineSpacing(3)
                 .selectableText()
                 .frame(maxWidth: 680, alignment: .leading)
@@ -377,7 +377,7 @@ private struct ArtistBio: View {
                     #if os(tvOS)
                     // A television opens no web pages; the credit stands as text.
                     Text("From Wikipedia")
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                         .accessibilityHint(url.absoluteString)
                     #else
                     Link("From Wikipedia", destination: url)
@@ -385,10 +385,10 @@ private struct ArtistBio: View {
                 }
                 if let imageCredit {
                     Text("Photo: \(imageCredit)")
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                 }
             }
-            .font(.caption)
+            .font(.role(.fine, system: .caption))
         }
     }
 }

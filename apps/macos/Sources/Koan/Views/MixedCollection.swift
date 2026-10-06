@@ -675,15 +675,15 @@ private final class SectionHeader: NSView, NSCollectionViewElement {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        title.font = .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .semibold)
-        title.textColor = .secondaryLabelColor
-        count.font = .monospacedDigitSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .caption1).pointSize, weight: .regular)
-        count.textColor = .tertiaryLabelColor
+        title.font = .role(.fine, system: .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .semibold))
+        title.textColor = .koanSecondaryLabel
+        count.font = .role(.fine, system: .monospacedDigitSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .caption1).pointSize, weight: .regular))
+        count.textColor = .koanTertiaryLabel
         addSubview(title)
         addSubview(count)
         chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
-        chevron.contentTintColor = .secondaryLabelColor
+        chevron.contentTintColor = .koanSecondaryLabel
         chevron.isHidden = true
         addSubview(chevron)
         addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(follow)))
@@ -773,7 +773,7 @@ private final class TrackItem: NSCollectionViewItem {
 /// plain capsule, which goes to the artist.
 private final class ArtistPillItem: NSCollectionViewItem {
     static let identifier = NSUserInterfaceItemIdentifier("ArtistPillItem")
-    private static let font = NSFont.preferredFont(forTextStyle: .callout)
+    private static let font = NSFont.role(.control, system: NSFont.preferredFont(forTextStyle: .callout))
 
     private let capsule = CALayer()
     private let mic = CALayer()
@@ -824,12 +824,12 @@ private final class ArtistPillItem: NSCollectionViewItem {
     private var micImage: CGImage? {
         let appearance = view.effectiveAppearance
         guard let coordinator, coordinator.picking, let artist else {
-            return Symbol.image("music.mic", size: 9, colours: [.tertiaryLabelColor], appearance: appearance)
+            return Symbol.image("music.mic", size: 9, colours: [.koanTertiaryLabel], appearance: appearance)
         }
         let tint = coordinator.parent?.tileContext.tint ?? .controlAccentColor
         return coordinator.isPicked(Playable.artist(id: artist.id, name: artist.name).key)
             ? Symbol.image("checkmark.circle.fill", size: 10, colours: [.white, tint], appearance: appearance)
-            : Symbol.image("circle", size: 10, colours: [.tertiaryLabelColor], appearance: appearance)
+            : Symbol.image("circle", size: 10, colours: [.koanTertiaryLabel], appearance: appearance)
     }
 
     private func restyle() {

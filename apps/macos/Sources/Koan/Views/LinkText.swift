@@ -93,11 +93,11 @@ struct PlayableArtwork: View {
     @State private var loading = false
 
     var body: some View {
-        AlbumArtwork(source: .album(albumId), cornerRadius: cornerRadius)
+        AlbumArtwork(source: .album(albumId), cornerRadius: KoanTheme.radius(cornerRadius))
             .overlay {
                 if hovering || loading {
                     ZStack {
-                        RoundedRectangle(cornerRadius: cornerRadius)
+                        RoundedRectangle(cornerRadius: KoanTheme.radius(cornerRadius))
                             .fill(.black.opacity(0.35))
                         if loading {
                             ProgressView()

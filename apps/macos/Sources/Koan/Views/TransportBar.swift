@@ -105,7 +105,7 @@ struct TransportBar: View {
         HStack(spacing: 11) {
             if showsArtwork {
                 if let sleeve = player.currentArtwork {
-                    AlbumArtwork(source: sleeve, size: .thumb, cornerRadius: KoanTheme.isOn ? 0 : 8)
+                    AlbumArtwork(source: sleeve, size: .thumb, cornerRadius: KoanTheme.radius(8))
                         .frame(width: 44, height: 44)
                         .showsArtworkFullSize(
                             source: sleeve,
@@ -115,12 +115,12 @@ struct TransportBar: View {
                             }
                         )
                 } else {
-                    RoundedRectangle(cornerRadius: KoanTheme.isOn ? 0 : 8)
+                    RoundedRectangle(cornerRadius: KoanTheme.radius(8))
                         .fill(.quaternary)
                         .frame(width: 44, height: 44)
                         .overlay {
                             Image(systemName: "music.note")
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                         }
                 }
             }

@@ -66,10 +66,10 @@ struct TrackBrowser: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 1) {
             Text("Tracks")
-                .font(.title2.weight(.semibold))
+                .font(.role(.titleSmall, system: .title2.weight(.semibold)))
             Text(count)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.role(.fine, system: .caption))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

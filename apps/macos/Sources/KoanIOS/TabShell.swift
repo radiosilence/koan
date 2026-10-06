@@ -122,7 +122,7 @@ struct TabShell: View {
                 ActivityList()
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.regularMaterial, in: .rect(cornerRadius: 16))
+                    .background(.regularMaterial, in: .rect(cornerRadius: KoanTheme.radius(16)))
                     .padding(.horizontal, 12)
                     // Clear of the mini player and the tab bar under it.
                     .padding(.bottom, 150)

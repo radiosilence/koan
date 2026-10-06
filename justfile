@@ -402,6 +402,32 @@ macos-test: macos-ffi
 ios_deployment_target := "26.0"
 tv_deployment_target := "26.0"
 
+# Styling that bypasses the kōan theme: a raw font, colour, label style or
+# corner in the apps' views rather than a role from `Support/KoanTheme.swift`.
+# The theme is the default, so each of these is a place it does not reach.
+# A line that must stay raw says why with `// theme: raw` and is skipped.
+theme-leaks:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    patterns=(
+        '\.font\(\.(largeTitle|title|title2|title3|headline|body|callout|subheadline|footnote|caption|caption2)\b'
+        '\.foreground(Style|Color)\(\.(primary|secondary|tertiary|quaternary)\)'
+        'cornerRadius: [0-9]'
+        'Color\((red|white|hue):'
+        'NSFont\.(systemFont|preferredFont|monospacedSystemFont|monospacedDigitSystemFont)\('
+        '[^.]\.(labelColor|secondaryLabelColor|tertiaryLabelColor)\b'
+    )
+    found=0
+    for pattern in "${patterns[@]}"; do
+        hits=$(grep -rnE "$pattern" apps/macos/Sources --include='*.swift' \
+            | grep -v -e 'Support/KoanTheme.swift' -e '// theme: raw' -e 'role(\.' -e 'KoanTheme\.' -e 'Support/Graphics.swift' -e '\.pointSize')
+        if [ -n "$hits" ]; then
+            found=1
+            echo "$hits"
+        fi
+    done
+    [ "$found" = 0 ] && echo "no theme leaks" || { echo "theme leaks above"; exit 1; }
+
 # Type-check the shared SwiftUI sources against the iOS SDK.
 #
 # The bindings are target-independent, so this needs `macos-ffi` and nothing

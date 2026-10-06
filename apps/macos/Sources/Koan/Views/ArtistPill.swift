@@ -19,16 +19,16 @@ struct ArtistPill: View {
                     SelectionTick(key: playable.key, selection: selection)
                 } else {
                     Image(systemName: "music.mic")
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                 }
             }
-            .font(.caption2)
+            .font(.role(.fine, system: .caption2))
             // A classical release credits the soloist, the orchestra and the
             // conductor in one artist string, which as a pill is a paragraph
             // laid on its side. The full name is in the tooltip and on the
             // artist page.
             Text(name)
-                .font(.callout)
+                .font(.role(.control, system: .callout))
                 .lineLimit(1)
                 .truncationMode(.tail)
         }

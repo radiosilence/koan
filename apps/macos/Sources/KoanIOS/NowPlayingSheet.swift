@@ -61,15 +61,15 @@ struct NowPlayingSheet: View {
                 .backgroundStyle(.clear)
                 .transition(.opacity)
         } else if let source = player.currentArtwork {
-            AlbumArtwork(source: source, size: .tile, cornerRadius: 12)
+            AlbumArtwork(source: source, size: .tile, cornerRadius: KoanTheme.radius(12))
                 .shadow(color: .black.opacity(0.25), radius: 24, y: 12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .transition(.opacity)
         } else {
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: KoanTheme.radius(12))
                 .fill(.quaternary)
                 .aspectRatio(1, contentMode: .fit)
-                .overlay { Image(systemName: "music.note").font(.largeTitle) }
+                .overlay { Image(systemName: "music.note").font(.role(.display, system: .largeTitle)) }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
@@ -78,11 +78,11 @@ struct NowPlayingSheet: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(player.resolving ?? player.currentEntry?.title ?? "Nothing playing")
-                    .font(.title3.weight(.semibold))
+                    .font(.role(.titleSmall, system: .title3.weight(.semibold)))
                     .lineLimit(1)
                 if player.resolving != nil {
                     Text("Loading…")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 } else if let entry = player.currentEntry {
                     LinkText(
                         text: entry.artist,
@@ -114,10 +114,10 @@ struct NowPlayingSheet: View {
     /// toggles below: they set how the queue plays rather than moving it.
     private var transport: some View {
         HStack(spacing: 0) {
-            ShuffleButton().font(.title3)
+            ShuffleButton().font(.role(.titleSmall, system: .title3))
             Spacer()
             Button { player.previous() } label: {
-                Image(systemName: Icon.previous).font(.title)
+                Image(systemName: Icon.previous).font(.role(.title, system: .title))
             }
             Spacer()
             Button { player.togglePlayPause() } label: {
@@ -135,10 +135,10 @@ struct NowPlayingSheet: View {
             .accessibilityLabel(player.isWaitingForTrack ? "Loading" : player.isPlaying ? "Pause" : "Play")
             Spacer()
             Button { player.next() } label: {
-                Image(systemName: Icon.next).font(.title)
+                Image(systemName: Icon.next).font(.role(.title, system: .title))
             }
             Spacer()
-            RepeatButton().font(.title3)
+            RepeatButton().font(.role(.titleSmall, system: .title3))
         }
         .padding(.horizontal, 28)
         .buttonStyle(.plain)
@@ -160,14 +160,14 @@ struct NowPlayingSheet: View {
 
             Spacer(minLength: 12)
             SleepButton()
-                .font(.subheadline)
+                .font(.role(.meta, system: .subheadline))
 
             if let format = player.currentFormat {
                 Spacer(minLength: 12)
                 Text(Format.quality(format))
-                    .font(.caption.monospaced())
+                    .font(.role(.fine, system: .caption.monospaced()))
                     .lineLimit(1)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(.quaternary, in: Capsule())
@@ -180,7 +180,7 @@ struct NowPlayingSheet: View {
                     .frame(width: 28, height: 28)
             }
         }
-        .font(.title3)
+        .font(.role(.titleSmall, system: .title3))
         .buttonStyle(.plain)
     }
 
@@ -262,9 +262,9 @@ private struct Pill: View {
                 .foregroundStyle(tinted ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
             Text(text)
                 .lineLimit(1)
-                .foregroundStyle(.primary)
+                .foregroundStyle(KoanTheme.style(.ink, system: .primary))
         }
-        .font(.subheadline)
+        .font(.role(.meta, system: .subheadline))
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(.quaternary, in: Capsule())

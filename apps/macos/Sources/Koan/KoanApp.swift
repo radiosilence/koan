@@ -297,10 +297,10 @@ private struct StartupErrorView: View {
                 .font(.system(size: 34, weight: .light))
                 .foregroundStyle(.orange)
             Text("Couldn't open your library")
-                .font(.title3.weight(.medium))
+                .font(.role(.titleSmall, system: .title3.weight(.medium)))
             Text(message)
-                .font(.callout)
-                .foregroundStyle(.secondary)
+                .font(.role(.control, system: .callout))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 .multilineTextAlignment(.center)
                 .textSelection(.enabled)
 

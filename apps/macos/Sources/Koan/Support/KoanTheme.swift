@@ -72,6 +72,13 @@ enum KoanTheme {
         }
     }
 
+    /// A corner as whichever look is on: square in the theme, the given
+    /// radius otherwise.
+    static func radius(_ system: CGFloat) -> CGFloat { isOn ? 0 : system }
+
+    /// A shadow's opacity as whichever look is on: none in the theme.
+    static func shadow(_ system: Float) -> Float { isOn ? 0 : system }
+
     /// One rule's width: a point, not a pixel, which at `rule`'s contrast is too
     /// faint on a 2× display.
     static let hairline: CGFloat = 1
@@ -489,12 +496,23 @@ extension Font {
     static func role(_ role: KoanType) -> Font {
         KoanTheme.isOn ? .koan(role) : .system(role.scalesWith)
     }
+
+    /// A role in the theme, and exactly the given font in the platform's look.
+    @MainActor
+    static func role(_ role: KoanType, system: Font) -> Font {
+        KoanTheme.isOn ? .koan(role) : system
+    }
 }
 
 extension KoanTheme {
     /// A tone as a style, for glyphs and shapes: the token in the theme, the
     /// nearest semantic style otherwise. Text takes `.koanText`, which also
     /// keeps a record's accent off text that it cannot reach 4.5:1 as.
+    /// A tone in the theme, and exactly the given style in the platform's look.
+    static func style(_ tone: KoanTone, system: some ShapeStyle) -> AnyShapeStyle {
+        isOn ? style(tone) : AnyShapeStyle(system)
+    }
+
     static func style(_ tone: KoanTone) -> AnyShapeStyle {
         switch (isOn, tone) {
         case (true, .ink): AnyShapeStyle(Color.koanInk)
@@ -585,6 +603,11 @@ extension View {
     /// The platform's sidebar row otherwise.
     func koanNavRow(selected: Bool) -> some View {
         modifier(KoanNavRowRole(selected: selected))
+    }
+
+    /// A sidebar's ground: flat `bg` in place of the system's material.
+    func koanSidebar() -> some View {
+        modifier(KoanSidebarRole())
     }
 
     /// Focus on tvOS, as the theme shows it: a ring in the accent. Elsewhere, and
@@ -940,6 +963,22 @@ private struct KoanRowRole: ViewModifier {
     }
 }
 
+private struct KoanSidebarRole: ViewModifier {
+    func body(content: Content) -> some View {
+        if KoanTheme.isOn {
+            #if os(tvOS)
+            content.background(Color.koanBg)
+            #else
+            content
+                .scrollContentBackground(.hidden)
+                .background(Color.koanBg)
+            #endif
+        } else {
+            content
+        }
+    }
+}
+
 private struct KoanNavRowRole: ViewModifier {
     let selected: Bool
 
@@ -1031,9 +1070,12 @@ private struct KoanFormRole: ViewModifier {
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
             #if os(macOS)
+            // Grouped, for its layout — footers that wrap, labels and fields
+            // in the window's width — with its cards taken away.
             content
-                .formStyle(.columns)
+                .formStyle(.grouped)
                 .scrollContentBackground(.hidden)
+                .listRowBackground(Color.clear)
             #elseif os(tvOS)
             // A television's form has no ground or separators to take over.
             content

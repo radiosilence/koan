@@ -46,8 +46,8 @@ struct LibraryTab: View {
                 systemImage: "wifi.slash"
             )
             Text("Showing what is on this iPhone.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.role(.fine, system: .caption))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             if manual {
                 Button("Go Online") { library.engine.setOffline(on: false) }
             }

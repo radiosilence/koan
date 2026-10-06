@@ -158,7 +158,7 @@ private struct DownloadRow: View {
         HStack(spacing: 10) {
             // A record is what you recognise a download by, and this is a list
             // of things you are waiting for.
-            AlbumArtwork(source: .track(transfer.trackId), size: .thumb, cornerRadius: 3)
+            AlbumArtwork(source: .track(transfer.trackId), size: .thumb, cornerRadius: KoanTheme.radius(3))
                 .frame(width: RowMetrics.sleeve, height: RowMetrics.sleeve)
 
             rows
@@ -176,8 +176,8 @@ private struct DownloadRow: View {
                     .lineLimit(1)
                 Spacer(minLength: 8)
                 Text(figure)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .font(.role(.fine, system: .caption.monospacedDigit()))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             }
 
             // Drawn rather than a `ProgressView`: the stock linear style
@@ -211,10 +211,10 @@ private struct DownloadRow: View {
                 if hovering || width == .compact {
                     Button("Show in Library") { showInLibrary() }
                         .linkButton()
-                        .font(.caption)
+                        .font(.role(.fine, system: .caption))
                 }
             }
-            .font(.caption)
+            .font(.role(.fine, system: .caption))
         }
     }
 

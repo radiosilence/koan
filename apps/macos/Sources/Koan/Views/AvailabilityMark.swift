@@ -57,8 +57,8 @@ final class AvailabilityMark: CALayer {
         defer { CATransaction.commit() }
         ring.isHidden = true
         badge.isHidden = false
-        let quiet: NSColor = selected ? .white : .tertiaryLabelColor
-        let plain: NSColor = selected ? .white : .secondaryLabelColor
+        let quiet: NSColor = selected ? .white : .koanTertiaryLabel
+        let plain: NSColor = selected ? .white : .koanSecondaryLabel
         switch state {
         case .nothing:
             badgeImage = nil

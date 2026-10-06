@@ -395,10 +395,10 @@ final class AlbumTile: NSCollectionViewItem {
 
     private enum Part { case sleeve, title, artist, elsewhere }
 
-    private static let titleFont = NSFont.systemFont(
+    private static let titleFont = NSFont.role(.meta, system: NSFont.systemFont(
         ofSize: NSFont.preferredFont(forTextStyle: .callout).pointSize, weight: .medium
-    )
-    private static let detailFont = NSFont.preferredFont(forTextStyle: .caption1)
+    ))
+    private static let detailFont = NSFont.role(.fine, system: NSFont.preferredFont(forTextStyle: .caption1))
     /// The gap between sleeve, title and credit, as `AlbumGridCell`'s stack.
     private static let gap: CGFloat = 7
     private static let titleHeight = lineHeight(titleFont)
@@ -428,7 +428,7 @@ final class AlbumTile: NSCollectionViewItem {
     private var spinner: NSProgressIndicator?
     private let badge = CALayer()
     private let codec = CATextLayer()
-    private static let codecFont = NSFont.monospacedSystemFont(ofSize: 9, weight: .semibold)
+    private static let codecFont = NSFont.role(.fine, system: NSFont.monospacedSystemFont(ofSize: 9, weight: .semibold))
     /// Made while there is a heart to show: the tile is hovered or the
     /// record a favourite. See `spinner`.
     private var heart: HeartButton?
@@ -459,12 +459,12 @@ final class AlbumTile: NSCollectionViewItem {
         root.wantsLayer = true
         guard let layer = root.layer else { return }
 
-        shade.shadowOpacity = 0.28
+        shade.shadowOpacity = KoanTheme.shadow(0.28)
         shade.shadowRadius = 7
         shade.shadowOffset = CGSize(width: 0, height: 3)
         layer.addSublayer(shade)
 
-        sleeve.cornerRadius = 6
+        sleeve.cornerRadius = KoanTheme.radius(6)
         sleeve.cornerCurve = .continuous
         sleeve.masksToBounds = true
         sleeve.contentsGravity = .resizeAspectFill
@@ -502,7 +502,7 @@ final class AlbumTile: NSCollectionViewItem {
         layer.addSublayer(badge)
         layer.addSublayer(downloadBar)
 
-        ring.cornerRadius = 6
+        ring.cornerRadius = KoanTheme.radius(6)
         ring.cornerCurve = .continuous
         ring.borderWidth = 3
         ring.isHidden = true
@@ -521,11 +521,11 @@ final class AlbumTile: NSCollectionViewItem {
             root.addSubview(label)
         }
         titleLabel.font = Self.titleFont
-        titleLabel.textColor = .labelColor
+        titleLabel.textColor = KoanTheme.isOn ? .koanStrong : .koanLabel
         artistLabel.font = Self.detailFont
-        artistLabel.textColor = .secondaryLabelColor
+        artistLabel.textColor = .koanSecondaryLabel
         yearLabel.font = Self.detailFont
-        yearLabel.textColor = .secondaryLabelColor
+        yearLabel.textColor = .koanSecondaryLabel
 
         view = root
         applyColours()
@@ -573,8 +573,8 @@ final class AlbumTile: NSCollectionViewItem {
         ring.isHidden = !(context.selecting && selected)
         ring.borderColor = context.tint.cgColor
         let arriving = context.arriving[album.id] ?? []
-        var muted = NSColor.secondaryLabelColor.cgColor
-        view.effectiveAppearance.performAsCurrentDrawingAppearance { muted = NSColor.secondaryLabelColor.cgColor }
+        var muted = NSColor.koanSecondaryLabel.cgColor
+        view.effectiveAppearance.performAsCurrentDrawingAppearance { muted = NSColor.koanSecondaryLabel.cgColor }
         downloadBar.show(album.onDevice, downloading: !arriving.isEmpty, tint: context.tint.cgColor, muted: muted)
         context.meter?.follow(downloadBar, transfers: arriving)
         tick.isHidden = !context.selecting
@@ -600,7 +600,7 @@ final class AlbumTile: NSCollectionViewItem {
         let titled = !context.selecting && hovered == .title
         if underlined != (titled, linked) {
             underlined = (titled, linked)
-            artistLabel.textColor = linked ? .labelColor : .secondaryLabelColor
+            artistLabel.textColor = linked ? .koanLabel : .koanSecondaryLabel
             underline(artistLabel, linked)
             underline(titleLabel, titled)
         }
@@ -718,7 +718,7 @@ final class AlbumTile: NSCollectionViewItem {
         let textWidth = ceil((text as NSString).size(withAttributes: [.font: Self.codecFont]).width)
         let textHeight = Self.lineHeight(Self.codecFont)
         badge.frame = CGRect(x: art.maxX - 6 - (textWidth + 12), y: 6, width: textWidth + 12, height: textHeight + 4)
-        badge.cornerRadius = badge.frame.height / 2
+        badge.cornerRadius = KoanTheme.radius(badge.frame.height / 2)
         codec.frame = CGRect(x: 6, y: 2, width: textWidth, height: textHeight)
         codec.contentsScale = view.window?.backingScaleFactor ?? 2
         downloadBar.frame = DownloadBarLayer.frame(side: side, flipped: true)
@@ -828,9 +828,9 @@ final class AlbumTile: NSCollectionViewItem {
     fileprivate func applyColours() {
         view.effectiveAppearance.performAsCurrentDrawingAppearance {
             shade.shadowColor = NSColor.black.cgColor
-            sleeve.backgroundColor = NSColor.quaternaryLabelColor.cgColor
+            sleeve.backgroundColor = NSColor.koanQuaternaryLabel.cgColor
             sleeve.borderColor = NSColor.white.withAlphaComponent(0.06).cgColor
-            ensō.strokeColor = NSColor.tertiaryLabelColor.cgColor
+            ensō.strokeColor = NSColor.koanTertiaryLabel.cgColor
         }
     }
 }
@@ -906,7 +906,7 @@ private final class HeartButton: NSButton {
             let name = isOn ? "heart.fill" : "heart"
             glyph.image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
                 .withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
-            glyph.contentTintColor = isOn ? .systemRed : .tertiaryLabelColor
+            glyph.contentTintColor = isOn ? .systemRed : .koanTertiaryLabel
             setAccessibilityLabel(isOn ? "Remove favourite" : "Favourite")
             toolTip = isOn ? "Remove favourite" : "Favourite"
             if oldValue != isOn, window != nil {

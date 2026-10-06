@@ -273,12 +273,12 @@ struct QueueView: View {
             case .playlist(let playlist):
                 PlaylistArtwork(
                     sources: playlists.covers[playlist.id] ?? [],
-                    cornerRadius: 4
+                    cornerRadius: KoanTheme.radius(4)
                 )
                 .frame(width: 34, height: 34)
                 .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
             case .album(let album):
-                AlbumArtwork(source: .album(album.id), size: .thumb, cornerRadius: 4)
+                AlbumArtwork(source: .album(album.id), size: .thumb, cornerRadius: KoanTheme.radius(4))
                     .frame(width: 34, height: 34)
                     .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
             case nil:
@@ -291,20 +291,20 @@ struct QueueView: View {
                     // sleeve beside it already says the queue follows it.
                     #if os(iOS)
                     Text(Format.title(name))
-                        .font(.headline)
+                        .font(.role(.body, system: .headline))
                         .lineLimit(1)
                     #else
                     Text("Playing \(name)")
-                        .font(.headline)
+                        .font(.role(.body, system: .headline))
                         .lineLimit(1)
                     #endif
                 } else {
                     Text("Queue")
-                        .font(.headline)
+                        .font(.role(.body, system: .headline))
                 }
                 Text(summary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.role(.fine, system: .caption))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     .lineLimit(1)
             }
 
@@ -816,8 +816,8 @@ private struct QueueSelectionHeader: View {
             // Each at its own width: squeezed by the rest of the header on a
             // phone, they wrap a few letters to a line.
             Text("\(QueueView.Row.itemIds(in: selection, of: rows).count) selected")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.role(.fine, system: .caption))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 .lineLimit(1)
                 .fixedSize()
             Group {
@@ -906,7 +906,7 @@ private struct QueueAlbumHeader: View {
             // selectable, draggable row, and a tap gesture on it would eat the
             // click that selects the row.
             if let sleeve = group.items.first?.sleeve {
-                AlbumArtwork(source: sleeve, size: .thumb, cornerRadius: 5)
+                AlbumArtwork(source: sleeve, size: .thumb, cornerRadius: KoanTheme.radius(5))
                     .frame(width: Self.sleeve, height: Self.sleeve)
                     .shadow(color: .black.opacity(0.28), radius: 4, y: 2)
             }
@@ -914,21 +914,21 @@ private struct QueueAlbumHeader: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(Format.title(group.title))
                     .font(Self.titleFont)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(KoanTheme.style(.ink, system: .primary))
                     .lineLimit(Format.titleLines)
 
                 // Only when the line above is the record: a group with no album
                 // title already leads with the artist.
                 if !group.album.isEmpty {
                     Text(group.albumArtist.isEmpty ? "Unknown Artist" : group.albumArtist)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.role(.fine, system: .caption))
+                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                         .lineLimit(1)
                 }
 
                 Text(group.detail)
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.tertiary)
+                    .font(.role(.fine, system: .caption2.monospacedDigit()))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                     .lineLimit(1)
             }
 

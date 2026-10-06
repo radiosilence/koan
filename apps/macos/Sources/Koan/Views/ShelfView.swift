@@ -190,11 +190,11 @@ struct ShelfView: View {
             // A television's navigation title already names the page, above.
             #if !os(tvOS)
             Text(title)
-                .font(.title2.weight(.semibold))
+                .font(.role(.titleSmall, system: .title2.weight(.semibold)))
             #endif
             Text(counts)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.role(.fine, system: .caption))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -223,10 +223,10 @@ struct ShelfView: View {
             HStack(spacing: 6) {
                 Text(title)
                 Text("\(total)")
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                     .monospacedDigit()
                 Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
+                    .font(.role(.fine, system: .caption.weight(.semibold)))
                 Spacer(minLength: 0)
             }
             .contentShape(Rectangle())

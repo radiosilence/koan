@@ -87,7 +87,7 @@ private struct BrowseFilterForm: View {
                 LabeledContent("Years") {
                     HStack(spacing: 4) {
                         YearField(prompt: "From", value: $library.browseFilter.yearFrom)
-                        Text("–").foregroundStyle(.secondary)
+                        Text("–").foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                         YearField(prompt: "To", value: $library.browseFilter.yearTo)
                     }
                 }

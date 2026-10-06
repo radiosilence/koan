@@ -17,19 +17,7 @@ import SwiftUI
 /// playing row's title and every borderless control are drawn in the tint,
 /// and in grey they read as disabled.
 extension Color {
-    #if canImport(AppKit)
-    static let koanAccent = Color(nsColor: NSColor(name: nil) { appearance in
-        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? mint : forest
-    })
-    private static let mint = NSColor(srgbRed: 0x7D / 255, green: 0xD3 / 255, blue: 0xA7 / 255, alpha: 1)
-    private static let forest = NSColor(srgbRed: 0x1F / 255, green: 0x7A / 255, blue: 0x50 / 255, alpha: 1)
-    #else
-    static let koanAccent = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark ? mint : forest
-    })
-    private static let mint = UIColor(red: 0x7D / 255, green: 0xD3 / 255, blue: 0xA7 / 255, alpha: 1)
-    private static let forest = UIColor(red: 0x1F / 255, green: 0x7A / 255, blue: 0x50 / 255, alpha: 1)
-    #endif
+    static var koanAccent: Color { KoanAccent.mint.color }
 }
 
 

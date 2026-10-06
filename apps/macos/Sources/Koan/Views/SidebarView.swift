@@ -78,6 +78,8 @@ struct SidebarView: View {
             playlistSection
         }
         .listStyle(.sidebar)
+        // The theme's sidebar is flat ground, not the system's material.
+        .koanSidebar()
         // The List's own hooks rather than per-row gestures, the same way the
         // queue and every track list does it: wired into selection, so the
         // double-click does not steal the click that selects the row. Only
@@ -326,7 +328,7 @@ private struct DownloadsRowLabel: View {
 private extension View {
     /// Lights a row while a drop is held over it.
     func dropHighlight(_ lit: Bool) -> some View {
-        listRowBackground(lit ? RoundedRectangle(cornerRadius: 5).fill(.tint.opacity(0.25)) : nil)
+        listRowBackground(lit ? RoundedRectangle(cornerRadius: KoanTheme.radius(5)).fill(.tint.opacity(0.25)) : nil)
     }
 
     /// A row that is a place: selecting it goes there, and clicking it while
