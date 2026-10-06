@@ -277,8 +277,8 @@ fn same(a: &SyncDoc, b: &SyncDoc, member: &dyn Fn(&str) -> Option<SyncDoc>, dept
     if !preamp || pa.target != pb.target {
         return false;
     }
-    let mut files = |d: &SyncDoc| {
-        let mut h: Vec<&str> = d.files.iter().map(|f| f.sha256.as_str()).collect();
+    let files = |d: &SyncDoc| {
+        let mut h: Vec<String> = d.files.iter().map(|f| f.sha256.clone()).collect();
         h.sort_unstable();
         h
     };
