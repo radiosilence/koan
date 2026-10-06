@@ -7,8 +7,10 @@ import XCTest
 /// this test approves the code the way a phone would — `koanPairApprove` with
 /// its credentials — which is `just tv-pair`; without one something else
 /// approves it, which is `just tv-pair-qr`, where a phone scans the code off
-/// the screen. Both run against a local `koan` started for the purpose.
-/// Screenshots of each step are kept.
+/// the screen. `KOAN_PAIR_OUTCOME` asks for the other endings instead:
+/// `decline`, which turns the code away, or `expire`, which approves nothing
+/// and waits for the code to lapse; either must say what happened and offer
+/// the code again. Screenshots of each step are kept.
 @MainActor
 final class TVPairTests: XCTestCase {
     func testPairing() throws {
@@ -37,8 +39,18 @@ final class TVPairTests: XCTestCase {
         XCTAssertTrue(code.waitForExistence(timeout: 15), "a code is shown")
         snap("02-code")
 
-        if let user = env["KOAN_PAIR_USER"], let password = env["KOAN_PAIR_PASSWORD"] {
-            try approve(code.label, on: server, as: user, password: password)
+        let outcome = env["KOAN_PAIR_OUTCOME"] ?? "approve"
+        if outcome != "expire", let user = env["KOAN_PAIR_USER"], let password = env["KOAN_PAIR_PASSWORD"] {
+            try approve(code.label, on: server, as: user, password: password, decline: outcome == "decline")
+        }
+        if outcome != "approve" {
+            let said = outcome == "decline" ? "declined" : "expired"
+            let problem = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", said)).firstMatch
+            XCTAssertTrue(problem.waitForExistence(timeout: 120), "the page says the code was \(said)")
+            XCTAssertFalse(problem.label.contains("password or API key"), "a \(said) code is not a server without pairing")
+            XCTAssertTrue(app.buttons["Get a Code"].exists, "and offers a code again")
+            snap("03-\(said)")
+            return
         }
 
         XCTAssertTrue(
@@ -47,11 +59,38 @@ final class TVPairTests: XCTestCase {
         )
         sleep(3)
         snap("03-signed-in")
+
+        // Whose account it is: a TV approved by a read-only account is that
+        // account, and nothing more.
+        let remote = XCUIRemote.shared
+        XCTAssertTrue(focus(app.buttons["Settings"]))
+        remote.press(.select)
+        sleep(1)
+        remote.press(.down)
+        XCTAssertTrue(focus(app.buttons["Server"]))
+        remote.press(.select)
+        sleep(2)
+        snap("04-account")
     }
 
-    private func approve(_ code: String, on server: String, as user: String, password: String) throws {
+    /// Move until `element` has focus: down and up the page, then along.
+    @discardableResult
+    private func focus(_ element: XCUIElement) -> Bool {
+        guard element.waitForExistence(timeout: 10) else { return false }
+        for direction in [XCUIRemote.Button.down, .up, .right, .left] {
+            for _ in 0..<12 {
+                if element.hasFocus { return true }
+                XCUIRemote.shared.press(direction)
+                Thread.sleep(forTimeInterval: 0.4)
+            }
+        }
+        return element.hasFocus
+    }
+
+    private func approve(_ code: String, on server: String, as user: String, password: String, decline: Bool) throws {
         var url = URLComponents(string: server + "/rest/koanPairApprove")!
         url.queryItems = [
+            .init(name: "decline", value: decline ? "true" : "false"),
             .init(name: "pair", value: code), .init(name: "u", value: user),
             .init(name: "p", value: password), .init(name: "v", value: "1.16.1"),
             .init(name: "c", value: "tv-pair-test"), .init(name: "f", value: "json"),
