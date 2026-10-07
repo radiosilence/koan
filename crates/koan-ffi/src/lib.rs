@@ -3395,14 +3395,15 @@ impl KoanEngine {
 
     /// Keep `name` as it is now as a copy, under `new` or "<name> copy", and
     /// put `name` back to `before` (a `dsp_snapshot`), or to its file. On
-    /// `device`, the copy takes its place in the tuning. The copy's name.
+    /// `device`, the copy takes its place in the tuning where the tuning names
+    /// it.
     pub async fn dsp_save_as_copy(
         self: Arc<Self>,
         name: String,
         new: Option<String>,
         before: Option<String>,
         device: Option<String>,
-    ) -> Result<String, KoanError> {
+    ) -> Result<DspSavedCopy, KoanError> {
         offload::sequenced(move || {
             let copy = koan_core::audio::dsp::profiles::save_as_copy(
                 &name,
@@ -3412,7 +3413,10 @@ impl KoanEngine {
             )
             .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)?;
-            Ok(copy)
+            Ok(DspSavedCopy {
+                name: copy.name,
+                placed: copy.placed,
+            })
         })
         .await
     }

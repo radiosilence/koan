@@ -286,7 +286,8 @@ A tuning's bands are edited on its own page, opened from its block on the EQ
 page: in the table below its graph, or on the graph itself. Drag a peak or
 shelf's handle for its frequency and gain, and pinch it, or drag it with
 Option held on the Mac, for its Q. A graphic curve is painted: drag anywhere
-away from the handles and the curve follows, with the brush under the graph
+across the graph away from the handles (a drag up or down scrolls the page)
+and the curve follows, with the brush under the graph
 moving the nearest point alone or its neighbours too, over a third of an
 octave or an octave. The graph follows the drag as it goes, drawn by the core
 without saving; the edit is saved and heard at most four times a second while
@@ -306,7 +307,9 @@ Once a tuning is edited, **Save as Copy…** on its page keeps the edit as an EQ
 of its own, named "<name> copy" unless another name is given, in the
 original's place in the output's tuning, and puts the original back as it was
 when the page was opened, or as its file had it for an import. The page then
-shows the copy.
+shows the copy. Where the output plays the original through a preset or a
+group rather than naming it in its tuning, the copy is saved but not placed,
+and the page says so.
 
 An imported EQ keeps what it was imported as. Once edited, **Reset to File** on
 its page or `koan dsp revert NAME` puts it back, and `koan dsp copy NAME` keeps the edit as an EQ of its own

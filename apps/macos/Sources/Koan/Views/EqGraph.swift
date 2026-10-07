@@ -62,6 +62,16 @@ struct EqGraph: View {
     @State private var startQ: Double?
     /// A pinch is under way: a drag's finger moves nothing meanwhile.
     @State private var pinching = false
+    /// Where the brush last was, to end a stroke cut short.
+    @State private var lastPaint: (hz: Double, db: Double)?
+    /// A drag that began across neither a handle nor the curve, left to the
+    /// page to scroll.
+    @State private var passing = false
+    /// Whether each gesture is still under way. A gesture cut short — the
+    /// page scrolled or closed, a call — never reaches `onEnded`; this going
+    /// false ends it.
+    @GestureState private var dragActive = false
+    @GestureState private var pinchActive = false
 
     enum Shown: String, CaseIterable, Identifiable {
         case eq = "EQ"
@@ -176,6 +186,8 @@ struct EqGraph: View {
                 }
             }
         }
+        .onChange(of: dragActive) { _, active in if !active { endDrag() } }
+        .onChange(of: pinchActive) { _, active in if !active { endPinch() } }
         #endif
         .accessibilityLabel(showingEq ? "EQ response" : "Measured response")
     }
@@ -208,23 +220,37 @@ struct EqGraph: View {
     #if !os(tvOS)
     private func drag(_ proxy: ChartProxy, _ geo: GeometryProxy) -> some Gesture {
         DragGesture(minimumDistance: 2)
+            .updating($dragActive) { _, active, _ in active = true }
             .onChanged { g in
                 guard let plot = proxy.plotFrame else { return }
                 let origin = geo[plot].origin
                 let at = CGPoint(x: g.location.x - origin.x, y: g.location.y - origin.y)
-                if !grabbed, !pinching {
-                    grabbed = true
+                if !grabbed, !pinching, !passing {
                     let start = CGPoint(x: g.startLocation.x - origin.x, y: g.startLocation.y - origin.y)
-                    dragging = nearest(to: start, proxy)
-                    painting = dragging == nil && paints
-                    selected = dragging?.index ?? selected
-                    startQ = dragging?.q
+                    let under = nearest(to: start, proxy)
+                    // A stroke starts across the curve; one starting up or
+                    // down is the page being scrolled. Which it is waits for
+                    // a few points of travel.
+                    if under == nil, paints, hypot(g.translation.width, g.translation.height) < 8 {
+                        return
+                    }
+                    if under == nil, !paints || abs(g.translation.height) >= abs(g.translation.width) {
+                        passing = true
+                        return
+                    }
+                    grabbed = true
+                    dragging = under
+                    painting = under == nil
+                    selected = under?.index ?? selected
+                    startQ = under?.q
                 }
-                guard let hz: Double = proxy.value(atX: at.x),
+                guard grabbed,
+                      let hz: Double = proxy.value(atX: at.x),
                       let db: Double = proxy.value(atY: at.y)
                 else { return }
                 let (hzIn, dbIn) = (min(max(hz, 20), 20000), min(max(db, yDomain.lowerBound), yDomain.upperBound))
                 if painting {
+                    lastPaint = (hzIn, dbIn)
                     onEdit?(.paint(hz: hzIn, db: dbIn, done: false))
                     return
                 }
@@ -243,35 +269,32 @@ struct EqGraph: View {
                 dragging = held
                 onEdit?(.band(held, done: false))
             }
-            .onEnded { g in
-                // Held where it was let go until the edited profile is drawn.
-                grabbed = false
-                // A pinch under way ends itself.
-                if pinching { return }
-                startQ = nil
-                if painting {
-                    painting = false
-                    if let plot = proxy.plotFrame {
-                        let origin = geo[plot].origin
-                        if let hz: Double = proxy.value(atX: g.location.x - origin.x),
-                           let db: Double = proxy.value(atY: g.location.y - origin.y) {
-                            onEdit?(.paint(
-                                hz: min(max(hz, 20), 20000),
-                                db: min(max(db, yDomain.lowerBound), yDomain.upperBound),
-                                done: true
-                            ))
-                        }
-                    }
-                } else if let held = dragging {
-                    onEdit?(.band(held, done: true))
-                }
-            }
+            .onEnded { _ in endDrag() }
+    }
+
+    /// The drag's end, whether it was let go or cut short; once only. The
+    /// handle is held where it was let go until the edited profile is drawn.
+    private func endDrag() {
+        passing = false
+        guard grabbed else { return }
+        grabbed = false
+        // A pinch under way ends itself.
+        if pinching { return }
+        startQ = nil
+        if painting {
+            painting = false
+            if let at = lastPaint { onEdit?(.paint(hz: at.hz, db: at.db, done: true)) }
+            lastPaint = nil
+        } else if let held = dragging {
+            onEdit?(.band(held, done: true))
+        }
     }
 
     /// A pinch widens the band under it, or the one last held: apart for a
     /// wider band, a lower Q.
     private func pinch(_ proxy: ChartProxy, _ geo: GeometryProxy) -> some Gesture {
         MagnifyGesture()
+            .updating($pinchActive) { _, active, _ in active = true }
             .onChanged { g in
                 if !pinching {
                     pinching = true
@@ -290,12 +313,16 @@ struct EqGraph: View {
                 dragging = held
                 onEdit?(.band(held, done: false))
             }
-            .onEnded { _ in
-                pinching = false
-                guard startQ != nil else { return }
-                startQ = nil
-                if let held = dragging { onEdit?(.band(held, done: true)) }
-            }
+            .onEnded { _ in endPinch() }
+    }
+
+    /// The pinch's end, whether it was let go or cut short; once only.
+    private func endPinch() {
+        guard pinching else { return }
+        pinching = false
+        guard startQ != nil else { return }
+        startQ = nil
+        if let held = dragging { onEdit?(.band(held, done: true)) }
     }
     #endif
 

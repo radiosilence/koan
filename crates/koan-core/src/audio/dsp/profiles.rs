@@ -1195,7 +1195,8 @@ fn curve_points(points: &[(f64, f64)]) -> Result<Vec<(f64, f64)>, String> {
 
 /// What `name` would draw with filter `index` changed by `edit`, nothing
 /// saved: the graph follows a drag with this, and the edit is saved when
-/// the drag settles. None where the filter is not of the kind `edit` takes.
+/// the drag settles. None where the filter is not of the kind `edit` takes,
+/// or `name` is a correction, which is not edited.
 fn preview(
     name: &str,
     index: usize,
@@ -1205,6 +1206,7 @@ fn preview(
     let cfg = Config::cached();
     let all = &cfg.dsp.profiles;
     let mut p = all.iter().find(|p| p.name == name)?.clone();
+    editable(&p, all).ok()?;
     if !edit(p.filters.get_mut(index)?) {
         return None;
     }
@@ -1929,22 +1931,40 @@ pub fn snapshot(name: &str) -> Option<String> {
     .ok()
 }
 
+/// A copy saved by `save_as_copy`: its name, and whether it took the
+/// original's place in the device's tuning, which it does only where the
+/// tuning names the original itself.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SavedCopy {
+    pub name: String,
+    pub placed: bool,
+}
+
 /// Keep `name` as it is now as a copy, under `new` or "<name> copy", and put
 /// `name` back: to `before`, a `snapshot` taken before the edit, where it
 /// differs, or else to its file, where it was imported and has been edited.
-/// On `device`, the copy takes `name`'s place in the tuning. The copy's
-/// name.
+/// On `device`, the copy takes `name`'s place in the tuning. Refused for a
+/// correction, which is not edited.
 pub fn save_as_copy(
     name: &str,
     new: Option<&str>,
     before: Option<&str>,
     device: Option<&str>,
-) -> Result<String, String> {
+) -> Result<SavedCopy, String> {
     use crate::config::DspOriginal;
+    may_edit(name)?;
     let before: Option<DspOriginal> = before
         .map(serde_json::from_str)
         .transpose()
         .map_err(|e| format!("Not a snapshot: {e}"))?;
+    // Whatever would refuse the swap is found before anything is written:
+    // the copy is the original under another name, so it may be a tuning's
+    // EQ exactly where the original may.
+    let tunings = device.map(tunings_for).unwrap_or_default();
+    let placed = tunings.iter().any(|(n, _)| n == name);
+    if placed {
+        check_tuning(name, &Config::cached().dsp.profiles)?;
+    }
     let copy = duplicate(name, new)?;
     let cfg = Config::cached();
     let p = cfg
@@ -1963,23 +1983,20 @@ pub fn save_as_copy(
         _ if edited(p) => revert(name)?,
         _ => {}
     }
-    if let Some(device) = device {
-        let tunings = tunings_for(device);
-        if tunings.iter().any(|(n, _)| n == name) {
-            let swapped: Vec<(String, bool)> = tunings
-                .into_iter()
-                .map(|(n, on)| {
-                    if n == name {
-                        (copy.clone(), on)
-                    } else {
-                        (n, on)
-                    }
-                })
-                .collect();
-            set_tunings(device, &swapped)?;
-        }
+    if let Some(device) = device.filter(|_| placed) {
+        let swapped: Vec<(String, bool)> = tunings
+            .into_iter()
+            .map(|(n, on)| {
+                if n == name {
+                    (copy.clone(), on)
+                } else {
+                    (n, on)
+                }
+            })
+            .collect();
+        set_tunings(device, &swapped)?;
     }
-    Ok(copy)
+    Ok(SavedCopy { name: copy, placed })
 }
 
 fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
@@ -3428,7 +3445,9 @@ mod tests {
         set_tunings(dac, &[("Warm".into(), true)]).unwrap();
         let before = snapshot("Warm").unwrap();
         set_band("Warm", 0, "peaking", 1000.0, 6.0, 1.0).unwrap();
-        let copy = save_as_copy("Warm", None, Some(&before), Some(dac)).unwrap();
+        let saved = save_as_copy("Warm", None, Some(&before), Some(dac)).unwrap();
+        assert!(saved.placed);
+        let copy = saved.name;
         assert_eq!(copy, "Warm copy");
         assert_eq!(detail("Warm").unwrap().filters[0], flat, "put back");
         assert!(matches!(
@@ -3437,6 +3456,22 @@ mod tests {
         ));
         assert_eq!(tunings_for(dac), vec![(copy, true)]);
         assert!(save_as_copy("Warm", None, Some("nonsense"), None).is_err());
+        let elsewhere = save_as_copy("Warm", Some("Spare"), None, Some("Speakers")).unwrap();
+        assert!(!elsewhere.placed, "not in that tuning");
+
+        // A correction is neither previewed nor copied this way.
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "HD 600".into(),
+                role: Some(crate::config::DspRole::Correction),
+                filters: vec![flat.clone()],
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        assert!(preview_band("HD 600", 0, "peaking", 1000.0, 6.0, 1.0, 48000).is_none());
+        assert!(save_as_copy("HD 600", None, None, None).is_err());
+        assert!(detail("HD 600 copy").is_none());
     }
 
     /// A graphic curve's points are set whole, clamped and in order of

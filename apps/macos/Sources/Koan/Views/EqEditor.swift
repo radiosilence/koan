@@ -4,8 +4,9 @@ import SwiftUI
 /// A profile's graph, and for a tuning the graph as an editor: a band's
 /// handle dragged for frequency and gain and pinched for Q, a graphic curve
 /// painted with a brush. The graph follows the finger with a preview the
-/// core draws and nothing saved; the edit is saved, and so played, at most
-/// every quarter second while it goes on, and once at its end.
+/// core draws and nothing saved, one at a time and always the newest; the
+/// edit is saved, and so played, at most every quarter second while it goes
+/// on, and once at its end, or when the page goes before it ends.
 struct EqEditor: View {
     let dsp: DspModel
     let name: String
@@ -20,8 +21,11 @@ struct EqEditor: View {
     @State private var painted: [DspPoint]?
     @State private var brush = Brush.narrow
     @State private var saved = Date.distantPast
-    /// Counts previews asked for, so a slow one cannot land on a newer.
-    @State private var asked = 0
+    /// The last step's save, where the throttle held it back.
+    @State private var unsaved: (() -> Void)?
+    /// A preview is being drawn; the newest step asked for meanwhile waits.
+    @State private var drawing = false
+    @State private var waiting: (() async -> DspResponse?)?
 
     enum Brush: Hashable { case point, narrow, wide }
 
@@ -33,22 +37,27 @@ struct EqEditor: View {
         detail.bands.firstIndex { $0.kind == "graphic" && ($0.channels.isEmpty || $0.channels.contains(0)) }
     }
 
+    private static let brushes: [(label: String, value: Brush)] = [
+        ("Point", .point), ("Narrow", .narrow), ("Wide", .wide),
+    ]
+
+    private var graph: EqGraph {
+        let onEdit: ((EqGraph.Edit) -> Void)? = editable ? { edit($0) } : nil
+        return EqGraph(
+            response: live ?? response,
+            parts: parts,
+            handles: editable ? BandTable.handles(detail.bands) : [],
+            paints: editable && curveIndex != nil,
+            onEdit: onEdit
+        )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: KoanTheme.Space.m) {
-            EqGraph(
-                response: live ?? response,
-                parts: parts,
-                handles: editable ? BandTable.handles(detail.bands) : [],
-                paints: editable && curveIndex != nil,
-                onEdit: editable ? edit : nil
-            )
+            graph
             #if !os(tvOS)
             if editable, curveIndex != nil {
-                KoanSegmentedPicker(
-                    options: [("Point", Brush.point), ("Narrow", .narrow), ("Wide", .wide)],
-                    selection: $brush,
-                    title: "Brush"
-                )
+                KoanSegmentedPicker(options: Self.brushes, selection: $brush, title: "Brush")
             }
             #endif
         }
@@ -57,6 +66,12 @@ struct EqEditor: View {
                 live = nil
                 painted = nil
             }
+        }
+        .onDisappear {
+            unsaved?()
+            unsaved = nil
+            editing = false
+            waiting = nil
         }
     }
 
@@ -83,19 +98,38 @@ struct EqEditor: View {
     }
 
     /// Draw a step of an edit at once, and save it if a quarter second has
-    /// passed since the last save, or it is the last step.
-    private func step(_ done: Bool, preview: @escaping () async -> DspResponse?, save: () -> Void) {
+    /// passed since the last save, or it is the last step. The first step
+    /// waits too: a touch that was the start of a scroll saves nothing.
+    private func step(_ done: Bool, preview: @escaping () async -> DspResponse?, save: @escaping () -> Void) {
+        if !editing { saved = .now }
         editing = !done
-        asked += 1
         if done || Date.now.timeIntervalSince(saved) > 0.25 {
             save()
             saved = .now
+            unsaved = nil
+        } else {
+            unsaved = save
         }
-        guard !done else { return }
-        let ask = asked
+        if done {
+            waiting = nil
+        } else if drawing {
+            waiting = preview
+        } else {
+            draw(preview)
+        }
+    }
+
+    private func draw(_ preview: @escaping () async -> DspResponse?) {
+        drawing = true
         Task {
             let drawn = await preview()
-            if ask == asked, editing, let drawn { live = drawn }
+            if editing, let drawn { live = drawn }
+            if let next = waiting {
+                waiting = nil
+                draw(next)
+            } else {
+                drawing = false
+            }
         }
     }
 

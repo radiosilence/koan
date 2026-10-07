@@ -35,6 +35,11 @@ struct DspProfilePage: View {
     @State private var copying = false
     @State private var copyName = ""
     @State private var confirmingReset = false
+    /// Edits made here to this EQ when `before` was taken: until there are
+    /// more, a change is another device's, and `before` follows it.
+    @State private var editsAtBefore: Int?
+    /// What became of the last Save as Copy, where it needs saying.
+    @State private var notice: String?
 
     var body: some View {
         KoanForm {
@@ -50,6 +55,12 @@ struct DspProfilePage: View {
             Section {
                 TextField("Name", text: $editingName)
                     .onSubmit(rename)
+            }
+            if let message = notice ?? dsp.lastError {
+                Section {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(KoanTheme.style(.bad, system: .orange))
+                }
             }
 
             if let d = detail {
@@ -156,9 +167,12 @@ struct DspProfilePage: View {
         .alert("Save as Copy", isPresented: $copying) {
             TextField("Name", text: $copyName)
             Button("Save") { saveCopy() }
+                .disabled(copyTaken)
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The copy takes this EQ's place in the tuning, and this one goes back to how it was.")
+            Text(copyTaken
+                 ? "There is already an EQ called \(copyName.trimmingCharacters(in: .whitespaces))."
+                 : "The copy takes this EQ's place in the tuning, and this one goes back to how it was.")
         }
         .confirmationDialog("Reset \(name) to its file?", isPresented: $confirmingReset, titleVisibility: .visible) {
             Button("Reset", role: .destructive) {
@@ -202,14 +216,21 @@ struct DspProfilePage: View {
         }
     }
 
+    private var copyTaken: Bool {
+        let new = copyName.trimmingCharacters(in: .whitespaces)
+        return dsp.overview?.profiles.contains { $0.name == new } ?? false
+    }
+
     private func saveCopy() {
         let (from, kept, on) = (name, before, device ?? dsp.overview?.device)
         let new = copyName.trimmingCharacters(in: .whitespaces)
         Task {
-            if let copy = await dsp.saveAsCopy(from, as: new.isEmpty ? nil : new, before: kept, device: on) {
-                before = nil
-                name = copy
-            }
+            guard let copy = await dsp.saveAsCopy(from, as: new.isEmpty ? nil : new, before: kept, device: on) else { return }
+            notice = copy.placed
+                ? nil
+                : "\(copy.name) is saved, but \(from) is not in \(on.map(dsp.label) ?? "the output")'s tuning, so the copy is not either. Add it on the EQ page."
+            before = nil
+            name = copy.name
         }
     }
 
@@ -258,7 +279,11 @@ struct DspProfilePage: View {
         let snapshot = await dsp.snapshot(asked)
         guard asked == name else { return }
         now = snapshot
-        if before == nil { before = snapshot }
+        let edits = dsp.edits[asked, default: 0]
+        if before == nil || editsAtBefore == edits {
+            before = snapshot
+            editsAtBefore = edits
+        }
         detail = await dsp.detail(name)
         response = await dsp.response(name)
         targets = await dsp.targets(name)

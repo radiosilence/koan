@@ -482,8 +482,13 @@ final class DspModel {
         act { try await $0.dspSetScope(name: name, everywhere: everywhere) }
     }
 
+    /// Edits made here, by profile: a page that has seen none takes a change
+    /// to its profile as another device's.
+    private(set) var edits: [String: Int] = [:]
+
     /// Set band `index` of `name`.
     func setBand(_ name: String, _ index: Int, kind: String, freq: Double, gain: Double, q: Double) {
+        edits[name, default: 0] += 1
         act {
             try await $0.dspSetBand(
                 name: name, index: UInt32(index), kind: kind, freq: freq, gainDb: gain, q: q
@@ -493,6 +498,7 @@ final class DspModel {
 
     /// Set the points of graphic curve `index` of `name`.
     func setCurve(_ name: String, _ index: Int, _ points: [DspPoint]) {
+        edits[name, default: 0] += 1
         act { try await $0.dspSetCurve(name: name, index: UInt32(index), points: points) }
     }
 
@@ -515,8 +521,8 @@ final class DspModel {
 
     /// Keep `name` as it is now as a copy, and put `name` back to `before`
     /// or its file; on `device` the copy takes its place in the tuning. The
-    /// copy's name, or nil where it was refused.
-    func saveAsCopy(_ name: String, as new: String?, before: String?, device: String?) async -> String? {
+    /// copy, or nil where it was refused.
+    func saveAsCopy(_ name: String, as new: String?, before: String?, device: String?) async -> DspSavedCopy? {
         do {
             let copy = try await engine.dspSaveAsCopy(name: name, new: new, before: before, device: device)
             lastError = nil
@@ -529,10 +535,12 @@ final class DspModel {
     }
 
     func addBand(_ name: String) {
+        edits[name, default: 0] += 1
         act { _ = try await $0.dspAddBand(name: name) }
     }
 
     func removeFilter(_ name: String, _ index: Int) {
+        edits[name, default: 0] += 1
         act { try await $0.dspRemoveFilter(name: name, index: UInt32(index)) }
     }
 
