@@ -185,7 +185,15 @@ pub fn end(key: u64) {
         i.waker.wake();
     }
     let id = held.id.clone();
-    HELD.lock().push(held);
+    {
+        // Once per address: a second Disconnect adds nothing, bar an id.
+        let mut all = HELD.lock();
+        match all.iter_mut().find(|h| h.addr == held.addr) {
+            Some(h) if h.id.is_none() => *h = held,
+            Some(_) => {}
+            None => all.push(held),
+        }
+    }
     if let Some(id) = id
         && let Some(conn) = CONNS.lock().as_ref().and_then(|c| c.get(&id))
     {
@@ -2828,6 +2836,12 @@ mod tests {
         drop(listed);
         release("held-phone");
         assert!(held_addr(&addr.ip()));
+        // Disconnected twice: held once.
+        let (listed, _) = Listed::new(&addr, &waker);
+        end(listed.0);
+        end(listed.0);
+        drop(listed);
+        assert_eq!(held().iter().filter(|(a, _)| a == "192.0.2.77").count(), 1);
         release_addr("192.0.2.77");
         assert!(!held_addr(&addr.ip()));
     }
