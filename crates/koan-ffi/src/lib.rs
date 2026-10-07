@@ -103,7 +103,10 @@ pub trait ProgressReporter: Send + Sync {
 /// `koan_core::audio::ios_backend::AudioSession`.
 #[uniffi::export(with_foreign)]
 pub trait AudioSessionHost: Send + Sync {
-    fn activate(&self);
+    /// Set `preferred_sample_rate` as the session's preferred rate (none when
+    /// zero), activate, and answer `AVAudioSession.sampleRate`. Also called
+    /// on a session already active, when a track wants another rate.
+    fn activate(&self, preferred_sample_rate: f64) -> f64;
     fn release(&self);
 }
 
@@ -112,8 +115,8 @@ struct SessionBridge(Arc<dyn AudioSessionHost>);
 
 #[cfg(any(target_os = "ios", target_os = "tvos"))]
 impl koan_core::audio::ios_backend::AudioSession for SessionBridge {
-    fn activate(&self) {
-        self.0.activate();
+    fn activate(&self, preferred_rate: f64) -> f64 {
+        self.0.activate(preferred_rate)
     }
 
     fn release(&self) {

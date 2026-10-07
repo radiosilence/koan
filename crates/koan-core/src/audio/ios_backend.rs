@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use super::backend::{AudioBackend, AudioEngineHandle, BackendError, DeviceInfo};
+use super::backend::{AudioBackend, AudioEngineHandle, BackendError, DeviceInfo, SampleRateWatch};
 use super::engine;
 
 /// iOS output, through RemoteIO.
@@ -12,14 +12,15 @@ use super::engine;
 /// not in the SDK at all, so this is not a matter of writing the FFI.
 ///
 /// What stands in for a device is the audio session's current route, which the
-/// host app owns: it decides the category, activates the session, asks for a
-/// preferred sample rate, and handles interruptions and route changes. That has
-/// to live where there is a run loop and an app lifecycle, so it is Swift's,
-/// and this backend deliberately knows nothing about it.
+/// host app owns: it decides the category and handles interruptions and route
+/// changes. That has to live where there is a run loop and an app lifecycle, so
+/// it is Swift's. The engine reaches it only through `AudioSession`.
 ///
-/// The consequence worth stating plainly: output is not bit-perfect here. The
-/// preferred rate is a request the system may decline, and everything crosses
-/// the system mixer whatever it answers.
+/// The device rate is the session's. Each track's rate is asked for as the
+/// session's preferred rate, and the rate the hardware then runs at is read
+/// back. A USB DAC that supports the source rate is switched to it and the
+/// output is bit-perfect; the built-in speaker, Bluetooth and AirPlay stay at
+/// their own rate, RemoteIO resamples, and the rate read back says so.
 pub struct IosAudioBackend;
 
 /// The name of the port the session is routed to, as the app last heard it:
@@ -46,8 +47,10 @@ pub fn set_route(name: String) {
 /// Both are called on the player thread, in order, which is what keeps a
 /// release from landing between an activation and the start it was for.
 pub trait AudioSession: Send + Sync {
-    /// Make the session active for playback. Blocks until it is.
-    fn activate(&self);
+    /// Make the session active for playback, asking for `preferred_rate` (none
+    /// when zero), and answer the rate the hardware runs at. Blocks until the
+    /// session is active.
+    fn activate(&self, preferred_rate: f64) -> f64;
     /// Nothing has played for a while: deactivate, and tell the other apps
     /// they may play again.
     fn release(&self);
@@ -63,12 +66,37 @@ pub fn set_session(session: Arc<dyn AudioSession>) {
     *SESSION.write() = Some(session);
 }
 
-/// Called by the engine just before its output unit starts.
+/// The rate the current track wants, as `f64` bits: what each activation asks
+/// for. Zero until a track has been played.
+static PREFERRED: AtomicU64 = AtomicU64::new(0);
+
+/// The rate the session last said the hardware runs at, as `f64` bits.
+static GRANTED: AtomicU64 = AtomicU64::new(0);
+
+type RateWatch = Arc<dyn Fn(f64) + Send + Sync>;
+
+/// Told the granted rate on each activation. One at a time: the player's
+/// current session's.
+static WATCH: parking_lot::Mutex<Option<RateWatch>> = parking_lot::Mutex::new(None);
+
+fn activate(session: &dyn AudioSession) -> f64 {
+    let granted = session.activate(f64::from_bits(PREFERRED.load(Ordering::Acquire)));
+    HELD.store(true, Ordering::Release);
+    GRANTED.store(granted.to_bits(), Ordering::Release);
+    granted
+}
+
+/// Called by the engine just before its output unit starts. A session taken
+/// back after a release may come back at another rate than the one the
+/// player last heard, so the granted rate goes to the watch.
 pub(crate) fn activate_session() {
     let session = SESSION.read().clone();
     if let Some(session) = session {
-        session.activate();
-        HELD.store(true, Ordering::Release);
+        let granted = activate(session.as_ref());
+        let watch = WATCH.lock().clone();
+        if let Some(watch) = watch {
+            watch(granted);
+        }
     }
 }
 
@@ -114,16 +142,32 @@ impl AudioBackend for IosAudioBackend {
     }
 
     fn get_device_sample_rate(&self, _device: &DeviceInfo) -> Result<f64, BackendError> {
-        // The session knows, and the session is the app's. Answering with the
-        // source rate keeps the player from trying to switch to something else.
-        Ok(0.0)
+        // Zero until the session has first been activated: unknown, and no
+        // switch to wait out.
+        Ok(f64::from_bits(GRANTED.load(Ordering::Acquire)))
     }
 
     fn set_device_sample_rate(&self, _device: &DeviceInfo, rate: f64) -> Result<f64, BackendError> {
-        // Nothing to set: `AVAudioSession.setPreferredSampleRate` is the only
-        // lever and it belongs to the app. Reporting the rate back unchanged
-        // says "asked for, not guaranteed", which is the truth on iOS.
-        Ok(rate)
+        PREFERRED.store(rate.to_bits(), Ordering::Release);
+        // A held session takes the new preference at once, and answers for
+        // it. One let go is asked when the engine starts, without taking the
+        // speaker from another app before anything plays; until then the rate
+        // asked for stands in, and the watch corrects it.
+        let session = SESSION.read().clone();
+        match session {
+            Some(session) if session_held() => Ok(activate(session.as_ref())),
+            _ => Ok(rate),
+        }
+    }
+
+    fn watch_device_sample_rate(
+        &self,
+        _device: &DeviceInfo,
+        on_change: Box<dyn Fn(f64) + Send + Sync>,
+    ) -> Option<Box<dyn SampleRateWatch>> {
+        let watch: RateWatch = Arc::from(on_change);
+        *WATCH.lock() = Some(watch.clone());
+        Some(Box::new(Watching(watch)))
     }
 
     fn create_engine(
@@ -137,5 +181,89 @@ impl AudioBackend for IosAudioBackend {
         let engine = engine::AudioEngine::new(0, sample_rate, channels, consumer, samples_played)
             .map_err(|e| BackendError::StreamCreation(e.to_string()))?;
         Ok(Box::new(engine))
+    }
+}
+
+/// The player's subscription to the granted rate. A newer one replaces it, so
+/// it clears the slot on drop only if it is still the one there.
+struct Watching(RateWatch);
+
+impl SampleRateWatch for Watching {}
+
+impl Drop for Watching {
+    fn drop(&mut self) {
+        let mut slot = WATCH.lock();
+        if slot.as_ref().is_some_and(|w| Arc::ptr_eq(w, &self.0)) {
+            *slot = None;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A session on a route that runs at 48 kHz unless asked for 44.1, as a
+    /// DAC with only those two would.
+    struct TwoRateDac {
+        activations: AtomicU64,
+    }
+
+    impl AudioSession for TwoRateDac {
+        fn activate(&self, preferred_rate: f64) -> f64 {
+            self.activations.fetch_add(1, Ordering::Relaxed);
+            if preferred_rate == 44100.0 {
+                44100.0
+            } else {
+                48000.0
+            }
+        }
+        fn release(&self) {}
+    }
+
+    #[test]
+    fn the_rate_reported_is_the_one_the_session_grants() {
+        let dac = Arc::new(TwoRateDac {
+            activations: AtomicU64::new(0),
+        });
+        set_session(dac.clone());
+        let backend = IosAudioBackend;
+        let device = backend.default_device().unwrap();
+        let heard = Arc::new(AtomicU64::new(0));
+        let watch = {
+            let heard = heard.clone();
+            backend.watch_device_sample_rate(
+                &device,
+                Box::new(move |rate| heard.store(rate.to_bits(), Ordering::Relaxed)),
+            )
+        };
+
+        // Not yet held: nothing is activated before the engine starts, and
+        // the request stands in until it does.
+        assert_eq!(
+            backend.set_device_sample_rate(&device, 96000.0).unwrap(),
+            96000.0
+        );
+        assert_eq!(dac.activations.load(Ordering::Relaxed), 0);
+
+        // Starting takes the session, and the player hears what it runs at.
+        activate_session();
+        assert_eq!(f64::from_bits(heard.load(Ordering::Relaxed)), 48000.0);
+        assert_eq!(backend.get_device_sample_rate(&device).unwrap(), 48000.0);
+
+        // Held: a new track's rate is asked for and answered at once.
+        assert_eq!(
+            backend.set_device_sample_rate(&device, 44100.0).unwrap(),
+            44100.0
+        );
+        assert_eq!(backend.get_device_sample_rate(&device).unwrap(), 44100.0);
+
+        // A replaced watch does not unsubscribe its successor.
+        let newer = backend.watch_device_sample_rate(&device, Box::new(|_| {}));
+        drop(watch);
+        assert!(WATCH.lock().is_some());
+        drop(newer);
+        assert!(WATCH.lock().is_none());
+        release_session();
     }
 }

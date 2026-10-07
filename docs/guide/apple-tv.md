@@ -75,7 +75,7 @@ with kōan in the background as well as on screen.
 
 ## Sample rates
 
-The Apple TV app asks tvOS for no sample rate and checks none, so output runs at the rate the route settles on; over HDMI that is the one the television or receiver negotiates. Bit-perfect playback is a claim for the Mac and Linux only; see [Sample rates on iOS](../getting-started.md#sample-rates-on-ios).
+The Apple TV app asks tvOS for each track's sample rate and shows the rate the output then runs at; over HDMI that is the one the television or receiver negotiates, and a different one means tvOS resampled. See [Sample rates on iOS](../getting-started.md#sample-rates-on-ios).
 
 ## What it leaves out
 

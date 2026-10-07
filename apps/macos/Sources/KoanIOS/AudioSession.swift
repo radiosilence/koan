@@ -53,13 +53,13 @@ final class AudioSession {
     /// Category and buffer size, and the notifications. Not activation: an
     /// active `.playback` session stops whatever else is playing, so it is
     /// activated only when koan plays — by the engine, through `Host`.
-    func prepare(preferredSampleRate: Double? = nil) {
-        configure(preferredSampleRate: preferredSampleRate)
+    func prepare() {
+        configure()
         observe()
     }
 
     /// Category and buffer size: also what a media services reset undoes.
-    private func configure(preferredSampleRate: Double? = nil) {
+    private func configure() {
         let session = AVAudioSession.sharedInstance()
         do {
             // `.playback` is what keeps producing audio with the screen locked
@@ -67,12 +67,6 @@ final class AudioSession {
             // the bundle, without which the process is suspended and the audio
             // thread with it.
             try session.setCategory(.playback, mode: .default, options: [])
-            if let preferredSampleRate {
-                // A request, not an instruction. iOS may answer with something
-                // else, and everything crosses the system mixer regardless —
-                // which is why koan makes no bit-perfect claim here.
-                try session.setPreferredSampleRate(preferredSampleRate)
-            }
             // Larger than the default of a few milliseconds, so the render
             // thread wakes a twentieth as often. Latency is no cost to a music
             // player — the ring holds seconds, and pause fades out anyway —
@@ -95,12 +89,25 @@ final class AudioSession {
             self.note = note
         }
 
-        func activate() {
+        /// The track's rate is a request: a USB DAC that supports it is
+        /// switched to it, while the speaker, Bluetooth and AirPlay keep their
+        /// own and RemoteIO resamples. What the hardware runs at is read back,
+        /// so the format badge shows which happened.
+        func activate(preferredSampleRate: Double) -> Double {
+            let session = AVAudioSession.sharedInstance()
+            if preferredSampleRate > 0 {
+                do {
+                    try session.setPreferredSampleRate(preferredSampleRate)
+                } catch {
+                    note("audio session refused \(preferredSampleRate) Hz: \(error)")
+                }
+            }
             do {
-                try AVAudioSession.sharedInstance().setActive(true)
+                try session.setActive(true)
             } catch {
                 note("audio session refused activation: \(error)")
             }
+            return session.sampleRate
         }
 
         func release() {
@@ -111,9 +118,6 @@ final class AudioSession {
             }
         }
     }
-
-    /// What the session settled on, as against what was asked for.
-    var sampleRate: Double { AVAudioSession.sharedInstance().sampleRate }
 
     private func observe() {
         let centre = NotificationCenter.default

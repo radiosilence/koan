@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>kōan: a music player for macOS, iOS and Linux</title>
   <meta name="description"
-    content="A fast music player for local and Subsonic/Navidrome libraries: native SwiftUI apps on macOS and iOS, a terminal UI on macOS and Linux, and a server with a web UI and a Subsonic API, on one Rust core. Gapless, bit-perfect on the Mac and Linux, no Electron.">
+    content="A fast music player for local and Subsonic/Navidrome libraries: native SwiftUI apps on macOS and iOS, a terminal UI on macOS and Linux, and a server with a web UI and a Subsonic API, on one Rust core. Gapless, bit-perfect where the device allows, no Electron.">
   <meta name="color-scheme" content="dark light">
   <meta name="theme-color" content="#1e1e1e" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
@@ -513,9 +513,9 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">mis
       <p>The macOS app's pages and engine in a phone's shell: a tab bar for the queue, the library, search and settings,
         and Now Playing with synced lyrics and AirPlay over the playing record's colour. It plays from a server and
         caches what it plays, so the rest of an album or queue carries on underground. On an iPad with room for a
-        sidebar it goes for the Mac's layout. Output goes through the system mixer at the rate the route runs, so
-        bit-perfect is a Mac and Linux claim: on iOS it can hold through a USB DAC that supports the track's rate, and
-        otherwise iOS resamples (the built-in speaker and Apple's headphone adapters run at 48 kHz, Bluetooth is lossy,
+        sidebar it goes for the Mac's layout. Playback is bit-perfect through a USB DAC that supports the track's
+        rate; on any other route iOS resamples, and the format badge says so (the built-in speaker and Apple's
+        headphone adapters run at 48 kHz, Bluetooth is lossy,
         AirPlay is 16-bit/44.1 kHz). EQ and convolution profiles follow the route, so your AirPods and your wired headphones each
         get their own.</p>
     </section>
