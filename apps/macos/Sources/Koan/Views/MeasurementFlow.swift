@@ -423,14 +423,10 @@ struct MeasurementFlow: View {
     /// Read the chosen files as one text: a speaker's two planes are read
     /// together. On the Mac, choosing one plane of an Audio Science Review
     /// export brings its sibling along where it can be read.
-    private func read(_ urls: [URL]) {
-        var urls = urls
-        if urls.count == 1, let sibling = Self.otherPlane(of: urls[0]),
-           FileManager.default.isReadableFile(atPath: sibling.path) {
-            urls.append(sibling)
-        }
+    private func read(_ chosen: [URL]) {
         var texts: [String] = []
-        for url in urls {
+        var names: [String] = []
+        for url in chosen {
             let held = url.startAccessingSecurityScopedResource()
             defer { if held { url.stopAccessingSecurityScopedResource() } }
             guard let contents = try? String(contentsOf: url, encoding: .utf8) else {
@@ -438,15 +434,26 @@ struct MeasurementFlow: View {
                 return
             }
             texts.append(contents)
+            names.append(url.lastPathComponent)
         }
+        #if os(macOS)
+        // Best effort: the picker grants the file chosen, and a protected
+        // folder such as Downloads may refuse its sibling. Without it the
+        // measurement reads as on-axis, and the note asks for the other plane.
+        if chosen.count == 1, let sibling = Self.otherPlane(of: chosen[0]),
+           let contents = try? String(contentsOf: sibling, encoding: .utf8) {
+            texts.append(contents)
+            names.append(sibling.lastPathComponent)
+        }
+        #endif
         problem = nil
         text = texts.joined(separator: "\n")
-        file = urls.map(\.lastPathComponent).joined(separator: ", ")
+        file = names.joined(separator: ", ")
         source = nil
         if name.isEmpty {
             // Audio Science Review names the files by plane, and their
             // folder by the speaker.
-            let first = urls[0]
+            let first = chosen[0]
             name = Self.otherPlane(of: first) == nil
                 ? first.deletingPathExtension().lastPathComponent
                 : first.deletingLastPathComponent().lastPathComponent

@@ -47,12 +47,12 @@ impl Used {
             }
             Used::OnAxis(plane) => {
                 let other = match plane {
-                    Some(Plane::Horizontal) => Plane::Vertical.name(),
-                    Some(Plane::Vertical) => Plane::Horizontal.name(),
-                    None => "the other plane's",
+                    Some(Plane::Horizontal) => format!("its {}", Plane::Vertical.name()),
+                    Some(Plane::Vertical) => format!("its {}", Plane::Horizontal.name()),
+                    None => "the other plane's".to_owned(),
                 };
                 format!(
-                    "A speaker's on-axis response. Add its {other} export as well, and the \
+                    "A speaker's on-axis response. Add {other} export as well, and the \
                      correction is made from its listening window (CTA-2034) instead, which \
                      predicts how it sounds in a room better."
                 )
