@@ -9,17 +9,21 @@ struct BandTable: View {
     let profile: String
     let bands: [DspBand]
 
-    /// The band types that can be chosen, by the name the config uses.
-    static let kinds: [(id: String, name: String)] = [
-        ("peaking", "Peak"),
-        ("low_shelf", "Low shelf"),
-        ("high_shelf", "High shelf"),
-        ("low_pass", "Low pass"),
-        ("high_pass", "High pass"),
-        ("notch", "Notch"),
-        ("band_pass", "Band pass"),
-        ("all_pass", "All pass"),
+    /// The band types that can be chosen, by the name the config uses: the
+    /// short form the row shows and the name the menu gives.
+    static let kinds: [(id: String, short: String, name: String)] = [
+        ("peaking", "PK", "Peak"),
+        ("low_shelf", "LS", "Low shelf"),
+        ("high_shelf", "HS", "High shelf"),
+        ("low_pass", "LP", "Low pass"),
+        ("high_pass", "HP", "High pass"),
+        ("notch", "NO", "Notch"),
+        ("band_pass", "BP", "Band pass"),
+        ("all_pass", "AP", "All pass"),
     ]
+
+    /// The table is read across rows of figures, so it is set small and tight.
+    static let rowInsets = EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16)
 
     static func editable(_ kind: String) -> Bool {
         kinds.contains { $0.id == kind }
@@ -46,6 +50,7 @@ struct BandTable: View {
                     Text("Q").frame(width: 50, alignment: .trailing)
                 }
                 .koanText(.fine, .muted)
+                .listRowInsets(Self.rowInsets)
             }
             ForEach(Array(bands.enumerated()), id: \.offset) { index, band in
                 Group {
@@ -55,6 +60,8 @@ struct BandTable: View {
                         BandRow(band: band)
                     }
                 }
+                .font(.role(.meta, system: .body))
+                .listRowInsets(Self.rowInsets)
                 #if !os(tvOS)
                 .contextMenu {
                     Button("Remove", role: .destructive) { dsp.removeFilter(profile, index) }
@@ -69,7 +76,7 @@ struct BandTable: View {
             #endif
             #if !os(tvOS)
             Button("Add a Band") { dsp.addBand(profile) }
-                .koanButton(.secondary)
+                .koanButton(.compact)
             #endif
         } header: {
             KoanSectionHeader("Filters")
@@ -98,13 +105,20 @@ private struct BandEditor: View {
     var body: some View {
         HStack(spacing: 8) {
             Text("\(index + 1)")
-                .koanText(.body, .muted)
+                .koanText(.meta, .muted)
                 .monospacedDigit()
                 .frame(width: 22, alignment: .leading)
-            Picker("Type", selection: Binding(get: { kind }, set: { kind = $0; commit() })) {
-                ForEach(BandTable.kinds, id: \.id) { Text($0.name).tag($0.id) }
-            }.koanControl()
-            .labelsHidden()
+            // The short form in the row, the names in the menu.
+            Menu {
+                Picker("Type", selection: Binding(get: { kind }, set: { kind = $0; commit() })) {
+                    ForEach(BandTable.kinds, id: \.id) { Text($0.name).tag($0.id) }
+                }
+            } label: {
+                Text(BandTable.kinds.first { $0.id == kind }?.short ?? kind)
+            }
+            // Not `koanControl`, whose `control` type would outweigh the row's.
+            .tint(KoanTheme.style(.ink, system: .tint))
+            .accessibilityLabel(BandTable.kinds.first { $0.id == kind }?.name ?? kind)
             .frame(maxWidth: .infinity, alignment: .leading)
             field($freq, .freq, width: 72, digits: 0)
             field($gain, .gain, width: 56, digits: 1)

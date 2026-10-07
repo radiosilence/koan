@@ -416,7 +416,7 @@ private struct MiniPlayhead: View {
     @Environment(PlayerModel.self) private var player
 
     var body: some View {
-        SeekProgress(fraction: player.progress, remaining: runway, thickness: 2)
+        SeekProgress(fraction: player.progress, remaining: runway, thickness: 2, showsHead: false)
             .frame(height: 2)
             .allowsHitTesting(false)
     }

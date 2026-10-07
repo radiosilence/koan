@@ -35,6 +35,17 @@ struct PlaylistView: View {
     /// Selection is local `@State` for the same reason the queue's is, and
     /// unread here for the same reason too — see `QueueView.selection`.
     @State private var selection: Set<String> = []
+    @State private var headerShown = true
+
+    /// Whether the header scrolls with the rows, as on a phone, where a fixed
+    /// one would take a third of the screen from the list.
+    private var headerScrolls: Bool {
+        #if os(iOS)
+        width == .compact && !entries.isEmpty
+        #else
+        false
+        #endif
+    }
     /// Where a drop would land, so the gesture says what it will do. See
     /// `insertionLine(showing:)`.
     @State private var dropBefore: Int?
@@ -60,10 +71,12 @@ struct PlaylistView: View {
         let rows = self.rows
 
         VStack(spacing: 0) {
-            header(rows)
-                .padding(.horizontal, 24)
-                .padding(.top, 18)
-                .padding(.bottom, 16)
+            if !headerScrolls {
+                header(rows)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 18)
+                    .padding(.bottom, 16)
+            }
 
             if entries.isEmpty {
                 EmptyState(
@@ -81,6 +94,18 @@ struct PlaylistView: View {
                 table(rows)
                 #else
                 List(selection: $selection) {
+                    if headerScrolls {
+                        header(rows)
+                            .padding(.vertical, KoanTheme.Space.s)
+                            // Each button its own tap target: a row of automatic-style
+                            // buttons is one target that fires them all.
+                            .buttonStyle(.borderless)
+                            .rowSeparator(.hidden)
+                            .selectionDisabled()
+                            .washedRow()
+                            .onAppear { headerShown = true }
+                            .onDisappear { headerShown = false }
+                    }
                     ForEach(rows) { row in
                         rowView(row)
                     }
@@ -88,6 +113,18 @@ struct PlaylistView: View {
                 }
                 .insetList()
                 .washedGround()
+                #if os(iOS)
+                // The name moves into the bar once the header has scrolled away.
+                .toolbar {
+                    if headerScrolls && !headerShown {
+                        ToolbarItem(placement: .principal) {
+                            Text(playlist?.name ?? "")
+                                .font(.role(.control, system: .headline))
+                                .lineLimit(1)
+                        }
+                    }
+                }
+                #endif
                 .selectionMenu(for: String.self) { ids in
                     menu(forRows: ids)
                 } primaryAction: { ids in
@@ -236,7 +273,8 @@ struct PlaylistView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            HStack(alignment: .bottom, spacing: 18) {
+            // Top-aligned: the cover's top edge meets the title's first line.
+            HStack(alignment: .top, spacing: 18) {
                 artwork
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -260,7 +298,7 @@ struct PlaylistView: View {
 
     private var artwork: some View {
         PlaylistArtwork(sources: playlists.covers[playlistId] ?? [], cornerRadius: KoanTheme.radius(8))
-            .frame(width: 132, height: 132)
+            .frame(width: width == .compact ? 96 : 132, height: width == .compact ? 96 : 132)
             .koanShadow(0.3, radius: 10, y: 4)
     }
 
@@ -298,6 +336,7 @@ struct PlaylistView: View {
         }
         .help("Reorder the playlist itself, for good")
         .disabled(entries.count < 2)
+        .koanButton(.compact)
     }
 
     private var layoutControls: some View {

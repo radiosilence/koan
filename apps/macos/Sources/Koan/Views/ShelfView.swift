@@ -166,9 +166,12 @@ struct ShelfView: View {
 
     private var list: some View {
                 List(selection: $selection) {
-                    if !artists.isEmpty { artistSection }
-                    if !albums.isEmpty { albumSection }
-                    if !tracks.isEmpty { trackSection }
+                    Group {
+                        if !artists.isEmpty { artistSection }
+                        if !albums.isEmpty { albumSection }
+                        if !tracks.isEmpty { trackSection }
+                    }
+                    .washedRow()
                 }
                 .insetList()
                 .washedGround()

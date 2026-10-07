@@ -24,7 +24,7 @@ struct AssistantsSettings: View {
                 } label: {
                     KoanLabel(copied ? "Copied" : "Copy Address", icon: "doc.on.doc")
                 }
-                .koanButton(.secondary)
+                .koanButton(.standard)
                 .task(id: copied) {
                     guard copied else { return }
                     try? await Task.sleep(for: .seconds(1.5))

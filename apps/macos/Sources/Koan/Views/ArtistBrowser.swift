@@ -85,6 +85,7 @@ struct ArtistBrowser: View {
                 }
                 .onAppear { library.artistsShown.insert(artist.id) }
                 .onDisappear { library.artistsShown.remove(artist.id) }
+                .washedRow()
         }
         // Rebuilt on each visit rather than kept mounted behind other pages
         // (see `StageView`). A `List` takes no scroll position, but it does go
@@ -269,7 +270,9 @@ struct ArtistDetailView: View {
                 // The play button reads as part of the title, so it sits on the
                 // title's line. Everything below is full width rather than
                 // indented into a column beside it.
-                HStack(alignment: .center, spacing: 20) {
+                // Top-aligned, as a record's header is: the photo's top edge
+                // meets the name's first line.
+                HStack(alignment: .top, spacing: 20) {
                     if info?.hasImage == true {
                         AlbumArtwork(source: .artist(artistId), size: .tile, cornerRadius: KoanTheme.radius(56))
                             .frame(width: 112, height: 112)

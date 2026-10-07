@@ -58,11 +58,11 @@ private struct SectionPage: View {
             }
             page
         }
-        .navigationTitle(title)
+        .navigationTitle(KoanTheme.label(title))
         .modifier(SectionFilter(placeholder: section.filterPlaceholder))
         #else
         page
-            .navigationTitle(title)
+            .navigationTitle(KoanTheme.label(title))
             .modifier(SectionFilter(placeholder: section.filterPlaceholder))
             .toolbar {
                 if section.isBrowser {
