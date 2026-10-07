@@ -148,13 +148,13 @@ struct PickerSheet: View {
 
             Button("Replace Queue") { commit(.replace) }
                 .shortcut(.return, modifiers: [.command, .shift])
-                .koanButton(.secondary)
+                .koanButton(.standard)
             Button("Add") { commit(.append) }
                 .shortcut(.return, modifiers: [])
-                .koanButton(.secondary)
+                .koanButton(.standard)
             Button("Add & Play") { commit(.appendAndPlay) }
                 .shortcut(.return, modifiers: .command)
-                .koanButton(.primary, system: .borderedProminent)
+                .koanButton(.prominent, system: .borderedProminent)
         }
         .disabled(resolving || (picked.isEmpty && highlighted == nil))
         .padding(.horizontal, 14)

@@ -79,19 +79,36 @@ pub fn next_id() -> u64 {
     u64::from_le_bytes(bytes).max(1)
 }
 
-static WAITING: LazyLock<Mutex<HashMap<u64, crossbeam_channel::Sender<AckOutcome>>>> =
-    LazyLock::new(Default::default);
+/// The device a command was sent to, and where its answer goes.
+type Waiter = (String, crossbeam_channel::Sender<AckOutcome>);
 
-/// Wait for the answer to `id`. Dropping the receiver stops waiting.
-pub fn expect(id: u64) -> crossbeam_channel::Receiver<AckOutcome> {
+/// Each waiting id, with its waiter.
+static WAITING: LazyLock<Mutex<HashMap<u64, Waiter>>> = LazyLock::new(Default::default);
+
+/// Wait for `device`'s answer to the command sent under `id`. Dropping the
+/// receiver stops waiting.
+pub fn expect(id: u64, device: &str) -> crossbeam_channel::Receiver<AckOutcome> {
     let (tx, rx) = crossbeam_channel::bounded(1);
-    WAITING.lock().insert(id, tx);
+    WAITING.lock().insert(id, (device.to_owned(), tx));
     rx
 }
 
-/// An answer to `id` has arrived, by whatever way.
-pub fn resolve(id: u64, outcome: AckOutcome) {
-    if let Some(tx) = WAITING.lock().remove(&id) {
+/// `from` answered `id`, by whatever way. Only the device the command was
+/// sent to can answer it: nearby connections are not encrypted, so an id is
+/// seen by anyone on the network, and any device this one has dialled could
+/// otherwise report a command done that never arrived, or refused one that
+/// did.
+pub fn resolve(id: u64, from: &str, outcome: AckOutcome) {
+    let mut waiting = WAITING.lock();
+    match waiting.get(&id) {
+        Some((device, _)) if device == from => {}
+        Some((device, _)) => {
+            log::warn!("acks: {from} answered a command sent to {device}; ignored");
+            return;
+        }
+        None => return,
+    }
+    if let Some((_, tx)) = waiting.remove(&id) {
         let _ = tx.try_send(outcome);
     }
 }
@@ -278,10 +295,21 @@ mod tests {
     #[test]
     fn a_sender_hears_its_answer_once() {
         let id = next_id();
-        let rx = expect(id);
-        resolve(id, AckOutcome::Queued);
-        resolve(id, AckOutcome::Done);
+        let rx = expect(id, "phone");
+        resolve(id, "phone", AckOutcome::Queued);
+        resolve(id, "phone", AckOutcome::Done);
         assert_eq!(rx.try_recv(), Ok(AckOutcome::Queued));
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn only_the_device_a_command_went_to_answers_it() {
+        let id = next_id();
+        let rx = expect(id, "phone");
+        // Another device on the network, which saw the id go by.
+        resolve(id, "stranger", AckOutcome::Done);
+        assert!(rx.try_recv().is_err(), "a stranger's answer is not heard");
+        resolve(id, "phone", AckOutcome::Failed { error: "no".into() });
+        assert!(matches!(rx.try_recv(), Ok(AckOutcome::Failed { .. })));
     }
 }

@@ -1281,7 +1281,7 @@ pub fn send_then(id: &str, cmd: LinkCommand, then: Option<Then>) -> Result<(), S
     // twice acts on it once; and listened for before it is sent, so an answer
     // quicker than this thread is still heard.
     let ack = acks::next_id();
-    let answer = acks::expect(ack);
+    let answer = acks::expect(ack, id);
     if routes.lan {
         let sent = if routes.lan_answers {
             crate::remote::nearby::send_acked(id, cmd.clone(), ack)
@@ -1502,6 +1502,17 @@ fn server_first(
     server().or_else(|why| {
         log::info!("devices: the server did not take it ({why}); sending it here");
         otherwise()
+    })
+}
+
+/// Whether `id` is listed by the server as one of the account's devices
+/// (`Some(None)`) or one shared with it (`Some(Some(owner))`).
+pub fn listed_owner(id: &str) -> Option<Option<String>> {
+    with(|s| {
+        s.account
+            .iter()
+            .find(|(d, _)| d.id == id)
+            .map(|(d, _)| d.owner.clone())
     })
 }
 

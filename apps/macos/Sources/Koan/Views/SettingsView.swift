@@ -34,13 +34,11 @@ struct SettingsView: View {
     ) -> some View {
         NavigationLink {
             content()
-                .navigationTitle(title)
+                .navigationTitle(KoanTheme.label(title))
                 // Pushed here rather than by a route, so it makes room for the
                 // theme's tab bar itself, as routes do.
                 .koanHidesSystemTabBar()
-                #if os(tvOS)
                 .roomBackground()
-                #endif
         } label: {
             #if os(tvOS)
             // The symbols are of different widths; at television size a
@@ -144,12 +142,12 @@ struct SettingsView: View {
                     pane("Appearance", "paintpalette") {
                         AppearanceSettings()
                     }
-                    Section {} footer: {
-                        Text(AppVersion.text)
-                            .koanText(.fine, .muted)
-                            .frame(maxWidth: .infinity)
-                    }
+                    Text(AppVersion.text)
+                        .koanText(.fine, .muted)
+                        .frame(maxWidth: .infinity)
+                        .washedRow()
                 }
+                .koanList()
                 .navigationTitle(KoanTheme.label("Settings"))
                 .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                 #endif
@@ -161,7 +159,7 @@ struct SettingsView: View {
         // screen, resizable, and kept at whatever size it was last given. A
         // phone gets whatever it has.
         #if os(macOS)
-        .frame(minWidth: 600, idealWidth: 820, maxWidth: .infinity, minHeight: 480, idealHeight: 780, maxHeight: .infinity)
+        .frame(minWidth: 600, idealWidth: 920, maxWidth: .infinity, minHeight: 480, idealHeight: 780, maxHeight: .infinity)
         .background(SettingsFrameAutosave())
         #endif
         #if os(macOS)
@@ -275,7 +273,7 @@ private struct LibrarySettings: View {
                 }
                 // Adding a folder starts a scan, so it waits for the one running.
                 Button("Add Folder…") { choosingFolder = true }
-                    .koanButton(.secondary)
+                    .koanButton(.standard)
                     .disabled(activity.conflicts(with: .localLibrary))
             } header: {
                 KoanSectionHeader("Folders")
@@ -287,9 +285,9 @@ private struct LibrarySettings: View {
             Section {
                 HStack {
                     Button("Scan") { model.scan() }
-                        .koanButton(.secondary)
+                        .koanButton(.standard)
                     Button("Rescan Everything") { model.scan(force: true) }
-                        .koanButton(.secondary)
+                        .koanButton(.standard)
                         .help("Re-read every file's tags, ignoring the scan cache")
                 }
                 .rowButtons()
@@ -311,7 +309,7 @@ private struct LibrarySettings: View {
                 Button("Clear Library Index…", role: .destructive) {
                     confirmingRebuild = true
                 }
-                .koanButton(.secondary)
+                .koanButton(.compact)
                 .disabled(activity.conflicts(with: .wholeLibrary))
             } header: {
                 KoanSectionHeader("Rebuild")
@@ -416,7 +414,7 @@ private struct RemoteSettings: View {
                     LabeledContent("User", value: model.settings.remoteUsername)
                     LabeledContent(
                         "Tracks",
-                        value: Format.count(Int64(model.settings.remoteTracks), "track")
+                        value: model.settings.remoteTracks.formatted(.number)
                     )
                     if mirror.signInRefused {
                         KoanLabel(EngineMirror.signInRefusedDetail, icon: "exclamationmark.triangle")
@@ -428,11 +426,11 @@ private struct RemoteSettings: View {
                         // sync runs strands you on a server you are trying to
                         // leave.
                         Button("Sync") { model.syncNow() }
-                            .koanButton(.secondary)
+                            .koanButton(.standard)
                             .disabled(activity.conflicts(with: [.remoteTracks]))
                         Spacer()
                         Button("Sign Out", role: .destructive) { confirmingSignOut = true }
-                            .koanButton(.secondary)
+                            .koanButton(.compact)
                     }
                     .rowButtons()
                 } header: {
@@ -484,7 +482,7 @@ private struct RemoteSettings: View {
                     }
                     HStack {
                         Button("Sign In") { model.signIn(url: url, username: username) }
-                            .koanButton(.primary)
+                            .koanButton(.prominent)
                             .disabled(url.isEmpty || username.isEmpty || model.password.isEmpty)
                         Spacer()
                         #if !os(tvOS)
@@ -645,7 +643,7 @@ private struct AccountSettings: View {
                 Section {
                     LabeledContent("User", value: model.settings.remoteUsername)
                     Button("Change Password…") { changingPassword = true }
-                        .koanButton(.secondary)
+                        .koanButton(.compact)
                 } header: {
                     KoanSectionHeader("Password")
                 } footer: {
@@ -864,7 +862,10 @@ struct EqSettings: View {
     /// The way to the profile's own page, where its bands are edited.
     @ViewBuilder private func editLink(_ name: String) -> some View {
         #if os(iOS)
-        NavigationLink("Edit") { DspProfilePage(dsp: app.dsp, name: name) }
+        NavigationLink("Edit") {
+            DspProfilePage(dsp: app.dsp, name: name)
+                .koanHidesSystemTabBar()
+        }
         #elseif os(macOS)
         Button("Edit") { showing = name }
             .koanButton(.text)
@@ -1043,11 +1044,11 @@ struct DspSettings: View {
             // imported on another device, and the TV picks them by output.
             #if !os(tvOS)
             Button("Import…") { importing = true }
-                .koanButton(.secondary)
+                .koanButton(.standard)
             Button("Find in AutoEQ…") { finding = AutoEqFind(query: "") }
-                .koanButton(.secondary)
+                .koanButton(.standard)
             Button("Use a Measurement…") { measuring = true }
-                .koanButton(.secondary)
+                .koanButton(.standard)
             #endif
             if let summary = dsp.importSummary {
                 Text(summary)
@@ -1084,14 +1085,14 @@ private struct AutoEqSuggestion: View {
                     .koanText(.body, .muted)
                 HStack {
                     Button("Use") { dsp.installAutoEq(entry) }
-                        .koanButton(.primary)
+                        .koanButton(.prominent)
                     dismiss
                     Spacer()
                 }
             case let .search(query):
                 HStack {
                     Button("Find \(query) in AutoEQ…") { find(query) }
-                        .koanButton(.secondary)
+                        .koanButton(.standard)
                     dismiss
                     Spacer()
                 }
@@ -1157,6 +1158,7 @@ private struct AutoEqSearch: View {
             .navigationTitle(KoanTheme.label("AutoEQ"))
             .sheet(isPresented: $measuring) {
                 MeasurementFlow(dsp: dsp, name: query) { _ in dismiss() }
+                    .koanSheet()
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -1232,7 +1234,7 @@ private struct ProfileRow: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(profile.name)
                     RoleTag(role: ProfileRole(profile.role))
                 }
@@ -1319,7 +1321,7 @@ private struct PairDevice: View {
                         .onSubmit(approve)
                         .koanField()
                     Button("Approve", action: approve)
-                        .koanButton(.primary)
+                        .koanButton(.prominent)
                         .disabled(code.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             } header: {
@@ -1372,14 +1374,14 @@ private struct ScrobblingSettings: View {
                     }
                     #if !os(tvOS)
                     Button("Disconnect", role: .destructive, action: disconnect)
-                        .koanButton(.secondary)
+                        .koanButton(.compact)
                         .disabled(busy)
                     #endif
                 } else if !loaded {
                     Text("Checking…").koanText(.body, .muted)
                 } else if statusFailed {
                     Button("Try Again") { Task { await load() } }
-                        .koanButton(.secondary)
+                        .koanButton(.standard)
                 } else {
                     #if os(tvOS)
                     Text("Not connected. Connect ListenBrainz from kōan on a phone or Mac.")
@@ -1396,7 +1398,7 @@ private struct ScrobblingSettings: View {
                             .koanButton(.text)
                         Spacer()
                         Button("Connect", action: connect)
-                            .koanButton(.primary)
+                            .koanButton(.prominent)
                             .disabled(busy || token.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                     .rowButtons()
@@ -1557,7 +1559,7 @@ private struct DevicesSettings: View {
             } header: {
                 KoanSectionHeader("This device")
             } footer: {
-                Text("Any kōan app on this network can then see what is playing here and control it, whoever is signed in there: with Full control, the output, preset and volume too, and move the music here or away; with Playback only, play and the queue. Neither reaches your library, playlists or history. Choose Playback only on a network you share with strangers. Your own devices reach each other through your server either way.")
+                Text("Other kōan apps on this network can see and control what plays here. Full control adds the output, preset, volume and moving the music; Playback only is play and the queue. Neither reaches your library. On a network shared with strangers, choose Playback only.")
                     .koanText(.fine, .muted)
             }
 
@@ -1582,7 +1584,7 @@ private struct DevicesSettings: View {
                         .onSubmit(add)
                         .koanField()
                     Button("Add", action: add)
-                        .koanButton(.secondary)
+                        .koanButton(.standard)
                         .disabled(address.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             } header: {
@@ -1615,7 +1617,7 @@ private struct DevicesSettings: View {
                             .onSubmit { share(grantee, allow: true) }
                             .koanField()
                         Button("Share") { share(grantee, allow: true) }
-                            .koanButton(.secondary)
+                            .koanButton(.standard)
                             .disabled(grantee.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                     #if !os(macOS)
@@ -1634,7 +1636,7 @@ private struct DevicesSettings: View {
                 } header: {
                     KoanSectionHeader("Shared with other accounts")
                 } footer: {
-                    Text("From any network, they can see what this device is playing and control its playback as on your own network: play, pause, skip, the queue, the output, preset and volume, and moving the music here or to their own devices. Each does it as their own account: nothing of your library, playlists, favourites or history, and nothing of your settings beyond what is playing and where.")
+                    Text("From any network, as their own account, they can see and control what this device plays, including the output, preset and volume. Nothing of your library, playlists, history or settings.")
                         .koanText(.fine, .muted)
                 }
             }
@@ -1702,10 +1704,15 @@ private struct AppearanceSettings: View {
             }
             Section {
                 Toggle("Colours from the record", isOn: $appearance.recordColours).koanToggle()
+                #if os(macOS)
+                if KoanTheme.isOn {
+                    Toggle("Wash the whole window", isOn: $appearance.washWindow).koanToggle()
+                }
+                #endif
             } header: {
                 KoanSectionHeader("Colour")
             } footer: {
-                Text("The record playing colours the window behind the page, and the accent on selection and progress. Off, there is no wash and the accent is kōan's mint, in either theme.")
+                Text("The record playing colours the window behind the page, and the accent on selection and progress. Off, there is no wash and the accent is kōan's mint, in either theme. Washing the whole window draws the sidebar, toolbar, transport and lyrics clear over it; off, they keep grounds of their own. That choice is provisional, while the look is decided.")
                     .koanText(.fine, .muted)
             }
             Section {
@@ -1802,6 +1809,9 @@ private struct SettingsFrameAutosave: NSViewRepresentable {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             guard let window, window.frameAutosaveName.isEmpty else { return }
+            // SwiftUI's Settings window is made without a resizable frame,
+            // whatever the scene's resizability says.
+            window.styleMask.insert(.resizable)
             window.setFrameUsingName("KoanSettings")
             window.setFrameAutosaveName("KoanSettings")
         }

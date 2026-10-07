@@ -1996,7 +1996,21 @@ pub fn split_baked(
 /// measured as `text`, corrected to `target`. A correction, kept everywhere
 /// like any headphone's.
 pub fn save_measured(name: &str, text: &str, ear: DspEar, target: &str) -> Result<String, String> {
-    let profile = measured_profile(name, text, ear, target)?;
+    save_measured_from(name, text, ear, target, None)
+}
+
+/// [`save_measured`], saying where the measurement came from, as an import
+/// says its files: one found on squig.link credits the site it was
+/// measured for.
+pub fn save_measured_from(
+    name: &str,
+    text: &str,
+    ear: DspEar,
+    target: &str,
+    source: Option<&str>,
+) -> Result<String, String> {
+    let mut profile = measured_profile(name, text, ear, target)?;
+    profile.source = source.into_iter().map(str::to_owned).collect();
     let name = profile.name.clone();
     persist(|cfg| cfg.dsp.profiles.push(profile))?;
     Ok(name)

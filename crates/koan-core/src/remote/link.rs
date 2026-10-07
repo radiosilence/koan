@@ -1042,8 +1042,8 @@ impl wire::Session for LinkSession<'_> {
             return;
         };
         match command {
-            LinkCommand::Acked { ack, outcome, .. } => {
-                crate::remote::acks::resolve(ack, outcome);
+            LinkCommand::Acked { from, ack, outcome } => {
+                crate::remote::acks::resolve(ack, &from, outcome);
             }
             LinkCommand::Devices { devices } => {
                 crate::remote::devices::set_account(devices);

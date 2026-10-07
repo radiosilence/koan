@@ -18,6 +18,9 @@ struct SeekProgress: PlatformViewRepresentable {
     /// is not advancing — paused, stopped, or being dragged.
     let remaining: TimeInterval
     let thickness: CGFloat
+    /// Whether the head is drawn. A playhead too thin to grab — the mini
+    /// player's — has none: at the start of a track it is a stray mark.
+    var showsHead = true
     /// The played extent's colour: the room's accent in the kōan theme, the
     /// label colour otherwise.
     @Environment(\.roomTint) private var tint
@@ -25,7 +28,9 @@ struct SeekProgress: PlatformViewRepresentable {
     typealias PlatformViewType = ProgressView
 
     func makeView(context: Context) -> ProgressView {
-        ProgressView(thickness: thickness)
+        let view = ProgressView(thickness: thickness)
+        view.showsHead = showsHead
+        return view
     }
 
     func updateView(_ view: ProgressView, context: Context) {
@@ -38,6 +43,9 @@ struct SeekProgress: PlatformViewRepresentable {
     final class ProgressView: LayerView {
         private let played = CALayer()
         private let head = CALayer()
+        var showsHead = true {
+            didSet { head.isHidden = !showsHead }
+        }
         private let thickness: CGFloat
         private var fraction = 0.0
         var tint: PlatformColor? {

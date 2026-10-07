@@ -169,7 +169,7 @@ pub fn parse(text: &str) -> Curve {
 
 /// Every frequency and level pair in `text`, at whatever level: a
 /// measurement in dB SPL sits around 90.
-fn points(text: &str) -> Curve {
+pub(crate) fn points(text: &str) -> Curve {
     let mut curve: Curve = text
         .lines()
         .filter_map(|line| {

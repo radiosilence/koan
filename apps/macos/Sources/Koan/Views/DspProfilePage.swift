@@ -432,7 +432,7 @@ struct RoleTag: View {
             .foregroundStyle(role.color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(role.color.opacity(0.15), in: Capsule())
+            .background(role.color.opacity(0.15), in: .rect(cornerRadius: KoanTheme.radius(8)))
     }
 }
 

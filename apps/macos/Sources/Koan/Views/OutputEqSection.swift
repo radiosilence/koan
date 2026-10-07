@@ -117,7 +117,7 @@ struct OutputEqSection: View {
                     .koanText(.meta, .bad)
             }
         } header: {
-            Text(dsp.label(device))
+            Text(dsp.label(device)).koanText(.fine, .ink).textCase(nil)
         } footer: {
             Text(sentence)
                 .koanText(.fine, .muted)
