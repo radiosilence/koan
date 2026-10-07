@@ -444,6 +444,7 @@ struct QueueView: View {
                     if grouped == value { Rectangle().fill(.tint).frame(height: KoanTheme.hairline) }
                 }
                 .touchTarget()
+                .contentShape(Rectangle())
         }
             .foregroundStyle(KoanTheme.style(grouped == value ? .ink : .muted))
             .accessibilityLabel(label)

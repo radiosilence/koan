@@ -483,6 +483,9 @@ struct PlayableHeaderButton: View {
                         .offset(x: 1)  // optical centring for a triangle
                 }
             }
+            // The whole square or disc takes the click, not just the stroke
+            // and the glyph a plain button would hit-test.
+            .contentShape(KoanTheme.isOn ? AnyShape(Rectangle()) : AnyShape(Circle()))
             #endif
         }
         #if !os(tvOS)
