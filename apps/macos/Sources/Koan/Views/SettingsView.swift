@@ -213,10 +213,32 @@ struct SettingsView: View {
 
 /// The result of the last action, or the reason it failed. One line, always in
 /// the same place — an action that reports nothing looks like it did nothing.
+/// On iOS in the theme it takes no room until there is something to say,
+/// and then sits on the ground under a rule, as the theme's bar does: held
+/// open on `surface`, it would be a blank band above the mini player on every
+/// settings page.
 private struct StatusLine: View {
     let model: SettingsModel
 
     var body: some View {
+        #if os(iOS)
+        if KoanTheme.isOn {
+            if model.lastError != nil || model.lastResult != nil {
+                line
+                    .koanSurface()
+                    .koanRule(.top)
+            }
+        } else {
+            line.koanMaterial(.bar)
+        }
+        #elseif os(tvOS)
+        line.koanMaterial(.regularMaterial)
+        #else
+        line.koanMaterial(.bar)
+        #endif
+    }
+
+    private var line: some View {
         Group {
             if let error = model.lastError {
                 KoanLabel(error, icon: "exclamationmark.triangle.fill")
@@ -232,11 +254,6 @@ private struct StatusLine: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 18)
         .padding(.vertical, 8)
-        #if os(tvOS)
-        .koanMaterial(.regularMaterial)
-        #else
-        .koanMaterial(.bar)
-        #endif
     }
 }
 
