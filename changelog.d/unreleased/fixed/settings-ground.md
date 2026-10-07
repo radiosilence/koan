@@ -1,0 +1,1 @@
+- **The Settings window has one ground in dark mode, title bar included.** The kōan look paints the window's ground behind the title bar as well as through the window's container, so no lighter band shows over the title bar and tabs where that container is not applied.
