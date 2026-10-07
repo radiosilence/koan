@@ -1,0 +1,1 @@
+- **Record and artist headers.** A title that runs to two lines starts level with the top of the play button and wraps below it, and the heart sits close to its "favourited" label.
