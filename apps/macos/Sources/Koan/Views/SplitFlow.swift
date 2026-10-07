@@ -26,7 +26,7 @@ struct SplitFlow: View {
         NavigationStack {
             KoanForm {
                 Section {
-                    Text("\(name) is a correction for a device with a tuning baked in. With a measurement of the device, kōan takes it apart: a **correction** that makes them neutral, and the **tuning**, your taste, which then works on any headphones.")
+                    Text("\(name) is a correction for a device with a tuning baked in. With a measurement of the device, kōan takes it apart: a **correction** that makes it neutral, and the **tuning**, your taste, which then works on any device.")
                 }
                 Section {
                     Button(file ?? "Choose a Measurement File…") { choosing = true }

@@ -563,7 +563,7 @@ private struct RoleSection: View {
         case .tuning:
             return "A tuning is taste: more bass, a darker treble. It plays on top of a correction. Say which target it was made against, and on a device corrected to another, kōan plays the difference first, so it sounds as it was made to."
         case .baked:
-            return "A correction with a tuning already in it, as most finished presets are. It counts as the stack's correction, so a tuning on top would add taste twice. Split it, with a measurement of the headphones, to swap tunings."
+            return "A correction with a tuning already in it, as most finished presets are. It counts as the stack's correction, so a tuning on top would add taste twice. Split it, with a measurement of the device, to swap tunings."
         case .correction:
             break
         }
