@@ -60,6 +60,9 @@ pub struct AppearanceConfig {
     /// keep grounds of their own. Provisional: a way to live with both while
     /// the look is decided, and expected to go once it is.
     pub wash_window: bool,
+    /// The rainbow: accent, wash, progress and playing bars in the pride
+    /// flag's hues. Per device, and not offered in Settings.
+    pub rainbow: bool,
 }
 
 impl Default for AppearanceConfig {
@@ -69,6 +72,7 @@ impl Default for AppearanceConfig {
             theme_icons: true,
             record_colours: true,
             wash_window: true,
+            rainbow: false,
         }
     }
 }
@@ -798,6 +802,7 @@ pub struct DspMeasurement {
 pub enum DspEar {
     In,
     Over,
+    Speaker,
 }
 
 /// The bounds a profile must keep to be played: what any real correction
@@ -1377,7 +1382,8 @@ pub fn layer_of(path: &str) -> Layer {
         | "visualizer.enabled"
         | "visualizer.mode"
         | "visualizer.matrix_overlay"
-        | "visualizer.bass_shake" => Layer::Machine,
+        | "visualizer.bass_shake"
+        | "appearance.rainbow" => Layer::Machine,
         // The listening setup: these headphones, this room.
         p if p == "dsp" || p.starts_with("dsp.") => Layer::Machine,
         _ => Layer::Shared,

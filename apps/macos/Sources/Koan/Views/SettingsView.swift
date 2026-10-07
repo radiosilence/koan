@@ -28,6 +28,13 @@ struct SettingsView: View {
     #else
     @Environment(\.scenePhase) private var scenePhase
     #endif
+    #if os(iOS)
+    /// Taps on the version line, toward the seven that switch gay mode.
+    @State private var versionTaps: (count: Int, last: Date) = (0, .distantPast)
+    #elseif os(tvOS)
+    /// ↑↑↓↓←→←→ on the remote, which switches gay mode.
+    @State private var konami = SecretCode<MoveCommandDirection>([.up, .up, .down, .down, .left, .right, .left, .right])
+    #endif
 
     #if !os(macOS)
     /// A settings section: a row that goes into the pane it names.
@@ -60,46 +67,99 @@ struct SettingsView: View {
     }
     #endif
 
+    #if os(macOS)
+    private struct Tab: Identifiable {
+        let id: String
+        let title: String
+        let icon: String
+    }
+
+    private func tabs(_ model: SettingsModel) -> [Tab] {
+        var tabs = [
+            Tab(id: "library", title: "Library", icon: "music.note.house"),
+            Tab(id: "server", title: "Server", icon: "server.rack"),
+        ]
+        if AccountSettings.shown(model, mirror) {
+            tabs.append(Tab(id: "account", title: "Account", icon: "person.crop.circle"))
+        }
+        if PeoplePane.shown(model, people), people != nil {
+            tabs.append(Tab(id: "people", title: "People", icon: "person.2"))
+        }
+        tabs += [
+            Tab(id: "playback", title: "Playback", icon: "hifispeaker"),
+            Tab(id: "eq", title: "EQ", icon: "slider.vertical.3"),
+            Tab(id: "devices", title: "Devices", icon: "laptopcomputer.and.iphone"),
+        ]
+        if ServerCapabilitySections.shown(model, mirror) {
+            tabs.append(Tab(id: "server-capabilities", title: "Server Capabilities", icon: "puzzlepiece.extension"))
+        }
+        tabs.append(Tab(id: "appearance", title: "Appearance", icon: "paintpalette"))
+        return tabs
+    }
+
+    @ViewBuilder private func settingsPane(_ id: String, model: SettingsModel) -> some View {
+        switch id {
+        case "server": RemoteSettings(model: model)
+        case "account": AccountSettings(model: model)
+        case "people": if let people { PeoplePane(model: model, people: people) }
+        case "playback": PlaybackSettings(model: model)
+        case "eq": EqSettings()
+        case "devices": DevicesSettings(model: model)
+        case "server-capabilities": ServerCapabilitiesSettings()
+        case "appearance": AppearanceSettings()
+        default: LibrarySettings(model: model)
+        }
+    }
+    #endif
+
     var body: some View {
         Group {
             if let model {
                 #if os(macOS)
                 // The panes side by side in a window sized to hold the largest
-                // of them, which is what a settings window is on macOS.
-                TabView(selection: $pane) {
-                    LibrarySettings(model: model)
-                        .tabItem { Label("Library", systemImage: "music.note.house") }
-                        .tag("library")
-                    RemoteSettings(model: model)
-                        .tabItem { Label("Server", systemImage: "server.rack") }
-                        .tag("server")
-                    if AccountSettings.shown(model, mirror) {
-                        AccountSettings(model: model)
-                            .tabItem { Label("Account", systemImage: "person.crop.circle") }
-                            .tag("account")
+                // of them, which is what a settings window is on macOS. In the
+                // theme the tabs are its own, drawn on the window's ground: the
+                // system's are buttons of glass in a toolbar, and no role
+                // reaches them.
+                let tabs = tabs(model)
+                Group {
+                    if KoanTheme.isOn {
+                        VStack(spacing: 0) {
+                            HStack(spacing: 0) {
+                                ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
+                                    Button { pane = tab.id } label: {
+                                        KoanTabItem(
+                                            title: tab.title, icon: tab.icon, selected: pane == tab.id,
+                                            position: (index, tabs.count)
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.horizontal, KoanTheme.Space.m)
+                            .padding(.bottom, KoanTheme.Space.xs)
+                            settingsPane(pane, model: model)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                        // No titlebar drawn: the ground runs up behind the
+                        // window's buttons, as it does over the wash in the
+                        // main window (see `SettingsFrameAutosave` too).
+                        .toolbar(removing: .title)
+                        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+                        .scrollEdgeEffectHidden(true, for: .top)
+                        .containerBackground(Color.koanBg, for: .window)
+                        // A window with no scene, as the evidence renderer's,
+                        // has nothing to hand that to.
+                        .background(Color.koanBg.ignoresSafeArea())
+                    } else {
+                        TabView(selection: $pane) {
+                            ForEach(tabs) { tab in
+                                settingsPane(tab.id, model: model)
+                                    .tabItem { Label(tab.title, systemImage: tab.icon) }
+                                    .tag(tab.id)
+                            }
+                        }
                     }
-                    if PeoplePane.shown(model, people), let people {
-                        PeoplePane(model: model, people: people)
-                            .tabItem { Label("People", systemImage: "person.2") }
-                            .tag("people")
-                    }
-                    PlaybackSettings(model: model)
-                        .tabItem { Label("Playback", systemImage: "hifispeaker") }
-                        .tag("playback")
-                    EqSettings()
-                        .tabItem { Label("EQ", systemImage: "slider.vertical.3") }
-                        .tag("eq")
-                    DevicesSettings(model: model)
-                        .tabItem { Label("Devices", systemImage: "laptopcomputer.and.iphone") }
-                        .tag("devices")
-                    if ServerCapabilitySections.shown(model, mirror) {
-                        ServerCapabilitiesSettings()
-                            .tabItem { Label("Server Capabilities", systemImage: "puzzlepiece.extension") }
-                            .tag("server-capabilities")
-                    }
-                    AppearanceSettings()
-                        .tabItem { Label("Appearance", systemImage: "paintpalette") }
-                        .tag("appearance")
                 }
                 .onChange(of: app.dsp.editing, initial: true) { _, asked in
                     if asked != nil { pane = "eq" }
@@ -162,9 +222,23 @@ struct SettingsView: View {
                     Text(AppVersion.text)
                         .koanText(.fine, .muted)
                         .frame(maxWidth: .infinity)
+                        #if os(iOS)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            let now = Date()
+                            let count = now.timeIntervalSince(versionTaps.last) < 1 ? versionTaps.count + 1 : 1
+                            versionTaps = (count == 7 ? 0 : count, now)
+                            if count == 7 { app.appearance.toggleRainbow() }
+                        }
+                        #endif
                         .washedRow()
                 }
                 .koanList()
+                #if os(tvOS)
+                .onMoveCommand { direction in
+                    if konami.press(direction) { app.appearance.toggleRainbow() }
+                }
+                #endif
                 .navigationTitle(KoanTheme.tabRootTitle("Settings"))
                 .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                 #endif
@@ -1582,7 +1656,14 @@ private struct SettingsFrameAutosave: NSViewRepresentable {
     final class Probe: NSView {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            guard let window, window.frameAutosaveName.isEmpty else { return }
+            guard let window else { return }
+            // In the theme the titlebar is not drawn: the window's ground,
+            // with no line under it.
+            if KoanTheme.isOn {
+                window.titlebarAppearsTransparent = true
+                window.titlebarSeparatorStyle = .none
+            }
+            guard window.frameAutosaveName.isEmpty else { return }
             // SwiftUI's Settings window is made without a resizable frame,
             // whatever the scene's resizability says.
             window.styleMask.insert(.resizable)

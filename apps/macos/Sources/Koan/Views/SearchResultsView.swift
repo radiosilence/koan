@@ -122,7 +122,7 @@ struct SearchResultsView: View {
                 trackContext: TrackTableRow.Context(
                     showsAlbum: true,
                     columns: [.availability],
-                    leadWidth: 18,
+                    leadOnSleeve: true,
                     picking: pick.isActive,
                     picked: picked,
                     currentTrackId: player.currentTrackId,

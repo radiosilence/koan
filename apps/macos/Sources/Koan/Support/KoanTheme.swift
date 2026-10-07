@@ -202,12 +202,61 @@ final class AppearanceModel {
         didSet { if washWindow != oldValue { engine.setWashWindow(on: washWindow) } }
     }
 
+    /// Gay mode as it was left on this device (see `Rainbow`). Saved to
+    /// config.local.toml; never synced, never offered in Settings.
+    var rainbow: Bool {
+        willSet { Rainbow.brat = rainbowForTrack && !newValue }
+        didSet {
+            Rainbow.drawn = rainbowDrawn
+            if rainbow != oldValue { engine.setRainbow(on: rainbow) }
+        }
+    }
+
+    /// Gay mode for the track playing alone, rolled when it started. Never saved.
+    /// It brings brat's lime with it.
+    private(set) var rainbowForTrack = false {
+        willSet { Rainbow.brat = newValue && !rainbow }
+        didSet { Rainbow.drawn = rainbowDrawn }
+    }
+
+    /// Whether the rainbow is drawn: switched on, or brought out by the track.
+    var rainbowDrawn: Bool { rainbow || rainbowForTrack }
+
+    /// What the last switch said, for `RainbowToast`.
+    var rainbowToast: String?
+    /// Counts the rainbow's arrivals, each one a burst of confetti (`RainbowBurst`).
+    private(set) var rainbowBurst = 0
+
     init(engine: KoanEngine, appearance: Appearance) {
         self.engine = engine
         self.showIcons = appearance.icons
         self.koan = appearance.koan
         self.recordColours = appearance.recordColours
         self.washWindow = appearance.washWindow
+        self.rainbow = appearance.rainbow
+        Rainbow.drawn = appearance.rainbow
+    }
+
+    /// The secret gesture: off if the rainbow is drawn, whoever drew it, and
+    /// on otherwise.
+    func toggleRainbow() {
+        let on = !rainbowDrawn
+        rainbowForTrack = false
+        rainbow = on
+        rainbowToast = (on ? Rainbow.on : Rainbow.off).randomElement()
+        if on { rainbowBurst += 1 }
+    }
+
+    /// A track has started. A Charli XCX track brings the rainbow out for
+    /// itself one time in four, unless it is already on by choice; any other
+    /// track puts a borrowed one away.
+    func trackStarted(_ entry: QueueItem?) {
+        let borrowed = !rainbow && entry.map(Rainbow.isCharli) == true && Int.random(in: 0..<4) == 0
+        if borrowed != rainbowForTrack { rainbowForTrack = borrowed }
+        if borrowed {
+            rainbowBurst += 1
+            rainbowToast = Rainbow.bratToast
+        }
     }
 }
 
@@ -486,7 +535,7 @@ struct KoanAccent: Equatable, Sendable {
         self.init(dark: dark, light: light)
     }
 
-    private init(dark: Shade, light: Shade) {
+    init(dark: Shade, light: Shade) {
         self.dark = dark
         self.light = light
         self.color = Self.color(dark: dark, light: light)
@@ -495,7 +544,7 @@ struct KoanAccent: Equatable, Sendable {
     /// The most vivid lightness in the band that reads as text — the darkest in
     /// dark mode, the lightest in light — or failing that, the one that clears
     /// 3:1 as a fill.
-    private static func shade(
+    static func shade(
         hue h: Double, chroma: Double, band: ClosedRange<Double>,
         bg: UInt32, surface: UInt32
     ) -> Shade? {
@@ -901,8 +950,9 @@ extension View {
 
     /// The button a menu opens from: in the theme, one of the theme's buttons
     /// of `kind`, square, with no indicator, in place of the platform's rounded
-    /// pull-down. The list it opens is the system's (`NSMenu`, `UIMenu`), which
-    /// no app can draw; `KoanMenu` draws its own on the Mac. Unchanged in the
+    /// pull-down. A menu style, so the buttons around the menu keep theirs.
+    /// The list it opens is the system's (`NSMenu`, `UIMenu`), which no app
+    /// can draw; `KoanMenu` draws its own on the Mac. Unchanged in the
     /// platform's look.
     @ViewBuilder
     func koanMenuButton(_ kind: KoanButtonKind) -> some View {
@@ -910,9 +960,7 @@ extension View {
         self
         #else
         if KoanTheme.isOn {
-            menuStyle(.button)
-                .buttonStyle(KoanButtonStyle(kind: kind))
-                .menuIndicator(.hidden)
+            menuStyle(KoanMenuButtonStyle(kind: kind))
         } else {
             self
         }
@@ -1170,6 +1218,7 @@ private struct KoanButtonBody: View {
     let configuration: ButtonStyleConfiguration
     @Environment(\.isEnabled) private var enabled
     @Environment(\.koanAccent) private var accent
+    @Environment(\.koanRainbow) private var rainbow
     @Environment(\.colorScheme) private var scheme
     #if os(tvOS)
     @Environment(\.isFocused) private var focused
@@ -1236,7 +1285,7 @@ private struct KoanButtonBody: View {
 
     private var outline: AnyShapeStyle? {
         switch kind {
-        case .prominent: AnyShapeStyle(.tint)
+        case .prominent: KoanTheme.marker(rainbow: rainbow)
         case .iconOutlined: AnyShapeStyle(Color.koanInk)
         case .bordered: AnyShapeStyle(Color.koanMuted)
         case .standard, .compact, .link, .text, .icon, .card: nil
@@ -1402,6 +1451,7 @@ struct KoanSegmentedPicker<Value: Hashable>: View {
     /// A glyph per option, drawn in place of its label, which VoiceOver and
     /// the help tag still read.
     var icons: [String]? = nil
+    @Environment(\.koanRainbow) private var rainbow
 
     var body: some View {
         if KoanTheme.isOn {
@@ -1423,7 +1473,7 @@ struct KoanSegmentedPicker<Value: Hashable>: View {
                             .foregroundStyle(chosen ? Color.koanInk : Color.koanMuted)
                             .padding(.bottom, 5)
                             .overlay(alignment: .bottom) {
-                                if chosen { Rectangle().fill(.tint).frame(height: KoanTheme.hairline) }
+                                if chosen { Rectangle().fill(KoanTheme.marker(rainbow: rainbow)).frame(height: KoanTheme.hairline) }
                             }
                             .contentShape(Rectangle())
                     }
@@ -1579,7 +1629,7 @@ struct KoanListPicker<Value: Hashable, Row: View>: View {
                     .font(.koan(.control))
                     .foregroundStyle(Color.koanInk)
                 }
-                .koanMenuButton(.bordered)
+                .koanButtons(.bordered)
                 .fixedSize()
             }
         } else {
@@ -1977,6 +2027,7 @@ private struct KoanSidebarRole: ViewModifier {
 
 private struct KoanNavRowRole: ViewModifier {
     let selected: Bool
+    @Environment(\.koanRainbow) private var rainbow
 
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
@@ -1985,7 +2036,7 @@ private struct KoanNavRowRole: ViewModifier {
                 .foregroundStyle(KoanTheme.style(selected ? .accent : .muted))
                 .listRowBackground(
                     Rectangle().fill(.clear).overlay(alignment: .leading) {
-                        if selected { Rectangle().fill(.tint).frame(width: 2) }
+                        if selected { Rectangle().fill(KoanTheme.marker(rainbow: rainbow, vertical: true)).frame(width: 2) }
                     }
                 )
                 .accessibilityAddTraits(selected ? .isSelected : [])
@@ -2173,6 +2224,19 @@ private struct KoanFieldRole: ViewModifier {
     }
 }
 
+#if !os(tvOS)
+private struct KoanMenuButtonStyle: MenuStyle {
+    let kind: KoanButtonKind
+
+    func makeBody(configuration: Configuration) -> some View {
+        Menu(configuration) // theme: raw — the role's own menu
+            .menuStyle(.button)
+            .buttonStyle(KoanButtonStyle(kind: kind))
+            .menuIndicator(.hidden)
+    }
+}
+#endif
+
 private struct KoanControlRole: ViewModifier {
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
@@ -2304,6 +2368,7 @@ struct KoanTabItem: View {
     /// platform's tab bar says it.
     var position: (index: Int, count: Int)?
     @Environment(\.koanIcons) private var icons
+    @Environment(\.koanRainbow) private var rainbow
 
     var body: some View {
         VStack(spacing: 4) {
@@ -2316,7 +2381,7 @@ struct KoanTabItem: View {
                 .padding(.bottom, 3)
                 .overlay(alignment: .bottom) {
                     if selected {
-                        let line = Rectangle().fill(.tint).frame(height: KoanTheme.hairline)
+                        let line = Rectangle().fill(KoanTheme.marker(rainbow: rainbow)).frame(height: KoanTheme.hairline)
                         if let underline {
                             line.matchedGeometryEffect(id: "underline", in: underline)
                         } else {

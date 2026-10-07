@@ -101,6 +101,7 @@ struct NowPlayingPage: View {
                 Text(entry.title)
                     .koanText(.display, .strong)
                     .lineLimit(2)
+                    .rainbowShimmer()
                 Text(entry.album.isEmpty ? entry.artist : "\(entry.artist) — \(entry.album)")
                     .koanText(.titleSmall, .muted)
                     .lineLimit(1)

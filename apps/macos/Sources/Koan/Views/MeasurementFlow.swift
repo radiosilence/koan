@@ -23,6 +23,9 @@ struct MeasurementFlow: View {
     @State private var preview: DspResponse?
     @State private var name: String
     @State private var problem: String?
+    /// What the measurement was read as: a speaker's or a headphone's, and
+    /// for a speaker which of its curves.
+    @State private var reading: DspMeasurementReading?
     @State private var saving = false
     /// Searching squig.link's sites, from the name the flow was opened with.
     @State private var squigQuery: String
@@ -62,19 +65,28 @@ struct MeasurementFlow: View {
 
     var body: some View {
         NavigationStack {
-            KoanForm {
-                switch step {
-                case .learn: learn
-                case .file: fileStep
-                case .ear: ear
-                case .target: targetStep
-                case .review: review
-                }
-                if let problem {
-                    Section {
-                        Label(problem, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(KoanTheme.style(.bad, system: .orange))
+            ScrollViewReader { scroller in
+                KoanForm {
+                    switch step {
+                    case .learn: learn
+                    case .file: fileStep
+                    case .ear: ear
+                    case .target: targetStep
+                    case .review: review
                     }
+                    if let problem {
+                        Section {
+                            Label(problem, systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(KoanTheme.style(.bad, system: .orange))
+                        }
+                        .id(Self.problemID)
+                    }
+                }
+                // The file step is long: a problem said below the fold would
+                // leave Next looking as if it did nothing.
+                .onChange(of: problem) { _, problem in
+                    guard problem != nil else { return }
+                    withAnimation { scroller.scrollTo(Self.problemID, anchor: .bottom) }
                 }
             }
             .navigationTitle(KoanTheme.label(step.title))
@@ -87,7 +99,10 @@ struct MeasurementFlow: View {
                         if step != .learn {
                             Button("Back") {
                                 problem = nil
-                                step = Step(rawValue: step.rawValue - 1) ?? .learn
+                                // A speaker has no in-ear or over-ear to ask.
+                                step = step == .target && speaker
+                                    ? .file
+                                    : Step(rawValue: step.rawValue - 1) ?? .learn
                             }
                         }
                     }
@@ -112,15 +127,18 @@ struct MeasurementFlow: View {
             }
             .fileImporter(
                 isPresented: $choosing,
-                allowedContentTypes: [.commaSeparatedText, .plainText, .text, .data]
+                allowedContentTypes: [.commaSeparatedText, .plainText, .text, .data],
+                allowsMultipleSelection: true
             ) { result in
-                if case let .success(url) = result { read(url) }
+                if case let .success(urls) = result, !urls.isEmpty { read(urls) }
             }
         }
         #if os(macOS)
         .frame(minWidth: 520, minHeight: 560)
         #endif
     }
+
+    private static let problemID = "problem"
 
     // MARK: - Steps
 
@@ -214,7 +232,7 @@ struct MeasurementFlow: View {
             Section {
                 Button(file.map { "Chosen: \($0)" } ?? "Choose a File…") { choosing = true }
             } footer: {
-                Text("A .csv or .txt file of frequency and level.")
+                Text("A .csv or .txt file of frequency and level. For a speaker measured by Audio Science Review, choose both its SPL Horizontal and SPL Vertical files.")
                     .koanText(.fine, .muted)
             }
             Section {
@@ -240,6 +258,17 @@ struct MeasurementFlow: View {
     }
 
     private var targetStep: some View {
+        Group {
+            if speaker, let reading {
+                Section("Read as") {
+                    Text(reading.note).koanText(.meta, .muted)
+                }
+            }
+            targetPicker
+        }
+    }
+
+    private var targetPicker: some View {
         Section {
             KoanChoices(title: "Target", selection: $target, values: targets.map { Optional($0.id) }) { id in
                 if let t = targets.first(where: { $0.id == id }) {
@@ -265,20 +294,24 @@ struct MeasurementFlow: View {
                 Section {
                     EqGraph(response: preview, startOn: .headphone)
                 } footer: {
-                    Text("Measured shows your measurement, the target, and what your headphones will sound like with the correction. EQ shows the correction itself.")
+                    Text("Measured shows your measurement, the target, and what your \(speaker ? "speaker" : "headphones") will sound like with the correction. EQ shows the correction itself.")
                         .koanText(.fine, .muted)
                 }
             }
             Section {
                 TextField("Name", text: $name).koanField()
             } footer: {
-                Text("Usually the headphones' name. It becomes a correction: add tunings, like more bass, on top of it.")
+                Text("Usually the \(speaker ? "speaker's" : "headphones'") name. It becomes a correction: add tunings, like more bass or a room tilt, on top of it.")
                     .koanText(.fine, .muted)
             }
         }
     }
 
     // MARK: - Doing
+
+    /// A speaker's measurement: corrected to Flat, the one speaker target,
+    /// with no headphone target offered.
+    private var speaker: Bool { reading?.speaker == true }
 
     private var canGoOn: Bool {
         switch step {
@@ -312,9 +345,15 @@ struct MeasurementFlow: View {
             // Checked now, so a file that is not a measurement is said so
             // before the questions after it.
             do {
-                _ = try await dsp.previewMeasurement(text, target: inEar ? "harman-in-ear-2019" : "harman-over-ear-2018")
+                reading = try await dsp.describeMeasurement(text)
             } catch {
                 problem = SettingsModel.describe(error)
+                return
+            }
+            if speaker {
+                targets = await dsp.targetsFor(.speaker)
+                target = targets.first { $0.id == "flat" }?.id ?? targets.first?.id
+                step = .target
                 return
             }
         default:
@@ -376,19 +415,54 @@ struct MeasurementFlow: View {
         }
     }
 
-    private func read(_ url: URL) {
-        let held = url.startAccessingSecurityScopedResource()
-        defer { if held { url.stopAccessingSecurityScopedResource() } }
-        guard let contents = try? String(contentsOf: url, encoding: .utf8) else {
-            problem = "That file could not be read as text."
-            return
+    /// Read the chosen files as one text: a speaker's two planes are read
+    /// together. On the Mac, choosing one plane of an Audio Science Review
+    /// export brings its sibling along where it can be read.
+    private func read(_ chosen: [URL]) {
+        var texts: [String] = []
+        var names: [String] = []
+        for url in chosen {
+            let held = url.startAccessingSecurityScopedResource()
+            defer { if held { url.stopAccessingSecurityScopedResource() } }
+            guard let contents = try? String(contentsOf: url, encoding: .utf8) else {
+                problem = "\(url.lastPathComponent) could not be read as text."
+                return
+            }
+            texts.append(contents)
+            names.append(url.lastPathComponent)
         }
-        text = contents
-        file = url.lastPathComponent
+        #if os(macOS)
+        // Best effort: the picker grants the file chosen, and a protected
+        // folder such as Downloads may refuse its sibling. Without it the
+        // measurement reads as on-axis, and the note asks for the other plane.
+        if chosen.count == 1, let sibling = Self.otherPlane(of: chosen[0]),
+           let contents = try? String(contentsOf: sibling, encoding: .utf8) {
+            texts.append(contents)
+            names.append(sibling.lastPathComponent)
+        }
+        #endif
+        problem = nil
+        text = texts.joined(separator: "\n")
+        file = names.joined(separator: ", ")
         source = nil
         if name.isEmpty {
-            name = url.deletingPathExtension().lastPathComponent
+            // Audio Science Review names the files by plane, and their
+            // folder by the speaker.
+            let first = chosen[0]
+            name = Self.otherPlane(of: first) == nil
+                ? first.deletingPathExtension().lastPathComponent
+                : first.deletingLastPathComponent().lastPathComponent
         }
+    }
+
+    /// The other plane's file beside one of an Audio Science Review export.
+    private static func otherPlane(of url: URL) -> URL? {
+        let other: String? = switch url.lastPathComponent {
+        case "SPL Horizontal.txt": "SPL Vertical.txt"
+        case "SPL Vertical.txt": "SPL Horizontal.txt"
+        default: nil
+        }
+        return other.map { url.deletingLastPathComponent().appendingPathComponent($0) }
     }
 
     private func save() {
@@ -396,7 +470,8 @@ struct MeasurementFlow: View {
         saving = true
         Task {
             do {
-                let saved = try await dsp.saveMeasured(name: name, text: text, inEar: inEar, target: target, source: source)
+                let ear: DspEarKind = speaker ? .speaker : inEar ? .inEar : .overEar
+                let saved = try await dsp.saveMeasured(name: name, text: text, ear: ear, target: target, source: source)
                 self.saved(saved)
                 dismiss()
             } catch {

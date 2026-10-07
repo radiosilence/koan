@@ -24,6 +24,8 @@ struct SeekProgress: PlatformViewRepresentable {
     /// The played extent's colour: the room's accent in the kōan theme, the
     /// label colour otherwise.
     @Environment(\.roomTint) private var tint
+    /// Gay mode: the played extent is the palette, in either look.
+    @Environment(\.koanRainbow) private var rainbow
 
     typealias PlatformViewType = ProgressView
 
@@ -35,13 +37,15 @@ struct SeekProgress: PlatformViewRepresentable {
 
     func updateView(_ view: ProgressView, context: Context) {
         view.tint = KoanTheme.isOn ? PlatformColor(tint) : nil
+        view.rainbow = rainbow
         view.apply(fraction: fraction, remaining: remaining)
     }
 
     /// Two layers: the capsule of what has played, and the head that marks
     /// where that is on a track too long for the capsule to show it.
     final class ProgressView: LayerView {
-        private let played = CALayer()
+        /// A gradient so the rainbow can be one; otherwise both ends are the tint.
+        private let played = CAGradientLayer() // theme: raw — gay mode's gradient, one colour otherwise
         private let head = CALayer()
         var showsHead = true {
             didSet { head.isHidden = !showsHead }
@@ -51,6 +55,9 @@ struct SeekProgress: PlatformViewRepresentable {
         var tint: PlatformColor? {
             didSet { if tint != oldValue { paint() } }
         }
+        var rainbow = false {
+            didSet { if rainbow != oldValue { paint() } }
+        }
         private var remaining = 0.0
 
         init(thickness: CGFloat) {
@@ -59,6 +66,8 @@ struct SeekProgress: PlatformViewRepresentable {
             // Grown from its leading edge, so widening it is one animatable
             // number rather than a width and a position that must agree.
             played.anchorPoint = CGPoint(x: 0, y: 0.5)
+            played.startPoint = CGPoint(x: 0, y: 0.5)
+            played.endPoint = CGPoint(x: 1, y: 0.5)
             played.cornerRadius = KoanTheme.radius(thickness / 2)
             head.cornerRadius = KoanTheme.radius(thickness)
             for sublayer in [played, head] {
@@ -87,7 +96,10 @@ struct SeekProgress: PlatformViewRepresentable {
         }
 
         private func paint() {
-            played.backgroundColor = resolved(tint ?? .label)
+            let colours = rainbow
+                ? KoanAccent.holo.stops.map { PlatformColor($0.color) }
+                : [tint ?? .label, tint ?? .label]
+            played.colors = colours.map { resolved($0) }
             head.backgroundColor = resolved(.koanLabel)
         }
 

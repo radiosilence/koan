@@ -24,6 +24,7 @@ struct MiniPlayer: View {
                 Text(player.resolving ?? entry?.title ?? KoanTheme.label("Nothing playing"))
                     .font(.role(.meta, system: .subheadline.weight(.medium)))
                     .lineLimit(1)
+                    .rainbowShimmer()
                 if player.isControllingAnother {
                     // Where it is playing matters more than who by, when it
                     // is not here.

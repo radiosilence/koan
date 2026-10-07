@@ -94,7 +94,7 @@ struct ShelfView: View {
     #if os(macOS)
     /// A `MixedCollection` — see there for why the Mac's page is AppKit.
     private var collection: some View {
-        let lines = tracks.enumerated().map { TrackLine(id: $1.id, kind: .track($1), lead: "\($0 + 1)", position: $0) }
+        let lines = tracks.enumerated().map { TrackLine(id: $1.id, kind: .track($1), position: $0) }
         let queued = mirror.queuedByTrack
         let current = player.currentTrackId
         let playing = player.isPlaying
@@ -138,7 +138,7 @@ struct ShelfView: View {
                 ),
                 trackContext: TrackTableRow.Context(
                     showsAlbum: true,
-                    leadWidth: TrackTableRow.leadWidth(for: tracks.count),
+                    leadOnSleeve: true,
                     currentTrackId: current,
                     isPlaying: playing,
                     barsLive: live,

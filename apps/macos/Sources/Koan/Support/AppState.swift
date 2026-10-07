@@ -111,6 +111,7 @@ final class AppState {
         // Single-key shortcuts, caught before the focused list eats them.
         #if os(macOS)
         self.hotkeys = Hotkeys.standard(player: player, library: library, nav: nav, ui: ui)
+        hotkeys.onKonami = { [appearance = self.appearance] in appearance.toggleRainbow() }
         FullScreenBackstop.install()
         #endif
 

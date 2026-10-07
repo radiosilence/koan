@@ -19,12 +19,13 @@ use std::path::{Path, PathBuf};
 
 use crate::config::{self, GraphicEq};
 
-/// Which kind of headphone a target is for. A target for one is not offered
-/// for the other: the measurements behind them differ.
+/// Which kind of headphone a target is for, or a speaker. A target for one
+/// is not offered for another: the measurements behind them differ.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ear {
     Over,
     In,
+    Speaker,
 }
 
 /// A target that ships with koan.
@@ -40,8 +41,8 @@ pub struct Target {
     data: &'static str,
 }
 
-/// The targets offered, over-ear then in-ear: neutral first, then each
-/// preference added to it, the most chosen first.
+/// The targets offered, over-ear, in-ear, then speakers: neutral first, then
+/// each preference added to it, the most chosen first.
 pub const TARGETS: &[Target] = &[
     Target {
         id: "diffuse-field-gras-kemar",
@@ -114,6 +115,14 @@ pub const TARGETS: &[Target] = &[
         character: "oratory1990's target for in-ears.",
         ear: Ear::In,
         data: include_str!("targets/oratory1990-in-ear.csv"),
+    },
+    Target {
+        id: "flat",
+        name: "Flat",
+        does: "",
+        character: "Neutral for a speaker: a flat listening window, as CTA-2034 and spinorama measurements aim for. Add a room tilt as a tuning.",
+        ear: Ear::Speaker,
+        data: include_str!("targets/flat.csv"),
     },
 ];
 
@@ -271,11 +280,13 @@ pub fn identify(result_target: &[(f64, f64)], ear: Ear) -> Option<&'static Targe
 const GUESS_MARGIN_DB: f64 = 1.5;
 
 /// The neutral and Harman targets for `ear`: what a tuning without a
-/// target said was most likely made against.
-fn usual(ear: Ear) -> [&'static str; 2] {
+/// target said was most likely made against. A speaker has only Flat, so
+/// nothing to choose between.
+fn usual(ear: Ear) -> Option<[&'static str; 2]> {
     match ear {
-        Ear::Over => ["diffuse-field-gras-kemar", "harman-over-ear-2018"],
-        Ear::In => ["diffuse-field-iso-11904-1", "harman-in-ear-2019"],
+        Ear::Over => Some(["diffuse-field-gras-kemar", "harman-over-ear-2018"]),
+        Ear::In => Some(["diffuse-field-iso-11904-1", "harman-in-ear-2019"]),
+        Ear::Speaker => None,
     }
 }
 
@@ -307,7 +318,8 @@ pub fn guess_made_against(eq: &[f64], ear: Ear, aim: &str) -> Option<&'static Ta
     if own < GUESS_MARGIN_DB {
         return None;
     }
-    let harman = levelled(&shipped(usual(ear)[1])?.curve(), &grid);
+    let usual = usual(ear)?;
+    let harman = levelled(&shipped(usual[1])?.curve(), &grid);
     let fit = |t: &Target| {
         let t = levelled(&t.curve(), &grid);
         let (sum, n) = grid
@@ -319,8 +331,7 @@ pub fn guess_made_against(eq: &[f64], ear: Ear, aim: &str) -> Option<&'static Ta
             });
         (sum / f64::from(n.max(1))).sqrt()
     };
-    let mut candidates: Vec<&'static Target> =
-        usual(ear).iter().filter_map(|id| shipped(id)).collect();
+    let mut candidates: Vec<&'static Target> = usual.iter().filter_map(|id| shipped(id)).collect();
     if let Some(a) = shipped(aim).filter(|a| a.ear == ear && !candidates.contains(a)) {
         candidates.push(a);
     }
@@ -470,23 +481,64 @@ pub fn covering(text: &str, what: &str) -> Result<Curve, String> {
             "{what} is a few kilobytes; this is over a megabyte"
         ));
     }
+    covers(points(text), what).map_err(|why| format!("{why}. {}", found(text)))
+}
+
+/// `curve`, levelled at 1 kHz, if it covers the audible band: or why not.
+pub(crate) fn covers(mut curve: Curve, what: &str) -> Result<Curve, String> {
     // Levelled at 1 kHz before anything is checked: REW and squig.link
     // export absolute levels, which only the shape of matters here.
-    let mut curve = points(text);
     let k = at(&curve, 1000.0);
     for (_, db) in &mut curve {
         *db -= k;
     }
     curve.retain(|(_, db)| db.abs() <= LEVEL_LIMIT_DB);
     let (Some(first), Some(last)) = (curve.first(), curve.last()) else {
-        return Err("No frequency and level pairs in it".into());
+        return Err(format!(
+            "{what} is lines of a frequency in hertz and a level in decibels, as a two-column \
+             CSV or a squig.link export has them"
+        ));
     };
     if curve.len() < 20 || first.0 > 100.0 || last.0 < 10_000.0 {
         return Err(format!(
-            "{what} needs points from below 100 Hz to above 10 kHz, at least twenty of them"
+            "{what} needs points from below 100 Hz to above 10 kHz, at least twenty of them; \
+             this has {} from {} to {}",
+            curve.len(),
+            hertz(first.0),
+            hertz(last.0)
         ));
     }
     Ok(curve)
+}
+
+fn hertz(hz: f64) -> String {
+    if hz >= 1000.0 {
+        format!("{:.1} kHz", hz / 1000.0)
+    } else {
+        format!("{hz:.0} Hz")
+    }
+}
+
+/// What `text` looks like, for a refusal: said so the person can tell a
+/// wrong file from a wrong format.
+pub(crate) fn found(text: &str) -> String {
+    let text = text.trim();
+    let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
+    let Some(first) = lines.next() else {
+        return "It is empty.".into();
+    };
+    let one_line = lines.next().is_none();
+    if one_line && (first.starts_with('/') || first.starts_with('~') || first.starts_with("file:"))
+    {
+        return "This is a file's path, not what is in it: choose the file instead.".into();
+    }
+    let shown: String = first.chars().take(60).collect();
+    let more = if first.chars().count() > 60 {
+        "…"
+    } else {
+        ""
+    };
+    format!("Its first line reads “{shown}{more}”.")
 }
 
 /// `curve` on AutoEQ's grid, as a CSV of frequency and level.

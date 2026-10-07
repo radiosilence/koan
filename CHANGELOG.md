@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.60.10
+
+### Added
+
+- **Speaker measurements from Audio Science Review.** The measurement importer reads Klippel Near-Field Scanner exports (`SPL Horizontal.txt`, `SPL Vertical.txt`), whose frequencies carry thousands separators. With both planes the correction is made from CTA-2034's listening window, with one from the on-axis response, and the importer says which. A speaker is corrected to the new Flat target, offered with any targets added by hand but none of the headphone ones; Flat is not offered for headphones.
+
+### Changed
+
+- **No glass, no rounded controls in the kōan theme.** With the theme on, popovers on the Mac (Control, Output, Filters) are square panels on the theme's ground with a hairline edge and no arrow; the sleep timer, EQ preset and sort menus open the same panel; dropdowns are square bordered buttons, choices in forms are ticked rows rather than radio buttons, and toolbar items, search fields and sheets lose their glass on every platform. The system theme keeps the platform's look.
+
+### Fixed
+
+- **A measurement the importer cannot read says so.** Next on the measurement step refused such a file with a message below the fold, so it looked as if nothing happened. The refusal now scrolls into view and names what was expected (a two-column frequency and level CSV, a squig.link export, or a Klippel export) and what the file holds instead, including when a file's path was pasted in place of its contents.
+- **The Mac's Settings window is drawn in the kōan look.** Its tabs were the system's glass toolbar buttons, with the chosen one dimmed almost out of sight. In the theme they are the theme's own tab row on the window's ground, lowercase, the chosen tab in the accent and underlined, with no glass anywhere in the window. The platform's look is unchanged.
+- **Mac search and shelf tracks line up with the page.** Track rows under the albums on search results, Favourites and Recently played start on the same margin as the headings and tiles, with the play mark and the playing bars in a badge on the sleeve rather than in an empty column.
+- **Mac search and shelf track rows answer where they are drawn.** The artist, the record and the sleeve took clicks and showed the pointing hand 8 pt to the left of where they sit.
+- **The Settings window has one ground in dark mode, title bar included.** The kōan look paints the window's ground behind the title bar as well as through the window's container, so no lighter band shows over the title bar and tabs where that container is not applied.
+
+## 0.60.9
+
+### Added
+
+- **Play on wakes a sleeping Apple TV.** A phone or Mac records the TV's AirPlay announcement while it is awake, and opens a connection to it when kōan there is asleep, so the Bonjour Sleep Proxy wakes the box before the server's push wakes kōan.
+
+### Changed
+
+- **Select is a checkbox on iPhone and iPad.** The word "Select" was cut short in crowded bars. An empty box starts select mode on every page that has one, shows ticked while the mode is on, and ends it when tapped again.
+
+### Fixed
+
+- **Lyrics no longer show another song's words.** The lyrics panel shows only lyrics fetched for the track that is playing, so a quick track change can no longer leave the previous song's lyrics on screen. When LRCLIB has no exact match, a search result is used only if its title (ignoring featured artists) and length (within two seconds) match the track; otherwise the panel shows no lyrics.
+- **Play on no longer waits on an Apple TV that is out of reach.** When nothing on the network answers for a TV on record (the phone is away from home, or the TV is unplugged), the push goes out at once instead of after twenty seconds of knocking.
+- **Apple TV: Menu goes back a page instead of leaving the app.** Playing from an artist page, a shelf or a browser used to jump to the Queue tab with focus on the tab bar, so the next press of Menu left kōan. The queue now opens over the page you were on, and Menu returns to it. The EQ page's "Add a correction" and "Add EQ" choose from the corrections and EQs already on the TV, and search's artist pills and track rows can be selected with the remote.
+
 ## 0.60.8
 
 ### Fixed
@@ -9,6 +43,7 @@
 - **A correction with a tuning on top is not quieter than it needs to be.** The chain's preamp is worked out from what the correction and tuning play together, rather than kept at the correction's own, so a layered chain plays at the level of a single EQ with the same curve.
 - **A tuning skipped under a mixed correction is said.** `koan dsp set` and `koan dsp show` name the device's tuning when a correction that already includes one leaves it out, and `--tuning` takes `none` or an empty value for no tuning, `koan dsp response` included.
 - **A tuning on a measured correction plays as squig.link would.** Under a tuning made against another target, a correction built from a measurement is fitted again to that target rather than played with the difference between the targets added, which only came close to the same result (off by up to a decibel in places). The EQ page, `koan dsp show` and `koan dsp response` show the refit. Nothing is saved.
+- **Opening EQ pages no longer slows the next track's start.** Fits from a measurement are kept least recently used first, and those the playing chain uses are kept apart from the ones EQ pages make for their previews, so browsing targets never forces the player to fit its correction again before playback starts.
 
 ## 0.60.7
 

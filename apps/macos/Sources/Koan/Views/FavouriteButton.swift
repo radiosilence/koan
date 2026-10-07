@@ -14,11 +14,18 @@ struct FavouriteButton: View {
     var hint: String?
     let action: () -> Void
 
+    /// Gay mode: a favourite's heart is the palette, top to bottom.
+    @Environment(\.koanRainbow) private var rainbow
+
     var body: some View {
         Button(action: action) {
             Image(systemName: isOn ? "heart.fill" : "heart")
                 .font(size)
-                .foregroundStyle(isOn ? KoanTheme.style(.bad, system: .red) : KoanTheme.style(.muted, system: .tertiary))
+                .foregroundStyle(
+                    isOn
+                        ? (rainbow ? KoanTheme.marker(rainbow: true, vertical: true) : KoanTheme.style(.bad, system: .red))
+                        : KoanTheme.style(.muted, system: .tertiary)
+                )
                 .contentTransition(.symbolEffect(.replace))
                 // A little jump on every change, and on a phone a tap in the
                 // hand when something becomes a favourite.

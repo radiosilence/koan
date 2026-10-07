@@ -45,6 +45,7 @@ struct ArtworkBleed: View {
     /// apart, a record whose art is still being fetched does not wipe the wash
     /// grey and then fade the new one in over two seconds.
     private var answered: PlatformImage?? {
+        if rainbow { return .some(Rainbow.wash) }
         guard let source, !cache.isAbsent(source) else { return .some(nil) }
         if let held = cache.cached(source, size: .tile) { return .some(held) }
         guard let fetched, fetched.source == source else { return nil }
@@ -52,19 +53,27 @@ struct ArtworkBleed: View {
     }
 
     @Environment(\.powerSaving) private var powerSaving
+    /// For gay mode's disco, which pulses with the music. Optional, as the
+    /// appearance is: the window's background is handed it explicitly.
+    @Environment(PlayingLevels.self) private var levels: PlayingLevels?
     @Environment(\.colorScheme) private var scheme
     /// Optional: the window's background is built outside the environment
     /// the app hands its views, and is given this explicitly.
     @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
     /// Whether the wash is moving: something to breathe to, a setting that
     /// allows it, and a system that has not asked for less motion.
-    private var breathes: Bool { drifts && graphics.drifts && !reduceMotion && !powerSaving }
+    /// The rainbow drifts whether or not anything plays.
+    private var breathes: Bool { (drifts || rainbow) && graphics.drifts && !reduceMotion && !powerSaving }
+
+    /// Gay mode: its sheen in place of the sleeve, whatever the record and
+    /// whether or not colours come from it.
+    private var rainbow: Bool { appearance?.rainbowDrawn == true }
 
     var body: some View {
         // Below `reduced` this is nothing at all rather than a transparent
         // wash: no cover fetched, no blur, no mirrored copy under the glass.
         // And nothing when colours from the record are off.
-        if graphics.showsWash, appearance?.recordColours != false {
+        if graphics.showsWash, appearance?.recordColours != false || rainbow {
             bleed
         }
     }
@@ -86,11 +95,13 @@ struct ArtworkBleed: View {
                 drifts: breathes,
                 tone: scheme == .dark ? .dark : .light
             )
+            .overlay { disco }
             .opacity(KoanTheme.wash)
             .allowsHitTesting(false)
             .task(id: source) { await load() }
         } else {
             DriftingWash(image: answered ?? nil, pending: answered == nil, drifts: breathes, tone: systemTone)
+                .overlay { disco }
                 .opacity(0.5)
                 .mask(
                     LinearGradient(
@@ -102,6 +113,15 @@ struct ArtworkBleed: View {
                 .backgroundExtensionEffect()
                 .allowsHitTesting(false)
                 .task(id: source) { await load() }
+        }
+    }
+
+    /// Gay mode's disco over its sheen, breathing with the music. Only while
+    /// the rainbow is drawn and motion allowed: it is what keeps the analyser
+    /// awake.
+    @ViewBuilder private var disco: some View {
+        if rainbow, breathes, let levels {
+            RainbowPulse(levels: levels)
         }
     }
 

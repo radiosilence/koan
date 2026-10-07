@@ -54,6 +54,10 @@ struct Hotkey {
 final class Hotkeys {
     private var monitor: Any?
     private let bindings: [String: Hotkey]
+    /// ↑↑↓↓←→←→ B A, by key code, anywhere in the main window outside a field.
+    private var konami = SecretCode<UInt16>([126, 126, 125, 125, 123, 124, 123, 124, 11, 0])
+    /// What the code does: gay mode (see `Rainbow`).
+    var onKonami: (() -> Void)?
 
     /// In table order, for the shortcuts sheet.
     let all: [Hotkey]
@@ -109,6 +113,21 @@ final class Hotkeys {
 
     /// Returns true when the event has been consumed.
     private func handle(_ event: NSEvent) -> Bool {
+        // Before the modifier check: arrow keys carry the function and
+        // numeric pad flags, which are all they may carry. A held key is one
+        // press. The arrows still reach the list; only the A that completes
+        // the code is taken, and ⌘A is never part of it.
+        let bare = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting([.function, .numericPad])
+            .isEmpty
+        if !bare { konami.reset() }
+        if bare, !event.isARepeat, ownWindow != nil, !EditCommands.isEditingText,
+           konami.press(event.keyCode), let onKonami {
+            onKonami()
+            return true
+        }
+
         // Shift is part of the key here — `>` is one. Anything else means the
         // user is aiming at a menu shortcut.
         let modifiers = event.modifierFlags
