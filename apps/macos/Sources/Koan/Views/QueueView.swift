@@ -287,12 +287,15 @@ struct QueueView: View {
         // A queue that is one record, grouped, has that record's heading as its
         // first row, sleeve and counts and all. The theme says it once.
         let albumOnce = if KoanTheme.isOn, grouped, case .album = mirror.lock { true } else { false }
-        return HStack(spacing: 12) {
+        // On a phone each control is its own 44-point target, which spaces
+        // them already.
+        return HStack(spacing: Self.headerSpacing) {
             // What the queue *is*, when it is still something. A queue that
             // came from a playlist and has not been touched since follows that
             // playlist, and saying so is what makes the following legible: you
             // can see why an edit over there moved something here, and you can
             // see the moment it stops.
+            HStack(spacing: 12) {
             switch albumOnce ? nil : mirror.lock {
             case .playlist(let playlist):
                 PlaylistArtwork(
@@ -333,8 +336,9 @@ struct QueueView: View {
                         .lineLimit(1)
                 }
             }
+            }
 
-            Spacer()
+            Spacer(minLength: 12)
 
             #if os(iOS)
             // The bar at the foot says what is picked and what to do with it.
@@ -356,7 +360,7 @@ struct QueueView: View {
             if KoanTheme.isOn {
                 // The theme's segmented control: the options bare, the chosen
                 // one lit, no track.
-                HStack(spacing: KoanTheme.Space.s) {
+                HStack(spacing: Self.headerSpacing == 0 ? 0 : KoanTheme.Space.s) {
                     layoutOption(true, Icon.album, "Group by album")
                     layoutOption(false, Icon.queueSection, "One row per track")
                 }
@@ -408,7 +412,11 @@ struct QueueView: View {
             .tint(KoanTheme.isOn ? Color.koanInk : roomTint)
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
+            #if os(iOS)
+            .touchTarget()
+            #else
             .frame(width: 22)
+            #endif
             #endif
         }
         // A television's controls are the size of its other buttons: a
@@ -418,7 +426,12 @@ struct QueueView: View {
         #else
         .buttonStyle(.borderless)
         #endif
+        // On the rows' edges: an inset list keeps 20 clear on a phone.
+        #if os(iOS)
+        .padding(.horizontal, 20)
+        #else
         .padding(.horizontal, 16)
+        #endif
         .padding(.vertical, 11)
     }
 
@@ -431,12 +444,19 @@ struct QueueView: View {
                 .overlay(alignment: .bottom) {
                     if grouped == value { Rectangle().fill(.tint).frame(height: KoanTheme.hairline) }
                 }
+                .touchTarget()
         }
             .foregroundStyle(KoanTheme.style(grouped == value ? .ink : .muted))
             .accessibilityLabel(label)
             .accessibilityAddTraits(grouped == value ? .isSelected : [])
             .help(label)
     }
+
+    #if os(iOS)
+    private static let headerSpacing: CGFloat = 0
+    #else
+    private static let headerSpacing: CGFloat = 12
+    #endif
 
     /// What the queue is, when it is still something someone chose.
     private var lockedName: String? {
@@ -901,6 +921,7 @@ private struct JumpToPlayingButton: View {
                     in: Circle()
                 )
                 .contentShape(Circle())
+                .touchTarget()
         }
         #if os(iOS) || os(tvOS)
         // A default button tints its label on a phone whatever the label

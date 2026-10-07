@@ -375,10 +375,13 @@ struct PlaylistView: View {
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
+                    .touchTarget()
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
+            #if !os(iOS)
             .frame(width: 22)
+            #endif
         }
     }
 

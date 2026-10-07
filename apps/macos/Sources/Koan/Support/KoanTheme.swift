@@ -1199,6 +1199,11 @@ private struct KoanButtonBody: View {
         #else
         case .icon, .iconOutlined: 44
         #endif
+        // The small actions beside a title or a row, which a finger still
+        // has to land on.
+        #if os(iOS)
+        case .compact: 44
+        #endif
         default: nil
         }
     }

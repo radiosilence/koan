@@ -67,7 +67,7 @@ struct TabShell: View {
             if KoanTheme.isOn && sidebar {
                 PadSidebar(
                     selection: tab,
-                    reselect: { paths[$0] = [] },
+                    reselect: reselect,
                     sections: Self.librarySections,
                     play: { play($0, shuffled: $1) }
                 )
@@ -175,7 +175,7 @@ struct TabShell: View {
             showingNowPlaying: $showingNowPlaying,
             showingDevices: $showingDevices,
             selection: tab,
-            reselect: { paths[$0] = [] }
+            reselect: reselect
         ))
         #if os(tvOS)
         // The remote's Play/Pause, wherever focus is.
@@ -294,6 +294,7 @@ struct TabShell: View {
                     .environment(\.onStage, showing && route == routes.last)
             }
         }
+        .id(resets[tab, default: 0])
     }
 
     /// Four in the tab bar, deliberately. Five is where iOS starts folding tabs
@@ -321,6 +322,22 @@ struct TabShell: View {
     /// What each tab has pushed. Held per tab, so leaving one and coming back
     /// finds it where it was.
     @State private var paths: [TabID: [Route]] = [:]
+
+    /// How many times each tab's stack has been made again — see `reselect`.
+    @State private var resets: [TabID: Int] = [:]
+
+    /// The tab showing, chosen again: back to its root, and at the root, back
+    /// to the top, as a tab bar does. Settings pushes its panes by link rather
+    /// than by route, so its path can be empty with a pane on screen: a stack
+    /// with nothing in its path is made again, which pops what it holds and
+    /// starts its page at the top.
+    private func reselect(_ tab: TabID) {
+        if (paths[tab] ?? []).isEmpty {
+            resets[tab, default: 0] += 1
+        } else {
+            paths[tab] = []
+        }
+    }
 
     private func path(_ tab: TabID) -> Binding<[Route]> {
         Binding(

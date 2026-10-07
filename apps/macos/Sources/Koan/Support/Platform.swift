@@ -110,6 +110,17 @@ extension View {
 }
 
 extension View {
+    /// At least 44 points square to a finger, Apple's minimum, however small
+    /// the glyph drawn. A pointer needs no more than the glyph, and a
+    /// television focuses rather than hits.
+    func touchTarget() -> some View {
+        #if os(iOS)
+        frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+        #else
+        self
+        #endif
+    }
+
     /// A control drawn as its glyph alone on the Mac and the phone. A
     /// television gives it the round platter its neighbours have: a bare glyph
     /// shows no focus, and cannot be found from across the room.
