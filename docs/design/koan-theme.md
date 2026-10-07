@@ -93,7 +93,7 @@ The accent follows the record playing, and is tone-mapped the same way in both t
 
 The playing record's sleeve, blurred to colour fields and drifting, behind the ground. It is the one element that is not flat, and it carries data. Surfaces stay flat tokens drawn over it; it shows where the design leaves the ground bare: the Mac's content column, and Now Playing and page backgrounds on iOS and tvOS. Nothing glass sits on it.
 
-On the Mac, "wash the whole window" (`appearance.wash_window`) runs it under the toolbar, the sidebar and the transport as well. Those have no ground and no material then: the sidebar's system glass is set clear, and each region meets the page at a hairline, where the page stops rather than passing beneath. Off, they keep `bg`.
+On the Mac, "wash the whole window" (`appearance.wash_window`) runs it under the toolbar and the sidebar as well, edge to edge from the toolbar down to the transport. Those have no ground and no material then: the sidebar's system glass is set clear, and each region meets the page at a hairline, where the page stops rather than passing beneath. The transport keeps its `bg` and spans the whole window beneath every column, as the phone's mini player does, and the sidebar, page and lyrics all stop at its rule. Off, toolbar and sidebar keep `bg` and the transport spans the page only.
 
 Each sample of the baked sleeve is held to a luminance limit before it is drawn: in dark mode no brighter than the level at which `muted` text keeps 4.6:1, and in light mode no darker than keeps the wash, drawn over `bg`, at least as light as `surface` — so whatever reads on `surface`, the accent and `bad` included, reads over the wash. The wash so carries the record's hue and never its brightness, and every text token passes over any sleeve. `wash` is its strength, the share of the toned sleeve over `bg`: 0.6 on the Mac and iPhone, 0.5 on a television. The graphics level in Settings → Appearance governs it as in the platform's look: lower levels stop the drift, then remove the wash.
 
@@ -144,7 +144,7 @@ Flat and full-width, with a 1-point `rule` along its top and `bg` beneath, 64 po
 
 ### Transport (Mac)
 
-A full-width bar, 68 points tall, with a 1-point `rule` along its top and no shadow, material or scrim. On the wash it has no ground of its own: the page above ends at its rule. Left: the cover, square, 40 points, then the title in `meta`, `strong` and the artist and album in `fine`, `muted`. Centre: shuffle, previous, play/pause, next and repeat as icon buttons, over the slider with times at either end. Right: the format badge (`fine`, a 1-point `rule` outline, `ink`), then sleep, output and lyrics, as text buttons in the plain variant or icon buttons with icons.
+A full-width bar, 68 points tall, with a 1-point `rule` along its top and no shadow, material or scrim. With the wash under the whole window it runs under the sidebar and lyrics too, and every column above ends at its rule. Left: the cover, square, 40 points, then the title in `meta`, `strong` and the artist and album in `fine`, `muted`. Centre: shuffle, previous, play/pause, next and repeat as icon buttons, over the slider with times at either end. Right: the format badge (`fine`, a 1-point `rule` outline, `ink`), then sleep, output and lyrics, as text buttons in the plain variant or icon buttons with icons.
 
 ## Icons
 

@@ -867,10 +867,11 @@ extension View {
     }
 
     /// A bar along the window's foot, such as the transport: flat `bg` with a
-    /// rule along its top, full width. In the platform's look, a floating slab
-    /// of glass with the given corner radius, inset from the window's edges.
-    func koanBar(radius: CGFloat, inset: CGFloat, overWash: Bool = false) -> some View {
-        modifier(KoanBarRole(radius: radius, inset: inset, overWash: overWash))
+    /// rule along its top, full width, over the wash as well. In the
+    /// platform's look, a floating slab of glass with the given corner radius,
+    /// inset from the window's edges.
+    func koanBar(radius: CGFloat, inset: CGFloat) -> some View {
+        modifier(KoanBarRole(radius: radius, inset: inset))
     }
 
     /// A form as the theme lays one out: no cards, rows on the ground with
@@ -1857,21 +1858,9 @@ private struct KoanChipRole: ViewModifier {
 private struct KoanBarRole: ViewModifier {
     let radius: CGFloat
     let inset: CGFloat
-    /// The window's transport, which the wash runs under. A bar in a sheet
-    /// keeps its ground: nothing is washed behind it.
-    let overWash: Bool
-    @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
 
     func body(content: Content) -> some View {
-        if overWash && KoanTheme.washesWindow(appearance) {
-            // On the wash itself, set off by a faint hairline. The page above
-            // stops at that line rather than passing under it (see
-            // `clearsTransport`), so nothing needs covering.
-            content
-                .overlay(alignment: .top) {
-                    Rectangle().fill(Color.koanRowRule).frame(height: KoanTheme.hairline)
-                }
-        } else if KoanTheme.isOn {
+        if KoanTheme.isOn {
             content
                 .background(Color.koanBg)
                 .koanRule(.top)
