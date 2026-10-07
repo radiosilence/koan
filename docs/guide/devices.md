@@ -121,7 +121,9 @@ its time on screen explains, this is where to look.
 A device on the network that is controlling this one can be disconnected.
 Every connection from it ends, and it is listed as disconnected: until you
 press **Allow** there, play on it, pick it in Play on, or kōan restarts, it is
-not let back in and this device does not connect to it either. A device that
+not let back in and this device does not connect to it either. One that did
+not prove who it is is held off by its address alone, so a stranger giving
+your phone's name cannot have the phone shut out with it. A device that
 has not proved it is yours, or shared with you, is listed by its address
 rather than by the name it gives, and can be refused for good: its address is
 kept in `devices.refused` and its connections are hung up as they arrive,
