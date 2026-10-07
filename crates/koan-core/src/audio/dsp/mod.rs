@@ -106,6 +106,9 @@ pub struct OutputChain {
     pub eq_notes: Vec<(String, String)>,
     /// The output's tuning plays.
     pub tuning_plays: bool,
+    /// The target, by id, a correction fitted to a measurement is fitted to
+    /// again for the tuning, and the tuning's EQ made against it.
+    pub refit: Option<(String, String)>,
 }
 
 /// What `device` plays, built from its two choices: the correction, the
@@ -124,7 +127,27 @@ pub struct OutputChain {
 /// curves come first in the chain's budget of them: the step is left out
 /// rather than push one out, and the tuning too where it alone would, or
 /// where the chain with it would be more than one may hold.
+///
+/// A correction fitted to a measurement is fitted again for a tuning made
+/// against another target only where the tuning that asks still plays and
+/// nothing more is left out than without the refit.
 pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<OutputChain> {
+    let refitted = output_chain_with(dsp, device, true)?;
+    let Some((_, by)) = &refitted.refit else {
+        return Some(refitted);
+    };
+    let plain = output_chain_with(dsp, device, false)?;
+    let worse = refitted.left_out_eqs.contains(by)
+        || refitted.left_out_eqs.len() > plain.left_out_eqs.len()
+        || refitted.eq_notes.len() > plain.eq_notes.len();
+    Some(if worse { plain } else { refitted })
+}
+
+fn output_chain_with(
+    dsp: &crate::config::DspConfig,
+    device: &str,
+    may_refit: bool,
+) -> Option<OutputChain> {
     use crate::config::{DspLayer, DspRole, dsp_bounds};
     let all = &dsp.profiles;
     let chosen = dsp.profile_for(device);
@@ -196,6 +219,7 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
                 left_out_eqs: dropped.to_vec(),
                 eq_notes: notes.to_vec(),
                 tuning_plays: false,
+                refit: None,
             },
             // Without a correction to fall back on, the output plays
             // untouched, and still says why.
@@ -210,6 +234,7 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
                 left_out_eqs: dropped.to_vec(),
                 eq_notes: notes.to_vec(),
                 tuning_plays: false,
+                refit: None,
             },
             None => return None,
         })
@@ -248,6 +273,26 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
     // target than the correction's, while curves are left: a layer of its
     // own ahead of the tuning, and of a group's member.
     let aim = correction.and_then(|c| profiles::aims_at(c, all));
+    // A correction fitted to a measurement, under a tuning made against
+    // another target, is fitted to that target instead: one fit to the
+    // target the tuning expects is squig.link's result, where a fit to the
+    // correction's own target plus the difference is an approximation of
+    // it. The first tuning that asks decides; any after it compare with
+    // that target. Nothing is written back.
+    let refit = correction
+        .zip(aim.as_ref())
+        .filter(|_| may_refit)
+        .and_then(|(c, aim)| {
+            kept.iter()
+                .filter_map(|t| Some((made_against(t, all, 0)?, t.name.clone())))
+                .find(|(made, _)| made != aim && targets::same_ear(aim, made))
+                .and_then(|(made, by)| Some((profiles::fitted_to(c, &made)?, made, by)))
+        });
+    let (refit_filters, refit) = match refit {
+        Some((filters, made, by)) => (Some(filters), Some((made, by))),
+        None => (None, None),
+    };
+    let aim = refit.as_ref().map(|(made, _)| made.clone()).or(aim);
     let mut layers: Vec<(Option<DspProfile>, DspProfile, String)> = Vec::new();
     for (i, t) in kept.into_iter().enumerate() {
         let mut on_top = t.clone();
@@ -305,6 +350,14 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
                 // with the same response.
                 if !names.is_empty() {
                     c.preamp_db = None;
+                }
+                if let (Some(filters), Some((to, _))) = (&refit_filters, &refit) {
+                    c.filters = filters.clone();
+                    c.fitted = c.measured().map(|m| crate::config::DspMeasurement {
+                        target: to.clone(),
+                        ..m.clone()
+                    });
+                    c.measurement = None;
                 }
                 c.layers.extend(
                     names
@@ -365,12 +418,13 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
         left_out_eqs: dropped,
         eq_notes: notes,
         tuning_plays: true,
+        refit,
     })
 }
 
 /// The profile that plays for `profile`: itself, or for a group, the member
 /// playing, and so on down.
-fn member_playing<'a>(profile: &'a DspProfile, all: &'a [DspProfile]) -> &'a DspProfile {
+pub(crate) fn member_playing<'a>(profile: &'a DspProfile, all: &'a [DspProfile]) -> &'a DspProfile {
     let mut p = profile;
     for _ in 0..MAX_LAYER_DEPTH {
         match p.group.then(|| playing(p, all)).flatten() {

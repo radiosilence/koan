@@ -1429,6 +1429,9 @@ pub enum DspJoin {
     /// Made against another: the difference from `from` to `to` plays
     /// first.
     Converted { from: String, to: String },
+    /// Made against another, under a correction fitted to a measurement:
+    /// the correction is fitted to `to` in place of `from`.
+    Refitted { from: String, to: String },
     /// Made against a target not said: a target may be applied twice.
     Unknown,
 }
@@ -1439,6 +1442,7 @@ impl From<koan_core::audio::dsp::profiles::Join> for DspJoin {
         match j {
             Join::Matched => Self::Matched,
             Join::Converted { from, to } => Self::Converted { from, to },
+            Join::Refitted { from, to } => Self::Refitted { from, to },
             Join::Unknown => Self::Unknown,
         }
     }

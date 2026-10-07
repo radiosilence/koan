@@ -259,7 +259,13 @@ line into each EQ says how the two meet. Drawn in the accent and marked
 **Matched**, the EQ was made against the correction's own target and plays as
 made. Made against another target, it shows the conversion kōan plays first
 ("Target difference: Neutral → Harman in-ear 2019"), which is correct and not
-a warning. Where the EQ does not say what it was made against, nothing can be
+a warning. A correction built from a measurement is instead fitted again to
+that target ("Correction fitted to Harman in-ear 2019 for it"): one fit to the
+target the EQ expects is what squig.link would give, where a fit to the
+correction's own target plus the difference only comes close, off by up to a
+decibel in places. The first EQ that asks decides the fit; later EQs made
+against yet another target are converted from it. Where the EQ does not say
+what it was made against, nothing can be
 converted, and if it already includes a target, as a finished preset like
 "Lush" does, that target is applied twice on top of the correction's: the line
 says so, and tapping it opens the EQ's page to set **Made against**. A
