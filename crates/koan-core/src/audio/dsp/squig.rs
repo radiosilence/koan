@@ -259,11 +259,104 @@ pub fn fetch(hit: &Hit) -> Result<String, String> {
         }
         (Err(e), Err(_)) => return Err(e),
     };
+    let curve = match calibration(&client, hit.site)? {
+        Some(cal) => calibrated(&curve, &cal),
+        None => curve,
+    };
     let mut text = String::from("frequency,raw\n");
     for (hz, db) in curve {
         text.push_str(&format!("{hz:.3},{db:.3}\n"));
     }
     Ok(text)
+}
+
+/// The calibration `site` subtracts from every measurement before it draws
+/// or equalises it, as its `config.js` names it in
+/// `measurement_calibration_file`: a file beside its measurements. None
+/// where it names none, or has no `config.js` to name one in. A
+/// measurement without it would not be the one the site's presets were
+/// made from.
+fn calibration(
+    client: &reqwest::blocking::Client,
+    site: &Site,
+) -> Result<Option<super::targets::Curve>, String> {
+    let label = site.label();
+    let config = url::Url::parse(&format!("{}/config.js", site.base)).map_err(|e| e.to_string())?;
+    let resp = match client.get(config).send() {
+        Ok(resp) if resp.status().is_success() => resp,
+        Ok(resp) => {
+            log::info!("squig: {label} has no config.js ({})", resp.status());
+            return Ok(None);
+        }
+        Err(e) => return Err(format!("{label} could not be reached: {}", e.without_url())),
+    };
+    let Some(name) = calibration_named(&body(resp, BOOK_CAP).map_err(|e| format!("{label}: {e}"))?)
+    else {
+        return Ok(None);
+    };
+    let file = if name.ends_with(".txt") {
+        name
+    } else {
+        format!("{name}.txt")
+    };
+    let resp = client
+        .get(measurement_url(site, &file)?)
+        .send()
+        .map_err(|e| format!("{label} could not be reached: {}", e.without_url()))?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "{label} calibrates its measurements with {file}, which it did not serve ({})",
+            resp.status()
+        ));
+    }
+    let cal =
+        super::targets::points(&body(resp, MEASUREMENT_CAP).map_err(|e| format!("{label}: {e}"))?);
+    if cal.len() < 20 {
+        return Err(format!("{label}'s calibration {file} is not a curve"));
+    }
+    Ok(Some(cal))
+}
+
+/// The calibration file a site's `config.js` names, if it names one: the
+/// last assignment to `measurement_calibration_file` that is not commented
+/// out. Only a file in the site's own measurement folder is taken.
+fn calibration_named(config: &str) -> Option<String> {
+    let name = config
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with("//"))
+        .filter_map(|l| {
+            l.strip_prefix("measurement_calibration_file")?
+                .trim_start()
+                .strip_prefix('=')
+        })
+        .filter_map(|rest| {
+            let rest = rest.trim_start();
+            let quote = rest.chars().next().filter(|c| matches!(c, '"' | '\''))?;
+            let rest = &rest[1..];
+            Some(rest[..rest.find(quote)?].trim().to_owned())
+        })
+        .next_back()?;
+    if name.is_empty() {
+        return None;
+    }
+    if !stays_in(&name) {
+        log::warn!("squig: a calibration outside the site's data is not taken: {name}");
+        return None;
+    }
+    Some(name)
+}
+
+/// `curve` with `calibration` subtracted, on the measurement's own
+/// frequencies.
+pub(crate) fn calibrated(
+    curve: &[(f64, f64)],
+    calibration: &[(f64, f64)],
+) -> super::targets::Curve {
+    curve
+        .iter()
+        .map(|&(hz, db)| (hz, db - super::targets::at(calibration, hz)))
+        .collect()
 }
 
 /// One measurement file of `hit`'s, read as a curve.
@@ -312,7 +405,7 @@ fn average_weighted(mean: &[(f64, f64)], next: &[(f64, f64)], n: usize) -> super
 
 /// Two channels' levels as one, as squig.link's graphs average them: the
 /// mean of their amplitudes, in dB again.
-fn average(left: &[(f64, f64)], right: &[(f64, f64)]) -> super::targets::Curve {
+pub(crate) fn average(left: &[(f64, f64)], right: &[(f64, f64)]) -> super::targets::Curve {
     average_weighted(left, right, 1)
 }
 
@@ -698,6 +791,39 @@ mod tests {
         assert!((both[0].1 - expected).abs() < 1e-9);
         assert!((both[0].1 - 3.51).abs() < 0.01, "{}", both[0].1);
         assert_eq!(both[1].1, 0.0);
+    }
+
+    /// squig.link names its calibration in `config.js`, after a commented-out
+    /// line naming none; it is subtracted from the measurement on the
+    /// measurement's own frequencies. kazi.squig.link names none.
+    #[test]
+    fn a_named_calibration_is_subtracted() {
+        let squig = "      extraMusicEnabled = true,\n//      measurement_calibration_file = \"\";\n      measurement_calibration_file = \"IEF 2023 Cal\";\n";
+        assert_eq!(calibration_named(squig).as_deref(), Some("IEF 2023 Cal"));
+        assert_eq!(calibration_named("const DIR = \"data/\";\n"), None);
+        assert_eq!(
+            calibration_named("measurement_calibration_file = \"\",\n"),
+            None
+        );
+        assert_eq!(
+            calibration_named("measurement_calibration_file = '../secret',\n"),
+            None
+        );
+        let text = include_str!("testdata/squig-ief-2023-cal.txt");
+        let cal = crate::audio::dsp::targets::points(text);
+        let flat: Vec<(f64, f64)> = [20.0, 2000.0, 10_000.0]
+            .into_iter()
+            .map(|hz| (hz, 90.0))
+            .collect();
+        let got = calibrated(&flat, &cal);
+        for ((hz, db), (_, was)) in got.iter().zip(&flat) {
+            let c = crate::audio::dsp::targets::at(&cal, *hz);
+            assert!((db - (was - c)).abs() < 1e-9);
+        }
+        // The IEF 2023 calibration's shape: a dip at 2 kHz, a lift above 8.
+        let k = crate::audio::dsp::targets::at(&cal, 1000.0);
+        assert!(crate::audio::dsp::targets::at(&cal, 2000.0) - k < -1.0);
+        assert!(crate::audio::dsp::targets::at(&cal, 10_000.0) - k > 1.5);
     }
 
     /// A response past its cap is refused, not cut short.

@@ -34,13 +34,22 @@ AutoEQ is distributed under the MIT License:
 |---|---|---|
 | `harman-over-ear-2018.csv` | `Harman over-ear 2018.csv` | Harman International's over-ear target, from Olive, Welti and Khonsaripour's listener-preference research |
 | `harman-over-ear-2018-without-bass.csv` | `Harman over-ear 2018 without bass.csv` | The same, without its low-frequency shelf, as AutoEQ derives it |
-| `harman-in-ear-2019.csv` | `Harman in-ear 2019.csv` | Harman International's in-ear target, from the same research group |
+| `harman-in-ear-2019.csv` | squig.link's `Harman IE 2019 Target.txt`, not AutoEQ's (see below) | Harman International's in-ear target, from the same research group |
 | `harman-in-ear-2019-without-bass.csv` | `Harman in-ear 2019 without bass.csv` | The same, without its low-frequency shelf, as AutoEQ derives it |
 | `oratory1990-over-ear.csv` | `oratory1990 optimum hifi over-ear.csv` | oratory1990's over-ear target |
 | `oratory1990-in-ear.csv` | `oratory1990 in-ear.csv` | oratory1990's in-ear target |
 | `autoeq-in-ear.csv` | `AutoEq in-ear.csv` | AutoEQ's own in-ear target |
 | `diffuse-field-gras-kemar.csv` | `Diffuse field GRAS KEMAR.csv` | A diffuse-field target for GRAS/KEMAR ear simulators, as AutoEQ publishes it |
 | `diffuse-field-iso-11904-1.csv` | `Diffuse field ISO 11904-1.csv` | The diffuse-field response at the eardrum from ISO 11904-1, as AutoEQ publishes it: the neutral reference for in-ears measured on an IEC 60318-4 (711) coupler, which approximates the eardrum |
+
+`harman-in-ear-2019.csv` is squig.link's own Harman in-ear 2019 target
+(<https://squig.link/data/Harman%20IE%202019%20Target.txt>, fetched
+2026-10-07), interpolated onto AutoEQ's grid against log frequency and held
+flat past its last point at 19.75 kHz. A correction to it then aims where the
+auto-EQ presets squig.link makes do. It lies within 0.03 dB RMS of AutoEQ's
+file; the two part only above 19.75 kHz, by up to 0.6 dB. The unchanged file
+is kept as `../testdata/squig-harman-ie-2019-target.txt`, which a test holds
+this one to.
 
 Targets a person adds themselves (a CSV, or a squig.link export) are kept
 beside their config under `dsp/targets/`, not here, and are theirs to license.
