@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.60.5
+
+### Fixed
+
+- **Mac controls in the kōan look.** Pop-up pickers are menus in the theme's type rather than AppKit's bezelled buttons, sliders (graphics level, output volume) are the theme's, settings labels share one style, lowercase, and the sidebar opens wide enough for its labels. The EQ chain names its tuning once, and the window no longer keeps Downloads' title after leaving it.
+- **The Apple TV in the kōan look.** Focus is a 2-point accent ring with no platter or lift; the tab bar, track rows and settings are in Geist Mono and lowercase; settings, the filter sheet, pickers and track menus are drawn with the theme's rows on the wash rather than the system's grey pills.
+- **No system chrome on the iPhone and iPad in the kōan look.** The iPad draws the theme's own sidebar, mini player and full-screen Now Playing; navigation bars, back buttons and search fields lose their glass; settings labels are lowercase; and the platform's look holds the wash to the same contrast limits on a phone.
+- **Build recipes honour `CARGO_TARGET_DIR`.** `macos-ffi`, `install-dev`, `watch-dev`, `ios-smoke` and the demo server looked for cargo's output under `target/` and failed when it was built elsewhere.
+
 ## 0.60.4
 
 ### Fixed
