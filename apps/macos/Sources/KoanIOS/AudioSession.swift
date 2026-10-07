@@ -98,10 +98,14 @@ final class AudioSession {
         /// behind it — and the engine then does not start.
         func activate(sampleRate: Double) -> Double? {
             let session = AVAudioSession.sharedInstance()
-            do {
-                try session.setPreferredSampleRate(sampleRate)
-            } catch {
-                note("audio session refused \(sampleRate) Hz: \(error)")
+            // Asked again on every route change; a preference already set is
+            // left alone, so asking cannot itself change the route.
+            if session.preferredSampleRate != sampleRate {
+                do {
+                    try session.setPreferredSampleRate(sampleRate)
+                } catch {
+                    note("audio session refused \(sampleRate) Hz: \(error)")
+                }
             }
             do {
                 try session.setActive(true)

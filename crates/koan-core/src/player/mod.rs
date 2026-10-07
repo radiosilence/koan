@@ -2446,6 +2446,10 @@ impl Player {
             }
             PlayerCommand::ClearOutputDevice => self.clear_output_device(),
             PlayerCommand::ReloadDsp => self.reload_dsp(),
+            PlayerCommand::RouteChanged => {
+                crate::audio::follow_route();
+                self.reload_dsp();
+            }
             PlayerCommand::UseRenderer(connection) => {
                 self.remember_renderer(connection.as_deref());
                 self.use_renderer(connection);

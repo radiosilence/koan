@@ -70,6 +70,10 @@ pub fn set_session(session: Arc<dyn AudioSession>) {
 /// The rate the session last said the hardware runs at, as `f64` bits.
 static GRANTED: AtomicU64 = AtomicU64::new(0);
 
+/// The rate last asked for, as `f64` bits: the current output's, which a new
+/// route is asked for again.
+static REQUESTED: AtomicU64 = AtomicU64::new(0);
+
 type RateWatch = Arc<dyn Fn(f64) + Send + Sync>;
 
 /// Told the granted rate on each activation. One at a time: the player's
@@ -77,6 +81,7 @@ type RateWatch = Arc<dyn Fn(f64) + Send + Sync>;
 static WATCH: parking_lot::Mutex<Option<RateWatch>> = parking_lot::Mutex::new(None);
 
 fn activate(session: &dyn AudioSession, sample_rate: f64) -> Option<f64> {
+    REQUESTED.store(sample_rate.to_bits(), Ordering::Release);
     let granted = session.activate(sample_rate)?;
     HELD.store(true, Ordering::Release);
     GRANTED.store(granted.to_bits(), Ordering::Release);
@@ -93,11 +98,32 @@ pub(crate) fn activate_session(sample_rate: f64) -> bool {
     let Some(granted) = activate(session.as_ref(), sample_rate) else {
         return false;
     };
+    tell_watch(granted);
+    true
+}
+
+fn tell_watch(granted: f64) {
     let watch = WATCH.lock().clone();
     if let Some(watch) = watch {
         watch(granted);
     }
-    true
+}
+
+/// The route changed under a held session: a DAC plugged in or pulled out,
+/// or the hardware settling at the rate it was asked for. The new route is
+/// asked for the output's rate, and the player told what it runs at. A
+/// session not held is asked when the engine next starts.
+pub(crate) fn follow_route() {
+    if !session_held() {
+        return;
+    }
+    let session = SESSION.read().clone();
+    let Some(session) = session else { return };
+    let rate = f64::from_bits(REQUESTED.load(Ordering::Acquire));
+    match activate(session.as_ref(), rate) {
+        Some(granted) => tell_watch(granted),
+        None => log::warn!("audio session refused activation on a new route"),
+    }
 }
 
 pub(crate) fn session_held() -> bool {
@@ -209,6 +235,8 @@ mod tests {
     struct TwoRateDac {
         activations: AtomicU64,
         refuse: AtomicBool,
+        /// Unplugged: the speaker, at 48 kHz whatever is asked.
+        unplugged: AtomicBool,
     }
 
     impl AudioSession for TwoRateDac {
@@ -217,11 +245,13 @@ mod tests {
                 return None;
             }
             self.activations.fetch_add(1, Ordering::Relaxed);
-            Some(if sample_rate == 44100.0 {
-                44100.0
-            } else {
-                48000.0
-            })
+            Some(
+                if sample_rate == 44100.0 && !self.unplugged.load(Ordering::Relaxed) {
+                    44100.0
+                } else {
+                    48000.0
+                },
+            )
         }
         fn release(&self) {}
     }
@@ -231,6 +261,7 @@ mod tests {
         let dac = Arc::new(TwoRateDac {
             activations: AtomicU64::new(0),
             refuse: AtomicBool::new(false),
+            unplugged: AtomicBool::new(false),
         });
         set_session(dac.clone());
         let backend = IosAudioBackend;
@@ -277,6 +308,23 @@ mod tests {
         assert!(backend.set_device_sample_rate(&device, 96000.0).is_err());
         assert_eq!(backend.get_device_sample_rate(&device).unwrap(), 44100.0);
         dac.refuse.store(false, Ordering::Relaxed);
+
+        // The DAC pulled out: the speaker is asked for the same rate, and
+        // the player hears the one it runs at. Plugged back in, the DAC is
+        // switched to the track's rate again.
+        dac.unplugged.store(true, Ordering::Relaxed);
+        follow_route();
+        assert_eq!(f64::from_bits(heard.load(Ordering::Relaxed)), 48000.0);
+        assert_eq!(backend.get_device_sample_rate(&device).unwrap(), 48000.0);
+        dac.unplugged.store(false, Ordering::Relaxed);
+        follow_route();
+        assert_eq!(f64::from_bits(heard.load(Ordering::Relaxed)), 44100.0);
+
+        // A session let go is not taken back for a route change.
+        release_session();
+        let before = dac.activations.load(Ordering::Relaxed);
+        follow_route();
+        assert_eq!(dac.activations.load(Ordering::Relaxed), before);
 
         // A replaced watch does not unsubscribe its successor.
         let newer = backend.watch_device_sample_rate(&device, Box::new(|_| {}));

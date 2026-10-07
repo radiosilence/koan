@@ -3396,13 +3396,14 @@ impl KoanEngine {
     }
 
     /// The name of the port iOS routes audio to, on each route change: what
-    /// profiles are chosen by on a phone. Does nothing elsewhere.
+    /// profiles are chosen by on a phone, and the cue to read the session's
+    /// rate again. Does nothing elsewhere.
     pub async fn set_audio_route(self: Arc<Self>, name: String) -> Result<(), KoanError> {
         #[cfg(any(target_os = "ios", target_os = "tvos"))]
         {
             offload::sequenced(move || {
                 koan_core::audio::ios_backend::set_route(name);
-                self.send_local(PlayerCommand::ReloadDsp)
+                self.send_local(PlayerCommand::RouteChanged)
             })
             .await
         }

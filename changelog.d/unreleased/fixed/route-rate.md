@@ -1,0 +1,1 @@
+- **The iOS format badge follows a route change.** Plugging in or pulling out a USB DAC while playing left the badge at the old route's rate. A route change now asks the new route for the track's rate and reports the rate it runs at.

@@ -61,6 +61,13 @@ pub(crate) fn release_session() {
     ios_backend::release_session();
 }
 
+/// The platform's audio route changed: on iOS and tvOS, ask the new one for
+/// the output's rate and report what it runs at.
+pub(crate) fn follow_route() {
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+    ios_backend::follow_route();
+}
+
 /// Cross-platform facade: list output devices via the platform backend.
 pub fn list_output_devices() -> Result<Vec<DeviceInfo>, BackendError> {
     platform_backend().list_devices()
