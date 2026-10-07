@@ -416,7 +416,7 @@ struct RecordRoom: ViewModifier {
             .onReceive(NotificationCenter.default.publisher(for: .appResignsActive)) { _ in active = false }
             .onReceive(NotificationCenter.default.publisher(for: .appBecomesActive)) { _ in active = true }
             .background { RainbowForTrack() }
-            .overlay { MirrorBall().ignoresSafeArea() }
+            .overlay { MirrorBall(active: active).ignoresSafeArea() }
             .overlay { RainbowBurst().ignoresSafeArea() }
             .overlay(alignment: .bottom) { RainbowToast() }
             // The theme's text button for every button that names no style.
