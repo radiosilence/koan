@@ -1590,6 +1590,10 @@ pub fn apply_preset(device: &str, name: Option<&str>) -> Result<(), String> {
     persist(|cfg| set_output(cfg, device, correction.as_deref(), &tunings, name))
 }
 
+/// An output set from a preset by `migrate`: the device, its correction,
+/// its tuning and the preset.
+type Setting = (String, Option<String>, Vec<(String, bool)>, String);
+
 /// Bring configs from before presets and tunings of several EQs up to
 /// them, once at start, and again harmlessly after:
 /// - a stack that is a correction with EQs on top is a preset, and an output
@@ -1709,7 +1713,7 @@ fn migrate_presets() -> Result<(), String> {
         .collect();
     // Each output those set: its correction, and its tuning, the preset's
     // EQs then those it had on top.
-    let mut set: Vec<(String, Option<String>, Vec<(String, bool)>, String)> = Vec::new();
+    let mut set: Vec<Setting> = Vec::new();
     for (name, layers, devices) in &presets {
         let (correction, eqs) = preset_parts(layers, all);
         for device in devices {
