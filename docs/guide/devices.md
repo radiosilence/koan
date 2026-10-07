@@ -109,6 +109,24 @@ to do with it. On iOS, finding anything on the network needs **Local Network**
 allowed for kōan (Settings → Privacy & Security); the picker says so when it
 is not.
 
+### Who is connected
+
+Settings → Devices → **Connected now** lists who is connected to this device
+and whom it is connected to: its link to your server and since when, your
+account's other devices signed in there, each of which can control this one
+through it, and every connection on the local network in either direction. A
+device that drives this one keeps it busy, so when kōan uses more battery than
+its time on screen explains, this is where to look.
+
+A device on the network that is controlling this one can be disconnected; it
+may connect again. One that has not proved it is yours, or shared with you,
+is listed by its address rather than by the name it gives, and can be
+refused: its address is kept in `devices.refused` and its connections are
+hung up as they arrive, until **Allow** takes it off the list. An address is
+all there is to know of a stranger, so one that moves to another address is
+not refused there. Your account's own devices are ended by revoking their
+keys under Server.
+
 ### Devices that stop answering
 
 A device is not dropped the moment it goes quiet. For one heartbeat (45
