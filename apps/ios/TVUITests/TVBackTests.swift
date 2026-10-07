@@ -137,7 +137,8 @@ final class TVBackTests: XCTestCase {
         pause(4)
         XCTAssertTrue(app.buttons[any: "Artist 1"].waitForExistence(timeout: 5), "the artists' pills are buttons")
         // Down from the keyboard lands on whichever pill is under the key.
-        let focused = app.buttons.matching(NSPredicate(format: "hasFocus == true")).firstMatch
+        // Any type: the keyboard's keys are not buttons.
+        let focused = app.descendants(matching: .any).matching(NSPredicate(format: "hasFocus == true")).firstMatch
         for _ in 0..<3 where !focused.label.hasPrefix("Artist") {
             press(.down)
         }
@@ -146,8 +147,32 @@ final class TVBackTests: XCTestCase {
         let name = focused.label
         press(.select)
         pause(3)
-        XCTAssertFalse(app.buttons[any: name].exists, "the artist's page is pushed over the results")
+        XCTAssertTrue(app.buttons[any: "Play"].waitForExistence(timeout: 5), "the artist's page, with its Play")
+        XCTAssertTrue(app.staticTexts[any: name].exists, "the page is \(name)'s")
         snap("9-artist")
+    }
+
+    /// The album browser narrows by name from a field above it, drawn as the
+    /// theme's square box.
+    func testAlbumsFilterByName() {
+        open(.library)
+        reach(app.buttons[any: "Albums"], by: .down)
+        press(.select)
+        pause(3)
+        XCTAssertTrue(app.buttons[any: "Album 1"].waitForExistence(timeout: 5), "the grid, unfiltered")
+        let field = app.textFields["name-filter"]
+        reach(field, by: .up)
+        snap("10-filter-focused")
+        press(.select)
+        pause(2)
+        app.typeText("Album 3")
+        pause(1)
+        press(.menu)
+        pause(3)
+        XCTAssertEqual(app.state, .runningForeground, "Menu leaves the keyboard, not the app")
+        snap("11-filtered")
+        XCTAssertTrue(app.buttons[any: "Album 3"].exists, "the record named stays")
+        XCTAssertFalse(app.buttons[any: "Album 1"].exists, "records not named go")
     }
 
     /// Along the tab bar to `tab`.

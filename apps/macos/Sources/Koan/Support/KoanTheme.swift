@@ -68,6 +68,11 @@ enum KoanTheme {
         UINavigationBar.appearance().titleTextAttributes = [
             .font: UIFont.koan(.title), .foregroundColor: UIColor.koanStrong,
         ]
+        // A field is the theme's square box (`koanField`), which a plain style
+        // does not reach: the rounded platter is the text field's own border.
+        // An alert's field keeps it, having no box around it.
+        UITextField.appearance().borderStyle = .none
+        UITextField.appearance(whenContainedInInstancesOf: [UIAlertController.self]).borderStyle = .roundedRect
         // The search page's field, typed into from the keyboard across the top.
         UITextField.appearance(whenContainedInInstancesOf: [UISearchBar.self]).defaultTextAttributes = [
             .font: UIFont.koan(.title), .foregroundColor: UIColor.koanInk,

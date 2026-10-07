@@ -52,13 +52,12 @@ private struct SectionPage: View {
         // takes focus, but a sheet or menu opened from it never appears. Above
         // the listing rather than inset over it, which would scroll beneath.
         VStack(spacing: 0) {
-            if section.isBrowser {
+            if section.isBrowser || section.filterPlaceholder != nil {
                 BrowseControlsRow(section: section)
             }
             page
         }
         .navigationTitle(KoanTheme.label(title))
-        .modifier(SectionFilter(placeholder: section.filterPlaceholder))
         #else
         page
             .navigationTitle(KoanTheme.label(title))
@@ -127,18 +126,12 @@ private struct SectionFilter: ViewModifier {
     @Environment(LibraryModel.self) private var library
 
     func body(content: Content) -> some View {
-        #if os(tvOS)
-        // A search field on tvOS is a keyboard across the top of the page,
-        // over its title and buttons. The Search tab finds things there.
-        content
-        #else
         if let placeholder {
             @Bindable var library = library
             content.koanSearchable(text: $library.filter, prompt: placeholder)
         } else {
             content
         }
-        #endif
     }
 }
 
@@ -211,31 +204,59 @@ private struct SortMenu<Value: Hashable>: View {
 }
 
 #if os(tvOS)
-/// A browser's filters and sort on a television: a row of buttons above the
-/// listing, reached by moving up from it, with room for their names.
+/// A listing's name filter, filters and sort on a television: a row above the
+/// listing, reached by moving up from it, with room for their names. The
+/// filter is a field rather than `.searchable`, whose keyboard would stand
+/// across the top of the page over its title and these buttons.
 private struct BrowseControlsRow: View {
     let section: Navigator.Section
     @Environment(LibraryModel.self) private var library
 
     var body: some View {
+        @Bindable var library = library
         HStack(spacing: 24) {
+            if let placeholder = section.filterPlaceholder {
+                NameFilter(text: $library.filter, prompt: placeholder)
+            }
             Spacer()
-            if section == .albums, library.albumSort == .random {
-                Button { library.reshuffleAlbums() } label: {
-                    Label("Shuffle", systemImage: Icon.reshuffle)
-                }
-            }
-            BrowseFilterButton()
-            if section == .albums {
-                AlbumSortMenu()
-            }
-            if section == .tracks {
-                TrackSortMenu()
+            if section.isBrowser {
+                browserControls
             }
         }
         .padding(.horizontal, 80)
         .padding(.bottom, 16)
         .focusSection()
+    }
+
+    @ViewBuilder private var browserControls: some View {
+        if section == .albums, library.albumSort == .random {
+            Button { library.reshuffleAlbums() } label: {
+                Label("Shuffle", systemImage: Icon.reshuffle)
+            }
+        }
+        BrowseFilterButton()
+        if section == .albums {
+            AlbumSortMenu()
+        }
+        if section == .tracks {
+            TrackSortMenu()
+        }
+    }
+}
+
+/// Narrowing a listing by name on a television: the field opens the system's
+/// keyboard, and the listing follows what is typed.
+struct NameFilter: View {
+    @Binding var text: String
+    let prompt: String
+
+    var body: some View {
+        TextField(KoanTheme.label(prompt), text: $text)
+            .autocorrectionDisabled()
+            .textInputAutocapitalization(.never)
+            .frame(width: 640)
+            .koanField()
+            .accessibilityIdentifier("name-filter")
     }
 }
 #else
