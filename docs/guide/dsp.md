@@ -223,13 +223,35 @@ handle. Each parametric band is drawn faintly behind the total. For a
 correction from AutoEQ, the Measured view draws the device as measured, the
 target it plays to, and the measurement with the profile applied.
 
-Bands are edited on the profile's own page, opened by **Edit** in the graph's
+A tuning's bands are edited on its own page, opened by **Edit** in the graph's
 header on the EQ page: in the table below its graph, or by dragging a peak or
-shelf on the graph itself. An edit is saved to the profile and heard straight
-away. Frequency is held to 10 Hz–22 kHz, gain to ±30 dB and
-Q to 0.1–20. Delays, mixes and graphic curves are shown but not edited here,
-and a correction's measurement is not changed by editing its bands, so the
-Measured view shows the effect of each edit on it.
+shelf on the graph itself. An edit is saved and heard straight away. Frequency
+is held to 10 Hz–22 kHz, gain to ±30 dB and Q to 0.1–20. Delays, mixes and
+graphic curves are shown but not edited here.
+
+A correction plays as made: its bands are shown and not edited, since a
+correction is what makes the device neutral and an edit to it is no longer
+that. To change the sound, add a tuning on top; to edit a correction anyway,
+make it a tuning on its page first.
+
+An imported EQ keeps what it was imported as. Once edited, `koan dsp revert NAME`
+puts it back, and `koan dsp copy NAME` keeps the edit as a profile of its own
+first. EQs imported before this was kept have nothing to go back to.
+
+### Tunings of several EQs, and presets
+
+An output's tuning can hold several EQs, played in order after the correction,
+each switched on or off. Each EQ made against a target other than the
+correction's has the difference between the two played with it, and where the
+chain cannot hold them all, the last ones are left out and the EQ page says
+which. A **preset** saves an output's correction and tuning under a name; an
+output set from it plays the same, and says when it was changed since. A stack
+made before presets, a correction with EQs on top, became a preset, and the
+outputs that played it play its correction and EQs, set from it.
+
+The apps show one EQ of the tuning for now; the CLI sets all of them:
+`koan dsp tuning EQ... [--off EQ]...`, `koan dsp preset save NAME` and
+`koan dsp preset use NAME|flat`.
 
 ## On every device
 

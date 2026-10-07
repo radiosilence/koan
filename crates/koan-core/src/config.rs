@@ -603,16 +603,39 @@ pub struct DspConfig {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub autoeq_dismissed: Vec<String>,
     /// The tuning each output plays on top of its correction, the profile
-    /// that lists it. This device's, as which profile an output plays is.
+    /// that lists it: its EQs, in the order listed, each switched on or off.
+    /// This device's, as which profile an output plays is.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tunings: Vec<DspOutputTuning>,
+    /// The preset each output's correction and tuning were last set from,
+    /// which they are compared with to say whether it was changed since.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub presets: Vec<DspOutputPreset>,
 }
 
-/// Taste on top of an output's correction.
+/// One EQ of an output's tuning.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DspOutputTuning {
     pub device: String,
     pub tuning: String,
+    /// Switched off, it stays in the tuning and plays nothing.
+    #[serde(default = "on", skip_serializing_if = "is_on")]
+    pub on: bool,
+}
+
+fn on() -> bool {
+    true
+}
+
+fn is_on(on: &bool) -> bool {
+    *on
+}
+
+/// The preset an output was set from.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DspOutputPreset {
+    pub device: String,
+    pub preset: String,
 }
 
 impl Default for DspConfig {
@@ -622,6 +645,7 @@ impl Default for DspConfig {
             profiles: Vec::new(),
             autoeq_dismissed: Vec::new(),
             tunings: Vec::new(),
+            presets: Vec::new(),
         }
     }
 }
@@ -674,6 +698,11 @@ pub struct DspProfile {
     /// to play together.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub group: bool,
+    /// A preset: a correction and its tuning saved together, its layers the
+    /// correction first and then the tuning's EQs, each on or off. What an
+    /// output is set from, and what the quick EQ menu lists.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub preset: bool,
     /// Whether it is the account's, kept on every device signed in to its
     /// kōan server, or this device's alone. Unset, it follows from what the
     /// profile is: see `audio::dsp::profiles::scope`.
@@ -701,6 +730,17 @@ pub struct DspProfile {
     /// the tuning sounds as it was made to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tuned_for: Option<String>,
+    /// What an import made it, kept so an edit can be undone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original: Option<DspOriginal>,
+}
+
+/// A profile as imported: its filters and preamp.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DspOriginal {
+    pub filters: Vec<DspFilter>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preamp_db: Option<f64>,
 }
 
 /// What a profile is for. A chain, a profile with its layers, corrects a
@@ -1041,6 +1081,19 @@ impl DspProfile {
                 t.chosen = None;
                 dropped.push("chosen target dropped".to_owned());
             }
+        }
+        // The original plays when reverted to: held to the same bounds.
+        if let Some(o) = self.original.take() {
+            let mut kept = DspProfile {
+                filters: o.filters,
+                preamp_db: o.preamp_db,
+                ..Default::default()
+            };
+            kept.sanitize();
+            self.original = Some(DspOriginal {
+                filters: kept.filters,
+                preamp_db: kept.preamp_db,
+            });
         }
         for d in dropped {
             note(d);
@@ -2670,12 +2723,14 @@ fps = 30
             target: None,
             layers: vec![],
             group: false,
+            preset: false,
             scope: None,
             uid: None,
             origin: None,
             role: None,
             measurement: None,
             tuned_for: None,
+            original: None,
         };
         Config::persist(|cfg| cfg.dsp.profiles.push(profile.clone())).unwrap();
 

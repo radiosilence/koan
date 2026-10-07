@@ -1260,11 +1260,24 @@ pub struct DspOverview {
     pub tuning_plays: bool,
     /// What of the output's choices does not play, and why.
     pub left_out: Option<String>,
-    /// Every output's tuning, by device.
+    /// Every output's tuning, by device: its first EQ.
     pub tunings: std::collections::HashMap<String, String>,
+    /// The output's tuning: its EQs in the order they play.
+    pub chain: Vec<DspTuningEntry>,
+    /// The preset the output was set from, and whether it was changed since.
+    pub preset: Option<String>,
+    pub preset_edited: bool,
     pub profiles: Vec<DspProfileSummary>,
     /// What to call the devices named by a UDN, where the renderer is known.
     pub names: std::collections::HashMap<String, String>,
+}
+
+/// One EQ of an output's tuning.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspTuningEntry {
+    pub name: String,
+    /// Switched off, it stays in the tuning and plays nothing.
+    pub on: bool,
 }
 
 #[derive(uniffi::Record, Debug, Clone)]
@@ -1284,6 +1297,10 @@ pub struct DspProfileSummary {
     pub role: DspRole,
     /// Built from a measurement.
     pub measured: bool,
+    /// A preset: a correction and its tuning saved together.
+    pub preset: bool,
+    /// Changed since it was imported.
+    pub edited: bool,
 }
 
 /// What a profile is for. A chain corrects a headphone once.
@@ -1436,6 +1453,14 @@ pub struct DspProfileDetail {
     pub made_for: Option<String>,
     /// For a tuning: the target it was made against, by id, if that is known.
     pub tuned_for: Option<String>,
+    /// A preset: a correction and its tuning saved together.
+    pub preset: bool,
+    /// Changed since it was imported.
+    pub edited: bool,
+    /// Imported, so it can go back to how it was.
+    pub can_revert: bool,
+    /// A correction, which plays as made: its bands are not edited.
+    pub read_only: bool,
 }
 
 /// One of a profile's filters, in the order they run.
@@ -1597,6 +1622,10 @@ impl From<koan_core::audio::dsp::profiles::Detail> for DspProfileDetail {
             measured: d.measured,
             made_for: d.made_for,
             tuned_for: d.tuned_for,
+            preset: d.preset,
+            edited: d.edited,
+            can_revert: d.can_revert,
+            read_only: d.read_only,
         }
     }
 }
@@ -1612,6 +1641,13 @@ impl From<koan_core::audio::dsp::profiles::Overview> for DspOverview {
             tuning_plays: o.tuning_plays,
             left_out: o.left_out,
             tunings: o.tunings.into_iter().collect(),
+            chain: o
+                .chain
+                .into_iter()
+                .map(|(name, on)| DspTuningEntry { name, on })
+                .collect(),
+            preset_edited: o.preset.as_ref().is_some_and(|(_, e)| *e),
+            preset: o.preset.map(|(name, _)| name),
             profiles: o
                 .profiles
                 .into_iter()
@@ -1626,6 +1662,8 @@ impl From<koan_core::audio::dsp::profiles::Overview> for DspOverview {
                     problem: p.problem,
                     members: p.members,
                     playing: p.playing,
+                    preset: p.preset,
+                    edited: p.edited,
                 })
                 .collect(),
         }

@@ -361,13 +361,62 @@ pub fn cmd_dsp_made_for(name: &str, target: Option<&str>) {
 
 /// Play `tuning` on top of `device`'s correction (the current output if not
 /// named), or none.
-pub fn cmd_dsp_tuning(tuning: Option<&str>, named: Option<String>) {
+pub fn cmd_dsp_tuning(names: &[String], off: &[String], named: Option<String>) {
     let device = device(named);
-    profiles::set_tuning(&device, tuning).unwrap_or_else(|e| fail(e));
-    match tuning {
-        Some(t) => println!("{} plays '{}' on top", device.bold(), t.bold()),
-        None => println!("{} plays no tuning", device.bold()),
+    let list: Vec<(String, bool)> = names
+        .iter()
+        .filter(|n| n.as_str() != "none")
+        .map(|n| (n.clone(), !off.contains(n)))
+        .collect();
+    profiles::set_tunings(&device, &list).unwrap_or_else(|e| fail(e));
+    if list.is_empty() {
+        println!("{} plays no tuning", device.bold());
+    } else {
+        let names: Vec<String> = list
+            .iter()
+            .map(|(n, on)| if *on { n.clone() } else { format!("{n} (off)") })
+            .collect();
+        println!("{} plays {} on top", device.bold(), names.join(", ").bold());
     }
+}
+
+/// Save `device`'s correction and tuning as the preset `name`.
+pub fn cmd_dsp_preset_save(name: &str, named: Option<String>) {
+    let device = device(named);
+    let saved = profiles::save_preset(&device, name).unwrap_or_else(|e| fail(e));
+    println!(
+        "{} '{}' from {}",
+        "saved".green(),
+        saved.bold(),
+        device.bold()
+    );
+}
+
+/// Set `device` from the preset `name`, or flat.
+pub fn cmd_dsp_preset_use(name: Option<&str>, named: Option<String>) {
+    let device = device(named);
+    profiles::apply_preset(&device, name).unwrap_or_else(|e| fail(e));
+    match name {
+        Some(n) => println!("{} plays '{}'", device.bold(), n.bold()),
+        None => println!("{} plays flat, untouched", device.bold()),
+    }
+}
+
+/// Put `name` back as it was imported.
+pub fn cmd_dsp_revert(name: &str) {
+    profiles::revert(name).unwrap_or_else(|e| fail(e));
+    println!("'{}' is as imported", name.bold());
+}
+
+/// Copy `name` as it is now.
+pub fn cmd_dsp_copy(name: &str, new: Option<&str>) {
+    let copy = profiles::duplicate(name, new).unwrap_or_else(|e| fail(e));
+    println!(
+        "{} '{}' as '{}'",
+        "copied".green(),
+        name.bold(),
+        copy.bold()
+    );
 }
 
 /// Record the target the tuning `name` was made against, or that it is not

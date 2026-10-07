@@ -3176,6 +3176,73 @@ impl KoanEngine {
         .await
     }
 
+    /// Make `device`'s tuning `tuning`: EQs in the order they play, each on
+    /// or off.
+    pub async fn dsp_set_tunings(
+        self: Arc<Self>,
+        device: String,
+        tuning: Vec<DspTuningEntry>,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            let list: Vec<(String, bool)> = tuning.into_iter().map(|t| (t.name, t.on)).collect();
+            koan_core::audio::dsp::profiles::set_tunings(&device, &list)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// Save `device`'s correction and tuning as the preset `name`.
+    pub async fn dsp_save_preset(
+        self: Arc<Self>,
+        device: String,
+        name: String,
+    ) -> Result<String, KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::save_preset(&device, &name)
+                .map_err(|message| KoanError::BadArgument { message })
+        })
+        .await
+    }
+
+    /// Set `device` from the preset `name`, or flat with `None`.
+    pub async fn dsp_apply_preset(
+        self: Arc<Self>,
+        device: String,
+        name: Option<String>,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::apply_preset(&device, name.as_deref())
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// Put `name` back as it was imported.
+    pub async fn dsp_revert(self: Arc<Self>, name: String) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::revert(&name)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// A copy of `name` as it is now, under `new` or "<name> copy". The
+    /// copy's name.
+    pub async fn dsp_duplicate(
+        self: Arc<Self>,
+        name: String,
+        new: Option<String>,
+    ) -> Result<String, KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::duplicate(&name, new.as_deref())
+                .map_err(|message| KoanError::BadArgument { message })
+        })
+        .await
+    }
+
     /// The target the tuning `name` was made against, or `None` when that is
     /// not known, which plays it as it is on any correction.
     pub async fn dsp_set_tuned_for(

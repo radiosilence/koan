@@ -8,6 +8,8 @@ struct BandTable: View {
     let dsp: DspModel
     let profile: String
     let bands: [DspBand]
+    /// A correction, which plays as made: its bands shown, not edited.
+    var readOnly = false
 
     /// The band types that can be chosen, by the name the config uses: the
     /// short form the row shows and the name the menu gives.
@@ -54,7 +56,7 @@ struct BandTable: View {
             }
             ForEach(Array(bands.enumerated()), id: \.offset) { index, band in
                 Group {
-                    if Self.editable(band.kind) {
+                    if Self.editable(band.kind), !readOnly {
                         BandEditor(dsp: dsp, profile: profile, index: index, band: band)
                     } else {
                         BandRow(band: band)
@@ -64,24 +66,30 @@ struct BandTable: View {
                 .listRowInsets(Self.rowInsets)
                 #if !os(tvOS)
                 .contextMenu {
-                    Button("Remove", role: .destructive) { dsp.removeFilter(profile, index) }
+                    if !readOnly {
+                        Button("Remove", role: .destructive) { dsp.removeFilter(profile, index) }
+                    }
                 }
                 #endif
             }
             #if os(iOS)
-            .onDelete { offsets in
+            .onDelete(perform: readOnly ? nil : { offsets in
                 // One at a time, from the end, so the indices hold.
                 for index in offsets.sorted(by: >) { dsp.removeFilter(profile, index) }
-            }
+            })
             #endif
             #if !os(tvOS)
-            Button("Add a Band") { dsp.addBand(profile) }
-                .koanButton(.compact)
+            if !readOnly {
+                Button("Add a Band") { dsp.addBand(profile) }
+                    .koanButton(.compact)
+            }
             #endif
         } header: {
             KoanSectionHeader("Filters")
         } footer: {
-            Text("Edits play at once. Frequency, gain and Q are held to 10 Hz–22 kHz, ±30 dB and 0.1–20.")
+            Text(readOnly
+                 ? "A correction plays as made. To change the sound, add a tuning on top; to edit these, make it a tuning under What it's for."
+                 : "Edits play at once. Frequency, gain and Q are held to 10 Hz–22 kHz, ±30 dB and 0.1–20.")
                 .koanText(.fine, .muted)
         }
     }
