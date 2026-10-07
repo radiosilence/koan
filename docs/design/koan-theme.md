@@ -148,7 +148,7 @@ Flat and full-width, with a 1-point `rule` along its top and `bg` beneath, 64 po
 
 ### Select bar (phone)
 
-Select mode begins from a "select" text button in a page's bar (in the queue's header, which has no bar). Rows take the List's ticks and tiles a ring; a bar along the foot of the page, over the mini player, says how many are picked with "done" beside it, and below, the verbs as the tab bar's items are drawn: play, play next, add to queue, add to playlist, favourite, and remove where the page holds the things picked (the queue, a playlist, history). Each verb ends the mode. VoiceOver reads each tick as selected or not, and each verb by its full name.
+Select mode is switched by a checkbox glyph, an icon button, in a page's bar (in the queue's header, which has no bar): an empty square while off, ticked while on, and a second tap ends the mode. A glyph rather than the word, which a crowded bar cuts short. VoiceOver reads it as "Select", with its value on or off. Rows take the List's ticks and tiles a ring; a bar along the foot of the page, over the mini player, says how many are picked with "done" beside it, and below, the verbs as the tab bar's items are drawn: play, play next, add to queue, add to playlist, favourite, and remove where the page holds the things picked (the queue, a playlist, history). Each verb ends the mode. VoiceOver reads each tick as selected or not, and each verb by its full name.
 
 ### Transport (Mac)
 

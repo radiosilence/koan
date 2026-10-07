@@ -342,11 +342,10 @@ struct QueueView: View {
 
             #if os(iOS)
             // The bar at the foot says what is picked and what to do with it.
-            if !editMode.isEditing {
-                SelectButton { editMode = .active }
-                    .disabled(listed.isEmpty)
-                    .fixedSize()
+            SelectButton(isOn: editMode.isEditing) {
+                editMode = editMode.isEditing ? .inactive : .active
             }
+            .disabled(listed.isEmpty && !editMode.isEditing)
             #else
             QueueSelectionHeader(selection: $selection, rows: rows) { removeSelected() }
             #endif
