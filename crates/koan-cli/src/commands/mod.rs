@@ -20,6 +20,7 @@ pub use auth::{
 };
 pub use cache::{cmd_cache_clear, cmd_cache_status, evict_cache};
 pub use config::{cmd_config, cmd_init};
+#[cfg(test)]
 pub use dsp::list_item as dsp_list_item;
 pub use dsp::{
     cmd_dsp_add_target, cmd_dsp_autoeq_install, cmd_dsp_autoeq_search, cmd_dsp_clear, cmd_dsp_copy,
