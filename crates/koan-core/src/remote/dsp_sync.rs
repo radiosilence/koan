@@ -15,6 +15,7 @@
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -485,6 +486,34 @@ pub fn sync(db: &Database) -> DspSync {
     reconcile(db, &client, &cfg.remote.url)
 }
 
+/// Set by a process that would exit before a background sync ran, such as
+/// the CLI: [`changed`] notes an edit in `PENDING` instead, and [`flush`]
+/// sends it.
+static DEFERRED: AtomicBool = AtomicBool::new(false);
+static PENDING: AtomicBool = AtomicBool::new(false);
+
+/// From now on, edits wait for [`flush`] rather than syncing in the
+/// background.
+pub fn defer() {
+    DEFERRED.store(true, Ordering::Relaxed);
+}
+
+/// Sync now if an edit was made since [`defer`]. None where nothing was
+/// edited; an error where the server could not be reached or refused.
+pub fn flush(db: &Database) -> Option<Result<DspSync, String>> {
+    if !PENDING.swap(false, Ordering::Relaxed) {
+        return None;
+    }
+    let cfg = Config::load().unwrap_or_default();
+    let client = crate::helpers::subsonic_client(&cfg)?;
+    let offers = crate::remote::profile::for_auth(client.auth())
+        .is_some_and(|p| p.offers(crate::remote::profile::DSP_PROFILES));
+    if !offers {
+        return Some(Ok(DspSync::default()));
+    }
+    Some(try_run(db, &client, &cfg.remote.url).map_err(|e| e.to_string()))
+}
+
 /// Part of every sync with the server at `url`: read what changed there,
 /// then send what changed here. Nothing, for a server that does not keep
 /// profiles.
@@ -499,14 +528,18 @@ pub fn reconcile(db: &Database, client: &SubsonicClient, url: &str) -> DspSync {
 
 /// [`reconcile`], given the server.
 pub fn run(db: &Database, remote: &dyn Remote, url: &str) -> DspSync {
-    let _one = ONE_AT_A_TIME.lock();
-    APPLYING.with(|a| a.set(true));
-    let out = sync_with(db, remote, url).unwrap_or_else(|e| {
+    try_run(db, remote, url).unwrap_or_else(|e| {
         log::warn!("dsp sync: {e}");
         DspSync::default()
-    });
+    })
+}
+
+fn try_run(db: &Database, remote: &dyn Remote, url: &str) -> Result<DspSync, Failed> {
+    let _one = ONE_AT_A_TIME.lock();
+    APPLYING.with(|a| a.set(true));
+    let out = sync_with(db, remote, url);
     APPLYING.with(|a| a.set(false));
-    if out.changed() {
+    if out.as_ref().is_ok_and(DspSync::changed) {
         crate::signal::engine_changed().bump();
     }
     out
@@ -516,6 +549,10 @@ pub fn run(db: &Database, remote: &dyn Remote, url: &str) -> DspSync {
 /// to send it to.
 pub fn changed() {
     if APPLYING.with(Cell::get) {
+        return;
+    }
+    if DEFERRED.load(Ordering::Relaxed) {
+        PENDING.store(true, Ordering::Relaxed);
         return;
     }
     let cfg = Config::cached();
@@ -1280,6 +1317,23 @@ mod tests {
             }),
             ..Default::default()
         }
+    }
+
+    /// Deferred, an edit waits for `flush` and starts no thread a CLI would
+    /// exit before; with no server signed in to, `flush` takes it and
+    /// sends nothing.
+    #[test]
+    fn deferred_edits_wait_for_flush() {
+        let _guard = lock();
+        let here = Device::new();
+        here.on();
+        defer();
+        changed();
+        assert!(PENDING.load(Ordering::Relaxed));
+        assert!(flush(&here.db).is_none());
+        assert!(!PENDING.load(Ordering::Relaxed));
+        assert!(flush(&here.db).is_none());
+        DEFERRED.store(false, Ordering::Relaxed);
     }
 
     fn lock() -> std::sync::MutexGuard<'static, ()> {
