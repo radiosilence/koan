@@ -37,10 +37,20 @@ final class SignInTests: XCTestCase {
         XCTAssert(app.images.firstMatch.waitForExistence(timeout: 180), "no albums after sync")
     }
 
-    /// A phone's tabs are a tab bar; an iPad's are buttons in a bar across the top.
+    /// A phone's tabs are the theme's bar, or the platform's tab bar in its
+    /// own look; an iPad's are buttons in a bar across the top. The platform's
+    /// tab bar shows for a moment at launch before the theme hides it, so it
+    /// is asked for only once the theme's bar has had its chance.
     private func tab(_ app: XCUIApplication, _ name: String) {
+        let theme = app.otherElements["koan-bar"].buttons[any: name]
         let bar = app.tabBars.buttons[any: name]
-        if bar.waitForExistence(timeout: 10) { bar.tap() } else { app.buttons[any: name].firstMatch.tap() }
+        if theme.waitForExistence(timeout: 10) {
+            theme.tap()
+        } else if bar.exists {
+            bar.tap()
+        } else {
+            app.buttons[any: name].firstMatch.tap()
+        }
     }
 
     private func field(_ query: XCUIElementQuery, _ placeholder: String) -> XCUIElement {
