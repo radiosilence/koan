@@ -1506,6 +1506,17 @@ fn server_first(
 }
 
 /// This device's id, as other devices know it.
+/// Whether `id` is listed by the server as one of the account's devices
+/// (`Some(None)`) or one shared with it (`Some(Some(owner))`).
+pub fn listed_owner(id: &str) -> Option<Option<String>> {
+    with(|s| {
+        s.account
+            .iter()
+            .find(|(d, _)| d.id == id)
+            .map(|(d, _)| d.owner.clone())
+    })
+}
+
 pub fn this_id() -> Option<String> {
     local().map(|l| l.identity.device_id.clone())
 }
