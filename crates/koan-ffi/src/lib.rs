@@ -2541,9 +2541,17 @@ impl KoanEngine {
     // --- DSP ---------------------------------------------------------------
 
     pub async fn dsp_overview(self: Arc<Self>) -> DspOverview {
+        let device = self.dsp_device();
+        self.dsp_overview_for(device).await
+    }
+
+    /// The profiles, and what `device` plays: the output in use with `None`.
+    /// A renderer is named by its UDN.
+    pub async fn dsp_overview_for(self: Arc<Self>, device: Option<String>) -> DspOverview {
         offload::offload(move || {
+            let device = device.or_else(|| self.dsp_device());
             let mut overview: DspOverview =
-                koan_core::audio::dsp::profiles::overview_for(self.dsp_device()).into();
+                koan_core::audio::dsp::profiles::overview_for(device).into();
             let playing = self.state.renderer();
             overview.names = overview
                 .profiles
@@ -3108,8 +3116,17 @@ impl KoanEngine {
     /// What the output in use plays: its correction, and the tuning on top
     /// adjusted to the correction's target.
     pub async fn dsp_output_response(self: Arc<Self>, rate: u32) -> Option<DspResponse> {
+        let device = self.dsp_device()?;
+        self.dsp_output_response_for(device, rate).await
+    }
+
+    /// What `device` plays, whether or not it is the output in use.
+    pub async fn dsp_output_response_for(
+        self: Arc<Self>,
+        device: String,
+        rate: u32,
+    ) -> Option<DspResponse> {
         offload::offload(move || {
-            let device = self.dsp_device()?;
             koan_core::audio::dsp::profiles::output_response(&device, rate).map(Into::into)
         })
         .await

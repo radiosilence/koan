@@ -1491,8 +1491,72 @@ pub fn apply_preset(device: &str, name: Option<&str>) -> Result<(), String> {
 /// - an output a preset is assigned to as its correction, as the apps
 ///   before this could and a synced preset can, is set from it the same way;
 /// - an output whose correction is a group, of which one member plays, has
-///   that member; a group in a tuning becomes its member playing.
+///   that member; a group in a tuning becomes its member playing;
+/// - with processing switched off, which is no longer a thing, every output
+///   is flat, its correction and tuning kept as a preset to go back to.
 pub fn migrate() -> Result<(), String> {
+    migrate_presets()?;
+    flatten_off()
+}
+
+/// Processing switched off becomes every output flat. What an output played
+/// is kept as a preset named for it, unless it was set from one and not
+/// changed since.
+fn flatten_off() -> Result<(), String> {
+    let cfg = Config::cached();
+    if cfg.dsp.enabled {
+        return Ok(());
+    }
+    let mut devices: Vec<&str> = Vec::new();
+    for d in cfg
+        .dsp
+        .profiles
+        .iter()
+        .filter(|p| !p.preset)
+        .flat_map(|p| p.devices.iter())
+        .chain(cfg.dsp.tunings.iter().map(|t| &t.device))
+    {
+        if !devices.contains(&d.as_str()) {
+            devices.push(d);
+        }
+    }
+    let mut taken: Vec<String> = cfg.dsp.profiles.iter().map(|p| p.name.clone()).collect();
+    let mut kept: Vec<(String, Vec<crate::config::DspLayer>)> = Vec::new();
+    for device in &devices {
+        if preset_for(device).is_some_and(|(_, edited)| !edited) {
+            continue;
+        }
+        let layers = chain_of(&cfg.dsp, device);
+        if layers.is_empty() {
+            continue;
+        }
+        let name = (1..)
+            .map(|n| match n {
+                1 => (*device).to_owned(),
+                n => format!("{device} {n}"),
+            })
+            .find(|n| !taken.contains(n))
+            .expect("a name is free");
+        taken.push(name.clone());
+        kept.push((name, layers));
+    }
+    persist(|cfg| {
+        for (name, layers) in &kept {
+            cfg.dsp.profiles.push(DspProfile {
+                name: name.clone(),
+                preset: true,
+                layers: layers.clone(),
+                ..Default::default()
+            });
+        }
+        for device in &devices {
+            set_output(cfg, device, None, &[], None);
+        }
+        cfg.dsp.enabled = true;
+    })
+}
+
+fn migrate_presets() -> Result<(), String> {
     let cfg = Config::cached();
     let all = &cfg.dsp.profiles;
     let used_as_layer = |name: &str| {
@@ -3497,6 +3561,66 @@ mod tests {
             Config::cached().dsp.profile_for("DAC").unwrap().name,
             "HD 600",
             "once"
+        );
+    }
+
+    /// Processing switched off is every output flat, what each played kept
+    /// as a preset named for it, unless a preset already holds it as it was.
+    #[test]
+    fn processing_off_becomes_flat() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "HD 600".into(),
+                filters: vec![band(100.0)],
+                role: Some(DspRole::Correction),
+                devices: vec!["DAC".into(), "Amp".into()],
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Warm".into(),
+                filters: vec![band(60.0)],
+                ..Default::default()
+            });
+            // Taken: the preset is named apart from it.
+            c.dsp.profiles.push(DspProfile {
+                name: "DAC".into(),
+                filters: vec![band(80.0)],
+                role: Some(DspRole::Tuning),
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        set_tunings("DAC", &[("Warm".into(), true)]).unwrap();
+        save_preset("Amp", "Speakers").unwrap();
+        set_enabled(false).unwrap();
+        migrate().unwrap();
+        let cfg = Config::cached();
+        assert!(cfg.dsp.enabled);
+        for device in ["DAC", "Amp"] {
+            assert!(cfg.dsp.profile_for(device).is_none(), "{device} is flat");
+            assert!(tunings_for(device).is_empty());
+            assert_eq!(preset_for(device), None);
+        }
+        let kept = cfg.dsp.profiles.iter().find(|p| p.name == "DAC 2").unwrap();
+        assert!(kept.preset);
+        apply_preset("DAC", Some("DAC 2")).unwrap();
+        assert_eq!(
+            Config::cached().dsp.profile_for("DAC").unwrap().name,
+            "HD 600"
+        );
+        assert_eq!(tunings_for("DAC"), vec![("Warm".to_string(), true)]);
+        assert!(
+            !Config::cached()
+                .dsp
+                .profiles
+                .iter()
+                .any(|p| p.name == "Amp"),
+            "Amp was set from Speakers, unchanged"
         );
     }
 

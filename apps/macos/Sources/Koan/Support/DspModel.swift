@@ -278,6 +278,40 @@ final class DspModel {
         act { try await $0.dspSetTuning(device: device, tuning: tuning) }
     }
 
+    /// Make `device`'s tuning these EQs, in the order they play.
+    func setTunings(_ entries: [DspTuningEntry], for device: String) {
+        act { try await $0.dspSetTunings(device: device, tuning: entries) }
+    }
+
+    /// The profiles, and what `device` plays: the output in use with nil.
+    func overview(for device: String?) async -> DspOverview {
+        await engine.dspOverviewFor(device: device)
+    }
+
+    /// What `device` plays, drawn: its correction and tuning.
+    func outputResponse(for device: String) async -> DspResponse? {
+        await engine.dspOutputResponseFor(device: device, rate: 48000)
+    }
+
+    /// Set `device` from the preset `name`, or flat with nil.
+    func applyPreset(_ name: String?, to device: String) {
+        act { try await $0.dspApplyPreset(device: device, name: name) }
+    }
+
+    /// Save `device`'s correction and tuning as the preset `name`, over one
+    /// of that name. Whether it took.
+    func savePreset(_ name: String, from device: String) async -> Bool {
+        do {
+            _ = try await engine.dspSavePreset(device: device, name: name)
+            lastError = nil
+            await changed()
+            return true
+        } catch {
+            lastError = SettingsModel.describe(error)
+            return false
+        }
+    }
+
     /// The target the tuning `name` was made against, or nil for not known.
     func setTunedFor(_ name: String, _ target: String?) {
         act { try await $0.dspSetTunedFor(name: name, target: target) }
