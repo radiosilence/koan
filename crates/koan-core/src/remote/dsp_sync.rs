@@ -511,7 +511,7 @@ pub fn flush(db: &Database) -> Option<Result<DspSync, String>> {
     if !offers {
         return Some(Ok(DspSync::default()));
     }
-    Some(try_run(db, &client, &cfg.remote.url).map_err(|e| e.to_string()))
+    Some(try_run(db, client.as_ref(), &cfg.remote.url).map_err(|e| e.to_string()))
 }
 
 /// Part of every sync with the server at `url`: read what changed there,
