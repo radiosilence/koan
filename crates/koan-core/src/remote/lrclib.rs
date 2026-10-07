@@ -1,5 +1,7 @@
 use serde::Deserialize;
 use thiserror::Error;
+use unicode_normalization::UnicodeNormalization;
+use unicode_normalization::char::is_combining_mark;
 
 const USER_AGENT: &str = "koan-music/0.3.0";
 
@@ -30,9 +32,10 @@ const DURATION_TOLERANCE_SECS: f64 = 2.0;
 
 /// Fetch lyrics from LRCLIB for a given track.
 ///
-/// `/api/get` first, which matches artist, title, album and duration. A miss
-/// falls back to `/api/search` by artist and title, whose hits are fuzzy: one
-/// is taken only if it is this title and this length. No match is no lyrics,
+/// `/api/get` first, which matches artist, title, album and duration, and is
+/// held only to the length. A miss falls back to `/api/search` by artist and
+/// title, whose hits are fuzzy: one is taken only if it is this title and this
+/// length. No match is no lyrics,
 /// never another song's. A track of unknown length is not looked up at all.
 pub fn get_lyrics(
     artist: &str,
@@ -59,7 +62,7 @@ pub fn get_lyrics(
 
     if resp.status() != reqwest::StatusCode::NOT_FOUND {
         let body: LrclibResponse = resp.error_for_status()?.json()?;
-        if matches(&body, title, duration_secs) {
+        if close_in_length(&body, duration_secs) {
             return Ok(body);
         }
     }
@@ -80,52 +83,79 @@ fn pick(results: Vec<LrclibResponse>, title: &str, duration_secs: u64) -> Option
         .find(|r| matches(r, title, duration_secs))
 }
 
-/// Whether a record is the track's: the same title once featured artists and
-/// punctuation are set aside, and a length within [`DURATION_TOLERANCE_SECS`].
-fn matches(record: &LrclibResponse, title: &str, duration_secs: u64) -> bool {
+fn close_in_length(record: &LrclibResponse, duration_secs: u64) -> bool {
     (record.duration - duration_secs as f64).abs() <= DURATION_TOLERANCE_SECS
+}
+
+/// Whether a record is the track's: the same title once credits, editions and
+/// punctuation are set aside, and a length within [`DURATION_TOLERANCE_SECS`],
+/// which is what tells two songs of one name apart.
+fn matches(record: &LrclibResponse, title: &str, duration_secs: u64) -> bool {
+    close_in_length(record, duration_secs)
         && normalise_title(&record.track_name) == normalise_title(title)
 }
 
-/// A title as matching sees it: lowercased, a featured-artist credit dropped
-/// wherever it is written ("feat. X", "(ft. X)", "[featuring X]"), and only
-/// letters and digits kept, words separated by single spaces.
+/// Words that mark a bracketed group as a credit or an edition of the song
+/// rather than part of its name.
+const ASIDES: [&str; 14] = [
+    "feat",
+    "ft",
+    "featuring",
+    "remaster",
+    "remastered",
+    "live",
+    "version",
+    "edit",
+    "mono",
+    "stereo",
+    "deluxe",
+    "bonus",
+    "mix",
+    "remix",
+];
+
+/// A title as matching sees it: lowercased, accents folded, a trailing
+/// " - …" and any bracketed aside dropped, an unbracketed featured credit cut
+/// to the end, and only letters and digits kept, single-spaced.
 fn normalise_title(title: &str) -> String {
-    let lower = title.to_lowercase();
+    let folded: String = title
+        .nfkd()
+        .filter(|c| !is_combining_mark(*c))
+        .collect::<String>()
+        .to_lowercase();
+    let head = folded.split(" - ").next().unwrap_or_default();
+
     let mut kept = String::new();
-    let mut rest = lower.as_str();
-    while !rest.is_empty() {
-        if let Some(skip) = credit_len(rest) {
-            rest = &rest[skip..];
-            continue;
+    let mut rest = head;
+    while let Some(ch) = rest.chars().next() {
+        let close = match ch {
+            '(' => Some(')'),
+            '[' => Some(']'),
+            _ => None,
+        };
+        if let Some(close) = close {
+            let end = rest.find(close).map_or(rest.len(), |at| at + 1);
+            if words(&rest[..end]).any(|w| ASIDES.contains(&w)) {
+                rest = &rest[end..];
+                continue;
+            }
         }
-        let ch = rest.chars().next().unwrap_or(' ');
         kept.push(if ch.is_alphanumeric() { ch } else { ' ' });
         rest = &rest[ch.len_utf8()..];
     }
-    kept.split_whitespace().collect::<Vec<_>>().join(" ")
+    let mut out = Vec::new();
+    for w in words(&kept) {
+        if matches!(w, "feat" | "ft" | "featuring") {
+            break;
+        }
+        out.push(w);
+    }
+    out.join(" ")
 }
 
-/// The length of a featured-artist credit starting here: to its closing
-/// bracket if it opened one, else to the end of the title.
-fn credit_len(s: &str) -> Option<usize> {
-    let (close, body) = match s.chars().next()? {
-        '(' => (Some(')'), &s[1..]),
-        '[' => (Some(']'), &s[1..]),
-        ' ' => (None, &s[1..]),
-        _ => return None,
-    };
-    let body = body.trim_start();
-    let word = ["featuring ", "feat. ", "feat ", "ft. ", "ft "]
-        .into_iter()
-        .any(|w| body.starts_with(w));
-    if !word {
-        return None;
-    }
-    Some(match close.and_then(|c| s.find(c)) {
-        Some(at) => at + 1,
-        None => s.len(),
-    })
+fn words(s: &str) -> impl Iterator<Item = &str> {
+    s.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
 }
 
 #[cfg(test)]
@@ -194,7 +224,23 @@ mod tests {
             assert_eq!(normalise_title(t), want, "{t}");
         }
         assert_eq!(normalise_title("Left Behind"), "left behind");
+        assert_eq!(normalise_title("Live and Let Die"), "live and let die");
         assert_eq!(normalise_title("Aftermath"), "aftermath");
+    }
+
+    #[test]
+    fn editions_and_accents_are_the_same_title() {
+        for (a, b) in [
+            ("Song - Remastered 2011", "Song"),
+            ("Song (Live)", "Song"),
+            ("Song (Deluxe Edition)", "Song"),
+            ("Song [2009 Remaster]", "Song"),
+            ("Beyoncé", "Beyonce"),
+            ("Don\u{2019}t Stop", "Don't Stop"),
+        ] {
+            assert_eq!(normalise_title(a), normalise_title(b), "{a} / {b}");
+        }
+        assert_ne!(normalise_title("Song (Part Two)"), normalise_title("Song"));
     }
 
     /// Arcade Fire's WE: a search for the ninth track must not answer with
