@@ -536,9 +536,12 @@ private struct DeviceChoiceRow: View {
                     .help("Send what is playing to \(name), and control it there")
             }
         }
-        .padding(.horizontal, 14)
+        // In the theme the highlight starts where the title does, the row's
+        // content inset within it, so the picker has one left edge.
+        .padding(.horizontal, KoanTheme.isOn ? KoanTheme.Space.s : 14)
         .padding(.vertical, 8)
         .background(selected ? AnyShapeStyle(.tint.opacity(0.12)) : AnyShapeStyle(.clear))
+        .padding(.horizontal, KoanTheme.isOn ? 14 : 0)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
@@ -716,21 +719,11 @@ extension PlayerModel {
 extension View {
     /// The sheets the buttons open, attached to a view that outlives them.
     func controlSheet(isPresented: Binding<Bool>) -> some View {
-        sheet(isPresented: isPresented) {
-            ScrollView { ControlPicker() }
-                .koanSheet()
-                .presentationDetents([.medium, .large])
-                .sheetGrabber()
-        }
+        tray(isPresented: isPresented) { ControlPicker() }
     }
 
     func outputSheet(isPresented: Binding<Bool>) -> some View {
-        sheet(isPresented: isPresented) {
-            ScrollView { OutputPicker() }
-                .koanSheet()
-                .presentationDetents([.medium, .large])
-                .sheetGrabber()
-        }
+        tray(isPresented: isPresented) { OutputPicker() }
     }
 }
 #endif

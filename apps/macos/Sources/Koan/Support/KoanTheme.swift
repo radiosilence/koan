@@ -2065,6 +2065,7 @@ private struct KoanSheetRole: ViewModifier {
                 .presentationBackground(Color.koanBg)
                 #else
                 .presentationBackground(Color.koanBg)
+                .presentationCornerRadius(0)
                 .scrollContentBackground(.hidden)
                 #endif
         } else {
