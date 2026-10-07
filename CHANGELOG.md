@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.60.3
+
+### Changed
+
+- **Pull requests hold a macOS runner only when they need one.** The macOS test, lint and build jobs and the app builds run when a pull request touches the apps, the FFI, dependencies, toolchains, workflows or Rust compiled for Apple targets. Release pull requests run everything.
+- **A correction plays as made; tunings of several EQs; presets.** A correction's bands are no longer edited, in the apps or anywhere else: add a tuning on top, or make it a tuning to edit it. An imported EQ keeps what it was imported as, so `koan dsp revert` puts an edit back and `koan dsp copy` keeps one. An output's tuning can hold several EQs in order, each on or off, and a preset saves an output's correction and tuning together: `koan dsp set --tuning`, `koan dsp preset save` and `koan dsp preset use`. An EQ that played a correction with EQs on top became a preset.
+- **The EQ page is the chain the music goes through.** Pick a device and its preset at the top; below, the curve of everything it plays, then the correction and the tuning's EQs as blocks in order, each drawn in the graph in its own stroke, each switched on or off, moved or opened to edit. Processing can no longer be switched off: a device is made Flat, and configs that had it off open flat, what each device played kept as a preset. The page explains its words under ⓘ How EQ works.
+- **The iPad's sidebar is the Mac's.** With room for it, the sidebar lists the library's sections and the playlists, each opening its page beside it, and opens by default; it no longer holds only the four tabs with the sections behind Library. At compact width the tab bar is unchanged.
+- **`koan dsp` reads like the EQ page.** `koan dsp` (or `show`) says what a device plays in the page's sentence; `set DEVICE --correction … --tuning …` sets the whole chain in one go and changes nothing when repeated; `flat`, `list` and `preset list` complete it, and every read command takes `--json` for scripts and assistants. Refusals name what is wrong and the valid choices. `eq plays` and `eq switch` replace `stack` and `layer`, and `role … mixed` replaces `baked`; the old names, and `use`, `clear` and `tuning`, still work but are out of the help.
+- **Manage EQ, and a preset menu.** Every correction, EQ and preset is listed in Manage EQ, at the foot of the EQ page, with the devices each is used on; groups are headings over their members, and a group of EQs can join the tuning whole. Renaming, copying, reverting an import, keeping one on every device and deleting are in each row's Options. The preset menu in the transport and Now Playing lists Flat and the presets, reads the preset's name, Flat or Unsaved, and opens the EQ page with Edit…. The guide and the CLI's help use the same words throughout: correction, tuning, EQ and preset.
+
+### Removed
+
+- **`koan dsp off` and `koan dsp on`.** Processing is no longer switched off as a whole. `koan dsp flat` makes a device flat, with no correction and no tuning, and `koan dsp preset use NAME` brings a saved setup back; `koan dsp preset use flat` does the same as `flat`. Scripts that call `off` or `on` fail with an unknown command.
+
+### Fixed
+
+- **No grey band at the foot of a page on iPhone in the kōan look.** Pages scroll under the theme's bar again rather than stopping at an opaque band above the mini player. Settings' steppers, pop-up pickers and row labels are drawn in the theme's type and controls instead of the system's.
+
 ## 0.60.2
 
 ### Added
