@@ -78,7 +78,21 @@ struct QueueView: View {
     /// the first track. That is what lets an album be selected and dragged as a
     /// unit — and stops selecting a track from lighting up the heading above it.
     private var rows: [Row] {
-        grouped ? Row.build(from: player.queue) : player.queue.map(Row.track)
+        grouped ? Row.build(from: listed) : listed.map(Row.track)
+    }
+
+    /// What the list is laid out from. On the Mac, the queue as it reads now:
+    /// the table compares its rows and redraws only those on screen. Elsewhere
+    /// the rows as last sent whole, which a track change or a download does not
+    /// move, with each row drawn reading its own state — on a queue of tens of
+    /// thousands, regrouping and diffing the whole list for each was what made
+    /// the phone unusable.
+    private var listed: [QueueItem] {
+        #if os(macOS)
+        player.queue
+        #else
+        mirror.queueRows
+        #endif
     }
 
     var body: some View {
@@ -89,7 +103,7 @@ struct QueueView: View {
         VStack(spacing: 0) {
             header(rows)
 
-            if player.queue.isEmpty {
+            if listed.isEmpty {
                 EmptyState(
                     icon: "list.bullet",
                     title: "Queue is empty",
@@ -222,15 +236,9 @@ struct QueueView: View {
                         jump(to: ui.queueJumpTarget, using: scroll)
                     }
                     // Following: the playing track kept in view as it moves
-                    // on, until the person scrolls.
-                    .onChange(of: player.currentItemId) { _, _ in
-                        followPlaying(using: scroll)
-                    }
-                    // The playing item and the rows arrive separately: a track
-                    // played from a new queue is scrolled to once it is listed.
-                    .onChange(of: rows.map(\.id)) { _, _ in
-                        followPlaying(using: scroll)
-                    }
+                    // on, until the person scrolls. A view of its own, so
+                    // what is playing is never read by this body.
+                    .background { FollowPlaying(scroll: scroll) }
                     .onScrollPhaseChange { _, phase in
                         if phase == .interacting, ui.followingQueue {
                             ui.followingQueue = false
@@ -302,7 +310,7 @@ struct QueueView: View {
                     Text("Queue").koanCase()
                         .font(.role(.body, system: .headline))
                 }
-                Text(summary)
+                QueueSummary()
                     .font(.role(.fine, system: .caption))
                     .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     .lineLimit(1)
@@ -348,7 +356,7 @@ struct QueueView: View {
                 Button { editMode = .active } label: {
                     Label("Select", systemImage: Icon.selectAll)
                 }
-                .disabled(player.queue.isEmpty)
+                .disabled(listed.isEmpty)
                 #endif
                 // Playlists are made elsewhere; a television plays them.
                 #if !os(tvOS)
@@ -397,12 +405,6 @@ struct QueueView: View {
         }
     }
 
-    private var summary: String {
-        let total = player.queue.compactMap(\.durationMs).reduce(0, +)
-        let count = Format.count(Int64(player.queue.count), "track")
-        return total > 0 ? "\(count) · \(Format.duration(total))" : count
-    }
-
     /// Extracted because the type checker gives up on a switch this size
     /// inline in a ForEach.
     @ViewBuilder
@@ -416,29 +418,23 @@ struct QueueView: View {
         // A record that is only this track: one row, with its own sleeve and
         // artist, rather than a heading and a row repeating it.
         case .single(let item):
-            QueueRow(
-                item: QueueRowContent(item: item),
-                isCurrent: item.status == .playing,
-                showArtist: true,
-                artwork: true
-            )
+            LiveQueueRow(sent: item, showArtist: true, artwork: true)
             .rowBehaviour()
-            .primaryTap { play(rowIds: [item.queueItemId]) } menu: { menu(forRows: [item.queueItemId]) }
+            // Built from the row in hand: on tvOS the menu is made with the row,
+            // and going through `rows` would regroup the whole queue for each.
+            .primaryTap { play(rowIds: [item.queueItemId]) } menu: { trackMenu(mirror.queueItem(item.queueItemId) ?? item) }
         case .track(let item):
-            QueueRow(
-                item: QueueRowContent(item: item),
-                // The queue already says which row the cursor is on — and says
-                // it again when the cursor moves, since that redraws two rows
-                // either way. Asking the player as well would subscribe the
-                // whole list to everything else about what is playing.
-                isCurrent: item.status == .playing,
+            LiveQueueRow(
+                sent: item,
                 // Ungrouped there is no heading above to say what record this
                 // is, so the row says it itself.
                 showArtist: !grouped || item.artist != item.albumArtist,
                 artwork: !grouped
             )
             .rowBehaviour()
-            .primaryTap { play(rowIds: [item.queueItemId]) } menu: { menu(forRows: [item.queueItemId]) }
+            // Built from the row in hand: on tvOS the menu is made with the row,
+            // and going through `rows` would regroup the whole queue for each.
+            .primaryTap { play(rowIds: [item.queueItemId]) } menu: { trackMenu(mirror.queueItem(item.queueItemId) ?? item) }
         }
     }
 
@@ -573,14 +569,6 @@ struct QueueView: View {
     /// The playing row is centred rather than put at the top: what is playing
     /// is read against what comes after it, and a row at the top edge has no
     /// after.
-    /// While following, bring the playing row into view, if it is listed.
-    private func followPlaying(using scroll: ScrollViewProxy) {
-        guard ui.followingQueue, let id = player.currentItemId,
-              rows.contains(where: { $0.id == id }) else { return }
-        withAnimation(.easeInOut(duration: 0.3)) {
-            scroll.scrollTo(id, anchor: .center)
-        }
-    }
 
     private func jump(to target: UIState.Jump, using scroll: ScrollViewProxy) {
         let row: String? = switch target {
@@ -607,7 +595,8 @@ struct QueueView: View {
         if ids.count == 1, let row = rows.first(where: { ids.contains($0.id) }) {
             switch row {
             case .album(_, let group): albumMenu(group)
-            case .track(let item), .single(let item): trackMenu(item)
+            // As it reads now: whether it is on disk moves without an edit.
+            case .track(let item), .single(let item): trackMenu(mirror.queueItem(item.queueItemId) ?? item)
             }
         } else {
             Button { player.remove(itemIds: itemIds(in: ids)) } label: {
@@ -884,6 +873,70 @@ private struct JumpToPlayingButton: View {
         }
         .help(ui.followingQueue ? "Following what's playing; click to stop" : "Scroll to what's playing and follow it")
         .accessibilityAddTraits(following ? .isSelected : [])
+    }
+}
+
+/// The playing row kept in view while following. Reads what is playing so the
+/// queue's own body does not, which on a long queue would regroup and diff
+/// every row on each change to it.
+private struct FollowPlaying: View {
+    let scroll: ScrollViewProxy
+
+    @Environment(PlayerModel.self) private var player
+    @Environment(EngineMirror.self) private var mirror
+    @Environment(UIState.self) private var ui
+
+    var body: some View {
+        Color.clear
+            .onChange(of: player.currentItemId) { _, _ in follow() }
+            // The playing item and the rows arrive separately: a track played
+            // from a new queue is scrolled to once it is listed.
+            .onChange(of: mirror.queueVersion) { _, _ in follow() }
+    }
+
+    private func follow() {
+        guard ui.followingQueue, let id = player.currentItemId, mirror.queueItem(id) != nil else { return }
+        withAnimation(.easeInOut(duration: 0.3)) {
+            scroll.scrollTo(id, anchor: .center)
+        }
+    }
+}
+
+/// "1,204 tracks · 3 days 2:10:05", as the queue reads now. Its own view, so a
+/// patch re-runs this line and not the list.
+private struct QueueSummary: View {
+    @Environment(EngineMirror.self) private var mirror
+
+    var body: some View {
+        let queue = mirror.queue
+        let total = queue.compactMap(\.durationMs).reduce(0, +)
+        let count = Format.count(Int64(queue.count), "track")
+        Text(total > 0 ? "\(count) · \(Format.duration(total))" : count)
+    }
+}
+
+/// A track row of the list, reading its own state from the mirror, so that a
+/// track change or a download redraws the rows on screen and not the list.
+/// See `EngineMirror.queueRows`.
+private struct LiveQueueRow: View {
+    let sent: QueueItem
+    let showArtist: Bool
+    let artwork: Bool
+
+    @Environment(EngineMirror.self) private var mirror
+
+    var body: some View {
+        let item = mirror.queueItem(sent.queueItemId) ?? sent
+        QueueRow(
+            item: QueueRowContent(item: item),
+            // The queue already says which row the cursor is on — and says it
+            // again when the cursor moves, since that redraws two rows either
+            // way. Asking the player as well would subscribe every row to
+            // everything else about what is playing.
+            isCurrent: item.status == .playing,
+            showArtist: showArtist,
+            artwork: artwork
+        )
     }
 }
 

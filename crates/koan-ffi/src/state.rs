@@ -60,7 +60,19 @@ pub enum StateSlice {
     /// that wants to know the queue moved is reading the queue, and one that
     /// is drawing a transport bar is not — leaving it there re-ran every
     /// reader of what is playing on every edit to what is queued.
+    ///
+    /// Sent when the queue's content changes, not when its rows' statuses do:
+    /// those arrive as `QueuePatch`, so a queue of tens of thousands of rows
+    /// is not sent again for every track change and download.
     Queue { items: Vec<QueueItem>, version: u64 },
+    /// Every row of the `Queue` whose `version` is `base` that reads
+    /// differently now — a status, a duration, a failure, where its bytes are
+    /// — whole. Relative to the base rather than to the last patch, so the
+    /// latest one is all a client needs: put the rows of the last one it
+    /// applied back as the base had them, and apply this. A patch for any
+    /// other base is stale and ignored; the queue it described has been sent
+    /// whole since.
+    QueuePatch { base: u64, items: Vec<QueueItem> },
     /// What the queue still is, when it is still a playlist or a record.
     Lock { lock: Option<QueueLock> },
     /// Every transfer koan knows about — running first, then whatever settled
@@ -122,6 +134,7 @@ enum Slot {
     Playback,
     Playhead,
     Queue,
+    QueuePatch,
     Lock,
     Transfers,
     Figures,
@@ -134,7 +147,7 @@ enum Slot {
     Outputs,
 }
 
-const SLOTS: usize = 14;
+pub(crate) const SLOTS: usize = 15;
 
 impl StateSlice {
     fn slot(&self) -> Slot {
@@ -142,6 +155,7 @@ impl StateSlice {
             Self::Playback { .. } => Slot::Playback,
             Self::Playhead { .. } => Slot::Playhead,
             Self::Queue { .. } => Slot::Queue,
+            Self::QueuePatch { .. } => Slot::QueuePatch,
             Self::Lock { .. } => Slot::Lock,
             Self::Transfers { .. } => Slot::Transfers,
             Self::Figures { .. } => Slot::Figures,
@@ -225,7 +239,7 @@ impl EngineState {
     }
 
     /// Everything that moved past `seen`, and advance it.
-    fn since(&self, seen: &mut [u64; SLOTS]) -> Vec<StateSlice> {
+    pub(crate) fn since(&self, seen: &mut [u64; SLOTS]) -> Vec<StateSlice> {
         let slots = self.slots.lock();
         let mut batch = Vec::new();
         for (i, seen) in seen.iter_mut().enumerate() {
