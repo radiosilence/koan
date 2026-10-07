@@ -1184,6 +1184,26 @@ struct KoanLabeledContentStyle: LabeledContentStyle {
 }
 #endif
 
+#if os(iOS)
+/// A form row on a phone: the label leading in `body` and `ink`, as a toggle's
+/// is, and the value trailing in `control` and `muted`. A field or control in
+/// the value keeps its own type. Without this a row's label takes whatever
+/// size the system's form gives a row beside a field.
+struct KoanRowLabelStyle: LabeledContentStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: KoanTheme.Space.m) {
+            configuration.label
+                .font(.koan(.body))
+                .foregroundStyle(Color.koanInk)
+            Spacer(minLength: 0)
+            configuration.content
+                .font(.koan(.control))
+                .foregroundStyle(Color.koanMuted)
+        }
+    }
+}
+#endif
+
 /// A square box: a `muted` outline off, filled with the accent and checked in
 /// `bg` on.
 struct KoanToggleStyle: ToggleStyle {
@@ -1272,6 +1292,128 @@ struct KoanSegmentedPicker<Value: Hashable>: View {
         }
     }
 }
+
+/// A pop-up picker. On a phone in the theme, a menu whose label is the chosen
+/// option in `control` type: UIKit draws a picker's own value in the system
+/// font whatever the environment says. The system picker, through
+/// `.koanControl()`, everywhere else.
+struct KoanPicker<Value: Hashable>: View {
+    let title: String
+    @Binding var selection: Value
+    let options: [(label: String, value: Value)]
+
+    init(_ title: String, selection: Binding<Value>, options: [(label: String, value: Value)]) {
+        self.title = title
+        _selection = selection
+        self.options = options
+    }
+
+    var body: some View {
+        #if os(iOS)
+        if KoanTheme.isOn {
+            LabeledContent {
+                Menu {
+                    Picker(title, selection: $selection) {
+                        ForEach(options, id: \.value) { Text(KoanTheme.label($0.label)).tag($0.value) }
+                    }
+                    .pickerStyle(.inline)
+                } label: {
+                    HStack(spacing: KoanTheme.Space.xs) {
+                        Text(KoanTheme.label(options.first { $0.value == selection }?.label ?? ""))
+                        KoanIcon("chevron.up.chevron.down").font(.koan(.fine))
+                    }
+                    .font(.koan(.control))
+                    .foregroundStyle(Color.koanInk)
+                }
+                .tint(Color.koanInk)
+            } label: {
+                Text(title)
+            }
+        } else {
+            picker
+        }
+        #else
+        picker
+        #endif
+    }
+
+    private var picker: some View {
+        Picker(title, selection: $selection) {
+            ForEach(options, id: \.value) { Text($0.label).tag($0.value) }
+        }
+        .koanControl()
+    }
+}
+
+#if !os(tvOS)
+/// A stepper as the theme draws it: the label leading in `body`, then − and +
+/// as square `muted` outlines at the row's trailing edge, each within a
+/// 44-point hit area on a phone. The system's stepper in the platform's look.
+/// tvOS has no stepper.
+struct KoanStepper<Value: Strideable>: View {
+    let title: String
+    @Binding var value: Value
+    let range: ClosedRange<Value>
+    let step: Value.Stride
+    @Environment(\.isEnabled) private var enabled
+    #if os(macOS)
+    private static var hit: CGFloat { 24 }
+    #else
+    private static var hit: CGFloat { 44 }
+    #endif
+
+    init(_ title: String, value: Binding<Value>, in range: ClosedRange<Value>, step: Value.Stride = 1) {
+        self.title = title
+        _value = value
+        self.range = range
+        self.step = step
+    }
+
+    var body: some View {
+        if KoanTheme.isOn {
+            HStack(spacing: KoanTheme.Space.xs) {
+                Text(title)
+                    .font(.koan(.body))
+                    .foregroundStyle(Color.koanInk)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                button("minus", by: -step, allowed: value > range.lowerBound)
+                button("plus", by: step, allowed: value < range.upperBound)
+            }
+            .opacity(enabled ? 1 : 0.4)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(title)
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: move(by: step)
+                case .decrement: move(by: -step)
+                @unknown default: break
+                }
+            }
+        } else {
+            Stepper(title, value: $value, in: range, step: step).koanControl()
+        }
+    }
+
+    private func button(_ symbol: String, by delta: Value.Stride, allowed: Bool) -> some View {
+        Button { move(by: delta) } label: {
+            KoanIcon(symbol)
+                .font(.system(size: 11))
+                .foregroundStyle(Color.koanInk)
+                .frame(width: 28, height: 28)
+                .overlay { Rectangle().strokeBorder(Color.koanMuted, lineWidth: KoanTheme.hairline) }
+                .frame(minWidth: Self.hit, minHeight: Self.hit)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!allowed)
+        .opacity(allowed ? 1 : 0.4)
+    }
+
+    private func move(by delta: Value.Stride) {
+        value = min(max(value.advanced(by: delta), range.lowerBound), range.upperBound)
+    }
+}
+#endif
 
 private struct KoanRowRole: ViewModifier {
     let selected: Bool
@@ -1745,6 +1887,7 @@ struct KoanForm<Content: View>: View {
             List { Group { content }.washedRow() }
                 .listStyle(.grouped)
                 .koanForm()
+                .labeledContentStyle(KoanRowLabelStyle())
         } else {
             Form { content }.koanForm()
         }
@@ -1805,6 +1948,10 @@ private struct KoanHidesSystemTabBar: ViewModifier {
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     Color.clear.frame(height: bar)
                 }
+                // The bar draws its own ground. The platform's edge effect
+                // would otherwise paint the inset as a grey band over the
+                // page's last rows, where content should pass under the bar.
+                .scrollEdgeEffectHidden(true, for: .bottom)
         } else {
             content
         }

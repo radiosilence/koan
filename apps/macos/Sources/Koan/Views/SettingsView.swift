@@ -542,13 +542,9 @@ private struct RemoteSettings: View {
             Section {
                 Toggle("Keep the library in sync", isOn: model.binding(\.autoSync)).koanToggle()
                 if model.settings.autoSync {
-                    Picker("Every", selection: model.binding(\.autoSyncIntervalMins)) {
-                        Text("Startup only").tag(UInt64(0))
-                        Text("15 minutes").tag(UInt64(15))
-                        Text("Hour").tag(UInt64(60))
-                        Text("6 hours").tag(UInt64(360))
-                        Text("Day").tag(UInt64(1440))
-                    }.koanControl()
+                    KoanPicker("Every", selection: model.binding(\.autoSyncIntervalMins), options: [
+                        ("Startup only", 0), ("15 minutes", 15), ("Hour", 60), ("6 hours", 360), ("Day", 1440),
+                    ])
                 }
             } header: {
                 KoanSectionHeader("Automatic sync")
@@ -573,14 +569,14 @@ private struct RemoteSettings: View {
                     ForEach(1...16, id: \.self) { Text("\($0)").tag($0) }
                 }.koanControl()
                 #else
-                Stepper(
+                KoanStepper(
                     "Parallel downloads: \(model.settings.downloadWorkers)",
                     value: Binding(
                         get: { Int(model.settings.downloadWorkers) },
                         set: { v in model.edit { $0.downloadWorkers = UInt32(v) } }
                     ),
                     in: 1...16
-                ).koanControl()
+                )
                 #endif
                 LabeledContent("Cache limit") {
                     TextField("Cache limit", text: Binding(
@@ -824,11 +820,9 @@ private struct PlaybackSettings: View {
             }
 
             Section {
-                Picker("ReplayGain", selection: model.binding(\.replaygain)) {
-                    Text("Off").tag("off")
-                    Text("Per track").tag("track")
-                    Text("Per album").tag("album")
-                }.koanControl()
+                KoanPicker("ReplayGain", selection: model.binding(\.replaygain), options: [
+                    ("Off", "off"), ("Per track", "track"), ("Per album", "album"),
+                ])
                 if model.settings.replaygain != "off" {
                     #if os(tvOS)
                     Picker("Pre-amp", selection: model.binding(\.preAmpDb)) {
@@ -837,12 +831,12 @@ private struct PlaybackSettings: View {
                         }
                     }.koanControl()
                     #else
-                    Stepper(
-                        "Pre-amp: \(model.settings.preAmpDb, specifier: "%.1f") dB",
+                    KoanStepper(
+                        "Pre-amp: \(String(format: "%.1f", model.settings.preAmpDb)) dB",
                         value: model.binding(\.preAmpDb),
                         in: -15...15,
                         step: 0.5
-                    ).koanControl()
+                    )
                     #endif
                 }
             } header: {
@@ -1308,10 +1302,9 @@ private struct DevicesSettings: View {
             #endif
             Section {
                 Toggle("Discoverable on this network", isOn: model.binding(\.devicesDiscoverable)).koanToggle()
-                Picker("Devices on this network", selection: model.binding(\.devicesNearbyControl)) {
-                    Text("Full control").tag("full")
-                    Text("Playback only").tag("playback")
-                }.koanControl()
+                KoanPicker("Devices on this network", selection: model.binding(\.devicesNearbyControl), options: [
+                    ("Full control", "full"), ("Playback only", "playback"),
+                ])
                 if let port = mirror.connection?.listeningPort {
                     LabeledContent("Listening on port", value: String(port))
                 }
