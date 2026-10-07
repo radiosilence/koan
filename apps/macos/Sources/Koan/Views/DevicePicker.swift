@@ -599,6 +599,9 @@ struct ControlButton: View {
     var labelled = true
     /// The icon's size, where the host's font would draw it too small.
     var iconSize: CGFloat?
+    /// The smallest square the button takes clicks in, for a host that sets
+    /// it in a cell of its own.
+    var target: CGFloat?
 
     var body: some View {
         Button {
@@ -614,6 +617,8 @@ struct ControlButton: View {
                         .foregroundStyle(KoanTheme.style(.ink, system: .primary))
                 }
             }
+            .frame(minWidth: target, minHeight: target)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(help)
@@ -664,6 +669,7 @@ struct OutputButton: View {
                         .foregroundStyle(KoanTheme.style(.ink, system: .primary))
                 }
             }
+            .contentShape(Rectangle())
         }
         .controlButton()
         .help(help)

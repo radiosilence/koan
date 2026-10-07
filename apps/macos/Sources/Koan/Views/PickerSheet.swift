@@ -300,8 +300,8 @@ private struct PickerRowView: View {
                     .monospacedDigit()
             }
         }
-        .contentShape(.rect)
         .padding(.vertical, 2)
+        .contentShape(.rect)
     }
 
     private var icon: String {

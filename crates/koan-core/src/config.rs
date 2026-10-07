@@ -557,6 +557,9 @@ pub struct DevicesConfig {
     /// What a kōan on the local network may have this device do, whoever is
     /// signed in there.
     pub nearby_control: NearbyControl,
+    /// Addresses whose connections to this device are hung up at once: a
+    /// stranger on the network, refused from Settings.
+    pub refused: Vec<String>,
     /// Keep the Mac app running in the menu bar once its window is closed, so
     /// other devices can still see and control this one. Quitting it then
     /// means this Mac is out of reach until it is opened again.
@@ -584,6 +587,7 @@ impl Default for DevicesConfig {
             port: DEVICES_PORT,
             addresses: Vec::new(),
             nearby_control: NearbyControl::Full,
+            refused: Vec::new(),
             keep_running: false,
         }
     }
@@ -1374,6 +1378,7 @@ pub fn layer_of(path: &str) -> Layer {
         | "devices.port"
         | "devices.addresses"
         | "devices.nearby_control"
+        | "devices.refused"
         | "devices.keep_running"
         // Which koan server this machine signs in to.
         | "auth.server"
