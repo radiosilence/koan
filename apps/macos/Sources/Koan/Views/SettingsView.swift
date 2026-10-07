@@ -862,7 +862,10 @@ struct EqSettings: View {
     /// The way to the profile's own page, where its bands are edited.
     @ViewBuilder private func editLink(_ name: String) -> some View {
         #if os(iOS)
-        NavigationLink("Edit") { DspProfilePage(dsp: app.dsp, name: name) }
+        NavigationLink("Edit") {
+            DspProfilePage(dsp: app.dsp, name: name)
+                .koanHidesSystemTabBar()
+        }
         #elseif os(macOS)
         Button("Edit") { showing = name }
             .koanButton(.text)
