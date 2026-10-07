@@ -69,18 +69,18 @@ struct ManageEq: View {
                 dsp.importFiles(urls)
             }
         }
-        .sheet(item: $finding) { find in
-            AutoEqSearch(dsp: dsp, query: find.query).koanSheet()
+        .formTray(item: $finding) { find in
+            AutoEqSearch(dsp: dsp, query: find.query)
         }
-        .sheet(isPresented: $measuring) {
-            MeasurementFlow(dsp: dsp).koanSheet()
+        .formTray(isPresented: $measuring) {
+            MeasurementFlow(dsp: dsp)
         }
-        .sheet(item: Binding(
+        .formTray(item: Binding(
             get: { dsp.askRole },
             // Swiped away, as Decide Later.
             set: { if $0 == nil, let ask = dsp.askRole { dsp.answer(ask, nil) } }
         )) { ask in
-            RoleQuestion(dsp: dsp, ask: ask).koanSheet()
+            RoleQuestion(dsp: dsp, ask: ask)
         }
         .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $newName)

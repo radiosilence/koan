@@ -1433,6 +1433,17 @@ pub enum DspJoin {
     Unknown,
 }
 
+impl From<koan_core::audio::dsp::profiles::Join> for DspJoin {
+    fn from(j: koan_core::audio::dsp::profiles::Join) -> Self {
+        use koan_core::audio::dsp::profiles::Join;
+        match j {
+            Join::Matched => Self::Matched,
+            Join::Converted { from, to } => Self::Converted { from, to },
+            Join::Unknown => Self::Unknown,
+        }
+    }
+}
+
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct DspProfileSummary {
     pub name: String,
@@ -1463,6 +1474,14 @@ pub struct DspProfileSummary {
     pub held_by: Vec<String>,
     /// Why it cannot move to the other scope, while it cannot.
     pub scope_locked: Option<String>,
+    /// The graphic curves among `bands`, and their points in all.
+    pub graphics: u32,
+    pub points: u32,
+    /// The target it was made against, by name.
+    pub made_for: Option<String>,
+    /// How it would meet the overview device's correction, as `joins` says
+    /// of an EQ in that device's tuning.
+    pub join: Option<DspJoin>,
 }
 
 /// What a profile is for. A chain corrects a headphone once.
@@ -1830,19 +1849,12 @@ impl From<koan_core::audio::dsp::profiles::Overview> for DspOverview {
             joins: o
                 .joins
                 .into_iter()
-                .map(|j| {
-                    use koan_core::audio::dsp::profiles::Join;
-                    DspEqJoin {
-                        made_for: j.made_for,
-                        join: j.join.map(|j| match j {
-                            Join::Matched => DspJoin::Matched,
-                            Join::Converted { from, to } => DspJoin::Converted { from, to },
-                            Join::Unknown => DspJoin::Unknown,
-                        }),
-                        note: j.note,
-                        step: j.step,
-                        suggestion: j.suggestion.map(|(id, name)| DspTargetName { id, name }),
-                    }
+                .map(|j| DspEqJoin {
+                    made_for: j.made_for,
+                    join: j.join.map(Into::into),
+                    note: j.note,
+                    step: j.step,
+                    suggestion: j.suggestion.map(|(id, name)| DspTargetName { id, name }),
                 })
                 .collect(),
             aim: o.aim,
@@ -1869,6 +1881,10 @@ impl From<koan_core::audio::dsp::profiles::Overview> for DspOverview {
                     everywhere: p.everywhere,
                     held_by: p.held_by,
                     scope_locked: p.scope_locked,
+                    graphics: p.graphics as u32,
+                    points: p.points as u32,
+                    made_for: p.made_for,
+                    join: p.join.map(Into::into),
                 })
                 .collect(),
         }

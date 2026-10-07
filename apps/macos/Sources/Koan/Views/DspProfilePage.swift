@@ -159,8 +159,8 @@ struct DspProfilePage: View {
                 Task { await dsp.addTarget(url) }
             }
         }
-        .sheet(isPresented: $splitting) {
-            SplitFlow(dsp: dsp, name: name).koanSheet()
+        .formTray(isPresented: $splitting) {
+            SplitFlow(dsp: dsp, name: name)
         }
         #endif
         #if !os(tvOS)

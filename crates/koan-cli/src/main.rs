@@ -356,7 +356,10 @@ enum DspCommands {
     /// squig.link export
     AddTarget { path: PathBuf },
     /// Correct a headphone from its measurement (a CSV of frequency and
-    /// level, or a squig.link export) to a target
+    /// level, or a squig.link export) to a target. The file is taken as it
+    /// is: a squig.link export already has both channels averaged and the
+    /// site's calibration applied, but a site's raw `L.txt` or `R.txt` has
+    /// neither. `koan dsp squig` fetches both and does both
     Measure {
         path: PathBuf,
         /// The headphone, as the correction's name
@@ -380,6 +383,21 @@ enum DspCommands {
         /// The target that counts as neutral, as `koan dsp target` lists them
         #[arg(long)]
         target: String,
+    },
+    /// What a device's chain plays, as CSV of frequency and dB on AutoEQ's
+    /// grid, preamp aside. `--correction` and `--tuning` stand in for the
+    /// device's own for this one reading; nothing is saved
+    Response {
+        device: Option<String>,
+        /// A correction's name, in place of the device's
+        #[arg(long)]
+        correction: Option<String>,
+        /// EQs in the order they play, separated by commas, in place of the
+        /// device's tuning
+        #[arg(long, value_delimiter = ',')]
+        tuning: Option<Vec<String>>,
+        #[arg(long, default_value_t = 48_000)]
+        rate: u32,
     },
     /// Say what an EQ is for: a neutral correction, a tuning on top of
     /// one, or `mixed`, a correction that already includes a tuning. A
@@ -761,108 +779,12 @@ fn main() {
             RemoteCommands::Sync { .. } => commands::cmd_remote_sync(),
             RemoteCommands::Status => commands::cmd_remote_status(),
         },
-        Some(Commands::Dsp { command }) => match command.unwrap_or(DspCommands::Show {
-            device: None,
-            json: false,
-        }) {
-            DspCommands::Show { device, json } => commands::cmd_dsp_show(device, json),
-            DspCommands::Set {
-                device,
-                correction,
-                tuning,
-            } => commands::cmd_dsp_set(&device, correction.as_deref(), tuning.as_deref()),
-            DspCommands::Flat { device } => commands::cmd_dsp_flat(device),
-            DspCommands::List { json } => commands::cmd_dsp_list(json),
-            DspCommands::Import {
-                paths,
-                name,
-                rate,
-                device,
-            } => commands::cmd_dsp_import(&paths, name, rate, device),
-            DspCommands::Use { name, device } => commands::cmd_dsp_use(&name, device),
-            DspCommands::Clear { device } => commands::cmd_dsp_clear(device),
-            DspCommands::Remove { name } => commands::cmd_dsp_remove(&name),
-            DspCommands::Target {
-                name,
-                target,
-                reset,
-            } => commands::cmd_dsp_target(&name, target.as_deref(), reset),
-            DspCommands::AddTarget { path } => commands::cmd_dsp_add_target(&path),
-            DspCommands::Measure {
-                path,
-                name,
-                ear,
-                target,
-            } => commands::cmd_dsp_measure(&path, &name, ear == "in", &target),
-            DspCommands::Split {
-                name,
-                path,
-                ear,
-                target,
-            } => commands::cmd_dsp_split(&name, &path, ear == "in", &target),
-            DspCommands::Role { name, role } => commands::cmd_dsp_role(&name, &role),
-            DspCommands::Squig {
-                query,
-                limit,
-                use_result,
-                name,
-                ear,
-                target,
-            } => commands::cmd_dsp_squig(
-                &query,
-                limit.unwrap_or(20),
-                use_result,
-                name.as_deref(),
-                ear.as_deref().map(|e| e == "in"),
-                target.as_deref(),
-            ),
-            DspCommands::MadeFor { name, target } => {
-                commands::cmd_dsp_made_for(&name, Some(target.as_str()).filter(|t| *t != "unknown"))
-            }
-            DspCommands::Tuning { names, off, device } => {
-                commands::cmd_dsp_tuning(&names, &off, device)
-            }
-            DspCommands::Preset { command } => match command {
-                PresetCommands::List { json } => commands::cmd_dsp_preset_list(json),
-                PresetCommands::Save { name, device } => {
-                    commands::cmd_dsp_preset_save(&name, device)
-                }
-                PresetCommands::Use { name, device } => commands::cmd_dsp_preset_use(
-                    Some(name.as_str()).filter(|n| *n != "flat"),
-                    device,
-                ),
-            },
-            DspCommands::Revert { name } => commands::cmd_dsp_revert(&name),
-            DspCommands::Copy { name, new } => commands::cmd_dsp_copy(&name, new.as_deref()),
-            DspCommands::TunedFor { name, target } => commands::cmd_dsp_tuned_for(
-                &name,
-                Some(target.as_str()).filter(|t| *t != "unknown"),
-            ),
-            DspCommands::Eq { command } => match command {
-                EqCommands::Plays { name, eqs } => commands::cmd_dsp_stack(&name, &eqs),
-                EqCommands::Switch { name, eq, state } => {
-                    commands::cmd_dsp_layer(&name, &eq, state == "on")
-                }
-            },
-            DspCommands::Stack { name, layers } => commands::cmd_dsp_stack(&name, &layers),
-            DspCommands::Layer {
-                stack,
-                layer,
-                state,
-            } => commands::cmd_dsp_layer(&stack, &layer, state == "on"),
-            DspCommands::Autoeq { command } => match command {
-                AutoeqCommands::Search {
-                    query,
-                    limit,
-                    refresh,
-                } => commands::cmd_dsp_autoeq_search(&query, limit, refresh),
-                AutoeqCommands::Install {
-                    entry,
-                    source,
-                    device,
-                } => commands::cmd_dsp_autoeq_install(&entry, source.as_deref(), device),
-            },
-        },
+        Some(Commands::Dsp { command }) => {
+            // The background sync an edit starts would die with the process.
+            koan_core::remote::dsp_sync::defer();
+            dsp(command);
+            commands::cmd_dsp_flush();
+        }
         Some(Commands::Cache(sub)) => match sub {
             CacheCommands::Status => commands::cmd_cache_status(),
             CacheCommands::Clear { yes } => commands::cmd_cache_clear(yes),
@@ -935,6 +857,113 @@ fn main() {
         None => {
             start_player(&cli, &[], &[], None, None, false, false, None);
         }
+    }
+}
+
+fn dsp(command: Option<DspCommands>) {
+    match command.unwrap_or(DspCommands::Show {
+        device: None,
+        json: false,
+    }) {
+        DspCommands::Show { device, json } => commands::cmd_dsp_show(device, json),
+        DspCommands::Set {
+            device,
+            correction,
+            tuning,
+        } => commands::cmd_dsp_set(&device, correction.as_deref(), tuning.as_deref()),
+        DspCommands::Flat { device } => commands::cmd_dsp_flat(device),
+        DspCommands::List { json } => commands::cmd_dsp_list(json),
+        DspCommands::Import {
+            paths,
+            name,
+            rate,
+            device,
+        } => commands::cmd_dsp_import(&paths, name, rate, device),
+        DspCommands::Use { name, device } => commands::cmd_dsp_use(&name, device),
+        DspCommands::Clear { device } => commands::cmd_dsp_clear(device),
+        DspCommands::Remove { name } => commands::cmd_dsp_remove(&name),
+        DspCommands::Target {
+            name,
+            target,
+            reset,
+        } => commands::cmd_dsp_target(&name, target.as_deref(), reset),
+        DspCommands::AddTarget { path } => commands::cmd_dsp_add_target(&path),
+        DspCommands::Measure {
+            path,
+            name,
+            ear,
+            target,
+        } => commands::cmd_dsp_measure(&path, &name, ear == "in", &target),
+        DspCommands::Split {
+            name,
+            path,
+            ear,
+            target,
+        } => commands::cmd_dsp_split(&name, &path, ear == "in", &target),
+        DspCommands::Role { name, role } => commands::cmd_dsp_role(&name, &role),
+        DspCommands::Response {
+            device,
+            correction,
+            tuning,
+            rate,
+        } => commands::cmd_dsp_response(device, correction.as_deref(), tuning.as_deref(), rate),
+        DspCommands::Squig {
+            query,
+            limit,
+            use_result,
+            name,
+            ear,
+            target,
+        } => commands::cmd_dsp_squig(
+            &query,
+            limit.unwrap_or(20),
+            use_result,
+            name.as_deref(),
+            ear.as_deref().map(|e| e == "in"),
+            target.as_deref(),
+        ),
+        DspCommands::MadeFor { name, target } => {
+            commands::cmd_dsp_made_for(&name, Some(target.as_str()).filter(|t| *t != "unknown"))
+        }
+        DspCommands::Tuning { names, off, device } => {
+            commands::cmd_dsp_tuning(&names, &off, device)
+        }
+        DspCommands::Preset { command } => match command {
+            PresetCommands::List { json } => commands::cmd_dsp_preset_list(json),
+            PresetCommands::Save { name, device } => commands::cmd_dsp_preset_save(&name, device),
+            PresetCommands::Use { name, device } => {
+                commands::cmd_dsp_preset_use(Some(name.as_str()).filter(|n| *n != "flat"), device)
+            }
+        },
+        DspCommands::Revert { name } => commands::cmd_dsp_revert(&name),
+        DspCommands::Copy { name, new } => commands::cmd_dsp_copy(&name, new.as_deref()),
+        DspCommands::TunedFor { name, target } => {
+            commands::cmd_dsp_tuned_for(&name, Some(target.as_str()).filter(|t| *t != "unknown"))
+        }
+        DspCommands::Eq { command } => match command {
+            EqCommands::Plays { name, eqs } => commands::cmd_dsp_stack(&name, &eqs),
+            EqCommands::Switch { name, eq, state } => {
+                commands::cmd_dsp_layer(&name, &eq, state == "on")
+            }
+        },
+        DspCommands::Stack { name, layers } => commands::cmd_dsp_stack(&name, &layers),
+        DspCommands::Layer {
+            stack,
+            layer,
+            state,
+        } => commands::cmd_dsp_layer(&stack, &layer, state == "on"),
+        DspCommands::Autoeq { command } => match command {
+            AutoeqCommands::Search {
+                query,
+                limit,
+                refresh,
+            } => commands::cmd_dsp_autoeq_search(&query, limit, refresh),
+            AutoeqCommands::Install {
+                entry,
+                source,
+                device,
+            } => commands::cmd_dsp_autoeq_install(&entry, source.as_deref(), device),
+        },
     }
 }
 
@@ -1257,6 +1286,10 @@ mod tests {
             everywhere: false,
             held_by: vec![],
             scope_locked: None,
+            graphics: 0,
+            points: 0,
+            made_for: None,
+            join: None,
         });
         let mut keys: Vec<&str> = item
             .as_object()

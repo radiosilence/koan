@@ -1,6 +1,9 @@
 import AVFAudio
 import Foundation
 import KoanFFI
+#if !os(tvOS)
+import UserNotifications
+#endif
 
 /// The half of iOS audio that the engine cannot own.
 ///
@@ -104,8 +107,27 @@ final class AudioSession {
                 return session.sampleRate
             } catch {
                 note("audio session refused activation: \(error)")
+                if (error as NSError).code == AVAudioSession.ErrorCode.cannotInterruptOthers.rawValue {
+                    askToBeTapped()
+                }
                 return nil
             }
+        }
+
+        /// iOS will not give the session to an app in the background while
+        /// another app plays, so music asked for from another device cannot
+        /// start here. Say so where the person will see it, as a push does for a
+        /// suspended phone: tapping opens the app, which may then play.
+        private func askToBeTapped() {
+            #if !os(tvOS)
+            let content = UNMutableNotificationContent()
+            content.title = "kōan could not start playing"
+            content.body = "iOS needs kōan open to take over the audio. Tap to play."
+            content.userInfo = ["koan": ["type": "resume"]]
+            UNUserNotificationCenter.current().add(
+                UNNotificationRequest(identifier: "koan.refused-activation", content: content, trigger: nil)
+            )
+            #endif
         }
 
         /// A route change: the new route asked for the output's rate, and

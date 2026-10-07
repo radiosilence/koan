@@ -794,6 +794,80 @@ ios-eq-graph device="koan-dev": (ios-ffi "iphonesimulator") ios-project
     echo "screenshots in $out"
     exit $status
 
+# Check that every scrolling page on an iPhone and an iPad scrolls its last
+# element clear of the kōan look's bar, and of the select mode's, in light.
+# Serves a generated library from a throwaway koan, favourites its records and
+# makes twenty playlists, then runs `BarInsetTests` on each simulator in turn.
+# Screenshots of each page's foot land in target/ios-bars.
+ios-bars phone="koan-dev" pad="koan-ipad": (ios-ffi "iphonesimulator") ios-project
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=$(pwd)/target/ios-bars
+    rm -rf "$out" && mkdir -p "$out"
+    cleanup=()
+    trap 'for c in "${cleanup[@]}"; do eval "$c"; done' EXIT
+    just _bar-library "$out/library"
+    url=$(just _demo-server "$out/library" "$out")
+    cleanup+=("just _demo-server-stop '$out'")
+    key=$(cat "$out/server.key")
+    api() { curl -sfG "$url/rest/$1" --data-urlencode "apiKey=$key" -d f=json -d v=1.16.1 -d c=bars "${@:2}"; }
+    ids() { python3 -c "import json,sys; r=json.load(sys.stdin)['subsonic-response']; print(' '.join(str(x['id']) for x in $1))"; }
+    albums=$(api getAlbumList2 -d type=alphabeticalByName -d size=500 | ids "r['albumList2']['album']")
+    artists=$(api getArtists | ids "[a for i in r['artists']['index'] for a in i['artist']]")
+    long=$(api search3 --data-urlencode "query=Thirty Rooms" -d songCount=0 -d artistCount=0 | ids "r['searchResult3']['album']")
+    songs=$(api getAlbum -d id="$long" | ids "r['album']['song']")
+    api star $(for a in $albums; do echo -d albumId=$a; done) $(for a in $artists; do echo -d artistId=$a; done) \
+        $(for s in $songs; do echo -d id=$s; done) >/dev/null
+    for n in $(seq 20); do
+        api createPlaylist --data-urlencode "name=Playlist $n" $(for s in $songs; do echo -d songId=$s; done) >/dev/null
+    done
+    export TEST_RUNNER_KOAN_REMOTE__ENABLED=true TEST_RUNNER_KOAN_REMOTE__URL=$url \
+        TEST_RUNNER_KOAN_REMOTE__USERNAME=owner TEST_RUNNER_KOAN_REMOTE__API_KEY=$key
+    status=0
+    for device in "{{phone}}" "{{pad}}"; do
+        udid=$(xcrun simctl list devices available | grep -F "$device (" | head -1 | grep -oE '[0-9A-F-]{36}' || true)
+        if [ -z "$udid" ]; then
+            echo "no simulator called $device; skipped" >&2
+            status=1
+            continue
+        fi
+        xcrun simctl boot "$udid" 2>/dev/null || true
+        xcrun simctl bootstatus "$udid" -b >/dev/null
+        was=$(xcrun simctl ui "$udid" appearance)
+        xcrun simctl ui "$udid" appearance light
+        xcodebuild test -quiet \
+            -project apps/ios/Koan.xcodeproj -scheme Koan \
+            -destination "id=$udid" \
+            -only-testing:KoanUITests/BarInsetTests \
+            -resultBundlePath "$out/$device.xcresult" || status=$?
+        xcrun simctl ui "$udid" appearance "$was" || true
+        # One booted simulator at a time.
+        xcrun simctl shutdown "$udid" || true
+        mkdir -p "$out/$device"
+        xcrun xcresulttool export attachments --path "$out/$device.xcresult" --output-path "$out/$device" >/dev/null || true
+    done
+    echo "screenshots in $out"
+    exit $status
+
+# The library `ios-bars` serves: an artist with fifteen records, one of them
+# thirty tracks long, and forty more artists with a record each. Silent FLACs
+# of two seconds, tagged.
+_bar-library dir:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "{{dir}}"
+    seed=$(mktemp -d)/seed.flac
+    ffmpeg -loglevel error -y -f lavfi -i anullsrc=r=44100:cl=stereo -t 2 -c:a flac "$seed"
+    put() {
+        d="{{dir}}/$1/$2"; mkdir -p "$d"; f="$d/$(printf %02d "$3") $4.flac"; cp "$seed" "$f"
+        metaflac --set-tag="ARTIST=$1" --set-tag="ALBUMARTIST=$1" --set-tag="ALBUM=$2" \
+            --set-tag="TRACKNUMBER=$3" --set-tag="TITLE=$4" "$f"
+    }
+    for n in $(seq 30); do put "Long Artist" "Thirty Rooms" "$n" "Room $n"; done
+    for a in $(seq 14); do for n in 1 2; do put "Long Artist" "Record $a" "$n" "Side $a.$n"; done; done
+    for a in $(seq 40); do for n in 1 2; do put "Artist $a" "Album $a" "$n" "Song $a.$n"; done; done
+    rm -r "$(dirname "$seed")"
+
 # Walk the app on a simulator and export a screenshot of every page.
 #
 # Runs `WalkTests` against whatever library that simulator holds, so sign it in

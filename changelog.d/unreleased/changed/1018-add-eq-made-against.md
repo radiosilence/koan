@@ -1,0 +1,1 @@
+- **Add EQ shows what each EQ was made against.** Each row carries its Made against target, and EQs made against the correction's target are listed first, in the accent. Graphic EQs read "graphic, N points" rather than "1 band".

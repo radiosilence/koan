@@ -18,6 +18,7 @@
 
 pub mod apo;
 pub mod autoeq;
+pub mod autoeq_squig;
 pub mod camilla;
 pub mod convolver;
 pub mod import;
@@ -271,9 +272,12 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
             Some((aim, made)) => {
                 let step = targets::choice_curve(&aim)
                     .zip(targets::choice_curve(&made))
-                    .map(|(from, to)| DspProfile {
+                    .zip(correction)
+                    .map(|((from, to), c)| DspProfile {
                         name: format!("\u{1}{i}\u{1}Target difference"),
-                        filters: vec![DspFilter::Graphic(targets::difference(&from, &to))],
+                        filters: vec![DspFilter::Graphic(profiles::target_step(
+                            c, all, &from, &to,
+                        ))],
                         ..Default::default()
                     });
                 held += usize::from(step.is_some());
@@ -517,14 +521,20 @@ fn resolve(
             None => step,
         }));
     }
-    // A correction built from a measurement, to its target.
-    if let Some(m) = &profile.measurement {
+    // A correction fitted to a measurement plays its own filters, above:
+    // the bands squig.link's auto-EQ fits. One saved before kōan fitted
+    // bands has them fitted here, from its measurement as kept. Nothing is
+    // written back, so no edit is made to sync. The fit leans on the
+    // platform's maths library, so two platforms can differ by a band here;
+    // a new target fits and keeps the bands, and then they are shared.
+    if let Some(m) = profile
+        .measurement
+        .as_ref()
+        .filter(|_| profile.fitted.is_none())
+    {
         let measured = targets::measurement(&dir)
             .ok_or_else(|| DspError::Measurement(profile.name.clone()))?;
-        out.push(DspFilter::Graphic(targets::correction(
-            &measured,
-            &curve(&m.target)?,
-        )));
+        out.extend(profiles::squig_fit(&measured, &curve(&m.target)?).0);
     }
     if out.len() > MAX_CHAIN_FILTERS && stack.len() > 1 {
         return Err(too_many(stack));

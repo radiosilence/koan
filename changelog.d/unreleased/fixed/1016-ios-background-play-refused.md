@@ -1,0 +1,1 @@
+- **Music sent to an iPhone in the background is no longer silently dropped.** iOS does not let a backgrounded app take the audio from another app that is playing, so the phone now shows a notification that starts playback when tapped.
