@@ -428,11 +428,11 @@ pub fn remove_stale_tracks_walked(
         );
     }
 
+    let mut tracks = Vec::with_capacity(stale.len());
     for path in &stale {
-        conn.execute("DELETE FROM scan_cache WHERE path = ?1", params![path])?;
-        sources::remove(conn, sources::Kind::Local, path)?;
-        sources::forget_unread(conn, sources::Kind::Local, path)?;
+        tracks.extend(sources::track_of_file(conn, path)?);
     }
+    sources::forget_tracks(conn, &tracks, sources::Forget::Demote)?;
 
     Ok(stale)
 }

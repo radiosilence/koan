@@ -606,6 +606,9 @@ fn resolve_from_paths(
 ) -> Result<Vec<ResolvedTrack>, OrganizeError> {
     use rayon::prelude::*;
 
+    // Handed in from outside, as Finder spells them; rows hold the disk's.
+    let mut spelling = crate::index::spelling::Spelling::default();
+    let paths: Vec<PathBuf> = paths.iter().map(|p| spelling.on_disk(p)).collect();
     let path_strings: Vec<String> = paths
         .iter()
         .map(|p| p.to_string_lossy().into_owned())
@@ -1091,6 +1094,11 @@ fn execute_single_move(
     if let Some(parent) = file_move.to.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    // The destination comes from the tags, and a folder already there may
+    // spell an accent another way. The rows take the directory's spelling, as
+    // a scan would.
+    let mut spelling = crate::index::spelling::Spelling::default();
+    let to = &spelling.on_disk(&file_move.to);
 
     let source_meta = std::fs::metadata(&file_move.from)?;
     let size = source_meta.len();
@@ -1102,39 +1110,40 @@ fn execute_single_move(
         batch_id,
         file_move.track_id,
         &file_move.from,
-        &file_move.to,
+        to,
         Some(size),
         mtime,
     )?;
-    rewrite_path_references(&tx, &file_move.from, &file_move.to)?;
+    rewrite_path_references(&tx, &file_move.from, to)?;
 
     // Dropping `tx` on the way out of this `?` rolls the rows back.
-    move_file(&file_move.from, &file_move.to)?;
+    move_file(&file_move.from, to)?;
 
-    let mut moved_ancillary: Vec<(&PathBuf, &PathBuf)> = Vec::new();
+    let mut moved_ancillary: Vec<(&PathBuf, PathBuf)> = Vec::new();
     let mut failure = None;
     for (anc_from, anc_to) in &file_move.ancillary {
+        let anc_to = spelling.on_disk(anc_to);
         if let Some(parent) = anc_to.parent()
             && std::fs::create_dir_all(parent).is_err()
         {
             continue;
         }
         // Best-effort — artwork that won't move doesn't hold up the audio file.
-        match move_file(anc_from, anc_to) {
+        match move_file(anc_from, &anc_to) {
             Ok(()) => {
-                moved_ancillary.push((anc_from, anc_to));
-                let meta = std::fs::metadata(anc_to).ok();
-                if let Err(e) = log_move(
+                let meta = std::fs::metadata(&anc_to).ok();
+                let logged = log_move(
                     &tx,
                     batch_id,
                     None,
                     anc_from,
-                    anc_to,
+                    &anc_to,
                     meta.as_ref().map(|m| m.len()),
                     meta.as_ref().and_then(mtime_secs),
                 )
-                .and_then(|()| rewrite_path_references(&tx, anc_from, anc_to))
-                {
+                .and_then(|()| rewrite_path_references(&tx, anc_from, &anc_to));
+                moved_ancillary.push((anc_from, anc_to));
+                if let Err(e) = logged {
                     failure = Some(e);
                     break;
                 }
@@ -1156,9 +1165,9 @@ fn execute_single_move(
         // The rows rolled back, so nothing records these files as moved and nothing
         // could undo them. Put them back.
         for (anc_from, anc_to) in moved_ancillary {
-            let _ = move_file(anc_to, anc_from);
+            let _ = move_file(&anc_to, anc_from);
         }
-        let _ = move_file(&file_move.to, &file_move.from);
+        let _ = move_file(to, &file_move.from);
         return Err(e);
     }
 
@@ -1950,6 +1959,55 @@ mod tests {
         assert_eq!(
             db_path_of(&db, imported.track_ids[0]).as_deref(),
             dest.to_str()
+        );
+    }
+
+    /// Tags spell accents precomposed; a Mac-written folder holds them
+    /// decomposed, and the filesystem opens either. A file organized into
+    /// such a folder is stored as the directory spells it, or the next scan
+    /// finds it under a path no row has and indexes it a second time.
+    #[test]
+    fn an_organized_file_is_stored_as_the_disk_spells_it() {
+        use unicode_normalization::UnicodeNormalization;
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let library = tmp.path().join("Music");
+        let artist_on_disk: String = "Björk".nfd().collect();
+        std::fs::create_dir_all(library.join(&artist_on_disk)).unwrap();
+
+        let source = tmp.path().join("in/track.wav");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        crate::test_utils::generate_wav(&source, 44100, 1, 0.2, 16);
+        let imported = crate::index::scanner::import_paths(&db, std::slice::from_ref(&source));
+        assert_eq!(imported.track_ids.len(), 1, "errors: {:?}", imported.errors);
+
+        let result = execute_for_tracks(
+            &db,
+            &imported.track_ids,
+            &format!("{}/%title%", "Björk".nfc().collect::<String>()),
+            Some(&library),
+        )
+        .unwrap();
+        assert_eq!(result.moved_count(), 1, "{:?}", result.failures().count());
+
+        crate::index::scanner::scan_folder(
+            &db,
+            &library,
+            crate::index::scanner::ScanOptions::default(),
+            None,
+        );
+        let paths: Vec<String> = db
+            .conn
+            .prepare("SELECT path FROM local_files")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(paths.len(), 1, "one file, one row: {paths:?}");
+        assert_eq!(
+            db_path_of(&db, imported.track_ids[0]).as_ref(),
+            paths.first()
         );
     }
 
