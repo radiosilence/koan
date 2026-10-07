@@ -1054,7 +1054,7 @@ impl KoanEngine {
 
     /// Everything known about a track, for its info view. `None` for a track
     /// that is not in the library.
-    pub async fn track_info(
+    pub async fn track_details(
         self: Arc<Self>,
         track_id: i64,
     ) -> Result<Option<TrackDetails>, KoanError> {
