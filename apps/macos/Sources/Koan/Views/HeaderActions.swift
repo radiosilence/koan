@@ -58,3 +58,31 @@ struct HeaderActions: View {
         .koanButtons(.compact)
     }
 }
+
+extension View {
+    /// A page's title beside its play button: the first line's capitals level
+    /// with the button's top edge, and any further line wrapping below. Used
+    /// in an `HStack(alignment: .top)`, whose plain `.top` would put the line
+    /// box there, a font's ascent above the capitals.
+    func headerTitleTop(_ role: KoanType, systemSize: CGFloat) -> some View {
+        modifier(HeaderTitleTop(role: role, systemSize: systemSize))
+    }
+}
+
+private struct HeaderTitleTop: ViewModifier {
+    let role: KoanType
+    let systemSize: CGFloat
+
+    func body(content: Content) -> some View {
+        let cap = capHeight
+        return content.alignmentGuide(.top) { $0[.firstTextBaseline] - cap }
+    }
+
+    private var capHeight: CGFloat {
+        #if os(macOS)
+        NSFont.role(role, system: NSFont.systemFont(ofSize: systemSize, weight: .semibold)).capHeight
+        #else
+        (KoanTheme.isOn ? UIFont.koan(role) : UIFont.systemFont(ofSize: systemSize, weight: .semibold)).capHeight
+        #endif
+    }
+}
