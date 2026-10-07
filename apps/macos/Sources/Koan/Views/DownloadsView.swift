@@ -38,6 +38,7 @@ struct DownloadsView: View {
                     }
                 }
                 .insetList()
+                .washedGround()
                 #endif
             }
         }

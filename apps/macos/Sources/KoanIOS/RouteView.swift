@@ -27,7 +27,6 @@ struct RouteView: View {
     var body: some View {
         content
             .washedGround()
-            .roomBackground()
     }
 
     @ViewBuilder private var content: some View {

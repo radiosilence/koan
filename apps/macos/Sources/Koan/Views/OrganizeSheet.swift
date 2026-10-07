@@ -163,7 +163,8 @@ struct OrganizeSheet: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let plan = organize.plan, !plan.entries.isEmpty {
-            List(plan.entries, id: \.fromPath) { entry in
+            // On the sheet's ground, which `koanSheet()` hides the list's for.
+            List(plan.entries, id: \.fromPath) { entry in // theme: raw
                 OrganizeRow(entry: entry, baseDir: organize.baseDir)
                     .rowSeparator(.hidden)
             }

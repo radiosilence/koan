@@ -267,7 +267,8 @@ struct TabShell: View {
 
     /// A tab's navigation stack. Pages are drawn from their routes — see
     /// `RouteView` — and the navigator follows whatever is on top.
-    /// `grounded: false` for a root that is a `RouteView`, which grounds itself.
+    /// `grounded: false` for a root that is a `RouteView`, whose lists give up
+    /// their ground themselves.
     private func stack<Root: View>(
         _ tab: TabID, grounded: Bool = true, @ViewBuilder root: () -> Root
     ) -> some View {
@@ -280,17 +281,17 @@ struct TabShell: View {
         return NavigationStack(path: path(tab)) {
             Group {
                 if grounded {
-                    root().washedGround().roomBackground()
+                    root().washedGround()
                 } else {
                     root()
                 }
             }
+            .roomBackground()
             .koanHidesSystemTabBar()
             .environment(\.onStage, showing && routes.isEmpty)
             .navigationDestination(for: Route.self) { route in
                 RouteView(route: route)
-                    .koanBackButton()
-                    .koanHidesSystemTabBar()
+                    .koanPushedPage()
                     .environment(\.onStage, showing && route == routes.last)
             }
         }

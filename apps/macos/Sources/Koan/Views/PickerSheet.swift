@@ -94,7 +94,8 @@ struct PickerSheet: View {
             EmptyState(icon: "magnifyingglass", title: "Search your library")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            List(selection: $highlighted) {
+            // On the sheet's ground, which `koanSheet()` hides the list's for.
+            List(selection: $highlighted) { // theme: raw
                 if !picked.isEmpty {
                     Section {
                         ForEach(picked) { row in
