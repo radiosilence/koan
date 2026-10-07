@@ -264,7 +264,9 @@ that target ("Correction fitted to Harman in-ear 2019 for it"): one fit to the
 target the EQ expects is what squig.link would give, where a fit to the
 correction's own target plus the difference only comes close, off by up to a
 decibel in places. The first EQ that asks decides the fit; later EQs made
-against yet another target are converted from it. Where the EQ does not say
+against yet another target are converted from it. The refit is dropped, and
+the line shows the conversion as above, where it would leave out an EQ that
+plays without it or add a note to the chain. Where the EQ does not say
 what it was made against, nothing can be
 converted, and if it already includes a target, as a finished preset like
 "Lush" does, that target is applied twice on top of the correction's: the line
@@ -449,7 +451,9 @@ any frequency and lowers the level by that much first, as AutoEQ's own `Preamp`
 line does. With a tuning on top of a correction, the level comes from what the
 whole chain plays, not the correction's own preamp, so a correction and tuning
 whose boosts cancel play as loud as a single EQ with the same curve and A/B
-comparisons are fair. ReplayGain is applied before it, with its own peak
+comparisons are fair. This holds for a preamp set by hand on the correction
+too: with a tuning on, the chain's derived preamp replaces it, and it applies
+again only when the correction plays alone. ReplayGain is applied before it, with its own peak
 limiting, so the two do not compound. An EQ's page shows the figure.
 
 ## Choosing

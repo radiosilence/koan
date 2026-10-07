@@ -572,8 +572,8 @@ impl Player {
         {
             return cache.setup.clone();
         }
-        let chain = crate::audio::dsp::output_chain(&config.dsp, device);
-        let setup = chain.and_then(|chain| {
+        let setup = crate::audio::dsp::profiles::for_playing(|| {
+            let chain = crate::audio::dsp::output_chain(&config.dsp, device)?;
             crate::audio::dsp::Setup::load(&chain.profile, &chain.all, &crate::config::config_dir())
                 .inspect_err(|e| {
                     log::error!(
