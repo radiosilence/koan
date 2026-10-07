@@ -618,8 +618,9 @@ private struct PhoneTrayPanel<Tray: View>: View {
     @State private var shown = false
     /// The content's own height: the panel stands as tall as it, to a limit.
     @State private var height: CGFloat = 0
-    /// How far a drag has pulled the panel down.
-    @State private var pull: CGFloat = 0
+    /// How far a drag has pulled the panel down; back to nothing when the
+    /// drag ends or the system cancels it.
+    @GestureState private var pull: CGFloat = 0
     /// Whether the content is scrolled to its top, where a downward drag
     /// pulls the panel instead.
     @State private var atTop = true
@@ -636,6 +637,7 @@ private struct PhoneTrayPanel<Tray: View>: View {
                     .accessibilityHidden(true)
                 panel(limit: proxy.size.height * 0.85)
                     .offset(y: shown ? pull : below)
+                    .koanAnimation(KoanTheme.Motion.settle, value: pull == 0)
             }
         }
         .onAppear { animate { shown = true } }
@@ -682,19 +684,19 @@ private struct PhoneTrayPanel<Tray: View>: View {
             }
         }
         .simultaneousGesture(
-            DragGesture(minimumDistance: 12)
-                .onChanged { drag in
-                    guard atTop else { return }
-                    pull = max(0, drag.translation.height)
+            // In the screen's space: the panel moves under the finger, and its
+            // own space would move with it.
+            DragGesture(minimumDistance: 12, coordinateSpace: .global)
+                .updating($pull) { drag, pull, _ in
+                    if atTop { pull = max(0, drag.translation.height) }
                 }
                 .onEnded { drag in
-                    guard pull > 0 else { return }
-                    if pull > 80 || drag.predictedEndTranslation.height > 240 {
+                    guard atTop else { return }
+                    if drag.translation.height > 80 || drag.predictedEndTranslation.height > 240 {
                         dismiss()
-                    } else {
-                        animate { pull = 0 }
                     }
-                }
+                },
+            including: .all
         )
         .accessibilityAddTraits(.isModal)
         .accessibilityAction(.escape, dismiss)
