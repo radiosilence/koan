@@ -198,6 +198,7 @@ struct EqSettings: View {
                         }
                     }
             }
+            .koanSheetStack()
             .frame(minWidth: 480, minHeight: 440)
         }
         #endif
@@ -458,6 +459,52 @@ struct EqChain: View {
     }
 
     var body: some View {
+        #if os(iOS)
+        // Each EQ a row of the list, for its swipe actions; the rows meet,
+        // so the line through the chain runs unbroken.
+        Group {
+            head
+            ForEach(Array(overview.chain.enumerated()), id: \.element.name) { i, entry in
+                eq(i, entry)
+                    .swipeActions(edge: .trailing) {
+                        Button("Remove", role: .destructive) { remove(i) }
+                    }
+                    .swipeActions(edge: .leading) {
+                        if i > 0 {
+                            Button("Move Up") { move(i, by: -1) }
+                        }
+                        if i < overview.chain.count - 1 {
+                            Button("Move Down") { move(i, by: 1) }
+                        }
+                    }
+                    .contextMenu {
+                        if i > 0 {
+                            Button("Move Up", systemImage: "arrow.up") { move(i, by: -1) }
+                        }
+                        if i < overview.chain.count - 1 {
+                            Button("Move Down", systemImage: "arrow.down") { move(i, by: 1) }
+                        }
+                        Button("Remove from Tuning", systemImage: "trash", role: .destructive) { remove(i) }
+                    }
+            }
+            tail
+        }
+        .listRowInsets(.vertical, 0)
+        #else
+        VStack(alignment: .leading, spacing: 0) {
+            head
+            ForEach(Array(overview.chain.enumerated()), id: \.element.name) { i, entry in
+                eq(i, entry)
+            }
+            tail
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Self.sentence(overview, device: device))
+        #endif
+    }
+
+    /// Music in, the correction, and the tuning's heading.
+    private var head: some View {
         VStack(alignment: .leading, spacing: 0) {
             end(KoanTheme.label("Music in"), systemImage: "music.note")
             link
@@ -487,43 +534,55 @@ struct EqChain: View {
                 .koanText(.fine, .muted)
                 .koanCase()
                 .padding(.vertical, 4)
-            ForEach(Array(overview.chain.enumerated()), id: \.element.name) { i, entry in
-                let meets = overview.joins.indices.contains(i) ? overview.joins[i] : nil
-                if i > 0 || meets?.join != nil || meets?.note != nil {
-                    join(meets, eq: entry.name)
-                }
-                StageBlock(
-                    title: "EQ \(i + 1)",
-                    name: entry.name,
-                    detail: entry.on ? meets?.madeFor.map { "made for \($0)" } : KoanTheme.label("Off"),
-                    db: curves[entry.name],
-                    stroke: .eq(i),
-                    action: { open(entry.name) }
-                ) {
-                    #if !os(tvOS)
-                    Toggle("On", isOn: Binding(
-                        get: { entry.on },
-                        set: { on in set(overview.chain.enumerated().map { $0 == i ? DspTuningEntry(name: $1.name, on: on) : $1 }) }
-                    ))
-                    .koanToggle()
-                    .fixedSize()
-                    Menu("Options") {
-                        Button("Edit") { open(entry.name) }
-                        if i > 0 {
-                            Button("Move Up") { move(i, by: -1) }
-                        }
-                        if i < overview.chain.count - 1 {
-                            Button("Move Down") { move(i, by: 1) }
-                        }
-                        Button("Remove from Tuning", role: .destructive) {
-                            set(overview.chain.enumerated().filter { $0.offset != i }.map(\.element))
-                        }
-                    }
-                    .koanControl()
-                    .fixedSize()
-                    #endif
-                }
+        }
+    }
+
+    /// One of the tuning's EQs, and the line into it. Tapped, it opens the
+    /// EQ's page. On a phone it is moved and removed by swiping; elsewhere
+    /// from its menu.
+    private func eq(_ i: Int, _ entry: DspTuningEntry) -> some View {
+        let meets = overview.joins.indices.contains(i) ? overview.joins[i] : nil
+        return VStack(alignment: .leading, spacing: 0) {
+            if i > 0 || meets?.join != nil || meets?.note != nil {
+                join(meets, eq: entry.name)
             }
+            StageBlock(
+                title: "EQ \(i + 1)",
+                name: entry.name,
+                detail: entry.on ? meets?.madeFor.map { "made for \($0)" } : KoanTheme.label("Off"),
+                db: curves[entry.name],
+                stroke: .eq(i),
+                action: { open(entry.name) }
+            ) {
+                #if !os(tvOS)
+                Toggle("On", isOn: Binding(
+                    get: { entry.on },
+                    set: { on in set(overview.chain.enumerated().map { $0 == i ? DspTuningEntry(name: $1.name, on: on) : $1 }) }
+                ))
+                .koanToggle()
+                .fixedSize()
+                #endif
+                #if os(macOS)
+                Menu("Options") {
+                    Button("Edit") { open(entry.name) }
+                    if i > 0 {
+                        Button("Move Up") { move(i, by: -1) }
+                    }
+                    if i < overview.chain.count - 1 {
+                        Button("Move Down") { move(i, by: 1) }
+                    }
+                    Button("Remove from Tuning", role: .destructive) { remove(i) }
+                }
+                .koanControl()
+                .fixedSize()
+                #endif
+            }
+        }
+    }
+
+    /// Adding an EQ, and the device out.
+    private var tail: some View {
+        VStack(alignment: .leading, spacing: 0) {
             if !overview.chain.isEmpty {
                 link
             }
@@ -535,8 +594,10 @@ struct EqChain: View {
             #endif
             end("\(device) out", systemImage: "hifispeaker")
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(Self.sentence(overview, device: device))
+    }
+
+    private func remove(_ i: Int) {
+        set(overview.chain.enumerated().filter { $0.offset != i }.map(\.element))
     }
 
     private func move(_ i: Int, by step: Int) {

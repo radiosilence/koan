@@ -1,0 +1,1 @@
+- **EQ: graphic curves are editable.** On a tuning's page, a graphic EQ opens a page of its points, each frequency and gain editable, with Reset to File for an imported EQ.

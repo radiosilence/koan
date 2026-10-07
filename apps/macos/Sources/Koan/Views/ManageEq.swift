@@ -128,6 +128,7 @@ struct ManageEq: View {
                         }
                     }
             }
+            .koanSheetStack()
             .frame(minWidth: 480, minHeight: 440)
         }
         #endif
