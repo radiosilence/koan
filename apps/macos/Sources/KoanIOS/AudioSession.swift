@@ -98,17 +98,33 @@ final class AudioSession {
         /// behind it — and the engine then does not start.
         func activate(sampleRate: Double) -> Double? {
             let session = AVAudioSession.sharedInstance()
-            do {
-                try session.setPreferredSampleRate(sampleRate)
-            } catch {
-                note("audio session refused \(sampleRate) Hz: \(error)")
-            }
+            prefer(sampleRate)
             do {
                 try session.setActive(true)
                 return session.sampleRate
             } catch {
                 note("audio session refused activation: \(error)")
                 return nil
+            }
+        }
+
+        /// A route change: the new route asked for the output's rate, and
+        /// the rate it runs at answered. Not an activation, which would take
+        /// the session back from an app that interrupted koan.
+        func follow(sampleRate: Double) -> Double {
+            prefer(sampleRate)
+            return AVAudioSession.sharedInstance().sampleRate
+        }
+
+        /// A preference already set is left alone, so asking again on a
+        /// route change cannot itself change the route.
+        private func prefer(_ sampleRate: Double) {
+            let session = AVAudioSession.sharedInstance()
+            guard session.preferredSampleRate != sampleRate else { return }
+            do {
+                try session.setPreferredSampleRate(sampleRate)
+            } catch {
+                note("audio session refused \(sampleRate) Hz: \(error)")
             }
         }
 

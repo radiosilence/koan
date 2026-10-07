@@ -108,6 +108,10 @@ pub trait AudioSessionHost: Send + Sync {
     /// Also called on a session already active, when a track wants another
     /// rate.
     fn activate(&self, sample_rate: f64) -> Option<f64>;
+    /// Ask for `sample_rate` without activating, and answer
+    /// `AVAudioSession.sampleRate`: on a route change, when another app may
+    /// hold the session.
+    fn follow(&self, sample_rate: f64) -> f64;
     fn release(&self);
 }
 
@@ -118,6 +122,10 @@ struct SessionBridge(Arc<dyn AudioSessionHost>);
 impl koan_core::audio::ios_backend::AudioSession for SessionBridge {
     fn activate(&self, sample_rate: f64) -> Option<f64> {
         self.0.activate(sample_rate)
+    }
+
+    fn follow(&self, sample_rate: f64) -> f64 {
+        self.0.follow(sample_rate)
     }
 
     fn release(&self) {
@@ -3444,13 +3452,14 @@ impl KoanEngine {
     }
 
     /// The name of the port iOS routes audio to, on each route change: what
-    /// profiles are chosen by on a phone. Does nothing elsewhere.
+    /// profiles are chosen by on a phone, and the cue to read the session's
+    /// rate again. Does nothing elsewhere.
     pub async fn set_audio_route(self: Arc<Self>, name: String) -> Result<(), KoanError> {
         #[cfg(any(target_os = "ios", target_os = "tvos"))]
         {
             offload::sequenced(move || {
                 koan_core::audio::ios_backend::set_route(name);
-                self.send_local(PlayerCommand::ReloadDsp)
+                self.send_local(PlayerCommand::RouteChanged)
             })
             .await
         }
@@ -5475,6 +5484,7 @@ impl KoanEngine {
             | PlayerCommand::SetOutputDevice(_)
             | PlayerCommand::ClearOutputDevice
             | PlayerCommand::ReloadDsp
+            | PlayerCommand::RouteChanged
             | PlayerCommand::RestartOutput
             | PlayerCommand::UseRenderer(_)
             | PlayerCommand::ResumeRenderer(_)
