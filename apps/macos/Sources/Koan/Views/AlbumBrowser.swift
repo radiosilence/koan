@@ -150,10 +150,17 @@ struct AlbumDetailView: View {
         Trace.event("album-body")
         FrameTimer.shared.evaluated()
         return page
-            // Only for a library change — the record itself arrived before the
-            // page did. A download landing writes a cached path onto one of
-            // these rows.
-            .reloading(on: albumId) { await library.prepare(album: albumId) }
+            // For a library change — the record itself arrived before the page
+            // did, and a download landing writes a cached path onto one of
+            // these rows — or for a record let go while the page was kept.
+            .reloading(on: Held(albumId: albumId, held: record != nil)) {
+                await library.prepare(album: albumId)
+            }
+    }
+
+    private struct Held: Equatable {
+        let albumId: Int64
+        let held: Bool
     }
 
     /// Never a record page with nothing on it: still reading, gone from the

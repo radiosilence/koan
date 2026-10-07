@@ -486,17 +486,24 @@ final class LibraryModel {
         } else if loaded.tracks.isEmpty, !loaded.failed {
             Self.log.error("album \(id) has no tracks at version \(stamp)")
         }
-        // Reads finish in any order; one begun before the library last moved
-        // never replaces one begun after.
-        if let held = detailRecords[id], held.stamp > loaded.stamp, !held.failed { return }
-        if detailRecords.count >= Self.heldRecords {
-            detailRecords = detailRecords.filter { $0.value.stamp == stamp }
+        if let held = detailRecords[id], !held.failed {
+            // Reads finish in any order; one begun before the library last
+            // moved never replaces one begun after. A failed read never
+            // replaces a good record: the page keeps what it was showing.
+            if held.stamp > loaded.stamp || loaded.failed { return }
         }
         detailRecords[id] = loaded
+        recordOrder.removeAll { $0 == id }
+        recordOrder.append(id)
+        if recordOrder.count > Self.heldRecords {
+            detailRecords[recordOrder.removeFirst()] = nil
+        }
     }
 
-    /// Past this many, records read before the library last moved are let
-    /// go. A page whose record went re-reads it when it next appears.
+    /// The albums in `detailRecords`, least recently read first. Past
+    /// `heldRecords` the oldest goes; a page whose record went reads it again
+    /// (see `AlbumDetailView`).
+    @ObservationIgnored private var recordOrder: [Int64] = []
     private static let heldRecords = 64
 
     nonisolated private static let log = Logger(subsystem: "cc.blit.koan", category: "library")
