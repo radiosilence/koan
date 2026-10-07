@@ -272,7 +272,7 @@ struct InviteSheet: View {
             .koanSheet()
             .navigationTitle(KoanTheme.label("Invite"))
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
+                KoanSheetAction(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
             }

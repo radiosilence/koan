@@ -300,16 +300,16 @@ struct RoutePicker: UIViewRepresentable {
     func updateUIView(_ view: AVRoutePickerView, context: Context) {}
 }
 
-/// How Now Playing opens. A sheet, as the platform has it, except on an iPad in
-/// the theme, where a sheet is a rounded card floating over the page: there it
-/// covers the screen, and goes with a swipe down or its chevron.
+/// How Now Playing opens. A sheet, as the platform has it, except in the
+/// theme, where a sheet is a rounded card (floating over the page on an iPad):
+/// there it covers the screen, square, and goes with a swipe down or its
+/// chevron.
 struct NowPlayingPresentation: ViewModifier {
     @Binding var isPresented: Bool
-    @Environment(\.horizontalSizeClass) private var width
 
     func body(content: Content) -> some View {
         #if os(iOS)
-        if KoanTheme.isOn && width == .regular {
+        if KoanTheme.isOn {
             content.fullScreenCover(isPresented: $isPresented) {
                 NowPlayingSheet()
                     .overlay(alignment: .topLeading) {

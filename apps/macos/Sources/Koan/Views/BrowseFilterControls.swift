@@ -44,7 +44,7 @@ struct BrowseFilterButton: View {
                     .navigationTitle(KoanTheme.label("Filter"))
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
+                        KoanSheetAction(placement: .confirmationAction) {
                             Button("Done") { open = false }
                                 .toolbarButton()
                         }

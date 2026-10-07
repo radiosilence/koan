@@ -87,7 +87,7 @@ struct PresetMenu<Label: View>: View {
                 EqSettings(device: presets.device)
                     .navigationTitle(KoanTheme.label("EQ"))
                     .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
+                        KoanSheetAction(placement: .confirmationAction) {
                             Button("Done") { editing = false }
                         }
                     }

@@ -981,7 +981,7 @@ struct AutoEqSearch: View {
                     .koanSheet()
             }
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
+                KoanSheetAction(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
             }
