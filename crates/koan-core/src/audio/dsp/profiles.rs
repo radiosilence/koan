@@ -1510,6 +1510,10 @@ pub fn apply_preset(device: &str, name: Option<&str>) -> Result<(), String> {
     persist(|cfg| set_output(cfg, device, correction.as_deref(), &tunings, name))
 }
 
+/// An output set from a preset by `migrate`: the device, its correction,
+/// its tuning and the preset.
+type Setting = (String, Option<String>, Vec<(String, bool)>, String);
+
 /// Bring configs from before presets and tunings of several EQs up to
 /// them, once at start, and again harmlessly after:
 /// - a stack that is a correction with EQs on top is a preset, and an output
@@ -1587,10 +1591,6 @@ fn flatten_off() -> Result<(), String> {
         cfg.dsp.enabled = true;
     })
 }
-
-/// An output set from a preset by `migrate`: the device, its correction,
-/// its tuning and the preset.
-type Setting = (String, Option<String>, Vec<(String, bool)>, String);
 
 fn migrate_presets() -> Result<(), String> {
     let cfg = Config::cached();
