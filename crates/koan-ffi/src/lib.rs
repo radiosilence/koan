@@ -3357,15 +3357,6 @@ impl KoanEngine {
         .await
     }
 
-    pub async fn dsp_set_enabled(self: Arc<Self>, enabled: bool) -> Result<(), KoanError> {
-        offload::sequenced(move || {
-            koan_core::audio::dsp::profiles::set_enabled(enabled)
-                .map_err(|message| KoanError::BadArgument { message })?;
-            self.send_local(PlayerCommand::ReloadDsp)
-        })
-        .await
-    }
-
     /// The name of the port iOS routes audio to, on each route change: what
     /// profiles are chosen by on a phone. Does nothing elsewhere.
     pub async fn set_audio_route(self: Arc<Self>, name: String) -> Result<(), KoanError> {
