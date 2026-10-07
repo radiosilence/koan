@@ -12,17 +12,11 @@ import SwiftUI
 /// koan is for: the queue, the library, finding something, and settings.
 struct LibraryTab: View {
     @Environment(EngineMirror.self) private var mirror
-    @Environment(LibraryModel.self) private var library
 
     var body: some View {
         List {
-            if mirror.signInRefused {
-                Section {
-                    Label(EngineMirror.signInRefusedDetail, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(KoanTheme.style(.bad, system: .orange))
-                }
-            } else if let connection = mirror.connection, connection.offline {
-                offline(manual: connection.offlineManual)
+            if LibraryStatus.showing(mirror) {
+                Section { LibraryStatus() }
             }
             row("Albums", Icon.album, .page(.section(.albums)))
             row("Artists", Icon.artist, .page(.section(.artists)))
@@ -41,23 +35,6 @@ struct LibraryTab: View {
         .navigationTitle(KoanTheme.label("Library"))
     }
 
-    /// Offline, and why: by hand, with the way back, or the server out of
-    /// reach, which lifts by itself.
-    private func offline(manual: Bool) -> some View {
-        Section {
-            Label(
-                manual ? "Offline mode is on" : "Can't reach your server",
-                systemImage: "wifi.slash"
-            )
-            Text("Showing what is on this iPhone.")
-                .font(.role(.fine, system: .caption))
-                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-            if manual {
-                Button("Go Online") { library.engine.setOffline(on: false) }
-            }
-        }
-    }
-
     private func row(_ title: String, _ symbol: String, _ route: Route) -> some View {
         NavigationLink(value: route) {
             #if os(tvOS)
@@ -72,5 +49,43 @@ struct LibraryTab: View {
             #endif
         }
         .listLink()
+    }
+}
+
+/// Why the library shows less than it holds: the server refused the sign-in,
+/// or koan is offline, by hand, with the way back, or with the server out of
+/// reach, which lifts by itself. Atop the Library tab, and the iPad's sidebar.
+struct LibraryStatus: View {
+    @Environment(EngineMirror.self) private var mirror
+    @Environment(LibraryModel.self) private var library
+
+    static func showing(_ mirror: EngineMirror) -> Bool {
+        mirror.signInRefused || mirror.connection?.offline == true
+    }
+
+    var body: some View {
+        if mirror.signInRefused {
+            Label(EngineMirror.signInRefusedDetail, systemImage: "exclamationmark.triangle")
+                .foregroundStyle(KoanTheme.style(.bad, system: .orange))
+        } else if let connection = mirror.connection, connection.offline {
+            Label(
+                connection.offlineManual ? "Offline mode is on" : "Can't reach your server",
+                systemImage: "wifi.slash"
+            )
+            Text("Showing what is on this \(Self.device).")
+                .font(.role(.fine, system: .caption))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+            if connection.offlineManual {
+                Button("Go Online") { library.engine.setOffline(on: false) }
+            }
+        }
+    }
+
+    private static var device: String {
+        #if os(tvOS)
+        "Apple TV"
+        #else
+        UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+        #endif
     }
 }
