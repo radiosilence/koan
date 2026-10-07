@@ -1057,7 +1057,7 @@ impl KoanEngine {
     pub async fn track_info(
         self: Arc<Self>,
         track_id: i64,
-    ) -> Result<Option<TrackInfo>, KoanError> {
+    ) -> Result<Option<TrackDetails>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
             let Some(row) = queries::get_track_row(&db.conn, track_id).map_err(db_err)? else {
@@ -1101,7 +1101,7 @@ impl KoanEngine {
                     .collect()
                 })
                 .unwrap_or_default();
-            Ok(Some(TrackInfo {
+            Ok(Some(TrackDetails {
                 track,
                 uid,
                 sources,

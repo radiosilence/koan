@@ -5,7 +5,7 @@ import SwiftUI
 /// it: the file's tags, the server's entry, the ReplayGain in the file. Small
 /// and dense, for reading a value off or copying it.
 struct TrackInfoView: View {
-    let info: TrackInfo
+    let info: TrackDetails
 
     var body: some View {
         VStack(alignment: .leading, spacing: KoanTheme.Space.l) {

@@ -20,7 +20,7 @@ struct NowPlayingSheet: View {
     @State private var showingControl = false
     @State private var showingInfo = false
     /// The playing track as its info and its menu need it.
-    @State private var info: TrackInfo?
+    @State private var info: TrackDetails?
 
     var body: some View {
         VStack(spacing: 20) {
@@ -58,7 +58,7 @@ struct NowPlayingSheet: View {
         .task(id: player.currentTrackId) {
             info = nil
             guard let id = player.currentTrackId else { return }
-            info = (try? await library.engine.trackInfo(trackId: id)) ?? nil
+            info = (try? await library.engine.trackDetails(trackId: id)) ?? nil
         }
     }
 

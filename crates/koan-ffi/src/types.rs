@@ -165,7 +165,7 @@ pub struct Track {
 /// Everything known about one track, for an info view: the track as lists
 /// show it, what each of its sources says, and the ReplayGain in its file.
 #[derive(uniffi::Record, Debug, Clone)]
-pub struct TrackInfo {
+pub struct TrackDetails {
     pub track: Track,
     pub uid: Option<String>,
     /// The file's first, then the server's.
