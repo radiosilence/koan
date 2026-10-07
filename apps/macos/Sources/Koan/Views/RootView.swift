@@ -641,12 +641,7 @@ private struct ClearsTransport: ViewModifier {
 
     func body(content: Content) -> some View {
         if KoanTheme.washesWindow(appearance) {
-            // The theme's toolbar and transport sit on the wash with nothing
-            // under them, so the page stops at their edges: a row passing
-            // beneath would need a scrim or a fade to be told from their text.
-            content
-                .padding(.bottom, height)
-                .clipped()
+            content.modifier(StopsAtBars(bottom: height))
         } else {
             // Content passing under the glass is what makes it glass. The soft
             // edge fades a row out as it goes, so one half under the bar reads
@@ -657,6 +652,27 @@ private struct ClearsTransport: ViewModifier {
                 .safeAreaPadding(.bottom, height)
                 .scrollEdgeEffectStyle(glass ? .soft : .hard, for: .bottom)
         }
+    }
+}
+
+/// In the washed theme the toolbar and transport sit on the wash with nothing
+/// under them, so a page stops at their edges: a row passing beneath would
+/// need a scrim or a fade to be told from their text. The toolbar's safe area
+/// becomes real space, so the AppKit lists that scroll into a safe area find
+/// none at the top, and everything past the edges is clipped.
+private struct StopsAtBars: ViewModifier {
+    let bottom: CGFloat
+    @State private var top: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.top, top)
+            .padding(.bottom, bottom)
+            .clipped()
+            .ignoresSafeArea(.container, edges: .top)
+            .background {
+                Color.clear.onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { top = $0 }
+            }
     }
 }
 
