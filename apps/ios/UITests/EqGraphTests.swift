@@ -42,12 +42,10 @@ final class EqGraphTests: XCTestCase {
     }
 
     func testGraphEdits() throws {
-        let settings = app.tabBars.buttons[any: "Settings"]
-        if settings.waitForExistence(timeout: 10) {
-            settings.tap()
-        } else {
-            app.buttons[any: "Settings"].firstMatch.tap()
-        }
+        // The theme's tab bar is buttons of its own, not a system tab bar.
+        let settings = app.buttons[any: "Settings"]
+        XCTAssert(settings.waitForExistence(timeout: 10), "no Settings tab")
+        settings.tap()
         let eq = app.buttons[any: "EQ"]
         XCTAssert(eq.waitForExistence(timeout: 10), "no EQ in Settings")
         eq.tap()
