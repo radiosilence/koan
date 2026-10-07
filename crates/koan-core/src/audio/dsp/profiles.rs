@@ -2298,9 +2298,7 @@ pub fn set_layers(name: &str, layers: Vec<crate::config::DspLayer>) -> Result<()
     .map_err(|e| e.to_string())
 }
 
-/// Delete a profile, and the responses koan keeps for it. Refused while a
-/// stack plays it.
-/// Delete `name`. The presets and groups that hold it go on without it; an
+/// Delete `name`, and the responses kōan keeps for it. The presets and groups that hold it go on without it; an
 /// EQ that plays it refuses, since what it plays is that EQ's to say.
 pub fn remove(name: &str) -> Result<(), String> {
     let cfg = Config::cached();

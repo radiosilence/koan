@@ -63,7 +63,7 @@ impl SyncDoc {
     /// device applies it so.
     pub fn parse(json: &str) -> Result<Self, String> {
         if json.len() > MAX_DOC {
-            return Err(format!("A profile may hold at most {} KB", MAX_DOC >> 10));
+            return Err(format!("An EQ may hold at most {} KB", MAX_DOC >> 10));
         }
         let mut doc: Self =
             serde_json::from_str(json).map_err(|e| format!("Not a profile: {e}"))?;
@@ -84,15 +84,12 @@ impl SyncDoc {
             return Err("It needs a name".into());
         }
         if self.files.len() > MAX_FILES {
-            return Err(format!("A profile may hold at most {MAX_FILES} files"));
+            return Err(format!("An EQ may hold at most {MAX_FILES} files"));
         }
         let mut names = HashSet::new();
         for f in &self.files {
             if !safe_name(&f.name) {
-                return Err(format!(
-                    "{:?} is not a file name a profile may hold",
-                    f.name
-                ));
+                return Err(format!("{:?} is not a file name an EQ may hold", f.name));
             }
             if !names.insert(f.name.as_str()) {
                 return Err(format!("{} is named twice", f.name));
@@ -754,7 +751,7 @@ fn pull(
                 local.map(|l| l.paths.clone()).unwrap_or_default();
             for (renamed, old, new) in adopt(&row.uid, &doc, fetched, &reused, &synced)? {
                 let why = format!(
-                    "Renamed from “{old}”: it met a different profile of that name from another device, so each is named for where it came from"
+                    "Renamed from “{old}”: it met a different EQ of that name from another device, so each is named for where it came from"
                 );
                 log::info!("dsp sync: {old} is now {new}");
                 if let Some(uid) = renamed {

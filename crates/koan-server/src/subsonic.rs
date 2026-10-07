@@ -3722,7 +3722,7 @@ fn dsp_account(caller: &Caller) -> Result<i64, SubsonicError> {
         Via::ApiKey | Via::Password => Ok(caller.user_id),
         Via::AppPassword | Via::SharedSecret => Err(SubsonicError::new(
             SubsonicErrorCode::NotAuthorized,
-            "EQ profiles are an account's: sign in with its password or an API key",
+            "EQ is an account's: sign in with its password or an API key",
         )),
     }
 }
@@ -3880,7 +3880,7 @@ async fn koan_dsp_profile_save(
                 if !known && kept >= koan_core::remote::dsp_sync::MAX_PROFILES {
                     return Err(SubsonicError::new(
                         SubsonicErrorCode::Generic,
-                        "The account keeps as many EQ profiles as it may",
+                        "The account keeps as many EQs as it may",
                     ));
                 }
                 let named =
@@ -10822,7 +10822,7 @@ mod tests {
             &format!("uid={UID}&editedAt=1&doc={}", form_value(&doc.json())),
         )
         .await;
-        assert!(body.contains("as many EQ profiles as it may"), "{body}");
+        assert!(body.contains("as many EQs as it may"), "{body}");
     }
 
     #[tokio::test]
