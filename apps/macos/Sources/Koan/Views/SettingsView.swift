@@ -159,7 +159,7 @@ struct SettingsView: View {
         // screen, resizable, and kept at whatever size it was last given. A
         // phone gets whatever it has.
         #if os(macOS)
-        .frame(minWidth: 600, idealWidth: 820, maxWidth: .infinity, minHeight: 480, idealHeight: 780, maxHeight: .infinity)
+        .frame(minWidth: 600, idealWidth: 920, maxWidth: .infinity, minHeight: 480, idealHeight: 780, maxHeight: .infinity)
         .background(SettingsFrameAutosave())
         #endif
         #if os(macOS)
@@ -1801,6 +1801,9 @@ private struct SettingsFrameAutosave: NSViewRepresentable {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             guard let window, window.frameAutosaveName.isEmpty else { return }
+            // SwiftUI's Settings window is made without a resizable frame,
+            // whatever the scene's resizability says.
+            window.styleMask.insert(.resizable)
             window.setFrameUsingName("KoanSettings")
             window.setFrameAutosaveName("KoanSettings")
         }
