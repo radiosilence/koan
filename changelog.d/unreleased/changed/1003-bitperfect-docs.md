@@ -1,0 +1,1 @@
+- **Bit-perfect claims match the apps.** The docs, site and README say what the phone and Apple TV do with sample rates: no resampling through a USB DAC that supports the track's rate, resampled by the system on any other route.

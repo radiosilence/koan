@@ -522,8 +522,8 @@ impl Player {
             consumer,
             self.timeline.samples_played_counter(),
         )?;
-        // iOS answers 0 for a rate that belongs to the app's session, and no
-        // switch it can make is one to wait out. A new engine inside the
+        // iOS answers 0 until its session has first been activated, and no
+        // switch from an unknown rate is one to wait out. A new engine inside the
         // silence, a seek, still has the rest of the relock ahead of it.
         let now = std::time::Instant::now();
         let lead_in = if device_rate > 0.0 && (settled - device_rate).abs() > 0.1 {

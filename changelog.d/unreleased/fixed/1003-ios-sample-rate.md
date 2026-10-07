@@ -1,0 +1,1 @@
+- **iOS and tvOS ask for each track's sample rate.** The app never set a preferred rate, so a USB DAC stayed at whatever rate it last ran at and iOS resampled every track, while the format badge reported the track's own rate as the output's. The audio session is now asked for the track's rate as playback starts, and the badge shows the rate the hardware runs at.

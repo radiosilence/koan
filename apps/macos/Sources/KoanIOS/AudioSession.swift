@@ -53,13 +53,13 @@ final class AudioSession {
     /// Category and buffer size, and the notifications. Not activation: an
     /// active `.playback` session stops whatever else is playing, so it is
     /// activated only when koan plays — by the engine, through `Host`.
-    func prepare(preferredSampleRate: Double? = nil) {
-        configure(preferredSampleRate: preferredSampleRate)
+    func prepare() {
+        configure()
         observe()
     }
 
     /// Category and buffer size: also what a media services reset undoes.
-    private func configure(preferredSampleRate: Double? = nil) {
+    private func configure() {
         let session = AVAudioSession.sharedInstance()
         do {
             // `.playback` is what keeps producing audio with the screen locked
@@ -67,12 +67,6 @@ final class AudioSession {
             // the bundle, without which the process is suspended and the audio
             // thread with it.
             try session.setCategory(.playback, mode: .default, options: [])
-            if let preferredSampleRate {
-                // A request, not an instruction. iOS may answer with something
-                // else, and everything crosses the system mixer regardless —
-                // which is why koan makes no bit-perfect claim here.
-                try session.setPreferredSampleRate(preferredSampleRate)
-            }
             // Larger than the default of a few milliseconds, so the render
             // thread wakes a twentieth as often. Latency is no cost to a music
             // player — the ring holds seconds, and pause fades out anyway —
@@ -95,16 +89,26 @@ final class AudioSession {
             self.note = note
         }
 
-        /// `sampleRate` is what the output was built for. False when iOS
-        /// refuses — during a call, or from the background with no remote
-        /// command behind it — and the engine then does not start.
-        func activate(sampleRate: Double) -> Bool {
+        /// `sampleRate` is what the output was built for, asked for as the
+        /// preferred rate: a USB DAC that supports it is switched to it, while
+        /// the speaker, Bluetooth and AirPlay keep their own and RemoteIO
+        /// resamples. Answers the rate the hardware runs at, so the format
+        /// badge shows which happened; nil when iOS refuses activation —
+        /// during a call, or from the background with no remote command
+        /// behind it — and the engine then does not start.
+        func activate(sampleRate: Double) -> Double? {
+            let session = AVAudioSession.sharedInstance()
             do {
-                try AVAudioSession.sharedInstance().setActive(true)
-                return true
+                try session.setPreferredSampleRate(sampleRate)
+            } catch {
+                note("audio session refused \(sampleRate) Hz: \(error)")
+            }
+            do {
+                try session.setActive(true)
+                return session.sampleRate
             } catch {
                 note("audio session refused activation: \(error)")
-                return false
+                return nil
             }
         }
 
@@ -116,9 +120,6 @@ final class AudioSession {
             }
         }
     }
-
-    /// What the session settled on, as against what was asked for.
-    var sampleRate: Double { AVAudioSession.sharedInstance().sampleRate }
 
     private func observe() {
         let centre = NotificationCenter.default

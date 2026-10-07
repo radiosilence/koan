@@ -212,6 +212,9 @@ impl AudioEngine {
 
         // Set stream format on the input scope of the output element.
         // This tells the AudioUnit what format we'll provide in the render callback.
+        // On iOS that stays the rate of the samples: RemoteIO converts to the
+        // hardware rate the session granted when the two differ, and does no
+        // conversion when the session was granted this rate.
         let bytes_per_sample = mem::size_of::<f32>() as u32;
         let asbd = AudioStreamBasicDescription {
             mSampleRate: sample_rate,

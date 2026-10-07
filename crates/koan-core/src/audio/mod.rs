@@ -12,7 +12,10 @@ pub mod dsp;
 #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos"))]
 pub mod engine;
 pub mod fade;
-#[cfg(any(target_os = "ios", target_os = "tvos"))]
+// Built on macOS for its tests: the rate it reports is the session's, and that
+// logic needs no phone.
+#[cfg(any(target_os = "ios", target_os = "tvos", all(test, target_os = "macos")))]
+#[cfg_attr(not(any(target_os = "ios", target_os = "tvos")), allow(dead_code))]
 pub mod ios_backend;
 pub mod opus;
 pub mod replaygain;
