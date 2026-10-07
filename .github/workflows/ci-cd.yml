@@ -31,6 +31,7 @@ jobs:
       code: ${{ steps.filter.outputs.code }}
       docker: ${{ steps.filter.outputs.docker }}
       package: ${{ steps.filter.outputs.package }}
+      macos: ${{ steps.filter.outputs.macos }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -38,6 +39,7 @@ jobs:
       - id: filter
         env:
           EVENT: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
         # Only a change to something that feeds a build is worth two operating
         # systems and three toolchains. Prose, plans and the licence are not.
         #
@@ -48,6 +50,7 @@ jobs:
           code=true
           docker=true
           package=true
+          macos=true
           if [ "$EVENT" = "pull_request" ]; then
             # HEAD is the merge commit GitHub built for this PR and its first
             # parent is the base branch, so this is exactly the PR's diff. If it
@@ -70,6 +73,41 @@ jobs:
               if ! printf '%s\n' "$files" | grep -qE '^deploy/'; then
                 package=false
               fi
+              # The macOS runners are few. A pull request holds one only when
+              # it touches what the Linux jobs cannot see: the apps and the FFI
+              # they link, or Rust that is compiled for Apple platforms alone.
+              # A shared change that breaks only on macOS is then caught by the
+              # release pull request, which runs everything.
+              version_of() { sed -n 's/^version = "\(.*\)"/\1/p' | head -1; }
+              release=false
+              case "$HEAD_REF" in release-*) release=true ;; esac
+              if [ "$(git show HEAD^1:Cargo.toml | version_of)" != "$(version_of < Cargo.toml)" ]; then
+                release=true
+              fi
+              if [ "$release" = false ]; then
+                macos=false
+                # The apps, the FFI and its bindings generator; the recipes that
+                # build them; dependencies and toolchains, whose Apple-only
+                # crates the Linux jobs never compile; and the workflows, so a
+                # change to this gating runs what it gates.
+                native='^apps/|^crates/koan-ffi/|^tools/uniffi-bindgen/|^justfile$|^Cargo\.lock$|^\.cargo/|^rust-toolchain|^mise\.toml$|^\.github/workflows/'
+                # Modules declared for Apple targets only, whose own source
+                # names no target.
+                native="$native"'|^crates/koan-core/src/audio/(coreaudio_backend|device|engine|ios_backend|toolbox)\.rs$'
+                if printf '%s\n' "$files" | grep -E "$native" | grep -qvE '\.md$'; then
+                  macos=true
+                fi
+                # Any other Rust source or manifest with code for an Apple
+                # target, as it stands now or as it stood before (a deletion).
+                apple='target_os = "(macos|ios|tvos)"|target_vendor = "apple"'
+                for f in $(printf '%s\n' "$files" | grep -E '\.(rs|toml)$' || true); do
+                  if { git show "HEAD:$f" 2>/dev/null; git show "HEAD^1:$f" 2>/dev/null; } | grep -qE "$apple"; then
+                    macos=true
+                    break
+                  fi
+                done
+              fi
+              echo "macOS jobs: $macos (release: $release)"
               printf '%s\n' "$files" | sed 's/^/  /'
             fi
           fi
@@ -77,6 +115,7 @@ jobs:
             echo "code=$code"
             echo "docker=$docker"
             echo "package=$package"
+            echo "macos=$macos"
           } >> "$GITHUB_OUTPUT"
 
   fmt:
@@ -145,7 +184,10 @@ jobs:
 
   clippy:
     name: Clippy (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    # A macOS entry with nothing for it to check runs on Linux with its
+    # steps skipped: the check it reports is still the one the ruleset
+    # requires, and no macOS runner is held for it.
+    runs-on: ${{ matrix.os == 'macos-latest' && needs.changes.outputs.macos != 'true' && 'ubuntu-latest' || matrix.os }}
     needs: changes
     timeout-minutes: 45
     concurrency:
@@ -162,7 +204,7 @@ jobs:
     # contexts the ruleset requires never appear and the pull request waits
     # on them forever. The job starts; its steps are what the filter stops.
     env:
-      RUN: ${{ needs.changes.outputs.code }}
+      RUN: ${{ needs.changes.outputs.code == 'true' && (matrix.os != 'macos-latest' || needs.changes.outputs.macos == 'true') }}
     steps:
       - if: env.RUN == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -182,7 +224,10 @@ jobs:
 
   test:
     name: Test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    # A macOS entry with nothing for it to check runs on Linux with its
+    # steps skipped: the check it reports is still the one the ruleset
+    # requires, and no macOS runner is held for it.
+    runs-on: ${{ matrix.os == 'macos-latest' && needs.changes.outputs.macos != 'true' && 'ubuntu-latest' || matrix.os }}
     needs: changes
     timeout-minutes: 45
     concurrency:
@@ -196,7 +241,7 @@ jobs:
     # contexts the ruleset requires never appear and the pull request waits
     # on them forever. The job starts; its steps are what the filter stops.
     env:
-      RUN: ${{ needs.changes.outputs.code }}
+      RUN: ${{ needs.changes.outputs.code == 'true' && (matrix.os != 'macos-latest' || needs.changes.outputs.macos == 'true') }}
     steps:
       - if: env.RUN == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -218,7 +263,10 @@ jobs:
 
   build:
     name: Build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    # A macOS entry with nothing for it to check runs on Linux with its
+    # steps skipped: the check it reports is still the one the ruleset
+    # requires, and no macOS runner is held for it.
+    runs-on: ${{ matrix.os == 'macos-latest' && needs.changes.outputs.macos != 'true' && 'ubuntu-latest' || matrix.os }}
     needs: changes
     timeout-minutes: 45
     concurrency:
@@ -237,7 +285,7 @@ jobs:
     # contexts the ruleset requires never appear and the pull request waits
     # on them forever. The job starts; its steps are what the filter stops.
     env:
-      RUN: ${{ needs.changes.outputs.code }}
+      RUN: ${{ needs.changes.outputs.code == 'true' && (matrix.os != 'macos-latest' || needs.changes.outputs.macos == 'true') }}
     steps:
       - if: env.RUN == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -273,7 +321,7 @@ jobs:
     # On main, only for a release: the pull request built it already, and a
     # release needs it (`create-macos-app` packages this build). Kept to
     # pull requests otherwise, and to manual runs.
-    if: ${{ !cancelled() && needs.changes.outputs.code == 'true' && (github.event_name != 'push' || needs.check-version.outputs.should_release == 'true') }}
+    if: ${{ !cancelled() && needs.changes.outputs.code == 'true' && needs.changes.outputs.macos == 'true' && (github.event_name != 'push' || needs.check-version.outputs.should_release == 'true') }}
     timeout-minutes: 45
     concurrency:
       group: macos-app-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
@@ -320,7 +368,7 @@ jobs:
     runs-on: macos-latest
     needs: [changes, check-version]
     # On main, only for a release: the pull request built it already.
-    if: ${{ !cancelled() && needs.changes.outputs.code == 'true' && (github.event_name != 'push' || needs.check-version.outputs.should_release == 'true') }}
+    if: ${{ !cancelled() && needs.changes.outputs.code == 'true' && needs.changes.outputs.macos == 'true' && (github.event_name != 'push' || needs.check-version.outputs.should_release == 'true') }}
     timeout-minutes: 45
     concurrency:
       group: tvos-app-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}

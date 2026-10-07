@@ -225,14 +225,14 @@ struct EqSettings: View {
                 LabeledContent("Changed since \(preset)") {
                     HStack {
                         Button("Save") { save(as: preset, over: true) }
-                            .koanButton(.secondary)
+                            .koanButton(.compact)
                         Button("Save as New…") { ask("Save as New Preset") }
                             .koanButton(.text)
                     }
                 }
             } else if o.preset == nil, !flat {
                 Button("Save as Preset…") { ask("Save as Preset") }
-                    .koanButton(.secondary)
+                    .koanButton(.compact)
             }
             if let refusal {
                 Text(refusal).koanText(.fine, .bad)
@@ -674,11 +674,11 @@ struct StagePicker: View {
                 }
                 Section {
                     Button("Import a File…") { add(.importing) }
-                        .koanButton(.secondary)
+                        .koanButton(.standard)
                     Button("Find in AutoEQ…") { add(.autoEq) }
-                        .koanButton(.secondary)
+                        .koanButton(.standard)
                     Button("Use a Measurement or squig.link…") { add(.measuring) }
-                        .koanButton(.secondary)
+                        .koanButton(.standard)
                 } header: {
                     KoanSectionHeader("Add…")
                 }
@@ -730,7 +730,7 @@ struct StagePicker: View {
                     .koanText(.meta, .muted)
                 if c.rates.isEmpty, c.layers == 0 {
                     Button("Split into Correction + Tuning…") { add(.splitting(name)) }
-                        .koanButton(.secondary)
+                        .koanButton(.compact)
                 }
             }
         } header: {

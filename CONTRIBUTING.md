@@ -91,6 +91,15 @@ lays out everything mounted in it. Two things follow:
 ends quickly followed by a hang on the main thread is the page being laid out,
 not read.
 
+### Designing a screen
+
+The apps' look is set down in [docs/design/koan-theme.md](docs/design/koan-theme.md),
+and its [rules](docs/design/koan-theme.md#rules) apply to every new screen: one
+prominent action, shared edges and one spacing scale, no system chrome in the
+kōan look, and dense views for technical data. Views name roles from
+`Support/KoanTheme.swift` rather than colours, fonts or materials;
+`just theme-leaks` finds the ones that do not.
+
 ## Submitting a PR
 
 1. Fork the repo and create a feature branch.
@@ -105,6 +114,15 @@ a build — `crates/`, `apps/`, `Cargo.toml`, `Cargo.lock`, `.cargo/`, `justfile
 skipped, which counts as passing. Adding a new top-level source directory means
 adding it to the `changes` job in `.github/workflows/ci-cd.yml`, or CI will sit
 the PR out.
+
+The macOS jobs (Test, Clippy and Build on macOS, and the macOS and tvOS app
+builds) run on a PR only when it touches what the Linux jobs cannot check: the
+apps, `koan-ffi`, the bindings generator, `justfile`, dependencies or
+toolchains, the workflows, or a Rust file with code for an Apple target
+(`target_os = "macos"`, `"ios"`, `"tvos"`, or a module declared for Apple
+only). Otherwise the macOS checks report success without running. A release PR
+(branch `release-*`, or one that changes the version) runs everything, so a
+change to shared Rust that breaks only on macOS is caught there at the latest.
 
 ## Architecture
 

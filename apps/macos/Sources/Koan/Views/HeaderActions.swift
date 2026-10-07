@@ -52,7 +52,8 @@ struct HeaderActions: View {
                 }
             }
         }
-        // The theme's secondary buttons; the platform's own otherwise.
-        .koanButtons(.secondary)
+        // Compact beside the header's one prominent action, Play; the
+        // platform's own buttons otherwise.
+        .koanButtons(.compact)
     }
 }

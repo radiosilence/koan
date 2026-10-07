@@ -73,6 +73,8 @@ fn frame(f: &ProofFrame) -> Option<String> {
 struct Conn {
     outbox: Vec<Envelope>,
     waker: Arc<Waker>,
+    /// Who the listener proved to be, if it proved anything.
+    proven: Option<proof::Peer>,
 }
 
 static CONNS: Mutex<Option<HashMap<String, Conn>>> = Mutex::new(None);
@@ -540,7 +542,8 @@ pub fn listening_port() -> Option<u16> {
 }
 
 /// Queue `cmd` for the device `id` on its local connection. False when there
-/// is none.
+/// is none, or when `id` is one of the account's devices or one shared with
+/// it and the listener has not proved it is that device.
 pub fn send(id: &str, cmd: LinkCommand) -> bool {
     send_envelope(id, cmd.into())
 }
@@ -557,10 +560,24 @@ pub fn send_acked(id: &str, cmd: LinkCommand, ack: u64) -> bool {
 }
 
 fn send_envelope(id: &str, envelope: Envelope) -> bool {
+    // Asked before the connections are held: the device store is not to be
+    // locked under them.
+    queue(id, devices::listed_owner(id), envelope)
+}
+
+/// `send_envelope`, for a device the server lists as `listed`.
+fn queue(id: &str, listed: Option<Option<String>>, envelope: Envelope) -> bool {
     let mut conns = CONNS.lock();
     let Some(conn) = conns.as_mut().and_then(|c| c.get_mut(id)) else {
         return false;
     };
+    // Anyone on the network can say it is the account's phone. What is meant
+    // for one of the account's devices, or one shared with it, goes only to a
+    // listener that proved it is that device; otherwise by the link.
+    if !proven_as_listed(listed, conn.proven.as_ref()) {
+        log::info!("nearby: {id} has not proved it is that device; not sent here");
+        return false;
+    }
     conn.outbox.push(envelope);
     conn.waker.wake();
     true
@@ -1003,6 +1020,7 @@ fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>, redial: Arc<Atomic
                     this_device: false,
                     duplicate: false,
                     handshake: Handshake::Plain,
+                    proven: None,
                     pending: Vec::new(),
                 };
                 let result = wire::drive(&mut socket, fd, &waker, &mut session);
@@ -1111,6 +1129,8 @@ struct Controlling<'a> {
     /// Already connected to this device another way: announced and typed in.
     duplicate: bool,
     handshake: Handshake,
+    /// Who the listener proved to be, if it proved anything.
+    proven: Option<proof::Peer>,
     /// Proof frames to send.
     pending: Vec<String>,
 }
@@ -1172,8 +1192,14 @@ impl Controlling<'_> {
         log::info!(
             "nearby: {listener} {} us; it proved itself: {:?}",
             if verified { "took" } else { "did not take" },
-            listener_is.map(|p| p.peer)
+            listener_is.as_ref().map(|p| &p.peer)
         );
+        self.proven = listener_is.map(|p| p.peer);
+        if let Some(id) = &self.id
+            && let Some(conn) = CONNS.lock().as_mut().and_then(|c| c.get_mut(id))
+        {
+            conn.proven = self.proven.clone();
+        }
         self.handshake = if verified {
             Handshake::Signed(proof::Session::new(listener, me, listen_nonce, dial_nonce))
         } else {
@@ -1242,6 +1268,7 @@ impl wire::Session for Controlling<'_> {
                     Conn {
                         outbox: Vec::new(),
                         waker: self.waker.clone(),
+                        proven: None,
                     },
                 );
                 self.id = Some(hello.id.clone());
@@ -1272,7 +1299,15 @@ impl wire::Session for Controlling<'_> {
                     crate::remote::levels::remote().received(id, f);
                 }
             }
-            Ok(LinkReport::Ack { ack, outcome }) => crate::remote::acks::resolve(ack, outcome),
+            Ok(LinkReport::Ack { ack, outcome }) => {
+                let Some(id) = &self.id else { return };
+                if proven_as_listed(devices::listed_owner(id), self.proven.as_ref()) {
+                    crate::remote::acks::resolve(ack, id, outcome);
+                } else {
+                    // The link, which the server vouches for, answers instead.
+                    log::warn!("nearby: an answer from {id}, which did not prove it is; ignored");
+                }
+            }
             Ok(_) => {}
             Err(e) => log::debug!("nearby: not a report ({e})"),
         }
@@ -1280,6 +1315,19 @@ impl wire::Session for Controlling<'_> {
 
     fn done(&self) -> bool {
         self.this_device || self.duplicate || self.stop.stopped()
+    }
+}
+
+/// Whether a listener is the device it said it is in its `Hello`, which
+/// anyone can say, as far as commands to it and answers from it go. One of
+/// the account's devices (`listed` is `Some(None)`) or one shared with it
+/// (`Some(Some(owner))`) must have proved it is that device, under that
+/// account; a stranger's word is all there is of a stranger.
+fn proven_as_listed(listed: Option<Option<String>>, proven: Option<&proof::Peer>) -> bool {
+    match listed {
+        None => true,
+        Some(None) => proven == Some(&proof::Peer::Own),
+        Some(Some(owner)) => matches!(proven, Some(proof::Peer::Shared(o)) if *o == owner),
     }
 }
 
@@ -2187,5 +2235,59 @@ mod admit_tests {
             admit(real, |cmd| cmd.from_the_network(false), |_, _| {}),
             Admitted::Command(LinkCommand::Pause, _, Some(_))
         ));
+    }
+}
+
+#[cfg(test)]
+mod proof_tests {
+    use super::*;
+    use crate::remote::proof::Peer;
+
+    #[test]
+    fn a_listed_devices_name_needs_its_proof() {
+        // A stranger is taken at its word: there is nothing else.
+        assert!(proven_as_listed(None, None));
+        // The account's own phone, proven, and an impostor using its id.
+        assert!(proven_as_listed(Some(None), Some(&Peer::Own)));
+        assert!(!proven_as_listed(Some(None), None));
+        assert!(!proven_as_listed(
+            Some(None),
+            Some(&Peer::Shared("b".into()))
+        ));
+        // A device shared by account b, proven as b's, and not as another's.
+        let shared = || Some(Some("b".to_string()));
+        assert!(proven_as_listed(shared(), Some(&Peer::Shared("b".into()))));
+        assert!(!proven_as_listed(shared(), Some(&Peer::Shared("c".into()))));
+        assert!(!proven_as_listed(shared(), Some(&Peer::Own)));
+        assert!(!proven_as_listed(shared(), None));
+    }
+
+    #[test]
+    fn a_listed_device_is_sent_nothing_until_it_proves_it_is_that_device() {
+        let id = "impostor-of-the-phone";
+        let waker = Waker::new().unwrap();
+        CONNS.lock().get_or_insert_with(HashMap::new).insert(
+            id.into(),
+            Conn {
+                outbox: Vec::new(),
+                waker,
+                proven: None,
+            },
+        );
+        let outbox = || CONNS.lock().as_ref().unwrap()[id].outbox.len();
+
+        // Claiming the account's phone's id, unproven: nothing goes, so the
+        // sender takes the link.
+        assert!(!queue(id, Some(None), LinkCommand::Pause.into()));
+        assert_eq!(outbox(), 0);
+        // A stranger, as it always was.
+        assert!(queue(id, None, LinkCommand::Pause.into()));
+        assert_eq!(outbox(), 1);
+        // Proven as the account's own.
+        CONNS.lock().as_mut().unwrap().get_mut(id).unwrap().proven = Some(Peer::Own);
+        assert!(queue(id, Some(None), LinkCommand::Pause.into()));
+        assert_eq!(outbox(), 2);
+
+        CONNS.lock().as_mut().unwrap().remove(id);
     }
 }

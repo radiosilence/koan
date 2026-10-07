@@ -58,10 +58,10 @@ struct SignInPage: View {
             HStack(spacing: 32) {
                 if pairing != nil {
                     Button("Another Server") { cancel() }
-                        .koanButton(.secondary)
+                        .koanButton(.standard)
                 }
                 Button("Use a Password or API Key") { manual = true }
-                    .koanButton(.secondary)
+                    .koanButton(.standard)
             }
         }
         .padding(80)
@@ -162,7 +162,7 @@ struct SignInPage: View {
                     .frame(width: 240)
             } else {
                 Button("Get a Code", action: start)
-                    .koanButton(.primary)
+                    .koanButton(.prominent)
                     .disabled(server.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }

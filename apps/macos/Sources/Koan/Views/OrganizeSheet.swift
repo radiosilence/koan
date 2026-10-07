@@ -83,15 +83,15 @@ struct OrganizeSheet: View {
                     // They are handed back to Close and Move on the way out.
                     Button("Cancel") { organize.cancelEditing() }
                         .shortcut(.cancelAction)
-                        .koanButton(.secondary)
+                        .koanButton(.compact)
                     Button("Save") { organize.saveEditing() }
                         .shortcut(.defaultAction)
-                        .koanButton(.primary)
+                        .koanButton(.prominent)
                         .disabled(!organize.isModified)
                         .help("Store this pattern in config.toml under its name")
                 } else {
                     Button("Edit") { organize.beginEditing() }
-                        .koanButton(.secondary)
+                        .koanButton(.standard)
                         .disabled(organize.patternName == nil)
                 }
             }
@@ -190,10 +190,10 @@ struct OrganizeSheet: View {
                 dismiss()
             }
             .shortcut(organize.editing ? nil : .cancelAction)
-            .koanButton(.secondary)
+            .koanButton(.standard)
             Button(runTitle) { organize.run() }
                 .shortcut(organize.editing ? nil : .defaultAction)
-                .koanButton(.primary)
+                .koanButton(.prominent)
                 .disabled(!canRun)
         }
         .padding(.horizontal, 18)

@@ -38,11 +38,11 @@ struct ManageEq: View {
             #if !os(tvOS)
             Section {
                 Button("Import a File…") { importing = true }
-                    .koanButton(.secondary)
+                    .koanButton(.standard)
                 Button("Find in AutoEQ…") { finding = AutoEqFind(query: "") }
-                    .koanButton(.secondary)
+                    .koanButton(.standard)
                 Button("Use a Measurement or squig.link…") { measuring = true }
-                    .koanButton(.secondary)
+                    .koanButton(.standard)
                 if let summary = dsp.importSummary {
                     Text(summary).koanText(.fine, .muted)
                 }
@@ -204,7 +204,7 @@ struct ManageEq: View {
 
     private func summary(_ p: DspProfileSummary) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(p.name)
                 if p.edited {
                     Text("Edited").koanText(.fine, .muted)

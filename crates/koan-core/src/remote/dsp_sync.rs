@@ -46,6 +46,25 @@ pub const MAX_DISMISSED: i64 = 1024;
 pub struct SyncDoc {
     pub profile: DspProfile,
     pub files: Vec<SyncFile>,
+    /// The profile's fields a newer kōan wrote that this one does not know:
+    /// kept and written back, so a server or a device in between loses none.
+    #[serde(skip)]
+    pub unknown: serde_json::Map<String, serde_json::Value>,
+}
+
+/// A document as written, its profile's unknown fields set apart.
+#[derive(Deserialize)]
+struct Wire {
+    profile: WireProfile,
+    files: Vec<SyncFile>,
+}
+
+#[derive(Deserialize)]
+struct WireProfile {
+    #[serde(flatten)]
+    known: DspProfile,
+    #[serde(flatten)]
+    unknown: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,8 +84,12 @@ impl SyncDoc {
         if json.len() > MAX_DOC {
             return Err(format!("An EQ may hold at most {} KB", MAX_DOC >> 10));
         }
-        let mut doc: Self =
-            serde_json::from_str(json).map_err(|e| format!("Not a profile: {e}"))?;
+        let wire: Wire = serde_json::from_str(json).map_err(|e| format!("Not a profile: {e}"))?;
+        let mut doc = Self {
+            profile: wire.profile.known,
+            files: wire.files,
+            unknown: wire.profile.unknown,
+        };
         doc.profile.sanitize();
         doc.profile.devices.clear();
         doc.profile.scope = None;
@@ -126,13 +149,28 @@ impl SyncDoc {
             .sum()
     }
 
+    /// As it travels: what this kōan knows, with the fields a newer one
+    /// wrote, laid out the same way whether there are any.
     pub fn json(&self) -> String {
-        serde_json::to_string(self).expect("a profile serialises")
+        let mut value = serde_json::to_value(self).expect("a profile serialises");
+        if let Some(profile) = value.get_mut("profile").and_then(|p| p.as_object_mut()) {
+            for (key, field) in &self.unknown {
+                profile.entry(key.clone()).or_insert_with(|| field.clone());
+            }
+        }
+        value.to_string()
     }
 
-    /// What tells two versions apart.
+    /// What tells two versions apart: the fields this kōan knows, which are
+    /// all a device keeps. A field from a newer kōan is never kept here, so
+    /// counting it would make every copy taken read as edited here, and be
+    /// sent back without it.
     pub fn hash(&self) -> String {
-        sha256_hex(self.json().as_bytes())
+        sha256_hex(
+            serde_json::to_string(self)
+                .expect("a profile serialises")
+                .as_bytes(),
+        )
     }
 }
 
@@ -228,6 +266,7 @@ pub fn doc_of(profile: &DspProfile) -> Result<(SyncDoc, HashMap<String, PathBuf>
     let doc = SyncDoc {
         profile: travelling,
         files,
+        unknown: Default::default(),
     };
     doc.check()?;
     Ok((doc, paths))
@@ -273,7 +312,11 @@ fn same(a: &SyncDoc, b: &SyncDoc, member: &dyn Fn(&str) -> Option<SyncDoc>, dept
     };
     // What the correction aims at, and whether its layers play together or
     // one at a time, change the sound as much as any band.
-    if !preamp || pa.target != pb.target || pa.measurement != pb.measurement || pa.group != pb.group
+    if !preamp
+        || pa.target != pb.target
+        || pa.measurement != pb.measurement
+        || pa.group != pb.group
+        || pa.tuned_for != pb.tuned_for
     {
         return false;
     }
@@ -1575,7 +1618,50 @@ mod tests {
                 ..Default::default()
             },
             files,
+            unknown: Default::default(),
         }
+    }
+
+    /// A field a newer kōan wrote is kept through a parse and written back,
+    /// so a server or device in between loses none.
+    #[test]
+    fn a_newer_field_is_passed_on() {
+        let json = r#"{"profile":{"name":"Warm","filters":[],"impulses":[],"devices":[],"source":[],"layers":[],"from_the_future":{"a":1}},"files":[]}"#;
+        let doc = SyncDoc::parse(json).unwrap();
+        assert_eq!(doc.profile.name, "Warm");
+        assert_eq!(
+            doc.unknown.get("from_the_future"),
+            Some(&serde_json::json!({"a": 1}))
+        );
+        let again = SyncDoc::parse(&doc.json()).unwrap();
+        assert_eq!(again, doc);
+        assert!(doc.json().contains("from_the_future"));
+    }
+
+    /// A copy taken from the server with a field from a newer kōan is not
+    /// an edit here, so it is never sent back without that field.
+    #[test]
+    fn a_newer_field_is_not_an_edit() {
+        let _guard = lock();
+        let server = Server::new();
+        let (a, b) = (Device::new(), Device::new());
+        a.on();
+        Config::persist(|c| c.dsp.profiles.push(headphone())).unwrap();
+        a.sync(&server);
+        let (uid, json) = rows::live_docs(&server.conn, USER).unwrap().pop().unwrap();
+        let mut newer: serde_json::Value = serde_json::from_str(&json).unwrap();
+        newer["profile"]["from_the_future"] = serde_json::json!({"a": 1});
+        server.save(&uid, now_ms() + 1, &newer.to_string()).unwrap();
+        for device in [&a, &b, &a, &b] {
+            let synced = device.sync(&server);
+            assert_eq!(synced.sent, 0, "{synced:?}");
+        }
+        let (_, kept) = rows::live_docs(&server.conn, USER).unwrap().pop().unwrap();
+        assert!(kept.contains("from_the_future"), "{kept}");
+        assert_eq!(
+            b.profile("HD 650 (AutoEQ, oratory1990)").unwrap().filters,
+            vec![band(3.0)]
+        );
     }
 
     /// What two profiles play, not how they are written down.
@@ -1616,6 +1702,19 @@ mod tests {
                 &none
             ),
             "one measurement corrected to two targets"
+        );
+        let tuned = |target: &str| {
+            let mut d = a.clone();
+            d.profile.tuned_for = Some(target.into());
+            d
+        };
+        assert!(
+            !sounds_same(
+                &tuned("harman-over-ear-2018"),
+                &tuned("diffuse-field-gras-kemar"),
+                &none
+            ),
+            "one tuning made against two targets"
         );
         let mut grouped = a.clone();
         grouped.profile.group = true;
@@ -1672,6 +1771,7 @@ mod tests {
                 sha256: "a".repeat(64),
                 size: 1,
             }],
+            unknown: Default::default(),
         };
         for bad in ["../config.toml", ".hidden", "a/b", ""] {
             assert!(SyncDoc::parse(&doc(bad).json()).is_err(), "{bad:?}");
