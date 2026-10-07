@@ -35,6 +35,24 @@ pub struct Connection {
     pub since: Option<i64>,
 }
 
+/// A device disconnected from Settings and held off: its address, and its
+/// name when it proved who it is.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Held {
+    pub addr: String,
+    pub name: Option<String>,
+}
+
+pub fn held() -> Vec<Held> {
+    nearby::held()
+        .into_iter()
+        .map(|(addr, id)| Held {
+            name: id.as_deref().and_then(devices::name_of),
+            addr,
+        })
+        .collect()
+}
+
 pub fn list() -> Vec<Connection> {
     let mut out = Vec::new();
     if let Some(since) = devices::linked_since() {

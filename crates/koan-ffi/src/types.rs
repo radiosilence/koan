@@ -2450,6 +2450,17 @@ pub struct ConnectionInfo {
     /// Who is connected to this device and whom it is connected to: see
     /// `koan_core::remote::connections`.
     pub connections: Vec<ConnectedInfo>,
+    /// Devices disconnected from Settings, held off until allowed back.
+    pub held: Vec<HeldInfo>,
+}
+
+/// A device disconnected from Settings and held off.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct HeldInfo {
+    /// What `allow_held` takes.
+    pub addr: String,
+    /// Its name, when it proved who it is.
+    pub name: Option<String>,
 }
 
 /// A connection to this device or from it.

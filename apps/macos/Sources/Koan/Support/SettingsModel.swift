@@ -70,6 +70,11 @@ final class SettingsModel {
         }
     }
 
+    /// Let a disconnected device back in.
+    func allowHeld(_ held: HeldInfo) {
+        engine.allowHeld(addr: held.addr)
+    }
+
     // MARK: - Play queue on the server
 
     /// What the server holds, asked before keeping the queue there: that

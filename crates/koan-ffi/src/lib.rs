@@ -2400,6 +2400,12 @@ impl KoanEngine {
         koan_core::remote::nearby::end(key);
     }
 
+    /// Let a device disconnected with `end_connection` back in, by the
+    /// address `HeldInfo` gives.
+    pub fn allow_held(&self, addr: String) {
+        koan_core::remote::nearby::release_addr(&addr);
+    }
+
     /// Control the device `id`, or this one with `None`. Picking a device is
     /// picking where music plays: this one pauses, and the transport, the
     /// queue and what is playing all show that device until another is
@@ -6557,6 +6563,13 @@ fn connection_info() -> ConnectionInfo {
                     },
                     since: c.since,
                 }
+            })
+            .collect(),
+        held: koan_core::remote::connections::held()
+            .into_iter()
+            .map(|h| HeldInfo {
+                addr: h.addr,
+                name: h.name,
             })
             .collect(),
     }

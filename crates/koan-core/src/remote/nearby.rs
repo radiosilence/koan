@@ -142,6 +142,8 @@ pub fn sessions() -> Vec<Session> {
 struct Held {
     addr: String,
     id: Option<String>,
+    /// It proved it is the device `id` names.
+    proven: bool,
 }
 
 /// Devices disconnected from Settings, held off until the person reaches
@@ -169,6 +171,7 @@ pub fn end(key: u64) {
         .map(|i| Held {
             addr: i.session.addr.clone(),
             id: i.session.id.clone(),
+            proven: i.session.proven.is_some(),
         })
     else {
         return;
@@ -191,18 +194,39 @@ pub fn end(key: u64) {
     devices::touch();
 }
 
+/// The devices held off: each address, and the id it proved if it proved one.
+pub fn held() -> Vec<(String, Option<String>)> {
+    HELD.lock()
+        .iter()
+        .map(|h| (h.addr.clone(), h.id.clone().filter(|_| h.proven)))
+        .collect()
+}
+
 /// The person has reached for `id` again, playing on it or picking it: it is
 /// no longer held off, and is dialled at once.
 pub fn release(id: &str) {
-    let before = {
+    release_where(|h| h.id.as_deref() == Some(id));
+}
+
+/// Let the device held off at `addr` back in, as Allow in Settings does.
+pub fn release_addr(addr: &str) {
+    release_where(|h| h.addr == addr);
+}
+
+fn release_where(matches: impl Fn(&Held) -> bool) {
+    let released: Vec<Held> = {
         let mut held = HELD.lock();
-        let before = held.len();
-        held.retain(|h| h.id.as_deref() != Some(id));
-        before != held.len()
+        let (out, kept) = held.drain(..).partition(|h| matches(h));
+        *held = kept;
+        out
     };
-    if before {
+    if released.is_empty() {
+        return;
+    }
+    for id in released.iter().filter_map(|h| h.id.as_deref()) {
         redial_device(id, "");
     }
+    devices::touch();
 }
 
 /// Whether connections from `ip` are refused.
@@ -2792,8 +2816,19 @@ mod tests {
         drop(listed);
         assert!(sessions().iter().all(|s| s.key != Some(key)));
 
+        // Its id was only its word: listed by address.
+        assert!(held().contains(&("192.0.2.77".into(), None)));
         release("held-phone");
         assert!(!held_id("held-phone"));
+        assert!(!held_addr(&addr.ip()));
+
+        // Held before it said who it is: only Allow, by address, lets it in.
+        let (listed, _) = Listed::new(&addr, &waker);
+        end(listed.0);
+        drop(listed);
+        release("held-phone");
+        assert!(held_addr(&addr.ip()));
+        release_addr("192.0.2.77");
         assert!(!held_addr(&addr.ip()));
     }
 

@@ -1505,7 +1505,8 @@ private struct DevicesSettings: View {
     @ViewBuilder private var connected: some View {
         let connections = mirror.connection?.connections ?? []
         let refused = model.settings.devicesRefused
-        if !connections.isEmpty || !refused.isEmpty {
+        let held = mirror.connection?.held ?? []
+        if !connections.isEmpty || !refused.isEmpty || !held.isEmpty {
             Section {
                 // By place: two of the account's devices can share a name and
                 // have nothing else to tell them apart.
@@ -1526,6 +1527,21 @@ private struct DevicesSettings: View {
                         }
                     }
                 }
+                ForEach(held, id: \.addr) { h in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            if let name = h.name {
+                                Text(name)
+                            } else {
+                                Text(h.addr).monospaced()
+                            }
+                            Text("Disconnected until allowed back").koanText(.fine, .muted)
+                        }
+                        Spacer()
+                        Button("Allow") { model.allowHeld(h) }
+                            .koanButton(.bordered, system: .borderless)
+                    }
+                }
                 ForEach(refused, id: \.self) { addr in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
@@ -1540,7 +1556,7 @@ private struct DevicesSettings: View {
             } header: {
                 KoanSectionHeader("Connected now")
             } footer: {
-                Text("A device that can control this one uses its battery while it does. Disconnect hangs up a device on this network and keeps it from connecting again, and this device from connecting to it, until you play on it, pick it in Play on, or kōan restarts. Refuse keeps a device that has not proved it is yours out for good, by its address. Your account's devices reach this one through the server for as long as they are signed in; revoke one under Server.")
+                Text("A device that can control this one uses its battery while it does. Disconnect hangs up a device on this network and keeps it from connecting again, and this device from connecting to it, until you allow it back here, play on it, pick it in Play on, or kōan restarts. Refuse keeps a device that has not proved it is yours out for good, by its address. Your account's devices reach this one through the server for as long as they are signed in; revoke one under Server.")
                     .koanText(.fine, .muted)
             }
         }
