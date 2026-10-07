@@ -458,6 +458,7 @@ pub fn evict_cache(
     }
     remove_empty_dirs(&cfg.cache_dir());
     if freed > 0 {
+        cache_shrank(freed as u64);
         log::info!("cache eviction freed {freed} bytes");
     }
     freed as u64
@@ -512,7 +513,37 @@ fn remove_empty_dirs(dir: &Path) {
     }
 }
 
-/// Bytes currently held in the download cache.
+/// Bytes in the download cache, as front ends show it: measured whole by
+/// `measure_cache` at startup and on a clear, and kept between them by what
+/// lands and leaves, so a reading never walks the disk.
+static CACHE_BYTES: AtomicU64 = AtomicU64::new(0);
+
+pub fn cache_bytes() -> u64 {
+    CACHE_BYTES.load(Ordering::Relaxed)
+}
+
+/// Walk the cache and take what it holds as the count.
+pub fn measure_cache(cfg: &Config) -> u64 {
+    let bytes = cache_size_bytes(cfg);
+    CACHE_BYTES.store(bytes, Ordering::Relaxed);
+    crate::signal::engine_changed().bump();
+    bytes
+}
+
+fn cache_grew(bytes: u64) {
+    CACHE_BYTES.fetch_add(bytes, Ordering::Relaxed);
+    crate::signal::engine_changed().bump();
+}
+
+fn cache_shrank(bytes: u64) {
+    let _ = CACHE_BYTES.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+        Some(n.saturating_sub(bytes))
+    });
+    crate::signal::engine_changed().bump();
+}
+
+/// Bytes on disk in the download cache, walked: what `measure_cache` and a
+/// clear count.
 pub fn cache_size_bytes(cfg: &Config) -> u64 {
     walkdir::WalkDir::new(cfg.cache_dir())
         .into_iter()
@@ -656,6 +687,7 @@ pub fn clear_download_cache(db: &Database, cfg: &Config) -> CacheCleared {
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::create_dir_all(&dir);
     let _ = queries::clear_cached_paths(&db.conn);
+    measure_cache(cfg);
     cleared
 }
 
@@ -689,6 +721,7 @@ pub fn clear_downloads_for(db: &Database, track_ids: &[i64]) -> CacheCleared {
     if let Err(e) = queries::clear_cached_paths_for(&db.conn, track_ids) {
         log::warn!("removed downloads but failed to forget them ({e})");
     }
+    cache_shrank(cleared.bytes);
     cleared
 }
 
@@ -1912,6 +1945,7 @@ pub(crate) fn download_track(
             Some(Err(e.to_string()))
         }
         Ok(()) => {
+            cache_grew(std::fs::metadata(&dest).map_or(0, |m| m.len()));
             // Without this row the file is invisible to cache eviction and never reclaimed.
             if let Err(e) = queries::set_cached_path(&db.conn, db_id, &dest.to_string_lossy()) {
                 log::warn!(
@@ -2135,6 +2169,29 @@ mod rebuild_tests {
         assert_eq!(swept.bytes, 4096);
         assert!(!half.exists(), "the unfinished one is gone");
         assert!(finished.exists(), "a downloaded track is not touched");
+    }
+
+    /// The figure Settings shows and what a clear reports are one walk of
+    /// one directory, so they cannot disagree.
+    #[test]
+    fn the_cache_is_measured_as_a_clear_counts_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("cache");
+        std::fs::create_dir_all(cache.join("Artist/Album")).unwrap();
+        std::fs::write(cache.join("Artist/Album/01.flac"), vec![0u8; 3000]).unwrap();
+        std::fs::write(cache.join("Artist/Album/02.flac"), vec![0u8; 5000]).unwrap();
+        let cfg = Config {
+            remote: crate::config::RemoteConfig {
+                cache_dir: Some(cache.clone()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        assert_eq!(measure_cache(&cfg), 8000);
+        let cleared = clear_download_cache(&db, &cfg);
+        assert_eq!((cleared.files, cleared.bytes), (2, 8000));
+        assert_eq!(measure_cache(&cfg), 0, "nothing left to count");
     }
 
     #[test]

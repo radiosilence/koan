@@ -3499,7 +3499,7 @@ impl KoanEngine {
         offload::offload(move || {
             let cfg = Config::load().unwrap_or_default();
             let cache_dir = cfg.cache_dir();
-            let cache_bytes = koan_core::helpers::cache_size_bytes(&cfg);
+            let cache_bytes = koan_core::helpers::cache_bytes();
 
             let db = self.db().ok();
             Settings {
@@ -4704,6 +4704,9 @@ impl KoanEngine {
                     out.publish(StateSlice::History {
                         version: koan_core::player::history::version(),
                     });
+                    out.publish(StateSlice::Cache {
+                        bytes: koan_core::helpers::cache_bytes(),
+                    });
 
                     out.publish(StateSlice::Tasks {
                         scanning: engine
@@ -5141,6 +5144,14 @@ impl KoanEngine {
         // sees files left by a previous run.
         let cfg = Config::load().unwrap_or_default();
         koan_core::helpers::sweep_partial_downloads(&cfg);
+        // Once, off the launch path; the count is kept from here on.
+        {
+            let cfg = cfg.clone();
+            std::thread::Builder::new()
+                .name("koan-cache-measure".into())
+                .spawn(move || koan_core::helpers::measure_cache(&cfg))
+                .ok();
+        }
         // Before the session is restored, so the queue finds its downloads.
         if let Err(e) = koan_core::helpers::relocate_cached_paths(&db, &cfg.cache_dir()) {
             log::warn!("could not re-root cached paths: {e}");

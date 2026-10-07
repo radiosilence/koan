@@ -90,6 +90,9 @@ pub enum StateSlice {
     Library { version: u64 },
     /// Moves whenever the play history does. Pages derived from it ask again.
     History { version: u64 },
+    /// Bytes in the download cache, as downloads land, trims remove them and
+    /// clears empty it.
+    Cache { bytes: u64 },
     /// What koan is doing on its own: the startup and watched-folder scan, and
     /// the automatic sync with a server.
     ///
@@ -140,6 +143,7 @@ enum Slot {
     Figures,
     Library,
     History,
+    Cache,
     Tasks,
     Sync,
     Connection,
@@ -147,7 +151,7 @@ enum Slot {
     Outputs,
 }
 
-pub(crate) const SLOTS: usize = 15;
+pub(crate) const SLOTS: usize = 16;
 
 impl StateSlice {
     fn slot(&self) -> Slot {
@@ -161,6 +165,7 @@ impl StateSlice {
             Self::Figures { .. } => Slot::Figures,
             Self::Library { .. } => Slot::Library,
             Self::History { .. } => Slot::History,
+            Self::Cache { .. } => Slot::Cache,
             Self::Tasks { .. } => Slot::Tasks,
             Self::Sync { .. } => Slot::Sync,
             Self::Devices { .. } => Slot::Devices,
