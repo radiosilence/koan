@@ -1,0 +1,1 @@
+- **Small controls easier to hit on iPhone and iPad.** The queue's ⋯, layout and follow buttons, a record's ⋯, hearts and the theme's compact buttons each take a 44-point tap, however small the glyph.

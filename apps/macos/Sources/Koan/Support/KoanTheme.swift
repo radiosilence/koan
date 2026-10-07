@@ -97,6 +97,18 @@ enum KoanTheme {
         isOn ? text.lowercased() : text
     }
 
+    /// The title of a tab's own page. On iOS in the theme, none: the tab bar,
+    /// or the iPad's sidebar, already shows the name lit, and the theme's way
+    /// back is a bare chevron that names nothing. A title that says more than
+    /// the tab (a search's query, what the queue follows) is the page's own.
+    nonisolated static func tabRootTitle(_ text: String) -> String {
+        #if os(iOS)
+        isOn ? "" : text
+        #else
+        label(text)
+        #endif
+    }
+
     /// How strongly the wash shows through where the design leaves the ground
     /// bare: the share of the toned sleeve mixed over `bg`.
     static var wash: Double {
@@ -1187,6 +1199,11 @@ private struct KoanButtonBody: View {
         case .icon, .iconOutlined: nil
         #else
         case .icon, .iconOutlined: 44
+        #endif
+        // The small actions beside a title or a row, which a finger still
+        // has to land on.
+        #if os(iOS)
+        case .compact: 44
         #endif
         default: nil
         }
@@ -2382,6 +2399,11 @@ private struct KoanHidesSystemTabBar: ViewModifier {
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     Color.clear.frame(height: bar)
                 }
+                // Room under the last row, so a page scrolled to its end
+                // stops short of the bar's rule rather than against it. On
+                // the scroll content alone: a bar a page pins to its foot
+                // still meets the mini player.
+                .contentMargins(.bottom, KoanTheme.Space.xxl, for: .scrollContent)
                 // The bar draws its own ground. The platform's edge effect
                 // would otherwise paint the inset as a grey band over the
                 // page's last rows, where content should pass under the bar.

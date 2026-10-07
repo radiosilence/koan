@@ -24,7 +24,10 @@ struct SearchResultsView: View {
 
     var body: some View {
         page
-        .navigationTitle(search.hasQuery ? "\(KoanTheme.label("Results for")) “\(search.query)”" : KoanTheme.label("Search"))
+        .navigationTitle(search.hasQuery ? "\(KoanTheme.label("Results for")) “\(search.query)”" : KoanTheme.tabRootTitle("Search"))
+        #if os(iOS)
+        .playableSelectMode(search.selection, engine: library.engine, available: search.hasQuery && !search.isEmpty)
+        #endif
         // The album browser's pick, over every kind of result. It survives a
         // new query, so a pick can gather from several searches; it ends with
         // the page.
@@ -309,6 +312,10 @@ private struct SearchTrackRow: View {
         }
         .rowBehaviour()
         .modifier(SelectableDrag(playable: .track(track), inContainer: true))
+        // One element, so VoiceOver reads the track and, while selecting, its
+        // tick, and a double tap does what a tap does.
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
         .onTapGesture {
             if selection.take(.track(track)) { return }
             guard let albumId = track.albumId else { return }

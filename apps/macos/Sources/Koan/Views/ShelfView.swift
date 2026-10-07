@@ -50,7 +50,7 @@ struct ShelfView: View {
     /// The same tile the grids use, at the same sizes.
     private static let tileMin: CGFloat = 140
     private static let tileMax: CGFloat = 190
-    private static let tileSpacing: CGFloat = 16
+    private static let tileSpacing = KoanTheme.Space.l
     /// What an inset list keeps clear at each side.
     private static let listInset: CGFloat = 20
 
@@ -272,12 +272,16 @@ struct ShelfView: View {
     private var albumSection: some View {
         Section {
             ForEach(albumRows, id: \.first!.id) { row in
+                // Across the whole row, so the grid keeps the margins its
+                // headings do; a short last row keeps the others' columns.
                 HStack(alignment: .top, spacing: Self.tileSpacing) {
                     ForEach(row, id: \.id) { album in
                         AlbumGridCell(album: album)
-                            .frame(maxWidth: Self.tileMax)
+                            .frame(maxWidth: .infinity)
                     }
-                    Spacer(minLength: 0)
+                    ForEach(row.count..<max(row.count, albumColumns), id: \.self) { _ in
+                        Color.clear.frame(maxWidth: .infinity, maxHeight: 0)
+                    }
                 }
                 .padding(.vertical, 6)
                 .selectionDisabled()
@@ -287,10 +291,12 @@ struct ShelfView: View {
         }
     }
 
-    /// How many tiles fit across, the way an adaptive grid would decide it.
+    /// How many tiles go across: the fewest that keep each within the
+    /// grids' largest tile, as long as each stays at least their smallest.
     private var albumColumns: Int {
         let usable = width - Self.listInset * 2 + Self.tileSpacing
-        return max(1, Int(usable / (Self.tileMin + Self.tileSpacing)))
+        let most = max(1, Int(usable / (Self.tileMin + Self.tileSpacing)))
+        return min(most, max(1, Int((usable / (Self.tileMax + Self.tileSpacing)).rounded(.up))))
     }
 
     private var albumRows: [[Album]] {

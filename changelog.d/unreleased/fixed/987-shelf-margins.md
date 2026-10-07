@@ -1,0 +1,1 @@
+- **Even margins on shelf pages.** Favourites, Recently Played and Downloaded laid their records out off-centre on a phone; the grid now spans the page between the same margins as its headings.

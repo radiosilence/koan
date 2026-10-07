@@ -46,6 +46,8 @@ struct ArtistPill: View {
         // it without arguing with it.
         .background(.quaternary, in: .capsule)
         .contentShape(Capsule())
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
         .onTapGesture {
             if selection?.take(playable) == true { return }
             nav.open(artist: artistId)

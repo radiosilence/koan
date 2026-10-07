@@ -30,6 +30,7 @@ struct HeaderActions: View {
                     } label: {
                         Image(systemName: "ellipsis")
                             .font(.role(.body, system: .body))
+                            .touchTarget()
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()

@@ -17,6 +17,9 @@ struct HistoryView: View {
     @Environment(PlayerModel.self) private var player
     @State private var selection: Set<Int64> = []
     @State private var confirmingClear = false
+    #if os(iOS)
+    @State private var editMode: EditMode = .inactive
+    #endif
     #if os(macOS)
     @Environment(Navigator.self) private var nav
     @Environment(EngineMirror.self) private var mirror
@@ -134,6 +137,16 @@ struct HistoryView: View {
                 }
                 .insetList()
                 .washedGround()
+                #if os(iOS)
+                .listSelectMode($editMode, selection: $selection) { ids in
+                    let tracks = ids.compactMap { id in entries.first { $0.id == id }?.track.id }
+                    return SelectionBar.Actions(
+                        favourites: tracks.map { Playable.Key(kind: .track, id: $0) },
+                        tracks: { tracks },
+                        remove: .init(title: "Forget", noun: "play", count: ids.count) { library.forgetPlays(ids: Set(ids)) }
+                    )
+                }
+                #endif
                 .clearsSelection($selection)
                 .selectionMenu(for: Int64.self) { ids in
                     menu(for: ids)

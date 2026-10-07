@@ -1,0 +1,1 @@
+- **Pages end above the mini player.** In the kōan look on iPhone and iPad a page scrolled to its end leaves room under its last row instead of meeting the bar's rule.

@@ -23,6 +23,7 @@ struct FavouriteButton: View {
                 // A little jump on every change, and on a phone a tap in the
                 // hand when something becomes a favourite.
                 .symbolEffect(.bounce.up.byLayer, options: .speed(1.4), value: isOn)
+                .touchTarget()
         }
         .controlButton()
         #if os(iOS)

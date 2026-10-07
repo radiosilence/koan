@@ -113,11 +113,10 @@ struct AlbumGridCell: View {
         .animation(.smooth(duration: 0.18), value: hovering)
         // While selecting, the whole tile is one target that ticks it — the art
         // does not play and the links do not go anywhere.
+        .accessibilityHidden(selecting)
         .overlay {
             if selecting, let selection {
-                Color.clear
-                    .contentShape(.rect)
-                    .onTapGesture { selection.click(.album(album)) }
+                SelectionTarget(playable: .album(album), selection: selection)
             }
         }
         // ⌘-click starts a selection with this one in it. Over the art's own
@@ -185,6 +184,23 @@ private struct SelectionMark: View {
     }
 }
 
+/// A tile while selecting: one target that ticks it, which VoiceOver reads as
+/// the record and whether it is picked. Its own view, as the mark is.
+private struct SelectionTarget: View {
+    let playable: Playable
+    let selection: PlayableSelection
+
+    var body: some View {
+        Color.clear
+            .contentShape(.rect)
+            .onTapGesture { selection.click(playable) }
+            .accessibilityElement()
+            .accessibilityLabel(playable.name)
+            .accessibilityAddTraits(selection.contains(playable.key) ? [.isButton, .isSelected] : .isButton)
+            .accessibilityAction { selection.click(playable) }
+    }
+}
+
 /// A tick for a row or a pill, where there is no artwork to ring. Its own view
 /// so that a tick re-runs it and not the row.
 struct SelectionTick: View {
@@ -195,6 +211,7 @@ struct SelectionTick: View {
         let selected = selection.contains(key)
         Image(systemName: selected ? "checkmark.circle.fill" : "circle")
             .foregroundStyle(selected ? AnyShapeStyle(.tint) : KoanTheme.style(.muted, system: .tertiary))
+            .accessibilityLabel(selected ? "Selected" : "Not selected")
     }
 }
 

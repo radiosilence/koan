@@ -1,0 +1,1 @@
+- **Tapping the tab you are on goes back to its top.** In the kōan look a tab chosen again returns to its root, and from the root to the top of the page, Settings' panes included.
