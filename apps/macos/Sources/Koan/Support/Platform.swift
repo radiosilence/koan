@@ -1016,4 +1016,50 @@ struct TelevisionRow: ButtonStyle {
         }
     }
 }
+
+/// A button whose label draws itself, such as a pill: only focus is added.
+/// In the theme the accent's ring; in the platform's look the lift every
+/// television control has.
+struct TelevisionChip: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Chip(label: configuration.label, pressed: configuration.isPressed)
+    }
+
+    private struct Chip<Label: View>: View {
+        let label: Label
+        let pressed: Bool
+        @Environment(\.isFocused) private var focused
+
+        var body: some View {
+            if KoanTheme.isOn {
+                label
+                    .foregroundStyle(Color.koanInk)
+                    .background(pressed ? Color.koanHover : .clear)
+                    .koanFocusRing(focused, gap: 4)
+            } else {
+                label
+                    .foregroundStyle(Color.primary)
+                    .environment(\.colorScheme, focused ? .light : .dark)
+                    .background(Capsule().fill(.white.opacity(focused ? 1 : 0)))
+                    .shadow(color: .black.opacity(focused ? 0.35 : 0), radius: 18, y: 8)
+                    .scaleEffect(pressed ? 0.97 : focused ? 1.08 : 1)
+                    .animation(.easeOut(duration: 0.15), value: focused)
+            }
+        }
+    }
+}
 #endif
+
+extension View {
+    /// A tap a remote can make too. On a television only what takes focus can
+    /// be clicked, so there the view becomes a button's label.
+    @ViewBuilder
+    func tapAction(_ action: @escaping () -> Void) -> some View {
+        #if os(tvOS)
+        Button(action: action) { self }
+            .buttonStyle(TelevisionChip())
+        #else
+        onTapGesture(perform: action)
+        #endif
+    }
+}

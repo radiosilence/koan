@@ -367,10 +367,19 @@ struct TabShell: View {
     /// The navigator moved on its own account; show where it went. A tab's own
     /// page brings that tab forward, back at its root. Anything else is pushed
     /// on the tab in front, or popped back to if it is already in the stack.
+    ///
+    /// A television pushes even a tab's own page. Changing tabs there puts
+    /// focus on the tab bar, where the next press of Menu leaves the app, and
+    /// the page the person came from would be gone from under them.
     private func arrive(at page: Navigator.Page) {
         // First: a pop back to a page another tab owns stays in this tab.
         guard top(of: selection) != page else { return }
-        if let owner = owner(of: page) {
+        #if os(tvOS)
+        let owner: TabID? = nil
+        #else
+        let owner = owner(of: page)
+        #endif
+        if let owner {
             paths[owner] = []
             selection = owner
             return

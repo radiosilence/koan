@@ -1100,6 +1100,38 @@ tv-walk library="": (tv-ffi "appletvsimulator") ios-project
     xcrun xcresulttool export attachments --path "$out/walk.xcresult" --output-path "$out"
     echo "screenshots in $out"
 
+# Check the remote's Menu button on a simulator: back a page, then to the tab
+# bar, then out. Serves a generated library from a throwaway koan and runs
+# `TVBackTests`; screenshots land in target/tv-back.
+tv-back: (tv-ffi "appletvsimulator") ios-project
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=$(pwd)/target/tv-back
+    rm -rf "$out" && mkdir -p "$out"
+    cleanup=()
+    trap 'for c in "${cleanup[@]}"; do eval "$c"; done' EXIT
+    just _bar-library "$out/library"
+    url=$(just _demo-server "$out/library" "$out")
+    cleanup+=("just _demo-server-stop '$out'")
+    export TEST_RUNNER_KOAN_REMOTE__ENABLED=true TEST_RUNNER_KOAN_REMOTE__URL=$url \
+        TEST_RUNNER_KOAN_REMOTE__USERNAME=owner TEST_RUNNER_KOAN_REMOTE__API_KEY=$(cat "$out/server.key")
+    sim=$(xcrun simctl list devices available -j \
+        | python3 -c 'import json,sys; ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "tvOS-" in k for d in v if d["isAvailable"] and "Apple TV" in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
+    [ -n "$sim" ] || { echo "No Apple TV simulator." >&2; exit 1; }
+    xcrun simctl boot "$sim" 2>/dev/null || true
+    xcrun simctl bootstatus "$sim" -b >/dev/null
+    cleanup+=("xcrun simctl shutdown '$sim'")
+    xcrun simctl uninstall "$sim" {{bundle_id}} 2>/dev/null || true
+    status=0
+    xcodebuild test -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme KoanTV \
+        -destination "id=$sim" -derivedDataPath target/tv-build \
+        -only-testing:KoanTVUITests/TVBackTests${KOAN_TV_BACK_TEST:+/$KOAN_TV_BACK_TEST} \
+        -resultBundlePath "$out/back.xcresult" || status=$?
+    xcrun xcresulttool export attachments --path "$out/back.xcresult" --output-path "$out" >/dev/null
+    echo "screenshots in $out"
+    exit $status
+
 # Pair a signed-out television, end to end: `TVPairTests` asks for a code on
 # the simulator and approves it as a phone would. `outcome` is `approve`,
 # `decline` or `expire` (against a server whose codes last 20 seconds). The
