@@ -1090,7 +1090,11 @@ private struct ProfileRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(profile.name)
-                    RoleTag(role: ProfileRole(profile.role))
+                    if profile.preset {
+                        Text("Preset").koanText(.fine, .muted)
+                    } else {
+                        RoleTag(role: ProfileRole(profile.role))
+                    }
                 }
                 if let problem = profile.problem {
                     Text(problem)
