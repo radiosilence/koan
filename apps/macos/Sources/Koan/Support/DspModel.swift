@@ -134,7 +134,7 @@ final class DspModel {
             let summary = try await engine.dspImportFiles(paths: urls.map(\.path), name: name, rate: rate)
             lastError = nil
             // A group's members are alike, so one answer does for them all.
-            if let first = summary.imported.first {
+            if !summary.imported.isEmpty {
                 askRole = RoleAsk(names: summary.imported, profiles: summary.group.map { [$0] } ?? summary.imported, into: into)
             }
             importSummary = Self.describe(summary, files: urls.count)
