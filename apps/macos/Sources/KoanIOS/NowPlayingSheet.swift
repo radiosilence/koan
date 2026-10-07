@@ -77,7 +77,7 @@ struct NowPlayingSheet: View {
     private var titles: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(player.resolving ?? player.currentEntry?.title ?? "Nothing playing")
+                Text(player.resolving ?? player.currentEntry?.title ?? KoanTheme.label("Nothing playing"))
                     .font(.role(.titleSmall, system: .title3.weight(.semibold)))
                     .foregroundStyle(KoanTheme.style(.strong, system: .primary))
                     .lineLimit(1)

@@ -21,7 +21,7 @@ struct MiniPlayer: View {
             VStack(alignment: .leading, spacing: 1) {
                 // A play still finding its tracks, named from the tap rather
                 // than leaving the paused track it replaces on show.
-                Text(player.resolving ?? entry?.title ?? "Nothing playing")
+                Text(player.resolving ?? entry?.title ?? KoanTheme.label("Nothing playing"))
                     .font(.role(.meta, system: .subheadline.weight(.medium)))
                     .lineLimit(1)
                 if player.isControllingAnother {

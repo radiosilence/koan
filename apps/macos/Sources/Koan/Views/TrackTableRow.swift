@@ -177,7 +177,7 @@ final class TrackTableRow: NSTableCellView, TableRow {
         for layer in [mark, sleeve, availability, heart, note] { layer.isHidden = isHeading }
         heading.isHidden = !isHeading
         if case .heading(let text) = item.kind {
-            heading.stringValue = text
+            heading.stringValue = KoanTheme.label(text)
             context.meter.follow(availability, transfer: nil)
             needsLayout = true
             return

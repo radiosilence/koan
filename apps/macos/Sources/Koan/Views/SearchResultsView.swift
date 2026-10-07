@@ -225,7 +225,7 @@ private struct SectionHeading: View {
     var body: some View {
         Button(action: open) {
             HStack(spacing: 7) {
-                Text(title)
+                Text(title).koanCase()
                     .font(.role(.titleSmall, system: .title3.weight(.semibold)))
                 Text("\(total ?? UInt64(count))")
                     .font(.role(.fine, system: .caption.monospacedDigit()))

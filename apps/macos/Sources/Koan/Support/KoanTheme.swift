@@ -1902,9 +1902,9 @@ struct KoanForm<Content: View>: View {
 struct KoanUnavailable: View {
     let title: String
     let icon: String
-    let detail: String
+    let detail: String?
 
-    init(_ title: String, icon: String, detail: String) {
+    init(_ title: String, icon: String, detail: String?) {
         self.title = title
         self.icon = icon
         self.detail = detail
@@ -1920,16 +1920,18 @@ struct KoanUnavailable: View {
                     .font(.koan(.body))
                     .textCase(.lowercase)
                     .foregroundStyle(Color.koanInk)
-                Text(detail)
-                    .font(.koan(.meta))
-                    .foregroundStyle(Color.koanMuted)
-                    .multilineTextAlignment(.center)
+                if let detail {
+                    Text(detail)
+                        .font(.koan(.meta))
+                        .foregroundStyle(Color.koanMuted)
+                        .multilineTextAlignment(.center)
+                }
             }
             .padding(KoanTheme.Space.xxl)
             .frame(maxWidth: 420)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ContentUnavailableView(title, systemImage: icon, description: Text(detail))
+            ContentUnavailableView(title, systemImage: icon, description: detail.map(Text.init))
         }
     }
 }

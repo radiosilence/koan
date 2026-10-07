@@ -301,7 +301,7 @@ struct QueueView: View {
                         .font(.role(.body, system: .headline))
                         .lineLimit(1)
                     #else
-                    Text("Playing \(name)")
+                    Text("\(KoanTheme.label("Playing")) \(name)")
                         .font(.role(.body, system: .headline))
                         .lineLimit(1)
                     #endif

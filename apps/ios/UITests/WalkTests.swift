@@ -12,10 +12,23 @@ final class WalkTests: XCTestCase {
 
     override func setUp() async throws {
         continueAfterFailure = true
+        addUIInterruptionMonitor(withDescription: "Notifications") { alert in
+            alert.buttons.element(boundBy: 0).tap()
+            return true
+        }
         app = XCUIApplication()
         // Silent, and blind to UPnP renderers: tests share a machine with its owner.
         app.launchEnvironment["KOAN_PLAYBACK__MUTED"] = "true"
         app.launchEnvironment["KOAN_PLAYBACK__RENDERERS"] = "false"
+        // Settings passed through from `just ios-walk`, such as the theme: the
+        // test runner sees `TEST_RUNNER_KOAN_*` as `KOAN_*`.
+        for (key, value) in ProcessInfo.processInfo.environment where key.hasPrefix("KOAN_") {
+            app.launchEnvironment[key] = value
+        }
+        // The wash held still: drifting, it keeps the app from ever being
+        // idle, and the test driver waits on that. A still frame of either
+        // looks the same.
+        app.launchArguments += ["-graphics", "1"]
         app.launch()
     }
 
@@ -27,24 +40,29 @@ final class WalkTests: XCTestCase {
         pause(Double(ProcessInfo.processInfo.environment["KOAN_WALK_SETTLE"] ?? "0") ?? 0)
         snap("01-queue")
 
-        tab("Library")
-        snap("02-library")
-        if open(app.buttons[any: "Albums"]) {
+        // An iPad has no Library tab: its pages are rows of the sidebar, and
+        // the detail column's root has no back button to return to.
+        let pad = UIDevice.current.userInterfaceIdiom == .pad
+        if !pad {
+            tab("Library")
+            snap("02-library")
+        }
+        if open(page("Albums")) {
             pause(3)
             snap("03-albums")
             // The first sleeve in the grid, by where it sits: tiles are images
             // inside buttons inside a lazy grid, and none of that is stable
             // enough to query by.
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.27, dy: 0.3)).tap()
+            app.coordinate(withNormalizedOffset: CGVector(dx: pad ? 0.42 : 0.27, dy: 0.3)).tap()
             pause(3)
             snap("04-album")
             back()
-            back()
+            if !pad { back() }
         }
-        if open(app.buttons[any: "Artists"]) {
+        if open(page("Artists")) {
             pause(3)
             snap("05-artists")
-            back()
+            if !pad { back() }
         }
 
         // Play whatever the queue holds, then open Now Playing from the mini
@@ -52,9 +70,9 @@ final class WalkTests: XCTestCase {
         let play = app.buttons[any: "play.fill"].firstMatch
         if play.waitForExistence(timeout: 3) { play.tap() }
         pause(4)
-        // The mini player: above the tab bar on a phone, at the foot on an iPad.
-        let pad = UIDevice.current.userInterfaceIdiom == .pad
-        app.coordinate(withNormalizedOffset: CGVector(dx: pad ? 0.2 : 0.35, dy: pad ? 0.965 : 0.868)).tap()
+        // The mini player: above the tab bar on a phone, at the foot of the
+        // detail column on an iPad.
+        app.coordinate(withNormalizedOffset: CGVector(dx: pad ? 0.5 : 0.35, dy: pad ? 0.965 : 0.868)).tap()
         let lyrics = app.buttons[any: "Show lyrics"]
         if lyrics.waitForExistence(timeout: 5) {
             pause(2)
@@ -110,8 +128,21 @@ final class WalkTests: XCTestCase {
 
     private func tab(_ name: String) {
         let button = app.tabBars.buttons[any: name]
-        if button.waitForExistence(timeout: 3) { button.tap() } else { app.buttons[any: name].firstMatch.tap() }
+        if button.waitForExistence(timeout: 3) {
+            button.tap()
+        } else if app.buttons[any: name].exists {
+            app.buttons[any: name].tap()
+        } else {
+            // An iPad's sidebar: rows whose label is their text.
+            app.staticTexts[any: name].tap()
+        }
         pause(1)
+    }
+
+    /// A library page: a row of the phone's Library tab, or of an iPad's sidebar.
+    private func page(_ name: String) -> XCUIElement {
+        let button = app.buttons[any: name]
+        return button.exists ? button : app.staticTexts[any: name]
     }
 
     private func open(_ element: XCUIElement) -> Bool {

@@ -1,0 +1,1 @@
+- **Lowercase where the kōan look writes text.** Empty pages, the Mac queue and history headings, search section headings and the iPhone's "nothing playing" follow the theme's case rule.
