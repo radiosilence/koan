@@ -546,8 +546,13 @@ fn try_run(db: &Database, remote: &dyn Remote, url: &str) -> Result<DspSync, Fai
     out
 }
 
+/// A sync is waiting for the one under way, and will send every edit made
+/// before it starts.
+static QUEUED: AtomicBool = AtomicBool::new(false);
+
 /// After an edit here: send it, in the background, where there is a server
-/// to send it to.
+/// to send it to. Edits in quick succession, a drag on the graph saving
+/// several times a second, share one sync: at most one runs and one waits.
 pub fn changed() {
     if APPLYING.with(Cell::get) {
         return;
@@ -560,15 +565,22 @@ pub fn changed() {
     if crate::helpers::subsonic_auth(&cfg).is_none() {
         return;
     }
+    if QUEUED.swap(true, Ordering::AcqRel) {
+        return;
+    }
     let spawned = std::thread::Builder::new()
         .name("koan-dsp-sync".into())
         .spawn(|| {
+            // Wait out the sync under way; edits from here on are this one's.
+            drop(ONE_AT_A_TIME.lock());
+            QUEUED.store(false, Ordering::Release);
             let Ok(db) = crate::db::pool::shared().get() else {
                 return;
             };
             sync(&db);
         });
     if let Err(e) = spawned {
+        QUEUED.store(false, Ordering::Release);
         log::warn!("dsp sync: could not start: {e}");
     }
 }

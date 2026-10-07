@@ -773,6 +773,27 @@ ios-autoeq-sheet device="koan-dev": (ios-ffi "iphonesimulator") ios-project
     echo "screenshots in $out"
     exit $status
 
+# Edit a tuning on its graph: a vertical swipe from the graph scrolls the
+# page, a stroke across it paints, a handle drags and a pinch changes Q.
+ios-eq-graph device="koan-dev": (ios-ffi "iphonesimulator") ios-project
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=target/ios-eq-graph
+    rm -rf "$out" && mkdir -p "$out"
+    udid=$(xcrun simctl list devices available | grep -F "{{device}} (" | head -1 | grep -oE '[0-9A-F-]{36}')
+    xcrun simctl boot "$udid" 2>/dev/null || true
+    xcrun simctl bootstatus "$udid" -b >/dev/null
+    trap 'xcrun simctl shutdown "$udid"' EXIT
+    status=0
+    xcodebuild test -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme Koan \
+        -destination "id=$udid" \
+        -only-testing:KoanUITests/EqGraphTests \
+        -resultBundlePath "$out/graph.xcresult" || status=$?
+    xcrun xcresulttool export attachments --path "$out/graph.xcresult" --output-path "$out" >/dev/null
+    echo "screenshots in $out"
+    exit $status
+
 # Check that every scrolling page on an iPhone and an iPad scrolls its last
 # element clear of the kōan look's bar, and of the select mode's, in light.
 # Serves a generated library from a throwaway koan, favourites its records and

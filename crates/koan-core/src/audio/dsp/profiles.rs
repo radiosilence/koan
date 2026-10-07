@@ -894,7 +894,7 @@ pub fn detail(name: &str) -> Option<Detail> {
         preset: profile.preset,
         edited: edited(profile),
         can_revert: profile.original.is_some(),
-        read_only: shown_role(profile, &cfg.dsp.profiles).corrects(),
+        read_only: editable(profile, &cfg.dsp.profiles).is_err(),
     })
 }
 
@@ -1217,6 +1217,98 @@ fn may_edit(name: &str) -> Result<(), String> {
     editable(p, &cfg.dsp.profiles)
 }
 
+/// A band's type by its config name, and its figures held within the
+/// ranges a band may have.
+fn band_values(
+    kind: &str,
+    freq: f64,
+    gain_db: f64,
+    q: f64,
+) -> Result<(crate::config::EqFilterKind, f64, f64, f64), String> {
+    let kind = serde_json::from_value(serde_json::Value::String(kind.into()))
+        .map_err(|_| format!("No band type called {kind}"))?;
+    Ok((
+        kind,
+        clamp(freq, &BAND_HZ)?,
+        clamp(gain_db, &BAND_DB)?,
+        clamp(q, &BAND_Q)?,
+    ))
+}
+
+/// A curve's points held within a band's ranges, in order of frequency.
+fn curve_points(points: &[(f64, f64)]) -> Result<Vec<(f64, f64)>, String> {
+    if points.is_empty() {
+        return Err("A curve needs a point".into());
+    }
+    let most = crate::config::dsp_bounds::GRAPHIC_POINTS;
+    if points.len() > most {
+        return Err(format!("A curve has at most {most} points"));
+    }
+    let mut points = points
+        .iter()
+        .map(|&(hz, db)| Ok((clamp(hz, &BAND_HZ)?, clamp(db, &BAND_DB)?)))
+        .collect::<Result<Vec<_>, String>>()?;
+    points.sort_by(|a, b| a.0.total_cmp(&b.0));
+    Ok(points)
+}
+
+/// What `name` would draw with filter `index` changed by `edit`, nothing
+/// saved: the graph follows a drag with this, and the edit is saved when
+/// the drag settles. None where the filter is not of the kind `edit` takes,
+/// or `name` is a correction, which is not edited.
+fn preview(
+    name: &str,
+    index: usize,
+    rate: u32,
+    edit: impl FnOnce(&mut crate::config::DspFilter) -> bool,
+) -> Option<Response> {
+    let cfg = Config::cached();
+    let all = &cfg.dsp.profiles;
+    let mut p = all.iter().find(|p| p.name == name)?.clone();
+    editable(&p, all).ok()?;
+    if !edit(p.filters.get_mut(index)?) {
+        return None;
+    }
+    response_of(&p, all, rate)
+}
+
+/// What `name` would draw with band `index` set so, at `rate`.
+pub fn preview_band(
+    name: &str,
+    index: usize,
+    kind: &str,
+    freq: f64,
+    gain_db: f64,
+    q: f64,
+    rate: u32,
+) -> Option<Response> {
+    let (kind, freq, gain_db, q) = band_values(kind, freq, gain_db, q).ok()?;
+    preview(name, index, rate, |f| match f {
+        crate::config::DspFilter::Band(b) => {
+            (b.kind, b.freq, b.gain_db, b.q) = (kind, freq, gain_db, q);
+            true
+        }
+        _ => false,
+    })
+}
+
+/// What `name` would draw with curve `index` set to `points`, at `rate`.
+pub fn preview_curve(
+    name: &str,
+    index: usize,
+    points: &[(f64, f64)],
+    rate: u32,
+) -> Option<Response> {
+    let points = curve_points(points).ok()?;
+    preview(name, index, rate, |f| match f {
+        crate::config::DspFilter::Graphic(g) => {
+            g.points = points;
+            true
+        }
+        _ => false,
+    })
+}
+
 /// Set filter `index` of `name`, a parametric band, to `kind` at `freq`,
 /// `gain_db` and `q`, held within the ranges a band may have. Its channels
 /// are kept. Delays, mixes and graphic curves are not edited this way.
@@ -1229,15 +1321,9 @@ pub fn set_band(
     gain_db: f64,
     q: f64,
 ) -> Result<(), String> {
-    use crate::config::{DspFilter, EqFilterKind};
-    let kind: EqFilterKind = serde_json::from_value(serde_json::Value::String(kind.into()))
-        .map_err(|_| format!("No band type called {kind}"))?;
+    use crate::config::DspFilter;
+    let (kind, freq, gain_db, q) = band_values(kind, freq, gain_db, q)?;
     may_edit(name)?;
-    let (freq, gain_db, q) = (
-        clamp(freq, &BAND_HZ)?,
-        clamp(gain_db, &BAND_DB)?,
-        clamp(q, &BAND_Q)?,
-    );
     let mut found = Err(format!("{name} has no band {}", index + 1));
     persist(|cfg| {
         if let Some(DspFilter::Band(b)) = cfg
@@ -1260,19 +1346,8 @@ pub fn set_band(
 /// channels are kept. Refused for a correction, which plays as made.
 pub fn set_curve(name: &str, index: usize, points: &[(f64, f64)]) -> Result<(), String> {
     use crate::config::DspFilter;
+    let points = curve_points(points)?;
     may_edit(name)?;
-    if points.is_empty() {
-        return Err("A curve needs a point".into());
-    }
-    let most = crate::config::dsp_bounds::GRAPHIC_POINTS;
-    if points.len() > most {
-        return Err(format!("A curve has at most {most} points"));
-    }
-    let mut points = points
-        .iter()
-        .map(|&(hz, db)| Ok((clamp(hz, &BAND_HZ)?, clamp(db, &BAND_DB)?)))
-        .collect::<Result<Vec<_>, String>>()?;
-    points.sort_by(|a, b| a.0.total_cmp(&b.0));
     let mut found = Err(format!("{name} has no curve {}", index + 1));
     persist(|cfg| {
         if let Some(DspFilter::Graphic(g)) = cfg
@@ -1900,8 +1975,16 @@ pub fn read_only(name: &str) -> String {
     )
 }
 
-/// Refused for a correction, which plays as made.
+/// Refused for a correction, which plays as made, and for anything fitted
+/// to a measurement whatever it is said to be: its bands are fitted again to
+/// each new target, and an edit would be lost.
 fn editable(profile: &DspProfile, all: &[DspProfile]) -> Result<(), String> {
+    if profile.fitted.is_some() {
+        return Err(format!(
+            "{} is fitted to a measurement, and fitted again for each target, so an edit would be lost: add a tuning on top to change the sound",
+            profile.name
+        ));
+    }
     if shown_role(profile, all).corrects() {
         return Err(read_only(&profile.name));
     }
@@ -1978,6 +2061,86 @@ pub fn duplicate(name: &str, new: Option<&str>) -> Result<String, String> {
     copy.source.clear();
     persist(|cfg| cfg.dsp.profiles.push(copy))?;
     Ok(new)
+}
+
+/// `name`'s filters and headroom as they are, to put back with
+/// `save_as_copy`. Opaque to callers.
+pub fn snapshot(name: &str) -> Option<String> {
+    let cfg = Config::cached();
+    let p = cfg.dsp.profiles.iter().find(|p| p.name == name)?;
+    serde_json::to_string(&crate::config::DspOriginal {
+        filters: p.filters.clone(),
+        preamp_db: p.preamp_db,
+    })
+    .ok()
+}
+
+/// A copy saved by `save_as_copy`: its name, and whether it took the
+/// original's place in the device's tuning, which it does only where the
+/// tuning names the original itself.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SavedCopy {
+    pub name: String,
+    pub placed: bool,
+}
+
+/// Keep `name` as it is now as a copy, under `new` or "<name> copy", and put
+/// `name` back: to `before`, a `snapshot` taken before the edit, where it
+/// differs, or else to its file, where it was imported and has been edited.
+/// On `device`, the copy takes `name`'s place in the tuning. Refused for a
+/// correction, which is not edited.
+pub fn save_as_copy(
+    name: &str,
+    new: Option<&str>,
+    before: Option<&str>,
+    device: Option<&str>,
+) -> Result<SavedCopy, String> {
+    use crate::config::DspOriginal;
+    may_edit(name)?;
+    let before: Option<DspOriginal> = before
+        .map(serde_json::from_str)
+        .transpose()
+        .map_err(|e| format!("Not a snapshot: {e}"))?;
+    // Whatever would refuse the swap is found before anything is written:
+    // the copy is the original under another name, so it may be a tuning's
+    // EQ exactly where the original may.
+    let tunings = device.map(tunings_for).unwrap_or_default();
+    let placed = tunings.iter().any(|(n, _)| n == name);
+    if placed {
+        check_tuning(name, &Config::cached().dsp.profiles)?;
+    }
+    let copy = duplicate(name, new)?;
+    let cfg = Config::cached();
+    let p = cfg
+        .dsp
+        .profiles
+        .iter()
+        .find(|p| p.name == name)
+        .ok_or_else(|| format!("No EQ called {name}"))?;
+    match before {
+        Some(b) if b.filters != p.filters || b.preamp_db != p.preamp_db => persist(|cfg| {
+            if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name) {
+                p.filters = b.filters;
+                p.preamp_db = b.preamp_db;
+            }
+        })?,
+        _ if edited(p) => revert(name)?,
+        _ => {}
+    }
+    if let Some(device) = device.filter(|_| placed) {
+        let swapped: Vec<(String, bool)> = tunings
+            .into_iter()
+            .map(|(n, on)| {
+                if n == name {
+                    (copy.clone(), on)
+                } else {
+                    (n, on)
+                }
+            })
+            .collect();
+        set_tunings(device, &swapped)?;
+    }
+    Ok(SavedCopy { name: copy, placed })
 }
 
 fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
@@ -3414,6 +3577,98 @@ mod tests {
         assert!(remove_filter("Mine", 3).is_err());
         assert!(add_band("Nobody").is_err());
         assert!(set_curve("Mine", 0, &[(100.0, 1.0)]).is_err(), "a band");
+    }
+
+    /// A preview draws an edit without saving it; saving as a copy keeps the
+    /// edit apart, puts the original back and swaps the copy into the
+    /// device's tuning.
+    #[test]
+    fn previews_and_copies_leave_the_original() {
+        use crate::config::{DspFilter, DspProfile, EqFilter, EqFilterKind, GraphicEq};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let flat = DspFilter::Band(EqFilter {
+            kind: EqFilterKind::Peaking,
+            freq: 1000.0,
+            gain_db: 0.0,
+            q: 1.0,
+            channels: vec![],
+        });
+        let curve = DspFilter::Graphic(GraphicEq {
+            points: vec![(20.0, 0.0), (20000.0, 0.0)],
+            channels: vec![],
+        });
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Warm".into(),
+                filters: vec![flat.clone(), curve],
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        let peak = |r: &Response| r.total.iter().cloned().fold(f64::MIN, f64::max);
+        let r = preview_band("Warm", 0, "peaking", 1000.0, 6.0, 1.0, 48000).unwrap();
+        assert!((peak(&r) - 6.0).abs() < 0.5, "{}", peak(&r));
+        let r = preview_curve("Warm", 1, &[(20.0, 4.0), (20000.0, 4.0)], 48000).unwrap();
+        assert!((peak(&r) - 4.0).abs() < 0.5, "{}", peak(&r));
+        assert!(preview_band("Warm", 1, "peaking", 1000.0, 6.0, 1.0, 48000).is_none());
+        assert!(preview_curve("Warm", 0, &[(20.0, 4.0)], 48000).is_none());
+        assert_eq!(detail("Warm").unwrap().filters[0], flat, "nothing saved");
+
+        let dac = "DAC";
+        set_tunings(dac, &[("Warm".into(), true)]).unwrap();
+        let before = snapshot("Warm").unwrap();
+        set_band("Warm", 0, "peaking", 1000.0, 6.0, 1.0).unwrap();
+        let saved = save_as_copy("Warm", None, Some(&before), Some(dac)).unwrap();
+        assert!(saved.placed);
+        let copy = saved.name;
+        assert_eq!(copy, "Warm copy");
+        assert_eq!(detail("Warm").unwrap().filters[0], flat, "put back");
+        assert!(matches!(
+            detail(&copy).unwrap().filters[0],
+            DspFilter::Band(EqFilter { gain_db: 6.0, .. })
+        ));
+        assert_eq!(tunings_for(dac), vec![(copy, true)]);
+        assert!(save_as_copy("Warm", None, Some("nonsense"), None).is_err());
+        let elsewhere = save_as_copy("Warm", Some("Spare"), None, Some("Speakers")).unwrap();
+        assert!(!elsewhere.placed, "not in that tuning");
+
+        // A correction is neither previewed nor copied this way.
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "HD 600".into(),
+                role: Some(crate::config::DspRole::Correction),
+                filters: vec![flat.clone()],
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        assert!(preview_band("HD 600", 0, "peaking", 1000.0, 6.0, 1.0, 48000).is_none());
+        assert!(save_as_copy("HD 600", None, None, None).is_err());
+        assert!(detail("HD 600 copy").is_none());
+
+        // Nor is one fitted to a measurement, even said to be a tuning.
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Fitted".into(),
+                role: Some(crate::config::DspRole::Tuning),
+                filters: vec![flat.clone()],
+                fitted: Some(crate::config::DspMeasurement {
+                    ear: crate::config::DspEar::Over,
+                    target: "harman-over-ear-2018".into(),
+                }),
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        assert!(detail("Fitted").unwrap().read_only);
+        assert!(preview_band("Fitted", 0, "peaking", 1000.0, 6.0, 1.0, 48000).is_none());
+        let refused = set_band("Fitted", 0, "peaking", 1000.0, 6.0, 1.0).unwrap_err();
+        assert!(refused.contains("fitted to a measurement"), "{refused}");
+        assert!(save_as_copy("Fitted", None, None, None).is_err());
     }
 
     /// A graphic curve's points are set whole, clamped and in order of

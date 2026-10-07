@@ -7,6 +7,9 @@ import SwiftUI
 struct DspProfilePage: View {
     let dsp: DspModel
     @State var name: String
+    /// The output whose tuning a copy saved here takes this EQ's place in;
+    /// the one in use if none.
+    var device: String?
     @Environment(\.dismiss) private var dismiss
 
     @State private var detail: DspProfileDetail?
@@ -25,6 +28,18 @@ struct DspProfilePage: View {
     /// pick a correction and its target and are done.
     @State private var showingMore = false
     @State private var splitting = false
+    /// The EQ as it was when the page opened, which Save as Copy puts back,
+    /// and as it is now.
+    @State private var before: String?
+    @State private var now: String?
+    @State private var copying = false
+    @State private var copyName = ""
+    @State private var confirmingReset = false
+    /// Edits made here to this EQ when `before` was taken: until there are
+    /// more, a change is another device's, and `before` follows it.
+    @State private var editsAtBefore: Int?
+    /// What became of the last Save as Copy, where it needs saying.
+    @State private var notice: String?
 
     var body: some View {
         KoanForm {
@@ -41,16 +56,24 @@ struct DspProfilePage: View {
                 TextField("Name", text: $editingName)
                     .onSubmit(rename)
             }
+            if let message = notice ?? dsp.lastError {
+                Section {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(KoanTheme.style(.bad, system: .orange))
+                }
+            }
 
             if let d = detail {
                 if let r = response {
                     Section {
-                        EqGraph(response: r, parts: onCorrection(d, r), handles: d.readOnly ? [] : BandTable.handles(d.bands)) { index, hz, db in
-                            let b = d.bands[index]
-                            dsp.setBand(name, index, kind: b.kind, freq: hz, gain: db, q: b.q)
-                        }
+                        EqEditor(dsp: dsp, name: name, detail: d, response: r, parts: onCorrection(d, r))
                     }
                 }
+                #if !os(tvOS)
+                if !d.readOnly, before != now || (d.canRevert && d.edited) {
+                    keeping(d)
+                }
+                #endif
                 if let problem = d.problem {
                     Section {
                         Label(problem, systemImage: "exclamationmark.triangle.fill")
@@ -125,7 +148,7 @@ struct DspProfilePage: View {
             }
         }
         .navigationTitle(name)
-        .task(id: dsp.stamp) { await load() }
+        .task(id: "\(name)\u{0}\(dsp.stamp)") { await load() }
         #if !os(tvOS)
         .filePicker(
             isPresented: $addingTarget,
@@ -140,6 +163,24 @@ struct DspProfilePage: View {
             SplitFlow(dsp: dsp, name: name)
         }
         #endif
+        #if !os(tvOS)
+        .alert("Save as Copy", isPresented: $copying) {
+            TextField("Name", text: $copyName)
+            Button("Save") { saveCopy() }
+                .disabled(copyTaken)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(copyTaken
+                 ? "There is already an EQ called \(copyName.trimmingCharacters(in: .whitespaces))."
+                 : "The copy takes this EQ's place in the tuning, and this one goes back to how it was.")
+        }
+        .confirmationDialog("Reset \(name) to its file?", isPresented: $confirmingReset, titleVisibility: .visible) {
+            Button("Reset", role: .destructive) {
+                dsp.revert(name)
+                before = nil
+            }
+        }
+        #endif
         .confirmationDialog(
             "Delete \(name)?",
             isPresented: $confirmingDelete,
@@ -151,6 +192,45 @@ struct DspProfilePage: View {
             }
         } message: {
             Text("Its impulse responses are deleted with it.")
+        }
+    }
+
+    /// Keeping an edit apart from what was there: as a copy, with this EQ put
+    /// back, or for an import, going back to its file.
+    private func keeping(_ d: DspProfileDetail) -> some View {
+        Section {
+            Button("Save as Copy…") {
+                copyName = "\(name) copy"
+                copying = true
+            }
+            .koanButton(.bordered)
+            if d.canRevert, d.edited {
+                Button("Reset to File") { confirmingReset = true }
+                    .koanButton(.bordered)
+            }
+        } footer: {
+            Text(d.canRevert
+                 ? "Save as Copy keeps this edit as an EQ of its own, in this one's place in the tuning, and puts this one back. Reset to File puts it back as \(d.source.first ?? "its file") had it."
+                 : "Save as Copy keeps this edit as an EQ of its own, in this one's place in the tuning, and puts this one back as it was when you opened it.")
+                .koanText(.fine, .muted)
+        }
+    }
+
+    private var copyTaken: Bool {
+        let new = copyName.trimmingCharacters(in: .whitespaces)
+        return dsp.overview?.profiles.contains { $0.name == new } ?? false
+    }
+
+    private func saveCopy() {
+        let (from, kept, on) = (name, before, device ?? dsp.overview?.device)
+        let new = copyName.trimmingCharacters(in: .whitespaces)
+        Task {
+            guard let copy = await dsp.saveAsCopy(from, as: new.isEmpty ? nil : new, before: kept, device: on) else { return }
+            notice = copy.placed
+                ? nil
+                : "\(copy.name) is saved, but \(from) is not in \(on.map(dsp.label) ?? "the output")'s tuning, so the copy is not either. Add it on the EQ page."
+            before = nil
+            name = copy.name
         }
     }
 
@@ -195,6 +275,15 @@ struct DspProfilePage: View {
     }
 
     private func load() async {
+        let asked = name
+        let snapshot = await dsp.snapshot(asked)
+        guard asked == name else { return }
+        now = snapshot
+        let edits = dsp.edits[asked, default: 0]
+        if before == nil || editsAtBefore == edits {
+            before = snapshot
+            editsAtBefore = edits
+        }
         detail = await dsp.detail(name)
         response = await dsp.response(name)
         targets = await dsp.targets(name)

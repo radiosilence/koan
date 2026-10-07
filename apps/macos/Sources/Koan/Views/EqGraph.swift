@@ -10,15 +10,18 @@ import SwiftUI
 /// only draws them.
 ///
 /// Given `handles`, each band has a point at its frequency and gain that can
-/// be dragged; `onDrag` is told where it was let go, and the curves follow
-/// once the profile has been changed and drawn again.
+/// be dragged, and its width pinched (option-dragged with a mouse) for Q.
+/// With `paints`, a drag away from every handle paints a graphic curve.
+/// `onEdit` is told of each step and of the end; the caller draws the edit
+/// by passing another `response`.
 struct EqGraph: View {
     let response: DspResponse
     /// An output's chain, stage by stage, each drawn as its block is, under
     /// the whole chain. Empty for a single profile.
     var parts: [Part] = []
     var handles: [Handle] = []
-    var onDrag: ((Int, Double, Double) -> Void)?
+    var paints = false
+    var onEdit: ((Edit) -> Void)?
     /// The view to open on, where there is a measurement to show.
     var startOn: Shown = .eq
 
@@ -29,12 +32,21 @@ struct EqGraph: View {
         let stroke: StageStroke
     }
 
-    /// A band's point: its index among the profile's filters, and where it is.
+    /// A band's point: its index among the profile's filters, where it is,
+    /// and its Q.
     struct Handle: Identifiable, Equatable {
         let index: Int
-        let hz: Double
-        let db: Double
+        var hz: Double
+        var db: Double
+        var q: Double
         var id: Int { index }
+    }
+
+    /// What a gesture did: moved or widened a band, or painted the curve
+    /// toward a point. `done` at the gesture's end.
+    enum Edit {
+        case band(Handle, done: Bool)
+        case paint(hz: Double, db: Double, done: Bool)
     }
 
     @State private var view: Shown = .eq
@@ -42,6 +54,24 @@ struct EqGraph: View {
     @State private var dragging: Handle?
     /// Whether a drag is under way, as against one let go and not yet drawn.
     @State private var grabbed = false
+    /// The drag paints rather than holding a handle.
+    @State private var painting = false
+    /// The handle last held, which a pinch away from every handle widens.
+    @State private var selected: Int?
+    /// The held handle's Q when the pinch or option-drag began.
+    @State private var startQ: Double?
+    /// A pinch is under way: a drag's finger moves nothing meanwhile.
+    @State private var pinching = false
+    /// Where the brush last was, to end a stroke cut short.
+    @State private var lastPaint: (hz: Double, db: Double)?
+    /// A drag that began across neither a handle nor the curve, left to the
+    /// page to scroll.
+    @State private var passing = false
+    /// Whether each gesture is still under way. A gesture cut short — the
+    /// page scrolled or closed, a call — never reaches `onEnded`; this going
+    /// false ends it.
+    @GestureState private var dragActive = false
+    @GestureState private var pinchActive = false
 
     enum Shown: String, CaseIterable, Identifiable {
         case eq = "EQ"
@@ -143,18 +173,30 @@ struct EqGraph: View {
             }
         }
         .chartLegend(.hidden)
-        .onChange(of: handles) { _, _ in dragging = nil }
+        // Saves land while a drag goes on; the handle stays with the finger.
+        .onChange(of: handles) { _, _ in if !grabbed { dragging = nil } }
         #if !os(tvOS)
         .chartOverlay { proxy in
-            if showingEq, onDrag != nil {
+            if showingEq, onEdit != nil {
                 GeometryReader { geo in
+                    #if os(iOS)
+                    GraphPan(
+                        begins: { start, velocity in claims(start, velocity, proxy, geo) },
+                        moved: { start, at, moved in dragStep(start: start, at: at, moved: moved, proxy, geo) },
+                        ended: endDrag
+                    )
+                    .gesture(pinch(proxy, geo))
+                    #else
                     Rectangle()
                         .fill(Color.clear)
                         .contentShape(Rectangle())
-                        .gesture(drag(proxy, geo))
+                        .gesture(drag(proxy, geo).simultaneously(with: pinch(proxy, geo)))
+                    #endif
                 }
             }
         }
+        .onChange(of: dragActive) { _, active in if !active { endDrag() } }
+        .onChange(of: pinchActive) { _, active in if !active { endPinch() } }
         #endif
         .accessibilityLabel(showingEq ? "EQ response" : "Measured response")
     }
@@ -187,41 +229,143 @@ struct EqGraph: View {
     #if !os(tvOS)
     private func drag(_ proxy: ChartProxy, _ geo: GeometryProxy) -> some Gesture {
         DragGesture(minimumDistance: 2)
+            .updating($dragActive) { _, active, _ in active = true }
             .onChanged { g in
-                guard let plot = proxy.plotFrame else { return }
-                let origin = geo[plot].origin
-                let at = CGPoint(x: g.location.x - origin.x, y: g.location.y - origin.y)
-                if !grabbed {
-                    grabbed = true
-                    let start = CGPoint(x: g.startLocation.x - origin.x, y: g.startLocation.y - origin.y)
-                    dragging = nearest(to: start, proxy)
+                if !grabbed, !pinching, !passing {
+                    // Which a drag away from the handles is waits for a few
+                    // points of travel.
+                    let speed = CGPoint(x: g.translation.width, y: g.translation.height)
+                    if paints, nearest(to: plotPoint(g.startLocation, proxy, geo), proxy) == nil,
+                       hypot(speed.x, speed.y) < 8 {
+                        return
+                    }
+                    guard claims(g.startLocation, speed, proxy, geo) else {
+                        passing = true
+                        return
+                    }
                 }
-                guard let held = dragging,
-                      let hz: Double = proxy.value(atX: at.x),
-                      let db: Double = proxy.value(atY: at.y)
-                else { return }
-                dragging = Handle(
-                    index: held.index,
-                    hz: min(max(hz, 20), 20000),
-                    db: min(max(db, yDomain.lowerBound), yDomain.upperBound)
-                )
+                guard !passing else { return }
+                dragStep(start: g.startLocation, at: g.location, moved: g.translation, proxy, geo)
             }
-            .onEnded { _ in
-                // Held where it was let go until the edited profile is drawn.
-                grabbed = false
-                if let held = dragging { onDrag?(held.index, held.hz, held.db) }
+            .onEnded { _ in endDrag() }
+    }
+
+    private func plotPoint(_ p: CGPoint, _ proxy: ChartProxy, _ geo: GeometryProxy) -> CGPoint {
+        guard let plot = proxy.plotFrame else { return p }
+        let origin = geo[plot].origin
+        return CGPoint(x: p.x - origin.x, y: p.y - origin.y)
+    }
+
+    /// Whether a drag starting at `start` and heading along `heading` is the
+    /// graph's: one from a handle, or a stroke across the curve. One up or
+    /// down away from every handle is the page being scrolled.
+    private func claims(_ start: CGPoint, _ heading: CGPoint, _ proxy: ChartProxy, _ geo: GeometryProxy) -> Bool {
+        if nearest(to: plotPoint(start, proxy, geo), proxy) != nil { return true }
+        return paints && abs(heading.x) > abs(heading.y)
+    }
+
+    /// A step of a drag the graph has claimed, in the overlay's space: the
+    /// first takes hold of the handle under it or starts a stroke.
+    private func dragStep(start: CGPoint, at location: CGPoint, moved: CGSize, _ proxy: ChartProxy, _ geo: GeometryProxy) {
+        let at = plotPoint(location, proxy, geo)
+        if !grabbed, !pinching {
+            let under = nearest(to: plotPoint(start, proxy, geo), proxy)
+            grabbed = true
+            dragging = under
+            painting = under == nil
+            selected = under?.index ?? selected
+            startQ = under?.q
+        }
+        guard grabbed,
+              let hz: Double = proxy.value(atX: at.x),
+              let db: Double = proxy.value(atY: at.y)
+        else { return }
+        let (hzIn, dbIn) = (min(max(hz, 20), 20000), min(max(db, yDomain.lowerBound), yDomain.upperBound))
+        if painting {
+            lastPaint = (hzIn, dbIn)
+            onEdit?(.paint(hz: hzIn, db: dbIn, done: false))
+            return
+        }
+        guard !pinching, var held = dragging else { return }
+        #if os(macOS)
+        // Option-drag widens or narrows the band where it is: up for a
+        // higher Q.
+        if NSEvent.modifierFlags.contains(.option), let q = startQ {
+            held.q = Self.clampQ(q * pow(2, -moved.height / 60))
+            dragging = held
+            onEdit?(.band(held, done: false))
+            return
+        }
+        #endif
+        (held.hz, held.db) = (hzIn, dbIn)
+        dragging = held
+        onEdit?(.band(held, done: false))
+    }
+
+    /// The drag's end, whether it was let go or cut short; once only. The
+    /// handle is held where it was let go until the edited profile is drawn.
+    private func endDrag() {
+        passing = false
+        guard grabbed else { return }
+        grabbed = false
+        // A pinch under way ends itself.
+        if pinching { return }
+        startQ = nil
+        if painting {
+            painting = false
+            if let at = lastPaint { onEdit?(.paint(hz: at.hz, db: at.db, done: true)) }
+            lastPaint = nil
+        } else if let held = dragging {
+            onEdit?(.band(held, done: true))
+        }
+    }
+
+    /// A pinch widens the band under it, or the one last held: apart for a
+    /// wider band, a lower Q.
+    private func pinch(_ proxy: ChartProxy, _ geo: GeometryProxy) -> some Gesture {
+        MagnifyGesture()
+            .updating($pinchActive) { _, active, _ in active = true }
+            .onChanged { g in
+                if !pinching {
+                    pinching = true
+                    var under: Handle?
+                    if let plot = proxy.plotFrame {
+                        let origin = geo[plot].origin
+                        under = nearest(to: CGPoint(x: g.startLocation.x - origin.x, y: g.startLocation.y - origin.y), proxy, within: 44)
+                    }
+                    guard let h = under ?? handles.first(where: { $0.index == selected }) else { return }
+                    dragging = h
+                    selected = h.index
+                    startQ = h.q
+                }
+                guard var held = dragging, let q = startQ else { return }
+                held.q = Self.clampQ(q / g.magnification)
+                dragging = held
+                onEdit?(.band(held, done: false))
             }
+            .onEnded { _ in endPinch() }
+    }
+
+    /// The pinch's end, whether it was let go or cut short; once only.
+    private func endPinch() {
+        guard pinching else { return }
+        pinching = false
+        guard startQ != nil else { return }
+        startQ = nil
+        if let held = dragging { onEdit?(.band(held, done: true)) }
     }
     #endif
 
+    private static func clampQ(_ q: Double) -> Double { min(max(q, 0.1), 20) }
+
     /// The handle under `point`, within a finger's width of it.
-    private func nearest(to point: CGPoint, _ proxy: ChartProxy) -> Handle? {
+    private func nearest(to point: CGPoint, _ proxy: ChartProxy, within: CGFloat = 24) -> Handle? {
         handles
             .compactMap { h -> (Handle, CGFloat)? in
                 guard let at = proxy.position(for: (x: h.hz, y: h.db)) else { return nil }
                 return (h, hypot(at.x - point.x, at.y - point.y))
             }
-            .filter { $0.1 < 24 }
+            .filter { $0.1 < within }
             .min { $0.1 < $1.1 }?
             .0
     }
@@ -329,3 +473,62 @@ struct EqGraph: View {
         hz >= 1000 ? "\(Int(hz / 1000))k" : "\(Int(hz))"
     }
 }
+
+#if os(iOS)
+/// The graph's drag on a phone, as a UIKit pan. A drag the graph does not
+/// claim is declined before it begins, so the page's scroll takes the touch;
+/// a SwiftUI drag that has seen a touch keeps it from the scroll.
+private struct GraphPan: UIViewRepresentable {
+    let begins: (_ start: CGPoint, _ velocity: CGPoint) -> Bool
+    let moved: (_ start: CGPoint, _ at: CGPoint, _ moved: CGSize) -> Void
+    let ended: () -> Void
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.step(_:)))
+        pan.maximumNumberOfTouches = 1
+        pan.delegate = context.coordinator
+        view.addGestureRecognizer(pan)
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        context.coordinator.owner = self
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(owner: self) }
+
+    @MainActor final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var owner: GraphPan
+        private var start = CGPoint.zero
+
+        init(owner: GraphPan) { self.owner = owner }
+
+        func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+            guard let pan = g as? UIPanGestureRecognizer, let view = pan.view else { return false }
+            let (at, moved) = (pan.location(in: view), pan.translation(in: view))
+            start = CGPoint(x: at.x - moved.x, y: at.y - moved.y)
+            return owner.begins(start, pan.velocity(in: view))
+        }
+
+        /// Alongside the pinch, never alongside the page's scroll.
+        func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            !(other.view is UIScrollView)
+        }
+
+        @objc func step(_ pan: UIPanGestureRecognizer) {
+            guard let view = pan.view else { return }
+            switch pan.state {
+            case .began, .changed:
+                let moved = pan.translation(in: view)
+                owner.moved(start, pan.location(in: view), CGSize(width: moved.x, height: moved.y))
+            case .ended, .cancelled, .failed:
+                owner.ended()
+            default:
+                break
+            }
+        }
+    }
+}
+#endif

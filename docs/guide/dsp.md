@@ -293,8 +293,16 @@ correction from AutoEQ, the Measured view draws the device as measured, the
 target it plays to, and the measurement with the correction applied.
 
 A tuning's bands are edited on its own page, opened from its block on the EQ
-page: in the table below its graph, or by dragging a peak or
-shelf on the graph itself. An edit is saved and heard straight away. Frequency
+page: in the table below its graph, or on the graph itself. Drag a peak or
+shelf's handle for its frequency and gain, and pinch it, or drag it with
+Option held on the Mac, for its Q. A graphic curve is painted: drag anywhere
+across the graph away from the handles (a drag up or down scrolls the page)
+and the curve follows, with the brush under the graph
+moving the nearest point alone or its neighbours too, over a third of an
+octave or an octave. The graph follows the drag as it goes, drawn by the core
+without saving; the edit is saved and heard at most four times a second while
+the drag goes on, and once when it ends, so the DSP is rebuilt for the edit
+and never for every frame of it. Frequency
 is held to 10 Hz–22 kHz, gain to ±30 dB and Q to 0.1–20. A graphic curve's
 row opens a page of its points, each frequency and gain editable within the
 same limits; a point moved past another takes its place in order. Delays and
@@ -305,8 +313,16 @@ correction is what makes the device neutral and an edit to it is no longer
 that. To change the sound, add a tuning on top; to edit a correction anyway,
 make it a tuning on its page first.
 
+Once a tuning is edited, **Save as Copy…** on its page keeps the edit as an EQ
+of its own, named "<name> copy" unless another name is given, in the
+original's place in the output's tuning, and puts the original back as it was
+when the page was opened, or as its file had it for an import. The page then
+shows the copy. Where the output plays the original through a preset or a
+group rather than naming it in its tuning, the copy is saved but not placed,
+and the page says so.
+
 An imported EQ keeps what it was imported as. Once edited, **Reset to File** on
-a graphic curve's page or `koan dsp revert NAME` puts it back, and `koan dsp copy NAME` keeps the edit as an EQ of its own
+its page or `koan dsp revert NAME` puts it back, and `koan dsp copy NAME` keeps the edit as an EQ of its own
 first. EQs imported before this was kept have nothing to go back to.
 
 ### Tunings of several EQs, and presets

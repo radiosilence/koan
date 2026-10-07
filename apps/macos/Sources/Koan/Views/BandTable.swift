@@ -36,7 +36,7 @@ struct BandTable: View {
     static func handles(_ bands: [DspBand]) -> [EqGraph.Handle] {
         bands.enumerated().compactMap { i, b in
             ["peaking", "low_shelf", "high_shelf"].contains(b.kind) && (b.channels.isEmpty || b.channels.contains(0))
-                ? EqGraph.Handle(index: i, hz: b.freq, db: b.gainDb)
+                ? EqGraph.Handle(index: i, hz: b.freq, db: b.gainDb, q: b.q)
                 : nil
         }
     }

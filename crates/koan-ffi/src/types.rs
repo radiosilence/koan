@@ -1677,6 +1677,14 @@ pub struct DspMixSource {
     pub gain: f64,
 }
 
+/// A copy saved from an edit: its name, and whether it took the original's
+/// place in the device's tuning.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct DspSavedCopy {
+    pub name: String,
+    pub placed: bool,
+}
+
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct DspPoint {
     pub hz: f64,

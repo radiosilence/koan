@@ -482,8 +482,13 @@ final class DspModel {
         act { try await $0.dspSetScope(name: name, everywhere: everywhere) }
     }
 
+    /// Edits made here, by profile: a page that has seen none takes a change
+    /// to its profile as another device's.
+    private(set) var edits: [String: Int] = [:]
+
     /// Set band `index` of `name`.
     func setBand(_ name: String, _ index: Int, kind: String, freq: Double, gain: Double, q: Double) {
+        edits[name, default: 0] += 1
         act {
             try await $0.dspSetBand(
                 name: name, index: UInt32(index), kind: kind, freq: freq, gainDb: gain, q: q
@@ -493,14 +498,49 @@ final class DspModel {
 
     /// Set the points of graphic curve `index` of `name`.
     func setCurve(_ name: String, _ index: Int, _ points: [DspPoint]) {
+        edits[name, default: 0] += 1
         act { try await $0.dspSetCurve(name: name, index: UInt32(index), points: points) }
     }
 
+    /// What `name` would draw with band `index` set so, nothing saved.
+    func previewBand(_ name: String, _ index: Int, kind: String, freq: Double, gain: Double, q: Double) async -> DspResponse? {
+        await engine.dspPreviewBand(
+            name: name, index: UInt32(index), kind: kind, freq: freq, gainDb: gain, q: q, rate: 48000
+        )
+    }
+
+    /// What `name` would draw with curve `index` set to `points`, nothing saved.
+    func previewCurve(_ name: String, _ index: Int, _ points: [DspPoint]) async -> DspResponse? {
+        await engine.dspPreviewCurve(name: name, index: UInt32(index), points: points, rate: 48000)
+    }
+
+    /// `name`'s filters and headroom as they are, for `saveAsCopy` to put back.
+    func snapshot(_ name: String) async -> String? {
+        await engine.dspSnapshot(name: name)
+    }
+
+    /// Keep `name` as it is now as a copy, and put `name` back to `before`
+    /// or its file; on `device` the copy takes its place in the tuning. The
+    /// copy, or nil where it was refused.
+    func saveAsCopy(_ name: String, as new: String?, before: String?, device: String?) async -> DspSavedCopy? {
+        do {
+            let copy = try await engine.dspSaveAsCopy(name: name, new: new, before: before, device: device)
+            lastError = nil
+            await changed()
+            return copy
+        } catch {
+            lastError = SettingsModel.describe(error)
+            return nil
+        }
+    }
+
     func addBand(_ name: String) {
+        edits[name, default: 0] += 1
         act { _ = try await $0.dspAddBand(name: name) }
     }
 
     func removeFilter(_ name: String, _ index: Int) {
+        edits[name, default: 0] += 1
         act { try await $0.dspRemoveFilter(name: name, index: UInt32(index)) }
     }
 

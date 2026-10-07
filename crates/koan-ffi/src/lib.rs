@@ -3387,6 +3387,40 @@ impl KoanEngine {
         .await
     }
 
+    /// `name`'s filters and headroom as they are, for `dsp_save_as_copy` to
+    /// put back. Opaque.
+    pub async fn dsp_snapshot(self: Arc<Self>, name: String) -> Option<String> {
+        offload::offload(move || koan_core::audio::dsp::profiles::snapshot(&name)).await
+    }
+
+    /// Keep `name` as it is now as a copy, under `new` or "<name> copy", and
+    /// put `name` back to `before` (a `dsp_snapshot`), or to its file. On
+    /// `device`, the copy takes its place in the tuning where the tuning names
+    /// it.
+    pub async fn dsp_save_as_copy(
+        self: Arc<Self>,
+        name: String,
+        new: Option<String>,
+        before: Option<String>,
+        device: Option<String>,
+    ) -> Result<DspSavedCopy, KoanError> {
+        offload::sequenced(move || {
+            let copy = koan_core::audio::dsp::profiles::save_as_copy(
+                &name,
+                new.as_deref(),
+                before.as_deref(),
+                device.as_deref(),
+            )
+            .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)?;
+            Ok(DspSavedCopy {
+                name: copy.name,
+                placed: copy.placed,
+            })
+        })
+        .await
+    }
+
     /// The target the tuning `name` was made against, or `None` when that is
     /// not known, which plays it as it is on any correction.
     pub async fn dsp_set_tuned_for(
@@ -3441,6 +3475,51 @@ impl KoanEngine {
     pub async fn dsp_response(self: Arc<Self>, name: String, rate: u32) -> Option<DspResponse> {
         offload::offload(move || {
             koan_core::audio::dsp::profiles::response(&name, rate).map(Into::into)
+        })
+        .await
+    }
+
+    /// What `name` would draw with band `index` set so, nothing saved: for
+    /// the graph to follow a drag.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn dsp_preview_band(
+        self: Arc<Self>,
+        name: String,
+        index: u32,
+        kind: String,
+        freq: f64,
+        gain_db: f64,
+        q: f64,
+        rate: u32,
+    ) -> Option<DspResponse> {
+        offload::offload(move || {
+            koan_core::audio::dsp::profiles::preview_band(
+                &name,
+                index as usize,
+                &kind,
+                freq,
+                gain_db,
+                q,
+                rate,
+            )
+            .map(Into::into)
+        })
+        .await
+    }
+
+    /// What `name` would draw with curve `index` set to `points`, nothing
+    /// saved.
+    pub async fn dsp_preview_curve(
+        self: Arc<Self>,
+        name: String,
+        index: u32,
+        points: Vec<DspPoint>,
+        rate: u32,
+    ) -> Option<DspResponse> {
+        offload::offload(move || {
+            let points: Vec<(f64, f64)> = points.iter().map(|p| (p.hz, p.db)).collect();
+            koan_core::audio::dsp::profiles::preview_curve(&name, index as usize, &points, rate)
+                .map(Into::into)
         })
         .await
     }
