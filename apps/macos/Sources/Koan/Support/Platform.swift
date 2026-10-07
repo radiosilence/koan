@@ -618,11 +618,59 @@ extension View {
 }
 #endif
 
+extension View {
+    /// A choice too long for a tray: a form in its own stack, with its Done
+    /// in the bar. The system's sheet, except on a phone in the theme, where
+    /// iOS draws a sheet over a sheet as a rounded card: there it is the
+    /// tray's square panel, at its full height. Either way in the theme's
+    /// sheet chrome, which the content leaves to this.
+    @ViewBuilder
+    func formTray<Item: Identifiable, Tray: View>(
+        item: Binding<Item?>,
+        onDismiss: (() -> Void)? = nil,
+        @ViewBuilder content: @escaping (Item) -> Tray
+    ) -> some View {
+        #if os(iOS)
+        if KoanTheme.isOn {
+            modifier(PhoneTray(
+                isPresented: Binding(
+                    get: { item.wrappedValue != nil },
+                    set: { if !$0 { item.wrappedValue = nil } }
+                ),
+                fills: true,
+                onDismiss: onDismiss,
+                tray: { if let shown = item.wrappedValue { content(shown) } }
+            ))
+        } else {
+            sheet(item: item, onDismiss: onDismiss) { content($0).koanSheet() }
+        }
+        #else
+        sheet(item: item, onDismiss: onDismiss) { content($0).koanSheet() }
+        #endif
+    }
+
+    @ViewBuilder
+    func formTray<Tray: View>(isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Tray) -> some View {
+        #if os(iOS)
+        if KoanTheme.isOn {
+            modifier(PhoneTray(isPresented: isPresented, fills: true, tray: content))
+        } else {
+            sheet(isPresented: isPresented) { content().koanSheet() }
+        }
+        #else
+        sheet(isPresented: isPresented) { content().koanSheet() }
+        #endif
+    }
+}
+
 #if os(iOS)
 /// A cover with nothing of its own to draw, presented and dismissed without
 /// the system's slide: the panel moves itself, and the dim fades.
 private struct PhoneTray<Tray: View>: ViewModifier {
     @Binding var isPresented: Bool
+    /// A form, which scrolls itself, filling the panel to its limit.
+    var fills = false
+    var onDismiss: (() -> Void)?
     @ViewBuilder let tray: () -> Tray
     @State private var covering = false
 
@@ -633,8 +681,11 @@ private struct PhoneTray<Tray: View>: ViewModifier {
                 instant.disablesAnimations = true
                 withTransaction(instant) { covering = open }
             }
-            .fullScreenCover(isPresented: $covering, onDismiss: { isPresented = false }) {
-                PhoneTrayPanel(close: { isPresented = false }, content: tray)
+            .fullScreenCover(isPresented: $covering, onDismiss: {
+                isPresented = false
+                onDismiss?()
+            }) {
+                PhoneTrayPanel(close: { isPresented = false }, fills: fills, content: tray)
                     .presentationBackground(.clear)
             }
     }
@@ -642,6 +693,7 @@ private struct PhoneTray<Tray: View>: ViewModifier {
 
 private struct PhoneTrayPanel<Tray: View>: View {
     let close: () -> Void
+    let fills: Bool
     @ViewBuilder let content: () -> Tray
     @State private var shown = false
     /// The content's own height: the panel stands as tall as it, to a limit.
@@ -682,20 +734,26 @@ private struct PhoneTrayPanel<Tray: View>: View {
                 .padding(.vertical, KoanTheme.Space.s)
                 .frame(maxWidth: .infinity)
                 .contentShape(Rectangle())
+                // A form scrolls under its own finger: only the strip pulls.
+                .gesture(pulling, including: fills ? .all : .none)
                 .accessibilityHidden(true)
-            ScrollView {
-                content().onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+            if fills {
+                content().frame(height: limit)
+            } else {
+                ScrollView {
+                    content().onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+                }
+                .scrollBounceBehavior(.basedOnSize)
+                // Content that fits has nothing to scroll, and a scroll view
+                // that could would take the drag that closes the panel.
+                .scrollDisabled(height <= limit)
+                .onScrollGeometryChange(for: Bool.self) {
+                    $0.contentOffset.y <= -$0.contentInsets.top + 0.5
+                } action: { _, top in
+                    atTop = top
+                }
+                .frame(height: min(max(height, 1), limit))
             }
-            .scrollBounceBehavior(.basedOnSize)
-            // Content that fits has nothing to scroll, and a scroll view that
-            // could would take the drag that closes the panel.
-            .scrollDisabled(height <= limit)
-            .onScrollGeometryChange(for: Bool.self) {
-                $0.contentOffset.y <= -$0.contentInsets.top + 0.5
-            } action: { _, top in
-                atTop = top
-            }
-            .frame(height: min(max(height, 1), limit))
         }
         .font(.koan(.body))
         .foregroundStyle(Color.koanInk)
@@ -711,23 +769,25 @@ private struct PhoneTrayPanel<Tray: View>: View {
                     .ignoresSafeArea(edges: .bottom)
             }
         }
-        .simultaneousGesture(
-            // In the screen's space: the panel moves under the finger, and its
-            // own space would move with it.
-            DragGesture(minimumDistance: 12, coordinateSpace: .global)
-                .updating($pull) { drag, pull, _ in
-                    if atTop { pull = max(0, drag.translation.height) }
-                }
-                .onEnded { drag in
-                    guard atTop else { return }
-                    if drag.translation.height > 80 || drag.predictedEndTranslation.height > 240 {
-                        dismiss()
-                    }
-                },
-            including: .all
-        )
+        .simultaneousGesture(pulling, including: fills ? .none : .all)
         .accessibilityAddTraits(.isModal)
         .accessibilityAction(.escape, dismiss)
+    }
+
+    /// A drag down from the top closes the panel.
+    private var pulling: some Gesture {
+        // In the screen's space: the panel moves under the finger, and its
+        // own space would move with it.
+        DragGesture(minimumDistance: 12, coordinateSpace: .global)
+            .updating($pull) { drag, pull, _ in
+                if atTop { pull = max(0, drag.translation.height) }
+            }
+            .onEnded { drag in
+                guard atTop else { return }
+                if drag.translation.height > 80 || drag.predictedEndTranslation.height > 240 {
+                    dismiss()
+                }
+            }
     }
 
     private func dismiss() {

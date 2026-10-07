@@ -1,0 +1,1 @@
+- **Square EQ sheets on iPhone.** In the kōan look, Add EQ, the correction picker, AutoEQ, measurements, splitting, the role question, How EQ works and the browse filters open as the theme's square panel rather than a rounded card over the EQ sheet.

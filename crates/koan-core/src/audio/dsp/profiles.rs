@@ -41,6 +41,14 @@ pub struct Summary {
     pub held_by: Vec<String>,
     /// Why it cannot move to the other scope, while it cannot.
     pub scope_locked: Option<String>,
+    /// The graphic curves among `bands`, and their points in all.
+    pub graphics: usize,
+    pub points: usize,
+    /// The target it was made against, by name.
+    pub made_for: Option<String>,
+    /// How it would meet the overview device's correction, as `joins` says
+    /// of an EQ in that device's tuning.
+    pub join: Option<Join>,
 }
 
 /// What a device plays, as the apps' EQ page shows it: for a front end
@@ -129,16 +137,9 @@ fn joins(
                 .find(|p| p.name == name)
                 .and_then(|p| super::made_against(p, all, 0));
             let plays = dsp.enabled && on && !dropped.contains(&name);
-            let join = match (&aim, &made) {
-                _ if !plays => None,
-                (Some(a), Some(m)) if a == m => Some(Join::Matched),
-                (Some(a), Some(m)) if targets::same_ear(a, m) => Some(Join::Converted {
-                    from: target_name(a),
-                    to: target_name(m),
-                }),
-                (Some(_), None) => Some(Join::Unknown),
-                _ => None,
-            };
+            let join = plays
+                .then(|| meets(aim.as_deref(), made.as_deref()))
+                .flatten();
             let said: Vec<&str> = notes
                 .iter()
                 .filter(|(eq, _)| *eq == name)
@@ -164,6 +165,21 @@ fn joins(
             }
         })
         .collect()
+}
+
+/// How an EQ made against `made` meets a correction aiming at `aim`, both
+/// target ids. None where nothing compares: no correction target, or one
+/// for another kind of headphone.
+fn meets(aim: Option<&str>, made: Option<&str>) -> Option<Join> {
+    match (aim, made) {
+        (Some(a), Some(m)) if a == m => Some(Join::Matched),
+        (Some(a), Some(m)) if super::targets::same_ear(a, m) => Some(Join::Converted {
+            from: target_name(a),
+            to: target_name(m),
+        }),
+        (Some(_), None) => Some(Join::Unknown),
+        _ => None,
+    }
 }
 
 /// What `device` plays.
@@ -484,6 +500,10 @@ pub fn overview_for(device: Option<String>) -> Overview {
     let chain = device
         .as_deref()
         .and_then(|d| super::output_chain(&cfg.dsp, d));
+    let aim = device
+        .as_deref()
+        .and_then(|d| cfg.dsp.profile_for(d))
+        .and_then(|c| aims_at(c, &cfg.dsp.profiles));
     Overview {
         enabled: cfg.dsp.enabled,
         active: device
@@ -500,17 +520,11 @@ pub fn overview_for(device: Option<String>) -> Overview {
             (Some(d), None) => joins(&cfg.dsp, d, &[], &[]),
             (None, _) => Vec::new(),
         },
-        in_ear: device
+        in_ear: aim
             .as_deref()
-            .and_then(|d| cfg.dsp.profile_for(d))
-            .and_then(|c| aims_at(c, &cfg.dsp.profiles))
-            .and_then(|t| super::targets::shipped(&t))
+            .and_then(super::targets::shipped)
             .map(|t| t.ear == super::targets::Ear::In),
-        aim: device
-            .as_deref()
-            .and_then(|d| cfg.dsp.profile_for(d))
-            .and_then(|c| aims_at(c, &cfg.dsp.profiles))
-            .map(|t| target_name(&t)),
+        aim: aim.as_deref().map(target_name),
         left_out: chain.and_then(|c| c.left_out),
         outputs: outputs(&cfg.dsp),
         tunings: cfg.dsp.tunings.iter().fold(Vec::new(), |mut first, t| {
@@ -528,6 +542,15 @@ pub fn overview_for(device: Option<String>) -> Overview {
             .profiles
             .iter()
             .map(|p| {
+                let graphics: Vec<_> = p
+                    .filters
+                    .iter()
+                    .filter_map(|f| match f {
+                        config::DspFilter::Graphic(g) => Some(g),
+                        _ => None,
+                    })
+                    .collect();
+                let made = super::made_against(p, &cfg.dsp.profiles, 0);
                 let (rates, problem) = match Setup::load(p, &cfg.dsp.profiles, &base) {
                     Ok(setup) => (setup.map(|s| s.rates()).unwrap_or_default(), None),
                     Err(e) => (Vec::new(), Some(e.to_string())),
@@ -564,6 +587,10 @@ pub fn overview_for(device: Option<String>) -> Overview {
                         .collect(),
                     everywhere: scope(p, &cfg.dsp.profiles) == DspScope::Everywhere,
                     scope_locked: scope_locked(p, &cfg.dsp.profiles),
+                    graphics: graphics.len(),
+                    points: graphics.iter().map(|g| g.points.len()).sum(),
+                    made_for: made.as_deref().map(target_name),
+                    join: meets(aim.as_deref(), made.as_deref()),
                 }
             })
             .collect(),

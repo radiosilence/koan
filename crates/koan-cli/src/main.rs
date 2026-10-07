@@ -1257,6 +1257,10 @@ mod tests {
             everywhere: false,
             held_by: vec![],
             scope_locked: None,
+            graphics: 0,
+            points: 0,
+            made_for: None,
+            join: None,
         });
         let mut keys: Vec<&str> = item
             .as_object()

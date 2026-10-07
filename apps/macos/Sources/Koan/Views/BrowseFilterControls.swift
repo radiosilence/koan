@@ -38,7 +38,7 @@ struct BrowseFilterButton: View {
         #elseif os(tvOS)
         .modifier(FilterSheet(open: $open))
         #else
-        .sheet(isPresented: $open) {
+        .formTray(isPresented: $open) {
             NavigationStack {
                 BrowseFilterForm()
                     .navigationTitle(KoanTheme.label("Filter"))
@@ -50,7 +50,6 @@ struct BrowseFilterButton: View {
                         }
                     }
             }
-            .koanSheet()
             .presentationDetents([.medium, .large])
         }
         #endif

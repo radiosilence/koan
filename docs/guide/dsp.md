@@ -243,6 +243,12 @@ it left to take it out of the tuning and right to move it up or down, or touch
 and hold it for the same; on the Mac, its **Options** menu does these. **Add EQ** adds another. An empty stage is a dashed
 place to add one.
 
+**Add EQ** lists each EQ with the target it was made against. Those made
+against the correction's target come first, under **Matches your correction**
+and in the accent, since they play as made; the rest follow under **Other**.
+A graphic EQ is described by its points ("graphic, 127 points"), a parametric
+one by its bands.
+
 The correction's block names the target it corrects to ("to Neutral, in-ear
 (diffuse field)"), and each EQ the target it was made against ("made for Neutral"). The
 line into each EQ says how the two meet. Drawn in the accent and marked

@@ -859,9 +859,10 @@ extension View {
     }
 
     /// A small fact set apart, such as a format: `fine` in `ink` inside a
-    /// square `rule` outline. A tinted capsule in the platform's look.
-    func koanBadge() -> some View {
-        modifier(KoanBadgeRole())
+    /// square `rule` outline. A tinted capsule in the platform's look. In the
+    /// accent where the fact is a match.
+    func koanBadge(accent: Bool = false) -> some View {
+        modifier(KoanBadgeRole(accent: accent))
     }
 
     /// A chip that is a choice — a device, a preset, an artist: a `muted`
@@ -1958,21 +1959,24 @@ private struct KoanFocusRing: ViewModifier {
 }
 
 private struct KoanBadgeRole: ViewModifier {
+    let accent: Bool
+
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
             content
-                .font(.koan(.fine))
-                .foregroundStyle(Color.koanInk)
+                .koanText(.fine, accent ? .accent : .ink)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 2)
-                .overlay { Rectangle().strokeBorder(Color.koanRule, lineWidth: KoanTheme.hairline) }
+                .overlay {
+                    Rectangle().strokeBorder(accent ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.koanRule), lineWidth: KoanTheme.hairline)
+                }
         } else {
             content
                 .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(accent ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
-                .background(.quaternary, in: Capsule())
+                .background(accent ? AnyShapeStyle(.tint.opacity(0.15)) : AnyShapeStyle(.quaternary), in: Capsule())
         }
     }
 }

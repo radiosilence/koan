@@ -132,16 +132,16 @@ struct EqSettings: View {
                 app.dsp.importFiles(urls, into: DspPlacement(device: device, stage: stage))
             }
         }
-        .sheet(item: $finding) { find in
-            AutoEqSearch(dsp: app.dsp, query: find.query).koanSheet()
+        .formTray(item: $finding) { find in
+            AutoEqSearch(dsp: app.dsp, query: find.query)
         }
-        .sheet(isPresented: $measuring) {
-            MeasurementFlow(dsp: app.dsp).koanSheet()
+        .formTray(isPresented: $measuring) {
+            MeasurementFlow(dsp: app.dsp)
         }
-        .sheet(item: $splitting) { baked in
-            SplitFlow(dsp: app.dsp, name: baked.name).koanSheet()
+        .formTray(item: $splitting) { baked in
+            SplitFlow(dsp: app.dsp, name: baked.name)
         }
-        .sheet(item: $choosing, onDismiss: {
+        .formTray(item: $choosing, onDismiss: {
             guard let (stage, add) = adding else { return }
             adding = nil
             switch add {
@@ -158,22 +158,21 @@ struct EqSettings: View {
                     adding = (stage, add)
                     choosing = nil
                 }
-                .koanSheet()
             }
         }
-        .sheet(isPresented: $explaining) {
-            EqExplainer().koanSheet()
+        .formTray(isPresented: $explaining) {
+            EqExplainer()
         }
         // A profile imported from a file: a neutral correction, one with a
         // tuning already in it, or taste to add on top? kōan cannot tell,
         // and a chain corrects once.
-        .sheet(item: Binding(
+        .formTray(item: Binding(
             // Manage EQ asks for its own imports while it is open.
             get: { managing ? nil : app.dsp.askRole },
             // Swiped away, as Decide Later.
             set: { if $0 == nil, let ask = app.dsp.askRole { app.dsp.answer(ask, nil) } }
         )) { ask in
-            RoleQuestion(dsp: app.dsp, ask: ask).koanSheet()
+            RoleQuestion(dsp: app.dsp, ask: ask)
         }
         .alert(namingTitle, isPresented: $naming) {
             TextField("Name", text: $presetName)
@@ -824,29 +823,55 @@ struct StagePicker: View {
         }
     }
 
+    /// The EQs made against the target the correction aims at, ahead of the
+    /// rest, each alphabetical; one list where there is no correction to
+    /// match.
+    private var eqGroups: [(title: String, eqs: [DspProfileSummary])] {
+        guard overview.aim != nil else { return [(title: "EQs", eqs: choices)] }
+        let sorted = choices.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        let matching = sorted.filter { $0.join == .matched }
+        let other = sorted.filter { $0.join != .matched }
+        guard !matching.isEmpty else { return [(title: "EQs", eqs: other)] }
+        return [(title: "Matches your correction", eqs: matching)] + (other.isEmpty ? [] : [(title: "Other", eqs: other)])
+    }
+
     var body: some View {
         NavigationStack {
             KoanForm {
-                Section {
-                    if stage == .correction {
+                switch stage {
+                case .correction:
+                    Section {
                         row("None", detail: "No correction: the device as it is", chosen: overview.active == nil) {
                             dsp.assign(nil, to: device)
                         }
-                    }
-                    ForEach(choices, id: \.name) { p in
-                        row(p.name, detail: DspModel.describe(p), chosen: stage == .correction && overview.active == p.name) {
-                            switch stage {
-                            case .correction: dsp.assign(p.name, to: device)
-                            case .eq: dsp.setTunings(overview.chain + [DspTuningEntry(name: p.name, on: true)], for: device)
+                        ForEach(choices, id: \.name) { p in
+                            row(p.name, detail: DspModel.describe(p), chosen: overview.active == p.name) {
+                                dsp.assign(p.name, to: device)
                             }
                         }
+                    } header: {
+                        KoanSectionHeader("Corrections")
                     }
-                    if choices.isEmpty, stage == .eq {
-                        Text("Every EQ is in the tuning already. Add another below.")
-                            .koanText(.meta, .muted)
+                case .eq:
+                    if choices.isEmpty {
+                        Section {
+                            Text("Every EQ is in the tuning already. Add another below.")
+                                .koanText(.meta, .muted)
+                        } header: {
+                            KoanSectionHeader("EQs")
+                        }
                     }
-                } header: {
-                    KoanSectionHeader(stage == .correction ? "Corrections" : "EQs")
+                    ForEach(eqGroups, id: \.title) { group in
+                        Section {
+                            ForEach(group.eqs, id: \.name) { p in
+                                row(p.name, detail: DspModel.describe(p), madeFor: p.madeFor, matched: p.join == .matched, chosen: false) {
+                                    dsp.setTunings(overview.chain + [DspTuningEntry(name: p.name, on: true)], for: device)
+                                }
+                            }
+                        } header: {
+                            KoanSectionHeader(group.title)
+                        }
+                    }
                 }
                 if stage == .correction, let name = overview.active {
                     current(name)
@@ -924,7 +949,16 @@ struct StagePicker: View {
         }
     }
 
-    private func row(_ name: String, detail: String, chosen: Bool, choose: @escaping () -> Void) -> some View {
+    /// A choice: its name, for an EQ the target it was made against, in the
+    /// accent where that is the correction's, and what it holds.
+    private func row(
+        _ name: String,
+        detail: String,
+        madeFor: String? = nil,
+        matched: Bool = false,
+        chosen: Bool,
+        choose: @escaping () -> Void
+    ) -> some View {
         Button {
             choose()
             dismiss()
@@ -932,6 +966,13 @@ struct StagePicker: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(name)
+                    if let madeFor {
+                        Text(madeFor)
+                            .textCase(nil)
+                            .koanBadge(accent: matched)
+                            .padding(.vertical, 2)
+                            .accessibilityLabel("Made against \(madeFor)")
+                    }
                     if !detail.isEmpty {
                         Text(detail).koanText(.fine, .muted)
                     }
