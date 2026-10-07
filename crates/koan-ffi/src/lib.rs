@@ -3044,16 +3044,23 @@ impl KoanEngine {
 
     /// What correcting the measurement in `text` to `target` would do, before
     /// it is saved: the measurement, the target, the predicted response and
-    /// the EQ itself.
+    /// the EQ itself. With `squig_fit`, the correction is the parametric
+    /// bands squig.link's auto-EQ fits rather than a graphic curve.
     pub async fn dsp_preview_measurement(
         self: Arc<Self>,
         text: String,
         target: String,
+        squig_fit: bool,
     ) -> Result<DspResponse, KoanError> {
         offload::offload(move || {
-            koan_core::audio::dsp::profiles::preview_measurement(&text, &target, 48000)
-                .map(Into::into)
-                .map_err(|message| KoanError::BadArgument { message })
+            koan_core::audio::dsp::profiles::preview_measurement(
+                &text,
+                &target,
+                fit_of(squig_fit),
+                48000,
+            )
+            .map(Into::into)
+            .map_err(|message| KoanError::BadArgument { message })
         })
         .await
     }
@@ -3097,7 +3104,8 @@ impl KoanEngine {
     }
 
     /// Save the headphone `name`, measured as `text`, corrected to `target`,
-    /// crediting `source` where the measurement came from one.
+    /// crediting `source` where the measurement came from one. With
+    /// `squig_fit`, the correction is squig.link's parametric auto-EQ.
     pub async fn dsp_save_measured(
         self: Arc<Self>,
         name: String,
@@ -3105,6 +3113,7 @@ impl KoanEngine {
         in_ear: bool,
         target: String,
         source: Option<String>,
+        squig_fit: bool,
     ) -> Result<String, KoanError> {
         offload::sequenced(move || {
             use koan_core::config::DspEar;
@@ -3114,6 +3123,7 @@ impl KoanEngine {
                 &text,
                 ear,
                 &target,
+                fit_of(squig_fit),
                 source.as_deref(),
             )
             .map_err(|message| KoanError::BadArgument { message })?;
@@ -6806,5 +6816,15 @@ fn dsp_error(e: koan_core::audio::dsp::import::ImportError) -> KoanError {
             message: e.to_string(),
         },
         ImportError::Failed(message) => KoanError::BadArgument { message },
+    }
+}
+
+/// How a measured correction is made: squig.link's parametric fit, or
+/// koan's graphic curve.
+fn fit_of(squig: bool) -> koan_core::config::DspFit {
+    if squig {
+        koan_core::config::DspFit::Squig
+    } else {
+        koan_core::config::DspFit::Graphic
     }
 }

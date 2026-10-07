@@ -773,6 +773,29 @@ pub struct DspMeasurement {
     pub ear: DspEar,
     /// A target id: one that ships, or `added:<name>`.
     pub target: String,
+    /// How the correction is made from the measurement.
+    #[serde(default, skip_serializing_if = "DspFit::is_graphic")]
+    pub fit: DspFit,
+}
+
+/// How a correction is made from a measurement and its target.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DspFit {
+    /// A graphic curve: the difference, smoothed and tapered off in the
+    /// treble, made when it plays.
+    #[default]
+    Graphic,
+    /// Parametric bands, fitted once as squig.link's auto-EQ fits them and
+    /// kept as the profile's own; refitted when the target changes. See
+    /// `audio::dsp::autoeq_squig`.
+    Squig,
+}
+
+impl DspFit {
+    fn is_graphic(&self) -> bool {
+        *self == Self::Graphic
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

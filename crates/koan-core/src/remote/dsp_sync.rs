@@ -1418,7 +1418,14 @@ mod tests {
         for hz in crate::audio::dsp::targets::grid() {
             text.push_str(&format!("{hz:.2},{:.1}\n", 90.0 + (hz / 1000.0).log2()));
         }
-        profiles::save_measured("IEM", &text, DspEar::In, "diffuse-field-iso-11904-1").unwrap();
+        profiles::save_measured(
+            "IEM",
+            &text,
+            DspEar::In,
+            "diffuse-field-iso-11904-1",
+            Default::default(),
+        )
+        .unwrap();
         let sent = a.profile("IEM").unwrap();
         let (doc, paths) = doc_of(&sent).unwrap();
         let back = SyncDoc::parse(&doc.json()).unwrap();
@@ -1692,6 +1699,7 @@ mod tests {
             d.profile.measurement = Some(crate::config::DspMeasurement {
                 ear: crate::config::DspEar::In,
                 target: target.into(),
+                fit: Default::default(),
             });
             d
         };

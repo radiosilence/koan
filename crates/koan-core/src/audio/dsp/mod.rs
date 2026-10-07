@@ -18,6 +18,7 @@
 
 pub mod apo;
 pub mod autoeq;
+pub mod autoeq_squig;
 pub mod camilla;
 pub mod convolver;
 pub mod import;
@@ -517,8 +518,13 @@ fn resolve(
             None => step,
         }));
     }
-    // A correction built from a measurement, to its target.
-    if let Some(m) = &profile.measurement {
+    // A correction built from a measurement, to its target. Bands fitted to
+    // it are the profile's own filters, played above.
+    if let Some(m) = profile
+        .measurement
+        .as_ref()
+        .filter(|m| m.fit == crate::config::DspFit::Graphic)
+    {
         let measured = targets::measurement(&dir)
             .ok_or_else(|| DspError::Measurement(profile.name.clone()))?;
         out.push(DspFilter::Graphic(targets::correction(
