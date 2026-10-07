@@ -87,6 +87,8 @@ impl Device {
 #[derive(Default)]
 struct Store {
     linked: bool,
+    /// When the link that is up came up, in Unix seconds.
+    linked_at: Option<i64>,
     account: Vec<(LinkDevice, Instant)>,
     nearby: Vec<Nearby>,
     seen: Vec<SeenNearby>,
@@ -390,11 +392,47 @@ pub fn local() -> Option<&'static Local> {
 pub fn set_linked(linked: bool) {
     crate::remote::offline::link_changed(linked);
     changed(|s| {
+        if linked != s.linked {
+            s.linked_at = linked.then(|| chrono::Utc::now().timestamp());
+        }
         s.linked = linked;
         if !linked {
             s.fresh = false;
         }
     });
+}
+
+/// When the link that is up came up, in Unix seconds.
+pub fn linked_since() -> Option<i64> {
+    with(|s| s.linked.then_some(s.linked_at).flatten())
+}
+
+/// The account's other devices linked to the server now, each of which can
+/// control this one through it. Devices other accounts share with this one
+/// are this account's to control, not the other way round; the accounts this
+/// one is shared with are `shares`.
+pub fn linked_controllers() -> Vec<LinkDevice> {
+    let me = this_id();
+    with(|s| {
+        s.account
+            .iter()
+            .map(|(d, _)| d)
+            .filter(|d| d.linked && d.owner.is_none() && Some(&d.id) != me.as_ref())
+            .cloned()
+            .collect()
+    })
+}
+
+/// The name `id` goes by, as the server or the network last gave it.
+pub fn name_of(id: &str) -> Option<String> {
+    with(|s| {
+        s.account
+            .iter()
+            .map(|(d, _)| (&d.id, &d.name))
+            .chain(s.seen.iter().map(|n| (&n.id, &n.name)))
+            .find(|(i, _)| *i == id)
+            .map(|(_, name)| name.clone())
+    })
 }
 
 pub fn set_account(devices: Vec<LinkDevice>) {
@@ -1173,6 +1211,9 @@ pub fn target() -> Option<String> {
 
 pub fn set_target(id: Option<String>) {
     cancel_wake(id.as_deref());
+    if let Some(id) = &id {
+        crate::remote::nearby::release(id);
+    }
     let listed = id
         .as_ref()
         .and_then(|id| list().into_iter().find(|d| d.id == *id));

@@ -84,9 +84,209 @@ struct Conn {
     waker: Arc<Waker>,
     /// Who the listener proved to be, if it proved anything.
     proven: Option<proof::Peer>,
+    /// Where it was reached.
+    addr: String,
+    /// When it said who it is, in Unix seconds.
+    since: i64,
 }
 
 static CONNS: Mutex<Option<HashMap<String, Conn>>> = Mutex::new(None);
+
+/// A connection to this device or from it, as Settings lists it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Session {
+    /// What `end` takes. Only a connection to this device has one: one this
+    /// device made is its own to keep.
+    pub key: Option<u64>,
+    /// The other device dialled this one, and can control it.
+    pub inbound: bool,
+    /// Its device id: as its proof or its `Hello` gave it. `None` from a
+    /// dialler that has not said.
+    pub id: Option<String>,
+    /// Its address: the one it connected from, or the one dialled.
+    pub addr: String,
+    /// Who it proved to be, if it proved anything.
+    pub proven: Option<Peer>,
+    /// Unix seconds.
+    pub since: i64,
+}
+
+/// A connection to this device: what is listed, and what ends it.
+struct Inbound {
+    session: Session,
+    ended: Arc<AtomicBool>,
+    waker: Arc<Waker>,
+}
+
+static INBOUND: Mutex<Vec<Inbound>> = Mutex::new(Vec::new());
+
+/// Every connection on the network, to this device and from it.
+pub fn sessions() -> Vec<Session> {
+    let mut out: Vec<Session> = INBOUND.lock().iter().map(|i| i.session.clone()).collect();
+    if let Some(conns) = CONNS.lock().as_ref() {
+        out.extend(conns.iter().map(|(id, c)| Session {
+            key: None,
+            inbound: false,
+            id: Some(id.clone()),
+            addr: c.addr.clone(),
+            proven: c.proven.clone(),
+            since: c.since,
+        }));
+    }
+    out.sort_by_key(|s| s.since);
+    out
+}
+
+/// A device the person disconnected: by the address it connected from, and
+/// by its id once it has given one.
+struct Held {
+    addr: String,
+    id: Option<String>,
+    /// It proved it is the device `id` names.
+    proven: bool,
+}
+
+/// Devices disconnected from Settings, held off until the person reaches
+/// for one again (`release`) or the app restarts. In memory only: refusing
+/// for good is `devices.refused`.
+static HELD: Mutex<Vec<Held>> = Mutex::new(Vec::new());
+
+fn held_addr(ip: &std::net::IpAddr) -> bool {
+    let ip = ip.to_canonical().to_string();
+    HELD.lock().iter().any(|h| h.addr == ip)
+}
+
+fn held_id(id: &str) -> bool {
+    HELD.lock().iter().any(|h| h.id.as_deref() == Some(id))
+}
+
+/// Hang up the connection to this device that `key` names, and hold the
+/// device off: every connection from its address or under its id ends, and
+/// it is neither accepted nor dialled again until `release` or a restart.
+pub fn end(key: u64) {
+    let Some(held) = INBOUND
+        .lock()
+        .iter()
+        .find(|i| i.session.key == Some(key))
+        .map(|i| Held {
+            addr: i.session.addr.clone(),
+            id: i.session.id.clone(),
+            proven: i.session.proven.is_some(),
+        })
+    else {
+        return;
+    };
+    for i in INBOUND
+        .lock()
+        .iter()
+        .filter(|i| i.session.addr == held.addr || (held.id.is_some() && i.session.id == held.id))
+    {
+        i.ended.store(true, Ordering::Relaxed);
+        i.waker.wake();
+    }
+    let id = held.id.clone();
+    {
+        // Once per address: a second Disconnect adds nothing, bar an id.
+        let mut all = HELD.lock();
+        match all.iter_mut().find(|h| h.addr == held.addr) {
+            Some(h) if h.id.is_none() => *h = held,
+            Some(_) => {}
+            None => all.push(held),
+        }
+    }
+    if let Some(id) = id
+        && let Some(conn) = CONNS.lock().as_ref().and_then(|c| c.get(&id))
+    {
+        conn.waker.wake();
+    }
+    devices::touch();
+}
+
+/// The devices held off: each address, and the id it proved if it proved one.
+pub fn held() -> Vec<(String, Option<String>)> {
+    HELD.lock()
+        .iter()
+        .map(|h| (h.addr.clone(), h.id.clone().filter(|_| h.proven)))
+        .collect()
+}
+
+/// The person has reached for `id` again, playing on it or picking it: it is
+/// no longer held off, and is dialled at once.
+pub fn release(id: &str) {
+    release_where(|h| h.id.as_deref() == Some(id));
+}
+
+/// Let the device held off at `addr` back in, as Allow in Settings does.
+pub fn release_addr(addr: &str) {
+    release_where(|h| h.addr == addr);
+}
+
+fn release_where(matches: impl Fn(&Held) -> bool) {
+    let released: Vec<Held> = {
+        let mut held = HELD.lock();
+        let (out, kept) = held.drain(..).partition(|h| matches(h));
+        *held = kept;
+        out
+    };
+    if released.is_empty() {
+        return;
+    }
+    for id in released.iter().filter_map(|h| h.id.as_deref()) {
+        redial_device(id, "");
+    }
+    devices::touch();
+}
+
+/// Whether connections from `ip` are refused.
+fn refused(ip: &std::net::IpAddr) -> bool {
+    let ip = ip.to_canonical().to_string();
+    Config::cached().devices.refused.contains(&ip)
+}
+
+/// A connection to this device, listed for as long as it is held.
+struct Listed(u64);
+
+impl Listed {
+    fn new(addr: &std::net::SocketAddr, waker: &Arc<Waker>) -> (Self, Arc<AtomicBool>) {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let key = NEXT.fetch_add(1, Ordering::Relaxed);
+        let ended = Arc::new(AtomicBool::new(false));
+        INBOUND.lock().push(Inbound {
+            session: Session {
+                key: Some(key),
+                inbound: true,
+                id: None,
+                addr: addr.ip().to_canonical().to_string(),
+                proven: None,
+                since: chrono::Utc::now().timestamp(),
+            },
+            ended: ended.clone(),
+            waker: waker.clone(),
+        });
+        devices::touch();
+        (Self(key), ended)
+    }
+
+    /// The dialler has said who it is, and proved it or not.
+    fn said(&self, id: &str, proven: Option<Peer>) {
+        if let Some(i) = INBOUND
+            .lock()
+            .iter_mut()
+            .find(|i| i.session.key == Some(self.0))
+        {
+            i.session.id = Some(id.to_owned());
+            i.session.proven = proven;
+        }
+        devices::touch();
+    }
+}
+
+impl Drop for Listed {
+    fn drop(&mut self) {
+        INBOUND.lock().retain(|i| i.session.key != Some(self.0));
+        devices::touch();
+    }
+}
 
 /// What is running, so a change of settings can stop and start it.
 struct Running {
@@ -569,6 +769,7 @@ pub fn send_acked(id: &str, cmd: LinkCommand, ack: u64) -> bool {
 }
 
 fn send_envelope(id: &str, envelope: Envelope) -> bool {
+    release(id);
     // Asked before the connections are held: the device store is not to be
     // locked under them.
     queue(id, devices::listed_owner(id), envelope)
@@ -647,12 +848,15 @@ fn listen_once(local: &Local, port: u16, stop: &Arc<Stop>) -> Result<(), String>
 
     while !stop.stopped() {
         match listener.accept() {
+            Ok((_, addr)) if refused(&addr.ip()) || held_addr(&addr.ip()) => {
+                log::info!("nearby: {addr} is refused or held off; hung up");
+            }
             Ok((stream, addr)) => {
                 let (local, stop) = (local.clone(), stop.clone());
                 let _ = std::thread::Builder::new()
                     .name("koan-nearby-peer".into())
                     .spawn(move || {
-                        if let Err(e) = serve(stream, &local, &stop) {
+                        if let Err(e) = serve(stream, addr, &local, &stop) {
                             log::info!("nearby: {addr}: {e}");
                         }
                     });
@@ -691,7 +895,12 @@ impl Stop {
 }
 
 /// Serve one device that connected to this one.
-fn serve(stream: TcpStream, local: &Local, stop: &Arc<Stop>) -> Result<(), String> {
+fn serve(
+    stream: TcpStream,
+    addr: std::net::SocketAddr,
+    local: &Local,
+    stop: &Arc<Stop>,
+) -> Result<(), String> {
     // Apple's accept hands back the listener's non-blocking mode, under which
     // a request that arrives a moment after the connection fails the handshake.
     stream.set_nonblocking(false).map_err(|e| e.to_string())?;
@@ -709,6 +918,7 @@ fn serve(stream: TcpStream, local: &Local, stop: &Arc<Stop>) -> Result<(), Strin
     wire::wake_on_engine_change(&waker);
     stop.also_wake(&waker);
     let mut session = Serving {
+        listed: Some(Listed::new(&addr, &waker)),
         local,
         stop,
         greeted: false,
@@ -749,6 +959,8 @@ struct Serving<'a> {
     reports: Option<proof::Session>,
     /// Proof frames to send.
     pending: Vec<String>,
+    /// This connection as Settings lists it, and the flag that ends it.
+    listed: Option<(Listed, Arc<AtomicBool>)>,
 }
 
 impl Serving<'_> {
@@ -767,6 +979,12 @@ impl Serving<'_> {
                 match &proven {
                     Some(p) => log::info!("nearby: {id} proved itself: {:?}", p.peer),
                     None => log::info!("nearby: {id} proved nothing; trusted as the network is"),
+                }
+                if let Some((listed, ended)) = &self.listed {
+                    listed.said(&id, proven.as_ref().map(|p| p.peer.clone()));
+                    if held_id(&id) {
+                        ended.store(true, Ordering::Relaxed);
+                    }
                 }
                 self.proven =
                     proven.map(|p| (p, proof::Session::new(me, &id, &listen_nonce, &nonce)));
@@ -917,6 +1135,10 @@ impl wire::Session for Serving<'_> {
 
     fn done(&self) -> bool {
         self.stop.stopped()
+            || self
+                .listed
+                .as_ref()
+                .is_some_and(|(_, ended)| ended.load(Ordering::Relaxed))
     }
 }
 
@@ -1039,6 +1261,26 @@ fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>, redial: Arc<Atomic
         let addr = at.lock().clone();
         let mut served = false;
         let started = Instant::now();
+        let held = FOUND
+            .lock()
+            .iter()
+            .find(|(k, _)| *k == key)
+            .and_then(|(_, f)| f.id.clone())
+            .is_some_and(|id| held_id(&id));
+        if held {
+            // Until `release` redials it, or the dialer is stopped.
+            let mut fds = [libc::pollfd {
+                fd: stop.waker_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            }];
+            // SAFETY: a live array of the length given.
+            unsafe { libc::poll(fds.as_mut_ptr(), 1, -1) };
+            stop.drain();
+            redial.store(false, Ordering::Relaxed);
+            wait = RETRY_MIN;
+            continue;
+        }
         match connect(&addr) {
             Ok(mut socket) => {
                 let fd = socket.get_ref().as_raw_fd();
@@ -1245,6 +1487,7 @@ impl Controlling<'_> {
         {
             conn.proven = self.proven.clone();
         }
+        devices::touch();
         self.handshake = if verified {
             Handshake::Signed(proof::Session::new(listener, me, listen_nonce, dial_nonce))
         } else {
@@ -1300,7 +1543,10 @@ impl wire::Session for Controlling<'_> {
     }
 
     fn done(&self) -> bool {
-        self.this_device || self.duplicate || self.stop.stopped()
+        self.this_device
+            || self.duplicate
+            || self.stop.stopped()
+            || self.id.as_deref().is_some_and(held_id)
     }
 }
 
@@ -1358,6 +1604,8 @@ impl Controlling<'_> {
                         outbox: Vec::new(),
                         waker: self.waker.clone(),
                         proven: None,
+                        addr: self.addr.to_string(),
+                        since: chrono::Utc::now().timestamp(),
                     },
                 );
                 self.id = Some(hello.id.clone());
@@ -2272,6 +2520,7 @@ mod tests {
             proven: None,
             reports: None,
             pending: Vec::new(),
+            listed: None,
         }
     }
 
@@ -2556,6 +2805,47 @@ mod tests {
         assert_eq!(c.checked(&state).as_deref(), Some(state.as_str()));
     }
 
+    #[test]
+    fn a_disconnected_device_is_held_off_until_reached_for() {
+        let _store = crate::remote::devices::tests::STORE_LOCK.lock();
+        let addr: std::net::SocketAddr = "[::ffff:192.0.2.77]:50000".parse().unwrap();
+        let waker = Waker::new().unwrap();
+        let (listed, ended) = Listed::new(&addr, &waker);
+        listed.said("held-phone", None);
+        let key = listed.0;
+        let session = sessions().into_iter().find(|s| s.key == Some(key)).unwrap();
+        assert_eq!(session.addr, "192.0.2.77");
+        assert!(session.inbound);
+
+        end(key);
+        assert!(ended.load(Ordering::Relaxed));
+        assert!(held_addr(&addr.ip()));
+        assert!(held_id("held-phone"));
+        drop(listed);
+        assert!(sessions().iter().all(|s| s.key != Some(key)));
+
+        // Its id was only its word: listed by address.
+        assert!(held().contains(&("192.0.2.77".into(), None)));
+        release("held-phone");
+        assert!(!held_id("held-phone"));
+        assert!(!held_addr(&addr.ip()));
+
+        // Held before it said who it is: only Allow, by address, lets it in.
+        let (listed, _) = Listed::new(&addr, &waker);
+        end(listed.0);
+        drop(listed);
+        release("held-phone");
+        assert!(held_addr(&addr.ip()));
+        // Disconnected twice: held once.
+        let (listed, _) = Listed::new(&addr, &waker);
+        end(listed.0);
+        end(listed.0);
+        drop(listed);
+        assert_eq!(held().iter().filter(|(a, _)| a == "192.0.2.77").count(), 1);
+        release_addr("192.0.2.77");
+        assert!(!held_addr(&addr.ip()));
+    }
+
     /// A connection is proven once. A second `nearbyAuth`, from a device
     /// that holds a key the first did not, changes nothing.
     #[test]
@@ -2704,6 +2994,8 @@ mod proof_tests {
                 outbox: Vec::new(),
                 waker,
                 proven: None,
+                addr: String::new(),
+                since: 0,
             },
         );
         let outbox = || CONNS.lock().as_ref().unwrap()[id].outbox.len();

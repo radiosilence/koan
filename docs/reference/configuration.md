@@ -28,7 +28,7 @@ Three kinds of setting are machine-scoped and always land in
 | Kind | Settings |
 |------|----------|
 | Secrets | `remote.password`, `subsonic.password` |
-| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username`, `remote.cache_dir`, `remote.cache_limit`, `playback.output_device/renderers/muted`, `subsonic.enabled/port/username/transcode/ffmpeg`, `devices.nearby/discoverable/port/addresses/nearby_control/keep_running`, everything under `dsp` |
+| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username`, `remote.cache_dir`, `remote.cache_limit`, `playback.output_device/renderers/muted`, `subsonic.enabled/port/username/transcode/ffmpeg`, `devices.nearby/discoverable/port/addresses/nearby_control/refused/keep_running`, everything under `dsp` |
 | Volatile UI state -- flipped by a keypress or a mouse drag | `playback.art_size`, `visualizer.enabled`, `visualizer.mode`, `visualizer.matrix_overlay`, `visualizer.bass_shake` |
 
 Everything else is taste, travels between machines, and goes in `config.toml`.
@@ -467,6 +467,7 @@ discoverable = true                 # listen, and announce this device (and its 
 port = 5626                         # fixed, so a typed address keeps working
 addresses = ["mac-mini:5626"]       # dialled directly: for a tailnet, which carries no Bonjour
 nearby_control = "full"             # "full" or "playback": what devices on the network may do here
+refused = ["192.168.1.40"]          # addresses whose connections are hung up at once; Settings → Devices → Refuse
 keep_running = false                # the Mac app stays in the menu bar with its window closed
 ```
 
