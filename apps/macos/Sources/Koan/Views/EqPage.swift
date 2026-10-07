@@ -827,6 +827,7 @@ struct StagePicker: View {
     /// rest, each alphabetical; one list where there is no correction to
     /// match.
     private var eqGroups: [(title: String, eqs: [DspProfileSummary])] {
+        guard !choices.isEmpty else { return [] }
         guard overview.aim != nil else { return [(title: "EQs", eqs: choices)] }
         let sorted = choices.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         let matching = sorted.filter { $0.join == .matched }
