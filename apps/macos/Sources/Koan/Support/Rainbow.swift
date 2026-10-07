@@ -128,14 +128,22 @@ extension KoanAccent {
     }
 
     /// The palette as a gradient, for what may carry one: progress, the chosen
-    /// tab, a favourite's heart. The hues as accents, so they read; chrome as
-    /// itself.
+    /// tab, a favourite's heart, the now-playing title. Every stop is an
+    /// accent, so text through it reads: the hues tone-mapped, chrome as
+    /// `chrome`.
     static var holo: Gradient {
         Gradient(colors: Rainbow.colours.map { hex in
             let (_, c, h) = OKLCH.from(srgb: hex)
-            return c < noHue ? Color(cgColor: Rainbow.cgColor(hex)) : tone(hue: h).color
+            return c < noHue ? chrome.color : tone(hue: h).color
         })
     }
+
+    /// Chrome as an accent: the silver itself in dark mode, a slate in light,
+    /// each past 4.5:1 on `bg` and `surface`.
+    static let chrome = KoanAccent(
+        dark: Shade(red: 0xC9 / 255, green: 0xCE / 255, blue: 0xD6 / 255, readsAsText: true),
+        light: Shade(red: 0x5F / 255, green: 0x66 / 255, blue: 0x70 / 255, readsAsText: true)
+    )
 
     private static let holoAccents = around(Rainbow.hyperpop)
     private static let bratAccents = around(Rainbow.bratLimes)
@@ -393,31 +401,30 @@ final class ConfettiView: LayerView {
         let glitter = Self.piece(width: 3, height: 3, diamond: false)
         let star = Self.glyph("✦", size: 18)
         rain.emitterShape = .line
-        rain.emitterCells =
-            colours.map { hex in
-                Self.falling(paper, colour: hex, rate: 24, velocity: 280, spin: 8)
-            }
-            + colours.map { hex in
-                let cell = Self.falling(glitter, colour: hex, rate: 30, velocity: 200, spin: 0)
-                cell.alphaSpeed = -0.4
+        let paperCells: [CAEmitterCell] = colours.map { hex in
+            Self.falling(paper, colour: hex, rate: 24, velocity: 280, spin: 8)
+        }
+        let glitterCells: [CAEmitterCell] = colours.map { hex in
+            let cell = Self.falling(glitter, colour: hex, rate: 30, velocity: 200, spin: 0)
+            cell.alphaSpeed = -0.4
+            return cell
+        }
+        let emojiCells: [CAEmitterCell] = Self.emoji.map { face in
+            let cell = Self.falling(Self.glyph(face), colour: nil, rate: 3, velocity: 160, spin: 1)
+            cell.scale = 0.5
+            cell.scaleRange = 0.15
+            return cell
+        }
+        let starCells: [CAEmitterCell] = Self.stars.flatMap { shape -> [CAEmitterCell] in
+            let image = Self.glyph(shape, size: 24)
+            return colours.map { hex in
+                let cell = Self.falling(image, colour: hex, rate: 2, velocity: 180, spin: 2)
+                cell.scale = 0.6
                 return cell
             }
-            + Self.emoji.map { face in
-                let cell = Self.falling(Self.glyph(face), colour: nil, rate: 3, velocity: 160, spin: 1)
-                cell.scale = 0.5
-                cell.scaleRange = 0.15
-                return cell
-            }
-            + Self.stars.flatMap { shape in
-                let image = Self.glyph(shape, size: 24)
-                return colours.map { hex in
-                    let cell = Self.falling(image, colour: hex, rate: 2, velocity: 180, spin: 2)
-                    cell.scale = 0.6
-                    return cell
-                }
-            }
-            // The chrome heart.
-            + [Self.falling(Self.glyph("♥", size: 40), colour: 0xC9CED6, rate: 4, velocity: 170, spin: 1)]
+        }
+        let chromeHeart: CAEmitterCell = Self.falling(Self.glyph("♥", size: 40), colour: 0xC9CED6, rate: 4, velocity: 170, spin: 1)
+        rain.emitterCells = paperCells + glitterCells + emojiCells + starCells + [chromeHeart]
         sparkles.emitterShape = .rectangle
         sparkles.emitterMode = .surface
         sparkles.emitterCells = colours.map { hex in
