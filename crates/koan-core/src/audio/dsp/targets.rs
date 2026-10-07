@@ -344,15 +344,6 @@ pub fn on_grid_db(step: &GraphicEq) -> Vec<f64> {
 /// sampled every twelfth of an octave, which the graphic filter interpolates
 /// between.
 pub fn difference(from: &[(f64, f64)], to: &[(f64, f64)]) -> GraphicEq {
-    let mut g = unbounded(from, to);
-    for (_, db) in &mut g.points {
-        *db = db.clamp(-MAX_DB, MAX_DB);
-    }
-    g
-}
-
-/// [`difference`], without the ±12 dB bound.
-fn unbounded(from: &[(f64, f64)], to: &[(f64, f64)]) -> GraphicEq {
     let grid = grid();
     let (a, b) = (levelled(from, &grid), levelled(to, &grid));
     // A curve that is not a target's makes no difference at all, rather than
@@ -381,7 +372,7 @@ fn unbounded(from: &[(f64, f64)], to: &[(f64, f64)]) -> GraphicEq {
     for (&hz, &db) in grid.iter().zip(&smoothed) {
         if hz >= next || Some(&hz) == grid.last() {
             let db = if db.is_finite() { db } else { 0.0 };
-            points.push((hz, db));
+            points.push((hz, db.clamp(-MAX_DB, MAX_DB)));
             next = hz * 2f64.powf(1.0 / 12.0);
         }
     }
@@ -546,11 +537,12 @@ fn tapered(mut g: GraphicEq) -> GraphicEq {
 }
 
 /// What brings a headphone measured as `measurement` to `target`: their
-/// difference, levelled at 1 kHz and smoothed as a target swap's is, and
-/// tapered off above 6 kHz (see [`taper`]). Not bounded: a tuning after it
-/// may undo part of it, and a bound on one would not compose with the other.
+/// difference, made as a target swap's is (levelled at 1 kHz, smoothed,
+/// within ±12 dB), and tapered off above 6 kHz (see [`taper`]). The bound
+/// keeps a measurement with a poor seal, rolled off by 25 dB in the bass,
+/// from becoming as much boost.
 pub fn correction(measurement: &[(f64, f64)], target: &[(f64, f64)]) -> GraphicEq {
-    tapered(unbounded(measurement, target))
+    tapered(difference(measurement, target))
 }
 
 /// What an AutoEQ install in `dsp_dir` kept of its result: the headphone as
@@ -572,14 +564,17 @@ pub fn moved(target: &[(f64, f64)], step: &GraphicEq) -> Curve {
         .collect()
 }
 
-/// Whether two targets are for the same kind of headphone. A target added
-/// by hand says nothing of it, and is taken at its word. The diffuse field
-/// on GRAS KEMAR is the neutral of either: in-ears are measured on the same
-/// ear simulator, and against ISO 11904-1 it differs by a rig, which a
-/// correction and a tuning made against it share.
-pub fn same_ear(a: &str, b: &str) -> bool {
-    match (shipped(a), shipped(b)) {
-        (Some(a), Some(b)) => a.ear == b.ear || a.id == EITHER_EAR || b.id == EITHER_EAR,
+/// Whether a tuning made against `made` converts onto a correction aiming
+/// at `aim`: both for the same kind of headphone. A target added by hand
+/// says nothing of it, and is taken at its word. A tuning made against the
+/// diffuse field on GRAS KEMAR converts onto either: in-ears are measured on
+/// the same ear simulator, and its difference from ISO 11904-1 is a rig's,
+/// which cancels between the step and the tuning. The other way round it is
+/// the over-ear neutral, and an in-ear target's difference from it is not
+/// taste.
+pub fn same_ear(aim: &str, made: &str) -> bool {
+    match (shipped(aim), shipped(made)) {
+        (Some(a), Some(m)) => a.ear == m.ear || m.id == EITHER_EAR,
         _ => true,
     }
 }
@@ -734,6 +729,22 @@ mod tests {
         let grid = grid();
         let top = grid.iter().position(|&hz| hz >= 12_500.0).unwrap();
         assert!(direct[top..].iter().all(|d| d.abs() < 0.05));
+    }
+
+    /// A tuning made against the over-ear neutral converts onto an in-ear
+    /// correction; an in-ear tuning does not convert onto an over-ear one.
+    #[test]
+    fn the_over_ear_neutral_converts_one_way() {
+        assert!(same_ear(
+            "diffuse-field-iso-11904-1",
+            "diffuse-field-gras-kemar"
+        ));
+        assert!(same_ear("harman-in-ear-2019", "diffuse-field-gras-kemar"));
+        assert!(!same_ear("diffuse-field-gras-kemar", "harman-in-ear-2019"));
+        assert!(!same_ear(
+            "harman-over-ear-2018",
+            "diffuse-field-iso-11904-1"
+        ));
     }
 
     /// The Harman in-ear target koan ships is squig.link's own file, put on
