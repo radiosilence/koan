@@ -1225,27 +1225,13 @@ struct KoanLabeledContentStyle: LabeledContentStyle {
 }
 #endif
 
-<<<<<<< HEAD
-#if os(iOS)
-/// A form row on a phone: the label leading in `body` and `ink`, lowercase as
-/// every label the app writes is, and the value trailing in `control` and
-/// `muted`. A field or control in the value keeps its own type. Without this a
-/// row's label takes whatever size the system's form gives a row beside a
-/// field. A label that is data (a server's extension, a maker) keeps its case
-/// with `.textCase(nil)` on its text.
-||||||| b3ec87a6
-#if os(iOS)
-/// A form row on a phone: the label leading in `body` and `ink`, as a toggle's
-/// is, and the value trailing in `control` and `muted`. A field or control in
-/// the value keeps its own type. Without this a row's label takes whatever
-/// size the system's form gives a row beside a field.
-=======
 #if !os(macOS)
-/// A form row on a phone or a television: the label leading in `body` and `ink`, as a toggle's
-/// is, and the value trailing in `control` and `muted`. A field or control in
-/// the value keeps its own type. Without this a row's label takes whatever
-/// size the system's form gives a row beside a field.
->>>>>>> origin/main
+/// A form row on a phone or a television: the label leading in `body` and
+/// `ink`, lowercase as every label the app writes is, and the value trailing
+/// in `control` and `muted`. A field or control in the value keeps its own
+/// type. Without this a row's label takes whatever size the system's form
+/// gives a row beside a field. A label that is data (a server's extension, a
+/// maker) keeps its case with `.textCase(nil)` on its text.
 struct KoanRowLabelStyle: LabeledContentStyle {
     func makeBody(configuration: Configuration) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: KoanTheme.Space.m) {
