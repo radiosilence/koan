@@ -1127,8 +1127,10 @@ pub struct SquigHit {
     pub in_ear: Option<bool>,
     /// What `dspSquigFetch` takes, with `site`.
     pub file: String,
-    /// The credit kept on a profile made from it.
+    /// The credit kept on a correction made from it.
     pub source: String,
+    /// Why it cannot be fetched, where its site keeps measurements from apps.
+    pub locked: Option<String>,
 }
 
 impl From<koan_core::audio::dsp::squig::Hit> for SquigHit {
@@ -1141,6 +1143,7 @@ impl From<koan_core::audio::dsp::squig::Hit> for SquigHit {
             site_label: h.site.label().to_owned(),
             rig: h.site.rig.map(str::to_owned),
             in_ear: h.site.ear.map(|e| e == Ear::In),
+            locked: h.site.locked.map(str::to_owned),
             brand: h.brand,
             model: h.model,
             variant: h.variant,

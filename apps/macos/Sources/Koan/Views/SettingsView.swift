@@ -954,7 +954,7 @@ struct AutoEqSearch: View {
                             } description: {
                                 Text("AutoEQ has nothing for “\(query)”. A measurement of your headphones works too: kōan builds the correction from it.")
                             } actions: {
-                                Button("Use a measurement instead") { measuring = true }
+                                Button("Find a Measurement…") { measuring = true }
                             }
                         }
                     }

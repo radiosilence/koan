@@ -41,7 +41,7 @@ struct ManageEq: View {
                     .koanButton(.standard)
                 Button("Find in AutoEQ…") { finding = AutoEqFind(query: "") }
                     .koanButton(.standard)
-                Button("Use a Measurement or squig.link…") { measuring = true }
+                Button("Find a Measurement…") { measuring = true }
                     .koanButton(.standard)
                 if let summary = dsp.importSummary {
                     Text(summary).koanText(.fine, .muted)
