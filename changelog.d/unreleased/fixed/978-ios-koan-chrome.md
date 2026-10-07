@@ -1,1 +1,0 @@
-- **No system chrome on the iPhone and iPad in the kōan look.** The iPad draws the theme's own sidebar, mini player and full-screen Now Playing; navigation bars, back buttons and search fields lose their glass; settings labels are lowercase; and the platform's look holds the wash to the same contrast limits on a phone.
