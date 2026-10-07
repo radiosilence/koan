@@ -899,10 +899,21 @@ fn push(
         out.sent += 1;
     }
     // What was kept everywhere and no longer is, and was never sent or has
-    // now been deleted: nothing is left to track.
+    // now been deleted: nothing is left to track. One kept everywhere that
+    // cannot be sent is not in `locals`, and keeps its refusal.
+    let cfg = Config::cached();
+    let kept: HashSet<&str> = cfg
+        .dsp
+        .profiles
+        .iter()
+        .filter(|p| {
+            crate::audio::dsp::profiles::scope(p, &cfg.dsp.profiles) == DspScope::Everywhere
+        })
+        .filter_map(|p| p.uid.as_deref())
+        .collect();
     for uid in edits
         .keys()
-        .filter(|u| !locals.contains_key(*u) && !synced.contains_key(*u))
+        .filter(|u| !kept.contains(u.as_str()) && !synced.contains_key(*u))
     {
         rows::forget_local(&db.conn, uid)?;
     }
@@ -1468,6 +1479,36 @@ mod tests {
         // Neither device tracks it as kept everywhere any more.
         assert!(rows::local_edits(&a.db.conn).unwrap().is_empty());
         assert!(rows::local_edits(&b.db.conn).unwrap().is_empty());
+    }
+
+    /// A profile kept everywhere that cannot be sent keeps its refusal, and
+    /// its record, across syncs.
+    #[test]
+    fn an_unsendable_profile_keeps_its_refusal() {
+        let _guard = lock();
+        let server = Server::new();
+        let a = Device::new();
+        a.on();
+        let dir = crate::audio::dsp::profiles::dir("Huge");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::File::create(dir.join("48000.wav"))
+            .unwrap()
+            .set_len(MAX_FILE + 1)
+            .unwrap();
+        Config::persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Huge".into(),
+                impulses: vec![Path::new("dsp/huge/48000.wav").into()],
+                scope: Some(DspScope::Everywhere),
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        a.sync(&server);
+        a.sync(&server);
+        a.on();
+        assert!(refusal(&a.db, "Huge").is_some());
+        assert_eq!(rows::local_edits(&a.db.conn).unwrap().len(), 1);
     }
 
     /// A correction built from a measurement arrives as made: its role, its
