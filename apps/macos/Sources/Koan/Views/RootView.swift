@@ -55,13 +55,19 @@ struct RootView: View {
     /// sidebar still reports its last width, and the transport would keep a
     /// gap where it had been.
     @State private var columns: NavigationSplitViewVisibility = .automatic
+    private static var sidebarMin: CGFloat { KoanTheme.metric(215, system: 190) }
 
     var body: some View {
         @Bindable var ui = ui
 
         NavigationSplitView(columnVisibility: $columns) {
             SidebarView()
-                .navigationSplitViewColumnWidth(min: 190, ideal: 215, max: 290)
+                // The column's minimum alone is not held when the window
+                // first lays out: the sidebar opened at its content's width
+                // and truncated its labels. The content's own minimum is.
+                // Wide enough for "recently played" in the theme's face.
+                .frame(minWidth: Self.sidebarMin)
+                .navigationSplitViewColumnWidth(min: Self.sidebarMin, ideal: Self.sidebarMin + 25, max: 290)
                 // The theme draws its own, without the glass; see `PageToolbar`.
                 .toolbar(removing: KoanTheme.isOn ? .sidebarToggle : nil)
         } detail: {

@@ -255,9 +255,8 @@ struct EqGraph: View {
                 key(KoanTheme.label("Target"), AnyShapeStyle(KoanTheme.style(.ink).opacity(0.55)), dashed: true)
                 key(KoanTheme.label("Corrected"), AnyShapeStyle(.tint))
             }
-            Text("Preamp \(String(format: "%.1f", response.preampDb)) dB")
+            Text("\(KoanTheme.label("Preamp")) \(String(format: "%.1f", response.preampDb)) dB")
                 .monospacedDigit()
-                .koanCase()
         }
         .koanText(.fine, .muted)
     }

@@ -321,6 +321,7 @@ struct EqSettings: View {
                 .overlay(alignment: .top) {
                     Text("Flat: plays untouched")
                         .koanText(.meta, .muted)
+                        .koanCase()
                         .padding(.top, KoanTheme.Space.xl)
                 }
         }
