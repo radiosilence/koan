@@ -35,14 +35,14 @@ struct BrowseFilterButton: View {
                 .frame(width: 300)
                 .koanPopover()
         }
+        #elseif os(tvOS)
+        .modifier(FilterSheet(open: $open))
         #else
         .sheet(isPresented: $open) {
             NavigationStack {
                 BrowseFilterForm()
                     .navigationTitle(KoanTheme.label("Filter"))
-                    #if !os(tvOS)
                     .navigationBarTitleDisplayMode(.inline)
-                    #endif
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
                             Button("Done") { open = false }
@@ -56,6 +56,35 @@ struct BrowseFilterButton: View {
         #endif
     }
 }
+
+#if os(tvOS)
+/// The filters on a television: the theme's panel, or the system's sheet.
+/// Menu closes either.
+private struct FilterSheet: ViewModifier {
+    @Binding var open: Bool
+
+    func body(content: Content) -> some View {
+        if KoanTheme.isOn {
+            content.televisionPanel(isPresented: $open, title: "Filter") { BrowseFilterForm() }
+        } else {
+            content.sheet(isPresented: $open) {
+                NavigationStack {
+                    BrowseFilterForm()
+                        .navigationTitle(KoanTheme.label("Filter"))
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("Done") { open = false }
+                                    .toolbarButton()
+                            }
+                        }
+                }
+                .koanSheet()
+                .presentationDetents([.medium, .large])
+            }
+        }
+    }
+}
+#endif
 
 private struct BrowseFilterForm: View {
     @Environment(LibraryModel.self) private var library

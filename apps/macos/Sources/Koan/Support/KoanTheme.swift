@@ -584,6 +584,9 @@ extension EnvironmentValues {
     /// How tall the theme's own tab bar and mini player stand over a phone's
     /// pages, as laid out; zero where the platform's bar is drawn.
     @Entry var koanBarHeight: CGFloat = 0
+    /// Rows in a television's form, whose text starts on the headings' edge
+    /// with the focus ring out in the margin.
+    @Entry var koanRowsBleed = false
 }
 
 // MARK: - Type
@@ -1238,10 +1241,6 @@ struct KoanRowLabelStyle: LabeledContentStyle {
                 .font(.koan(.control))
                 .foregroundStyle(Color.koanMuted)
         }
-        #if os(tvOS)
-        // In line with the rows that are buttons (`TelevisionRow`).
-        .padding(.horizontal, 20)
-        #endif
     }
 }
 #endif
@@ -1443,30 +1442,35 @@ private struct TelevisionPicker<Value: Hashable>: View {
         }
         .buttonStyle(TelevisionRow())
         .accessibilityValue(options.first { $0.value == selection }?.label ?? "")
-        .sheet(isPresented: $open) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: KoanTheme.Space.xs) {
-                    KoanSectionHeader(title)
-                    ForEach(options, id: \.value) { option in
-                        Button {
-                            selection = option.value
-                            open = false
-                        } label: {
-                            HStack(spacing: KoanTheme.Space.m) {
-                                Text(option.label)
-                                Spacer(minLength: 0)
-                                if option.value == selection {
-                                    KoanIcon("checkmark")
-                                }
-                            }
-                        }
-                        .buttonStyle(TelevisionRow())
-                        .accessibilityAddTraits(option.value == selection ? .isSelected : [])
+        .televisionPanel(isPresented: $open, title: title) {
+            TelevisionChoices(selection: $selection, options: options) { open = false }
+        }
+    }
+}
+
+/// A choice of options as the theme's rows, the chosen one ticked: what a
+/// picker or a menu of choices opens on a television.
+struct TelevisionChoices<Value: Hashable>: View {
+    @Binding var selection: Value
+    let options: [(label: String, value: Value)]
+    let chosen: () -> Void
+
+    var body: some View {
+        ForEach(options, id: \.value) { option in
+            Button {
+                selection = option.value
+                chosen()
+            } label: {
+                HStack(spacing: KoanTheme.Space.m) {
+                    Text(option.label)
+                    Spacer(minLength: 0)
+                    if option.value == selection {
+                        KoanIcon("checkmark")
                     }
                 }
-                .padding(KoanTheme.Space.xl)
             }
-            .koanSheet()
+            .buttonStyle(TelevisionRow())
+            .accessibilityAddTraits(option.value == selection ? .isSelected : [])
         }
     }
 }
@@ -2183,8 +2187,10 @@ struct KoanForm<Content: View>: View {
                     content
                 }
                 .padding(.vertical, KoanTheme.Space.xl)
+                .padding(.horizontal, 20)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .environment(\.koanRowsBleed, true)
             .koanForm()
             .toggleStyle(KoanToggleStyle())
             .buttonStyle(TelevisionRow())

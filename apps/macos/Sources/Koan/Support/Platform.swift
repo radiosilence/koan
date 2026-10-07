@@ -238,15 +238,8 @@ private struct TelevisionMenuRow<Menu: View>: ViewModifier {
             .onTapGesture(perform: action)
             .accessibilityAddTraits(.isButton)
             .accessibilityAction(named: "Menu") { open = true }
-            .sheet(isPresented: $open) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: KoanTheme.Space.xs) {
-                        menu()
-                    }
-                    .padding(KoanTheme.Space.xl)
-                }
-                .buttonStyle(MenuItem(close: { open = false }))
-                .koanSheet()
+            .televisionPanel(isPresented: $open) {
+                menu().buttonStyle(MenuItem(close: { open = false }))
             }
     }
 
@@ -670,6 +663,57 @@ struct TelevisionButton: ButtonStyle {
     }
 }
 
+extension View {
+    /// The theme's sheet on a television: a square panel on `bg` inside a
+    /// rule, over the page dimmed. A cover rather than a sheet, which tvOS
+    /// draws as a rounded card whatever its background is told; Menu closes
+    /// it as it closes a sheet. Its content is held whole when it fits, and
+    /// scrolls when it does not.
+    func televisionPanel<Panel: View>(
+        isPresented: Binding<Bool>,
+        title: String? = nil,
+        @ViewBuilder content: @escaping () -> Panel
+    ) -> some View {
+        fullScreenCover(isPresented: isPresented) {
+            TelevisionPanel(title: title, content: content)
+        }
+    }
+}
+
+private struct TelevisionPanel<Panel: View>: View {
+    let title: String?
+    @ViewBuilder let content: () -> Panel
+
+    var body: some View {
+        ViewThatFits(in: .vertical) {
+            stack
+            ScrollView { stack }
+        }
+        .frame(width: 960)
+        .frame(maxHeight: 880)
+        .background(Color.koanBg)
+        .overlay { Rectangle().strokeBorder(Color.koanRule, lineWidth: KoanTheme.hairline) }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .presentationBackground(Color.black.opacity(0.6))
+    }
+
+    private var stack: some View {
+        VStack(alignment: .leading, spacing: KoanTheme.Space.xs) {
+            if let title {
+                Text(title)
+                    .koanText(.titleSmall, .strong)
+                    .textCase(.lowercase)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, KoanTheme.Space.m)
+            }
+            content()
+        }
+        .font(.koan(.body))
+        .foregroundStyle(Color.koanInk)
+        .padding(KoanTheme.Space.xxl)
+    }
+}
+
 /// A list row as a television draws one: the row's own colours at rest, and
 /// focused, a white platter with the row drawn as it would be on a light
 /// screen, so secondary text stays readable on it. A plain button would tint
@@ -691,9 +735,12 @@ struct TelevisionRow: ButtonStyle {
         let resting: Double
         @Environment(\.isFocused) private var focused
         @Environment(\.isEnabled) private var enabled
+        @Environment(\.koanRowsBleed) private var bleeds
 
         var body: some View {
             if KoanTheme.isOn {
+                // In a form the row's text keeps the headings' edge, and the
+                // ring stands out into the margin.
                 label
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .foregroundStyle(Color.koanInk)
@@ -702,6 +749,7 @@ struct TelevisionRow: ButtonStyle {
                     .background(pressed ? Color.koanHover : .clear)
                     .opacity(enabled ? 1 : 0.4)
                     .koanFocusRing(focused, gap: 0)
+                    .padding(.horizontal, bleeds ? -20 : 0)
             } else {
                 label
                     .frame(maxWidth: .infinity, alignment: .leading)
