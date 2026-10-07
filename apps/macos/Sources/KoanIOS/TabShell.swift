@@ -755,9 +755,10 @@ private struct PadSidebar: View {
             }
             Section {
                 ForEach(sections, id: \.section) { item in
-                    row(.section(item.section), item.title, item.icon)
-                        .badge(item.section == .downloads ? mirror.activeTransfers : 0)
-                        .listRowSeparator(.hidden)
+                    row(
+                        .section(item.section), item.title, item.icon,
+                        badge: item.section == .downloads ? mirror.activeTransfers : 0
+                    )
                 }
             } header: {
                 KoanSectionHeader("Library")
@@ -791,8 +792,12 @@ private struct PadSidebar: View {
     }
 
     /// A row that is a tab: chosen again, back to its root, as a tab is.
-    /// A playlist's name is the person's, and keeps its case.
-    private func row(_ id: TabShell.TabID, _ title: String, _ icon: String, data: Bool = false) -> some View {
+    /// A playlist's name is the person's, and keeps its case. The badge goes
+    /// on before the row's role: on the row it replaces the row's background,
+    /// the selection's rule with it, by the list's own.
+    private func row(
+        _ id: TabShell.TabID, _ title: String, _ icon: String, data: Bool = false, badge: Int = 0
+    ) -> some View {
         Button {
             if selection == id { reselect(id) } else { selection = id }
         } label: {
@@ -807,6 +812,7 @@ private struct PadSidebar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .badge(badge)
         .koanNavRow(selected: selection == id)
         .listRowSeparator(.hidden)
     }
