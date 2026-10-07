@@ -1,5 +1,6 @@
 import Foundation
 import KoanFFI
+import OSLog
 import SwiftUI
 
 /// Library browsing state.
@@ -410,14 +411,21 @@ final class LibraryModel {
         }
     }
 
-    /// The record a page is showing, and its tracks, as one value.
+    /// Each record page's record and its tracks, as one value, by album.
     ///
     /// Loaded *before* the page appears — see `Navigator.open(album:)`. A page
     /// that fetches once it is already on screen has to draw itself empty
-    /// first, and the empty state of a record page is the word "Album" over
-    /// nothing. Both halves land together or not at all, so the header can
+    /// first. Both halves land together or not at all, so the header can
     /// never arrive ahead of the rows either.
-    private(set) var detailRecord: AlbumRecord?
+    ///
+    /// Keyed rather than one slot: on iOS every tab's stack keeps its pages,
+    /// so several record pages are alive at once, and a read for one of them
+    /// landing late must not take the record from the page on screen.
+    private(set) var detailRecords: [Int64: AlbumRecord] = [:]
+
+    func detailRecord(album id: Int64) -> AlbumRecord? {
+        detailRecords[id]
+    }
 
     struct AlbumRecord: Sendable {
         let albumId: Int64
@@ -427,6 +435,8 @@ final class LibraryModel {
         let stamp: UInt64
         var album: Album?
         var tracks: [Track]
+        /// The read itself failed, as opposed to finding nothing.
+        var failed = false
     }
 
     /// Set by `AppState`. Read for the library version a record was loaded at.
@@ -446,7 +456,7 @@ final class LibraryModel {
         // while the artwork it kicked off is still competing, and takes twenty
         // times what the first one did. A fast page followed by a slow redraw of
         // the same page reads worse than a slow page.
-        if let held = detailRecord, held.albumId == id, held.stamp == stamp { return }
+        if let held = detailRecords[id], held.stamp == stamp, !held.failed { return }
 
         // The sleeve and the colour the room takes from it. Once both are
         // decoded the page, its cover and the room's colour go up in one
@@ -462,17 +472,41 @@ final class LibraryModel {
         let engine = self.engine
         let loaded = await Trace.region("engine-reads") {
             await Task.detached(priority: .userInitiated) {
-                let page = try? await engine.albumPage(albumId: id)
-                return AlbumRecord(
-                    albumId: id,
-                    stamp: stamp,
-                    album: page?.album,
-                    tracks: page?.tracks ?? []
-                )
+                do {
+                    let page = try await engine.albumPage(albumId: id)
+                    return AlbumRecord(albumId: id, stamp: stamp, album: page.album, tracks: page.tracks)
+                } catch {
+                    Self.log.error("album \(id) failed to load: \(error.localizedDescription, privacy: .public)")
+                    return AlbumRecord(albumId: id, stamp: stamp, album: nil, tracks: [], failed: true)
+                }
             }.value
         }
-        detailRecord = loaded
+        if loaded.album == nil, !loaded.failed {
+            Self.log.error("album \(id) is not in the library at version \(stamp)")
+        } else if loaded.tracks.isEmpty, !loaded.failed {
+            Self.log.error("album \(id) has no tracks at version \(stamp)")
+        }
+        if let held = detailRecords[id], !held.failed {
+            // Reads finish in any order; one begun before the library last
+            // moved never replaces one begun after. A failed read never
+            // replaces a good record: the page keeps what it was showing.
+            if held.stamp > loaded.stamp || loaded.failed { return }
+        }
+        detailRecords[id] = loaded
+        recordOrder.removeAll { $0 == id }
+        recordOrder.append(id)
+        if recordOrder.count > Self.heldRecords {
+            detailRecords[recordOrder.removeFirst()] = nil
+        }
     }
+
+    /// The albums in `detailRecords`, least recently read first. Past
+    /// `heldRecords` the oldest goes; a page whose record went reads it again
+    /// (see `AlbumDetailView`).
+    @ObservationIgnored private var recordOrder: [Int64] = []
+    private static let heldRecords = 64
+
+    nonisolated private static let log = Logger(subsystem: "cc.blit.koan", category: "library")
 
     /// An artist, their records and who they sound like, as one value.
     ///
