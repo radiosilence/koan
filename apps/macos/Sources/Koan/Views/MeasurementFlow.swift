@@ -32,7 +32,7 @@ struct MeasurementFlow: View {
     @State private var searchNote: String?
     /// The result being fetched.
     @State private var picking: SquigHit?
-    /// Where the measurement came from, credited on the profile.
+    /// Where the measurement came from, credited on the correction.
     @State private var source: String?
 
     init(dsp: DspModel, name: String = "", saved: @escaping (String) -> Void = { _ in }) {
@@ -171,7 +171,7 @@ struct MeasurementFlow: View {
             } header: {
                 Text("Find it on squig.link")
             } footer: {
-                Text("Measurements reviewers publish on their squig.link sites. Pick one measured on the rig your target assumes, where the site says; the site is credited on the profile.")
+                Text("Measurements reviewers publish on their squig.link sites. Pick one measured on the rig your target assumes, where the site says; the site is credited on the correction.")
                     .koanText(.fine, .muted)
             }
             Section {

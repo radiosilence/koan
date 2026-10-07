@@ -340,10 +340,6 @@ final class DspModel {
         act { try await $0.dspRemove(name: profile) }
     }
 
-    func setEnabled(_ on: Bool) {
-        act { try await $0.dspSetEnabled(enabled: on) }
-    }
-
     private func act(_ run: @escaping @Sendable (KoanEngine) async throws -> Void) {
         let engine = self.engine
         Task {
