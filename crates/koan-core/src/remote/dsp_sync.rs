@@ -152,10 +152,9 @@ impl SyncDoc {
             .sum()
     }
 
+    /// As it travels: what this kōan knows, with the fields a newer one
+    /// wrote, laid out the same way whether there are any.
     pub fn json(&self) -> String {
-        if self.unknown.is_empty() {
-            return serde_json::to_string(self).expect("a profile serialises");
-        }
         let mut value = serde_json::to_value(self).expect("a profile serialises");
         if let Some(profile) = value.get_mut("profile").and_then(|p| p.as_object_mut()) {
             for (key, field) in &self.unknown {
@@ -165,9 +164,16 @@ impl SyncDoc {
         value.to_string()
     }
 
-    /// What tells two versions apart.
+    /// What tells two versions apart: the fields this kōan knows, which are
+    /// all a device keeps. A field from a newer kōan is never kept here, so
+    /// counting it would make every copy taken read as edited here, and be
+    /// sent back without it.
     pub fn hash(&self) -> String {
-        sha256_hex(self.json().as_bytes())
+        sha256_hex(
+            serde_json::to_string(self)
+                .expect("a profile serialises")
+                .as_bytes(),
+        )
     }
 }
 
@@ -1631,6 +1637,32 @@ mod tests {
         let again = SyncDoc::parse(&doc.json()).unwrap();
         assert_eq!(again, doc);
         assert!(doc.json().contains("from_the_future"));
+    }
+
+    /// A copy taken from the server with a field from a newer kōan is not
+    /// an edit here, so it is never sent back without that field.
+    #[test]
+    fn a_newer_field_is_not_an_edit() {
+        let _guard = lock();
+        let server = Server::new();
+        let (a, b) = (Device::new(), Device::new());
+        a.on();
+        Config::persist(|c| c.dsp.profiles.push(headphone())).unwrap();
+        a.sync(&server);
+        let (uid, json) = rows::live_docs(&server.conn, USER).unwrap().pop().unwrap();
+        let mut newer: serde_json::Value = serde_json::from_str(&json).unwrap();
+        newer["profile"]["from_the_future"] = serde_json::json!({"a": 1});
+        server.save(&uid, now_ms() + 1, &newer.to_string()).unwrap();
+        for device in [&a, &b, &a, &b] {
+            let synced = device.sync(&server);
+            assert_eq!(synced.sent, 0, "{synced:?}");
+        }
+        let (_, kept) = rows::live_docs(&server.conn, USER).unwrap().pop().unwrap();
+        assert!(kept.contains("from_the_future"), "{kept}");
+        assert_eq!(
+            b.profile("HD 650 (AutoEQ, oratory1990)").unwrap().filters,
+            vec![band(3.0)]
+        );
     }
 
     /// What two profiles play, not how they are written down.
