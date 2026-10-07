@@ -405,8 +405,8 @@ enum KoanTone {
 // MARK: - Accent
 
 /// The accent for a record, tone-mapped as the spec sets out: the sleeve's hue
-/// kept, its lightness and chroma moved into a band per appearance in OKLCH,
-/// clear of `bad`'s hue. Mint when there is no record or no usable hue. The
+/// kept, its lightness and chroma moved into a band per appearance in OKLCH.
+/// Mint when there is no record or no usable hue. The
 /// room's tint in both looks, not only the kōan theme's.
 ///
 /// Built from the colour `Color.dominant` already works out for the room, so
@@ -441,10 +441,6 @@ struct KoanAccent: Equatable, Sendable {
     static let chroma = 0.10...0.19
     /// Under this, a sleeve has no hue worth carrying, and the accent is mint.
     static let noHue = 0.04
-    /// Degrees of hue kept between the accent and `bad`, so a red record never
-    /// reads as an error.
-    static let badGap = 25.0
-
     func shade(_ scheme: ColorScheme) -> Shade { scheme == .dark ? dark : light }
 
     private static func color(dark: Shade, light: Shade) -> Color {
@@ -484,8 +480,8 @@ struct KoanAccent: Equatable, Sendable {
             linear: (Double(resolved.linearRed), Double(resolved.linearGreen), Double(resolved.linearBlue))
         )
         guard c >= Self.noHue,
-              let dark = Self.shade(hue: h, chroma: c, band: Self.darkBand, bad: 0xEF6B73, bg: 0x1E1E1E, surface: 0x2A2A2A),
-              let light = Self.shade(hue: h, chroma: c, band: Self.lightBand, bad: 0xC43F3F, bg: 0xFFFFFF, surface: 0xF2F2F2)
+              let dark = Self.shade(hue: h, chroma: c, band: Self.darkBand, bg: 0x1E1E1E, surface: 0x2A2A2A),
+              let light = Self.shade(hue: h, chroma: c, band: Self.lightBand, bg: 0xFFFFFF, surface: 0xF2F2F2)
         else { self = .mint; return }
         self.init(dark: dark, light: light)
     }
@@ -500,13 +496,9 @@ struct KoanAccent: Equatable, Sendable {
     /// dark mode, the lightest in light — or failing that, the one that clears
     /// 3:1 as a fill.
     private static func shade(
-        hue: Double, chroma: Double, band: ClosedRange<Double>,
-        bad: UInt32, bg: UInt32, surface: UInt32
+        hue h: Double, chroma: Double, band: ClosedRange<Double>,
+        bg: UInt32, surface: UInt32
     ) -> Shade? {
-        let badHue = OKLCH.from(srgb: bad).h
-        var h = hue
-        let d = (h - badHue + 540).truncatingRemainder(dividingBy: 360) - 180
-        if abs(d) < badGap { h = (badHue + (d >= 0 ? badGap : -badGap) + 360).truncatingRemainder(dividingBy: 360) }
         let c = min(max(chroma, Self.chroma.lowerBound), Self.chroma.upperBound)
         let darkMode = band == darkBand
         let steps = (0...50).map { band.lowerBound + (band.upperBound - band.lowerBound) * Double($0) / 50 }

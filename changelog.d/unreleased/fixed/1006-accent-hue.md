@@ -1,0 +1,1 @@
+- **Red records give a red accent.** A sleeve whose red sat close to the error colour had its accent turned to magenta or orange; the accent now keeps the sleeve's hue. Thin coloured strokes on a black sleeve are found too, rather than giving mint.

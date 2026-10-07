@@ -81,12 +81,11 @@ The accent follows the record playing, and is tone-mapped the same way in both t
 | `accent-lightness` | 0.70–0.85 | 0.45–0.60 |
 | `accent-chroma` | 0.10–0.19 | 0.10–0.19 |
 | `accent-no-hue` | 0.04 | 0.04 |
-| `accent-bad-gap` | 25° | 25° |
 
 - Within the band, the accent takes the most vivid lightness that reaches 4.5:1 on `bg` and `surface`: the darkest of the band in dark mode, the lightest in light.
 - Where no lightness in the band does, the accent is used for fills, indicators and rings only, at 3:1, and text that would have been the accent is `ink`.
 - A sleeve whose chroma is under `accent-no-hue`, and no record at all, give mint.
-- A hue within `accent-bad-gap` of `bad`'s moves to the edge of that gap, so a red record never reads as an error.
+- The hue is never moved. A red record gives a red accent, even one close to `bad`; errors are told apart by where they appear and what they say, not by hue alone.
 - A change of record eases to the new accent over 0.35 s, and only when the colour was not already known; one in hand lands with the record.
 - "Colours from the record" (`appearance.record_colours`) off pins the accent to mint and removes the wash, in both themes.
 

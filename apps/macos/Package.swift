@@ -34,5 +34,10 @@ let package = Package(
                 .linkedFramework("SystemConfiguration"),
             ]
         ),
+        .testTarget(
+            name: "KoanTests",
+            dependencies: ["Koan"],
+            path: "Tests/KoanTests"
+        ),
     ]
 )

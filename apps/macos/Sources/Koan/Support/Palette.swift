@@ -43,15 +43,16 @@ extension Color {
 
     /// Not the average of the sleeve: averaging every pixel of a busy cover
     /// gives the same brown-grey every time, because opposite hues cancel. This
-    /// is a circular mean of *hue* weighted by how colourful each sample is, so
-    /// the one strong colour on a mostly black cover wins rather than being
-    /// drowned by the black.
+    /// is a circular mean of *hue* weighted by each sample's chroma, so the one
+    /// strong colour on a mostly black cover wins rather than being drowned by
+    /// the black. Samples are gated on chroma rather than brightness: thin
+    /// strokes on black come out of the downscale dark but still coloured.
     ///
     /// The result is forced into a band that stays legible as a tint on dark
     /// chrome. A navy sleeve would otherwise give an accent invisible against
     /// the window and a neon one would flare.
     private static func dominant(of cgImage: CGImage) -> Color? {
-        let side = 12
+        let side = 32
         var pixels = [UInt8](repeating: 0, count: side * side * 4)
         guard let context = CGContext(
                   data: &pixels,
@@ -73,8 +74,10 @@ extension Color {
                 Double(pixels[i + 2]) / 255
             )
             // Near-grey, near-black and blown-out samples say nothing about
-            // what colour the record is.
-            guard sat > 0.15, value > 0.15, value < 0.98 else { continue }
+            // what colour the record is. The black floor sits under a thin
+            // stroke averaged into its sample, and over a dark sleeve's tint
+            // and its compression noise.
+            guard sat > 0.15, value > 0.1, value < 0.98 else { continue }
             let weight = sat * value
             let angle = hue * 2 * .pi
             x += cos(angle) * weight
