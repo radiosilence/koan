@@ -251,6 +251,9 @@ struct RecordRoom: ViewModifier {
     @State private var worn: Color?
     /// Where the rainbow's accent is around the flag (see `Rainbow`).
     @State private var rainbowStep = 0
+    /// Whether the app is in front. Followed by notification rather than
+    /// `scenePhase`, which read here re-runs the whole scene.
+    @State private var active = true
 
     /// Only for a colour that had to be worked out, which arrives after the page
     /// and would otherwise cut. A colour already in hand needs no ease: it lands
@@ -302,8 +305,9 @@ struct RecordRoom: ViewModifier {
     }
 
     /// Whether the rainbow's accent moves round the flag: only while it is
-    /// drawn and motion is allowed. Still, it holds one hue.
-    private var cycles: Bool { appearance.rainbowDrawn && !reduceMotion }
+    /// drawn, motion is allowed and the app is in front. Still, it holds one
+    /// hue: a phone playing in the background is not woken to change it.
+    private var cycles: Bool { appearance.rainbowDrawn && !reduceMotion && active }
 
     /// The colour to put on.
     private var tint: Color { accent.color }
@@ -405,6 +409,8 @@ struct RecordRoom: ViewModifier {
                     withAnimation(KoanTheme.Motion.settle) { rainbowStep += 1 }
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .appResignsActive)) { _ in active = false }
+            .onReceive(NotificationCenter.default.publisher(for: .appBecomesActive)) { _ in active = true }
             .background { RainbowForTrack() }
             .overlay(alignment: .bottom) { RainbowToast() }
             // The theme's text button for every button that names no style.

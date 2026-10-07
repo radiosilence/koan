@@ -170,6 +170,9 @@ struct SecretCode<Key: Equatable> {
 
     init(_ code: [Key]) { self.code = code }
 
+    /// Start over: a key that cannot be part of the code.
+    mutating func reset() { recent.removeAll() }
+
     /// A key; true when it completes the code.
     mutating func press(_ key: Key) -> Bool {
         recent.append(key)

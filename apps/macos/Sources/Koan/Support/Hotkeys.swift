@@ -114,9 +114,16 @@ final class Hotkeys {
     /// Returns true when the event has been consumed.
     private func handle(_ event: NSEvent) -> Bool {
         // Before the modifier check: arrow keys carry the function and
-        // numeric pad flags. The arrows still reach the list; only the A that
-        // completes the code is taken.
-        if ownWindow != nil, !EditCommands.isEditingText, konami.press(event.keyCode), let onKonami {
+        // numeric pad flags, which are all they may carry. A held key is one
+        // press. The arrows still reach the list; only the A that completes
+        // the code is taken, and ⌘A is never part of it.
+        let bare = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting([.function, .numericPad])
+            .isEmpty
+        if !bare { konami.reset() }
+        if bare, !event.isARepeat, ownWindow != nil, !EditCommands.isEditingText,
+           konami.press(event.keyCode), let onKonami {
             onKonami()
             return true
         }
