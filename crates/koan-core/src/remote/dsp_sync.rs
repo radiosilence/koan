@@ -316,6 +316,7 @@ fn same(a: &SyncDoc, b: &SyncDoc, member: &dyn Fn(&str) -> Option<SyncDoc>, dept
     if !preamp
         || pa.target != pb.target
         || pa.measurement != pb.measurement
+        || pa.fitted != pb.fitted
         || pa.group != pb.group
         || pa.tuned_for != pb.tuned_for
     {
@@ -656,10 +657,7 @@ fn first_sync(db: &Database) -> Result<(), Failed> {
         .profiles
         .iter()
         .filter(|p| {
-            p.scope.is_none()
-                && p.target.is_none()
-                && p.measurement.is_none()
-                && p.layers.is_empty()
+            p.scope.is_none() && p.target.is_none() && p.measured().is_none() && p.layers.is_empty()
         })
         .map(|p| p.name.clone())
         .collect();
@@ -1529,7 +1527,8 @@ mod tests {
         let sent = a.profile("IEM").unwrap();
         let (doc, paths) = doc_of(&sent).unwrap();
         let back = SyncDoc::parse(&doc.json()).unwrap();
-        assert_eq!(back.profile.measurement, sent.measurement);
+        assert_eq!(back.profile.fitted, sent.fitted);
+        assert!(sent.fitted.is_some() && back.profile.filters == sent.filters);
         assert!(back.files.iter().any(|f| f.name == "measurement.csv"));
         assert!(paths.values().any(|p| p.ends_with("measurement.csv")));
 
@@ -1537,7 +1536,7 @@ mod tests {
         b.sync(&server);
         b.on();
         let got = b.profile("IEM").unwrap();
-        assert_eq!(got.measurement, sent.measurement);
+        assert_eq!(got.fitted, sent.fitted);
         assert_eq!(profiles::role(&got), DspRole::Correction);
         a.on();
         let file = std::fs::read(profiles::dir("IEM").join("measurement.csv")).unwrap();

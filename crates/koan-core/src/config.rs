@@ -650,6 +650,14 @@ impl Default for DspConfig {
     }
 }
 
+impl DspProfile {
+    /// The measurement and target a correction is built from: fitted, or
+    /// saved before kōan fitted bands.
+    pub fn measured(&self) -> Option<&DspMeasurement> {
+        self.fitted.as_ref().or(self.measurement.as_ref())
+    }
+}
+
 impl DspConfig {
     /// The profile for the output device called `device`, if DSP is on and
     /// one names it.
@@ -722,9 +730,19 @@ pub struct DspProfile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<DspRole>,
     /// A correction built from a headphone's measurement, kept as
-    /// `measurement.csv` in the profile's folder, to `target`.
+    /// `measurement.csv` in the profile's folder, to `target`, as kōan
+    /// saved one before it fitted bands: played as the bands squig.link's
+    /// auto-EQ fits to it, which are not written back. See `fitted`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub measurement: Option<DspMeasurement>,
+    /// A correction fitted to a headphone's measurement, kept as
+    /// `measurement.csv` in the profile's folder, and `target`: its filters
+    /// and preamp are the bands squig.link's auto-EQ fits, refitted when the
+    /// target changes. A key of its own rather than `measurement`, so a
+    /// build that knows only `measurement` plays the bands alone and not a
+    /// correction of its own after them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fitted: Option<DspMeasurement>,
     /// For a tuning: the target it was made against, by id. On a correction
     /// to another target, the difference between the two plays first, so
     /// the tuning sounds as it was made to.
@@ -1070,6 +1088,14 @@ impl DspProfile {
             .is_some_and(|m| m.target.chars().count() > b::NAME)
         {
             self.measurement = None;
+            dropped.push("measurement's target dropped".to_owned());
+        }
+        if self
+            .fitted
+            .as_ref()
+            .is_some_and(|m| m.target.chars().count() > b::NAME)
+        {
+            self.fitted = None;
             dropped.push("measurement's target dropped".to_owned());
         }
         if let Some(t) = &mut self.target {
@@ -2906,6 +2932,7 @@ fps = 30
             origin: None,
             role: None,
             measurement: None,
+            fitted: None,
             tuned_for: None,
             original: None,
         };
