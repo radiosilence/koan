@@ -116,9 +116,12 @@ final class WalkTests: XCTestCase {
         // Last, because its keyboard covers the tab bar.
         tab("Search")
         // The search tab's field lives in the tab bar and arrives after the
-        // tab does.
-        let field = app.searchFields.firstMatch
-        if field.waitForExistence(timeout: 8) {
+        // tab does. The kōan look's is a text field under the title.
+        var field = app.searchFields.firstMatch
+        if !field.waitForExistence(timeout: 8) {
+            field = app.textFields[any: "Artists, albums, tracks"]
+        }
+        if field.exists {
             field.tap()
             field.typeText(ProcessInfo.processInfo.environment["KOAN_WALK_SEARCH"] ?? "gabriel")
             pause(3)
@@ -152,7 +155,11 @@ final class WalkTests: XCTestCase {
     }
 
     private func back() {
-        let button = app.navigationBars.buttons.element(boundBy: 0)
+        // The kōan look draws its own back button, which is not always the
+        // bar's first.
+        let drawn = app.navigationBars.buttons
+            .matching(NSPredicate(format: "label IN %@", ["Back", "chevron.left"])).firstMatch
+        let button = drawn.exists ? drawn : app.navigationBars.buttons.element(boundBy: 0)
         if button.exists { button.tap() }
         pause(1)
     }

@@ -60,7 +60,22 @@ struct TabShell: View {
         .buttonStyle(TelevisionButton())
         .task { await checkSignedIn() }
         #else
-        shell
+        // The theme's iPad draws its own sidebar beside the tabs, as the Mac's
+        // is drawn: the platform's is glass and SF, and folds into a floating
+        // capsule of tabs.
+        HStack(spacing: 0) {
+            if KoanTheme.isOn && sidebar {
+                PadSidebar(
+                    selection: tab,
+                    reselect: { paths[$0] = [] },
+                    sections: Self.librarySections,
+                    play: { play($0, shuffled: $1) }
+                )
+                .frame(width: 260)
+                .koanRule(.trailing)
+            }
+            shell
+        }
         #endif
     }
 
@@ -151,16 +166,7 @@ struct TabShell: View {
         // style folds them behind a pill a remote has to find first.
         .tabViewStyle(.tabBarOnly)
         #else
-        .tabViewStyle(.sidebarAdaptable)
-        // Open, as the Mac's is: it is where everything but the queue lives.
-        .defaultAdaptableTabBarPlacement(.sidebar)
-        // What the Library tab says atop its list, with no Library tab to say it.
-        .tabViewSidebarHeader {
-            if sidebar, LibraryStatus.showing(mirror) {
-                VStack(alignment: .leading, spacing: 6) { LibraryStatus() }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
+        .modifier(AdaptableTabs(sidebar: sidebar))
         .onChange(of: sidebar) { regroup() }
         .onChange(of: playlists.playlists.map(\.id)) { _, ids in dropDeleted(ids) }
         #endif
@@ -203,10 +209,7 @@ struct TabShell: View {
         // Something other than the stacks can move the navigator: a link on a
         // page, a search result, Now Playing, playback showing the queue.
         .onChange(of: nav.current) { _, page in arrive(at: page) }
-        .sheet(isPresented: $showingNowPlaying) {
-            NowPlayingSheet()
-                .presentationDetents([.large])
-        }
+        .modifier(NowPlayingPresentation(isPresented: $showingNowPlaying))
         .modifier(RecordRoom())
         // As on the Mac: the things that ask for a new playlist are mostly
         // context menus, which take their own alerts down with them.
@@ -286,6 +289,7 @@ struct TabShell: View {
             .environment(\.onStage, showing && routes.isEmpty)
             .navigationDestination(for: Route.self) { route in
                 RouteView(route: route)
+                    .koanBackButton()
                     .koanHidesSystemTabBar()
                     .environment(\.onStage, showing && route == routes.last)
             }
@@ -507,11 +511,10 @@ private struct Transport: ViewModifier {
         // Now Playing is a tab of its own there.
         content
         #else
-        // A phone's theme bar; an iPad keeps the platform's sidebar layout.
-        if KoanTheme.isOn && width == .compact {
+        if KoanTheme.isOn {
             // The theme's own bar in place of the platform's glass: the mini
-            // player as a row with the playhead along its top, the tabs flat
-            // beneath it. Laid over the content and kept behind the keyboard,
+            // player as a row with the playhead along its top, and on a phone
+            // the tabs flat beneath it; an iPad's are its sidebar. Laid over the content and kept behind the keyboard,
             // as the platform's tab bar is. Each page makes room for it itself,
             // from its height (`koanHidesSystemTabBar`), less what the keyboard
             // already covers.
@@ -530,8 +533,10 @@ private struct Transport: ViewModifier {
                             .padding(.vertical, 8)
                             .overlay(alignment: .top) { MiniPlayhead() }
                             .koanRule(.top)
-                        tabs
-                            .koanRule(.top)
+                        if width == .compact {
+                            tabs
+                                .koanRule(.top)
+                        }
                     }
                     .koanSurface()
                     // What a test measures a page's last row against.
@@ -600,6 +605,129 @@ private struct MiniPlayhead: View {
     private var runway: TimeInterval {
         guard player.scrubbing == nil, player.playhead.playing, player.durationMs > 0 else { return 0 }
         return Double(player.durationMs - player.playhead.at(within: player.durationMs)) / 1000
+    }
+}
+#endif
+
+#if !os(tvOS)
+/// The tab view's layout. In the platform's look, its own iPad layout: a bar
+/// across the top that opens into a sidebar. In the theme, tabs alone, with
+/// the bar hidden on every page (`koanHidesSystemTabBar`) for the theme's bar
+/// on a phone and `PadSidebar` on an iPad.
+private struct AdaptableTabs: ViewModifier {
+    let sidebar: Bool
+    @Environment(EngineMirror.self) private var mirror
+
+    func body(content: Content) -> some View {
+        if KoanTheme.isOn {
+            content.tabViewStyle(.tabBarOnly)
+        } else {
+            content
+                .tabViewStyle(.sidebarAdaptable)
+                // Open, as the Mac's is: it is where everything but the queue lives.
+                .defaultAdaptableTabBarPlacement(.sidebar)
+                // What the Library tab says atop its list, with no Library tab to say it.
+                .tabViewSidebarHeader {
+                    if sidebar, LibraryStatus.showing(mirror) {
+                        VStack(alignment: .leading, spacing: 6) { LibraryStatus() }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+        }
+    }
+}
+
+/// The theme's iPad sidebar: the Mac's navigation rows, flat on the ground.
+/// The same tabs as the platform's sidebar, chosen the same way.
+private struct PadSidebar: View {
+    @Binding var selection: TabShell.TabID
+    let reselect: (TabShell.TabID) -> Void
+    let sections: [(section: Navigator.Section, title: String, icon: String)]
+    let play: (Playlist, _ shuffled: Bool) -> Void
+    @Environment(EngineMirror.self) private var mirror
+    @Environment(PlaylistsModel.self) private var playlists
+
+    var body: some View {
+        List {
+            if LibraryStatus.showing(mirror) {
+                VStack(alignment: .leading, spacing: 6) { LibraryStatus() }
+                    .font(.koan(.meta))
+                    .listRowBackground(Color.clear)
+            }
+            Section {
+                row(.queue, "Queue", Icon.queueSection)
+                row(.search, "Search", Icon.search)
+                row(.settings, "Settings", "gearshape")
+            }
+            Section {
+                ForEach(sections, id: \.section) { item in
+                    row(.section(item.section), item.title, item.icon)
+                        .badge(item.section == .downloads ? mirror.activeTransfers : 0)
+                        .listRowSeparator(.hidden)
+                }
+            } header: {
+                KoanSectionHeader("Library")
+            }
+            Section {
+                ForEach(playlists.playlists, id: \.id) { playlist in
+                    row(.section(.playlist(playlist.id)), playlist.name, Icon.playlist, data: true)
+                        .contextMenu {
+                            Button("Play", systemImage: Icon.play) { play(playlist, false) }
+                            Button("Shuffle", systemImage: Icon.shuffle) { play(playlist, true) }
+                        }
+                        .listRowSeparator(.hidden)
+                }
+                Button { playlists.naming = [] } label: {
+                    KoanLabel("New Playlist", icon: Icon.add)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .koanNavRow(selected: false)
+                .listRowSeparator(.hidden)
+            } header: {
+                KoanSectionHeader("Playlists")
+            }
+        }
+        .listStyle(.plain)
+        .koanSidebar()
+        .environment(\.defaultMinListHeaderHeight, 0)
+        .listRowSeparator(.hidden)
+        .listSectionSeparator(.hidden)
+    }
+
+    /// A row that is a tab: chosen again, back to its root, as a tab is.
+    /// A playlist's name is the person's, and keeps its case.
+    private func row(_ id: TabShell.TabID, _ title: String, _ icon: String, data: Bool = false) -> some View {
+        Button {
+            if selection == id { reselect(id) } else { selection = id }
+        } label: {
+            Label {
+                Text(title).textCase(data ? nil : .lowercase)
+            } icon: {
+                KoanIcon(icon)
+            }
+            .labelStyle(PadRowLabel())
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .koanNavRow(selected: selection == id)
+        .listRowSeparator(.hidden)
+    }
+}
+
+/// A row's glyph, or not, as "Show icons" says.
+private struct PadRowLabel: LabelStyle {
+    @Environment(\.koanIcons) private var icons
+
+    func makeBody(configuration: Configuration) -> some View {
+        if icons {
+            Label(configuration).labelStyle(.titleAndIcon)
+        } else {
+            Label(configuration).labelStyle(.titleOnly)
+        }
     }
 }
 #endif

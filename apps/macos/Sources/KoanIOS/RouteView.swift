@@ -67,8 +67,9 @@ private struct SectionPage: View {
             .toolbar {
                 if section.isBrowser {
                     ToolbarItem(placement: .topBarTrailing) {
-                        BrowseFilterButton()
+                        BrowseFilterButton().koanControl()
                     }
+                    .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
                 }
                 if section == .albums {
                     AlbumSortControls()
@@ -127,7 +128,7 @@ private struct SectionFilter: ViewModifier {
         #else
         if let placeholder {
             @Bindable var library = library
-            content.searchable(text: $library.filter, prompt: placeholder)
+            content.koanSearchable(text: $library.filter, prompt: placeholder)
         } else {
             content
         }
@@ -235,7 +236,8 @@ private struct BrowseControlsRow: View {
 /// The track browser's sort, in the navigation bar.
 private struct TrackSortControls: ToolbarContent {
     var body: some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) { TrackSortMenu() }
+        ToolbarItem(placement: .topBarTrailing) { TrackSortMenu().koanControl() }
+            .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
     }
 }
 
@@ -252,9 +254,12 @@ private struct AlbumSortControls: ToolbarContent {
                 } label: {
                     Label("Shuffle", systemImage: Icon.reshuffle)
                 }
+                .koanControl()
             }
+            .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
         }
-        ToolbarItem(placement: .topBarTrailing) { AlbumSortMenu() }
+        ToolbarItem(placement: .topBarTrailing) { AlbumSortMenu().koanControl() }
+            .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
     }
 }
 #endif

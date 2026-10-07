@@ -11,7 +11,12 @@ struct QueueView: View {
     #if os(macOS)
     private static let emptyDetail = "Press ⌘K to find something to play."
     #else
-    private static let emptyDetail = "Find something to play from Albums or Artists."
+    /// Names the pages as their tabs and rows show them.
+    private static var emptyDetail: String {
+        KoanTheme.isOn
+            ? "Find something to play from albums or artists."
+            : "Find something to play from Albums or Artists."
+    }
     #endif
 
     /// A phone's library is a server's, so an empty one means not signed in
@@ -270,13 +275,16 @@ struct QueueView: View {
     // MARK: - Header
 
     private func header(_ rows: [Row]) -> some View {
-        HStack(spacing: 12) {
+        // A queue that is one record, grouped, has that record's heading as its
+        // first row, sleeve and counts and all. The theme says it once.
+        let albumOnce = if KoanTheme.isOn, grouped, case .album = mirror.lock { true } else { false }
+        return HStack(spacing: 12) {
             // What the queue *is*, when it is still something. A queue that
             // came from a playlist and has not been touched since follows that
             // playlist, and saying so is what makes the following legible: you
             // can see why an edit over there moved something here, and you can
             // see the moment it stops.
-            switch mirror.lock {
+            switch albumOnce ? nil : mirror.lock {
             case .playlist(let playlist):
                 PlaylistArtwork(
                     sources: playlists.covers[playlist.id] ?? [],
@@ -293,7 +301,7 @@ struct QueueView: View {
             }
 
             VStack(alignment: .leading, spacing: 1) {
-                if let name = lockedName {
+                if let name = lockedName, !albumOnce {
                     // On a phone the label leaves the name a few letters; the
                     // sleeve beside it already says the queue follows it.
                     #if os(iOS)
@@ -309,10 +317,12 @@ struct QueueView: View {
                     Text("Queue").koanCase()
                         .font(.role(.body, system: .headline))
                 }
-                QueueSummary()
-                    .font(.role(.fine, system: .caption))
-                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                    .lineLimit(1)
+                if !albumOnce {
+                    QueueSummary()
+                        .font(.role(.fine, system: .caption))
+                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                        .lineLimit(1)
+                }
             }
 
             Spacer()
@@ -388,6 +398,9 @@ struct QueueView: View {
             #if os(tvOS)
             .accessibilityLabel("More")
             #else
+            // A secondary control, in ink as its neighbours are; a menu's label
+            // otherwise takes the accent.
+            .tint(KoanTheme.isOn ? Color.koanInk : nil)
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .frame(width: 22)
@@ -404,9 +417,17 @@ struct QueueView: View {
         .padding(.vertical, 11)
     }
 
+    /// One option of the theme's segmented control, as glyphs: the chosen one
+    /// in `ink` over an accent underline, the other `muted`.
     private func layoutOption(_ value: Bool, _ icon: String, _ label: String) -> some View {
-        Button { grouped = value } label: { Image(systemName: icon) }
-            .foregroundStyle(KoanTheme.style(grouped == value ? .accent : .muted))
+        Button { grouped = value } label: {
+            Image(systemName: icon)
+                .padding(.bottom, KoanTheme.Space.xs)
+                .overlay(alignment: .bottom) {
+                    if grouped == value { Rectangle().fill(.tint).frame(height: KoanTheme.hairline) }
+                }
+        }
+            .foregroundStyle(KoanTheme.style(grouped == value ? .ink : .muted))
             .accessibilityLabel(label)
             .accessibilityAddTraits(grouped == value ? .isSelected : [])
             .help(label)

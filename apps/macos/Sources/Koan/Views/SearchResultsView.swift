@@ -278,10 +278,18 @@ private struct SearchTrackRow: View {
                     .font(.role(.fine, system: .caption))
                     .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     .lineLimit(1)
-                SourceBadges(track: track, queued: mirror.queuedByTrack[track.id])
+                if !KoanTheme.isOn {
+                    SourceBadges(track: track, queued: mirror.queuedByTrack[track.id])
+                }
             }
 
             Spacer(minLength: 8)
+
+            // Beside the length, where every other track row has it, rather
+            // than a third line under the subtitle.
+            if KoanTheme.isOn {
+                SourceBadges(track: track, queued: mirror.queuedByTrack[track.id])
+            }
 
             if track.albumId != nil && hovering && !selection.isActive {
                 Text("Go to album")

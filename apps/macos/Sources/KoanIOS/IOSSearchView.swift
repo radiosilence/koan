@@ -15,12 +15,12 @@ struct IOSSearchView: View {
             // Always showing, under the title. Left to itself the field hides
             // until the page is pulled down, and on the one page whose whole
             // purpose is the field, that reads as there being none.
-            .searchable(
+            .koanSearchable(
                 text: $search.query,
                 placement: Self.placement,
-                prompt: KoanTheme.label("Artists, albums, tracks")
+                prompt: "Artists, albums, tracks",
+                onSubmit: { search.submit() }
             )
-            .onSubmit(of: .search) { search.submit() }
     }
 
     #if os(tvOS)
