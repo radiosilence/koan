@@ -118,6 +118,10 @@ struct Store {
     accounts: Vec<String>,
     /// The last command that did not simply arrive, for the app to say so.
     notice: Option<Notice>,
+    /// When each Apple TV was last looked for among AirPlay announcements, by
+    /// id and host: one with none, or none that matches, is not looked for
+    /// again at every hello.
+    tv_looked: HashMap<(String, String), Instant>,
 }
 
 /// A command that was queued for a device asleep, or did not reach one: what
@@ -569,7 +573,9 @@ pub fn nearby_hello(hello: LinkHello, addr: &str) {
             .find(|n| n.id == hello.id)
             .and_then(|n| n.tv.clone())
             .filter(|tv| crate::remote::airplay::current(Some(tv), &host));
-        let look = hello.platform == "tvos" && tv.is_none();
+        let look = hello.platform == "tvos"
+            && tv.is_none()
+            && look_for_tv(&mut s.tv_looked, &hello.id, &host, Instant::now());
         s.seen.retain(|n| n.id != hello.id);
         s.seen.push(SeenNearby {
             id: hello.id.clone(),
@@ -598,6 +604,27 @@ pub fn nearby_hello(hello: LinkHello, addr: &str) {
     if let Some((id, name)) = look {
         record_tv(id, name, addr.to_string());
     }
+}
+
+/// How long a look for an Apple TV's AirPlay announcement stands, found or
+/// not, before the same TV at the same host is looked for again.
+const TV_LOOK_AGAIN: Duration = Duration::from_secs(10 * 60);
+
+/// Whether to look for the AirPlay announcement of the Apple TV `id` at
+/// `host` now, noting the look if so. A look under way counts.
+fn look_for_tv(
+    looked: &mut HashMap<(String, String), Instant>,
+    id: &str,
+    host: &str,
+    now: Instant,
+) -> bool {
+    looked.retain(|_, at| now.saturating_duration_since(*at) < TV_LOOK_AGAIN);
+    let key = (id.to_string(), host.to_string());
+    if looked.contains_key(&key) {
+        return false;
+    }
+    looked.insert(key, now);
+    true
 }
 
 /// Find the AirPlay announcement of the Apple TV `id`, met at `addr`, and keep
@@ -1610,6 +1637,33 @@ pub fn this_id() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_apple_tv_is_looked_for_once_per_host_for_a_while() {
+        let mut looked = HashMap::new();
+        let t0 = Instant::now();
+        assert!(look_for_tv(&mut looked, "tv", "living-room.local.", t0));
+        assert!(!look_for_tv(
+            &mut looked,
+            "tv",
+            "living-room.local.",
+            t0 + Duration::from_secs(5)
+        ));
+        // Another host, or another TV, is looked for at once.
+        assert!(look_for_tv(
+            &mut looked,
+            "tv",
+            "10.0.0.7",
+            t0 + Duration::from_secs(5)
+        ));
+        assert!(look_for_tv(&mut looked, "other", "living-room.local.", t0));
+        assert!(look_for_tv(
+            &mut looked,
+            "tv",
+            "living-room.local.",
+            t0 + TV_LOOK_AGAIN
+        ));
+    }
 
     #[test]
     fn a_live_send_with_no_way_through_sends_nothing() {
