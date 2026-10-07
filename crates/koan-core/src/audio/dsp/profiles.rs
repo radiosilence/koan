@@ -68,6 +68,83 @@ pub struct ChainView {
 pub struct TuningView {
     pub name: String,
     pub on: bool,
+    /// The target it was made against, by name.
+    pub made_for: Option<String>,
+    /// Made against the target the correction aims at. False where it was
+    /// made against another, or where that is not known; none where there
+    /// is nothing to compare.
+    pub matched: Option<bool>,
+    pub join: Option<Join>,
+    /// What of it does not play as chosen, and why.
+    pub note: Option<String>,
+}
+
+/// How an EQ of the tuning meets the correction ahead of it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case", tag = "state")]
+pub enum Join {
+    /// Made against the target the correction aims at: nothing to convert.
+    Matched,
+    /// Made against another target: the difference from the correction's
+    /// target to that one plays first. Names, not ids.
+    Converted { from: String, to: String },
+    /// Made against a target not said, so nothing converts: a target the EQ
+    /// already includes may be applied twice.
+    Unknown,
+}
+
+/// One EQ of a device's tuning, as it meets the correction.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct EqJoin {
+    /// The target it was made against, by name.
+    pub made_for: Option<String>,
+    /// None where nothing is compared: no correction, one whose target is
+    /// not known, a headphone of another kind, or an EQ that does not play.
+    pub join: Option<Join>,
+    pub note: Option<String>,
+}
+
+/// How each EQ of `device`'s tuning meets its correction, in order. `notes`
+/// are the chain's, by EQ, and `dropped` the EQs it leaves out.
+fn joins(
+    dsp: &crate::config::DspConfig,
+    device: &str,
+    notes: &[(String, String)],
+    dropped: &[String],
+) -> Vec<EqJoin> {
+    use super::targets;
+    let all = &dsp.profiles;
+    let aim = dsp.profile_for(device).and_then(|c| aims_at(c, all));
+    tunings_for(device)
+        .into_iter()
+        .map(|(name, on)| {
+            let made = all
+                .iter()
+                .find(|p| p.name == name)
+                .and_then(|p| super::made_against(p, all, 0));
+            let plays = dsp.enabled && on && !dropped.contains(&name);
+            let join = match (&aim, &made) {
+                _ if !plays => None,
+                (Some(a), Some(m)) if a == m => Some(Join::Matched),
+                (Some(a), Some(m)) if targets::same_ear(a, m) => Some(Join::Converted {
+                    from: target_name(a),
+                    to: target_name(m),
+                }),
+                (Some(_), None) => Some(Join::Unknown),
+                _ => None,
+            };
+            let said: Vec<&str> = notes
+                .iter()
+                .filter(|(eq, _)| *eq == name)
+                .map(|(_, n)| n.as_str())
+                .collect();
+            EqJoin {
+                made_for: made.as_deref().map(target_name),
+                join,
+                note: (!said.is_empty()).then(|| said.join(" ")),
+            }
+        })
+        .collect()
 }
 
 /// What `device` plays.
@@ -76,9 +153,7 @@ pub fn chain_view(device: &str) -> ChainView {
     let cfg = Config::cached();
     let all = &cfg.dsp.profiles;
     let chosen = cfg.dsp.profile_for(device);
-    let target = chosen
-        .and_then(|c| aims_at(c, all))
-        .map(|t| target_name(&t));
+    let target = o.aim.clone();
     let includes = chosen.is_some_and(|c| shown_role(c, all) == DspRole::Baked);
     let playing: Vec<&str> = if includes {
         Vec::new()
@@ -89,6 +164,13 @@ pub fn chain_view(device: &str) -> ChainView {
             .map(|(name, _)| name.as_str())
             .collect()
     };
+    let meets = o
+        .chain
+        .iter()
+        .zip(&o.joins)
+        .filter(|((name, _), _)| playing.contains(&name.as_str()))
+        .filter_map(|((name, _), j)| Some(joined(name, j.join.as_ref()?, target.as_deref()?)))
+        .collect::<Vec<_>>();
     let sentence = match (&o.active, playing.is_empty()) {
         (None, true) => format!("{device} is flat: the music plays untouched."),
         (active, _) => {
@@ -102,7 +184,12 @@ pub fn chain_view(device: &str) -> ChainView {
             if !playing.is_empty() {
                 parts.push(format!("tuned with {}", and_list(&playing)));
             }
-            format!("Music to {device}, {}.", parts.join(", then "))
+            let mut said = format!("Music to {device}, {}.", parts.join(", then "));
+            for j in meets {
+                said.push(' ');
+                said.push_str(&j);
+            }
+            said
         }
     };
     ChainView {
@@ -113,13 +200,35 @@ pub fn chain_view(device: &str) -> ChainView {
         tuning: o
             .chain
             .into_iter()
-            .map(|(name, on)| TuningView { name, on })
+            .zip(o.joins)
+            .map(|((name, on), j)| TuningView {
+                name,
+                on,
+                matched: j.join.as_ref().map(|j| *j == Join::Matched),
+                made_for: j.made_for,
+                join: j.join,
+                note: j.note,
+            })
             .collect(),
         edited: o.preset.as_ref().is_some_and(|(_, e)| *e),
         preset: o.preset.map(|(name, _)| name),
         left_out: o.left_out_eqs,
         notes: o.left_out,
         sentence,
+    }
+}
+
+/// How `eq` meets a correction aiming at `aim`, as a sentence: what the EQ
+/// page's chain reads to VoiceOver after the chain itself.
+pub fn joined(eq: &str, join: &Join, aim: &str) -> String {
+    match join {
+        Join::Matched => format!("{eq} was made for {aim}: matched."),
+        Join::Converted { to, .. } => {
+            format!("{eq} was made for {to}, so the difference from {aim} plays first.")
+        }
+        Join::Unknown => {
+            format!("What {eq} was made against is not set, so it may apply a target twice.")
+        }
     }
 }
 
@@ -247,6 +356,10 @@ pub struct Overview {
     pub tunings: Vec<(String, String)>,
     /// That device's tuning: its EQs in order, each on or off.
     pub chain: Vec<(String, bool)>,
+    /// How each EQ of `chain` meets the correction, in the same order.
+    pub joins: Vec<EqJoin>,
+    /// The target that device's correction aims at, by name.
+    pub aim: Option<String>,
     /// The preset that device was set from, and whether it was changed
     /// since.
     pub preset: Option<(String, bool)>,
@@ -291,6 +404,16 @@ pub fn overview_for(device: Option<String>) -> Overview {
             .as_ref()
             .map(|c| c.left_out_eqs.clone())
             .unwrap_or_default(),
+        joins: match (&device, &chain) {
+            (Some(d), Some(c)) => joins(&cfg.dsp, d, &c.eq_notes, &c.left_out_eqs),
+            (Some(d), None) => joins(&cfg.dsp, d, &[], &[]),
+            (None, _) => Vec::new(),
+        },
+        aim: device
+            .as_deref()
+            .and_then(|d| cfg.dsp.profile_for(d))
+            .and_then(|c| aims_at(c, &cfg.dsp.profiles))
+            .map(|t| target_name(&t)),
         left_out: chain.and_then(|c| c.left_out),
         outputs: outputs(&cfg.dsp),
         tunings: cfg.dsp.tunings.iter().fold(Vec::new(), |mut first, t| {
@@ -4284,6 +4407,16 @@ mod tests {
         set_tuning(dac, Some("Warm")).unwrap();
         assert_eq!(tuning_for(dac).as_deref(), Some("Warm"));
         assert_eq!(plays(), ["step", "60", "100"]);
+        let join = || overview_for(Some(dac.into())).joins[0].clone();
+        let harman = target_name("harman-over-ear-2018");
+        assert_eq!(
+            join().join,
+            Some(Join::Converted {
+                from: harman.clone(),
+                to: target_name("diffuse-field-gras-kemar"),
+            })
+        );
+        assert_eq!(chain_view(dac).tuning[0].matched, Some(false));
         // Made against the correction's own target, or nothing said: as it is.
         set_tuned_for("Warm", Some("harman-over-ear-2018")).unwrap();
         assert_eq!(
@@ -4291,11 +4424,33 @@ mod tests {
             Some("harman-over-ear-2018")
         );
         assert_eq!(plays(), ["60", "100"]);
+        assert_eq!(join().join, Some(Join::Matched));
+        assert_eq!(join().made_for, Some(harman.clone()));
+        let view = chain_view(dac);
+        assert_eq!(view.tuning[0].matched, Some(true));
+        assert!(
+            view.sentence
+                .ends_with(&format!("Warm was made for {harman}: matched.")),
+            "{}",
+            view.sentence
+        );
         set_tuned_for("Warm", None).unwrap();
         assert_eq!(plays(), ["60", "100"]);
+        assert_eq!(join().join, Some(Join::Unknown), "nothing converts");
+        assert_eq!(join().made_for, None);
+        assert!(
+            chain_view(dac)
+                .sentence
+                .contains("may apply a target twice")
+        );
+        // Switched off, it meets nothing.
+        set_tunings(dac, &[("Warm".into(), false)]).unwrap();
+        assert_eq!(join().join, None);
+        set_tunings(dac, &[("Warm".into(), true)]).unwrap();
         // An in-ear target says nothing of over-ears.
         set_tuned_for("Warm", Some("harman-in-ear-2019")).unwrap();
         assert_eq!(plays(), ["60", "100"]);
+        assert_eq!(join().join, None);
         assert!(set_tuned_for("Warm", Some("made-up")).is_err());
 
         // A correction is not a tuning, and a baked one takes none.
@@ -4307,6 +4462,15 @@ mod tests {
             overview_for(Some(dac.into())).left_out.as_deref(),
             Some("Warm is left out: Lush already includes a tuning."),
             "and says why"
+        );
+        assert_eq!(
+            join(),
+            EqJoin {
+                made_for: Some(target_name("harman-in-ear-2019")),
+                join: None,
+                note: Some("Warm is left out: Lush already includes a tuning.".into()),
+            },
+            "at the EQ it is about"
         );
         assert_eq!(
             set_tuning(dac, Some("Warm")).unwrap_err(),

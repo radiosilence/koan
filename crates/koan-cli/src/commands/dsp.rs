@@ -55,11 +55,16 @@ pub fn cmd_dsp_show(named: Option<String>, json: bool) {
     }
     for (i, eq) in view.tuning.iter().enumerate() {
         let state = if !eq.on {
-            " (off)"
+            " (off)".to_owned()
         } else if view.left_out.contains(&eq.name) {
-            " (left out)"
+            " (left out)".to_owned()
         } else {
-            ""
+            match &eq.join {
+                Some(profiles::Join::Matched) => " (matched)".to_owned(),
+                Some(profiles::Join::Converted { from, to }) => format!(" ({from} → {to})"),
+                Some(profiles::Join::Unknown) => " (made against: unknown)".to_owned(),
+                None => String::new(),
+            }
         };
         row(
             if i == 0 { "tuning" } else { "" },
