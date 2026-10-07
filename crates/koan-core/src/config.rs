@@ -1371,6 +1371,12 @@ type CachedConfig = Option<(ConfigStamp, Arc<Config>)>;
 static CONFIG_CACHE: LazyLock<parking_lot::RwLock<CachedConfig>> =
     LazyLock::new(|| parking_lot::RwLock::new(None));
 
+/// Moved by every invalidation. A read keeps what it loaded only if this has
+/// not moved since it began: the stamp alone cannot tell a directory switched
+/// away and back again mid-read, which leaves the stamp as it was and the
+/// config loaded from the other directory.
+static CONFIG_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn config_stamp() -> ConfigStamp {
     let (base, local) = stamp_of(&config_file_path(), &config_local_file_path());
     (config_dir(), base, local)
@@ -1426,6 +1432,7 @@ impl Config {
     /// is read from a SwiftUI list body. Callers that want to avoid even the
     /// clone `load_or_default()` does can hold this `Arc`.
     pub fn cached() -> Arc<Config> {
+        let generation = CONFIG_GENERATION.load(std::sync::atomic::Ordering::SeqCst);
         let stamp = config_stamp();
         if let Some((seen, cfg)) = CONFIG_CACHE.read().as_ref()
             && *seen == stamp
@@ -1442,7 +1449,9 @@ impl Config {
         // directory's config under the other's stamp. Checked under the lock
         // a switch takes to drop the cache, so none slips in between.
         let mut cache = CONFIG_CACHE.write();
-        if config_stamp() == stamp {
+        if CONFIG_GENERATION.load(std::sync::atomic::Ordering::SeqCst) == generation
+            && config_stamp() == stamp
+        {
             *cache = Some((stamp, cfg.clone()));
         }
         cfg
@@ -1452,7 +1461,9 @@ impl Config {
     /// than relying on the mtime, which can land in the same filesystem tick as
     /// the read before it.
     pub fn invalidate_cache() {
-        *CONFIG_CACHE.write() = None;
+        let mut cache = CONFIG_CACHE.write();
+        CONFIG_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        *cache = None;
     }
 
     /// Load from a specific TOML file (no env var overlay).
@@ -2625,6 +2636,44 @@ fps = 30
         fs::create_dir_all(&dir).unwrap();
         set_config_dir(&dir);
         (config_file_path(), config_local_file_path())
+    }
+
+    /// A read racing directory switches never caches one directory's config
+    /// under the other's, even when the directory switches away and back
+    /// while the read is loading.
+    #[test]
+    fn a_read_during_switches_is_never_kept_for_the_wrong_directory() {
+        let _guard = PERSIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dirs: Vec<tempfile::TempDir> = (0..2).map(|_| tempfile::tempdir().unwrap()).collect();
+        for (dir, port) in dirs.iter().zip([4001, 4002]) {
+            fs::write(
+                dir.path().join("config.toml"),
+                format!("[graphql]\nport = {port}\n"),
+            )
+            .unwrap();
+        }
+        let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reader = std::thread::spawn({
+            let done = done.clone();
+            move || {
+                while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                    Config::cached();
+                }
+            }
+        });
+        for i in 0..2000 {
+            let (dir, port) = if i % 2 == 0 {
+                (&dirs[0], 4001)
+            } else {
+                (&dirs[1], 4002)
+            };
+            set_config_dir(dir.path());
+            for _ in 0..3 {
+                assert_eq!(Config::cached().graphql.port, port, "switch {i}");
+            }
+        }
+        done.store(true, std::sync::atomic::Ordering::Relaxed);
+        reader.join().unwrap();
     }
 
     #[test]
