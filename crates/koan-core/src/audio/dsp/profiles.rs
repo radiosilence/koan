@@ -1483,6 +1483,10 @@ pub fn apply_preset(device: &str, name: Option<&str>) -> Result<(), String> {
     persist(|cfg| set_output(cfg, device, correction.as_deref(), &tunings, name))
 }
 
+/// An output set from a preset by `migrate`: the device, its correction,
+/// its tuning and the preset.
+type Setting = (String, Option<String>, Vec<(String, bool)>, String);
+
 /// Bring configs from before presets and tunings of several EQs up to
 /// them, once at start, and again harmlessly after:
 /// - a stack that is a correction with EQs on top is a preset, and an output
@@ -1492,10 +1496,6 @@ pub fn apply_preset(device: &str, name: Option<&str>) -> Result<(), String> {
 ///   before this could and a synced preset can, is set from it the same way;
 /// - an output whose correction is a group, of which one member plays, has
 ///   that member; a group in a tuning becomes its member playing.
-/// An output set from a preset by `migrate`: the device, its correction,
-/// its tuning and the preset.
-type Setting = (String, Option<String>, Vec<(String, bool)>, String);
-
 pub fn migrate() -> Result<(), String> {
     let cfg = Config::cached();
     let all = &cfg.dsp.profiles;
