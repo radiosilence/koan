@@ -1,0 +1,1 @@
+- **Neutral targets name their kind of headphone.** The two diffuse-field targets read "Neutral, over-ear (diffuse field)" and "Neutral, in-ear (diffuse field)", so either reads right outside its heading, and Made against lists the targets for the device's kind of headphone first. Their ids are unchanged.

@@ -36,7 +36,7 @@ Every EQ is one of three, shown as a badge wherever EQs are listed:
 
 kōan can't tell from the file which an imported EQ is, so it asks.
 
-The target belongs to the correction, and each says what it does against neutral. **Neutral (diffuse field)**, offered first for in-ears and over-ears alike, has no bass or treble preference; Harman's targets are neutral plus the bass and treble most listeners preferred. Moving an AutoEQ correction from Harman to neutral takes Harman's preference out, which leaves room for a tuning of your own on top.
+The target belongs to the correction, and each says what it does against neutral. **Neutral, in-ear (diffuse field)** and **Neutral, over-ear (diffuse field)**, offered first for each, has no bass or treble preference; Harman's targets are neutral plus the bass and treble most listeners preferred. Moving an AutoEQ correction from Harman to neutral takes Harman's preference out, which leaves room for a tuning of your own on top.
 
 ## One correction at a time
 
@@ -48,13 +48,13 @@ The top of each EQ's page says what the chain does, one line per role, each with
 
 ## Device, target, tuning
 
-Each output's EQ is three choices, made on the EQ page as the chain the music goes through, and it reads as a sentence: "Music to Topping E30, corrected by AFUL Performer 8S to Neutral (diffuse field), then tuned with Lush".
+Each output's EQ is three choices, made on the EQ page as the chain the music goes through, and it reads as a sentence: "Music to Topping E30, corrected by AFUL Performer 8S to Neutral, in-ear (diffuse field), then tuned with Lush".
 
 - **Correction** is the correction for what the output plays through: headphones or speakers. Choosing it is all most people need.
-- **Target** belongs to the correction: what it makes neutral mean. Harman's targets add the bass and treble most listeners prefer; Neutral (diffuse field) adds nothing.
+- **Target** belongs to the correction: what it makes neutral mean. Harman's targets add the bass and treble most listeners prefer; neutral (diffuse field) adds nothing.
 - **Tuning** is optional, behind **Add EQ**: your taste on top, one or more EQs in order.
 
-kōan builds the chain itself, so no EQ that plays others has to be made by hand: the correction, then the tuning. A tuning can say which target it was made against, on its own page under **Made against**. On headphones corrected to another target, kōan plays the difference between the two first, so the tuning sounds as it was made to whatever corrects the headphones. A finished preset like Qudelix's "Lush" fixes that difference into one EQ for one pair of headphones; kōan works it out for each pair as it plays. A tuning whose target isn't known plays as it is.
+kōan builds the chain itself, so no EQ that plays others has to be made by hand: the correction, then the tuning. A tuning can say which target it was made against, on its own page under **Made against**. On headphones corrected to another target, kōan plays the difference between the two first, so the tuning sounds as it was made to whatever corrects the headphones. A finished preset like Qudelix's "Lush" fixes that difference into one EQ for one pair of headphones; kōan works it out for each pair as it plays. A tuning whose target isn't known plays as it is, and kōan offers the target its curve looks made against for you to accept.
 
 A correction that already includes a tuning needs none on top; the EQ page says so, and offers to split it. A group of tunings works as a quick switch between them. The tuning is this device's choice for that output, as the correction is, and the menu by the output in the transport offers it too.
 

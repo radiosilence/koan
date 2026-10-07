@@ -500,6 +500,19 @@ final class DspModel {
     }
 
     /// What `name` does to the sound, at 48 kHz, for the graph.
+    /// What the tuning `name` looks made against on the output in use, where
+    /// it does not say.
+    func suggestMadeAgainst(_ name: String) async -> DspTargetName? {
+        await engine.dspSuggestMadeAgainst(name: name, device: nil)
+    }
+
+    /// What the tuning `name` adds on the output's correction for each
+    /// target it could be said to be made against, by id; "" for not saying.
+    func madeAgainstPreviews(_ name: String) async -> [String: [Double]] {
+        let previews = await engine.dspMadeAgainstPreviews(name: name, device: nil)
+        return Dictionary(previews.map { ($0.target ?? "", $0.db) }, uniquingKeysWith: { a, _ in a })
+    }
+
     func response(_ name: String) async -> DspResponse? {
         await engine.dspResponse(name: name, rate: 48000)
     }

@@ -14,6 +14,10 @@ struct DspProfilePage: View {
     @State private var targets: DspTargets?
     /// Every target, for what a ready-made EQ was made for.
     @State private var madeForChoices = TargetGroups()
+    /// For a tuning: the target it looks made against, while it does not
+    /// say, and what it adds on the output's correction for each choice.
+    @State private var suggestion: DspTargetName?
+    @State private var previews: [String: [Double]] = [:]
     @State private var addingTarget = false
     @State private var editingName = ""
     @State private var confirmingDelete = false
@@ -41,7 +45,7 @@ struct DspProfilePage: View {
             if let d = detail {
                 if let r = response {
                     Section {
-                        EqGraph(response: r, handles: d.readOnly ? [] : BandTable.handles(d.bands)) { index, hz, db in
+                        EqGraph(response: r, parts: onCorrection(d, r), handles: d.readOnly ? [] : BandTable.handles(d.bands)) { index, hz, db in
                             let b = d.bands[index]
                             dsp.setBand(name, index, kind: b.kind, freq: hz, gain: db, q: b.q)
                         }
@@ -81,7 +85,8 @@ struct DspProfilePage: View {
                 // A stack with nothing of its own is what its layers are.
                 if d.layers.isEmpty || !d.bands.isEmpty || !d.impulses.isEmpty {
                     RoleSection(dsp: dsp, detail: d, madeForChoices: madeForChoices,
-                                targets: targets, adding: $addingTarget, splitting: $splitting)
+                                targets: targets, suggestion: suggestion, previews: previews,
+                                adding: $addingTarget, splitting: $splitting)
                 }
                 if d.group {
                     GroupSection(dsp: dsp, detail: d)
@@ -193,10 +198,27 @@ struct DspProfilePage: View {
         detail = await dsp.detail(name)
         response = await dsp.response(name)
         targets = await dsp.targets(name)
-        if madeForChoices.isEmpty {
-            madeForChoices = await TargetGroups(over: dsp.targetsFor(inEar: false), inEar: dsp.targetsFor(inEar: true))
+        madeForChoices = await TargetGroups(
+            over: dsp.targetsFor(inEar: false),
+            inEar: dsp.targetsFor(inEar: true),
+            first: dsp.overview?.inEar
+        )
+        if detail?.role == .tuning {
+            suggestion = await dsp.suggestMadeAgainst(name)
+            previews = await dsp.madeAgainstPreviews(name)
+        } else {
+            suggestion = nil
+            previews = [:]
         }
         editingName = name
+    }
+
+    /// A tuning as it plays on the output's correction, where that differs
+    /// from the tuning alone: with the target difference its Made against
+    /// asks for, so a wrong choice shows as a preference doubled or taken out.
+    private func onCorrection(_ d: DspProfileDetail, _ r: DspResponse) -> [EqGraph.Part] {
+        guard let db = previews[d.tunedFor ?? ""], db.count == r.total.count, db != r.total else { return [] }
+        return [EqGraph.Part(name: "On the correction in use", db: db, stroke: .eq(1))]
     }
 
     private func rename() {
@@ -458,18 +480,28 @@ struct TargetGroups {
 
     init() {}
 
-    init(over: [DspTargetOption], inEar: [DspTargetOption]) {
+    /// Whether the device's correction is for in-ears, which puts its kind
+    /// first and the other under Other; none shows both as they are.
+    var first: Bool?
+
+    init(over: [DspTargetOption], inEar: [DspTargetOption], first: Bool? = nil) {
         let both = Set(over.map(\.id)).intersection(inEar.map(\.id))
         self.over = over.filter { !both.contains($0.id) }
         self.inEar = inEar.filter { !both.contains($0.id) }
         added = over.filter { both.contains($0.id) }
+        self.first = first
     }
 
     var isEmpty: Bool { over.isEmpty && inEar.isEmpty && added.isEmpty }
 
     /// The targets' ids under a heading for each group, Unknown first.
     var sections: [(title: String?, values: [String])] {
-        [(nil, [""])] + [("Over-ear", over), ("In-ear", inEar), ("Added", added)]
+        let groups: [(String, [DspTargetOption])] = switch first {
+        case true?: [("In-ear", inEar), ("Other", over), ("Added", added)]
+        case false?: [("Over-ear", over), ("Other", inEar), ("Added", added)]
+        case nil: [("Over-ear", over), ("In-ear", inEar), ("Added", added)]
+        }
+        return [(nil, [""])] + groups
             .filter { !$0.1.isEmpty }
             .map { ($0.0, $0.1.map(\.id)) }
     }
@@ -528,6 +560,9 @@ private struct RoleSection: View {
     let madeForChoices: TargetGroups
     /// The targets this correction can move to, once its own is known.
     let targets: DspTargets?
+    let suggestion: DspTargetName?
+    /// What a tuning adds on the output's correction, by Made against.
+    let previews: [String: [Double]]
     @Binding var adding: Bool
     /// Taking a baked EQ apart, presented by the page.
     @Binding var splitting: Bool
@@ -549,6 +584,20 @@ private struct RoleSection: View {
         )
     }
 
+    /// A Made against choice, and on a phone, what the tuning adds on the
+    /// correction in use with it.
+    private func madeAgainstRow(_ id: String) -> some View {
+        HStack(spacing: KoanTheme.Space.m) {
+            madeForChoices.row(id)
+            #if os(iOS)
+            Spacer(minLength: 0)
+            if let db = previews[id] {
+                CurveThumb(db: db, stroke: .eq(1))
+            }
+            #endif
+        }
+    }
+
     var body: some View {
         Section {
             KoanPicker("This is", selection: Binding(
@@ -563,8 +612,14 @@ private struct RoleSection: View {
                     },
                     sections: madeForChoices.sections,
                     name: { madeForChoices.option($0)?.name ?? "Unknown" },
-                    row: madeForChoices.row
+                    row: madeAgainstRow
                 )
+                if detail.tunedFor == nil, let suggestion {
+                    Button("Looks made for \(suggestion.name). Use That?") {
+                        dsp.setTunedFor(detail.name, suggestion.id)
+                    }
+                    .koanButton(.text)
+                }
             }
             #if !os(tvOS)
             if detail.role == .baked, detail.impulses.isEmpty, detail.layers.isEmpty {

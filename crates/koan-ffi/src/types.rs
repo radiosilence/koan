@@ -1275,6 +1275,8 @@ pub struct DspOverview {
     pub joins: Vec<DspEqJoin>,
     /// The target the output's correction aims at, by name.
     pub aim: Option<String>,
+    /// Whether that target is for in-ears; none where it is not known.
+    pub in_ear: Option<bool>,
     /// The preset the output was set from, and whether it was changed since.
     pub preset: Option<String>,
     pub preset_edited: bool,
@@ -1313,6 +1315,26 @@ pub struct DspEqJoin {
     pub join: Option<DspJoin>,
     /// What of it does not play as chosen, and why.
     pub note: Option<String>,
+    /// For a converted join, the target difference that plays, in dB on
+    /// the response grid.
+    pub step: Vec<f64>,
+    /// For an unknown join, the target it looks made against.
+    pub suggestion: Option<DspTargetName>,
+}
+
+/// A target by id and name.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspTargetName {
+    pub id: String,
+    pub name: String,
+}
+
+/// What a tuning adds on a correction, said to be made against `target`
+/// (none for not saying), in dB on the response grid.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspMadeAgainstPreview {
+    pub target: Option<String>,
+    pub db: Vec<f64>,
 }
 
 #[derive(uniffi::Enum, Debug, Clone, PartialEq)]
@@ -1725,10 +1747,13 @@ impl From<koan_core::audio::dsp::profiles::Overview> for DspOverview {
                             Join::Unknown => DspJoin::Unknown,
                         }),
                         note: j.note,
+                        step: j.step,
+                        suggestion: j.suggestion.map(|(id, name)| DspTargetName { id, name }),
                     }
                 })
                 .collect(),
             aim: o.aim,
+            in_ear: o.in_ear,
             preset_edited: o.preset.as_ref().is_some_and(|(_, e)| *e),
             preset: o.preset.map(|(name, _)| name),
             profiles: o

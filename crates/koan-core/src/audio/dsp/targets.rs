@@ -45,8 +45,8 @@ pub struct Target {
 pub const TARGETS: &[Target] = &[
     Target {
         id: "diffuse-field-gras-kemar",
-        name: "Neutral (diffuse field)",
-        does: "flat, no preference",
+        name: "Neutral, over-ear (diffuse field)",
+        does: "",
         character: "Neutral: sound arriving evenly from every direction, as a room without reflections would give, with no bass or treble preference. Brighter than Harman.",
         ear: Ear::Over,
         data: include_str!("targets/diffuse-field-gras-kemar.csv"),
@@ -77,8 +77,8 @@ pub const TARGETS: &[Target] = &[
     },
     Target {
         id: "diffuse-field-iso-11904-1",
-        name: "Neutral (diffuse field)",
-        does: "flat, no preference",
+        name: "Neutral, in-ear (diffuse field)",
+        does: "",
         character: "Neutral: the ear's response to sound arriving evenly from every direction (ISO 11904-1), with no bass or treble preference.",
         ear: Ear::In,
         data: include_str!("targets/diffuse-field-iso-11904-1.csv"),
@@ -261,6 +261,69 @@ pub fn identify(result_target: &[(f64, f64)], ear: Ear) -> Option<&'static Targe
         }
         _ => None,
     }
+}
+
+/// How much better the best target must explain a tuning than the next for
+/// it to be suggested as what the tuning was made against: RMS, 20 Hz to
+/// 10 kHz. Neutral and Harman differ by 5 to 10 dB in the bass, so a tuning
+/// said against one fits it by about 2 dB more than the other, and one made
+/// against neither fits both about as badly.
+const GUESS_MARGIN_DB: f64 = 1.5;
+
+/// The neutral and Harman targets for `ear`: what a tuning without a
+/// target said was most likely made against.
+fn usual(ear: Ear) -> [&'static str; 2] {
+    match ear {
+        Ear::Over => ["diffuse-field-gras-kemar", "harman-over-ear-2018"],
+        Ear::In => ["diffuse-field-iso-11904-1", "harman-in-ear-2019"],
+    }
+}
+
+/// The target a tuning whose curve is `eq` (dB on `grid()`) looks made
+/// against: of neutral and Harman for `ear`, and `aim`, the target of the
+/// correction it plays on. A tuning made against a target T is mostly a
+/// listener's preference said against T, and preferences sit near
+/// Harman's, so a tuning made against T looks like Harman minus T: one
+/// made against neutral carries Harman's bass shelf, one made against
+/// Harman does not. The target whose difference from Harman the tuning
+/// is nearest is taken, when it is nearer than the next by
+/// `GUESS_MARGIN_DB`.
+pub fn guess_made_against(eq: &[f64], ear: Ear, aim: &str) -> Option<&'static Target> {
+    let grid = grid();
+    if eq.len() != grid.len() || eq.iter().any(|d| !d.is_finite()) {
+        return None;
+    }
+    let ours: Curve = grid.iter().copied().zip(eq.iter().copied()).collect();
+    let eq = levelled(&ours, &grid);
+    let harman = levelled(&shipped(usual(ear)[1])?.curve(), &grid);
+    let fit = |t: &Target| {
+        let t = levelled(&t.curve(), &grid);
+        let (sum, n) = grid
+            .iter()
+            .zip(eq.iter().zip(harman.iter().zip(&t)))
+            .filter(|(hz, _)| **hz <= 10_000.0)
+            .fold((0.0, 0), |(sum, n), (_, (e, (h, t)))| {
+                (sum + (e - (h - t)).powi(2), n + 1)
+            });
+        (sum / f64::from(n.max(1))).sqrt()
+    };
+    let mut candidates: Vec<&'static Target> =
+        usual(ear).iter().filter_map(|id| shipped(id)).collect();
+    if let Some(a) = shipped(aim).filter(|a| a.ear == ear && !candidates.contains(a)) {
+        candidates.push(a);
+    }
+    let mut near: Vec<(f64, &'static Target)> =
+        candidates.into_iter().map(|t| (fit(t), t)).collect();
+    near.sort_by(|a, b| a.0.total_cmp(&b.0));
+    match near.as_slice() {
+        [(best, t), (next, _), ..] if next - best >= GUESS_MARGIN_DB => Some(t),
+        _ => None,
+    }
+}
+
+/// `step` on `grid()`, in dB.
+pub fn on_grid_db(step: &GraphicEq) -> Vec<f64> {
+    grid().iter().map(|&hz| at(&step.points, hz)).collect()
 }
 
 /// The curve that moves a correction made for `from` to `to`: their

@@ -64,7 +64,8 @@ struct EqSettings: View {
                         curves: curves,
                         choose: { choosing = $0 },
                         open: { showing = ShownProfile(name: $0) },
-                        set: { app.dsp.setTunings($0, for: device) }
+                        set: { app.dsp.setTunings($0, for: device) },
+                        madeFor: { app.dsp.setTunedFor($0, $1) }
                     )
                 } footer: {
                     Text(EqChain.sentence(o, device: app.dsp.label(device)))
@@ -448,6 +449,8 @@ struct EqChain: View {
     let choose: (Stage) -> Void
     let open: (String) -> Void
     let set: ([DspTuningEntry]) -> Void
+    /// Say what an EQ was made against: its name, a target's id.
+    let madeFor: (String, String) -> Void
 
     private var correction: DspProfileSummary? {
         overview.profiles.first { $0.name == overview.active }
@@ -560,8 +563,13 @@ struct EqChain: View {
                     .koanText(.fine, .accent)
                     .koanCase()
             case let .converted(from, to):
-                Text("Target difference: \(from) → \(to)")
-                    .koanText(.fine, .muted)
+                HStack(spacing: KoanTheme.Space.m) {
+                    Text("Target difference: \(from) → \(to)")
+                        .koanText(.fine, .muted)
+                    if let step = meets?.step, step.count > 1 {
+                        CurveThumb(db: step, stroke: StageStroke(style: KoanTheme.style(.muted, system: Color.secondary), dash: [])) // theme: raw — the system look's own
+                    }
+                }
             case .unknown:
                 #if os(tvOS)
                 Label("Made against: unknown. This may apply a target twice", systemImage: "exclamationmark.triangle")
@@ -573,6 +581,10 @@ struct EqChain: View {
                         .multilineTextAlignment(.leading)
                 }
                 .buttonStyle(.plain)
+                if let suggestion = meets?.suggestion {
+                    Button("Looks made for \(suggestion.name). Use That?") { madeFor(eq, suggestion.id) }
+                        .koanButton(.text)
+                }
                 #endif
             case nil:
                 EmptyView()
