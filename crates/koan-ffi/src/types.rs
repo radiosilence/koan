@@ -1109,6 +1109,46 @@ pub enum AutoEqOffer {
     Search { query: String },
 }
 
+/// A measurement on a squig.link site.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct SquigHit {
+    /// Brand, model and variant, as a profile would be named.
+    pub name: String,
+    pub brand: String,
+    pub model: String,
+    /// Tips, inserts or a nozzle; empty for the model's own.
+    pub variant: String,
+    /// The site, as `dspSquigFetch` takes it, and as a person reads it.
+    pub site: String,
+    pub site_label: String,
+    /// The rig, where the site says which.
+    pub rig: Option<String>,
+    /// In-ear or over-ear, where the site keeps one kind.
+    pub in_ear: Option<bool>,
+    /// What `dspSquigFetch` takes, with `site`.
+    pub file: String,
+    /// The credit kept on a profile made from it.
+    pub source: String,
+}
+
+impl From<koan_core::audio::dsp::squig::Hit> for SquigHit {
+    fn from(h: koan_core::audio::dsp::squig::Hit) -> Self {
+        use koan_core::audio::dsp::targets::Ear;
+        Self {
+            name: h.name(),
+            source: h.source(),
+            site: h.site.base.to_owned(),
+            site_label: h.site.label().to_owned(),
+            rig: h.site.rig.map(str::to_owned),
+            in_ear: h.site.ear.map(|e| e == Ear::In),
+            brand: h.brand,
+            model: h.model,
+            variant: h.variant,
+            file: h.file,
+        }
+    }
+}
+
 /// A headphone target a correction can be moved to.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct DspTargetOption {

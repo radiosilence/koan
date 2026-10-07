@@ -24,11 +24,22 @@ struct MeasurementFlow: View {
     @State private var name: String
     @State private var problem: String?
     @State private var saving = false
+    /// Searching squig.link's sites, from the name the flow was opened with.
+    @State private var squigQuery: String
+    @State private var hits: [SquigHit] = []
+    @State private var searching = false
+    /// Why a search shows nothing: no match, or no site reached.
+    @State private var searchNote: String?
+    /// The result being fetched.
+    @State private var picking: SquigHit?
+    /// Where the measurement came from, credited on the profile.
+    @State private var source: String?
 
     init(dsp: DspModel, name: String = "", saved: @escaping (String) -> Void = { _ in }) {
         self.dsp = dsp
         self.saved = saved
         _name = State(initialValue: name)
+        _squigQuery = State(initialValue: name)
     }
 
     enum Step: Int, CaseIterable {
@@ -107,7 +118,7 @@ struct MeasurementFlow: View {
             }
             Section("Where to get one") {
                 Link("squig.link", destination: URL(string: "https://squig.link")!)
-                Text("Find your headphones on squig.link or a site like it, and save their frequency response as a file.")
+                Text("Search for your headphones on the next page: kōan looks through the reviewers' squig.link sites. Or save their frequency response as a file from one.")
                 Text("REW and most measurement tools export one too.")
             }
             Section {
@@ -128,6 +139,41 @@ struct MeasurementFlow: View {
 
     private var fileStep: some View {
         Group {
+            Section {
+                TextField("Headphones", text: $squigQuery)
+                    .task(id: squigQuery) { await search() }
+                if searching, hits.isEmpty {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Searching squig.link…").koanText(.meta, .muted)
+                    }
+                } else if let searchNote {
+                    Text(searchNote).koanText(.meta, .muted)
+                }
+                ForEach(hits.prefix(20), id: \.self) { hit in
+                    Button { pick(hit) } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(hit.name)
+                                Text([hit.siteLabel, hit.rig.map { "\($0) rig" }].compactMap { $0 }.joined(separator: " · "))
+                                    .koanText(.fine, .muted)
+                            }
+                            Spacer()
+                            if picking == hit {
+                                ProgressView().controlSize(.small)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(picking != nil)
+                }
+            } header: {
+                Text("Find it on squig.link")
+            } footer: {
+                Text("Measurements reviewers publish on their squig.link sites. Pick one measured on the rig your target assumes, where the site says; the site is credited on the profile.")
+                    .koanText(.fine, .muted)
+            }
             Section {
                 Button(file.map { "Chosen: \($0)" } ?? "Choose a File…") { choosing = true }
             } footer: {
@@ -246,6 +292,51 @@ struct MeasurementFlow: View {
         step = Step(rawValue: step.rawValue + 1) ?? .review
     }
 
+    /// Search squig.link's sites once typing pauses. A search overtaken by
+    /// newer typing leaves what it found unshown.
+    private func search() async {
+        try? await Task.sleep(for: .milliseconds(300))
+        guard !Task.isCancelled else { return }
+        let query = squigQuery.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else {
+            hits = []
+            searchNote = nil
+            searching = false
+            return
+        }
+        searching = true
+        do {
+            let found = try await dsp.squigSearch(query)
+            guard !Task.isCancelled else { return }
+            hits = found
+            searchNote = found.isEmpty ? "Nothing on squig.link matches “\(query)”." : nil
+        } catch {
+            guard !Task.isCancelled else { return }
+            hits = []
+            searchNote = SettingsModel.describe(error)
+        }
+        searching = false
+    }
+
+    /// Fetch `hit`'s measurement as the file: its name, its site credited,
+    /// and in-ear or over-ear where the site keeps one kind.
+    private func pick(_ hit: SquigHit) {
+        picking = hit
+        Task {
+            defer { picking = nil }
+            do {
+                text = try await dsp.squigFetch(hit)
+                file = "\(hit.name), \(hit.siteLabel)"
+                source = hit.source
+                problem = nil
+                if name.isEmpty { name = "\(hit.brand) \(hit.model)" }
+                if let inEar = hit.inEar { self.inEar = inEar }
+            } catch {
+                problem = SettingsModel.describe(error)
+            }
+        }
+    }
+
     private func read(_ url: URL) {
         let held = url.startAccessingSecurityScopedResource()
         defer { if held { url.stopAccessingSecurityScopedResource() } }
@@ -255,6 +346,7 @@ struct MeasurementFlow: View {
         }
         text = contents
         file = url.lastPathComponent
+        source = nil
         if name.isEmpty {
             name = url.deletingPathExtension().lastPathComponent
         }
@@ -265,7 +357,7 @@ struct MeasurementFlow: View {
         saving = true
         Task {
             do {
-                let saved = try await dsp.saveMeasured(name: name, text: text, inEar: inEar, target: target)
+                let saved = try await dsp.saveMeasured(name: name, text: text, inEar: inEar, target: target, source: source)
                 self.saved(saved)
                 dismiss()
             } catch {

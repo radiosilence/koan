@@ -2940,19 +2940,65 @@ impl KoanEngine {
         .await
     }
 
-    /// Save the headphone `name`, measured as `text`, corrected to `target`.
+    /// Measurements on squig.link sites whose name has each word of `query`,
+    /// best first.
+    pub async fn dsp_squig_search(
+        self: Arc<Self>,
+        query: String,
+    ) -> Result<Vec<SquigHit>, KoanError> {
+        offload::offload(move || {
+            koan_core::audio::dsp::squig::search(&query, 60)
+                .map(|hits| hits.into_iter().map(Into::into).collect())
+                .map_err(|message| KoanError::BadArgument { message })
+        })
+        .await
+    }
+
+    /// The measurement `file` on the squig.link site `site`, its channels
+    /// averaged, as frequency and level text for `dspSaveMeasured`.
+    pub async fn dsp_squig_fetch(
+        self: Arc<Self>,
+        site: String,
+        file: String,
+    ) -> Result<String, KoanError> {
+        offload::offload(move || {
+            use koan_core::audio::dsp::squig;
+            let site = squig::site(&site).ok_or(KoanError::BadArgument {
+                message: format!("{site} is not a squig.link site koan searches"),
+            })?;
+            let hit = squig::Hit {
+                site,
+                brand: String::new(),
+                model: file.clone(),
+                variant: String::new(),
+                file,
+            };
+            squig::fetch(&hit).map_err(|message| KoanError::BadArgument { message })
+        })
+        .await
+    }
+
+    /// Save the headphone `name`, measured as `text`, corrected to `target`,
+    /// crediting `source` where the measurement came from one.
     pub async fn dsp_save_measured(
         self: Arc<Self>,
         name: String,
         text: String,
         in_ear: bool,
         target: String,
+        source: Option<String>,
     ) -> Result<String, KoanError> {
         offload::sequenced(move || {
             use koan_core::config::DspEar;
             let ear = if in_ear { DspEar::In } else { DspEar::Over };
-            let name = koan_core::audio::dsp::profiles::save_measured(&name, &text, ear, &target)
-                .map_err(|message| KoanError::BadArgument { message })?;
+            let name = koan_core::audio::dsp::profiles::save_measured_from(
+                &name,
+                &text,
+                ear,
+                &target,
+                source.as_deref(),
+            )
+            .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)?;
             Ok(name)
         })
