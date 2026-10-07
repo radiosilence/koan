@@ -1,0 +1,1 @@
+- **The iPad's sidebar is the Mac's.** With room for it, the sidebar lists the library's sections and the playlists, each opening its page beside it, and opens by default; it no longer holds only the four tabs with the sections behind Library. At compact width the tab bar is unchanged.
