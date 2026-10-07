@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.60.6
+
+### Added
+
+- **Select several on iPhone and iPad.** A "select" button on the queue, record, artist and playlist pages, history, search and the browsers ticks rows or records, and a bar at the foot of the page plays, queues, adds to a playlist, favourites or removes them together.
+- **Revert to a preset.** An output changed since its preset can go back to it from the EQ page, and the quick preset menus list the edited chain and the saved preset side by side.
+
+### Changed
+
+- **The wash is the only gradient in the kōan look.** The Mac transport no longer fades in over the page. With the wash under the whole window, toolbar, sidebar and transport sit on it with no ground, scrim or system glass, each set off by a hairline, and pages stop at their edges instead of passing under them. The Apple TV sign-in screen loses its glow, and lists in the picker end on a hard edge.
+- **No repeated titles on iOS tabs.** In the kōan look the queue, library, search and settings pages leave their name to the tab bar, which already shows it.
+- **The Mac transport is the window's foot when the wash covers the whole window.** It keeps the theme's ground and a rule along its top, as the iPhone's mini player does, and spans the window beneath the sidebar and lyrics, which stop at its edge. The wash fills everything above it.
+
+### Fixed
+
+- **Theme labels and tints.** In the kōan look on Apple TV, Settings' picker rows are lowercased like their neighbours; in the system look on the Mac and iPhone, the queue's "…" menu keeps the record's accent.
+- **Importing an EQ.** Importing no longer offers the new EQ for the output in use in a prompt that closed by itself; "What is this EQ?" appears straight away over Manage EQ rather than after leaving it. Import from a stage's Add… on the EQ page now imports at all on iPhone, and puts what it made into that device's chain as its answer says.
+- **Pages end above the mini player.** In the kōan look on iPhone and iPad a page scrolled to its end leaves room under its last row instead of meeting the bar's rule.
+- **Even margins on shelf pages.** Favourites, Recently Played and Downloaded laid their records out off-centre on a phone; the grid now spans the page between the same margins as its headings.
+- **Tapping the tab you are on goes back to its top.** In the kōan look a tab chosen again returns to its root, and from the root to the top of the page, Settings' panes included.
+- **Small controls easier to hit on iPhone and iPad.** The queue's ⋯, layout and follow buttons, a record's ⋯, hearts and the theme's compact buttons each take a 44-point tap, however small the glyph.
+- **Square trays on iPhone.** In the kōan look, the Control and Output trays are a square panel across the bottom of the screen rather than a rounded, inset card, with the selected row lined up on the title's edge; other sheets lose their rounded corners.
+- **EQ names and targets.** Preset and device names keep their case in pickers, roles read Correction, Correction + Tuning and Tuning, and Made against lists each target once, under Over-ear, In-ear and Added, so a choice there sticks.
+- **Device tray drag.** In the kōan look on iPhone, dragging the Control or Output tray down closes it.
+- **EQ targets on iPhone.** Picking the target an EQ was made against, made for or corrected to ticks it and closes the list, instead of leaving "Unknown" ticked until you go back.
+
 ## 0.60.5
 
 ### Fixed
