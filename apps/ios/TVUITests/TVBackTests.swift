@@ -135,13 +135,18 @@ final class TVBackTests: XCTestCase {
         XCTAssertTrue(field.waitForExistence(timeout: 10), "the search field")
         field.typeText("Artist 1")
         pause(4)
-        let pill = app.buttons[any: "Artist 1"]
-        XCTAssertTrue(pill.waitForExistence(timeout: 5), "the artist's pill is a button")
-        reach(pill, by: .down)
+        XCTAssertTrue(app.buttons[any: "Artist 1"].waitForExistence(timeout: 5), "the artists' pills are buttons")
+        // Down from the keyboard lands on whichever pill is under the key.
+        let focused = app.buttons.matching(NSPredicate(format: "hasFocus == true")).firstMatch
+        for _ in 0..<3 where !focused.label.hasPrefix("Artist") {
+            press(.down)
+        }
         snap("8-pill-focused")
+        XCTAssertTrue(focused.label.hasPrefix("Artist"), "an artist's pill has focus, not \(focused.label)")
+        let name = focused.label
         press(.select)
         pause(3)
-        XCTAssertFalse(app.searchFields.firstMatch.isHittable && pill.exists, "the artist's page is pushed")
+        XCTAssertFalse(app.buttons[any: name].exists, "the artist's page is pushed over the results")
         snap("9-artist")
     }
 
