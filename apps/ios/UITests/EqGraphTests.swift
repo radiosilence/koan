@@ -113,10 +113,15 @@ final class EqGraphTests: XCTestCase {
         try String(contentsOf: config.appending(path: "config.toml"), encoding: .utf8)
     }
 
+    /// Waits for the file to change and settle: saves come several times a
+    /// second while a gesture goes on, and a read can land mid-write.
     private func waitForSave(from old: String, _ what: String) throws {
-        for _ in 0..<20 {
-            if try saved() != old { return }
+        var last = old
+        for _ in 0..<40 {
             usleep(250_000)
+            let now = try saved()
+            if now != old, !now.isEmpty, now == last { return }
+            last = now
         }
         XCTFail("\(what) saved nothing")
     }
