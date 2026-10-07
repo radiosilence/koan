@@ -1999,6 +1999,8 @@ pub struct Settings {
     pub devices_discoverable: bool,
     /// Devices to reach by address where Bonjour does not: `host:port`.
     pub devices_addresses: Vec<String>,
+    /// Addresses whose connections to this device are hung up at once.
+    pub devices_refused: Vec<String>,
     /// What devices on the local network may do with this one: `full`
     /// (playback, outputs, presets, volume, hand-off) or `playback` (play and
     /// the queue only).
@@ -2445,6 +2447,31 @@ pub struct ConnectionInfo {
     pub nearby_servers: Vec<NearbyServer>,
     /// The last command to another device that did not simply arrive.
     pub command_notice: Option<CommandNotice>,
+    /// Who is connected to this device and whom it is connected to: see
+    /// `koan_core::remote::connections`.
+    pub connections: Vec<ConnectedInfo>,
+}
+
+/// A connection to this device or from it.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct ConnectedInfo {
+    /// What `end_connection` takes: only a connection on the network to this
+    /// device has one.
+    pub key: Option<u64>,
+    /// Through the server, rather than on the local network.
+    pub via_server: bool,
+    /// The other end can control this device.
+    pub inbound: bool,
+    /// The device's name, or the server's or a stranger's address.
+    pub name: String,
+    /// The address on the network, which `devices.refused` takes.
+    pub addr: Option<String>,
+    /// It proved it is one of the account's devices.
+    pub own: bool,
+    /// It proved it is a device another account shares: that account.
+    pub owner: Option<String>,
+    /// Unix seconds. `None` where this device cannot know.
+    pub since: Option<i64>,
 }
 
 /// A server another device on this network announced it is signed in to.

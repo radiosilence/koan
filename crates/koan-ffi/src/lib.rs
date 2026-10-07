@@ -2393,6 +2393,13 @@ impl KoanEngine {
         .await
     }
 
+    /// Hang up the connection to this device that `key` names
+    /// (`ConnectedInfo::key`). To keep a stranger from dialling again, add its
+    /// address to `devices_refused` too.
+    pub fn end_connection(&self, key: u64) {
+        koan_core::remote::nearby::end(key);
+    }
+
     /// Control the device `id`, or this one with `None`. Picking a device is
     /// picking where music plays: this one pauses, and the transport, the
     /// queue and what is playing all show that device until another is
@@ -3741,6 +3748,7 @@ impl KoanEngine {
                 fade_on_pause: cfg.playback.fade_on_pause,
                 devices_discoverable: cfg.devices.discoverable,
                 devices_addresses: cfg.devices.addresses.clone(),
+                devices_refused: cfg.devices.refused.clone(),
                 devices_nearby_control: match cfg.devices.nearby_control {
                     config::NearbyControl::Full => "full".into(),
                     config::NearbyControl::Playback => "playback".into(),
@@ -3789,6 +3797,7 @@ impl KoanEngine {
                     _ => config::NearbyControl::Full,
                 };
                 cfg.devices.keep_running = s.devices_keep_running;
+                cfg.devices.refused = s.devices_refused.clone();
                 cfg.devices.addresses = s
                     .devices_addresses
                     .iter()
@@ -6531,6 +6540,25 @@ fn connection_info() -> ConnectionInfo {
                 },
             }
         }),
+        connections: koan_core::remote::connections::list()
+            .into_iter()
+            .map(|c| {
+                use koan_core::remote::proof::Peer;
+                ConnectedInfo {
+                    key: c.key,
+                    via_server: c.via == koan_core::remote::connections::Via::Server,
+                    inbound: c.inbound,
+                    name: c.name,
+                    addr: c.addr,
+                    own: c.peer == Some(Peer::Own),
+                    owner: match c.peer {
+                        Some(Peer::Shared(owner)) => Some(owner),
+                        _ => None,
+                    },
+                    since: c.since,
+                }
+            })
+            .collect(),
     }
 }
 

@@ -59,6 +59,17 @@ final class SettingsModel {
         try engine.shareDevice(grantee: account, allow: allow)
     }
 
+    /// Hang up a device connected to this one on the network. Refusing it as
+    /// well keeps its address from connecting again.
+    func endConnection(_ connection: ConnectedInfo, refuse: Bool) {
+        if refuse, let addr = connection.addr, !settings.devicesRefused.contains(addr) {
+            edit { $0.devicesRefused.append(addr) }
+        }
+        if let key = connection.key {
+            engine.endConnection(key: key)
+        }
+    }
+
     // MARK: - Play queue on the server
 
     /// What the server holds, asked before keeping the queue there: that

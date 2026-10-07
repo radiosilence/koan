@@ -84,9 +84,118 @@ struct Conn {
     waker: Arc<Waker>,
     /// Who the listener proved to be, if it proved anything.
     proven: Option<proof::Peer>,
+    /// Where it was reached.
+    addr: String,
+    /// When it said who it is, in Unix seconds.
+    since: i64,
 }
 
 static CONNS: Mutex<Option<HashMap<String, Conn>>> = Mutex::new(None);
+
+/// A connection to this device or from it, as Settings lists it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Session {
+    /// What `end` takes. Only a connection to this device has one: one this
+    /// device made is its own to keep.
+    pub key: Option<u64>,
+    /// The other device dialled this one, and can control it.
+    pub inbound: bool,
+    /// Its device id: as its proof or its `Hello` gave it. `None` from a
+    /// dialler that has not said.
+    pub id: Option<String>,
+    /// Its address: the one it connected from, or the one dialled.
+    pub addr: String,
+    /// Who it proved to be, if it proved anything.
+    pub proven: Option<Peer>,
+    /// Unix seconds.
+    pub since: i64,
+}
+
+/// A connection to this device: what is listed, and what ends it.
+struct Inbound {
+    session: Session,
+    ended: Arc<AtomicBool>,
+    waker: Arc<Waker>,
+}
+
+static INBOUND: Mutex<Vec<Inbound>> = Mutex::new(Vec::new());
+
+/// Every connection on the network, to this device and from it.
+pub fn sessions() -> Vec<Session> {
+    let mut out: Vec<Session> = INBOUND.lock().iter().map(|i| i.session.clone()).collect();
+    if let Some(conns) = CONNS.lock().as_ref() {
+        out.extend(conns.iter().map(|(id, c)| Session {
+            key: None,
+            inbound: false,
+            id: Some(id.clone()),
+            addr: c.addr.clone(),
+            proven: c.proven.clone(),
+            since: c.since,
+        }));
+    }
+    out.sort_by_key(|s| s.since);
+    out
+}
+
+/// Hang up the connection to this device that `key` names. The device can
+/// dial again, unless its address is refused (`devices.refused`).
+pub fn end(key: u64) {
+    if let Some(i) = INBOUND.lock().iter().find(|i| i.session.key == Some(key)) {
+        i.ended.store(true, Ordering::Relaxed);
+        i.waker.wake();
+    }
+}
+
+/// Whether connections from `ip` are refused.
+fn refused(ip: &std::net::IpAddr) -> bool {
+    let ip = ip.to_canonical().to_string();
+    Config::cached().devices.refused.iter().any(|r| *r == ip)
+}
+
+/// A connection to this device, listed for as long as it is held.
+struct Listed(u64);
+
+impl Listed {
+    fn new(addr: &std::net::SocketAddr, waker: &Arc<Waker>) -> (Self, Arc<AtomicBool>) {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let key = NEXT.fetch_add(1, Ordering::Relaxed);
+        let ended = Arc::new(AtomicBool::new(false));
+        INBOUND.lock().push(Inbound {
+            session: Session {
+                key: Some(key),
+                inbound: true,
+                id: None,
+                addr: addr.ip().to_canonical().to_string(),
+                proven: None,
+                since: chrono::Utc::now().timestamp(),
+            },
+            ended: ended.clone(),
+            waker: waker.clone(),
+        });
+        devices::touch();
+        (Self(key), ended)
+    }
+
+    /// The dialler has said who it is, and proved it or not.
+    fn said(&self, id: &str, proven: Option<Peer>) {
+        if let Some(i) = INBOUND
+            .lock()
+            .iter_mut()
+            .find(|i| i.session.key == Some(self.0))
+        {
+            i.session.id = Some(id.to_owned());
+            i.session.proven = proven;
+        }
+        devices::touch();
+    }
+}
+
+impl Drop for Listed {
+    fn drop(&mut self) {
+        INBOUND.lock().retain(|i| i.session.key != Some(self.0));
+        devices::touch();
+    }
+}
 
 /// What is running, so a change of settings can stop and start it.
 struct Running {
@@ -647,12 +756,15 @@ fn listen_once(local: &Local, port: u16, stop: &Arc<Stop>) -> Result<(), String>
 
     while !stop.stopped() {
         match listener.accept() {
+            Ok((_, addr)) if refused(&addr.ip()) => {
+                log::info!("nearby: {addr} is refused; hung up");
+            }
             Ok((stream, addr)) => {
                 let (local, stop) = (local.clone(), stop.clone());
                 let _ = std::thread::Builder::new()
                     .name("koan-nearby-peer".into())
                     .spawn(move || {
-                        if let Err(e) = serve(stream, &local, &stop) {
+                        if let Err(e) = serve(stream, addr, &local, &stop) {
                             log::info!("nearby: {addr}: {e}");
                         }
                     });
@@ -691,7 +803,12 @@ impl Stop {
 }
 
 /// Serve one device that connected to this one.
-fn serve(stream: TcpStream, local: &Local, stop: &Arc<Stop>) -> Result<(), String> {
+fn serve(
+    stream: TcpStream,
+    addr: std::net::SocketAddr,
+    local: &Local,
+    stop: &Arc<Stop>,
+) -> Result<(), String> {
     // Apple's accept hands back the listener's non-blocking mode, under which
     // a request that arrives a moment after the connection fails the handshake.
     stream.set_nonblocking(false).map_err(|e| e.to_string())?;
@@ -709,6 +826,7 @@ fn serve(stream: TcpStream, local: &Local, stop: &Arc<Stop>) -> Result<(), Strin
     wire::wake_on_engine_change(&waker);
     stop.also_wake(&waker);
     let mut session = Serving {
+        listed: Some(Listed::new(&addr, &waker)),
         local,
         stop,
         greeted: false,
@@ -749,6 +867,8 @@ struct Serving<'a> {
     reports: Option<proof::Session>,
     /// Proof frames to send.
     pending: Vec<String>,
+    /// This connection as Settings lists it, and the flag that ends it.
+    listed: Option<(Listed, Arc<AtomicBool>)>,
 }
 
 impl Serving<'_> {
@@ -767,6 +887,9 @@ impl Serving<'_> {
                 match &proven {
                     Some(p) => log::info!("nearby: {id} proved itself: {:?}", p.peer),
                     None => log::info!("nearby: {id} proved nothing; trusted as the network is"),
+                }
+                if let Some((listed, _)) = &self.listed {
+                    listed.said(&id, proven.as_ref().map(|p| p.peer.clone()));
                 }
                 self.proven =
                     proven.map(|p| (p, proof::Session::new(me, &id, &listen_nonce, &nonce)));
@@ -917,6 +1040,10 @@ impl wire::Session for Serving<'_> {
 
     fn done(&self) -> bool {
         self.stop.stopped()
+            || self
+                .listed
+                .as_ref()
+                .is_some_and(|(_, ended)| ended.load(Ordering::Relaxed))
     }
 }
 
@@ -1245,6 +1372,7 @@ impl Controlling<'_> {
         {
             conn.proven = self.proven.clone();
         }
+        devices::touch();
         self.handshake = if verified {
             Handshake::Signed(proof::Session::new(listener, me, listen_nonce, dial_nonce))
         } else {
@@ -1358,6 +1486,8 @@ impl Controlling<'_> {
                         outbox: Vec::new(),
                         waker: self.waker.clone(),
                         proven: None,
+                        addr: self.addr.to_string(),
+                        since: chrono::Utc::now().timestamp(),
                     },
                 );
                 self.id = Some(hello.id.clone());
@@ -2272,6 +2402,7 @@ mod tests {
             proven: None,
             reports: None,
             pending: Vec::new(),
+            listed: None,
         }
     }
 
@@ -2704,6 +2835,8 @@ mod proof_tests {
                 outbox: Vec::new(),
                 waker,
                 proven: None,
+                addr: String::new(),
+                since: 0,
             },
         );
         let outbox = || CONNS.lock().as_ref().unwrap()[id].outbox.len();
