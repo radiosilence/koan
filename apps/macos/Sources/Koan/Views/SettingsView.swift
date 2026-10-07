@@ -1629,7 +1629,11 @@ private struct SettingsFrameAutosave: NSViewRepresentable {
     final class Probe: NSView {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            guard let window, window.frameAutosaveName.isEmpty else { return }
+            guard let window else { return }
+            // In the theme the tab row draws its own rule; the titlebar's
+            // would be a second one just above it.
+            if KoanTheme.isOn { window.titlebarSeparatorStyle = .none }
+            guard window.frameAutosaveName.isEmpty else { return }
             // SwiftUI's Settings window is made without a resizable frame,
             // whatever the scene's resizability says.
             window.styleMask.insert(.resizable)
