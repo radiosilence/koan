@@ -326,12 +326,19 @@ pub enum TrackOrder {
     Duration,
     /// When last played, by `TrackFilter::played`; without it, `Title`.
     LastPlayed,
+    /// The closest match to `TrackFilter::search` first, by title, artist or
+    /// album (see `search::match_rank`), then as `ArtistAlbumDiscTrack`.
+    /// Without a search, in the order of `TrackFilter::ids`; without either,
+    /// `ArtistAlbumDiscTrack`.
+    Relevance,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct TrackFilter {
     pub ids: Option<Vec<i64>>,
     /// FTS5 query. Applied as a subquery so it composes with the other filters.
+    /// When no track matches it, the closest fuzzy matches instead
+    /// (`search::fuzzy_ids`).
     pub search: Option<String>,
     pub album_id: Option<i64>,
     pub artist_ids: Option<Vec<i64>>,
@@ -368,7 +375,10 @@ pub fn filter_tracks(
     limit: u32,
     offset: u32,
 ) -> Result<Vec<TrackRow>, DbError> {
-    let Some((body, mut binds)) = track_body(conn, filter)? else {
+    if let Some(fallback) = fuzzy_fallback(conn, filter)? {
+        return filter_tracks(conn, &fallback, order, descending, limit, offset);
+    }
+    let Some((body, mut binds)) = track_body(conn, filter, order == TrackOrder::Relevance)? else {
         return Ok(Vec::new());
     };
     let order = match order {
@@ -376,10 +386,26 @@ pub fn filter_tracks(
         order => order,
     };
     let dir = if descending { "DESC" } else { "ASC" };
+    let shelved =
+        format!("a.name {dir}, al.date {dir}, al.title {dir}, t.disc {dir}, t.track_number {dir}");
     let order_by = match order {
-        TrackOrder::ArtistAlbumDiscTrack => format!(
-            "a.name {dir}, al.date {dir}, al.title {dir}, t.disc {dir}, t.track_number {dir}"
-        ),
+        TrackOrder::ArtistAlbumDiscTrack => shelved,
+        TrackOrder::Relevance => match (&filter.search, &filter.ids) {
+            (Some(query), _) => {
+                let rank = super::search::match_rank_binds(query);
+                for _ in 0..3 {
+                    binds.extend(rank.iter().map(|b| Box::new(b.clone()) as Box<dyn ToSql>));
+                }
+                format!(
+                    "min({}, {}, {}) {dir}, {shelved}",
+                    super::search::match_rank("t.title"),
+                    super::search::match_rank("a.name"),
+                    super::search::match_rank("al.title"),
+                )
+            }
+            (None, Some(_)) => format!("r.key {dir}"),
+            (None, None) => shelved,
+        },
         TrackOrder::Title => format!("t.title {dir}"),
         TrackOrder::Artist => {
             format!("a.name {dir}, al.date {dir}, t.disc {dir}, t.track_number {dir}")
@@ -404,7 +430,10 @@ pub fn filter_tracks(
 
 /// How many tracks `filter_tracks` would list for `filter`, ignoring paging.
 pub fn count_tracks(conn: &Connection, filter: &TrackFilter) -> Result<u64, DbError> {
-    let Some((body, binds)) = track_body(conn, filter)? else {
+    if let Some(fallback) = fuzzy_fallback(conn, filter)? {
+        return count_tracks(conn, &fallback);
+    }
+    let Some((body, binds)) = track_body(conn, filter, false)? else {
         return Ok(0);
     };
     let n: i64 = conn.query_row(
@@ -415,12 +444,43 @@ pub fn count_tracks(conn: &Connection, filter: &TrackFilter) -> Result<u64, DbEr
     Ok(n as u64)
 }
 
+/// What `filter` lists when its search matches no track: the same filter with
+/// the fuzzy matches in place of the search, best first. `None` when it has
+/// no search or the search finds something.
+fn fuzzy_fallback(conn: &Connection, filter: &TrackFilter) -> Result<Option<TrackFilter>, DbError> {
+    let Some(query) = &filter.search else {
+        return Ok(None);
+    };
+    let Some((body, binds)) = track_body(conn, filter, false)? else {
+        return Ok(None);
+    };
+    let found: bool = conn.query_row(
+        &format!("SELECT EXISTS (SELECT 1 {body})"),
+        params_from_iter(binds.iter()),
+        |r| r.get(0),
+    )?;
+    if found {
+        return Ok(None);
+    }
+    let mut ids = super::search::fuzzy_ids(conn, super::search::CorpusKind::Track, query)?;
+    if let Some(only) = &filter.ids {
+        ids.retain(|id| only.contains(id));
+    }
+    Ok(Some(TrackFilter {
+        search: None,
+        ids: Some(ids),
+        ..filter.clone()
+    }))
+}
+
 /// The FROM and WHERE that `filter_tracks` and `count_tracks` share, and their
 /// parameters in order. `None` when nothing can match: an empty id list.
+/// `ranked` joins the ids as `r`, for `TrackOrder::Relevance` to order by.
 #[allow(clippy::type_complexity)]
 fn track_body(
     conn: &Connection,
     filter: &TrackFilter,
+    ranked: bool,
 ) -> Result<Option<(String, Vec<Box<dyn ToSql>>)>, DbError> {
     let mut clauses: Vec<String> = Vec::new();
     let mut binds: Vec<Box<dyn ToSql>> = Vec::new();
@@ -440,13 +500,35 @@ fn track_body(
         if ids.is_empty() {
             return Ok(None);
         }
-        clauses.push(format!("t.id IN {IN_LIST}"));
+        if ranked && filter.search.is_none() {
+            // Joined once rather than looked up per row, so the order of the
+            // ids is `r.key`. In the FROM, after the joins above bind theirs.
+            joins.push_str(" JOIN json_each(?) r ON r.value = t.id");
+        } else {
+            clauses.push(format!("t.id IN {IN_LIST}"));
+        }
         binds.push(Box::new(json_list(ids)));
     }
 
     if let Some(query) = &filter.search {
-        clauses.push("t.id IN (SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH ?)".to_string());
-        binds.push(Box::new(super::search::sanitize_fts_query(query)));
+        if query.chars().any(char::is_alphanumeric) {
+            clauses.push(
+                "t.id IN (SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH ?)".to_string(),
+            );
+            binds.push(Box::new(super::search::sanitize_fts_query(query)));
+        } else {
+            // The index tokenizes words and drops punctuation, so a query of
+            // punctuation alone ("!!!", a band) would match nothing there.
+            clauses.push(
+                "(t.title LIKE ? ESCAPE '\\' OR a.name LIKE ? ESCAPE '\\'
+                  OR aa.name LIKE ? ESCAPE '\\' OR al.title LIKE ? ESCAPE '\\')"
+                    .to_string(),
+            );
+            let pattern = like_contains(query.trim());
+            for _ in 0..4 {
+                binds.push(Box::new(pattern.clone()));
+            }
+        }
     }
 
     if filter.on_device {

@@ -1,0 +1,1 @@
+- **EQ for headphones or speakers, and a steadier EQ page.** EQ copy speaks of any device rather than headphones alone. An imported EQ's role is asked in a sheet with an example for each answer and a Decide Later that says what it leaves. The EQ page draws what the output plays at a fixed height, easing between presets, and edits happen on the profile's own page.

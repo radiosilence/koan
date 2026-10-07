@@ -473,6 +473,15 @@ pub fn moved(target: &[(f64, f64)], step: &GraphicEq) -> Curve {
         .collect()
 }
 
+/// Whether two targets are for the same kind of headphone. A target added
+/// by hand says nothing of it, and is taken at its word.
+pub fn same_ear(a: &str, b: &str) -> bool {
+    match (shipped(a), shipped(b)) {
+        (Some(a), Some(b)) => a.ear == b.ear,
+        _ => true,
+    }
+}
+
 /// The curve a chosen target id names: one that ships, or one added.
 pub fn choice_curve(id: &str) -> Option<Curve> {
     if let Some(t) = shipped(id) {

@@ -20,6 +20,7 @@ struct DspProfilePage: View {
     /// Bands, responses, headroom and sync, for a correction: most people
     /// pick a correction and its target and are done.
     @State private var showingMore = false
+    @State private var splitting = false
 
     var body: some View {
         KoanForm {
@@ -71,7 +72,7 @@ struct DspProfilePage: View {
                 // A stack with nothing of its own is what its layers are.
                 if d.layers.isEmpty || !d.bands.isEmpty || !d.impulses.isEmpty {
                     RoleSection(dsp: dsp, detail: d, madeForChoices: madeForChoices,
-                                targets: targets, adding: $addingTarget)
+                                targets: targets, adding: $addingTarget, splitting: $splitting)
                 }
                 if d.group {
                     GroupSection(dsp: dsp, detail: d)
@@ -120,6 +121,9 @@ struct DspProfilePage: View {
             if case let .success(urls) = result, let url = urls.first {
                 Task { await dsp.addTarget(url) }
             }
+        }
+        .sheet(isPresented: $splitting) {
+            SplitFlow(dsp: dsp, name: name).koanSheet()
         }
         #endif
         .confirmationDialog(
@@ -441,13 +445,17 @@ extension DspTargetOption {
 /// a list of its own; on the Mac, both in the menu's one line.
 struct TargetRow: View {
     let target: DspTargetOption
+    /// The target the correction was made for, which it plays unless moved.
+    var isDefault = false
+
+    private var name: String { isDefault ? "\(target.name) (default)" : target.name }
 
     var body: some View {
         #if os(macOS)
-        Text(target.label)
+        Text(target.does.isEmpty ? name : "\(name): \(target.does)")
         #else
         VStack(alignment: .leading, spacing: 2) {
-            Text(target.name)
+            Text(name)
             if !target.does.isEmpty {
                 Text(target.does)
                     .font(.role(.fine, system: .caption))
@@ -469,6 +477,8 @@ private struct RoleSection: View {
     /// The targets this correction can move to, once its own is known.
     let targets: DspTargets?
     @Binding var adding: Bool
+    /// Taking a baked EQ apart, presented by the page.
+    @Binding var splitting: Bool
 
     private var madeFor: String? { targets?.madeFor?.id }
     private var current: String { targets?.chosen ?? madeFor ?? "" }
@@ -479,10 +489,29 @@ private struct RoleSection: View {
                 get: { detail.role },
                 set: { dsp.setRole(detail.name, $0) }
             )) {
-                Text("A neutral correction for these headphones").tag(DspRole.correction)
+                Text("A neutral correction").tag(DspRole.correction)
                 Text("A correction with a sound already in it").tag(DspRole.baked)
                 Text("A tuning to add on top").tag(DspRole.tuning)
             }
+            if detail.role == .tuning, !madeForChoices.isEmpty {
+                Picker("Made against", selection: Binding(
+                    get: { detail.tunedFor ?? "" },
+                    set: { dsp.setTunedFor(detail.name, $0.isEmpty ? nil : $0) }
+                )) {
+                    Text("Unknown").tag("")
+                    ForEach(madeForChoices, id: \.id) { t in
+                        TargetRow(target: t).tag(t.id)
+                    }
+                }
+                #if os(iOS)
+                .pickerStyle(.navigationLink)
+                #endif
+            }
+            #if !os(tvOS)
+            if detail.role == .baked, detail.impulses.isEmpty, detail.layers.isEmpty {
+                Button("Split into Correction + Tuning…") { splitting = true }
+            }
+            #endif
             if detail.role == .correction {
                 if let targets {
                     Picker("Corrected to", selection: Binding(
@@ -532,19 +561,19 @@ private struct RoleSection: View {
     private var footer: String {
         switch detail.role {
         case .tuning:
-            return "A tuning is taste: more bass, a darker treble. It plays on top of a correction."
+            return "A tuning is taste: more bass, a darker treble. It plays on top of a correction. Say which target it was made against, and on a device corrected to another, kōan plays the difference first, so it sounds as it was made to."
         case .baked:
-            return "A correction with a tuning already in it, as most finished presets are. It counts as the stack's correction, so a tuning on top would add taste twice."
+            return "A correction with a tuning already in it, as most finished presets are. It counts as the stack's correction, so a tuning on top would add taste twice. Split it, with a measurement of the device, to swap tunings."
         case .correction:
             break
         }
         if detail.measured {
-            return "A correction makes your headphones neutral, and the target says what neutral is. This one is worked out again from the measurement for each target."
+            return "A correction makes your headphones or speakers neutral, and the target says what neutral is. This one is worked out again from the measurement for each target."
         }
         if let made = targets?.madeFor {
             return "Made for \(made.name). Another target is worked out from the measurement AutoEQ kept, where there is one, or plays as the difference between the two. Moving from Harman to neutral takes Harman's bass and treble out."
         }
-        return "A correction makes your headphones neutral. Say which target this EQ was made for, and you can move it to another; if you don't know, leave it Unknown and target switching stays off."
+        return "A correction makes your headphones or speakers neutral. Say which target this EQ was made for, and you can move it to another; if you don't know, leave it Unknown and target switching stays off."
     }
 }
 

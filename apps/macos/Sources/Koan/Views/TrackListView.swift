@@ -226,7 +226,7 @@ struct TrackListView: View {
         if let artwork {
             AlbumArtwork(source: artwork, cornerRadius: KoanTheme.radius(8))
                 .frame(width: Columns.sleeve, height: Columns.sleeve)
-                .shadow(color: .black.opacity(KoanTheme.isOn ? 0 : 0.3), radius: 10, y: 4)
+                .koanShadow(0.3, radius: 10, y: 4)
                 .showsArtworkFullSize(
                     source: artwork,
                     title: title,

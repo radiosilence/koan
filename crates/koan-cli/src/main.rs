@@ -335,6 +335,18 @@ enum DspCommands {
         #[arg(long)]
         target: String,
     },
+    /// Split a baked EQ into a correction from the headphones' measurement
+    /// and a tuning holding the rest; the outputs that played it play both
+    Split {
+        name: String,
+        /// The headphones' measurement, a squig.link or REW CSV
+        path: PathBuf,
+        #[arg(long, value_parser = ["in", "over"])]
+        ear: String,
+        /// The target that counts as neutral, as `koan dsp target` lists them
+        #[arg(long)]
+        target: String,
+    },
     /// Say what a profile is for: a neutral headphone correction, a tuning
     /// on top of one, or a correction with a tuning baked in. A stack holds
     /// one correction, and a baked one counts
@@ -364,6 +376,16 @@ enum DspCommands {
     /// The target a ready-made EQ was made for, or `unknown`, which leaves
     /// target switching off
     MadeFor { name: String, target: String },
+    /// Play a tuning on top of an output's correction (the current output by
+    /// default), or `none`
+    Tuning {
+        name: String,
+        #[arg(long)]
+        device: Option<String>,
+    },
+    /// The target a tuning was made against, or `unknown`. On headphones
+    /// corrected to another, the difference plays first
+    TunedFor { name: String, target: String },
     /// Make a profile a stack of others, played in the order given: a
     /// headphone's correction, then taste on top. Creates it if need be
     Stack { name: String, layers: Vec<String> },
@@ -662,6 +684,12 @@ fn main() {
                 ear,
                 target,
             } => commands::cmd_dsp_measure(&path, &name, ear == "in", &target),
+            DspCommands::Split {
+                name,
+                path,
+                ear,
+                target,
+            } => commands::cmd_dsp_split(&name, &path, ear == "in", &target),
             DspCommands::Role { name, role } => commands::cmd_dsp_role(&name, &role),
             DspCommands::Squig {
                 query,
@@ -681,6 +709,13 @@ fn main() {
             DspCommands::MadeFor { name, target } => {
                 commands::cmd_dsp_made_for(&name, Some(target.as_str()).filter(|t| *t != "unknown"))
             }
+            DspCommands::Tuning { name, device } => {
+                commands::cmd_dsp_tuning(Some(name.as_str()).filter(|n| *n != "none"), device)
+            }
+            DspCommands::TunedFor { name, target } => commands::cmd_dsp_tuned_for(
+                &name,
+                Some(target.as_str()).filter(|t| *t != "unknown"),
+            ),
             DspCommands::Stack { name, layers } => commands::cmd_dsp_stack(&name, &layers),
             DspCommands::Layer {
                 stack,

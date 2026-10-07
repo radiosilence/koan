@@ -23,7 +23,8 @@ pub use config::{cmd_config, cmd_init};
 pub use dsp::{
     cmd_dsp_add_target, cmd_dsp_autoeq_install, cmd_dsp_autoeq_search, cmd_dsp_clear,
     cmd_dsp_enable, cmd_dsp_import, cmd_dsp_layer, cmd_dsp_list, cmd_dsp_made_for, cmd_dsp_measure,
-    cmd_dsp_remove, cmd_dsp_role, cmd_dsp_squig, cmd_dsp_stack, cmd_dsp_target, cmd_dsp_use,
+    cmd_dsp_remove, cmd_dsp_role, cmd_dsp_split, cmd_dsp_squig, cmd_dsp_stack, cmd_dsp_target,
+    cmd_dsp_tuned_for, cmd_dsp_tuning, cmd_dsp_use,
 };
 pub use library::cmd_library;
 pub use play::{ApiOptions, cmd_play, cmd_play_remote};

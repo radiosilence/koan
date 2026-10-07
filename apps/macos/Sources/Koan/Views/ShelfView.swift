@@ -231,7 +231,14 @@ struct ShelfView: View {
             }
             .contentShape(Rectangle())
         }
+        // A television's focus platter is white: `TelevisionRow` draws the
+        // heading as on a light screen there, where a plain button keeps the
+        // header's light text on it.
+        #if os(tvOS)
+        .buttonStyle(TelevisionRow())
+        #else
         .buttonStyle(.plain)
+        #endif
         .accessibilityIdentifier("heading-\(list)")
     }
 

@@ -35,7 +35,7 @@ struct EqGraph: View {
 
     enum Shown: String, CaseIterable, Identifiable {
         case eq = "EQ"
-        case headphone = "Headphone"
+        case headphone = "Measured"
         var id: Self { self }
     }
 
@@ -77,11 +77,7 @@ struct EqGraph: View {
                         series: .value("Band", area.series)
                     )
                     // Each band neutral, so the accent is the curve that plays.
-                    .foregroundStyle(
-                        KoanTheme.isOn
-                            ? AnyShapeStyle(Color.koanMuted.opacity(0.15))
-                            : AnyShapeStyle(.tint.opacity(0.13))
-                    )
+                    .foregroundStyle(KoanTheme.style(.muted, system: .tint).opacity(0.15))
                 }
                 // A chain with a correction and tuning: each in its role's
                 // colour, under the two together.
@@ -90,6 +86,11 @@ struct EqGraph: View {
                           color: AnyShapeStyle(ProfileRole.correction.color.opacity(0.7)), width: 1.2, dashed: true)
                     lines(curves: [Curve(name: "Tuning", db: tuning)],
                           color: AnyShapeStyle(ProfileRole.tuning.color), width: 1.2)
+                }
+                // A split's preview: the baked EQ the two come from.
+                if let original = response.original {
+                    lines(curves: [Curve(name: "Original", db: original)],
+                          color: KoanTheme.style(.muted, system: Color.secondary), width: 1.2, dashed: true)
                 }
                 lines(curves: [Curve(name: "EQ", db: response.total)], color: AnyShapeStyle(.tint), width: 2)
                 ForEach(shownHandles) { h in
@@ -138,7 +139,7 @@ struct EqGraph: View {
             }
         }
         #endif
-        .accessibilityLabel(showingEq ? "EQ response" : "Headphone response")
+        .accessibilityLabel(showingEq ? "EQ response" : "Measured response")
     }
 
     private struct Curve {
@@ -219,11 +220,12 @@ struct EqGraph: View {
                 } else {
                     key("EQ", AnyShapeStyle(.tint))
                 }
+                if response.original != nil {
+                    key("Original", KoanTheme.style(.muted, system: Color.secondary), dashed: true)
+                }
                 key("No change", KoanTheme.style(.rule, system: Color.secondary.opacity(0.4)), thin: true)
                 if !response.bands.isEmpty {
-                    key("Each band", KoanTheme.isOn
-                        ? AnyShapeStyle(Color.koanMuted.opacity(0.3))
-                        : AnyShapeStyle(.tint.opacity(0.3)))
+                    key("Each band", AnyShapeStyle(KoanTheme.style(.muted, system: .tint).opacity(0.3)))
                 }
             } else {
                 key("Measured", KoanTheme.style(.muted))
@@ -279,7 +281,7 @@ struct EqGraph: View {
 
     private var shown: [[Double]] {
         if showingEq {
-            return [response.total, response.correction ?? [], response.tuning ?? []]
+            return [response.total, response.correction ?? [], response.tuning ?? [], response.original ?? []]
                 + response.bands.map(\.db) + [handles.map(\.db)]
         }
         return [response.measurement, response.target, response.predicted].compactMap { $0 }

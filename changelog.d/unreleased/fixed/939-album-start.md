@@ -1,0 +1,1 @@
+- **Play on a record starts at its first track.** With the first track still on the server and later ones cached, playback could begin at the first cached track: a stream opened ahead of the download that gave out with nothing heard was taken for a track that had played. It is now waited for and played from disk when it lands; only a track that has failed is passed over.

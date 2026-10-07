@@ -305,6 +305,9 @@ extension UIColor {
     static let koanRule = koan(dark: 0x383838, light: 0xE0E0E0)
     static let koanMuted = koan(dark: 0x919191, light: 0x666666)
     @MainActor static var koanQuaternaryLabel: UIColor { KoanTheme.isOn ? koanRule : .quaternaryLabel }
+    /// The label colours, as the Mac's: the theme's tokens, or the system's.
+    @MainActor static var koanLabel: UIColor { KoanTheme.isOn ? koanInk : .label }
+    @MainActor static var koanSecondaryLabel: UIColor { KoanTheme.isOn ? koanMuted : .secondaryLabel }
 
     fileprivate static func rgb(_ hex: UInt32) -> UIColor {
         UIColor(
@@ -516,6 +519,9 @@ extension EnvironmentValues {
     /// The accent in force, for roles that must know whether it reads as text.
     /// Set beside `.tint` and `roomTint` by the room.
     @Entry var koanAccent = KoanAccent.mint
+    /// How tall the theme's own tab bar and mini player stand over a phone's
+    /// pages, as laid out; zero where the platform's bar is drawn.
+    @Entry var koanBarHeight: CGFloat = 0
 }
 
 // MARK: - Type
@@ -551,6 +557,17 @@ enum KoanType {
         case .display: .ultraLight
         case .title, .titleSmall: .light
         default: .regular
+        }
+    }
+
+    /// The weight trait that picks the role's face of the variable Geist Mono
+    /// in AppKit and UIKit: Core Text maps `.light` (-0.4) to ExtraLight (200)
+    /// and -0.25 to Light (300).
+    var faceWeight: CGFloat {
+        switch self {
+        case .display: -0.4
+        case .title, .titleSmall: -0.25
+        default: 0
         }
     }
 
@@ -598,6 +615,18 @@ extension KoanTheme {
         isOn ? style(tone) : AnyShapeStyle(system)
     }
 
+    /// A measure that differs between the looks: a thickness, a size, a
+    /// margin. The theme's in the theme, the platform's otherwise.
+    nonisolated static func metric<T>(_ theme: T, system: T) -> T {
+        isOn ? theme : system
+    }
+
+    /// The bare ground of a page or a sheet: `bg` in the theme, `system`
+    /// otherwise.
+    nonisolated static func ground(_ system: some ShapeStyle) -> AnyShapeStyle {
+        isOn ? AnyShapeStyle(Color.koanBg) : AnyShapeStyle(system)
+    }
+
     nonisolated static func style(_ tone: KoanTone) -> AnyShapeStyle {
         switch (isOn, tone) {
         case (true, .ink): AnyShapeStyle(Color.koanInk)
@@ -619,17 +648,16 @@ extension UIFont {
     /// A role of the theme's type scale, for UIKit's own drawing (navigation
     /// titles), scaled with Dynamic Type as the role's text style is.
     static func koan(_ role: KoanType) -> UIFont {
-        let weight: UIFont.Weight = switch role.weight {
-        case .ultraLight: .ultraLight
-        case .light: .light
-        default: .regular
-        }
-        let base = UIFont(name: "Geist Mono", size: role.size)
-            ?? .monospacedSystemFont(ofSize: role.size, weight: weight)
-        let face = UIFont(
-            descriptor: base.fontDescriptor.addingAttributes([.traits: [UIFontDescriptor.TraitKey.weight: weight]]),
-            size: role.size
-        )
+        let weight = UIFont.Weight(role.faceWeight)
+        // From the family, not from a face's descriptor: a weight added to the
+        // Regular face's descriptor keeps the Regular face.
+        let wanted = UIFontDescriptor(fontAttributes: [
+            .family: "Geist Mono",
+            .traits: [UIFontDescriptor.TraitKey.weight: weight],
+        ])
+        let face = UIFont(name: "Geist Mono", size: role.size) == nil
+            ? UIFont.monospacedSystemFont(ofSize: role.size, weight: weight)
+            : UIFont(descriptor: wanted, size: role.size)
         let style: UIFont.TextStyle = switch role.scalesWith {
         case .largeTitle: .largeTitle
         case .title: .title1
@@ -650,19 +678,17 @@ extension NSFont {
     /// the system monospace where the face is not registered.
     @MainActor
     static func koan(_ role: KoanType, weight: NSFont.Weight? = nil) -> NSFont {
-        let wanted: NSFont.Weight = weight ?? {
-            switch role.weight {
-            case .ultraLight: .ultraLight
-            case .light: .light
-            default: .regular
-            }
-        }()
-        let base = NSFont(name: "Geist Mono", size: role.size)
-            ?? .monospacedSystemFont(ofSize: role.size, weight: wanted)
-        let descriptor = base.fontDescriptor.addingAttributes([
+        let wanted = weight ?? NSFont.Weight(role.faceWeight)
+        guard NSFont(name: "Geist Mono", size: role.size) != nil else {
+            return .monospacedSystemFont(ofSize: role.size, weight: wanted)
+        }
+        // From the family, not from a face's descriptor: a weight added to the
+        // Regular face's descriptor keeps the Regular face.
+        let descriptor = NSFontDescriptor(fontAttributes: [
+            .family: "Geist Mono",
             .traits: [NSFontDescriptor.TraitKey.weight: wanted],
         ])
-        return NSFont(descriptor: descriptor, size: role.size) ?? base
+        return NSFont(descriptor: descriptor, size: role.size) ?? .monospacedSystemFont(ofSize: role.size, weight: wanted)
     }
 
     /// A role as whichever look is on: Geist Mono in the theme, the given
@@ -779,12 +805,6 @@ extension View {
         modifier(KoanFieldRole())
     }
 
-    /// A form section with no card behind its rows. Forms on the Mac draw a
-    /// card per section, which `.koanForm()` cannot reach from outside it.
-    func koanSection() -> some View {
-        modifier(KoanSectionRole())
-    }
-
     /// A pop-up picker, menu or stepper: the system control, in `ink` and the
     /// theme's type rather than the accent. Unchanged in the platform's look.
     func koanControl() -> some View {
@@ -809,10 +829,34 @@ extension View {
         #endif
     }
 
+    /// A material behind a region, out to the edges past the safe area as
+    /// `.background(_:)` draws it: `surface` in the theme, which has no
+    /// materials; the material otherwise.
+    func koanMaterial(_ material: some ShapeStyle) -> some View {
+        modifier(KoanMaterialRole(material: AnyShapeStyle(material), shape: nil))
+    }
+
+    /// A material in a shape: `surface`, square, in the theme.
+    func koanMaterial(_ material: some ShapeStyle, in shape: some Shape) -> some View {
+        modifier(KoanMaterialRole(material: AnyShapeStyle(material), shape: AnyShape(shape)))
+    }
+
+    /// A popover's content: `bg` beneath it, the popover's own material
+    /// replaced. The platform's popover otherwise.
+    func koanPopover() -> some View {
+        modifier(KoanPopoverRole())
+    }
+
     /// A sheet's chrome: `bg` beneath, no material, the theme's type for
     /// everything that does not set its own.
     func koanSheet() -> some View {
         modifier(KoanSheetRole())
+    }
+
+    /// A drop shadow in the platform's look. The theme has none: depth is
+    /// rules and surfaces.
+    func koanShadow(_ opacity: Double, radius: CGFloat, y: CGFloat = 0) -> some View {
+        shadow(color: .black.opacity(KoanTheme.isOn ? 0 : opacity), radius: radius, y: y)
     }
 }
 
@@ -1403,22 +1447,6 @@ private struct KoanFieldRole: ViewModifier {
     }
 }
 
-private struct KoanSectionRole: ViewModifier {
-    func body(content: Content) -> some View {
-        if KoanTheme.isOn {
-            #if os(tvOS)
-            content
-            #else
-            content
-                .listRowBackground(Color.clear)
-                .listRowSeparatorTint(Color.koanRule)
-            #endif
-        } else {
-            content
-        }
-    }
-}
-
 private struct KoanControlRole: ViewModifier {
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
@@ -1478,6 +1506,32 @@ private struct KoanAnimationRole<Value: Equatable>: ViewModifier {
     }
 }
 
+private struct KoanMaterialRole: ViewModifier {
+    let material: AnyShapeStyle
+    let shape: AnyShape?
+
+    func body(content: Content) -> some View {
+        switch (KoanTheme.isOn, shape) {
+        case (true, nil): content.background(Color.koanSurface)
+        case (true, .some): content.background(Color.koanSurface, in: Rectangle())
+        case (false, nil): content.background(material)
+        case (false, .some(let shape)): content.background(material, in: shape)
+        }
+    }
+}
+
+private struct KoanPopoverRole: ViewModifier {
+    func body(content: Content) -> some View {
+        if KoanTheme.isOn {
+            content
+                .background(Color.koanBg)
+                .presentationBackground(Color.koanBg)
+        } else {
+            content
+        }
+    }
+}
+
 private struct KoanSheetRole: ViewModifier {
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
@@ -1507,6 +1561,9 @@ struct KoanTabItem: View {
     let selected: Bool
     /// Shared by a bar's items, so the underline slides from tab to tab.
     var underline: Namespace.ID?
+    /// Where the tab sits in its bar, for VoiceOver: "tab 2 of 4", as the
+    /// platform's tab bar says it.
+    var position: (index: Int, count: Int)?
     @Environment(\.koanIcons) private var icons
 
     var body: some View {
@@ -1539,11 +1596,16 @@ struct KoanTabItem: View {
             Text(title)
         }
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityValue(position.map { "Tab \($0.index + 1) of \($0.count)" } ?? "")
     }
 }
 
 extension View {
-    /// Hides the platform's tab bar where the theme draws its own (iOS).
+    /// Hides the platform's tab bar where the theme draws its own (iOS), and
+    /// makes the page room for that bar at its foot. Applied to every page in
+    /// a tab, root and pushed alike: an inset from outside the tab view does
+    /// not reach a list inside a tab's stack in every case, and a list that
+    /// misses it stops scrolling with its last rows under the bar.
     func koanHidesSystemTabBar() -> some View {
         modifier(KoanHidesSystemTabBar())
     }
@@ -1623,10 +1685,19 @@ struct KoanUnavailable: View {
 /// own. An iPad keeps its sidebar layout, the platform's.
 private struct KoanHidesSystemTabBar: ViewModifier {
     @Environment(\.horizontalSizeClass) private var width
+    @Environment(\.koanBarHeight) private var bar
 
     func body(content: Content) -> some View {
         #if os(iOS)
-        content.toolbar(KoanTheme.isOn && width == .compact ? .hidden : .automatic, for: .tabBar)
+        if KoanTheme.isOn && width == .compact {
+            content
+                .toolbar(.hidden, for: .tabBar)
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    Color.clear.frame(height: bar)
+                }
+        } else {
+            content
+        }
         #else
         content
         #endif

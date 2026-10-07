@@ -38,6 +38,8 @@ pub fn cmd_dsp_list() {
     for p in &o.profiles {
         let marker = if o.active.as_ref() == Some(&p.name) {
             " *".yellow().bold().to_string()
+        } else if o.tuning.as_ref() == Some(&p.name) {
+            " + tuning".yellow().to_string()
         } else {
             String::new()
         };
@@ -309,6 +311,24 @@ pub fn cmd_dsp_squig(
     );
 }
 
+/// Split the baked EQ `name` into a correction and a tuning.
+pub fn cmd_dsp_split(name: &str, path: &std::path::Path, in_ear: bool, target: &str) {
+    use koan_core::config::DspEar;
+    let text =
+        std::fs::read_to_string(path).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())));
+    let ear = if in_ear { DspEar::In } else { DspEar::Over };
+    let (correction, tuning) =
+        profiles::split_baked(name, &text, ear, target).unwrap_or_else(|e| fail(e));
+    println!(
+        "{} '{}' into '{}' and '{}', made against {}",
+        "split".green(),
+        name.bold(),
+        correction.bold(),
+        tuning.bold(),
+        profiles::target_name(target)
+    );
+}
+
 /// Say what `name` is for: `correction`, `tuning` or `baked`.
 pub fn cmd_dsp_role(name: &str, role: &str) {
     use koan_core::config::DspRole;
@@ -336,6 +356,31 @@ pub fn cmd_dsp_made_for(name: &str, target: Option<&str>) {
             profiles::target_name(t)
         ),
         None => println!("'{}' was made for an unknown target", name.bold()),
+    }
+}
+
+/// Play `tuning` on top of `device`'s correction (the current output if not
+/// named), or none.
+pub fn cmd_dsp_tuning(tuning: Option<&str>, named: Option<String>) {
+    let device = device(named);
+    profiles::set_tuning(&device, tuning).unwrap_or_else(|e| fail(e));
+    match tuning {
+        Some(t) => println!("{} plays '{}' on top", device.bold(), t.bold()),
+        None => println!("{} plays no tuning", device.bold()),
+    }
+}
+
+/// Record the target the tuning `name` was made against, or that it is not
+/// known.
+pub fn cmd_dsp_tuned_for(name: &str, target: Option<&str>) {
+    profiles::set_tuned_for(name, target).unwrap_or_else(|e| fail(e));
+    match target {
+        Some(t) => println!(
+            "'{}' was made against {}",
+            name.bold(),
+            profiles::target_name(t)
+        ),
+        None => println!("'{}' plays as it is on any correction", name.bold()),
     }
 }
 

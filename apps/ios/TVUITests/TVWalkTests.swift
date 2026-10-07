@@ -92,8 +92,8 @@ final class TVWalkTests: XCTestCase {
         snap("11-library")
         // Each page by its place in the library index, counted from the tab bar.
         let pages = [
-            ("12-albums", 1), ("13-artists", 2), ("13b-tracks", 3), ("14-favourites", 4),
-            ("15-playlists", 5), ("15b-recently-played", 6), ("15c-downloaded", 7), ("16-history", 8),
+            ("12-albums", 1), ("13-artists", 2), ("14-favourites", 3),
+            ("15-playlists", 4), ("15b-recently-played", 5), ("15c-downloaded", 6), ("16-history", 7),
         ]
         for (name, place) in pages {
             start(at: .library)

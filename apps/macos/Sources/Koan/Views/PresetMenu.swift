@@ -15,6 +15,9 @@ struct Presets {
     /// The preset in use, where it is a group: its members, the one playing,
     /// and choosing another. Only for this device's own outputs.
     var group: (members: [String], playing: String?, select: (String) -> Void)?
+    /// The tuning on top of the preset, and the others to choose from. Only
+    /// for this device's own outputs, and not on a preset with one baked in.
+    var tuning: (current: String?, options: [String], choose: (String?) -> Void)?
     /// Turning processing on, where this device can: nil for another device's
     /// outputs, which are turned on there.
     let enable: (() -> Void)?
@@ -34,6 +37,11 @@ struct Presets {
         {
             group = (g.members, g.playing, { dsp.select(current, $0) })
         }
+        let tunings = overview.profiles.filter { $0.role == .tuning && $0.rates.isEmpty }.map(\.name)
+        let baked = overview.profiles.first { $0.name == current }?.role == .baked
+        if !tunings.isEmpty, !baked {
+            tuning = (dsp.tuning(for: device), tunings, { dsp.setTuning($0, for: device) })
+        }
     }
 
     /// An output of the device in view, from what that device published.
@@ -50,7 +58,8 @@ struct Presets {
 
     var summary: String {
         guard let current else { return none }
-        return enabled ? current : "\(current), processing off"
+        let playing = tuning?.current.map { "\(current) + \($0)" } ?? current
+        return enabled ? playing : "\(playing), processing off"
     }
 }
 
@@ -81,6 +90,18 @@ struct PresetMenu<Label: View>: View {
                 Section(title) { picker }
             } else {
                 picker
+            }
+            if let tuning = presets.tuning {
+                Section("Tuning") {
+                    Picker("Tuning", selection: Binding(
+                        get: { tuning.current ?? "" },
+                        set: { tuning.choose($0.isEmpty ? nil : $0) }
+                    )) {
+                        Text("None").tag("")
+                        ForEach(tuning.options, id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.inline)
+                }
             }
             if let group = presets.group {
                 Section("Group: pick one") {

@@ -596,6 +596,17 @@ pub struct DspConfig {
     /// `audio::dsp::autoeq::suggest`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub autoeq_dismissed: Vec<String>,
+    /// The tuning each output plays on top of its correction, the profile
+    /// that lists it. This device's, as which profile an output plays is.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tunings: Vec<DspOutputTuning>,
+}
+
+/// Taste on top of an output's correction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DspOutputTuning {
+    pub device: String,
+    pub tuning: String,
 }
 
 impl Default for DspConfig {
@@ -604,6 +615,7 @@ impl Default for DspConfig {
             enabled: true,
             profiles: Vec::new(),
             autoeq_dismissed: Vec::new(),
+            tunings: Vec::new(),
         }
     }
 }
@@ -678,6 +690,11 @@ pub struct DspProfile {
     /// `measurement.csv` in the profile's folder, to `target`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub measurement: Option<DspMeasurement>,
+    /// For a tuning: the target it was made against, by id. On a correction
+    /// to another target, the difference between the two plays first, so
+    /// the tuning sounds as it was made to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tuned_for: Option<String>,
 }
 
 /// What a profile is for. A chain, a profile with its layers, corrects a
@@ -994,6 +1011,14 @@ impl DspProfile {
             self.origin = None;
         }
         if self
+            .tuned_for
+            .as_ref()
+            .is_some_and(|t| t.chars().count() > b::NAME)
+        {
+            self.tuned_for = None;
+            dropped.push("tuned-for target dropped".to_owned());
+        }
+        if self
             .measurement
             .as_ref()
             .is_some_and(|m| m.target.chars().count() > b::NAME)
@@ -1277,7 +1302,10 @@ pub fn layer_of(path: &str) -> Layer {
 /// Mtimes of the two files `figment()` layers. Keyed on these so a config
 /// edited by hand is picked up without koan being told about it; `KOAN_*` env
 /// vars are not tracked, since they are fixed for the life of the process.
-type ConfigStamp = (Option<SystemTime>, Option<SystemTime>);
+/// Which directory, and its two files' mtimes. The directory is part of it:
+/// two directories' files can share an mtime, and a read in one must never
+/// be served what was read in the other.
+type ConfigStamp = (PathBuf, Option<SystemTime>, Option<SystemTime>);
 
 type CachedConfig = Option<(ConfigStamp, Arc<Config>)>;
 
@@ -1285,11 +1313,12 @@ static CONFIG_CACHE: LazyLock<parking_lot::RwLock<CachedConfig>> =
     LazyLock::new(|| parking_lot::RwLock::new(None));
 
 fn config_stamp() -> ConfigStamp {
-    stamp_of(&config_file_path(), &config_local_file_path())
+    let (base, local) = stamp_of(&config_file_path(), &config_local_file_path());
+    (config_dir(), base, local)
 }
 
 /// A file that does not exist stamps as `None`, so creating one is a change.
-fn stamp_of(base: &Path, local: &Path) -> ConfigStamp {
+fn stamp_of(base: &Path, local: &Path) -> (Option<SystemTime>, Option<SystemTime>) {
     let mtime = |p: &Path| fs::metadata(p).and_then(|m| m.modified()).ok();
     (mtime(base), mtime(local))
 }
@@ -1349,7 +1378,14 @@ impl Config {
             log::warn!("failed to load config, using defaults: {}", e);
             Self::default()
         }));
-        *CONFIG_CACHE.write() = Some((stamp, cfg.clone()));
+        // Kept only if nothing moved while it was read: a switch of
+        // directory or a write between the stamp and the load would keep one
+        // directory's config under the other's stamp. Checked under the lock
+        // a switch takes to drop the cache, so none slips in between.
+        let mut cache = CONFIG_CACHE.write();
+        if config_stamp() == stamp {
+            *cache = Some((stamp, cfg.clone()));
+        }
         cfg
     }
 
@@ -2633,6 +2669,7 @@ fps = 30
             origin: None,
             role: None,
             measurement: None,
+            tuned_for: None,
         };
         Config::persist(|cfg| cfg.dsp.profiles.push(profile.clone())).unwrap();
 

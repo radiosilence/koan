@@ -288,9 +288,9 @@ private struct SidebarFooter: View {
         }
         // In the theme: the rows' own inset at the sides, and clear of the
         // window's rounded corner below. The platform's look as it was.
-        .padding(.horizontal, KoanTheme.isOn ? KoanTheme.Space.l : 14)
-        .padding(.top, KoanTheme.isOn ? KoanTheme.Space.s : 0)
-        .padding(.bottom, KoanTheme.isOn ? KoanTheme.Space.xl : 10)
+        .padding(.horizontal, KoanTheme.metric(KoanTheme.Space.l, system: 14))
+        .padding(.top, KoanTheme.metric(KoanTheme.Space.s, system: 0))
+        .padding(.bottom, KoanTheme.metric(KoanTheme.Space.xl, system: 10))
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
