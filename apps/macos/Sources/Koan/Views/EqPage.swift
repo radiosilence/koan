@@ -188,7 +188,7 @@ struct EqSettings: View {
             #endif
         } header: {
             HStack {
-                KoanSectionHeader("Device")
+                KoanSectionHeader("Device and preset")
                 Spacer()
                 #if !os(tvOS)
                 Button { explaining = true } label: {
