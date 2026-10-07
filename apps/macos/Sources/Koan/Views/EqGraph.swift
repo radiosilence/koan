@@ -235,27 +235,27 @@ struct EqGraph: View {
                     ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
                         key(part.name, part.stroke.style, dash: part.stroke.dash)
                     }
-                    key("Total", StageStroke.total.style)
+                    key(KoanTheme.label("Total"), StageStroke.total.style)
                 } else if response.correction != nil, response.tuning != nil {
-                    key("Correction", AnyShapeStyle(ProfileRole.correction.color.opacity(0.7)), dashed: true)
-                    key("Tuning", AnyShapeStyle(ProfileRole.tuning.color))
-                    key("Total", AnyShapeStyle(.tint))
+                    key(KoanTheme.label("Correction"), AnyShapeStyle(ProfileRole.correction.color.opacity(0.7)), dashed: true)
+                    key(KoanTheme.label("Tuning"), AnyShapeStyle(ProfileRole.tuning.color))
+                    key(KoanTheme.label("Total"), AnyShapeStyle(.tint))
                 } else {
-                    key("EQ", AnyShapeStyle(.tint))
+                    key(KoanTheme.label("EQ"), AnyShapeStyle(.tint))
                 }
                 if response.original != nil {
-                    key("Original", KoanTheme.style(.muted, system: Color.secondary), dashed: true)
+                    key(KoanTheme.label("Original"), KoanTheme.style(.muted, system: Color.secondary), dashed: true)
                 }
-                key("No change", KoanTheme.style(.rule, system: Color.secondary.opacity(0.4)), thin: true)
+                key(KoanTheme.label("No change"), KoanTheme.style(.rule, system: Color.secondary.opacity(0.4)), thin: true)
                 if !response.bands.isEmpty {
-                    key("Each band", AnyShapeStyle(KoanTheme.style(.muted, system: .tint).opacity(0.3)))
+                    key(KoanTheme.label("Each band"), AnyShapeStyle(KoanTheme.style(.muted, system: .tint).opacity(0.3)))
                 }
             } else {
-                key("Measured", KoanTheme.style(.muted))
-                key("Target", AnyShapeStyle(KoanTheme.style(.ink).opacity(0.55)), dashed: true)
-                key("Corrected", AnyShapeStyle(.tint))
+                key(KoanTheme.label("Measured"), KoanTheme.style(.muted))
+                key(KoanTheme.label("Target"), AnyShapeStyle(KoanTheme.style(.ink).opacity(0.55)), dashed: true)
+                key(KoanTheme.label("Corrected"), AnyShapeStyle(.tint))
             }
-            Text("Preamp \(String(format: "%.1f", response.preampDb)) dB")
+            Text("\(KoanTheme.label("Preamp")) \(String(format: "%.1f", response.preampDb)) dB")
                 .monospacedDigit()
         }
         .koanText(.fine, .muted)

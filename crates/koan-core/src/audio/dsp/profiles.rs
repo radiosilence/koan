@@ -39,6 +39,8 @@ pub struct Summary {
     pub everywhere: bool,
     /// The presets and groups that hold it.
     pub held_by: Vec<String>,
+    /// Why it cannot move to the other scope, while it cannot.
+    pub scope_locked: Option<String>,
 }
 
 /// What a device plays, as the apps' EQ page shows it: for a front end
@@ -341,6 +343,7 @@ pub fn overview_for(device: Option<String>) -> Overview {
                         .map(|q| q.name.clone())
                         .collect(),
                     everywhere: scope(p, &cfg.dsp.profiles) == DspScope::Everywhere,
+                    scope_locked: scope_locked(p, &cfg.dsp.profiles),
                 }
             })
             .collect(),
@@ -1322,6 +1325,22 @@ fn local_layer<'a>(layers: &'a [crate::config::DspLayer], all: &[DspProfile]) ->
         .map(|l| l.profile.as_str())
 }
 
+/// The stack kept everywhere that plays `name`, if one does.
+fn shared_stack<'a>(name: &str, all: &'a [DspProfile]) -> Option<&'a DspProfile> {
+    all.iter().find(|p| {
+        p.layers.iter().any(|l| l.profile == name) && scope(p, all) == DspScope::Everywhere
+    })
+}
+
+/// Why `profile` cannot move to the scope it is not in, in a few words.
+fn scope_locked(profile: &DspProfile, all: &[DspProfile]) -> Option<String> {
+    if scope(profile, all) == DspScope::Everywhere {
+        shared_stack(&profile.name, all).map(|s| format!("{} plays it on every device", s.name))
+    } else {
+        local_layer(&profile.layers, all).map(|l| format!("plays {l}, kept on this device"))
+    }
+}
+
 fn kept_here(stack: &str, layer: &str) -> String {
     format!(
         "{layer} is kept on this device, so {stack}, which is kept everywhere, \
@@ -1345,9 +1364,7 @@ pub fn set_scope(name: &str, to: DspScope) -> Result<(), String> {
             }
         }
         DspScope::Device => {
-            if let Some(stack) = all.iter().find(|p| {
-                p.layers.iter().any(|l| l.profile == name) && scope(p, all) == DspScope::Everywhere
-            }) {
+            if let Some(stack) = shared_stack(name, all) {
                 return Err(format!(
                     "{name} is played by {}, which is kept everywhere and would lose it on \
                      your other devices. Keep {} on this device first",
@@ -3236,6 +3253,20 @@ mod tests {
         assert!(refused.contains("Amp is kept on this device"), "{refused}");
         let refused = set_scope("Bass", DspScope::Device).unwrap_err();
         assert!(refused.contains("Bass is played by Desk"), "{refused}");
+        let locked = |name: &str| {
+            let cfg = Config::cached();
+            let p = cfg.dsp.profiles.iter().find(|p| p.name == name).unwrap();
+            scope_locked(p, &cfg.dsp.profiles)
+        };
+        assert_eq!(
+            locked("Bass").as_deref(),
+            Some("Desk plays it on every device")
+        );
+        assert_eq!(
+            locked("Speakers").as_deref(),
+            Some("plays Amp, kept on this device")
+        );
+        assert_eq!(locked("Desk"), None);
         set_scope("Speakers", DspScope::Everywhere).unwrap_err();
         set_scope("Desk", DspScope::Device).unwrap();
         set_scope("Bass", DspScope::Device).unwrap();

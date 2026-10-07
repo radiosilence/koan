@@ -42,7 +42,7 @@ struct KoanThemeSheet: View {
             )
 
             KoanSectionHeader("Slider")
-            Slider(value: $level)
+            KoanSlider("Level", value: $level, in: 0...1)
 
             KoanSectionHeader("Rows")
             VStack(spacing: 0) {
