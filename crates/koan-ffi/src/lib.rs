@@ -5345,17 +5345,31 @@ impl KoanEngine {
         // sees files left by a previous run.
         let cfg = Config::load().unwrap_or_default();
         koan_core::helpers::sweep_partial_downloads(&cfg);
-        // Once, off the launch path; the count is kept from here on.
+        // Before the session is restored, so the queue finds its downloads.
+        if let Err(e) = koan_core::helpers::relocate_cached_paths(&db, &cfg.cache_dir()) {
+            log::warn!("could not re-root cached paths: {e}");
+        }
+        // Once, off the launch path; the count is kept from here on. Files
+        // the cache holds unrecorded are matched to their tracks after the
+        // re-rooting, which they would otherwise be mistaken for.
         {
             let cfg = cfg.clone();
             std::thread::Builder::new()
                 .name("koan-cache-measure".into())
-                .spawn(move || koan_core::helpers::measure_cache(&cfg))
+                .spawn(move || {
+                    koan_core::helpers::measure_cache(&cfg);
+                    let adopted = koan_core::db::pool::shared()
+                        .get()
+                        .map_err(|e| e.to_string())
+                        .and_then(|db| {
+                            koan_core::helpers::adopt_cached_files(&db, &cfg.cache_dir())
+                                .map_err(|e| e.to_string())
+                        });
+                    if let Err(e) = adopted {
+                        log::warn!("could not record unrecorded downloads: {e}");
+                    }
+                })
                 .ok();
-        }
-        // Before the session is restored, so the queue finds its downloads.
-        if let Err(e) = koan_core::helpers::relocate_cached_paths(&db, &cfg.cache_dir()) {
-            log::warn!("could not re-root cached paths: {e}");
         }
         drop(db);
         let t_sweep = t0.elapsed();
