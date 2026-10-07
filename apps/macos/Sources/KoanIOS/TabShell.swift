@@ -79,10 +79,15 @@ struct TabShell: View {
             Tab("Queue", systemImage: Icon.queueSection, value: TabID.queue) {
                 stack(.queue) { QueueView() }
             }
+            #if os(tvOS)
             Tab("Library", systemImage: "music.note.house", value: TabID.library) {
                 stack(.library) { LibraryTab() }
             }
-            #if !os(tvOS)
+            #else
+            // Only lists what the sidebar shows as its own rows.
+            Tab("Library", systemImage: "music.note.house", value: TabID.library) {
+                stack(.library) { LibraryTab() }
+            }
             .hidden(sidebar)
             TabSection {
                 ForEach(Self.librarySections, id: \.section) { item in
