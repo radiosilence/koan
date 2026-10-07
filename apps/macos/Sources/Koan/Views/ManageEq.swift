@@ -115,6 +115,7 @@ struct ManageEq: View {
         #if os(iOS)
         .navigationDestination(item: $showing) { shown in
             DspProfilePage(dsp: dsp, name: shown.name)
+                .koanBackButton()
                 .koanHidesSystemTabBar()
         }
         #elseif os(macOS)

@@ -283,9 +283,7 @@ struct TabShell: View {
             .environment(\.onStage, showing && routes.isEmpty)
             .navigationDestination(for: Route.self) { route in
                 RouteView(route: route)
-                    #if os(iOS)
                     .koanBackButton()
-                    #endif
                     .koanHidesSystemTabBar()
                     .environment(\.onStage, showing && route == routes.last)
             }

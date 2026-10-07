@@ -1851,15 +1851,22 @@ struct KoanTabItem: View {
     }
 }
 
-#if os(iOS)
 extension View {
-    /// A pushed page's way back. In the theme, a bare chevron in `ink` in place
-    /// of the platform's glass circle, which no bar appearance reaches; the
-    /// edge swipe still goes back. The platform's back button otherwise.
+    /// A pushed page's way back. In the theme on iOS, a bare chevron in `ink`
+    /// in place of the platform's glass circle, which no bar appearance
+    /// reaches; the edge swipe still goes back. The platform's back button
+    /// otherwise.
+    @ViewBuilder
     func koanBackButton() -> some View {
+        #if os(iOS)
         modifier(KoanBackButton())
+        #else
+        self
+        #endif
     }
 }
+
+#if os(iOS)
 
 private struct KoanBackButton: ViewModifier {
     @Environment(\.dismiss) private var dismiss
@@ -2073,7 +2080,8 @@ struct KoanUnavailable: View {
 }
 
 /// In the theme the platform's tab bar gives way to the theme's own: the tabs
-/// and mini player on a phone, the sidebar and mini player on an iPad.
+/// and mini player on a phone, the sidebar and mini player on an iPad. Every
+/// page in a tab takes this, so it also gives the navigation bar its ground.
 private struct KoanHidesSystemTabBar: ViewModifier {
     @Environment(\.koanBarHeight) private var bar
 
@@ -2081,6 +2089,10 @@ private struct KoanHidesSystemTabBar: ViewModifier {
         #if os(iOS)
         if KoanTheme.isOn {
             content
+                // Scrolled, the navigation bar is flat `bg`, rather than the
+                // platform's blur with the page showing through it.
+                .toolbarBackground(Color.koanBg, for: .navigationBar)
+                .scrollEdgeEffectStyle(.hard, for: .top)
                 .toolbar(.hidden, for: .tabBar)
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     Color.clear.frame(height: bar)

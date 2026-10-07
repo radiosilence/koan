@@ -40,7 +40,8 @@ struct SettingsView: View {
             content()
                 .navigationTitle(KoanTheme.label(title))
                 // Pushed here rather than by a route, so it makes room for the
-                // theme's tab bar itself, as routes do.
+                // theme's tab bar and draws its way back itself, as routes do.
+                .koanBackButton()
                 .koanHidesSystemTabBar()
                 .roomBackground()
         } label: {
@@ -935,6 +936,7 @@ struct AutoEqSearch: View {
                     List(dsp.autoEqMakers, id: \.name) { maker in
                         NavigationLink {
                             AutoEqModels(dsp: dsp, maker: maker.name) { dismiss() }
+                                .koanBackButton()
                         } label: {
                             LabeledContent(maker.name, value: "\(maker.results)")
                         }

@@ -107,6 +107,7 @@ struct EqSettings: View {
         #else
         .navigationDestination(isPresented: $managing) {
             ManageEq(device: device, active: overview?.active, chain: overview?.chain ?? [])
+                .koanBackButton()
                 .koanHidesSystemTabBar()
         }
         #endif
@@ -176,6 +177,7 @@ struct EqSettings: View {
         #if os(iOS)
         .navigationDestination(item: $showing) { shown in
             DspProfilePage(dsp: app.dsp, name: shown.name)
+                .koanBackButton()
                 .koanHidesSystemTabBar()
         }
         #elseif os(macOS)
