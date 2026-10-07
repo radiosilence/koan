@@ -1,0 +1,1 @@
+- **Bit-perfect claims match the apps.** The docs, site and README say that only the Mac and Linux switch the device to the source's rate; on iOS and tvOS the output follows the route, so a USB DAC can match the source and anything else is resampled.
