@@ -1,0 +1,1 @@
+- **EQ: the tuning's EQs are swiped.** On the iPhone, swipe an EQ in the chain to remove or move it, or touch and hold it, in place of its Options menu. An EQ's page sits on the wash like the rest of Settings, and Add a Band is a button.
