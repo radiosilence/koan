@@ -25,6 +25,10 @@ final class WalkTests: XCTestCase {
         for (key, value) in ProcessInfo.processInfo.environment where key.hasPrefix("KOAN_") {
             app.launchEnvironment[key] = value
         }
+        // The wash held still: drifting, it keeps the app from ever being
+        // idle, and the test driver waits on that. A still frame of either
+        // looks the same.
+        app.launchArguments += ["-graphics", "1"]
         app.launch()
     }
 
