@@ -148,30 +148,49 @@ Equalisation and convolution, per output device. See
 [Equalisation and convolution](../guide/dsp.md).
 
 ```bash
-koan dsp                                        # list corrections, EQs and presets; * marks the current output's
-koan dsp import "Harman 780.zip"                # Roon zip, .cfg, WAVs, CamillaDSP, APO, AutoEQ…
+koan dsp [show] [DEVICE] [--json]                # what a device plays: the chain in a sentence, then each stage
+koan dsp set DEVICE --correction NAME|none --tuning EQ,EQ…|none   # the whole chain in one go; repeating it changes nothing
+koan dsp flat [DEVICE]                           # no correction or tuning: plays untouched
+koan dsp list [--json]                           # every correction, EQ and preset, and where each is used
+koan dsp preset save NAME [--device NAME]        # a device's correction and tuning, saved together
+koan dsp preset use NAME|flat [--device NAME]    # set a device from a preset, or flat
+koan dsp preset list [--json]                    # the presets, and the devices set from each
+koan dsp import "Harman 780.zip"                 # Roon zip, .cfg, WAVs, CamillaDSP, APO, AutoEQ…
 koan dsp import L48.wav R48.wav --name Room --device "Topping E30"
-koan dsp import room.txt --rate 48000           # coefficients that do not say their rate
-koan dsp use "Living room" [--device NAME]      # correct a device with it, or set it from a preset
-koan dsp clear [--device NAME]                  # make a device flat: no correction or tuning, played untouched
+koan dsp import room.txt --rate 48000            # coefficients that do not say their rate
 koan dsp remove NAME
 koan dsp autoeq search QUERY [--limit N] [--refresh]   # AutoEQ results by headphone name, numbered
 koan dsp autoeq install NUMBER|NAME [--source SOURCE] [--device NAME]
-koan dsp target NAME [--use TARGET | --reset]               # move an AutoEQ correction to another target
-koan dsp add-target FILE                                    # a target from a CSV or squig.link export
-koan dsp stack NAME EQ...                                   # an EQ that plays others first, in order
-koan dsp layer NAME EQ on|off                               # switch one of the EQs it plays on or off
+koan dsp target NAME [--use TARGET | --reset]    # move an AutoEQ correction to another target
+koan dsp add-target FILE                         # a target from a CSV or squig.link export
 koan dsp measure FILE --name NAME --ear in|over --target TARGET  # correct a headphone from its measurement
-koan dsp role NAME correction|tuning|baked                  # baked: a correction that already includes a tuning
-koan dsp made-for NAME TARGET|unknown                       # the target a ready-made EQ was made for
-koan dsp tuning EQ... [--off EQ]... [--device NAME]         # the tuning on top of an output's correction: EQs in order, or none
-koan dsp preset save NAME [--device NAME]                   # an output's correction and tuning, saved together
-koan dsp preset use NAME|flat [--device NAME]               # set an output from a preset, or flat: untouched
-koan dsp revert NAME                                        # an imported EQ back as imported
-koan dsp copy NAME [NEW]                                    # a copy as it is now, used by no output
-koan dsp tuned-for NAME TARGET|unknown                      # the target a tuning was made against
-koan dsp split NAME FILE --ear in|over --target TARGET      # a correction that includes a tuning, into correction + EQ
+koan dsp role NAME correction|tuning|mixed       # mixed: a correction that already includes a tuning
+koan dsp made-for NAME TARGET|unknown            # the target a ready-made EQ was made for
+koan dsp tuned-for NAME TARGET|unknown           # the target a tuning was made against
+koan dsp revert NAME                             # an imported EQ back as imported
+koan dsp copy NAME [NEW]                         # a copy as it is now, used by no device
+koan dsp split NAME FILE --ear in|over --target TARGET  # a mixed correction into a correction and an EQ
+koan dsp eq plays NAME EQ...                     # one EQ built from others, played in order
+koan dsp eq switch NAME EQ on|off                # switch one of the EQs it plays on or off
 ```
+
+`koan dsp --help` opens with worked examples:
+
+```bash
+koan dsp set "Scarlett 4i4 USB" --correction "Wharfedale EVO 4.1" --tuning Lush
+koan dsp preset save "Desk" --device "Scarlett 4i4 USB"
+koan dsp show "Scarlett 4i4 USB" --json
+```
+
+`show --json` gives `device`, `correction`, `target`, `tuning` (each `name` and
+`on`), `preset`, `edited`, `left_out` (EQs that do not play), `notes` (why),
+`flat` and `sentence`; `list --json` and `preset list --json` give each one's
+`name`, `used_on` and `edited`. A refusal says what is wrong and the valid
+choices ("No correction called X. Corrections: …") and exits non-zero.
+
+The names from before still work, out of the help: `use` (now `set
+--correction` or `preset use`), `clear` (`flat`), `tuning` (`set --tuning`),
+`stack` and `layer` (`eq plays`, `eq switch`), and `role … baked` (`mixed`).
 
 `--device` defaults to the current output: `[playback] output_device`, or the
 system default.

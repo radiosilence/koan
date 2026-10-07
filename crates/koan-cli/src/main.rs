@@ -218,7 +218,9 @@ enum Commands {
     /// Manage the download cache
     #[command(subcommand)]
     Cache(CacheCommands),
-    /// Equalisation and convolution profiles, per output device
+    /// EQ per output device: a correction that makes it neutral, a tuning
+    /// of EQs on top, and presets that save the two
+    #[command(before_help = DSP_EXAMPLES)]
     Dsp {
         #[command(subcommand)]
         command: Option<DspCommands>,
@@ -276,8 +278,36 @@ enum CacheCommands {
 
 #[derive(Subcommand)]
 enum DspCommands {
-    /// List corrections, EQs and presets, and what the current output device plays
-    List,
+    /// What a device plays (the current output by default): the chain in a
+    /// sentence, then its preset, correction and tuning
+    Show {
+        device: Option<String>,
+        /// As JSON: device, correction, target, tuning, preset, edited,
+        /// left_out, notes, flat, sentence
+        #[arg(long)]
+        json: bool,
+    },
+    /// Set a device's whole chain: its correction and the EQs of its tuning,
+    /// in order. Repeating it changes nothing
+    #[command(group(clap::ArgGroup::new("chain").required(true).multiple(true).args(["correction", "tuning"])))]
+    Set {
+        device: String,
+        /// A correction's name, or `none`
+        #[arg(long)]
+        correction: Option<String>,
+        /// EQs in the order they play, separated by commas, or `none`
+        #[arg(long, value_delimiter = ',')]
+        tuning: Option<Vec<String>>,
+    },
+    /// Make a device (the current output by default) flat: no correction
+    /// and no tuning, so it plays untouched
+    Flat { device: Option<String> },
+    /// Every correction, EQ and preset, and the devices each is used on
+    List {
+        /// As JSON: name, kind, used_on, edited, members, problem
+        #[arg(long)]
+        json: bool,
+    },
     /// Make or update an EQ or correction from files: AutoEQ or Equalizer
     /// APO text, impulse WAVs, Roon zips and Convolver .cfg, CamillaDSP YAML,
     /// raw or text coefficients. Files, folders or zips; an existing one of
@@ -295,14 +325,16 @@ enum DspCommands {
         #[arg(long)]
         device: Option<String>,
     },
-    /// Play an output device (the current one by default) through a correction, or set it from a preset
+    /// The same as `set DEVICE --correction NAME`, or `preset use` for a
+    /// preset, under its old name
+    #[command(hide = true)]
     Use {
         name: String,
         #[arg(long)]
         device: Option<String>,
     },
-    /// Make an output device (the current one by default) flat: no
-    /// correction and no tuning, so it plays untouched
+    /// The same as `flat`, under its old name
+    #[command(hide = true)]
     Clear {
         #[arg(long)]
         device: Option<String>,
@@ -350,18 +382,22 @@ enum DspCommands {
         target: String,
     },
     /// Say what an EQ is for: a neutral correction, a tuning on top of
-    /// one, or a correction that already includes a tuning (`baked`). A
+    /// one, or `mixed`, a correction that already includes a tuning. A
     /// device has one correction
     Role {
         name: String,
-        #[arg(value_parser = ["correction", "tuning", "baked"])]
+        #[arg(value_parser = clap::builder::PossibleValuesParser::new([
+            clap::builder::PossibleValue::new("correction"),
+            clap::builder::PossibleValue::new("tuning"),
+            clap::builder::PossibleValue::new("mixed").alias("baked"),
+        ]))]
         role: String,
     },
     /// The target a ready-made EQ was made for, or `unknown`, which leaves
     /// target switching off
     MadeFor { name: String, target: String },
-    /// The tuning on top of an output's correction (the current output by
-    /// default): EQs in the order they play, or `none`
+    /// The same as `set DEVICE --tuning`, with EQs kept but off
+    #[command(hide = true)]
     Tuning {
         #[arg(required = true)]
         names: Vec<String>,
@@ -383,11 +419,16 @@ enum DspCommands {
     /// The target a tuning was made against, or `unknown`. On headphones
     /// corrected to another, the difference plays first
     TunedFor { name: String, target: String },
-    /// Make an EQ that plays others in the order given. For an output's
-    /// correction and tuning, `tuning` and `preset` are the way; this is for
-    /// building one EQ from several. Creates it if need be
+    /// One EQ built from others
+    Eq {
+        #[command(subcommand)]
+        command: EqCommands,
+    },
+    /// The same as `eq plays`, under its old name
+    #[command(hide = true)]
     Stack { name: String, layers: Vec<String> },
-    /// Switch one of the EQs it plays on or off
+    /// The same as `eq switch`, under its old name
+    #[command(hide = true)]
     Layer {
         stack: String,
         layer: String,
@@ -415,6 +456,36 @@ enum PresetCommands {
         name: String,
         #[arg(long)]
         device: Option<String>,
+    },
+    /// The presets, and the devices set from each
+    List {
+        /// As JSON: name, used_on, edited
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+/// Opens `koan dsp --help`: what a person or an assistant usually wants.
+const DSP_EXAMPLES: &str = "Examples:
+  koan dsp set \"Scarlett 4i4 USB\" --correction \"Wharfedale EVO 4.1\" --tuning Lush
+      Correct the Scarlett with the Wharfedale correction, Lush on top.
+  koan dsp preset save \"Desk\" --device \"Scarlett 4i4 USB\"
+      Save that as the preset Desk, then `koan dsp preset use Desk` brings it back.
+  koan dsp show \"Scarlett 4i4 USB\" --json
+      What it plays, for a script.";
+
+#[derive(Subcommand)]
+enum EqCommands {
+    /// Make an EQ that plays others in the order given. A device's
+    /// correction and tuning are set with `tuning` and `preset`; this
+    /// builds one EQ from several. Creates it if need be
+    Plays { name: String, eqs: Vec<String> },
+    /// Switch one of the EQs it plays on or off
+    Switch {
+        name: String,
+        eq: String,
+        #[arg(value_parser = ["on", "off"])]
+        state: String,
     },
 }
 
@@ -672,8 +743,18 @@ fn main() {
             RemoteCommands::Sync { .. } => commands::cmd_remote_sync(),
             RemoteCommands::Status => commands::cmd_remote_status(),
         },
-        Some(Commands::Dsp { command }) => match command.unwrap_or(DspCommands::List) {
-            DspCommands::List => commands::cmd_dsp_list(),
+        Some(Commands::Dsp { command }) => match command.unwrap_or(DspCommands::Show {
+            device: None,
+            json: false,
+        }) {
+            DspCommands::Show { device, json } => commands::cmd_dsp_show(device, json),
+            DspCommands::Set {
+                device,
+                correction,
+                tuning,
+            } => commands::cmd_dsp_set(&device, correction.as_deref(), tuning.as_deref()),
+            DspCommands::Flat { device } => commands::cmd_dsp_flat(device),
+            DspCommands::List { json } => commands::cmd_dsp_list(json),
             DspCommands::Import {
                 paths,
                 name,
@@ -709,6 +790,7 @@ fn main() {
                 commands::cmd_dsp_tuning(&names, &off, device)
             }
             DspCommands::Preset { command } => match command {
+                PresetCommands::List { json } => commands::cmd_dsp_preset_list(json),
                 PresetCommands::Save { name, device } => {
                     commands::cmd_dsp_preset_save(&name, device)
                 }
@@ -723,6 +805,12 @@ fn main() {
                 &name,
                 Some(target.as_str()).filter(|t| *t != "unknown"),
             ),
+            DspCommands::Eq { command } => match command {
+                EqCommands::Plays { name, eqs } => commands::cmd_dsp_stack(&name, &eqs),
+                EqCommands::Switch { name, eq, state } => {
+                    commands::cmd_dsp_layer(&name, &eq, state == "on")
+                }
+            },
             DspCommands::Stack { name, layers } => commands::cmd_dsp_stack(&name, &layers),
             DspCommands::Layer {
                 stack,
@@ -957,6 +1045,150 @@ mod tests {
             }
             _ => panic!("expected Play subcommand"),
         }
+    }
+
+    fn dsp(args: &[&str]) -> DspCommands {
+        match Cli::try_parse_from(args).map(|c| c.command) {
+            Ok(Some(Commands::Dsp { command: Some(cmd) })) => cmd,
+            Ok(_) => panic!("{args:?} is not a dsp command"),
+            Err(e) => panic!("{args:?}: {e}"),
+        }
+    }
+
+    /// The EQ subcommands go by device, correction, tuning, EQ and preset;
+    /// the old names still parse, out of the help, so scripts keep working.
+    #[test]
+    fn dsp_words_and_their_old_names() {
+        assert!(matches!(
+            dsp(&["koan", "dsp", "set", "Scarlett", "--correction", "Wharfedale", "--tuning", "Lush,Air"]),
+            DspCommands::Set { correction: Some(c), tuning: Some(t), .. } if c == "Wharfedale" && t == ["Lush", "Air"]
+        ));
+        assert!(
+            Cli::try_parse_from(["koan", "dsp", "set", "Scarlett"]).is_err(),
+            "set names a correction, a tuning or both"
+        );
+        assert!(matches!(
+            dsp(&["koan", "dsp", "show", "--json"]),
+            DspCommands::Show {
+                device: None,
+                json: true
+            }
+        ));
+        assert!(matches!(
+            dsp(&["koan", "dsp", "flat", "Scarlett"]),
+            DspCommands::Flat { device: Some(_) }
+        ));
+        assert!(matches!(
+            dsp(&["koan", "dsp", "preset", "list", "--json"]),
+            DspCommands::Preset {
+                command: PresetCommands::List { json: true }
+            }
+        ));
+        assert!(matches!(
+            dsp(&["koan", "dsp", "eq", "plays", "Desk", "HD 650", "Bass"]),
+            DspCommands::Eq { command: EqCommands::Plays { eqs, .. } } if eqs == ["HD 650", "Bass"]
+        ));
+        assert!(matches!(
+            dsp(&["koan", "dsp", "eq", "switch", "Desk", "Bass", "off"]),
+            DspCommands::Eq {
+                command: EqCommands::Switch { .. }
+            }
+        ));
+        // The old names.
+        assert!(matches!(
+            dsp(&["koan", "dsp", "stack", "Desk", "Bass"]),
+            DspCommands::Stack { .. }
+        ));
+        assert!(matches!(
+            dsp(&["koan", "dsp", "layer", "Desk", "Bass", "on"]),
+            DspCommands::Layer { .. }
+        ));
+        assert!(matches!(
+            dsp(&["koan", "dsp", "use", "HD 650"]),
+            DspCommands::Use { .. }
+        ));
+        assert!(matches!(
+            dsp(&["koan", "dsp", "clear"]),
+            DspCommands::Clear { .. }
+        ));
+        assert!(matches!(
+            dsp(&["koan", "dsp", "tuning", "none"]),
+            DspCommands::Tuning { .. }
+        ));
+        for role in ["mixed", "baked"] {
+            assert!(matches!(
+                dsp(&["koan", "dsp", "role", "Lush", role]),
+                DspCommands::Role { .. }
+            ));
+        }
+
+        let mut cli = Cli::command();
+        let dsp = cli.find_subcommand_mut("dsp").unwrap();
+        let shown: Vec<&str> = dsp
+            .get_subcommands()
+            .filter(|c| !c.is_hide_set())
+            .map(|c| c.get_name())
+            .collect();
+        for gone in ["stack", "layer", "use", "clear", "tuning"] {
+            assert!(
+                !shown.contains(&gone),
+                "{gone} is out of the help: {shown:?}"
+            );
+        }
+        for word in ["show", "set", "flat", "list", "preset", "eq"] {
+            assert!(shown.contains(&word), "{word}: {shown:?}");
+        }
+        let help = dsp.render_long_help().to_string();
+        assert!(help.starts_with("Examples:"), "{help}");
+    }
+
+    /// `koan dsp show --json` keeps these keys, which scripts and assistants
+    /// read.
+    #[test]
+    fn dsp_show_json_keys() {
+        use koan_core::audio::dsp::profiles::{ChainView, TuningView};
+        let view = ChainView {
+            device: "Scarlett".into(),
+            correction: Some("Wharfedale".into()),
+            target: None,
+            tuning: vec![TuningView {
+                name: "Lush".into(),
+                on: true,
+            }],
+            preset: None,
+            edited: false,
+            left_out: vec![],
+            notes: None,
+            flat: false,
+            sentence: String::new(),
+        };
+        let value = serde_json::to_value(&view).unwrap();
+        let mut keys: Vec<&str> = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "correction",
+                "device",
+                "edited",
+                "flat",
+                "left_out",
+                "notes",
+                "preset",
+                "sentence",
+                "target",
+                "tuning"
+            ]
+        );
+        assert_eq!(
+            value["tuning"][0],
+            serde_json::json!({ "name": "Lush", "on": true })
+        );
     }
 
     #[test]

@@ -16,13 +16,106 @@ fn device(named: Option<String>) -> String {
         .unwrap_or_else(|| fail("no output device"))
 }
 
-pub fn cmd_dsp_list() {
-    let o = profiles::overview();
-    println!(
-        "{} {}",
-        "output:".cyan(),
-        o.device.as_deref().unwrap_or("none").bold()
+/// What `device` (the current output if not named) plays: the sentence the
+/// EQ page says, then each stage.
+pub fn cmd_dsp_show(named: Option<String>, json: bool) {
+    let view = profiles::chain_view(&device(named));
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&view).expect("serialises")
+        );
+        return;
+    }
+    println!("{}", view.sentence);
+    let row = |label: &str, value: String| println!("  {:<11} {value}", label.dimmed());
+    row(
+        "preset",
+        match (&view.preset, view.edited, view.flat) {
+            (Some(p), true, _) => format!("{p} (edited)"),
+            (Some(p), false, _) => p.clone(),
+            (None, _, true) => "flat".into(),
+            (None, _, false) => "unsaved".into(),
+        },
     );
+    row(
+        "correction",
+        match (&view.correction, &view.target) {
+            (Some(c), Some(t)) => format!("{c} → {t}"),
+            (Some(c), None) => c.clone(),
+            (None, _) => "none".into(),
+        },
+    );
+    if view.tuning.is_empty() {
+        row("tuning", "none".into());
+    }
+    for (i, eq) in view.tuning.iter().enumerate() {
+        let state = if !eq.on {
+            " (off)"
+        } else if view.left_out.contains(&eq.name) {
+            " (left out)"
+        } else {
+            ""
+        };
+        row(
+            if i == 0 { "tuning" } else { "" },
+            format!("{}. {}{state}", i + 1, eq.name),
+        );
+    }
+    if let Some(notes) = &view.notes {
+        row("note", notes.clone());
+    }
+}
+
+/// Set `device`'s correction and tuning in one go.
+pub fn cmd_dsp_set(device: &str, correction: Option<&str>, tuning: Option<&[String]>) {
+    let correction = correction.map(|c| Some(c).filter(|c| *c != "none"));
+    let tuning: Option<Vec<String>> =
+        tuning.map(|t| t.iter().filter(|n| n.as_str() != "none").cloned().collect());
+    profiles::set_chain(device, correction, tuning.as_deref()).unwrap_or_else(|e| fail(e));
+    println!("{}", profiles::chain_view(device).sentence);
+}
+
+/// Make `device` (the current output if not named) flat.
+pub fn cmd_dsp_flat(named: Option<String>) {
+    let device = device(named);
+    profiles::apply_preset(&device, None).unwrap_or_else(|e| fail(e));
+    println!("{}", profiles::chain_view(&device).sentence);
+}
+
+/// Every correction, EQ and preset, with where each is used.
+pub fn cmd_dsp_list(json: bool) {
+    let o = profiles::overview();
+    let kind = |p: &profiles::Summary| {
+        if p.preset {
+            "preset"
+        } else if p.role.corrects() {
+            "correction"
+        } else {
+            "eq"
+        }
+    };
+    if json {
+        let items: Vec<serde_json::Value> = o
+            .profiles
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "name": p.name,
+                    "kind": kind(p),
+                    "used_on": p.used_on,
+                    "edited": p.edited,
+                    "members": p.members,
+                    "problem": p.problem,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&items).expect("serialises")
+        );
+        return;
+    }
     if o.profiles.is_empty() {
         println!(
             "{}",
@@ -30,31 +123,68 @@ pub fn cmd_dsp_list() {
         );
         return;
     }
-    for p in &o.profiles {
-        let marker = if o.active.as_ref() == Some(&p.name) {
-            " *".yellow().bold().to_string()
-        } else if o.tuning.as_ref() == Some(&p.name) {
-            " + tuning".yellow().to_string()
+    for (title, which) in [
+        ("Corrections", "correction"),
+        ("EQs", "eq"),
+        ("Presets", "preset"),
+    ] {
+        let of: Vec<&profiles::Summary> = o.profiles.iter().filter(|p| kind(p) == which).collect();
+        if of.is_empty() {
+            continue;
+        }
+        println!("{}", title.cyan());
+        for p in of {
+            let used = if p.used_on.is_empty() {
+                "not used".to_owned()
+            } else {
+                format!("used on {}", p.used_on.join(", "))
+            };
+            let edited = if p.edited { ", edited" } else { "" };
+            println!(
+                "  {}  {}",
+                p.name.bold(),
+                format!("{used}{edited}").dimmed()
+            );
+            if !p.members.is_empty() {
+                println!("    {} {}", "group of".dimmed(), p.members.join(", "));
+            }
+            if let Some(problem) = &p.problem {
+                println!("    {} {}", "not loading:".red(), problem);
+            }
+        }
+    }
+}
+
+/// The presets, with the devices set from each.
+pub fn cmd_dsp_preset_list(json: bool) {
+    let presets: Vec<profiles::Summary> = profiles::overview()
+        .profiles
+        .into_iter()
+        .filter(|p| p.preset)
+        .collect();
+    if json {
+        let items: Vec<serde_json::Value> = presets
+            .iter()
+            .map(
+                |p| serde_json::json!({ "name": p.name, "used_on": p.used_on, "edited": p.edited }),
+            )
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&items).expect("serialises")
+        );
+        return;
+    }
+    if presets.is_empty() {
+        println!("{}", "no presets yet: koan dsp preset save <name>".dimmed());
+    }
+    for p in presets {
+        let used = if p.used_on.is_empty() {
+            "not used".to_owned()
         } else {
-            String::new()
+            format!("used on {}", p.used_on.join(", "))
         };
-        println!("{}{marker}", p.name.bold());
-        if !p.devices.is_empty() {
-            println!("  {} {}", "devices:".dimmed(), p.devices.join(", "));
-        }
-        if p.layers > 0 {
-            println!("  {} {}", "plays:".dimmed(), p.layers);
-        }
-        if p.bands > 0 {
-            println!("  {} {}", "bands:".dimmed(), p.bands);
-        }
-        if !p.rates.is_empty() {
-            let rates: Vec<String> = p.rates.iter().map(|r| format!("{r} Hz")).collect();
-            println!("  {} {}", "impulses:".dimmed(), rates.join(", "));
-        }
-        if let Some(problem) = &p.problem {
-            println!("  {} {}", "not loading:".red(), problem);
-        }
+        println!("{}  {}", p.name.bold(), used.dimmed());
     }
 }
 
@@ -274,7 +404,7 @@ pub fn cmd_dsp_role(name: &str, role: &str) {
     use koan_core::config::DspRole;
     let to = match role {
         "correction" => DspRole::Correction,
-        "baked" => DspRole::Baked,
+        "mixed" | "baked" => DspRole::Baked,
         _ => DspRole::Tuning,
     };
     profiles::set_role(name, to).unwrap_or_else(|e| fail(e));

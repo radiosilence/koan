@@ -167,8 +167,8 @@ played cannot be deleted until it is taken out.
 
 ```bash
 koan dsp import shelf.txt --name "Bass +3"     # Filter 1: ON LSC Fc 105 Hz Gain 3 dB Q 0.71
-koan dsp stack Desk "Sennheiser HD 650 (AutoEQ, oratory1990)" "Bass +3"
-koan dsp layer Desk "Bass +3" off
+koan dsp eq plays Desk "Sennheiser HD 650 (AutoEQ, oratory1990)" "Bass +3"
+koan dsp eq switch Desk "Bass +3" off
 ```
 
 An EQ is named after what it came from; rename it on its page in Settings
@@ -276,8 +276,9 @@ output set from it plays the same, and says when it was changed since. An EQ
 made before presets that played a correction with EQs on top became a preset,
 and the outputs that played it play its correction and EQs, set from it.
 
-The CLI does the same: `koan dsp tuning EQ... [--off EQ]...`,
-`koan dsp preset save NAME` and `koan dsp preset use NAME|flat`.
+The CLI does the same: `koan dsp set DEVICE --correction NAME --tuning EQ,EQ`,
+`koan dsp preset save NAME` and `koan dsp preset use NAME|flat`, with
+`koan dsp show` to read it back.
 
 Configs from before Flat with processing switched off open with every device
 flat, and what each played kept as a preset named for the device, unless it
@@ -406,9 +407,10 @@ one. Tapping it picks another preset for that output, which applies at once.
 It changes when the output does. On Apple TV the same menu has no Edit….
 
 ```bash
-koan dsp                        # list; * marks the current output's correction
-koan dsp use "Living room"      # the current output (or --device NAME) is corrected by it
-koan dsp clear                  # the current output is flat: it plays untouched
+koan dsp                                        # what the current output plays
+koan dsp set "Topping E30" --correction "Living room"   # correct it with Living room
+koan dsp flat "Topping E30"                     # it plays untouched
+koan dsp list                                   # every correction, EQ and preset
 koan dsp remove "Living room"
 ```
 
