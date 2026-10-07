@@ -1157,7 +1157,8 @@ pub fn choose_target(name: &str, chosen: Option<&str>) -> Result<(), String> {
                 m.target = c.to_owned();
             }
             if let Some((filters, preamp)) = refit {
-                p.fitted = p.fitted.take().or(p.measurement.take());
+                let legacy = p.measurement.take();
+                p.fitted = p.fitted.take().or(legacy);
                 p.filters = filters;
                 p.preamp_db = Some(preamp);
             }

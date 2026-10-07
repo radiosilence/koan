@@ -523,10 +523,15 @@ fn resolve(
     }
     // A correction fitted to a measurement plays its own filters, above:
     // the bands squig.link's auto-EQ fits. One saved before kōan fitted
-    // bands has them fitted here, from its measurement as kept; nothing is
-    // written back, so every device plays the same bands and no edit is
-    // made to sync.
-    if let Some(m) = &profile.measurement {
+    // bands has them fitted here, from its measurement as kept. Nothing is
+    // written back, so no edit is made to sync. The fit leans on the
+    // platform's maths library, so two platforms can differ by a band here;
+    // a new target fits and keeps the bands, and then they are shared.
+    if let Some(m) = profile
+        .measurement
+        .as_ref()
+        .filter(|_| profile.fitted.is_none())
+    {
         let measured = targets::measurement(&dir)
             .ok_or_else(|| DspError::Measurement(profile.name.clone()))?;
         out.extend(profiles::squig_fit(&measured, &curve(&m.target)?).0);

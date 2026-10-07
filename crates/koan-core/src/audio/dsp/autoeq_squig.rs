@@ -19,7 +19,8 @@
 //!   loudness there. The level matters: the fit measures misses in decibels
 //!   against thresholds.
 //! - Up to `MAX_BANDS` peaking bands are fitted between 20 Hz and 6 kHz, Q
-//!   0.1 to 10, gain within ±12 dB (the site's default is ±40): the widest misses of more than 1 dB first,
+//!   0.1 to 10, each band and their sum within ±12 dB (the site's default is
+//!   ±40 a band): the widest misses of more than 1 dB first,
 //!   none above 7 kHz, then the misses of more than 0.5 dB left, each batch
 //!   refined by a coordinate search over frequency, Q and gain, and all of
 //!   them refined together at the end.
@@ -35,9 +36,11 @@ const RATE: f64 = 48_000.0;
 /// The band limits of the site's "Auto EQ" constraints.
 const FREQ_RANGE: (f64, f64) = (20.0, 6_000.0);
 const Q_RANGE: (f64, f64) = (0.1, 10.0);
-/// Gain is held to ±12 dB, a constraint the site offers, as kōan's graphic
-/// corrections were: a measurement with a poor seal, its bass 25 dB down,
-/// would otherwise become as much boost.
+/// Each band, and the boost they add together, is held to ±12 dB, as kōan's
+/// graphic corrections were: a measurement with a poor seal, its bass 25 dB
+/// down, would otherwise become as much boost. The site offers the bound on
+/// each band; the bound on the sum is kōan's, kept by the solver and by
+/// [`held`].
 const GAIN_RANGE: (f64, f64) = (-12.0, 12.0);
 /// The first batch leaves the treble alone.
 const TREBLE_START_FROM: f64 = 7_000.0;
@@ -577,7 +580,13 @@ fn optimize(fr: &Fr, target: &Fr, bands: &[Band], iteration: usize) -> Vec<Band>
                 .collect();
             let fr1 = apply(fr, &others);
             let mut best = f;
-            let mut best_distance = distance(&apply(&fr1, &[f]), target);
+            // A band that takes the boost past the bound is no fit at all.
+            let now = apply(&fr1, &[f]);
+            let mut best_distance = if boost(&now, fr) > GAIN_RANGE.1 {
+                f64::INFINITY
+            } else {
+                distance(&now, target)
+            };
             let mut test = |df: f64, dq: f64, dg: f64| {
                 let freq = f.freq + df * freq_unit(f.freq) * step_df;
                 let q = f.q + dq * step_dq;
@@ -592,7 +601,11 @@ fn optimize(fr: &Fr, target: &Fr, bands: &[Band], iteration: usize) -> Vec<Band>
                     return false;
                 }
                 let candidate = Band { freq, q, gain };
-                let d = distance(&apply(&fr1, &[candidate]), target);
+                let tried = apply(&fr1, &[candidate]);
+                if boost(&tried, fr) > GAIN_RANGE.1 {
+                    return false;
+                }
+                let d = distance(&tried, target);
                 if d < best_distance {
                     best = candidate;
                     best_distance = d;
@@ -624,9 +637,14 @@ fn optimize(fr: &Fr, target: &Fr, bands: &[Band], iteration: usize) -> Vec<Band>
     let mut i = 0;
     while i + 1 < bands.len() {
         let (f1, f2) = (bands[i], bands[i + 1]);
-        if (f1.freq - f2.freq).abs() <= freq_unit(f1.freq) && (f1.q - f2.q).abs() <= 0.1 {
-            bands[i].gain += f2.gain;
-            bands.remove(i + 1);
+        let mut merged = bands.clone();
+        merged[i].gain += f2.gain;
+        merged.remove(i + 1);
+        if (f1.freq - f2.freq).abs() <= freq_unit(f1.freq)
+            && (f1.q - f2.q).abs() <= 0.1
+            && boost(&apply(fr, &merged), fr) <= GAIN_RANGE.1
+        {
+            bands = merged;
         } else {
             i += 1;
         }
@@ -685,7 +703,35 @@ fn autoeq(fr: &Fr, target: &Fr, max_bands: usize) -> Vec<Band> {
     );
     let second = refine(&second_fr, target, second);
     let all = [first, second].concat();
-    strip(&refine(fr, target, all))
+    held(fr, strip(&refine(fr, target, all)))
+}
+
+/// The most `eq`, played on `fr`, lifts it anywhere, in dB.
+fn boost(eq: &Fr, fr: &Fr) -> f64 {
+    eq.iter()
+        .zip(fr)
+        .map(|(a, b)| a.1 - b.1)
+        .fold(f64::NEG_INFINITY, f64::max)
+}
+
+/// `bands` with their summed boost held to `GAIN_RANGE`: the solver keeps
+/// to it, and a band it could not move is lowered here, the largest boost
+/// first, a tenth of a decibel at a time. Measurements the site's presets
+/// are made from never come near it.
+fn held(fr: &Fr, mut bands: Vec<Band>) -> Vec<Band> {
+    while boost(&apply(fr, &bands), fr) > GAIN_RANGE.1 {
+        let Some(i) = (0..bands.len())
+            .filter(|&i| bands[i].gain > 0.0)
+            .max_by(|&a, &b| bands[a].gain.total_cmp(&bands[b].gain))
+        else {
+            break;
+        };
+        bands[i].gain = ((bands[i].gain - 0.1) * 10.0).round() / 10.0;
+        if bands[i].gain <= 0.0 {
+            bands.remove(i);
+        }
+    }
+    bands
 }
 
 #[cfg(test)]
@@ -837,21 +883,37 @@ mod tests {
     }
 
     /// A measurement with a poor seal, its bass 25 dB down, is not met
-    /// with 25 dB of boost: no band past 12 dB.
+    /// with 25 dB of boost: what the bands add together, wherever it is
+    /// levelled against the target, stays within 12 dB.
     #[test]
-    fn gain_is_held_to_12_db() {
-        let target: Fr = f_values().iter().map(|&f| (f, 0.0)).collect();
-        let sealed: Fr = target
-            .iter()
-            .map(|&(f, _)| (f, if f < 100.0 { -25.0 } else { 0.0 }))
-            .collect();
-        let fit = fit(&sealed, &target);
-        assert!(!fit.filters.is_empty());
-        assert!(
-            fit.filters.iter().all(|b| b.gain_db.abs() <= 12.0),
-            "{:?}",
-            fit.filters
-        );
+    fn boost_is_held_to_12_db() {
+        let fv = f_values();
+        let target: Fr = fv.iter().map(|&f| (f, 0.0)).collect();
+        for offset in [-3.0, 0.0, 3.0] {
+            let sealed: Fr = fv
+                .iter()
+                .map(|&f| (f, if f < 100.0 { -25.0 } else { offset }))
+                .collect();
+            let fit = fit(&sealed, &target);
+            assert!(!fit.filters.is_empty());
+            let bands: Vec<Band> = fit
+                .filters
+                .iter()
+                .map(|b| Band {
+                    freq: b.freq,
+                    q: b.q,
+                    gain: b.gain_db,
+                })
+                .collect();
+            let most = gains(&fv, &bands)
+                .into_iter()
+                .fold(f64::NEG_INFINITY, f64::max);
+            assert!(
+                most <= 12.0,
+                "offset {offset}: {most:.2} dB, {:?}",
+                fit.filters
+            );
+        }
     }
 
     /// The graph's points run from 20 Hz to the first at or past 20 kHz.
