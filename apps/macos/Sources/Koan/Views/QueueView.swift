@@ -420,7 +420,9 @@ struct QueueView: View {
         case .single(let item):
             LiveQueueRow(sent: item, showArtist: true, artwork: true)
             .rowBehaviour()
-            .primaryTap { play(rowIds: [item.queueItemId]) } menu: { menu(forRows: [item.queueItemId]) }
+            // Built from the row in hand: on tvOS the menu is made with the row,
+            // and going through `rows` would regroup the whole queue for each.
+            .primaryTap { play(rowIds: [item.queueItemId]) } menu: { trackMenu(mirror.queueItem(item.queueItemId) ?? item) }
         case .track(let item):
             LiveQueueRow(
                 sent: item,
@@ -430,7 +432,9 @@ struct QueueView: View {
                 artwork: !grouped
             )
             .rowBehaviour()
-            .primaryTap { play(rowIds: [item.queueItemId]) } menu: { menu(forRows: [item.queueItemId]) }
+            // Built from the row in hand: on tvOS the menu is made with the row,
+            // and going through `rows` would regroup the whole queue for each.
+            .primaryTap { play(rowIds: [item.queueItemId]) } menu: { trackMenu(mirror.queueItem(item.queueItemId) ?? item) }
         }
     }
 
