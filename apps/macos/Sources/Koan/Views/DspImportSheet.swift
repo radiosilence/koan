@@ -27,13 +27,13 @@ private struct DspImportSheet: View {
                 } header: {
                     Text(plan.group
                          ? "These \(plan.files.count) presets will become a group"
-                         : "These \(plan.files.count) files will be combined into one profile")
+                         : "These \(plan.files.count) files will be combined into one EQ")
                 } footer: {
                     Text(plan.group
-                         ? "Each becomes a profile of its own, and the group holds them. A group plays one at a time: the first, until you pick another on the group's page or in an output's preset menu."
-                         : "They are parts of one setup, such as a response for each channel, so they play together as one profile.")
+                         ? "Each becomes an EQ of its own, and the group holds them. A group plays one at a time: the first, until you pick another on the group's page or in an output's preset menu."
+                         : "They are parts of one setup, such as a response for each channel, so they play together as one EQ.")
                 }
-                Section(plan.group ? "Group name" : "Profile name") {
+                Section(plan.group ? "Group name" : "Name") {
                     TextField("Name", text: $name)
                 }
             }

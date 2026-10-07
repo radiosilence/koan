@@ -81,7 +81,7 @@ impl SyncDoc {
     /// that are not among the files.
     pub fn check(&self) -> Result<(), String> {
         if self.profile.name.trim().is_empty() {
-            return Err("A profile needs a name".into());
+            return Err("It needs a name".into());
         }
         if self.files.len() > MAX_FILES {
             return Err(format!("A profile may hold at most {MAX_FILES} files"));

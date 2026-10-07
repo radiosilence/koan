@@ -45,16 +45,6 @@ struct EqSettings: View {
     }
 
     var body: some View {
-        #if os(macOS)
-        // A pane of the Settings window, which has no stack of its own for
-        // Manage EQ to go into.
-        NavigationStack { page }
-        #else
-        page
-        #endif
-    }
-
-    private var page: some View {
         KoanForm {
             if let o = overview, let device {
                 head(o, device)
@@ -100,9 +90,25 @@ struct EqSettings: View {
             }
         }
         .koanSheet()
+        #if os(macOS)
+        // A sheet, as each EQ's page is: a pane of the Settings window has no
+        // stack to go into, and one pushed there has no way back.
+        .sheet(isPresented: $managing) {
+            NavigationStack {
+                ManageEq(device: device, active: overview?.active, chain: overview?.chain ?? [])
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { managing = false }
+                        }
+                    }
+            }
+            .frame(minWidth: 480, minHeight: 520)
+        }
+        #else
         .navigationDestination(isPresented: $managing) {
             ManageEq(device: device, active: overview?.active, chain: overview?.chain ?? [])
         }
+        #endif
         #if os(macOS)
         .onChange(of: app.dsp.editing, initial: true) { _, asked in
             guard let asked else { return }

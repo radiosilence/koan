@@ -159,8 +159,8 @@ koan dsp autoeq search QUERY [--limit N] [--refresh]   # AutoEQ results by headp
 koan dsp autoeq install NUMBER|NAME [--source SOURCE] [--device NAME]
 koan dsp target NAME [--use TARGET | --reset]               # move an AutoEQ correction to another target
 koan dsp add-target FILE                                    # a target from a CSV or squig.link export
-koan dsp stack NAME LAYER...                                # an EQ that plays others first, in order
-koan dsp layer STACK LAYER on|off
+koan dsp stack NAME EQ...                                   # an EQ that plays others first, in order
+koan dsp layer NAME EQ on|off                               # switch one of the EQs it plays on or off
 koan dsp measure FILE --name NAME --ear in|over --target TARGET  # correct a headphone from its measurement
 koan dsp role NAME correction|tuning|baked                  # baked: a correction that already includes a tuning
 koan dsp made-for NAME TARGET|unknown                       # the target a ready-made EQ was made for

@@ -77,5 +77,5 @@ with kōan in the background as well as on screen.
 
 It is a device to play on rather than to curate: playlists are made on a phone
 or a computer, and the cache looks after itself, so neither is editable on the
-TV. DSP profiles are chosen there but imported elsewhere. Share links appear as
+TV. EQ presets are chosen there but made elsewhere. Share links appear as
 a code to scan, since a television has no pasteboard.

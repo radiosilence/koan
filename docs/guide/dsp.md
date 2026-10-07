@@ -154,7 +154,7 @@ koan dsp add-target "My target.csv"
 
 An EQ can play others first: a headphone's correction, then a bass shelf
 or a treble tilt on top, without editing the correction. On an EQ's page,
-**Add a Layer** puts another EQ in front of its own filters; the EQs play
+**Add an EQ** puts another EQ in front of its own bands; the EQs play
 in the order listed, each switched on or off, and one switched off plays
 nothing. Each plays as it would alone, the EQs it plays and its target included.
 Such an EQ is assigned to an output like any other, and one whose EQs are
@@ -206,7 +206,7 @@ after a convolution, settings that depend on the sample rate (Equalizer APO's
 `If:`), and filter types with no equivalent here, such as raw IIR
 coefficients.
 
-kōan keeps what it imported under `dsp/<profile>/` beside the config, as one
+kōan keeps what it imported under `dsp/<name>/` beside the config, as one
 32-bit float WAV per rate, with a `.cfg` where the routes mix or delay channels.
 The originals are not needed again.
 

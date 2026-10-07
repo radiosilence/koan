@@ -878,7 +878,7 @@ struct AutoEqSuggestion: View {
         VStack(alignment: .leading, spacing: 6) {
             switch offer {
             case let .profile(entry):
-                Text("AutoEQ has a profile for \(entry.name). Use it?")
+                Text("AutoEQ has a correction for \(entry.name). Use it?")
                     .koanText(.body, .muted)
                 HStack {
                     Button("Use") { dsp.installAutoEq(entry) }
@@ -1060,7 +1060,7 @@ struct DspImportPrompts: ViewModifier {
                 if let summary = dsp.importSummary {
                     Text(summary)
                 } else if let device = dsp.overview?.device, dsp.overview?.active == nil {
-                    Text("\(device) plays untouched until it has a profile.")
+                    Text("\(device) is flat until it has a correction or tuning.")
                 }
             }
             #if !os(tvOS)

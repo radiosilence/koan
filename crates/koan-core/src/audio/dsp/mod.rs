@@ -141,7 +141,7 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
                     Some("it is no longer a tuning".to_owned())
                 }
                 Some(_) => match (chosen, correction) {
-                    (Some(c), _) if baked => Some(format!("{} has a tuning baked in", c.name)),
+                    (Some(c), _) if baked => Some(format!("{} already includes a tuning", c.name)),
                     // A group without a member to play has nothing to put a
                     // layer on.
                     (Some(c), Some(m)) if m.group => {
@@ -398,21 +398,21 @@ fn resolve(
 ) -> Result<Vec<DspFilter>, DspError> {
     if stack.contains(&profile.name) {
         return Err(DspError::Layer(format!(
-            "{} is a layer of itself, through {}",
+            "{} plays itself, through {}",
             profile.name,
             stack.join(" → ")
         )));
     }
     if stack.len() >= MAX_LAYER_DEPTH {
         return Err(DspError::Layer(format!(
-            "{} nests layers more than {MAX_LAYER_DEPTH} deep",
+            "{} plays EQs that play others more than {MAX_LAYER_DEPTH} deep",
             stack[0]
         )));
     }
     *visits += 1;
     if *visits > MAX_LAYER_VISITS {
         return Err(DspError::Layer(format!(
-            "{} reaches its layers more than {MAX_LAYER_VISITS} times over",
+            "{} reaches the EQs it plays more than {MAX_LAYER_VISITS} times over",
             stack.first().unwrap_or(&profile.name)
         )));
     }
@@ -420,7 +420,7 @@ fn resolve(
     let mut out = Vec::new();
     let too_many = |stack: &[String]| {
         DspError::Layer(format!(
-            "{} comes to more than {MAX_CHAIN_FILTERS} filters with its layers",
+            "{} comes to more than {MAX_CHAIN_FILTERS} filters with the EQs it plays",
             stack[0]
         ))
     };
@@ -443,7 +443,7 @@ fn resolve(
             .find(|p| p.name == layer.profile)
             .ok_or_else(|| {
                 DspError::Layer(format!(
-                    "{} has no profile {} to layer",
+                    "{} plays {}, which is not there",
                     profile.name, layer.profile
                 ))
             })?;
@@ -451,7 +451,7 @@ fn resolve(
         // group's member plays alone, its responses as the group's own.
         if !profile.group && !responses(p, all).is_empty() {
             return Err(DspError::Layer(format!(
-                "{} has impulse responses, and only EQ can be a layer",
+                "{} has impulse responses: only bands can be played by another EQ",
                 p.name
             )));
         }

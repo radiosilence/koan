@@ -200,19 +200,22 @@ pub fn local(state: &SharedPlayerState) -> LinkOutputs {
     let devices = device_outputs(DEVICES.lock().get_or_insert_with(list_devices), &cfg.dsp);
     let renderers = crate::upnp::discovery::renderers()
         .into_iter()
-        .map(|r| LinkOutput {
-            preset: preset(&cfg.dsp, r.device_name()).0,
-            unsaved: preset(&cfg.dsp, r.device_name()).1,
-            busy: crate::upnp::discovery::busy(&r.udn),
-            detail: [r.manufacturer.as_str(), r.model.as_str()]
-                .iter()
-                .filter(|s| !s.is_empty())
-                .copied()
-                .collect::<Vec<_>>()
-                .join(" "),
-            id: r.udn,
-            name: r.name,
-            kind: "upnp".into(),
+        .map(|r| {
+            let (preset, unsaved) = preset(&cfg.dsp, r.device_name());
+            LinkOutput {
+                preset,
+                unsaved,
+                busy: crate::upnp::discovery::busy(&r.udn),
+                detail: [r.manufacturer.as_str(), r.model.as_str()]
+                    .iter()
+                    .filter(|s| !s.is_empty())
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                id: r.udn,
+                name: r.name,
+                kind: "upnp".into(),
+            }
         })
         .collect();
     let renderer = state.renderer();

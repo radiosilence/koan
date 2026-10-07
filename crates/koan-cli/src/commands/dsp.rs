@@ -19,19 +19,14 @@ fn device(named: Option<String>) -> String {
 pub fn cmd_dsp_list() {
     let o = profiles::overview();
     println!(
-        "{} {}{}",
+        "{} {}",
         "output:".cyan(),
-        o.device.as_deref().unwrap_or("none").bold(),
-        if o.enabled {
-            String::new()
-        } else {
-            format!(" {}", "(dsp off: every profile bypassed)".yellow())
-        }
+        o.device.as_deref().unwrap_or("none").bold()
     );
     if o.profiles.is_empty() {
         println!(
             "{}",
-            "no profiles — koan dsp import <file, folder or zip>".dimmed()
+            "no EQ yet: koan dsp import <file, folder or zip>".dimmed()
         );
         return;
     }
@@ -48,10 +43,10 @@ pub fn cmd_dsp_list() {
             println!("  {} {}", "devices:".dimmed(), p.devices.join(", "));
         }
         if p.layers > 0 {
-            println!("  {} {}", "layers:".dimmed(), p.layers);
+            println!("  {} {}", "plays:".dimmed(), p.layers);
         }
         if p.bands > 0 {
-            println!("  {} {}", "filters:".dimmed(), p.bands);
+            println!("  {} {}", "bands:".dimmed(), p.bands);
         }
         if !p.rates.is_empty() {
             let rates: Vec<String> = p.rates.iter().map(|r| format!("{r} Hz")).collect();
@@ -214,16 +209,16 @@ pub fn cmd_dsp_stack(name: &str, layers: &[String]) {
         })
         .collect();
     profiles::set_layers(name, layers).unwrap_or_else(|e| fail(e));
-    println!("{} '{}'", "stacked".green(), name.bold());
+    println!("'{}' {}", name.bold(), "plays them in order".green());
 }
 
 /// Switch `layer` of `stack` on or off.
 pub fn cmd_dsp_layer(stack: &str, layer: &str, on: bool) {
     let mut layers = profiles::detail(stack)
-        .unwrap_or_else(|| fail(format!("no profile called {stack}")))
+        .unwrap_or_else(|| fail(format!("no EQ called {stack}")))
         .layers;
     let Some(l) = layers.iter_mut().find(|l| l.profile == layer) else {
-        fail(format!("{layer} is not a layer of {stack}"));
+        fail(format!("{stack} does not play {layer}"));
     };
     l.on = on;
     profiles::set_layers(stack, layers).unwrap_or_else(|e| fail(e));
@@ -286,7 +281,7 @@ pub fn cmd_dsp_role(name: &str, role: &str) {
     let what = match to {
         DspRole::Correction => "a neutral correction",
         DspRole::Tuning => "a tuning",
-        DspRole::Baked => "a correction with a tuning baked in",
+        DspRole::Baked => "a correction that already includes a tuning",
     };
     println!("'{}' is {what}", name.bold());
 }

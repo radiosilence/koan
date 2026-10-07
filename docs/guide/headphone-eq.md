@@ -46,7 +46,7 @@ An EQ made before kōan refused this still plays, and its page says what's wrong
 
 The top of each EQ's page says what the chain does, one line per role, each with its badge: "Correction: AFUL Performer 8S → Harman in-ear 2019 (from measurement)", then "Tuning: Warm bass". A correction with a tuning in it reads "AFUL Performer 8S Lush (correction + tuning in one)".
 
-## Device, target, tuning: dynamic baking
+## Device, target, tuning
 
 Each output's EQ is three choices, made on the EQ page as the chain the music goes through, and it reads as a sentence: "Music to Topping E30, corrected by AFUL Performer 8S to Neutral (diffuse field), then tuned with Lush".
 
@@ -54,7 +54,7 @@ Each output's EQ is three choices, made on the EQ page as the chain the music go
 - **Target** belongs to the correction: what it makes neutral mean. Harman's targets add the bass and treble most listeners prefer; Neutral (diffuse field) adds nothing.
 - **Tuning** is optional, behind **Add EQ**: your taste on top, one or more EQs in order.
 
-kōan builds the chain itself, so no EQ that plays others has to be made by hand: the correction, then the tuning. A tuning can say which target it was made against, on its own page under **Made against**. On headphones corrected to another target, kōan plays the difference between the two first, so the tuning sounds as it was made to whatever corrects the headphones. That is dynamic baking: what an EQ like Qudelix's "Lush" bakes into one fixed EQ, worked out for each pair of headphones as it plays. A tuning whose target isn't known plays as it is.
+kōan builds the chain itself, so no EQ that plays others has to be made by hand: the correction, then the tuning. A tuning can say which target it was made against, on its own page under **Made against**. On headphones corrected to another target, kōan plays the difference between the two first, so the tuning sounds as it was made to whatever corrects the headphones. A finished preset like Qudelix's "Lush" fixes that difference into one EQ for one pair of headphones; kōan works it out for each pair as it plays. A tuning whose target isn't known plays as it is.
 
 A correction that already includes a tuning needs none on top; the EQ page says so, and offers to split it. A group of tunings works as a quick switch between them. The tuning is this device's choice for that output, as the correction is, and the menu by the output in the transport offers it too.
 

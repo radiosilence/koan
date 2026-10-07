@@ -1282,6 +1282,8 @@ pub struct DspProfileSummary {
     pub used_on: Vec<String>,
     /// Kept on every device of the account.
     pub everywhere: bool,
+    /// The presets and groups that hold it.
+    pub held_by: Vec<String>,
 }
 
 /// What a profile is for. A chain corrects a headphone once.
@@ -1658,6 +1660,7 @@ impl From<koan_core::audio::dsp::profiles::Overview> for DspOverview {
                     edited: p.edited,
                     used_on: p.used_on,
                     everywhere: p.everywhere,
+                    held_by: p.held_by,
                 })
                 .collect(),
         }

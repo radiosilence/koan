@@ -104,7 +104,7 @@ struct DspProfilePage: View {
                 }
 
                 Section {
-                    Button("Delete Profile", role: .destructive) { confirmingDelete = true }
+                    Button("Delete", role: .destructive) { confirmingDelete = true }
                 }
             } else {
                 ProgressView()
@@ -165,7 +165,7 @@ struct DspProfilePage: View {
             Text("Headroom")
         } footer: {
             Text(d.preampSet
-                 ? "Set in the profile."
+                 ? "Set in this EQ."
                  : "Derived at \(DspModel.khz(d.preampRate)) kHz from the largest gain the filters apply, so nothing they boost can clip.")
                 .font(.role(.fine, system: .caption))
                 .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
@@ -220,13 +220,13 @@ private struct GroupSection: View {
             .pickerStyle(.inline)
             .labelsHidden()
             #if !os(tvOS)
-            Button("Make It a Stack of Layers") { dsp.setGroup(detail.name, false) }
+            Button("Play Them All in Order") { dsp.setGroup(detail.name, false) }
             #endif
         } header: {
             Text("Group: pick one")
         } footer: {
             Text(detail.layers.contains(where: \.on)
-                 ? "One member plays at a time. Pick another and it plays in place of the last. Each member is a profile of its own, with its own page."
+                 ? "One member plays at a time. Pick another and it plays in place of the last. Each member is an EQ of its own, with its own page."
                  : "None was picked, so the first plays. Pick one to change it.")
                 .font(.role(.fine, system: .caption))
                 .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
@@ -255,7 +255,7 @@ private struct LayersSection: View {
 
     /// Tunings first, since adding one is what most people come here for.
     private var addMenu: some View {
-        Menu(layers.isEmpty ? "Add a Tuning…" : "Add a Layer") {
+        Menu(layers.isEmpty ? "Add a Tuning…" : "Add an EQ") {
             ForEach(addable.filter { $0.role == .tuning }, id: \.name) { p in
                 Button(p.name) { add(p) }
             }
@@ -305,7 +305,7 @@ private struct LayersSection: View {
                         .disabled(index == 0)
                     Button("Move Down") { move(index, by: 1) }
                         .disabled(index == layers.count - 1)
-                    Button("Remove from Stack", role: .destructive) { remove(index) }
+                    Button("Remove", role: .destructive) { remove(index) }
                 }
                 #endif
             }
@@ -328,9 +328,9 @@ private struct LayersSection: View {
             }
             #endif
         } header: {
-            Text("Layers")
+            Text("Plays first")
         } footer: {
-            Text("Played in order, before this profile's own filters: a correction, then tunings on top. A layer switched off plays nothing.")
+            Text("Played in order, before this EQ's own bands. One switched off plays nothing.")
                 .font(.role(.fine, system: .caption))
                 .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
         }
@@ -392,7 +392,7 @@ enum ProfileRole {
         switch self {
         case .correction: "Correction"
         case .tuning: "Tuning"
-        case .baked: "Baked"
+        case .baked: "Correction + Tuning"
         }
     }
 
@@ -485,7 +485,7 @@ private struct RoleSection: View {
 
     var body: some View {
         Section {
-            Picker("This profile is", selection: Binding(
+            Picker("This is", selection: Binding(
                 get: { detail.role },
                 set: { dsp.setRole(detail.name, $0) }
             )) {
@@ -563,7 +563,7 @@ private struct RoleSection: View {
         case .tuning:
             return "A tuning is taste: more bass, a darker treble. It plays on top of a correction. Say which target it was made against, and on a device corrected to another, kōan plays the difference first, so it sounds as it was made to."
         case .baked:
-            return "A correction with a tuning already in it, as most finished presets are. It counts as the stack's correction, so a tuning on top would add taste twice. Split it, with a measurement of the device, to swap tunings."
+            return "A correction with a tuning already in it, as most finished presets are. It is the device's correction, so another tuning on top would add taste twice. Split it, with a measurement of the device, to change the tuning."
         case .correction:
             break
         }
@@ -647,7 +647,7 @@ private struct ScopeSection: View {
         } footer: {
             Text(detail.everywhere
                  ? "Everywhere: kept on every device signed in to your kōan server, and an edit on one reaches the rest. Which output plays it stays each device's own. Headphone corrections sync by default, since headphones move between devices."
-                 : "This device: never leaves it. Room and speaker corrections stay by default, since they belong to where they were measured. Moving a profile here from everywhere removes it from your other devices.")
+                 : "This device: never leaves it. Room and speaker corrections stay by default, since they belong to where they were measured. Moving one here from everywhere removes it from your other devices.")
                 .font(.role(.fine, system: .caption))
                 .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
         }

@@ -207,7 +207,7 @@ amplifier, such as Dirac Live, still applies. ReplayGain and fades do not,
 since kōan never touches the samples. The volume control in the picker drives
 the amplifier's own volume.
 
-An amplifier given an EQ or convolution profile of its own is sent a stream kōan
+An amplifier given a correction or tuning of its own is sent a stream kōan
 has processed instead, ReplayGain included; see
 [Equalisation and convolution](dsp.md).
 
@@ -295,7 +295,7 @@ uses one only where the server lists it:
 | `koanLink` | The app's standing WebSocket at `/rest/koanLink`: the server can command it, and it reports what it is playing. |
 | `koanShares` | Sharing a device with other accounts on the server: the grant from the device, the server's accounts to choose from, and shared devices in each grantee's list, relayed with their outputs for the playback set. |
 | `koanHistory` | The account's play history as every device's: `/rest/koanHistory` pages the plays and forgettings after a cursor, `/rest/koanForgetPlays` forgets plays for every device, and the link says when the history moved. See [Play history](remote-servers.md#play-history). |
-| `koanDspProfiles` | The account's EQ profiles kept on every device: `/rest/koanDspProfiles` reads what changed after a cursor, `/rest/koanDspProfileSave` and `/rest/koanDspProfileDelete` change one, `/rest/koanDspFile` moves the files a profile names by SHA-256, and the link says when they moved. Only the account's password or an API key reach them, never the shared secret or an app password. See [On every device](dsp.md#on-every-device). |
+| `koanDspProfiles` | The account's corrections, EQs and presets kept on every device: `/rest/koanDspProfiles` reads what changed after a cursor, `/rest/koanDspProfileSave` and `/rest/koanDspProfileDelete` change one, `/rest/koanDspFile` moves the files each names by SHA-256, and the link says when they moved. Only the account's password or an API key reach them, never the shared secret or an app password. See [On every device](dsp.md#on-every-device). |
 | `koanAck` | Commands answered: a device says once it has acted on a command sent with an id, and the server relays the answer to the sender, answers for a device that is away (queued, once woken), and drops a link that has gone quiet since the command and wakes the device instead. `/rest/koanCommand` waits a moment for the answer and returns it. Without it, commands are sent as before and taken as sent. |
 | `koanDeviceKeys` | Each device's public key, for proving on the local network that it is the account's own (or shared with it) without the server in the room. A device registers it as `deviceKey` when it links with an API key; it is kept on that key's row, so revoking the key or signing out drops it. Links that registered one are sent the account's keys, and those of devices shared with it, as `DeviceKeys`. The local network never may send them. |
 | `koanDevices` | The account's devices sent down each link, commands relayed between them, handoff, Live Activity pushes, and `/rest/koanCommand` for a device whose link is down. Each device's outputs travel with its state; a server older than the apps drops them, so the Output menu for another device needs the server updated too. |

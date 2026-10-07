@@ -479,14 +479,14 @@ so only typed addresses miss it.
 
 ## `[dsp]`
 
-Equalisation and convolution profiles, each for the output devices it names.
+Corrections, EQs and presets, each correction for the output devices it names.
 They describe the listening setup, so all of `[dsp]` belongs to the machine. See
 [Equalisation and convolution](../guide/dsp.md).
 
 ```toml
 # config.local.toml
 [dsp]
-enabled = true                      # false bypasses every profile
+enabled = true                      # false, from before Flat, makes every device flat at start
 
 [[dsp.profiles]]
 name = "Living room"
@@ -499,7 +499,7 @@ filters = [
 ]
 ```
 
-Profiles are normally made by importing (`koan dsp import`, or Settings in the
+They are normally made by importing (`koan dsp import`, or Settings in the
 apps), which reads every format the guide lists and keeps the result under
 `dsp/` here.
 

@@ -132,12 +132,20 @@ struct ManageEq: View {
         #endif
     }
 
+    /// Where it goes from: the devices that play it, and the presets and
+    /// groups that hold it, which go on without it.
     private var deleteMessage: String {
         guard let name = deleting?.name,
-              let p = app.dsp.overview?.profiles.first(where: { $0.name == name }),
-              !p.usedOn.isEmpty
-        else { return "It is not used anywhere." }
-        return "Used on \(usedOn(p)), which will play without it."
+              let p = app.dsp.overview?.profiles.first(where: { $0.name == name })
+        else { return "" }
+        var lines: [String] = []
+        if !p.usedOn.isEmpty {
+            lines.append("Used on \(usedOn(p)), which will play without it.")
+        }
+        if !p.heldBy.isEmpty {
+            lines.append("It is taken out of \(ListFormatter.localizedString(byJoining: p.heldBy)).")
+        }
+        return lines.isEmpty ? "It is not used anywhere." : lines.joined(separator: " ")
     }
 
     @ViewBuilder private func list(_ title: String, _ profiles: [DspProfileSummary], _ o: DspOverview) -> some View {
@@ -176,27 +184,14 @@ struct ManageEq: View {
 
     private func row(_ p: DspProfileSummary, _ o: DspOverview) -> some View {
         HStack {
+            #if os(tvOS)
+            // Read here, changed on a phone or computer.
+            summary(p)
+            #else
             Button { showing = ShownProfile(name: p.name) } label: {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(p.name)
-                        if p.edited {
-                            Text("Edited").koanText(.fine, .muted)
-                        }
-                    }
-                    if let problem = p.problem {
-                        Text(problem).koanText(.fine, .bad)
-                    } else {
-                        let what = DspModel.describe(p)
-                        Text([what, p.usedOn.isEmpty ? "Not used" : "Used on \(usedOn(p))"].filter { !$0.isEmpty }.joined(separator: " · "))
-                            .koanText(.fine, .muted)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+                summary(p)
             }
             .buttonStyle(.plain)
-            #if !os(tvOS)
             Menu("Options") { actions(p, o) }
                 .koanControl()
                 .fixedSize()
@@ -205,6 +200,26 @@ struct ManageEq: View {
         #if !os(tvOS)
         .contextMenu { actions(p, o) }
         #endif
+    }
+
+    private func summary(_ p: DspProfileSummary) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text(p.name)
+                if p.edited {
+                    Text("Edited").koanText(.fine, .muted)
+                }
+            }
+            if let problem = p.problem {
+                Text(problem).koanText(.fine, .bad)
+            } else {
+                let what = DspModel.describe(p)
+                Text([what, p.usedOn.isEmpty ? "Not used" : "Used on \(usedOn(p))"].filter { !$0.isEmpty }.joined(separator: " · "))
+                    .koanText(.fine, .muted)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 
     private func usedOn(_ p: DspProfileSummary) -> String {
