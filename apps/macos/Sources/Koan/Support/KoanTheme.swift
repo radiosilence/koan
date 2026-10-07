@@ -1068,12 +1068,14 @@ private struct KoanButtonBody: View {
         if kind == .card {
             configuration.label
         } else if kind.setsType {
-            // One line, always: buttons in a row stand at one height.
+            // One line, always: buttons in a row stand at one height. Truncated
+            // rather than pushed past the edge when a label holds a long name;
+            // its own size is what it asks for first.
             configuration.label
                 .font(.koan(kind.type))
                 .textCase(.lowercase)
                 .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
                 .foregroundStyle(foreground(configuration))
         } else {
             configuration.label

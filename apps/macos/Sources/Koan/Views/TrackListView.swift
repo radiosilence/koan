@@ -74,7 +74,7 @@ struct TrackListView: View {
         let queued = mirror.queuedByTrack
         let current = player.currentTrackId
         let playing = player.isPlaying
-        let live = onStage && !reduceMotion && graphics.animatesIndicators
+        let live = onStage && !reduceMotion
         // What the rows draw that can change under them, as one value. Download
         // progress is not: `TransferMeter` hands it to the rings directly.
         let key = [

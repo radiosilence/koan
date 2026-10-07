@@ -133,7 +133,7 @@ struct QueueView: View {
     /// A `KoanTable` — see there for why the Mac's lists are AppKit.
     private func table(_ rows: [Row]) -> some View {
         let lines = rows.map(line)
-        let live = onStage && !reduceMotion && graphics.animatesIndicators
+        let live = onStage && !reduceMotion
         let offline = mirror.connection?.offline == true
         let jumpTarget: String? = switch ui.queueJumpTarget {
         case .top: rows.first?.id

@@ -28,7 +28,7 @@ struct PlayingIndicator: View {
     /// Whether the bars follow the music. Reduce Motion asks them not to, and
     /// so does the bottom of the graphics ladder; off stage nobody is looking.
     private var live: Bool {
-        onStage && !reduceMotion && !powerSaving && graphics.animatesIndicators
+        onStage && !reduceMotion && !powerSaving
     }
 
     var body: some View {

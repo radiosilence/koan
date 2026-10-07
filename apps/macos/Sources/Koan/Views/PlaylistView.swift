@@ -192,7 +192,7 @@ struct PlaylistView: View {
                 ))
             }
         }
-        let live = onStage && !reduceMotion && graphics.animatesIndicators
+        let live = onStage && !reduceMotion
         let key: [AnyHashable] = [
             AnyHashable(player.isPlaying), AnyHashable(live), AnyHashable(onStage), AnyHashable(tint), AnyHashable(library.favouriteTrackIds),
         ]

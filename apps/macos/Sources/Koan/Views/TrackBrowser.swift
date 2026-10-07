@@ -80,7 +80,7 @@ struct TrackBrowser: View {
         let queued = mirror.queuedByTrack
         let current = player.currentTrackId
         let playing = player.isPlaying
-        let live = onStage && !reduceMotion && graphics.animatesIndicators
+        let live = onStage && !reduceMotion
         let key: [AnyHashable] = [
             AnyHashable(current), AnyHashable(playing), AnyHashable(live), AnyHashable(tint),
             AnyHashable(library.favouriteTrackIds),
