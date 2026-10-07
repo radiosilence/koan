@@ -5,13 +5,14 @@ import SwiftUI
 /// What an imported EQ is for, asked once it is in: kōan cannot tell from a
 /// file whether it corrects headphones or speakers, does that with a sound
 /// added, or is taste for on top. Each answer says what it means; leaving it
-/// for later keeps the profile a tuning, changed on its page.
+/// for later keeps the profile a tuning, changed on its page. An import
+/// started from a device's chain goes into it as the answer says.
 struct RoleQuestion: View {
     let dsp: DspModel
-    let names: [String]
+    let ask: RoleAsk
     @Environment(\.dismiss) private var dismiss
 
-    private var many: Bool { names.count > 1 }
+    private var many: Bool { ask.names.count > 1 }
 
     var body: some View {
         NavigationStack {
@@ -19,8 +20,15 @@ struct RoleQuestion: View {
                 Section {
                     Text(many
                          ? "kōan can't tell from the files what these EQs do."
-                         : "kōan can't tell from the file what \(names.first ?? "this EQ") does.")
+                         : "kōan can't tell from the file what \(ask.names.first ?? "this EQ") does.")
                         .koanText(.body)
+                } footer: {
+                    if let into = ask.into {
+                        Text(into.stage == .eq
+                             ? "A tuning is added to \(dsp.label(into.device))'s tuning; a correction becomes its correction."
+                             : "A correction becomes \(dsp.label(into.device))'s correction.")
+                            .koanText(.fine, .muted)
+                    }
                 }
                 Section {
                     choice(.correction,
@@ -34,14 +42,19 @@ struct RoleQuestion: View {
                            "Taste on top of a correction: more bass, a darker treble.")
                 }
                 Section {
-                    Button("Decide Later") { dismiss() }
+                    Button("Decide Later") {
+                        dsp.answer(ask, nil)
+                        dismiss()
+                    }
                         .koanButton(.text)
                 } footer: {
-                    Text("Decided later, \(many ? "they stay tunings" : "it stays a tuning"), changed on \(many ? "each one's" : "its") page.")
+                    Text(many
+                         ? "Decide later: they're kept as tunings, and you can change each one's role on its page."
+                         : "Decide later: it's kept as a tuning, and you can change its role on its page.")
                         .koanText(.fine, .muted)
                 }
             }
-            .navigationTitle(many ? "What Are These EQs?" : "What Is This EQ?")
+            .navigationTitle(KoanTheme.label(many ? "What are these EQs?" : "What is this EQ?"))
         }
         #if os(macOS)
         .frame(minWidth: 460, minHeight: 420)
@@ -50,7 +63,7 @@ struct RoleQuestion: View {
 
     private func choice(_ role: DspRole, _ title: String, _ example: String) -> some View {
         Button {
-            dsp.setRole(names, role)
+            dsp.answer(ask, role)
             dismiss()
         } label: {
             VStack(alignment: .leading, spacing: 4) {
@@ -65,11 +78,5 @@ struct RoleQuestion: View {
         }
         .koanButton(.card)
     }
-}
-
-/// The profiles an import is asking about, as a sheet presents them.
-struct RoleAsk: Identifiable {
-    let names: [String]
-    var id: String { names.joined(separator: "\u{0}") }
 }
 #endif

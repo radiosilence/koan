@@ -8,14 +8,32 @@ struct PendingImport: Identifiable {
     let urls: [URL]
     let plan: DspImportPlan
     let rate: UInt32?
+    let into: DspPlacement?
+}
+
+/// The stage of a device's chain an import was started from, which what it
+/// made goes into once its role is answered.
+struct DspPlacement {
+    let device: String
+    let stage: Stage
+}
+
+/// The profiles an import is asking about, and where the import was started.
+struct RoleAsk: Identifiable {
+    let names: [String]
+    /// What goes into the chain: the group several presets became, or the
+    /// profiles made, the first of them as a correction.
+    let profiles: [String]
+    let into: DspPlacement?
+    var id: String { names.joined(separator: "\u{0}") }
 }
 
 /// EQ and convolution profiles, and importing them.
 ///
 /// What Settings shows, and what a file opened in or shared to the app goes
 /// through: one import flow wherever it starts, asking for a sample rate only
-/// for coefficients that carry none, and offering the new profile for the
-/// output in use once it is in.
+/// for coefficients that carry none, and what each new profile is for once
+/// it is in.
 @MainActor
 @Observable
 final class DspModel {
@@ -30,15 +48,13 @@ final class DspModel {
     /// Moves on every change made here or synced from elsewhere: what a page
     /// showing profiles reloads on.
     var stamp: String { "\(version).\(mirror?.libraryVersion ?? 0)" }
-    /// The last import, to offer for the output in use.
-    var imported: String?
     /// The port iOS is routing audio to, which profiles are chosen by on a
     /// phone. Set on each route change; nil on the Mac.
     private(set) var route: String?
     var lastError: String?
     /// Profiles just imported, whose role is asked, once for all of them: a
     /// neutral correction, one with a tuning baked in, or a tuning on top.
-    var askRole: [String]?
+    var askRole: RoleAsk?
     /// What the last import of several files did.
     var importSummary: String?
     /// Several files planned for import, waiting to be confirmed and named.
@@ -61,7 +77,7 @@ final class DspModel {
     var editing: String?
 
     enum Pending {
-        case files([URL], name: String?)
+        case files([URL], name: String?, into: DspPlacement?)
         case text(String)
     }
 
@@ -88,18 +104,19 @@ final class DspModel {
     /// Files, folders or zips. Several are first planned and shown to be
     /// confirmed (`pendingImport`): whole presets become a group, parts of
     /// one profile combine into one. Picked or shared ones are
-    /// security-scoped and readable only while held open.
-    func importFiles(_ urls: [URL], name: String? = nil, rate: UInt32? = nil) {
+    /// security-scoped and readable only while held open. Started from a
+    /// stage of a device's chain (`into`), what it makes goes into it.
+    func importFiles(_ urls: [URL], name: String? = nil, rate: UInt32? = nil, into: DspPlacement? = nil) {
         let engine = self.engine
         Task {
             if urls.count > 1, name == nil {
                 let held = urls.filter { $0.startAccessingSecurityScopedResource() }
                 let plan = await engine.dspImportPlan(paths: urls.map(\.path))
                 held.forEach { $0.stopAccessingSecurityScopedResource() }
-                pendingImport = PendingImport(urls: urls, plan: plan, rate: rate)
+                pendingImport = PendingImport(urls: urls, plan: plan, rate: rate, into: into)
                 return
             }
-            await run(urls, name: name, rate: rate)
+            await run(urls, name: name, rate: rate, into: into)
         }
     }
 
@@ -107,21 +124,22 @@ final class DspModel {
     func confirmImport(name: String) {
         guard let pending = pendingImport else { return }
         pendingImport = nil
-        Task { await run(pending.urls, name: name, rate: pending.rate) }
+        Task { await run(pending.urls, name: name, rate: pending.rate, into: pending.into) }
     }
 
-    private func run(_ urls: [URL], name: String?, rate: UInt32?) async {
+    private func run(_ urls: [URL], name: String?, rate: UInt32?, into: DspPlacement?) async {
         let held = urls.filter { $0.startAccessingSecurityScopedResource() }
         defer { held.forEach { $0.stopAccessingSecurityScopedResource() } }
         do {
             let summary = try await engine.dspImportFiles(paths: urls.map(\.path), name: name, rate: rate)
-            imported = summary.group ?? summary.imported.first
             lastError = nil
             // A group's members are alike, so one answer does for them all.
-            if !summary.imported.isEmpty { askRole = summary.imported }
+            if !summary.imported.isEmpty {
+                askRole = RoleAsk(names: summary.imported, profiles: summary.group.map { [$0] } ?? summary.imported, into: into)
+            }
             importSummary = Self.describe(summary, files: urls.count)
         } catch KoanError.NeedsSampleRate {
-            needsRate = .files(urls, name: name)
+            needsRate = .files(urls, name: name, into: into)
         } catch {
             importSummary = nil
             lastError = SettingsModel.describe(error)
@@ -171,16 +189,16 @@ final class DspModel {
         guard let pending = needsRate else { return }
         needsRate = nil
         switch pending {
-        case let .files(urls, name): importFiles(urls, name: name, rate: rate)
+        case let .files(urls, name, into): importFiles(urls, name: name, rate: rate, into: into)
         case let .text(text): importText(text, rate: rate)
         }
     }
 
     private func finish(_ pending: Pending, _ run: () async throws -> String) async {
         do {
-            imported = try await run()
+            let name = try await run()
             lastError = nil
-            askRole = imported.map { [$0] }
+            askRole = RoleAsk(names: [name], profiles: [name], into: nil)
         } catch KoanError.NeedsSampleRate {
             needsRate = pending
         } catch {
@@ -387,11 +405,26 @@ final class DspModel {
         act { try await $0.dspSetRole(name: name, role: role) }
     }
 
-    /// Say what each of `names` is for, as one import's answer.
-    func setRole(_ names: [String], _ role: DspRole) {
+    /// Answer an import's question: what each of its profiles is for, nil
+    /// leaving them tunings. One started from a device's chain then goes
+    /// into it: a correction as the device's correction, a tuning on the
+    /// end of its tuning.
+    func answer(_ ask: RoleAsk, _ role: DspRole?) {
+        askRole = nil
         act { engine in
-            for name in names {
-                try await engine.dspSetRole(name: name, role: role)
+            if let role {
+                for name in ask.names {
+                    try await engine.dspSetRole(name: name, role: role)
+                }
+            }
+            guard let into = ask.into else { return }
+            if role == .correction || role == .baked {
+                try await engine.dspAssignDevice(device: into.device, profile: ask.profiles.first)
+            } else if into.stage == .eq {
+                let chain = await engine.dspOverviewFor(device: into.device).chain
+                let added = ask.profiles.filter { name in !chain.contains { $0.name == name } }
+                guard !added.isEmpty else { return }
+                try await engine.dspSetTunings(device: into.device, tuning: chain + added.map { DspTuningEntry(name: $0, on: true) })
             }
         }
     }
@@ -426,7 +459,6 @@ final class DspModel {
     /// crediting where the measurement came from.
     func saveMeasured(name: String, text: String, inEar: Bool, target: String, source: String? = nil) async throws -> String {
         let saved = try await engine.dspSaveMeasured(name: name, text: text, inEar: inEar, target: target, source: source)
-        imported = saved
         await changed()
         return saved
     }

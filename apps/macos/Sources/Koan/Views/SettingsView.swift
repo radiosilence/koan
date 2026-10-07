@@ -1045,9 +1045,9 @@ struct ShownProfile: Identifiable, Hashable {
     var id: String { name }
 }
 
-/// The questions an import can stop on — what rate bare coefficients are at —
-/// and the offer of what it made for the output in use. On the settings page,
-/// and on iOS over everything, since a share can arrive anywhere.
+/// The questions an import can stop on: what rate bare coefficients are at,
+/// and how several files are to be imported. On the settings page, and on
+/// iOS over everything, since a share can arrive anywhere.
 struct DspImportPrompts: ViewModifier {
     let dsp: DspModel
 
@@ -1067,25 +1067,6 @@ struct DspImportPrompts: ViewModifier {
                 Button("Cancel", role: .cancel) { dsp.needsRate = nil }
             } message: {
                 Text("These coefficients carry no rate of their own. Use the one the filter was designed at.")
-            }
-            .alert(
-                "Imported \(dsp.imported ?? "")",
-                isPresented: Binding(
-                    get: { dsp.imported != nil },
-                    set: { if !$0 { dsp.imported = nil } }
-                ),
-                presenting: dsp.imported
-            ) { name in
-                if let device = dsp.overview?.device, dsp.overview?.active != name {
-                    Button("Use for" + " \(device)") { dsp.use(name) }
-                }
-                Button("Done", role: .cancel) {}
-            } message: { _ in
-                if let summary = dsp.importSummary {
-                    Text(summary)
-                } else if let device = dsp.overview?.device, dsp.overview?.active == nil {
-                    Text("\(device) is flat until it has a correction or tuning.")
-                }
             }
             #if !os(tvOS)
             .dspImportConfirmation(dsp)

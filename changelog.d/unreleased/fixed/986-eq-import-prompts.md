@@ -1,0 +1,1 @@
+- **Importing an EQ.** Importing no longer offers the new EQ for the output in use in a prompt that closed by itself; "What is this EQ?" appears straight away over Manage EQ rather than after leaving it. Import from a stage's Add… on the EQ page now imports at all on iPhone, and puts what it made into that device's chain as its answer says.
