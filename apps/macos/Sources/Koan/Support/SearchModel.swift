@@ -7,10 +7,10 @@ import KoanFFI
 /// the reason there is no separate per-view filter: two search boxes competing
 /// for the same intent is worse than one that always means the same thing.
 ///
-/// Tracks go through FTS5 and artists/albums through nucleo. That split is
-/// deliberate: fuzzy matching rebuilds its corpus from every row it searches,
-/// which is fine across a few thousand artists and wasteful across fifty
-/// thousand tracks on every keystroke.
+/// The results are the search shelf's (`koan_core::shelves`): each section is
+/// the head of the listing its heading's "See all" opens, and its total that
+/// listing's length. The closest matches come first; a query nothing holds as
+/// typed falls back to fuzzy matching, so a typo still finds what was meant.
 @MainActor
 @Observable
 final class SearchModel {
@@ -38,8 +38,8 @@ final class SearchModel {
     private(set) var albums: [Album] = []
     private(set) var tracks: [Track] = []
     /// How many of each kind the query finds in the library as its browsers
-    /// would list them, for each section's heading. The results above are ranked and capped,
-    /// so these can be more.
+    /// would list them, for each section's heading. The results above are the
+    /// head of those listings, so these can be more.
     private(set) var totals: ShelfTotals?
     private(set) var isSearching = false
 
@@ -108,7 +108,7 @@ final class SearchModel {
     /// lyrics inspector for the same corner of the window.
     ///
     /// Debounced: a fast typist would otherwise queue a round of queries per
-    /// keystroke, and the fuzzy passes are the expensive half.
+    /// keystroke.
     func schedule() {
         task?.cancel()
         // A completion token isn't a search term; submit will consume it.
@@ -137,19 +137,12 @@ final class SearchModel {
             try? await Task.sleep(for: .milliseconds(160))
             guard !Task.isCancelled else { return }
 
-            // Rows, not ids: the engine already read them to rank them, and
-            // resolving ids would mean holding a catalogue to resolve against.
-            let found = (
-                (try? await engine.search(query: text, limit: 60)) ?? [],
-                (try? await engine.fuzzyAlbums(query: text, limit: 30)) ?? [],
-                (try? await engine.fuzzyArtists(query: text, limit: 30)) ?? []
-            )
             let shelf = try? await engine.shelfSummary(shelf: .search(query: text))
 
             guard !Task.isCancelled else { return }
-            tracks = found.0
-            albums = found.1
-            artists = found.2
+            tracks = shelf?.tracks ?? []
+            albums = shelf?.albums ?? []
+            artists = shelf?.artists ?? []
             totals = shelf.map(ShelfTotals.init)
             isSearching = false
             // Moved once there is something to show: the page you were on is a

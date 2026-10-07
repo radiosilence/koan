@@ -12,6 +12,7 @@ extension AlbumSort {
         case .random: "random"
         case .lastPlayed: "lastPlayed"
         case .downloaded: "downloaded"
+        case .bestMatch: "bestMatch"
         }
     }
 
@@ -24,6 +25,7 @@ extension AlbumSort {
         case "random": self = .random
         case "lastPlayed": self = .lastPlayed
         case "downloaded": self = .downloaded
+        case "bestMatch": self = .bestMatch
         default: return nil
         }
     }
@@ -37,14 +39,16 @@ extension AlbumSort {
         case .random: "Random"
         case .lastPlayed: "Last Played"
         case .downloaded: "Most Downloaded"
+        case .bestMatch: "Best Match"
         }
     }
 
     /// The sorts to offer. Last Played only means something, and is only
     /// offered, while the Recently Played filter is on; Most Downloaded while
-    /// the Downloaded one is.
-    static func offered(recent: Bool, downloaded: Bool) -> [AlbumSort] {
-        (recent ? [.lastPlayed] : []) + (downloaded ? [.downloaded] : [])
+    /// the Downloaded one is; Best Match while a search narrows the listing.
+    static func offered(recent: Bool, downloaded: Bool, searching: Bool) -> [AlbumSort] {
+        (searching ? [.bestMatch] : []) + (recent ? [.lastPlayed] : [])
+            + (downloaded ? [.downloaded] : [])
             + [.recentlyAdded, .title, .artist, .year, .random]
     }
 }
@@ -57,6 +61,7 @@ extension TrackBrowseSort {
         case .album: "album"
         case .duration: "duration"
         case .lastPlayed: "lastPlayed"
+        case .bestMatch: "bestMatch"
         }
     }
 
@@ -67,6 +72,7 @@ extension TrackBrowseSort {
         case "album": self = .album
         case "duration": self = .duration
         case "lastPlayed": self = .lastPlayed
+        case "bestMatch": self = .bestMatch
         default: return nil
         }
     }
@@ -78,11 +84,13 @@ extension TrackBrowseSort {
         case .album: "Album"
         case .duration: "Duration"
         case .lastPlayed: "Last Played"
+        case .bestMatch: "Best Match"
         }
     }
 
     /// As `AlbumSort.offered`.
-    static func offered(recent: Bool) -> [TrackBrowseSort] {
-        (recent ? [.lastPlayed] : []) + [.artist, .title, .album, .duration]
+    static func offered(recent: Bool, searching: Bool) -> [TrackBrowseSort] {
+        (searching ? [.bestMatch] : []) + (recent ? [.lastPlayed] : [])
+            + [.artist, .title, .album, .duration]
     }
 }

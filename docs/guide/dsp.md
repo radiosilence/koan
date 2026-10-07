@@ -210,23 +210,26 @@ The originals are not needed again.
 
 ## The EQ page
 
-The apps' EQ settings draw what the profile playing on the output in use does
-to the sound, and each profile's page draws its own. The curve is computed by
+The apps' EQ settings draw what the output in use plays, its correction and
+any tuning on top, at the head of the page and always at the same height, so
+choosing another preset changes the curve and not the page; with nothing
+chosen it says the output plays untouched. Each profile's page draws its own. The curve is computed by
 the core from the same filters and impulse responses the DSP runs, at 48 kHz,
 so it shows what plays rather than what the filters were meant to do, layers
 and a moved target included. The preamp is shown beside the curve rather than
 in it, so the curve lines up with the bands' own gains. The curve is the left
 channel's; a band on the right channel alone draws nothing there and has no
 handle. Each parametric band is drawn faintly behind the total. For a
-correction from AutoEQ, the Headphone view draws the headphone as measured, the
+correction from AutoEQ, the Measured view draws the device as measured, the
 target it plays to, and the measurement with the profile applied.
 
-A profile's parametric bands are edited in the table below the graph, or by
-dragging a peak or shelf on the graph itself; an edit is saved to the profile
-and heard straight away. Frequency is held to 10 Hz–22 kHz, gain to ±30 dB and
+Bands are edited on the profile's own page, opened by **Edit** in the graph's
+header on the EQ page: in the table below its graph, or by dragging a peak or
+shelf on the graph itself. An edit is saved to the profile and heard straight
+away. Frequency is held to 10 Hz–22 kHz, gain to ±30 dB and
 Q to 0.1–20. Delays, mixes and graphic curves are shown but not edited here,
 and a correction's measurement is not changed by editing its bands, so the
-Headphone view shows the effect of each edit on it.
+Measured view shows the effect of each edit on it.
 
 ## On every device
 

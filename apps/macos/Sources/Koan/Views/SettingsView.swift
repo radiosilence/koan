@@ -860,6 +860,17 @@ struct EqSettings: View {
     @State private var showing: String?
 
     private var active: String? { app.dsp.overview?.active }
+
+    /// The way to the profile's own page, where its bands are edited.
+    @ViewBuilder private func editLink(_ name: String) -> some View {
+        #if os(iOS)
+        NavigationLink("Edit") { DspProfilePage(dsp: app.dsp, name: name) }
+        #elseif os(macOS)
+        Button("Edit") { showing = name }
+            .koanButton(.text)
+        #endif
+    }
+
     /// The tuning on top, where one plays: none waits on a correction with
     /// one baked in, or one the chain cannot hold.
     private var tuning: String? {
@@ -869,6 +880,32 @@ struct EqSettings: View {
 
     var body: some View {
         KoanForm {
+            // What the output plays, drawn first and always the same height,
+            // so choosing another preset changes the curve and not the page.
+            // Bands are edited on the profile's own page.
+            if let o = app.dsp.overview, o.device != nil, !o.profiles.isEmpty {
+                Section {
+                    Group {
+                        if let response {
+                            EqGraph(response: response)
+                                .koanAnimation(KoanTheme.Motion.normal, value: response.total)
+                        } else {
+                            Text("Plays untouched")
+                                .koanText(.meta, .muted)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                    }
+                    .frame(height: 290, alignment: .top)
+                } header: {
+                    HStack {
+                        Text(tuning.map { "\(active ?? "") + \($0)" } ?? active ?? "No EQ")
+                        Spacer()
+                        if let active {
+                            editLink(active)
+                        }
+                    }
+                }
+            }
             if let o = app.dsp.overview, let device = o.device, !o.profiles.isEmpty {
                 OutputEqSection(dsp: app.dsp, overview: o, device: device) {
                     splitting = ShownProfile(name: $0)
@@ -887,28 +924,13 @@ struct EqSettings: View {
                     KoanSectionHeader("Group: pick one")
                 }
             }
-            if let active, let response, let detail {
-                Section {
-                    // With a tuning on top, the graph is the output's whole
-                    // chain, and the correction's handles would sit off it.
-                    EqGraph(response: response, handles: tuning == nil ? BandTable.handles(detail.bands) : []) { index, hz, db in
-                        let b = detail.bands[index]
-                        app.dsp.setBand(active, index, kind: b.kind, freq: hz, gain: db, q: b.q)
-                    }
-                } header: {
-                    Text(tuning.map { "\(active) + \($0)" } ?? active)
-                }
-                BandTable(dsp: app.dsp, profile: active, bands: detail.bands)
-            }
             DspSettings(importing: $importing, finding: $finding, measuring: $measuring, showing: $showing)
         }
         .koanSheet()
         .task(id: "\(active ?? "")\u{0}\(tuning ?? "")\u{0}\(app.dsp.stamp)") {
-            response = if let active {
-                tuning == nil ? await app.dsp.response(active) : await app.dsp.outputResponse()
-            } else {
-                nil
-            }
+            // The old curve stays until the new one is drawn, so the page
+            // never empties between presets.
+            response = if active == nil { nil } else { await app.dsp.outputResponse() }
             detail = if let active { await app.dsp.detail(active) } else { nil }
         }
         .task(id: app.dsp.stamp) { app.dsp.reload() }
@@ -934,17 +956,11 @@ struct EqSettings: View {
         // A profile imported from a file: a neutral correction, one with a
         // tuning already in it, or taste to add on top? kōan cannot tell,
         // and a chain corrects once.
-        .confirmationDialog(
-            app.dsp.askRole?.count ?? 0 > 1 ? "What are these EQs?" : "What is this EQ?",
-            isPresented: Binding(get: { app.dsp.askRole != nil }, set: { if !$0 { app.dsp.askRole = nil } }),
-            titleVisibility: .visible,
-            presenting: app.dsp.askRole
-        ) { names in
-            Button("A neutral correction for these headphones") { app.dsp.setRole(names, .correction) }
-            Button("A correction with a sound already in it") { app.dsp.setRole(names, .baked) }
-            Button("A tuning to add on top") { app.dsp.setRole(names, .tuning) }
-        } message: { _ in
-            Text("A correction makes your headphones neutral; a stack holds one. Most presets named for a sound, like “Lush”, are a correction with a tuning baked in. A tuning is taste, like more bass, and plays on top of a correction.")
+        .sheet(item: Binding(
+            get: { app.dsp.askRole.map(RoleAsk.init) },
+            set: { if $0 == nil { app.dsp.askRole = nil } }
+        )) { ask in
+            RoleQuestion(dsp: app.dsp, names: ask.names).koanSheet()
         }
         #endif
         #if os(macOS)
