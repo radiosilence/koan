@@ -11,9 +11,19 @@ struct LyricsPanel: View {
     @Environment(UIState.self) private var ui
     @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
 
-    @State private var lyrics: Lyrics?
-    @State private var loadedTrackId: Int64?
-    @State private var loading = false
+    /// What was found, and for which track. Held together so the words can
+    /// only be shown beside the track they belong to: a load that loses a race
+    /// with a track change leaves nothing on screen, never another song.
+    @State private var loaded: (trackId: Int64, lyrics: Lyrics?)?
+    /// The track LRCLIB is being asked about.
+    @State private var fetching: Int64?
+
+    private var loading: Bool { fetching != nil && fetching == player.currentTrackId }
+
+    private var lyrics: Lyrics? {
+        guard let loaded, loaded.trackId == player.currentTrackId else { return nil }
+        return loaded.lyrics
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -78,32 +88,21 @@ struct LyricsPanel: View {
     /// Cache first so the panel fills instantly, then LRCLIB in the background
     /// for a miss or a plain copy.
     private func load() async {
-        guard let trackId = player.currentTrackId else {
-            lyrics = nil
-            loadedTrackId = nil
-            return
-        }
-        guard trackId != loadedTrackId else { return }
+        guard let trackId = player.currentTrackId else { return }
+        if loaded?.trackId == trackId, loaded?.lyrics?.synced == true { return }
 
-        loadedTrackId = trackId
         let cached = try? await library.engine.lyrics(trackId: trackId)
-        guard loadedTrackId == trackId else { return }
-        guard !Task.isCancelled else {
-            loadedTrackId = nil
-            return
-        }
-        lyrics = cached
+        guard !Task.isCancelled else { return }
+        loaded = (trackId, cached)
         // A plain copy may have a synced one upstream by now; the engine
         // decides whether it is old enough to ask again.
         guard cached?.synced != true else { return }
 
-        loading = true
-        let engine = library.engine
-        let fetched = try? await engine.fetchLyrics(trackId: trackId)
-        loading = false
-        // The track may have changed while LRCLIB was answering.
-        guard loadedTrackId == trackId else { return }
-        lyrics = fetched ?? lyrics
+        fetching = trackId
+        defer { if fetching == trackId { fetching = nil } }
+        let fetched = try? await library.engine.fetchLyrics(trackId: trackId)
+        guard !Task.isCancelled else { return }
+        loaded = (trackId, fetched ?? cached)
     }
 }
 
