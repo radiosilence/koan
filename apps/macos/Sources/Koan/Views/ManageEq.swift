@@ -251,10 +251,19 @@ struct ManageEq: View {
         if p.edited {
             Button("Revert to Imported") { dsp.revert(p.name) }
         }
-        Toggle("Keep on Every Device", isOn: Binding(
-            get: { p.everywhere },
-            set: { dsp.setScope(p.name, everywhere: $0) }
-        ))
+        // A button rather than a toggle: a menu draws a toggle in the
+        // environment's style, and the theme's box comes apart there.
+        if let why = p.scopeLocked {
+            Button {} label: {
+                Text(p.everywhere ? "Kept on Every Device" : "Kept on This Device")
+                Text(why)
+            }
+            .disabled(true)
+        } else {
+            Button(p.everywhere ? "Keep on This Device Only" : "Keep on Every Device") {
+                dsp.setScope(p.name, everywhere: !p.everywhere)
+            }
+        }
         Divider()
         Button("Delete…", role: .destructive) { deleting = ShownProfile(name: p.name) }
     }
