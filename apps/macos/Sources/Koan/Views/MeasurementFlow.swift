@@ -296,6 +296,7 @@ struct MeasurementFlow: View {
         guard !query.isEmpty else {
             hits = []
             searchNote = nil
+            searching = false
             return
         }
         searching = true
