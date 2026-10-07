@@ -1,0 +1,1 @@
+- **EQ sync forgets profiles no longer kept everywhere.** A profile deleted or moved to one device left its record of local edits behind; that record is now removed once the deletion has reached the server.
