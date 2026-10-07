@@ -268,6 +268,10 @@ impl AudioEngine {
     }
 
     pub fn start(&self) -> Result<()> {
+        // A RemoteIO unit started on an inactive session reports success and
+        // produces silence.
+        #[cfg(any(target_os = "ios", target_os = "tvos"))]
+        super::ios_backend::activate_session();
         self.running.store(true, Ordering::Release);
         check(unsafe { AudioOutputUnitStart(self.audio_unit) })
     }

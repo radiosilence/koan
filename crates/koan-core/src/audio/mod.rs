@@ -39,6 +39,25 @@ pub fn platform_backend() -> Box<dyn AudioBackend> {
     }
 }
 
+/// Whether output holds the platform's audio session: on iOS and tvOS, since
+/// the engine last started and until the player releases it. Never elsewhere,
+/// where there is no session to hold.
+pub(crate) fn session_held() -> bool {
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+    {
+        ios_backend::session_held()
+    }
+    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+    {
+        false
+    }
+}
+
+pub(crate) fn release_session() {
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+    ios_backend::release_session();
+}
+
 /// Cross-platform facade: list output devices via the platform backend.
 pub fn list_output_devices() -> Result<Vec<DeviceInfo>, BackendError> {
     platform_backend().list_devices()
