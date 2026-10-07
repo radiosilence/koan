@@ -40,7 +40,7 @@ struct OutputEqSection: View {
 
     var body: some View {
         Section {
-            Picker("Headphones", selection: Binding(
+            Picker("Correction", selection: Binding(
                 get: { overview.active ?? "" },
                 set: { dsp.assign($0.isEmpty ? nil : $0, to: device) }
             )) {
@@ -128,7 +128,7 @@ struct OutputEqSection: View {
     /// The chain in words: what plays, and what could.
     private var sentence: String {
         guard let name = overview.active else {
-            return "Pick your headphones to make them neutral first."
+            return "Pick a correction for your headphones or speakers to make them neutral first."
         }
         var parts = [name]
         if let aim { parts.append("corrected to \(aim.name)") }

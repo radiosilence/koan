@@ -489,7 +489,7 @@ private struct RoleSection: View {
                 get: { detail.role },
                 set: { dsp.setRole(detail.name, $0) }
             )) {
-                Text("A neutral correction for these headphones").tag(DspRole.correction)
+                Text("A neutral correction").tag(DspRole.correction)
                 Text("A correction with a sound already in it").tag(DspRole.baked)
                 Text("A tuning to add on top").tag(DspRole.tuning)
             }
@@ -561,19 +561,19 @@ private struct RoleSection: View {
     private var footer: String {
         switch detail.role {
         case .tuning:
-            return "A tuning is taste: more bass, a darker treble. It plays on top of a correction. Say which target it was made against, and on headphones corrected to another, kōan plays the difference first, so it sounds as it was made to."
+            return "A tuning is taste: more bass, a darker treble. It plays on top of a correction. Say which target it was made against, and on a device corrected to another, kōan plays the difference first, so it sounds as it was made to."
         case .baked:
-            return "A correction with a tuning already in it, as most finished presets are. It counts as the stack's correction, so a tuning on top would add taste twice. Split it, with a measurement of the headphones, to swap tunings."
+            return "A correction with a tuning already in it, as most finished presets are. It counts as the stack's correction, so a tuning on top would add taste twice. Split it, with a measurement of the device, to swap tunings."
         case .correction:
             break
         }
         if detail.measured {
-            return "A correction makes your headphones neutral, and the target says what neutral is. This one is worked out again from the measurement for each target."
+            return "A correction makes your headphones or speakers neutral, and the target says what neutral is. This one is worked out again from the measurement for each target."
         }
         if let made = targets?.madeFor {
             return "Made for \(made.name). Another target is worked out from the measurement AutoEQ kept, where there is one, or plays as the difference between the two. Moving from Harman to neutral takes Harman's bass and treble out."
         }
-        return "A correction makes your headphones neutral. Say which target this EQ was made for, and you can move it to another; if you don't know, leave it Unknown and target switching stays off."
+        return "A correction makes your headphones or speakers neutral. Say which target this EQ was made for, and you can move it to another; if you don't know, leave it Unknown and target switching stays off."
     }
 }
 
