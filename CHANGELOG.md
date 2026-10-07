@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.60.2
+
+### Added
+
+- **Find a headphone's measurement on squig.link.** Use a Measurement… searches the reviewers' squig.link sites by headphone name and lists each measurement with its site, rig where the site says, and variant; picking one fetches it, averages its two sides and credits the site on the profile. Each site's catalogue is fetched at most once a day. `koan dsp squig` searches from the terminal and makes a correction from a result.
+
+### Security
+
+- **Answers to commands come only from the device they were sent to.** A command's id could be read off the network, and a device nearby, a listener claiming another's id, or another account on the server could report the command done, which stopped it being retried, or refused. A sender now believes an answer only from its target: on the network, one that proved it is that device; through the server, a link of the target's own account.
+- **Commands for your devices go over the network only to the device itself.** A device on the network could claim the id of one of your devices and receive commands meant for it, with the tracks they name. Commands for your own devices, and for devices shared with you, now go over the network only to a device that has proved it is that one; otherwise they go through the server.
+
+### Changed
+
+- **The Mac window in the kōan look.** The wash runs under the whole window, with the sidebar, toolbar, transport and lyrics drawn clear over it; turning off "Wash the whole window" in Settings → Appearance gives them back their own grounds. The toolbar's icons and filter field drop their glass, rows have more room between them, and the playing bars move at every graphics level. A text field keeps ⌥←, ⌘Z and the other editing keys from the moment it takes focus, and Settings can be resized.
+
+### Fixed
+
+- **Sign in on iPhone with the keyboard up.** In the kōan theme, a blank strip above the keyboard covered the controls at the foot of a page, Settings' Sign In button among them, so a tap there did nothing. The room a page keeps for the theme's bar now gives way to the keyboard.
+
 ## 0.60.1
 
 ### Added

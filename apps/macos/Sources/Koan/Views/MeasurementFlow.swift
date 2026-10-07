@@ -223,7 +223,7 @@ struct MeasurementFlow: View {
             .pickerStyle(.inline)
             .labelsHidden()
         } footer: {
-            Text("Each target is a different idea of a good sound. You can change it later on the profile's page.")
+            Text("Each target is a different idea of a good sound. You can change it later on the correction's page.")
                 .koanText(.fine, .muted)
         }
     }

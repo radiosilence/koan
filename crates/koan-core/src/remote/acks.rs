@@ -79,9 +79,11 @@ pub fn next_id() -> u64 {
     u64::from_le_bytes(bytes).max(1)
 }
 
-/// Each waiting id, with the device it was sent to and where its answer goes.
-static WAITING: LazyLock<Mutex<HashMap<u64, (String, crossbeam_channel::Sender<AckOutcome>)>>> =
-    LazyLock::new(Default::default);
+/// The device a command was sent to, and where its answer goes.
+type Waiter = (String, crossbeam_channel::Sender<AckOutcome>);
+
+/// Each waiting id, with its waiter.
+static WAITING: LazyLock<Mutex<HashMap<u64, Waiter>>> = LazyLock::new(Default::default);
 
 /// Wait for `device`'s answer to the command sent under `id`. Dropping the
 /// receiver stops waiting.

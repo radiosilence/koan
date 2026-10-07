@@ -55,6 +55,10 @@ final class DspModel {
     /// AutoEQ's profile for the output in use, by its name, while the output
     /// has none and the offer has not been turned down.
     private(set) var suggestion: AutoEqOffer?
+    /// A device whose EQ a preset menu's Edit… asked to show, on the Mac,
+    /// where the EQ page is a pane of the Settings window. The page takes it
+    /// and clears it.
+    var editing: String?
 
     enum Pending {
         case files([URL], name: String?)
@@ -278,6 +282,40 @@ final class DspModel {
         act { try await $0.dspSetTuning(device: device, tuning: tuning) }
     }
 
+    /// Make `device`'s tuning these EQs, in the order they play.
+    func setTunings(_ entries: [DspTuningEntry], for device: String) {
+        act { try await $0.dspSetTunings(device: device, tuning: entries) }
+    }
+
+    /// The profiles, and what `device` plays: the output in use with nil.
+    func overview(for device: String?) async -> DspOverview {
+        await engine.dspOverviewFor(device: device)
+    }
+
+    /// What `device` plays, drawn: its correction and tuning.
+    func outputResponse(for device: String) async -> DspResponse? {
+        await engine.dspOutputResponseFor(device: device, rate: 48000)
+    }
+
+    /// Set `device` from the preset `name`, or flat with nil.
+    func applyPreset(_ name: String?, to device: String) {
+        act { try await $0.dspApplyPreset(device: device, name: name) }
+    }
+
+    /// Save `device`'s correction and tuning as the preset `name`, over one
+    /// of that name. Whether it took.
+    func savePreset(_ name: String, from device: String) async -> Bool {
+        do {
+            _ = try await engine.dspSavePreset(device: device, name: name)
+            lastError = nil
+            await changed()
+            return true
+        } catch {
+            lastError = SettingsModel.describe(error)
+            return false
+        }
+    }
+
     /// The target the tuning `name` was made against, or nil for not known.
     func setTunedFor(_ name: String, _ target: String?) {
         act { try await $0.dspSetTunedFor(name: name, target: target) }
@@ -286,6 +324,16 @@ final class DspModel {
     /// What to call a device: a renderer by its name rather than its UDN.
     func label(_ device: String) -> String {
         overview?.names[device] ?? device
+    }
+
+    /// Copy `name` as it is now, as `new` or "<name> copy".
+    func duplicate(_ name: String, as new: String? = nil) {
+        act { _ = try await $0.dspDuplicate(name: name, new: new) }
+    }
+
+    /// Put `name` back as it was imported.
+    func revert(_ name: String) {
+        act { try await $0.dspRevert(name: name) }
     }
 
     func remove(_ profile: String) {
@@ -428,10 +476,6 @@ final class DspModel {
         await engine.dspResponse(name: name, rate: 48000)
     }
 
-    /// What the output in use plays: its correction and the tuning on top.
-    func outputResponse() async -> DspResponse? {
-        await engine.dspOutputResponse(rate: 48000)
-    }
 
     func detail(_ name: String) async -> DspProfileDetail? {
         await engine.dspDetail(name: name)
@@ -456,8 +500,14 @@ final class DspModel {
     static func describe(_ p: DspProfileSummary) -> String {
         var parts: [String] = []
         if p.measured { parts.append("From a measurement") }
-        if p.layers > 0 { parts.append("\(p.layers) \(p.layers == 1 ? "layer" : "layers")") }
-        if p.bands > 0 { parts.append("\(p.bands) \(p.bands == 1 ? "filter" : "filters")") }
+        if !p.members.isEmpty {
+            parts.append("\(p.members.count) to pick from")
+        } else if p.preset {
+            parts.append(p.layers == 1 ? "1 part" : "\(p.layers) parts")
+        } else if p.layers > 0 {
+            parts.append("Plays \(p.layers) \(p.layers == 1 ? "EQ" : "EQs") in order")
+        }
+        if p.bands > 0 { parts.append("\(p.bands) \(p.bands == 1 ? "band" : "bands")") }
         if !p.rates.isEmpty {
             parts.append(p.rates.map(khz).joined(separator: ", ") + " kHz")
         }
