@@ -334,7 +334,7 @@ struct RecordRoom: ViewModifier {
             #if os(macOS)
             .containerBackground(for: .window) { washLayer }
             // A window the renderer draws has no scene to hand that to.
-            .background { if offscreen { washLayer } }
+            .background { if offscreen { washLayer.ignoresSafeArea() } }
             #elseif os(tvOS)
             .background { washLayer.ignoresSafeArea() }
             #else

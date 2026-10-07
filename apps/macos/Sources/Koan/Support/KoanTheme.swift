@@ -1558,7 +1558,11 @@ private struct KoanToolbarRole: ViewModifier {
         let bar = ToolbarPlacement.navigationBar
         #endif
         if KoanTheme.washesWindow(appearance) {
-            content.toolbarBackgroundVisibility(.hidden, for: bar)
+            // No ground, and the soft edge rather than the hard one, whose
+            // grey band would stand in for the ground taken away.
+            content
+                .toolbarBackgroundVisibility(.hidden, for: bar)
+                .scrollEdgeEffectStyle(.soft, for: .top)
         } else if KoanTheme.isOn {
             content
                 .toolbarBackground(Color.koanBg, for: bar)
