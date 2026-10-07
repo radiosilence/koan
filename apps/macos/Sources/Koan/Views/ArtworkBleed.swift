@@ -126,8 +126,8 @@ extension View {
     /// the app sits in the wash, so every list gives its ground up.
     func washedGround() -> some View {
         #if os(tvOS)
-        // A tvOS list paints no ground of its own.
-        self
+        // A tvOS list paints no ground of its own; the theme's sets its type.
+        koanList()
         #else
         // And in the theme, the theme's list: rows on the ground, ruled.
         scrollContentBackground(.hidden)

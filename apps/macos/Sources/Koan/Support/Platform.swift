@@ -216,16 +216,28 @@ extension View {
 #if os(tvOS)
 /// A row whose menu, in the theme, is a sheet of the theme's rows rather than
 /// the system's popover of grey pills. A long press of the remote opens it,
-/// as it does the system's.
+/// as it does the system's. Focusable rather than a button: a button takes
+/// the press for itself, and a long one never reaches the gesture.
 private struct TelevisionMenuRow<Menu: View>: ViewModifier {
     let action: () -> Void
     @ViewBuilder let menu: () -> Menu
     @State private var open = false
+    @FocusState private var focused: Bool
 
     func body(content: Content) -> some View {
-        Button(action: action) { content.contentShape(Rectangle()) }
-            .buttonStyle(TelevisionRow())
+        content
+            .contentShape(Rectangle())
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .foregroundStyle(Color.koanInk)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 6)
+            .koanFocusRing(focused, gap: 0)
+            .focusable()
+            .focused($focused)
             .onLongPressGesture(minimumDuration: 0.5) { open = true }
+            .onTapGesture(perform: action)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(named: "Menu") { open = true }
             .sheet(isPresented: $open) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: KoanTheme.Space.xs) {

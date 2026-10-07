@@ -155,7 +155,7 @@ struct HistoryView: View {
                 .font(.role(.control, system: .callout))
                 .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             Spacer(minLength: 0)
-            Button { confirmingClear = true } label: { Text("Clear…").koanCase() }
+            Button { confirmingClear = true } label: { Text("Clear…").koanCase().font(.role(.control, system: .body)) }
                 .disabled(entries.isEmpty)
         }
     }

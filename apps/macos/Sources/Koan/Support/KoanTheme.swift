@@ -1231,6 +1231,10 @@ struct KoanRowLabelStyle: LabeledContentStyle {
                 .font(.koan(.control))
                 .foregroundStyle(Color.koanMuted)
         }
+        #if os(tvOS)
+        // In line with the rows that are buttons (`TelevisionRow`).
+        .padding(.horizontal, 20)
+        #endif
     }
 }
 #endif
@@ -1900,7 +1904,9 @@ private struct KoanSheetRole: ViewModifier {
                 .background(Color.koanBg)
                 .scrollContentBackground(.hidden)
                 #elseif os(tvOS)
-                .background(Color.koanBg)
+                // Only where it is presented: a settings page takes this too,
+                // and its ground is the wash.
+                .presentationBackground(Color.koanBg)
                 #else
                 .presentationBackground(Color.koanBg)
                 .scrollContentBackground(.hidden)

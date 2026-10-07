@@ -130,9 +130,15 @@ struct TabShell: View {
                 stack(.settings) { SettingsView() }
             }
             #endif
+            #if os(tvOS)
+            Tab(Self.title("Search"), systemImage: Icon.search, value: TabID.search, role: .search) {
+                stack(.search) { IOSSearchView() }
+            }
+            #else
             Tab(value: TabID.search, role: .search) {
                 stack(.search) { IOSSearchView() }
             }
+            #endif
             // Last on a television, where it is visited least.
             #if os(tvOS)
             Tab(Self.title("Settings"), systemImage: "gearshape", value: TabID.settings) {
