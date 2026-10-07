@@ -41,7 +41,7 @@ struct DspProfilePage: View {
             if let d = detail {
                 if let r = response {
                     Section {
-                        EqGraph(response: r, handles: BandTable.handles(d.bands)) { index, hz, db in
+                        EqGraph(response: r, handles: d.readOnly ? [] : BandTable.handles(d.bands)) { index, hz, db in
                             let b = d.bands[index]
                             dsp.setBand(name, index, kind: b.kind, freq: hz, gain: db, q: b.q)
                         }
@@ -157,7 +157,7 @@ struct DspProfilePage: View {
             }
         }
 
-        BandTable(dsp: dsp, profile: name, bands: d.bands)
+        BandTable(dsp: dsp, profile: name, bands: d.bands, readOnly: d.readOnly)
 
         Section {
             LabeledContent("Preamp", value: "\(String(format: "%.1f", d.preampDb)) dB")
