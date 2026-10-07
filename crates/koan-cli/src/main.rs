@@ -437,6 +437,23 @@ enum PresetCommands {
 }
 
 #[derive(Subcommand)]
+enum PresetCommands {
+    /// Save an output's correction and tuning (the current output by
+    /// default) as a preset
+    Save {
+        name: String,
+        #[arg(long)]
+        device: Option<String>,
+    },
+    /// Set an output from a preset, or `flat`: no correction and no tuning
+    Use {
+        name: String,
+        #[arg(long)]
+        device: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 enum AutoeqCommands {
     /// Search AutoEQ's index by headphone name; numbers are what install takes
     Search {
