@@ -1,0 +1,1 @@
+- **The wash is the only gradient in the kōan look.** The Mac transport no longer fades in over the page: toolbar and transport sit on the wash with no ground, and pages stop at their edges instead of passing under them. The Apple TV sign-in screen loses its glow, and lists in the picker end on a hard edge.

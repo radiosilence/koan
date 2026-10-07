@@ -628,20 +628,41 @@ private struct TransportHeightKey: PreferenceKey {
     }
 }
 
+/// Room for the transport, which floats over every screen in the stack.
+///
+/// Measured rather than a constant. The bar's height is a stack of paddings
+/// and a control size, so any number written here would be right until one
+/// of them changed and then be a gap, or a row clipped by a bar with
+/// nothing to say why.
+private struct ClearsTransport: ViewModifier {
+    let height: CGFloat
+    let glass: Bool
+    @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
+
+    func body(content: Content) -> some View {
+        if KoanTheme.washesWindow(appearance) {
+            // The theme's toolbar and transport sit on the wash with nothing
+            // under them, so the page stops at their edges: a row passing
+            // beneath would need a scrim or a fade to be told from their text.
+            content
+                .padding(.bottom, height)
+                .clipped()
+        } else {
+            // Content passing under the glass is what makes it glass. The soft
+            // edge fades a row out as it goes, so one half under the bar reads
+            // as behind it rather than cut off — and it is a live blur of a
+            // window-wide strip, which is why `bare` does without it and takes
+            // the hard edge instead.
+            content
+                .safeAreaPadding(.bottom, height)
+                .scrollEdgeEffectStyle(glass ? .soft : .hard, for: .bottom)
+        }
+    }
+}
+
 private extension View {
-    /// Room for the transport, which floats over every screen in the stack.
-    ///
-    /// Measured rather than a constant. The bar's height is a stack of paddings
-    /// and a control size, so any number written here would be right until one
-    /// of them changed and then be a gap, or a row clipped by a bar with
-    /// nothing to say why.
     func clearsTransport(_ height: CGFloat, glass: Bool) -> some View {
-        // Content passing under the glass is what makes it glass. The soft edge
-        // fades a row out as it goes, so one half under the bar reads as behind
-        // it rather than cut off — and it is a live blur of a window-wide strip,
-        // which is why `bare` does without it and takes the hard edge instead.
-        safeAreaPadding(.bottom, height)
-            .scrollEdgeEffectStyle(glass ? .soft : .hard, for: .bottom)
+        modifier(ClearsTransport(height: height, glass: glass))
     }
 }
 

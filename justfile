@@ -437,6 +437,13 @@ theme-leaks:
             echo "$hits"
         fi
     done
+    # The wash is the only gradient: no fades, scrims or gradient masks.
+    hits=$(grep -rnE '(Linear|Radial|Angular|Elliptical)Gradient|CAGradientLayer|\.mask\(' apps/macos/Sources --include='*.swift' \
+        | grep -v -e 'Views/ArtworkBleed.swift' -e 'Views/DriftingWash.swift' -e '// theme: raw')
+    if [ -n "$hits" ]; then
+        found=1
+        echo "$hits"
+    fi
     [ "$found" = 0 ] && echo "no theme leaks" || { echo "theme leaks above"; exit 1; }
 
 # Type-check the shared SwiftUI sources against the iOS SDK.

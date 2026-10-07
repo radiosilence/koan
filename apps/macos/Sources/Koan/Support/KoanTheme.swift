@@ -1863,22 +1863,10 @@ private struct KoanBarRole: ViewModifier {
 
     func body(content: Content) -> some View {
         if overWash && KoanTheme.washesWindow(appearance) {
-            // Over the wash, set off by a faint hairline and a scrim that fades
-            // in over its top quarter: rows scrolling under it fade out there
-            // and are gone behind its text. Lighter, and a row's text showed
-            // through the transport's.
+            // On the wash itself, set off by a faint hairline. The page above
+            // stops at that line rather than passing under it (see
+            // `clearsTransport`), so nothing needs covering.
             content
-                .background {
-                    LinearGradient(
-                        stops: [
-                            .init(color: Color.koanBg.opacity(0), location: 0),
-                            .init(color: Color.koanBg.opacity(0.97), location: 0.25),
-                            .init(color: Color.koanBg, location: 1),
-                        ],
-                        startPoint: .top, endPoint: .bottom
-                    )
-                    .ignoresSafeArea(edges: .bottom)
-                }
                 .overlay(alignment: .top) {
                     Rectangle().fill(Color.koanRowRule).frame(height: KoanTheme.hairline)
                 }
@@ -2002,13 +1990,13 @@ private struct KoanToolbarRole: ViewModifier {
         #else
         let bar = ToolbarPlacement.navigationBar
         #endif
-        if glass && KoanTheme.washesWindow(appearance) {
-            // No ground, and the soft edge rather than the hard one, whose
-            // grey band would stand in for the ground taken away. At `bare`
-            // the toolbar keeps its opaque ground: the soft edge is live blur.
+        if KoanTheme.washesWindow(appearance) {
+            // No ground and no edge: the wash runs under the toolbar, and the
+            // page stops below it rather than fading out beneath it (see
+            // `clearsTransport`).
             content
                 .toolbarBackgroundVisibility(.hidden, for: bar)
-                .scrollEdgeEffectStyle(.soft, for: .top)
+                .scrollEdgeEffectHidden(true, for: .top)
         } else if KoanTheme.isOn {
             content
                 .toolbarBackground(Color.koanBg, for: bar)
