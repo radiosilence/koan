@@ -46,8 +46,10 @@ pub fn set_route(name: String) {
 /// Both are called on the player thread, in order, which is what keeps a
 /// release from landing between an activation and the start it was for.
 pub trait AudioSession: Send + Sync {
-    /// Make the session active for playback. Blocks until it is.
-    fn activate(&self);
+    /// Make the session active for playback, for output at `sample_rate`.
+    /// Blocks until it is; false if the system refused, as it does during a
+    /// call or to an app in the background with nothing to interrupt for.
+    fn activate(&self, sample_rate: f64) -> bool;
     /// Nothing has played for a while: deactivate, and tell the other apps
     /// they may play again.
     fn release(&self);
@@ -63,13 +65,16 @@ pub fn set_session(session: Arc<dyn AudioSession>) {
     *SESSION.write() = Some(session);
 }
 
-/// Called by the engine just before its output unit starts.
-pub(crate) fn activate_session() {
+/// Called by the engine just before its output unit starts. False if the
+/// session could not be activated, when starting would only play silence.
+pub(crate) fn activate_session(sample_rate: f64) -> bool {
     let session = SESSION.read().clone();
-    if let Some(session) = session {
-        session.activate();
+    let Some(session) = session else { return true };
+    let active = session.activate(sample_rate);
+    if active {
         HELD.store(true, Ordering::Release);
     }
+    active
 }
 
 pub(crate) fn session_held() -> bool {

@@ -21,6 +21,9 @@ pub enum EngineError {
     OSStatus(i32),
     #[error("failed to find the output audio component")]
     NoOutputComponent,
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+    #[error("the audio session could not be activated")]
+    SessionInactive,
     #[cfg(target_os = "macos")]
     #[error("device error: {0}")]
     Device(#[from] device::DeviceError),
@@ -49,6 +52,10 @@ struct CallbackData {
     fader: Fader,
     /// Frames of silence still to play before the ring is read.
     lead_in: Arc<AtomicU64>,
+    /// The rate the unit was built for, which the audio session is asked for
+    /// on iOS and tvOS.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    sample_rate: f64,
 }
 
 // SAFETY: `rtrb::Consumer` is `!Send` due to internal raw pointers, but our usage is
@@ -264,6 +271,7 @@ impl AudioEngine {
             in_callback,
             fade,
             lead_in,
+            sample_rate,
         })
     }
 
@@ -271,7 +279,9 @@ impl AudioEngine {
         // A RemoteIO unit started on an inactive session reports success and
         // produces silence.
         #[cfg(any(target_os = "ios", target_os = "tvos"))]
-        super::ios_backend::activate_session();
+        if !super::ios_backend::activate_session(self.sample_rate) {
+            return Err(EngineError::SessionInactive);
+        }
         self.running.store(true, Ordering::Release);
         check(unsafe { AudioOutputUnitStart(self.audio_unit) })
     }

@@ -99,11 +99,11 @@ pub trait ProgressReporter: Send + Sync {
 /// The iOS and tvOS audio session, which the app owns: activated by the
 /// engine the moment before it plays, released by the player once output has
 /// stopped for a while. Called on the player thread; `activate` must not
-/// return until the session is active. See
-/// `koan_core::audio::ios_backend::AudioSession`.
+/// return until the session is active, and answers false if it could not be
+/// made so. See `koan_core::audio::ios_backend::AudioSession`.
 #[uniffi::export(with_foreign)]
 pub trait AudioSessionHost: Send + Sync {
-    fn activate(&self);
+    fn activate(&self, sample_rate: f64) -> bool;
     fn release(&self);
 }
 
@@ -112,8 +112,8 @@ struct SessionBridge(Arc<dyn AudioSessionHost>);
 
 #[cfg(any(target_os = "ios", target_os = "tvos"))]
 impl koan_core::audio::ios_backend::AudioSession for SessionBridge {
-    fn activate(&self) {
-        self.0.activate();
+    fn activate(&self, sample_rate: f64) -> bool {
+        self.0.activate(sample_rate)
     }
 
     fn release(&self) {

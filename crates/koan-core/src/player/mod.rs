@@ -2668,25 +2668,45 @@ impl Player {
 
     /// Give the audio session back once output has been stopped for
     /// `SESSION_GRACE`, so another app can play. A resume inside it finds the
-    /// session still active.
+    /// session still active. Waiting for a track to arrive with play asked
+    /// for counts as playing: the session is wanted again the moment it does.
     fn release_idle_session(&mut self) {
-        let running = self
-            .session()
-            .and_then(Session::engine)
-            .is_some_and(|e| e.is_running());
-        if running || !crate::audio::session_held() {
-            self.session_release_at = None;
-            return;
+        if self.session_release_due(
+            self.wants_output(),
+            crate::audio::session_held(),
+            std::time::Instant::now(),
+        ) {
+            log::info!("output idle: releasing the audio session");
+            crate::audio::release_session();
         }
-        let now = std::time::Instant::now();
+    }
+
+    /// Play asked for, or output still running (a pause fading out).
+    fn wants_output(&self) -> bool {
+        self.intent() == Some(Run::Playing)
+            || self
+                .session()
+                .and_then(Session::engine)
+                .is_some_and(|e| e.is_running())
+    }
+
+    /// Whether the session is to be released now, starting the grace when
+    /// output has just stopped.
+    fn session_release_due(&mut self, playing: bool, held: bool, now: std::time::Instant) -> bool {
+        if playing || !held {
+            self.session_release_at = None;
+            return false;
+        }
         match self.session_release_at {
-            None => self.session_release_at = Some(now + SESSION_GRACE),
+            None => {
+                self.session_release_at = Some(now + SESSION_GRACE);
+                false
+            }
             Some(at) if now >= at => {
                 self.session_release_at = None;
-                log::info!("output idle: releasing the audio session");
-                crate::audio::release_session();
+                true
             }
-            Some(_) => {}
+            Some(_) => false,
         }
     }
 
@@ -3108,6 +3128,52 @@ mod tests {
         assert!(player.session().is_some(), "the cursor's track started");
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Playing);
         player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
+    fn the_audio_session_is_released_only_after_output_has_been_idle_a_while() {
+        let mut player = Player::new();
+        let now = std::time::Instant::now();
+        assert!(
+            !player.session_release_due(false, true, now),
+            "the grace starts"
+        );
+        assert!(!player.session_release_due(false, true, now + SESSION_GRACE / 2));
+        assert!(
+            player.session_release_due(false, true, now + SESSION_GRACE),
+            "released once it runs out"
+        );
+        assert_eq!(player.session_release_at, None);
+
+        assert!(!player.session_release_due(false, true, now));
+        assert!(
+            !player.session_release_due(true, true, now + SESSION_GRACE / 2),
+            "playing again inside the grace keeps the session"
+        );
+        assert_eq!(player.session_release_at, None);
+        assert!(
+            !player.session_release_due(false, false, now),
+            "nothing held"
+        );
+        assert_eq!(player.session_release_at, None);
+    }
+
+    #[test]
+    fn waiting_to_play_a_track_keeps_the_audio_session() {
+        let mut player = Player::new();
+        let item = make_item("t");
+        player.transport = Transport::Waiting(Waiting {
+            id: item.id,
+            position_ms: 0,
+            start: Run::Playing,
+        });
+        assert!(player.wants_output(), "play was asked for");
+        let playing = player.wants_output();
+        let now = std::time::Instant::now();
+        for later in [now, now + SESSION_GRACE * 2] {
+            assert!(!player.session_release_due(playing, true, later));
+        }
+        assert_eq!(player.session_release_at, None);
     }
 
     #[test]

@@ -95,11 +95,16 @@ final class AudioSession {
             self.note = note
         }
 
-        func activate() {
+        /// `sampleRate` is what the output was built for. False when iOS
+        /// refuses — during a call, or from the background with no remote
+        /// command behind it — and the engine then does not start.
+        func activate(sampleRate: Double) -> Bool {
             do {
                 try AVAudioSession.sharedInstance().setActive(true)
+                return true
             } catch {
                 note("audio session refused activation: \(error)")
+                return false
             }
         }
 
