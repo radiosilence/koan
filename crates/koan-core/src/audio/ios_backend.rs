@@ -18,8 +18,8 @@ use super::engine;
 ///
 /// The device rate is the session's. Each track's rate is asked for as the
 /// session's preferred rate, and the rate the hardware then runs at is read
-/// back. A USB DAC that supports the source rate is switched to it and the
-/// output is bit-perfect; the built-in speaker, Bluetooth and AirPlay stay at
+/// back. A USB DAC that supports the source rate is switched to it, and
+/// nothing resamples; the built-in speaker, Bluetooth and AirPlay stay at
 /// their own rate, RemoteIO resamples, and the rate read back says so.
 pub struct IosAudioBackend;
 
