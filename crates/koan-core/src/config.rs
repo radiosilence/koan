@@ -60,8 +60,8 @@ pub struct AppearanceConfig {
     /// keep grounds of their own. Provisional: a way to live with both while
     /// the look is decided, and expected to go once it is.
     pub wash_window: bool,
-    /// The rainbow: accent, wash, progress and playing bars in the pride
-    /// flag's hues. Per device, and not offered in Settings.
+    /// An alternative palette for the accent, wash and indicators (see the
+    /// apps' `Rainbow.swift`). Per device, and not offered in Settings.
     pub rainbow: bool,
 }
 
