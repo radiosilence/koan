@@ -1,0 +1,1 @@
+- **The Apple TV in the kōan look.** Focus is a 2-point accent ring with no platter or lift. Tab titles are in lowercase Geist Mono, and track rows are in Geist Mono with their titles as tagged. Settings, the filter sheet, pickers and track menus are drawn with the theme's rows on the wash, not the system's grey pills.

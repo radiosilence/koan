@@ -4,10 +4,8 @@
 
 ### Fixed
 
-- **Mac controls in the kōan look.** Pop-up pickers are menus in the theme's type rather than AppKit's bezelled buttons, sliders (graphics level, output volume) are the theme's, settings labels share one style, lowercase, and the sidebar opens wide enough for its labels. The EQ chain names its tuning once, and the window no longer keeps Downloads' title after leaving it.
-- **The Apple TV in the kōan look.** Focus is a 2-point accent ring with no platter or lift; the tab bar, track rows and settings are in Geist Mono and lowercase; settings, the filter sheet, pickers and track menus are drawn with the theme's rows on the wash rather than the system's grey pills.
-- **No system chrome on the iPhone and iPad in the kōan look.** The iPad draws the theme's own sidebar, mini player and full-screen Now Playing; navigation bars, back buttons and search fields lose their glass; settings labels are lowercase; and the platform's look holds the wash to the same contrast limits on a phone.
-- **Build recipes honour `CARGO_TARGET_DIR`.** `macos-ffi`, `install-dev`, `watch-dev`, `ios-smoke` and the demo server looked for cargo's output under `target/` and failed when it was built elsewhere.
+- **The Apple TV in the kōan look.** Focus is a 2-point accent ring with no platter or lift. Tab titles are in lowercase Geist Mono, and track rows are in Geist Mono with their titles as tagged. Settings, the filter sheet, pickers and track menus are drawn with the theme's rows on the wash, not the system's grey pills.
+- **No system chrome on the iPhone and iPad in the kōan look.** The iPad draws the theme's own sidebar, mini player and full-screen Now Playing. Navigation bars, back buttons and search fields lose their glass, and settings labels are lowercase. In the platform's look, the wash is held to the same contrast limits on the iPhone and iPad. On the Mac and iOS, the queue header no longer repeats a single album's name, and its layout toggle and menu are drawn in ink.
 
 ## 0.60.4
 
@@ -17,6 +15,8 @@
 - **squig.link measurements fetch from every site, and a failed fetch says why under the result.** Sites that keep numbered samples or a separate measurements folder (squig.link's headphones, listener, doltonius) now fetch instead of failing. graph.hangout.audio serves its measurements only to its own pages, so its results are listed last and open the site in a browser. The entry point is now Find a Measurement….
 - **Lowercase where the kōan look writes text.** Empty pages, the Mac queue and history headings, search section headings and the iPhone's "nothing playing" follow the theme's case rule.
 - **The EQ options menu says where a profile is kept.** On iOS the "Keep on Every Device" item came apart into a greyed row and a blank checked one. It is now one item naming what it does, "Keep on Every Device" or "Keep on This Device Only", and when a stack or layer pins the profile where it is, the item is disabled and says why.
+- **Mac controls in the kōan look.** Pop-up pickers are menus in the theme's type rather than AppKit's bezelled buttons, sliders (graphics level, output volume) are the theme's, settings labels share one style, lowercase, and the sidebar opens wide enough for its labels. The EQ chain names its tuning once, and the window no longer keeps Downloads' title after leaving it.
+- **Build recipes honour `CARGO_TARGET_DIR`.** `macos-ffi`, `install-dev`, `watch-dev`, `ios-smoke` and the demo server looked for cargo's output under `target/` and failed when it was built elsewhere.
 
 ## 0.60.3
 
