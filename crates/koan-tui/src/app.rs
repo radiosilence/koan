@@ -401,19 +401,21 @@ impl App {
 
     /// Toggle favourite status for a track. Returns true if now favourite.
     pub fn toggle_favourite(&mut self, track_id: i64) -> bool {
+        use koan_core::db::queries;
+        // One transaction with the change it queues for the server, so a sync
+        // importing the server's favourites sees both or neither.
         if let Ok(db) = koan_core::db::pool::shared().get()
-            && let Ok(is_fav) = koan_core::db::queries::toggle_favourite(
-                &db.conn,
-                koan_core::db::queries::LOCAL_USER,
-                track_id,
-            )
+            && let Ok(is_fav) = queries::atomically(&db.conn, || {
+                let now = queries::toggle_favourite(&db.conn, queries::LOCAL_USER, track_id)?;
+                koan_core::helpers::sync_favourite_to_remote(&db, track_id, now);
+                Ok::<_, koan_core::db::connection::DbError>(now)
+            })
         {
             if is_fav {
                 self.favourites.insert(track_id);
             } else {
                 self.favourites.remove(&track_id);
             }
-            koan_core::helpers::sync_favourite_to_remote(&db, track_id, is_fav);
             return is_fav;
         }
         false

@@ -1565,9 +1565,14 @@ impl KoanEngine {
                 .ok_or_else(|| KoanError::NotFound {
                     message: format!("track {track_id}"),
                 })?;
-            let now_favourite = queries::toggle_favourite(&db.conn, queries::LOCAL_USER, track_id)
-                .map_err(fav_err)?;
-            koan_core::helpers::sync_favourite_to_remote(&db, track_id, now_favourite);
+            // One transaction with the change it queues for the server, so a
+            // sync importing the server's favourites sees both or neither.
+            let now_favourite = queries::atomically(&db.conn, || {
+                let now = queries::toggle_favourite(&db.conn, queries::LOCAL_USER, track_id)?;
+                koan_core::helpers::sync_favourite_to_remote(&db, track_id, now);
+                Ok(now)
+            })
+            .map_err(fav_err)?;
             Ok(now_favourite)
         })
         .await
@@ -1623,14 +1628,18 @@ impl KoanEngine {
                 .ok_or_else(|| KoanError::NotFound {
                     message: format!("album {album_id}"),
                 })?;
-            let now = queries::toggle_favourite_album(&db.conn, queries::LOCAL_USER, album_id)
-                .map_err(fav_err)?;
-            koan_core::helpers::sync_collection_favourite_to_remote(
-                &db,
-                koan_core::helpers::FavouriteKind::Album,
-                album_id,
-                now,
-            );
+            // As for a track: the favourite and its queued change together.
+            let now = queries::atomically(&db.conn, || {
+                let now = queries::toggle_favourite_album(&db.conn, queries::LOCAL_USER, album_id)?;
+                koan_core::helpers::sync_collection_favourite_to_remote(
+                    &db,
+                    koan_core::helpers::FavouriteKind::Album,
+                    album_id,
+                    now,
+                );
+                Ok(now)
+            })
+            .map_err(fav_err)?;
             Ok(now)
         })
         .await
@@ -1648,14 +1657,19 @@ impl KoanEngine {
                 .ok_or_else(|| KoanError::NotFound {
                     message: format!("artist {artist_id}"),
                 })?;
-            let now = queries::toggle_favourite_artist(&db.conn, queries::LOCAL_USER, artist_id)
-                .map_err(fav_err)?;
-            koan_core::helpers::sync_collection_favourite_to_remote(
-                &db,
-                koan_core::helpers::FavouriteKind::Artist,
-                artist_id,
-                now,
-            );
+            // As for a track: the favourite and its queued change together.
+            let now = queries::atomically(&db.conn, || {
+                let now =
+                    queries::toggle_favourite_artist(&db.conn, queries::LOCAL_USER, artist_id)?;
+                koan_core::helpers::sync_collection_favourite_to_remote(
+                    &db,
+                    koan_core::helpers::FavouriteKind::Artist,
+                    artist_id,
+                    now,
+                );
+                Ok(now)
+            })
+            .map_err(fav_err)?;
             Ok(now)
         })
         .await
