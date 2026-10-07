@@ -8,7 +8,6 @@
 
 ### Fixed
 
-- **Opening EQ pages no longer slows the next track's start.** Fits from a measurement are kept least recently used first, and those the playing chain uses are kept apart from the ones EQ pages make for their previews, so browsing targets never forces the player to fit its correction again before playback starts.
 - **Lyrics no longer show another song's words.** The lyrics panel shows only lyrics fetched for the track that is playing, so a quick track change can no longer leave the previous song's lyrics on screen. When LRCLIB has no exact match, a search result is used only if its title (ignoring featured artists) and length (within two seconds) match the track; otherwise the panel shows no lyrics.
 
 ## 0.60.8
@@ -20,6 +19,7 @@
 - **A correction with a tuning on top is not quieter than it needs to be.** The chain's preamp is worked out from what the correction and tuning play together, rather than kept at the correction's own, so a layered chain plays at the level of a single EQ with the same curve.
 - **A tuning skipped under a mixed correction is said.** `koan dsp set` and `koan dsp show` name the device's tuning when a correction that already includes one leaves it out, and `--tuning` takes `none` or an empty value for no tuning, `koan dsp response` included.
 - **A tuning on a measured correction plays as squig.link would.** Under a tuning made against another target, a correction built from a measurement is fitted again to that target rather than played with the difference between the targets added, which only came close to the same result (off by up to a decibel in places). The EQ page, `koan dsp show` and `koan dsp response` show the refit. Nothing is saved.
+- **Opening EQ pages no longer slows the next track's start.** Fits from a measurement are kept least recently used first, and those the playing chain uses are kept apart from the ones EQ pages make for their previews, so browsing targets never forces the player to fit its correction again before playback starts.
 
 ## 0.60.7
 
