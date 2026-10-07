@@ -686,6 +686,28 @@ ios-use device="koan-dev": (ios-ffi "iphonesimulator") ios-project
     echo "screenshots in $out"
     exit $status
 
+# Search for an artist, play them, open and close Now Playing, then follow
+# its album link: no album page on the way is empty (#997). ARTIST must be in
+# the simulator's library.
+ios-album-page device="koan-dev" artist="Halden": (ios-ffi "iphonesimulator") ios-project
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=target/ios-album-page
+    rm -rf "$out" && mkdir -p "$out"
+    udid=$(xcrun simctl list devices available | grep -F "{{device}} (" | head -1 | grep -oE '[0-9A-F-]{36}')
+    xcrun simctl boot "$udid" 2>/dev/null || true
+    xcrun simctl bootstatus "$udid" -b >/dev/null
+    trap 'xcrun simctl shutdown "$udid"' EXIT
+    status=0
+    TEST_RUNNER_KOAN_ALBUM_ARTIST='{{artist}}' xcodebuild test -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme Koan \
+        -destination "id=$udid" \
+        -only-testing:KoanUITests/AlbumPageTests \
+        -resultBundlePath "$out/album.xcresult" || status=$?
+    xcrun xcresulttool export attachments --path "$out/album.xcresult" --output-path "$out" >/dev/null
+    echo "screenshots in $out"
+    exit $status
+
 # Open Find in AutoEQ on a fresh install, where the first open fetches
 # AutoEQ's index, and check the sheet stays open while it arrives.
 ios-autoeq-sheet device="koan-dev": (ios-ffi "iphonesimulator") ios-project
