@@ -2024,7 +2024,8 @@ pub struct OutputsInfo {
     pub current: OutputChoice,
     /// The volume of the renderer it plays to, when it has one.
     pub volume: Option<u8>,
-    /// Its DSP profiles, and whether processing is on there.
+    /// Its EQ presets, and whether processing is on there (always, from
+    /// apps that make a device flat instead).
     pub profiles: Vec<String>,
     pub dsp_enabled: bool,
 }
@@ -2040,7 +2041,10 @@ pub struct OutputInfo {
     pub detail: String,
     /// Playing or paused for something else.
     pub busy: bool,
+    /// The EQ preset it was set from.
     pub preset: Option<String>,
+    /// Its EQ is no preset as saved; with no preset and not this, it is flat.
+    pub unsaved: bool,
 }
 
 /// An output to play through.
@@ -2086,6 +2090,7 @@ impl OutputsInfo {
             detail: o.detail,
             busy: o.busy,
             preset: o.preset,
+            unsaved: o.unsaved,
         };
         Self {
             owner,
