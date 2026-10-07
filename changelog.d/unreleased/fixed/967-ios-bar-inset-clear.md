@@ -1,0 +1,1 @@
+- **No grey band at the foot of a page on iPhone in the kōan look.** Pages scroll under the theme's bar again rather than stopping at an opaque band above the mini player. Settings' steppers, pop-up pickers and row labels are drawn in the theme's type and controls instead of the system's.
