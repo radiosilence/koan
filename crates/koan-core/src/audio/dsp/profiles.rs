@@ -3725,10 +3725,17 @@ mod tests {
         let all = Config::cached().dsp.profiles.clone();
         let played = super::super::chain(&p, &all, &mut Vec::new()).unwrap();
         assert_eq!(played, p.filters, "no graphic correction after the bands");
-        // The 6 dB bump at 3 kHz is cut.
+        // It does at 3 kHz, against 1 kHz, what the graphic correction
+        // would, within a decibel and a half.
         let r = response("Fitted", 48000).unwrap();
-        let i = r.freqs.iter().position(|f| *f >= 3000.0).unwrap();
-        assert!(r.total[i] < -2.0, "{}", r.total[i]);
+        let at = |hz: f64| r.total[r.freqs.iter().position(|f| *f >= hz).unwrap()];
+        let graphic = super::super::targets::correction(
+            &read_measurement(&text).unwrap(),
+            &super::super::targets::choice_curve("harman-in-ear-2019").unwrap(),
+        );
+        let g = |hz| super::super::targets::at(&graphic.points, hz);
+        let (ours, wanted) = (at(3000.0) - at(1000.0), g(3000.0) - g(1000.0));
+        assert!((ours - wanted).abs() < 1.5, "{ours} against {wanted}");
 
         choose_target("Fitted", Some("diffuse-field-iso-11904-1")).unwrap();
         let moved = get();

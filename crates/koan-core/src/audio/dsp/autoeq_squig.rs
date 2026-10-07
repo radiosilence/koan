@@ -14,8 +14,10 @@
 //! - Both curves are interpolated, linearly in hertz, onto 1/48-octave
 //!   points from 20 Hz to 20 kHz.
 //! - Each is levelled to 60 phon: a loudness model (ISO 226:2003) is run over
-//!   the curve as the graph draws it, smoothed, and the offset found that
-//!   brings its total loudness there.
+//!   the curve as the graph draws it, smoothed (a headphone's channels each
+//!   smoothed, then averaged), and the offset found that brings its total
+//!   loudness there. The level matters: the fit measures misses in decibels
+//!   against thresholds.
 //! - Up to `MAX_BANDS` peaking bands are fitted between 20 Hz and 6 kHz, Q
 //!   0.1 to 10, gain ±40 dB: the widest misses of more than 1 dB first,
 //!   none above 7 kHz, then the misses of more than 0.5 dB left, each batch
@@ -70,10 +72,32 @@ type Fr = Vec<(f64, f64)>;
 /// What squig.link's auto-EQ makes of a headphone measured as `measurement`
 /// for `target`, both as (Hz, dB) points on any grid and at any level. A
 /// measurement the site calibrates should be calibrated already.
+///
+/// The site levels a headphone by its channels, each smoothed, and fits
+/// their average; given their average alone, the level can differ by a
+/// hundred-thousandth of a decibel, and the fit is sensitive enough to move
+/// a band for it. [`fit_channels`] given the channels is the site's fit
+/// exactly; this is the same response within a few hundredths of a decibel.
 pub fn fit(measurement: &[(f64, f64)], target: &[(f64, f64)]) -> Fit {
+    fit_channels(&[measurement], target)
+}
+
+/// [`fit`] for a headphone measured as `channels`, averaged as the site
+/// averages them.
+pub fn fit_channels(channels: &[&[(f64, f64)]], target: &[(f64, f64)]) -> Fit {
     let freqs = f_values();
-    let phone = levelled(&interp(&freqs, measurement));
-    let target = levelled(&interp(&freqs, target));
+    let channels: Vec<Fr> = channels.iter().map(|c| interp(&freqs, c)).collect();
+    let drawn: Vec<Fr> = channels.iter().map(smoothed).collect();
+    let offset = level_offset(&average(&drawn));
+    let phone = average(
+        &channels
+            .iter()
+            .map(|c| c.iter().map(|&(f, v)| (f, v + offset)).collect())
+            .collect::<Vec<Fr>>(),
+    );
+    let target = interp(&freqs, target);
+    let offset = level_offset(&smoothed(&target));
+    let target: Fr = target.iter().map(|&(f, v)| (f, v + offset)).collect();
     let bands = autoeq(&phone, &target, MAX_BANDS);
     let preamp_db = -gains(&freqs, &bands)
         .into_iter()
@@ -125,12 +149,37 @@ fn interp(fv: &[f64], fr: &[(f64, f64)]) -> Fr {
         .collect()
 }
 
-/// `fr` moved to 60 phon, as the graph levels a curve.
-fn levelled(fr: &Fr) -> Fr {
+/// Curves on the same points as one, by the mean of their amplitudes; one
+/// curve as it is.
+fn average(curves: &[Fr]) -> Fr {
+    if curves.len() == 1 {
+        return curves[0].clone();
+    }
+    let mut sum: Vec<f64> = curves[0].iter().map(|p| 10f64.powf(p.1 / 20.0)).collect();
+    for c in &curves[1..] {
+        for (s, p) in sum.iter_mut().zip(c) {
+            *s += 10f64.powf(p.1 / 20.0);
+        }
+    }
+    curves[0]
+        .iter()
+        .zip(sum)
+        .map(|(p, s)| (p.0, 20.0 * (s / curves.len() as f64).log10()))
+        .collect()
+}
+
+/// `fr` as the graph draws it, smoothed.
+fn smoothed(fr: &Fr) -> Fr {
     let ys: Vec<f64> = fr.iter().map(|p| p.1).collect();
     let freqs: Vec<f64> = fr.iter().map(|p| p.0).collect();
-    let offset = find_offset(&freqs, &smooth(&freqs, &ys), NORM_PHON);
-    fr.iter().map(|&(f, v)| (f, v + offset)).collect()
+    freqs.iter().copied().zip(smooth(&freqs, &ys)).collect()
+}
+
+/// The offset that brings `fr`, as the graph draws it, to 60 phon.
+fn level_offset(fr: &Fr) -> f64 {
+    let ys: Vec<f64> = fr.iter().map(|p| p.1).collect();
+    let freqs: Vec<f64> = fr.iter().map(|p| p.0).collect();
+    find_offset(&freqs, &ys, NORM_PHON)
 }
 
 // --- Smoothing ---------------------------------------------------------------
@@ -650,18 +699,20 @@ mod tests {
         20.0 * ((10f64.powf(a / 20.0) + 10f64.powf(b / 20.0)) / 2.0).log10()
     }
 
-    /// The AFUL Performer 8S as squig.link (Super* Review) hands it to its
-    /// auto-EQ: each channel on the graph's points, the site's IEF 2023
-    /// calibration subtracted, the two averaged by amplitude.
-    fn as_squig_has_it() -> Fr {
+    /// The AFUL Performer 8S's channels as squig.link (Super* Review) hands
+    /// them to its auto-EQ: each on the graph's points, the site's IEF 2023
+    /// calibration subtracted.
+    fn channels_as_squig_has_them() -> [Fr; 2] {
         let fv = f_values();
         let cal = interp(&fv, &points(CAL));
-        let side = |text| interp(&fv, &points(text));
-        let (l, r) = (side(LEFT), side(RIGHT));
-        fv.iter()
-            .enumerate()
-            .map(|(i, &f)| (f, amplitude_mean(l[i].1 - cal[i].1, r[i].1 - cal[i].1)))
-            .collect()
+        let side = |text| -> Fr {
+            interp(&fv, &points(text))
+                .iter()
+                .zip(&cal)
+                .map(|(&(f, v), c)| (f, v - c.1))
+                .collect()
+        };
+        [side(LEFT), side(RIGHT)]
     }
 
     /// The same measurement as koan keeps one fetched from squig.link: the
@@ -725,66 +776,65 @@ mod tests {
         (sum / grid.len() as f64).sqrt()
     }
 
-    fn assert_matches(name: &str, fit: &Fit, preset: &str) {
+    /// RMS of `fit`'s response against `preset`'s, 20 Hz to 10 kHz, and
+    /// the difference of their preamps.
+    fn response_parity(name: &str, fit: &Fit, preset: &str) -> (f64, f64) {
         let (theirs, preamp) = exported(preset);
         let rms = rms_db(&fit.filters, &theirs);
+        let pre = (fit.preamp_db - preamp).abs();
         println!(
-            "{name}: {} bands, preamp {:.2} dB against {preamp:.1}, RMS {rms:.4} dB 20 Hz-10 kHz",
+            "{name}: {} bands against {}, RMS {rms:.3} dB 20 Hz-10 kHz, preamp {:.2} dB against {preamp:.1}",
             fit.filters.len(),
-            fit.preamp_db
-        );
-        assert_eq!(fit.filters.len(), theirs.len(), "{name}: {:?}", fit.filters);
-        for (o, t) in fit.filters.iter().zip(&theirs) {
-            assert_eq!(o.kind, t.kind, "{name}");
-            assert_eq!(o.freq, t.freq, "{name}: {o:?} against {t:?}");
-            assert!(
-                (o.gain_db - t.gain_db).abs() < 0.05,
-                "{name}: {o:?} against {t:?}"
-            );
-            assert!((o.q - t.q).abs() < 0.0005, "{name}: {o:?} against {t:?}");
-        }
-        assert!(
-            (fit.preamp_db - preamp).abs() < 0.05,
-            "{name}: preamp {}",
+            theirs.len(),
             fit.preamp_db
         );
         assert!(rms <= 0.3, "{name}: {rms:.3} dB RMS");
+        assert!(pre <= 0.1, "{name}: preamp {:.2}", fit.preamp_db);
+        (rms, pre)
     }
 
-    /// Given the measurement as squig.link has it, the fit is the site's
-    /// preset, band for band, to the precision the site exports.
+    /// Given the channels as squig.link has them, the fit is the site's
+    /// preset band for band, to the precision the site exports: the same
+    /// count and type, frequencies equal, gains and Qs to the tenth.
     #[test]
     fn reproduces_squiglinks_presets() {
-        let measured = as_squig_has_it();
+        let [l, r] = channels_as_squig_has_them();
         for (name, target, preset) in PRESETS {
-            assert_matches(name, &fit(&measured, &points(target)), preset);
+            let fit = fit_channels(&[&l, &r], &points(target));
+            let (theirs, preamp) = exported(preset);
+            response_parity(name, &fit, preset);
+            assert_eq!(fit.filters.len(), theirs.len(), "{name}: {:?}", fit.filters);
+            for (o, t) in fit.filters.iter().zip(&theirs) {
+                assert_eq!(o.kind, t.kind, "{name}");
+                assert_eq!(o.freq, t.freq, "{name}: {o:?} against {t:?}");
+                assert!(
+                    (o.gain_db - t.gain_db).abs() < 0.05,
+                    "{name}: {o:?} against {t:?}"
+                );
+                assert!((o.q - t.q).abs() < 0.0005, "{name}: {o:?} against {t:?}");
+            }
+            assert!((fit.preamp_db - preamp).abs() < 0.05, "{name}");
         }
     }
 
-    /// Given the measurement as koan keeps one fetched from the site, the
-    /// fit is still the site's preset.
+    /// Given the measurement as koan keeps one fetched from the site, its
+    /// channels already averaged, and again as a saved correction keeps it,
+    /// levelled and on AutoEQ's grid, the fit plays what the site's preset
+    /// does.
     #[test]
-    fn reproduces_squiglinks_presets_from_koans_copy() {
-        let measured = as_koan_has_it();
-        for (name, target, preset) in PRESETS {
-            assert_matches(name, &fit(&measured, &points(target)), preset);
-        }
-    }
-
-    /// Refitted from the copy a saved correction keeps, levelled and on
-    /// AutoEQ's grid to the hundredth of a decibel, as when its target is
-    /// changed, the fit is still the site's preset.
-    #[test]
-    fn reproduces_squiglinks_presets_from_the_kept_measurement() {
+    fn plays_squiglinks_presets_from_koans_copies() {
         use crate::audio::dsp::targets;
-        let text: String = as_koan_has_it()
+        let averaged = as_koan_has_it();
+        let text: String = averaged
             .iter()
             .map(|(f, db)| format!("{f},{db}\n"))
             .collect();
-        let read = targets::covering(&text, "A measurement").unwrap();
-        let kept = targets::parse(&targets::on_grid(&read));
+        let kept = targets::parse(&targets::on_grid(
+            &targets::covering(&text, "A measurement").unwrap(),
+        ));
         for (name, target, preset) in PRESETS {
-            assert_matches(name, &fit(&kept, &points(target)), preset);
+            response_parity(name, &fit(&averaged, &points(target)), preset);
+            response_parity(name, &fit(&kept, &points(target)), preset);
         }
     }
 
