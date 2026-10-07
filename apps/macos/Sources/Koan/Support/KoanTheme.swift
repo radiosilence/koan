@@ -1437,6 +1437,7 @@ private struct TelevisionPicker<Value: Hashable>: View {
         Button { open = true } label: {
             HStack(spacing: KoanTheme.Space.m) {
                 Text(title)
+                    .textCase(.lowercase)
                 Spacer(minLength: 0)
                 Text(options.first { $0.value == selection }?.label ?? "")
                     .font(.koan(.control))

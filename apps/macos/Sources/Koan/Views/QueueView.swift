@@ -46,6 +46,7 @@ struct QueueView: View {
     /// The queue outlives the page you are on — see `StageView`. Anything
     /// aimed at whatever list is in front of you has to check.
     @Environment(\.onStage) private var onStage
+    @Environment(\.roomTint) private var roomTint
     #if os(macOS)
     @Environment(CoverArtCache.self) private var art
     @Environment(PlayingLevels.self) private var levels
@@ -399,8 +400,8 @@ struct QueueView: View {
             .accessibilityLabel("More")
             #else
             // A secondary control, in ink as its neighbours are; a menu's label
-            // otherwise takes the accent.
-            .tint(KoanTheme.isOn ? Color.koanInk : nil)
+            // otherwise takes the accent. The system look keeps the record's.
+            .tint(KoanTheme.isOn ? Color.koanInk : roomTint)
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .frame(width: 22)

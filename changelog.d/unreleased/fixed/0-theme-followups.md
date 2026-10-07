@@ -1,0 +1,1 @@
+- **Theme labels and tints.** In the kōan look on Apple TV, Settings' picker rows are lowercased like their neighbours; in the system look on the Mac and iPhone, the queue's "…" menu keeps the record's accent.
