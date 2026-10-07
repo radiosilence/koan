@@ -1699,6 +1699,11 @@ mod tests {
         let music_dir = dir.path().join(&nfd);
         std::fs::create_dir_all(&music_dir).unwrap();
         test_utils::generate_wav(&music_dir.join("softice.wav"), 44100, 1, 0.2, 16);
+        // Where the filesystem tells the two spellings apart, as Linux's do,
+        // the precomposed path names no file, and there is nothing to drop.
+        if !dir.path().join(&nfc).exists() {
+            return;
+        }
         let db = test_db(dir.path());
 
         // Dropped from Finder: the path arrives precomposed.
