@@ -27,6 +27,7 @@ struct PlaylistsList: View {
                     }
                     .listLink()
                 }
+                .washedGround()
             }
         }
         .navigationTitle(KoanTheme.label("Playlists"))

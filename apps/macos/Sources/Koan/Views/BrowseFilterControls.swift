@@ -90,16 +90,13 @@ private struct BrowseFilterForm: View {
     @Environment(LibraryModel.self) private var library
 
     var body: some View {
-        // A television's form is the theme's container, which a Mac's
-        // popover cannot size itself to.
-        #if os(tvOS)
-        KoanForm { sections }
+        // The theme's form, which a Mac's popover cannot size itself to.
+        #if os(macOS)
+        Form { sections }
+            .koanForm()
             .task { await library.loadBrowseChoices() }
         #else
-        Form { sections }
-            #if os(macOS)
-            .formStyle(.grouped)
-            #endif
+        KoanForm { sections }
             .task { await library.loadBrowseChoices() }
         #endif
     }
