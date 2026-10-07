@@ -1,0 +1,1 @@
+- **The Mac transport is the window's foot when the wash covers the whole window.** It keeps the theme's ground and a rule along its top, as the iPhone's mini player does, and spans the window beneath the sidebar and lyrics, which stop at its edge. The wash fills everything above it.

@@ -65,7 +65,7 @@ struct TransportBar: View {
         }
         .padding(.horizontal, Self.inset)
         .padding(.vertical, 9)
-        .koanBar(radius: Self.radius, inset: Self.inset, overWash: true)
+        .koanBar(radius: Self.radius, inset: Self.inset)
         // Measured outside the paddings, so nothing the layout below decides
         // feeds back into the width it was decided from.
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { barWidth = $0 }

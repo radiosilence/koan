@@ -63,6 +63,7 @@ struct RootView: View {
         NavigationSplitView(columnVisibility: $columns) {
             SidebarView()
                 .modifier(SidebarOverWash())
+                .clearsWashedTransport(transportHeight)
                 // The column's minimum alone is not held when the window
                 // first lays out: the sidebar opened at its content's width
                 // and truncated its labels. The content's own minimum is.
@@ -82,6 +83,7 @@ struct RootView: View {
         }
         .inspector(isPresented: $ui.showLyrics) {
             LyricsPanel()
+                .clearsWashedTransport(transportHeight)
                 .inspectorColumnWidth(min: 260, ideal: 280, max: 460)
                 // The toggle belongs to the inspector rather than the window, so
                 // it sits at the pane's leading edge and moves with it. In the
@@ -400,11 +402,15 @@ private struct TransportOverlay: View {
     let columns: NavigationSplitViewVisibility
 
     @Environment(UIState.self) private var ui
+    @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
 
     var body: some View {
+        // Over the wash it is the window's foot, under every column, as the
+        // phone's mini player is.
+        let washed = KoanTheme.washesWindow(appearance)
         TransportBar()
-            .padding(.leading, columns == .detailOnly ? 0 : ui.sidebarWidth)
-            .padding(.trailing, ui.showLyrics ? ui.lyricsWidth : 0)
+            .padding(.leading, washed || columns == .detailOnly ? 0 : ui.sidebarWidth)
+            .padding(.trailing, !washed && ui.showLyrics ? ui.lyricsWidth : 0)
             .background(
                 GeometryReader { proxy in
                     Color.clear.preference(
@@ -656,10 +662,10 @@ private struct ClearsTransport: ViewModifier {
     }
 }
 
-/// In the washed theme the toolbar and transport sit on the wash with nothing
-/// under them and a hairline at the edge they share with the page, so a page
-/// stops at those edges: a row passing beneath would
-/// need a scrim or a fade to be told from their text. The toolbar's safe area
+/// In the washed theme the toolbar sits on the wash with nothing under it and
+/// a hairline at the edge it shares with the page, and the transport on its
+/// own ground below a rule, so a page stops at those edges: a row passing
+/// beneath the toolbar would need a scrim or a fade to be told from its text. The toolbar's safe area
 /// becomes real space, so the AppKit lists that scroll into a safe area find
 /// none at the top, and everything past the edges is clipped.
 private struct StopsAtBars: ViewModifier {
@@ -702,9 +708,24 @@ private struct SidebarOverWash: ViewModifier {
     }
 }
 
+/// The sidebar and the lyrics in the washed theme, where the transport runs
+/// under them too: they stop at its edge as the page does.
+private struct ClearsWashedTransport: ViewModifier {
+    let height: CGFloat
+    @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
+
+    func body(content: Content) -> some View {
+        content.padding(.bottom, KoanTheme.washesWindow(appearance) ? height : 0)
+    }
+}
+
 private extension View {
     func clearsTransport(_ height: CGFloat, glass: Bool) -> some View {
         modifier(ClearsTransport(height: height, glass: glass))
+    }
+
+    func clearsWashedTransport(_ height: CGFloat) -> some View {
+        modifier(ClearsWashedTransport(height: height))
     }
 }
 
