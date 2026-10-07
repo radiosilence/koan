@@ -90,7 +90,7 @@ struct ArtworkBleed: View {
             .allowsHitTesting(false)
             .task(id: source) { await load() }
         } else {
-            DriftingWash(image: answered ?? nil, pending: answered == nil, drifts: breathes)
+            DriftingWash(image: answered ?? nil, pending: answered == nil, drifts: breathes, tone: systemTone)
                 .opacity(0.5)
                 .mask(
                     LinearGradient(
@@ -103,6 +103,18 @@ struct ArtworkBleed: View {
                 .allowsHitTesting(false)
                 .task(id: source) { await load() }
         }
+    }
+
+    /// The platform's look holds the wash to the theme's limits on a phone,
+    /// where secondary text, track numbers and lengths sit straight on it: a
+    /// saturated sleeve otherwise darkens a light page past what they read on.
+    /// The Mac's wash fades out under its header and keeps its full colour.
+    private var systemTone: WashTone? {
+        #if os(iOS)
+        scheme == .dark ? .dark : .light
+        #else
+        nil
+        #endif
     }
 
     /// Only for a cover the cache could not already answer for. The usual path

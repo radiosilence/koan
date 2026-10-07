@@ -54,11 +54,8 @@ struct NowPlayingSheet: View {
     /// lyric sheet share a sleeve.
     @ViewBuilder private var stage: some View {
         if ui.showLyrics {
-            // The words stand in the wash, as the sleeve did. The panel's ground
-            // is the environment's background style, which the Mac leaves as
-            // its inspector's and this clears.
+            // The words stand in the wash, as the sleeve did.
             LyricsPanel()
-                .backgroundStyle(.clear)
                 .transition(.opacity)
         } else if let source = player.currentArtwork {
             AlbumArtwork(source: source, size: .tile, cornerRadius: KoanTheme.radius(12))
@@ -301,4 +298,42 @@ struct RoutePicker: UIViewRepresentable {
     }
 
     func updateUIView(_ view: AVRoutePickerView, context: Context) {}
+}
+
+/// How Now Playing opens. A sheet, as the platform has it, except on an iPad in
+/// the theme, where a sheet is a rounded card floating over the page: there it
+/// covers the screen, and goes with a swipe down or its chevron.
+struct NowPlayingPresentation: ViewModifier {
+    @Binding var isPresented: Bool
+    @Environment(\.horizontalSizeClass) private var width
+
+    func body(content: Content) -> some View {
+        if KoanTheme.isOn && width == .regular {
+            content.fullScreenCover(isPresented: $isPresented) {
+                NowPlayingSheet()
+                    .overlay(alignment: .topLeading) {
+                        Button { isPresented = false } label: {
+                            KoanIcon("chevron.down")
+                                .font(.koan(.titleSmall))
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .koanButton(.icon)
+                        .accessibilityLabel("Close")
+                        .padding(KoanTheme.Space.m)
+                    }
+                    .gesture(
+                        DragGesture(minimumDistance: 24).onEnded { drag in
+                            let down = drag.translation
+                            if down.height > 120, down.height > abs(down.width) * 2 { isPresented = false }
+                        }
+                    )
+            }
+        } else {
+            content.sheet(isPresented: $isPresented) {
+                NowPlayingSheet()
+                    .presentationDetents([.large])
+            }
+        }
+    }
 }

@@ -42,8 +42,12 @@ enum KoanTheme {
             look.subtitleTextAttributes = [.font: UIFont.koan(.fine), .foregroundColor: UIColor.koanMuted]
             return look
         }
+        // Scrolled, the bar is flat `bg` over a rule, as the transport is: the
+        // default is a blur with the page showing through it.
         let rest = UINavigationBarAppearance()
-        rest.configureWithDefaultBackground()
+        rest.configureWithOpaqueBackground()
+        rest.backgroundColor = .koanBg
+        rest.shadowColor = .koanRule
         let edge = UINavigationBarAppearance()
         edge.configureWithTransparentBackground()
         let bar = UINavigationBar.appearance()
@@ -331,6 +335,7 @@ extension UIColor {
     }
 
     /// The tokens layer-drawn views read, as on the Mac.
+    static let koanBg = koan(dark: 0x1E1E1E, light: 0xFFFFFF)
     static let koanInk = koan(dark: 0xCCCCCC, light: 0x333333)
     static let koanStrong = koan(dark: 0xFFFFFF, light: 0x111111)
     static let koanRule = koan(dark: 0x383838, light: 0xE0E0E0)
@@ -1185,15 +1190,18 @@ struct KoanLabeledContentStyle: LabeledContentStyle {
 #endif
 
 #if os(iOS)
-/// A form row on a phone: the label leading in `body` and `ink`, as a toggle's
-/// is, and the value trailing in `control` and `muted`. A field or control in
-/// the value keeps its own type. Without this a row's label takes whatever
-/// size the system's form gives a row beside a field.
+/// A form row on a phone: the label leading in `body` and `ink`, lowercase as
+/// every label the app writes is, and the value trailing in `control` and
+/// `muted`. A field or control in the value keeps its own type. Without this a
+/// row's label takes whatever size the system's form gives a row beside a
+/// field. A label that is data (a server's extension, a maker) keeps its case
+/// with `.textCase(nil)` on its text.
 struct KoanRowLabelStyle: LabeledContentStyle {
     func makeBody(configuration: Configuration) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: KoanTheme.Space.m) {
             configuration.label
                 .font(.koan(.body))
+                .textCase(.lowercase)
                 .foregroundStyle(Color.koanInk)
             Spacer(minLength: 0)
             configuration.content
@@ -1843,6 +1851,134 @@ struct KoanTabItem: View {
     }
 }
 
+#if os(iOS)
+extension View {
+    /// A pushed page's way back. In the theme, a bare chevron in `ink` in place
+    /// of the platform's glass circle, which no bar appearance reaches; the
+    /// edge swipe still goes back. The platform's back button otherwise.
+    func koanBackButton() -> some View {
+        modifier(KoanBackButton())
+    }
+}
+
+private struct KoanBackButton: ViewModifier {
+    @Environment(\.dismiss) private var dismiss
+
+    func body(content: Content) -> some View {
+        if KoanTheme.isOn {
+            content
+                .navigationBarBackButtonHidden()
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button { dismiss() } label: {
+                            KoanIcon("chevron.left")
+                                .font(.koan(.titleSmall))
+                                .foregroundStyle(Color.koanInk)
+                                .frame(width: 44, height: 44, alignment: .leading)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Back")
+                    }
+                    .sharedBackgroundVisibility(.hidden)
+                }
+                .background { SwipeBack() }
+        } else {
+            content
+        }
+    }
+}
+
+/// The edge swipe a hidden back button takes with it, given back: the stack's
+/// pop gesture, answered by a delegate that allows it wherever there is a page
+/// to go back to.
+private struct SwipeBack: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> Controller { Controller() }
+    func updateUIViewController(_ controller: Controller, context: Context) {}
+
+    final class Controller: UIViewController {
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            navigationController?.interactivePopGestureRecognizer?.delegate = Allow.shared
+        }
+    }
+
+    /// One, held for good: the gesture holds its delegate weakly, and outlives
+    /// every page that set it.
+    @MainActor final class Allow: NSObject, UIGestureRecognizerDelegate {
+        static let shared = Allow()
+
+        func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
+            ((gesture.view?.next as? UINavigationController)?.viewControllers.count ?? 0) > 1
+        }
+    }
+}
+#endif
+
+extension View {
+    /// A page's search field. In the theme on iOS, a flat `surface` field under
+    /// the title with a bare clear button, in place of the platform's glass
+    /// capsule and its glass close button. `.searchable` everywhere else.
+    @ViewBuilder
+    func koanSearchable(
+        text: Binding<String>,
+        placement: SearchFieldPlacement = .automatic,
+        prompt: String,
+        onSubmit: @escaping () -> Void = {}
+    ) -> some View {
+        #if os(iOS)
+        if KoanTheme.isOn {
+            safeAreaInset(edge: .top, spacing: 0) {
+                KoanSearchField(text: text, prompt: prompt, onSubmit: onSubmit)
+                    .padding(.horizontal, KoanTheme.Space.page)
+                    .padding(.vertical, KoanTheme.Space.s)
+            }
+        } else {
+            searchable(text: text, placement: placement, prompt: prompt)
+                .onSubmit(of: .search, onSubmit)
+        }
+        #else
+        searchable(text: text, placement: placement, prompt: prompt)
+            .onSubmit(of: .search, onSubmit)
+        #endif
+    }
+}
+
+#if os(iOS)
+/// The theme's search field: a glyph, the field and, once there is something
+/// to clear, a bare clear button, on `surface`.
+private struct KoanSearchField: View {
+    @Binding var text: String
+    let prompt: String
+    let onSubmit: () -> Void
+
+    var body: some View {
+        HStack(spacing: KoanTheme.Space.s) {
+            KoanIcon(Icon.search)
+                .foregroundStyle(Color.koanMuted)
+                .accessibilityHidden(true)
+            TextField(KoanTheme.label(prompt), text: $text)
+                .submitLabel(.search)
+                .onSubmit(onSubmit)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .accessibilityLabel(prompt)
+            if !text.isEmpty {
+                Button { text = "" } label: {
+                    KoanIcon("xmark")
+                        .foregroundStyle(Color.koanMuted)
+                        .frame(minWidth: 28, minHeight: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear")
+            }
+        }
+        .koanField()
+    }
+}
+#endif
+
 extension View {
     /// Hides the platform's tab bar where the theme draws its own (iOS), and
     /// makes the page room for that bar at its foot. Applied to every page in
@@ -1936,15 +2072,14 @@ struct KoanUnavailable: View {
     }
 }
 
-/// On a phone, in the theme, the platform's tab bar gives way to the theme's
-/// own. An iPad keeps its sidebar layout, the platform's.
+/// In the theme the platform's tab bar gives way to the theme's own: the tabs
+/// and mini player on a phone, the sidebar and mini player on an iPad.
 private struct KoanHidesSystemTabBar: ViewModifier {
-    @Environment(\.horizontalSizeClass) private var width
     @Environment(\.koanBarHeight) private var bar
 
     func body(content: Content) -> some View {
         #if os(iOS)
-        if KoanTheme.isOn && width == .compact {
+        if KoanTheme.isOn {
             content
                 .toolbar(.hidden, for: .tabBar)
                 .safeAreaInset(edge: .bottom, spacing: 0) {
