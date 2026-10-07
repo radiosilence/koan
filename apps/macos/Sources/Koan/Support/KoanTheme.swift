@@ -730,7 +730,12 @@ extension UIFont {
             ? UIFont.monospacedSystemFont(ofSize: role.size, weight: weight)
             : UIFont(descriptor: wanted, size: role.size)
         let style: UIFont.TextStyle = switch role.scalesWith {
+        #if os(tvOS)
+        // tvOS has no Large Title style; Title 1 is its largest.
+        case .largeTitle: .title1
+        #else
         case .largeTitle: .largeTitle
+        #endif
         case .title: .title1
         case .title2: .title2
         case .callout: .callout
