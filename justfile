@@ -749,11 +749,11 @@ ios-bars phone="koan-dev" pad="koan-ipad": (ios-ffi "iphonesimulator") ios-proje
             -destination "id=$udid" \
             -only-testing:KoanUITests/BarInsetTests \
             -resultBundlePath "$out/$device.xcresult" || status=$?
-        xcrun simctl ui "$udid" appearance "$was"
+        xcrun simctl ui "$udid" appearance "$was" || true
         # One booted simulator at a time.
-        xcrun simctl shutdown "$udid"
+        xcrun simctl shutdown "$udid" || true
         mkdir -p "$out/$device"
-        xcrun xcresulttool export attachments --path "$out/$device.xcresult" --output-path "$out/$device" >/dev/null
+        xcrun xcresulttool export attachments --path "$out/$device.xcresult" --output-path "$out/$device" >/dev/null || true
     done
     echo "screenshots in $out"
     exit $status

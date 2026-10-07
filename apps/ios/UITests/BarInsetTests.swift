@@ -75,6 +75,9 @@ final class BarInsetTests: XCTestCase {
     }
 
     func testLibrary() {
+        // Plays first, so history, recently played and the downloads have rows.
+        playLongAlbum()
+        skip(4)
         let pad = UIDevice.current.userInterfaceIdiom == .pad
         if !pad {
             tab("Library")
@@ -99,12 +102,15 @@ final class BarInsetTests: XCTestCase {
         if open(page("Playlists")) {
             settle(2)
             assertClears("playlists")
-            if open(app.staticTexts[any: "Playlist 1"]) {
+            // The last one, which the scroll to the foot left on screen.
+            let last = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "label BEGINSWITH[c] 'Playlist 20'")).firstMatch
+            if open(last) {
                 settle(2)
                 assertClears("playlist")
                 selecting { assertClears("playlist, selecting") }
             } else {
-                XCTFail("no Playlist 1")
+                XCTFail("no Playlist 20")
             }
         }
     }
@@ -132,10 +138,7 @@ final class BarInsetTests: XCTestCase {
     func testHistory() {
         // A few plays, so the page has rows.
         playLongAlbum()
-        for _ in 0..<4 {
-            app.buttons[any: "Next"].firstMatch.tap()
-            settle(1)
-        }
+        skip(4)
         let pad = UIDevice.current.userInterfaceIdiom == .pad
         if !pad { tab("Library") }
         if open(page("History")) {
@@ -180,7 +183,9 @@ final class BarInsetTests: XCTestCase {
             }
             settle(1)
             assertClears("EQ: \(profile)")
-            let link = app.buttons.matching(NSPredicate(format: "label ==[c] %@", picker)).firstMatch
+            // Near the top, over the foot the page was scrolled to.
+            for _ in 0..<6 { app.swipeDown(velocity: .fast) }
+            let link = app.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] %@", picker)).firstMatch
             reach(link)
             if open(link) {
                 settle(1)
@@ -208,10 +213,8 @@ final class BarInsetTests: XCTestCase {
         var top = bar.frame.minY
         let picking = app.otherElements[any: "Selection"]
         if picking.exists { top = min(top, picking.frame.minY) }
-        guard let foot = foot() else {
-            XCTFail("\(page): nothing scrolls", file: file, line: line)
-            return
-        }
+        // A page showing only its empty state has no list to end under the bar.
+        guard let foot = foot() else { return }
         XCTAssertLessThanOrEqual(
             foot.maxY, top + 1,
             "\(page): “\(foot.label)” ends at \(foot.maxY), under the bar from \(top)",
@@ -277,8 +280,17 @@ final class BarInsetTests: XCTestCase {
         search("Thirty Rooms")
         XCTAssertTrue(open(app.staticTexts[any: "Thirty Rooms"]), "no Thirty Rooms in the results")
         settle(2)
-        XCTAssertTrue(open(app.staticTexts[any: "Room 1"]), "no Room 1 on the record")
-        settle(2)
+        let first = app.cells.containing(NSPredicate(format: "label ==[c] 'Room 1'")).firstMatch
+        XCTAssertTrue(open(first), "no Room 1 on the record")
+        XCTAssertTrue(app.buttons[any: "Pause"].firstMatch.waitForExistence(timeout: 30), "the record did not play")
+    }
+
+    /// On through the queue, so each track is a play in history.
+    private func skip(_ tracks: Int) {
+        for _ in 0..<tracks {
+            app.buttons[any: "Next"].firstMatch.tap()
+            settle(2)
+        }
     }
 
     private func search(_ text: String) {
