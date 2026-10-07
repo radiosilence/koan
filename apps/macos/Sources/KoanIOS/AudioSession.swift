@@ -89,25 +89,27 @@ final class AudioSession {
             self.note = note
         }
 
-        /// The track's rate is a request: a USB DAC that supports it is
-        /// switched to it, while the speaker, Bluetooth and AirPlay keep their
-        /// own and RemoteIO resamples. What the hardware runs at is read back,
-        /// so the format badge shows which happened.
-        func activate(preferredSampleRate: Double) -> Double {
+        /// `sampleRate` is what the output was built for, asked for as the
+        /// preferred rate: a USB DAC that supports it is switched to it, while
+        /// the speaker, Bluetooth and AirPlay keep their own and RemoteIO
+        /// resamples. Answers the rate the hardware runs at, so the format
+        /// badge shows which happened; nil when iOS refuses activation —
+        /// during a call, or from the background with no remote command
+        /// behind it — and the engine then does not start.
+        func activate(sampleRate: Double) -> Double? {
             let session = AVAudioSession.sharedInstance()
-            if preferredSampleRate > 0 {
-                do {
-                    try session.setPreferredSampleRate(preferredSampleRate)
-                } catch {
-                    note("audio session refused \(preferredSampleRate) Hz: \(error)")
-                }
+            do {
+                try session.setPreferredSampleRate(sampleRate)
+            } catch {
+                note("audio session refused \(sampleRate) Hz: \(error)")
             }
             do {
                 try session.setActive(true)
+                return session.sampleRate
             } catch {
                 note("audio session refused activation: \(error)")
+                return nil
             }
-            return session.sampleRate
         }
 
         func release() {
