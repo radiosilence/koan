@@ -667,8 +667,8 @@ extension View {
     /// The theme's sheet on a television: a square panel on `bg` inside a
     /// rule, over the page dimmed. A cover rather than a sheet, which tvOS
     /// draws as a rounded card whatever its background is told; Menu closes
-    /// it as it closes a sheet. Its content is held whole when it fits, and
-    /// scrolls when it does not.
+    /// it as it closes a sheet. It stands as tall as its content, and scrolls
+    /// past a limit.
     func televisionPanel<Panel: View>(
         isPresented: Binding<Bool>,
         title: String? = nil,
@@ -683,14 +683,15 @@ extension View {
 private struct TelevisionPanel<Panel: View>: View {
     let title: String?
     @ViewBuilder let content: () -> Panel
+    /// The content's own height: the panel stands as tall as it, to a limit.
+    @State private var height: CGFloat = 0
 
     var body: some View {
-        ViewThatFits(in: .vertical) {
-            stack
-            ScrollView { stack }
+        ScrollView {
+            stack.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
         }
-        .frame(width: 960)
-        .frame(maxHeight: 880)
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(width: 960, height: min(max(height, 1), 880))
         .background(Color.koanBg)
         .overlay { Rectangle().strokeBorder(Color.koanRule, lineWidth: KoanTheme.hairline) }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
