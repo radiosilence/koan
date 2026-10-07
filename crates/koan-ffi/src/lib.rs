@@ -1052,6 +1052,65 @@ impl KoanEngine {
         .await
     }
 
+    /// Everything known about a track, for its info view. `None` for a track
+    /// that is not in the library.
+    pub async fn track_info(
+        self: Arc<Self>,
+        track_id: i64,
+    ) -> Result<Option<TrackInfo>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let Some(row) = queries::get_track_row(&db.conn, track_id).map_err(db_err)? else {
+                return Ok(None);
+            };
+            let Some(track) = self.decorate(&db, vec![row]).into_iter().next() else {
+                return Ok(None);
+            };
+            let uid = queries::uids_for(&db.conn, queries::UidKind::Track, [track_id])
+                .map_err(db_err)?
+                .remove(&track_id);
+            let sources = queries::sources_of_track(&db.conn, track_id)
+                .map_err(db_err)?
+                .into_iter()
+                .map(Into::into)
+                .collect();
+            let replay_gain = track
+                .path
+                .as_deref()
+                .and_then(|p| koan_core::audio::replaygain::read_tags(std::path::Path::new(p)).ok())
+                .map(|rg| {
+                    [
+                        (
+                            "Track gain",
+                            rg.track_gain_db.map(|g| format!("{g:+.2} dB")),
+                        ),
+                        ("Track peak", rg.track_peak.map(|p| format!("{p:.6}"))),
+                        (
+                            "Album gain",
+                            rg.album_gain_db.map(|g| format!("{g:+.2} dB")),
+                        ),
+                        ("Album peak", rg.album_peak.map(|p| format!("{p:.6}"))),
+                    ]
+                    .into_iter()
+                    .filter_map(|(name, value)| {
+                        value.map(|value| InfoField {
+                            name: name.into(),
+                            value,
+                        })
+                    })
+                    .collect()
+                })
+                .unwrap_or_default();
+            Ok(Some(TrackInfo {
+                track,
+                uid,
+                sources,
+                replay_gain,
+            }))
+        })
+        .await
+    }
+
     /// FTS5 search across title, artist, album, genre.
     pub async fn search(
         self: Arc<Self>,

@@ -14,9 +14,13 @@ struct NowPlayingSheet: View {
     @Environment(Navigator.self) private var nav
     @Environment(UIState.self) private var ui
     @Environment(AppState.self) private var app
+    @Environment(LibraryModel.self) private var library
     @Environment(\.dismiss) private var dismiss
     @State private var showingDevices = false
     @State private var showingControl = false
+    @State private var showingInfo = false
+    /// The playing track as its info and its menu need it.
+    @State private var info: TrackInfo?
 
     var body: some View {
         VStack(spacing: 20) {
@@ -48,6 +52,14 @@ struct NowPlayingSheet: View {
         .onChange(of: nav.current) { dismiss() }
         .outputSheet(isPresented: $showingDevices)
         .controlSheet(isPresented: $showingControl)
+        .tray(isPresented: $showingInfo) {
+            if let info { TrackInfoView(info: info) }
+        }
+        .task(id: player.currentTrackId) {
+            info = nil
+            guard let id = player.currentTrackId else { return }
+            info = (try? await library.engine.trackInfo(trackId: id)) ?? nil
+        }
     }
 
     /// The sleeve, or the words, in the same place — the way a record and its
@@ -101,9 +113,27 @@ struct NowPlayingSheet: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentTransition(.opacity)
             .animation(.easeInOut(duration: 0.2), value: player.currentEntry?.queueItemId)
+            // The artist and the record are links of their own; the rest of
+            // the block opens what the library knows about the track.
+            .contentShape(Rectangle())
+            .onTapGesture { if info != nil { showingInfo = true } }
+            .accessibilityAction(named: "Track Info") { if info != nil { showingInfo = true } }
 
             if let trackId = player.currentTrackId {
                 TrackHeart(trackId: trackId, size: .title3)
+            }
+            if let info {
+                Menu {
+                    PlayableMenu(playable: .track(info.track))
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.role(.body, system: .body))
+                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                        .touchTarget()
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .accessibilityLabel("More")
             }
         }
     }
