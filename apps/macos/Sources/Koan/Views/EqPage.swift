@@ -107,6 +107,7 @@ struct EqSettings: View {
         #else
         .navigationDestination(isPresented: $managing) {
             ManageEq(device: device, active: overview?.active, chain: overview?.chain ?? [])
+                .koanHidesSystemTabBar()
         }
         #endif
         #if os(macOS)

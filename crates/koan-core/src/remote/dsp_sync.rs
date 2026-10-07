@@ -84,7 +84,7 @@ impl SyncDoc {
         if json.len() > MAX_DOC {
             return Err(format!("An EQ may hold at most {} KB", MAX_DOC >> 10));
         }
-        let wire: Wire = serde_json::from_str(json).map_err(|e| format!("Not a profile: {e}"))?;
+        let wire: Wire = serde_json::from_str(json).map_err(|e| format!("Not an EQ: {e}"))?;
         let mut doc = Self {
             profile: wire.profile.known,
             files: wire.files,
