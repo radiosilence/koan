@@ -1,0 +1,1 @@
+- **No spinner flash on album pages.** The library is read locally, so a record nearly always arrives at once; the progress indicator now appears only if the read is still going after 300 ms.

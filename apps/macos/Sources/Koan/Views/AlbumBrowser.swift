@@ -195,8 +195,7 @@ struct AlbumDetailView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ProgressView()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            SlowReadProgress()
         }
     }
 
@@ -210,6 +209,25 @@ struct AlbumDetailView: View {
             parts.append(Format.duration(total))
         }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// Nothing, then a spinner if the read is still going after a beat. The
+/// library is local, so a record nearly always lands within a frame or two,
+/// and a spinner that flashes on every page says there was something to wait
+/// for when there was not.
+private struct SlowReadProgress: View {
+    @State private var slow = false
+
+    var body: some View {
+        Group {
+            if slow { ProgressView() }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task {
+            try? await Task.sleep(for: .milliseconds(300))
+            slow = true
+        }
     }
 }
 
