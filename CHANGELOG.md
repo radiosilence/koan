@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.60.8
+
+### Fixed
+
+- **A record without cover art no longer keeps the previous record's colours.** The wash fades to the bare ground and the accent returns to mint, while a cover that is still loading keeps the current colours until it arrives.
+- **An Equalizer APO file's preamp stays a preamp.** The same `Preamp:` on each channel, as squig.link's two-channel export writes it, is imported as the EQ's preamp rather than a gain band on each channel, so the graph no longer draws it inside the curve. An EQ imported before keeps its gain bands until its file is imported again.
+- **A correction with a tuning on top is not quieter than it needs to be.** The chain's preamp is worked out from what the correction and tuning play together, rather than kept at the correction's own, so a layered chain plays at the level of a single EQ with the same curve.
+- **A tuning skipped under a mixed correction is said.** `koan dsp set` and `koan dsp show` name the device's tuning when a correction that already includes one leaves it out, and `--tuning` takes `none` or an empty value for no tuning, `koan dsp response` included.
+- **A tuning on a measured correction plays as squig.link would.** Under a tuning made against another target, a correction built from a measurement is fitted again to that target rather than played with the difference between the targets added, which only came close to the same result (off by up to a decibel in places). The EQ page, `koan dsp show` and `koan dsp response` show the refit. Nothing is saved.
+
 ## 0.60.7
 
 ### Added
