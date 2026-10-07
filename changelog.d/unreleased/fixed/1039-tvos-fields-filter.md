@@ -1,0 +1,1 @@
+- **Apple TV: square text fields, and a name filter on listings.** In the kōan look, text fields on the TV are square boxes like the rest of the theme instead of rounded pills. Albums, Artists, History and Playlists now have a field above the listing that narrows it by name.
