@@ -24,7 +24,7 @@ struct SeekProgress: PlatformViewRepresentable {
     /// The played extent's colour: the room's accent in the kōan theme, the
     /// label colour otherwise.
     @Environment(\.roomTint) private var tint
-    /// Gay mode: the played extent is the flag, in either look.
+    /// Gay mode: the played extent is the palette, in either look.
     @Environment(\.koanRainbow) private var rainbow
 
     typealias PlatformViewType = ProgressView
@@ -45,7 +45,7 @@ struct SeekProgress: PlatformViewRepresentable {
     /// where that is on a track too long for the capsule to show it.
     final class ProgressView: LayerView {
         /// A gradient so the rainbow can be one; otherwise both ends are the tint.
-        private let played = CAGradientLayer()
+        private let played = CAGradientLayer() // theme: raw — gay mode's gradient, one colour otherwise
         private let head = CALayer()
         var showsHead = true {
             didSet { head.isHidden = !showsHead }
@@ -97,7 +97,7 @@ struct SeekProgress: PlatformViewRepresentable {
 
         private func paint() {
             let colours = rainbow
-                ? KoanAccent.pride.stops.map { PlatformColor($0.color) }
+                ? KoanAccent.holo.stops.map { PlatformColor($0.color) }
                 : [tint ?? .label, tint ?? .label]
             played.colors = colours.map { resolved($0) }
             head.backgroundColor = resolved(.koanLabel)

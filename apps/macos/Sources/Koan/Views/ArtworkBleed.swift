@@ -65,7 +65,7 @@ struct ArtworkBleed: View {
     /// The rainbow drifts whether or not anything plays.
     private var breathes: Bool { (drifts || rainbow) && graphics.drifts && !reduceMotion && !powerSaving }
 
-    /// Gay mode: the flag in place of the sleeve, whatever the record and
+    /// Gay mode: its sheen in place of the sleeve, whatever the record and
     /// whether or not colours come from it.
     private var rainbow: Bool { appearance?.rainbowDrawn == true }
 
@@ -116,7 +116,7 @@ struct ArtworkBleed: View {
         }
     }
 
-    /// Gay mode's disco over the flag, breathing with the music. Only while
+    /// Gay mode's disco over its sheen, breathing with the music. Only while
     /// the rainbow is drawn and motion allowed: it is what keeps the analyser
     /// awake.
     @ViewBuilder private var disco: some View {

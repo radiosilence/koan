@@ -438,9 +438,10 @@ theme-leaks:
             echo "$hits"
         fi
     done
-    # The wash is the only gradient: no fades, scrims or gradient masks.
+    # The wash is the only gradient: no fades, scrims or gradient masks. Gay
+    # mode (Support/Rainbow.swift) is the deliberate exception.
     hits=$(grep -rnE '(Linear|Radial|Angular|Elliptical)Gradient|CAGradientLayer|\.mask\(' apps/macos/Sources --include='*.swift' \
-        | grep -v -e 'Views/ArtworkBleed.swift' -e 'Views/DriftingWash.swift' -e '// theme: raw')
+        | grep -v -e 'Views/ArtworkBleed.swift' -e 'Views/DriftingWash.swift' -e 'Support/Rainbow.swift' -e '// theme: raw')
     if [ -n "$hits" ]; then
         found=1
         echo "$hits"

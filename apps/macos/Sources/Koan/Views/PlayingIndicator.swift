@@ -172,7 +172,7 @@ final class PlayingBarsView: LayerView, LevelsListener {
 
     override func appearanceChanged() { paint() }
 
-    /// Gay mode spreads the bars a third of the flag apart, moving round it
+    /// Gay mode spreads the bars across the palette, moving round it
     /// with the accent; on a selected row they stay the row's white. Every
     /// step of the rainbow is a new tint, which is what repaints them.
     private func paint() {

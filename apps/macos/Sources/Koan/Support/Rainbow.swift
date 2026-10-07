@@ -7,10 +7,12 @@ import KoanFFI
 import SwiftUI
 
 /// Gay mode: the accent, the wash, progress, selected tabs and the playing
-/// bars in the pride flag's hues. Hidden on purpose — no Settings row, no docs.
-/// It is switched by a gesture (the Konami code in the Mac's main window, seven
+/// bars in an acid hyperpop palette — hot pink, cyber blue, holographic lilac,
+/// brat lime and chrome. Hidden on purpose: no Settings row, no docs. It is
+/// switched by a gesture (the Konami code in the Mac's main window, seven
 /// taps on the version line in iOS Settings, ↑↑↓↓←→←→ on a television's
-/// Settings page), and switches itself on for some Charli XCX tracks.
+/// Settings page), and switches itself on for some Charli XCX tracks, which
+/// go fully brat.
 ///
 /// Off, it costs nothing: the only timer is the accent's cycle, and that runs
 /// only while the rainbow is drawn and motion is allowed.
@@ -21,40 +23,43 @@ enum Rainbow {
     /// else. Written by `AppearanceModel` before the tint it changes reaches
     /// them, and only ever on the main thread.
     nonisolated(unsafe) static var drawn = false
-    /// The accent's place around the flag, for the same views.
+    /// The accent's place around the palette, for the same views.
     nonisolated(unsafe) static var step = 0
-    /// A Charli XCX track brought the rainbow out, and brat's lime joins the
-    /// flag for it.
+    /// A Charli XCX track brought the rainbow out: everything goes brat lime.
     nonisolated(unsafe) static var brat = false
 
-    /// The flag, top stripe first.
-    nonisolated static let flag: [UInt32] = [0xE40303, 0xFF8C00, 0xFFED00, 0x008026, 0x004CFF, 0x732982]
-    /// Brat green.
-    nonisolated static let lime: UInt32 = 0x8ACE00
-    /// The colours in force: the flag, and lime after it for brat.
-    nonisolated static var colours: [UInt32] { brat ? flag + [lime] : flag }
+    /// Hot pink, cyber blue, chrome, holographic lilac, brat lime.
+    nonisolated static let hyperpop: [UInt32] = [0xFF2E9A, 0x00C8FF, 0xC9CED6, 0xB388FF, 0x8ACE00]
+    /// Brat: lime, a little lighter and a little darker.
+    nonisolated static let bratLimes: [UInt32] = [0x8ACE00, 0xB0F02A, 0x6FA800]
+    /// The colours in force.
+    nonisolated static var colours: [UInt32] { brat ? bratLimes : hyperpop }
     /// How long the accent holds each place.
     static let period: Duration = .seconds(2)
 
-    /// The stripes as a sleeve for the wash, which blurs, tones and drifts
-    /// them as it would a record.
-    static var wash: PlatformImage { brat ? bratWash : prideWash }
-    private static let prideWash = stripes(flag)
-    private static let bratWash = stripes(flag + [lime])
+    /// A sleeve for the wash, which blurs, tones and drifts it as it would a
+    /// record's: an iridescent diagonal through the palette, or brat's lime.
+    static var wash: PlatformImage { brat ? bratWash : holoWash }
+    private static let holoWash = sheen(hyperpop)
+    private static let bratWash = sheen(bratLimes)
 
-    private static func stripes(_ colours: [UInt32]) -> PlatformImage {
+    private static func sheen(_ colours: [UInt32]) -> PlatformImage {
         let side = 84
-        let band = side / colours.count
         let context = CGContext(
             data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpace(name: CGColorSpace.sRGB)!,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         )!
-        for (index, hex) in colours.enumerated() {
-            context.setFillColor(cgColor(hex))
-            // Core Graphics counts up from the bottom; the flag reads down.
-            context.fill(CGRect(x: 0, y: side - (index + 1) * band, width: side, height: band))
-        }
+        let stops = (colours + [colours[0]]).map(cgColor)
+        let gradient = CGGradient(
+            colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
+            colors: stops as CFArray,
+            locations: nil
+        )!
+        context.drawLinearGradient(
+            gradient, start: .zero, end: CGPoint(x: side, y: side),
+            options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
+        )
         let image = context.makeImage()!
         #if canImport(AppKit)
         return NSImage(cgImage: image, size: CGSize(width: side, height: side))
@@ -82,49 +87,72 @@ enum Rainbow {
         String(name.lowercased().unicodeScalars.filter(CharacterSet.alphanumerics.contains).map(Character.init))
     }
 
-    /// What the toast says as the rainbow comes on, one at random.
-    static let sass = [
-        "gay mode: ON 💅✨",
-        "gay mode: ON 💅✨ — the queue is a runway",
-        "gay mode: ON 💅✨ — bit-perfect and fabulous",
-        "gay mode: ON 💅✨ — lossless, shameless",
-        "gay mode: ON 💅✨ — no notes",
-        "gay mode: ON 💅✨ — hydrate, darling",
-        "gay mode: ON 💅✨ — the wash is serving",
+    /// What the toast says as it comes on, one at random.
+    static let on = [
+        "gay mode: ON ✦ it's giving",
+        "slay ✧˖°",
+        "ur playlist ate",
+        "girl what is this song 💅",
+        "hyperpop mode unlocked ⋆｡°✩",
+        "no thoughts just vibes",
+        "mother is mothering",
+        "the gays are fighting in the comments",
+        "who let her cook 🍳",
+        "flop era cancelled",
+        "this is her renaissance",
+        "chart position: iconic",
+        "serving cunt, sorry, i mean content 💅",
+        "ok diva",
+        "pop girlies stay winning",
     ]
+
+    /// And as it goes off.
+    static let off = [
+        "ok back to being normal i guess",
+        "and the music stops… for now",
+    ]
+
+    /// A Charli XCX track bringing it out.
+    static let bratToast = "brat summer forever 💚"
 }
 
 extension KoanAccent {
-    /// The accent at a place around the flag, tone-mapped into the same bands
-    /// as a record's, so text and indicators keep their contrast. Starts at
-    /// the flag's blue: red would read as something gone wrong. Two places per
-    /// stripe: each stripe, and one between it and the next.
+    /// The accent at a place around the palette, tone-mapped into the same
+    /// bands as a record's, so text and indicators keep their contrast. Chrome
+    /// has no hue to carry and sits out of the cycle; the gradients have it.
+    /// Two places per colour: each, and one between it and the next.
     static func rainbow(_ step: Int) -> KoanAccent {
-        let accents = Rainbow.brat ? bratAccents : prideAccents
+        let accents = Rainbow.brat ? bratAccents : holoAccents
         let count = accents.count
-        return accents[((step + 8) % count + count) % count]
+        return accents[(step % count + count) % count]
     }
 
-    /// The colours as a gradient of accents, for what may carry it: progress,
-    /// the chosen tab, a favourite's heart.
-    static var pride: Gradient {
-        Gradient(colors: (0..<Rainbow.colours.count).map { rainbow($0 * 2 - 8).color })
+    /// The palette as a gradient, for what may carry one: progress, the chosen
+    /// tab, a favourite's heart. The hues as accents, so they read; chrome as
+    /// itself.
+    static var holo: Gradient {
+        Gradient(colors: Rainbow.colours.map { hex in
+            let (_, c, h) = OKLCH.from(srgb: hex)
+            return c < noHue ? Color(cgColor: Rainbow.cgColor(hex)) : tone(hue: h).color
+        })
     }
 
-    private static let prideAccents = around(Rainbow.flag)
-    private static let bratAccents = around(Rainbow.flag + [Rainbow.lime])
+    private static let holoAccents = around(Rainbow.hyperpop)
+    private static let bratAccents = around(Rainbow.bratLimes)
+
+    private static func tone(hue: Double) -> KoanAccent {
+        guard let dark = shade(hue: hue, chroma: chroma.upperBound, band: darkBand, bg: 0x1E1E1E, surface: 0x2A2A2A),
+              let light = shade(hue: hue, chroma: chroma.upperBound, band: lightBand, bg: 0xFFFFFF, surface: 0xF2F2F2)
+        else { return .mint }
+        return KoanAccent(dark: dark, light: light)
+    }
 
     private static func around(_ colours: [UInt32]) -> [KoanAccent] {
-        let hues = colours.map { OKLCH.from(srgb: $0).h }
+        let hues = colours.map { OKLCH.from(srgb: $0) }.filter { $0.c >= noHue }.map(\.h)
         return (0..<hues.count * 2).map { step in
             let from = hues[step / 2], to = hues[(step / 2 + 1) % hues.count]
-            // Round the short way: violet back to red passes through magenta.
             let turn = (to - from + 540).truncatingRemainder(dividingBy: 360) - 180
-            let hue = (from + turn * Double(step % 2) / 2 + 360).truncatingRemainder(dividingBy: 360)
-            guard let dark = shade(hue: hue, chroma: chroma.upperBound, band: darkBand, bg: 0x1E1E1E, surface: 0x2A2A2A),
-                  let light = shade(hue: hue, chroma: chroma.upperBound, band: lightBand, bg: 0xFFFFFF, surface: 0xF2F2F2)
-            else { return .mint }
-            return KoanAccent(dark: dark, light: light)
+            return tone(hue: (from + turn * Double(step % 2) / 2 + 360).truncatingRemainder(dividingBy: 360))
         }
     }
 }
@@ -136,11 +164,11 @@ extension EnvironmentValues {
 
 extension KoanTheme {
     /// What an underline or rule marking the chosen place is drawn in: the
-    /// accent, or with the rainbow on, the flag.
+    /// accent, or with the rainbow on, the palette.
     nonisolated static func marker(rainbow: Bool, vertical: Bool = false) -> AnyShapeStyle {
         rainbow
             ? AnyShapeStyle(LinearGradient(
-                gradient: KoanAccent.pride,
+                gradient: KoanAccent.holo,
                 startPoint: vertical ? .top : .leading,
                 endPoint: vertical ? .bottom : .trailing
             ))
@@ -211,14 +239,15 @@ struct SecretCode<Key: Equatable> {
 }
 
 extension EnvironmentValues {
-    /// Where the rainbow's accent is around the flag, for what sweeps with it.
+    /// Where the rainbow's accent is around the palette, for what sweeps with it.
     @Entry var koanRainbowStep = 0
 }
 
 extension View {
-    /// The now-playing title in gay mode: the flag through the text, moving
-    /// along with the accent's cycle — no clock of its own. Plain with the
-    /// rainbow off or motion reduced.
+    /// The now-playing title in gay mode: the palette through the text,
+    /// moving along with the accent's cycle — no clock of its own — and now
+    /// and then a glitch, the title split into pink and cyan for a blink.
+    /// Plain with the rainbow off or motion reduced.
     func rainbowShimmer() -> some View { modifier(RainbowShimmer()) }
 }
 
@@ -226,17 +255,36 @@ private struct RainbowShimmer: ViewModifier {
     @Environment(\.koanRainbow) private var rainbow
     @Environment(\.koanRainbowStep) private var step
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var glitch = false
 
     func body(content: Content) -> some View {
         if rainbow && !reduceMotion {
-            let stops = KoanAccent.pride.stops.map(\.color)
-            let shift = ((step / 2) % stops.count + stops.count) % stops.count
+            let stops = KoanAccent.holo.stops.map(\.color)
+            let shift = (step % stops.count + stops.count) % stops.count
             let turned = Array(stops[shift...] + stops[..<shift])
             content
-                .foregroundStyle(.clear)
                 .overlay {
                     LinearGradient(colors: turned + [turned[0]], startPoint: .leading, endPoint: .trailing)
                         .mask(content)
+                }
+                .background {
+                    if glitch {
+                        ZStack {
+                            Color(cgColor: Rainbow.cgColor(0xFF2E9A)).mask(content).offset(x: -2, y: -0.5)
+                            Color(cgColor: Rainbow.cgColor(0x00C8FF)).mask(content).offset(x: 2, y: 0.5)
+                        }
+                        .opacity(0.8)
+                    }
+                }
+                // Rare: on one step in seven, two blinks of a tenth of a second.
+                .task(id: step) {
+                    guard step % 7 == 3 else { return }
+                    for blink in [0.09, 0.06, 0.07] {
+                        glitch.toggle()
+                        try? await Task.sleep(for: .seconds(blink))
+                        guard !Task.isCancelled else { break }
+                    }
+                    glitch = false
                 }
         } else {
             content
@@ -255,7 +303,10 @@ struct RainbowBurst: View {
 
     var body: some View {
         ZStack {
-            if let showing { Confetti().id(showing) }
+            if let showing {
+                Confetti().id(showing)
+                Sticker(brat: Rainbow.brat).id(showing)
+            }
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
@@ -267,6 +318,47 @@ struct RainbowBurst: View {
             try? await Task.sleep(for: .seconds(3.2))
             guard !Task.isCancelled else { return }
             showing = nil
+        }
+    }
+}
+
+/// The burst's sticker, slapped on mid-window: brat's wordmark for a Charli
+/// XCX track — lowercase, stretched, a little smeared, black on lime — or a
+/// chrome-edged y2k one for gay mode.
+private struct Sticker: View {
+    let brat: Bool
+    @State private var landed = false
+
+    var body: some View {
+        Group {
+            if brat {
+                Text("brat")
+                    .font(.custom("Arial Narrow", size: 88)) // theme: raw — brat's wordmark
+                    .foregroundStyle(Color(cgColor: Rainbow.cgColor(0x000000)))
+                    .blur(radius: 0.8)
+                    .padding(.horizontal, 36)
+                    .padding(.vertical, 8)
+                    .background(Color(cgColor: Rainbow.cgColor(0x8ACE00)))
+            } else {
+                Text("✧ gay mode ✧")
+                    .font(.koan(.title))
+                    .foregroundStyle(Color(cgColor: Rainbow.cgColor(0xFFFFFF)))
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 10)
+                    .background(Color(cgColor: Rainbow.cgColor(0xFF2E9A)))
+                    .overlay {
+                        Rectangle().strokeBorder(KoanTheme.marker(rainbow: true), lineWidth: 3)
+                    }
+            }
+        }
+        .rotationEffect(.degrees(brat ? -3 : 4))
+        .scaleEffect(landed ? 1 : 1.6)
+        .opacity(landed ? 1 : 0)
+        .task {
+            withAnimation(.spring(duration: 0.3, bounce: 0.45)) { landed = true }
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeIn(duration: 0.3)) { landed = false }
         }
     }
 }
@@ -285,7 +377,10 @@ final class ConfettiView: LayerView {
     private let sparkles = CAEmitterLayer()
     private var started = false
 
-    nonisolated static let emoji = ["🏳️‍🌈", "💖", "✨", "🦄", "💅", "🪩"]
+    /// Emoji, in their own colours.
+    nonisolated static let emoji = ["🦋", "💖", "💅", "🪩"]
+    /// Pixel stars, tinted through the palette.
+    nonisolated static let stars = ["✦", "✧", "⋆"]
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -296,7 +391,7 @@ final class ConfettiView: LayerView {
         let colours = Rainbow.colours
         let paper = Self.piece(width: 9, height: 4, diamond: false)
         let glitter = Self.piece(width: 3, height: 3, diamond: false)
-        let diamond = Self.piece(width: 7, height: 7, diamond: true)
+        let star = Self.glyph("✦", size: 18)
         rain.emitterShape = .line
         rain.emitterCells =
             colours.map { hex in
@@ -313,11 +408,21 @@ final class ConfettiView: LayerView {
                 cell.scaleRange = 0.15
                 return cell
             }
+            + Self.stars.flatMap { shape in
+                let image = Self.glyph(shape, size: 24)
+                return colours.map { hex in
+                    let cell = Self.falling(image, colour: hex, rate: 2, velocity: 180, spin: 2)
+                    cell.scale = 0.6
+                    return cell
+                }
+            }
+            // The chrome heart.
+            + [Self.falling(Self.glyph("♥", size: 40), colour: 0xC9CED6, rate: 4, velocity: 170, spin: 1)]
         sparkles.emitterShape = .rectangle
         sparkles.emitterMode = .surface
         sparkles.emitterCells = colours.map { hex in
             let cell = CAEmitterCell()
-            cell.contents = diamond
+            cell.contents = star
             cell.color = Rainbow.cgColor(hex)
             cell.birthRate = 7
             cell.lifetime = 1.2
@@ -395,7 +500,8 @@ final class ConfettiView: LayerView {
         return context.makeImage()
     }
 
-    /// An emoji as a bitmap, drawn by Core Text in the colour font.
+    /// A glyph as a bitmap, drawn by Core Text: an emoji in its own colours,
+    /// anything else in white for a cell's colour to tint.
     nonisolated static func glyph(_ text: String, size: CGFloat = 56) -> CGImage? {
         let side = Int(size * 1.25)
         guard let context = CGContext(
@@ -405,7 +511,10 @@ final class ConfettiView: LayerView {
         ) else { return nil }
         let font = CTFontCreateWithName("AppleColorEmoji" as CFString, size, nil)
         let line = CTLineCreateWithAttributedString(
-            NSAttributedString(string: text, attributes: [.init(kCTFontAttributeName as String): font])
+            NSAttributedString(string: text, attributes: [
+                .init(kCTFontAttributeName as String): font,
+                .init(kCTForegroundColorAttributeName as String): CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1),
+            ])
         )
         let width = CTLineGetTypographicBounds(line, nil, nil, nil)
         context.textPosition = CGPoint(x: (CGFloat(side) - width) / 2, y: size * 0.25)
@@ -414,8 +523,9 @@ final class ConfettiView: LayerView {
     }
 }
 
-/// A mirror ball in the window's corner while the rainbow is on: it sways on
-/// its string and throws flecks of coloured light across the window. Both are
+/// A holographic mirror ball in the window's corner while the rainbow is on:
+/// it sways on its string, an iridescent sheen turns over it, and it throws
+/// flecks of coloured light across the window. Both are
 /// Core Animation's, committed once; nothing here wakes the main thread.
 struct MirrorBall: View {
     /// Whether the app is in front. Behind, the flecks stop.
@@ -444,6 +554,9 @@ private struct MirrorBallLayers: PlatformViewRepresentable {
 
 final class MirrorBallView: LayerView {
     private let ball = CALayer()
+    /// The palette as a conic sheen, cut to the ball and turning.
+    private let holo = CAGradientLayer()
+    private let holoShape = CALayer()
     /// Emitting only while the app is in front (`MirrorBallLayers`).
     let flecks = CAEmitterLayer()
 
@@ -467,8 +580,19 @@ final class MirrorBallView: LayerView {
             cell.alphaSpeed = -0.6
             return cell
         }
-        ball.contents = ConfettiView.glyph("🪩", size: 64)
+        let face = ConfettiView.glyph("🪩", size: 64)
+        ball.contents = face
         ball.contentsGravity = .resizeAspect
+        holo.type = .conic
+        holo.startPoint = CGPoint(x: 0.5, y: 0.5)
+        holo.endPoint = CGPoint(x: 0.5, y: 0)
+        let sheen = Rainbow.colours.map(Rainbow.cgColor)
+        holo.colors = sheen + [sheen[0]]
+        holo.opacity = 0.55
+        holoShape.contents = face
+        holoShape.contentsGravity = .resizeAspect
+        holo.mask = holoShape
+        ball.addSublayer(holo)
         // Hung from the top of the window.
         ball.anchorPoint = CGPoint(x: 0.5, y: -0.6)
         for layer in [flecks, ball] { hostLayer.addSublayer(layer) }
@@ -485,7 +609,16 @@ final class MirrorBallView: LayerView {
         let side: CGFloat = 52
         ball.bounds = CGRect(x: 0, y: 0, width: side, height: side)
         ball.position = CGPoint(x: size.width - side - 24, y: 0)
+        holo.frame = ball.bounds
+        holoShape.frame = holo.bounds
         CATransaction.commit()
+        if holo.animation(forKey: "turn") == nil {
+            let turn = CABasicAnimation(keyPath: "transform.rotation.z")
+            turn.byValue = 2 * Double.pi
+            turn.duration = 6
+            turn.repeatCount = .infinity
+            holo.add(turn, forKey: "turn")
+        }
         guard ball.animation(forKey: "sway") == nil else { return }
         let sway = CABasicAnimation(keyPath: "transform.rotation.z")
         sway.fromValue = -0.12
