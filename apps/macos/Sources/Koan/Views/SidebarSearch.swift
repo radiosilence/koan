@@ -1,4 +1,5 @@
 #if os(macOS)
+import AppKit
 import KoanFFI
 import SwiftUI
 
@@ -15,13 +16,16 @@ struct SidebarSearch: View {
     @FocusState private var focused: Bool
     @Binding var fieldHeight: CGFloat
     @State private var lit: Int?
+    /// The pointer is over the panel: a click there may take the keyboard
+    /// from the field on mouse-down, and the panel stays for the click to land.
+    @State private var pointing = false
 
     var body: some View {
         let items = suggestions
 
         VStack(spacing: 0) {
             field(items)
-            if focused, !search.queryIsToken, !items.isEmpty {
+            if focused || pointing, !search.queryIsToken, !items.isEmpty {
                 panel(items).padding(.horizontal, KoanTheme.Space.s)
             }
         }
@@ -40,17 +44,17 @@ struct SidebarSearch: View {
         .padding(.vertical, KoanTheme.Space.s)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fieldHeight = $0 }
         .onKeyPress(.downArrow) {
-            guard !items.isEmpty else { return .ignored }
+            guard !items.isEmpty, !composing else { return .ignored }
             lit = min((lit ?? -1) + 1, items.count - 1)
             return .handled
         }
         .onKeyPress(.upArrow) {
-            guard let current = lit else { return .ignored }
+            guard let current = lit, !composing else { return .ignored }
             lit = current == 0 ? nil : current - 1
             return .handled
         }
         .onKeyPress(.escape) {
-            guard !search.query.isEmpty else { return .ignored }
+            guard !search.query.isEmpty, !composing else { return .ignored }
             search.query = ""
             return .handled
         }
@@ -64,6 +68,7 @@ struct SidebarSearch: View {
                 if index == 0 || items[index - 1].kind != item.kind {
                     Text(item.kind)
                         .koanText(.fine, .muted)
+                        .accessibilityAddTraits(.isHeader)
                         .padding(.horizontal, KoanTheme.Space.s)
                         .padding(.top, KoanTheme.Space.s)
                         .padding(.bottom, KoanTheme.Space.xs)
@@ -71,18 +76,30 @@ struct SidebarSearch: View {
                 SuggestionLine(item: item, lit: lit == index)
                     .onHover { if $0 { lit = index } }
                     .onTapGesture { pick(item) }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(lit == index ? [.isButton, .isSelected] : .isButton)
+                    .accessibilityAction { pick(item) }
             }
         }
         .padding(.bottom, KoanTheme.Space.xs)
         .frame(maxWidth: .infinity, alignment: .leading)
         .koanPopover()
         .overlay { Rectangle().strokeBorder(Color.koanRule, lineWidth: KoanTheme.hairline) }
+        .onHover { pointing = $0 }
+        .onDisappear { pointing = false }
     }
 
     private func pick(_ item: Suggestion) {
         search.query = item.token
         search.submit()
         focused = false
+        pointing = false
+    }
+
+    /// An input method is composing: its candidate window takes the arrows
+    /// and Escape, not the suggestions.
+    private var composing: Bool {
+        (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() == true
     }
 
     /// The same few the system's dropdown offered: five tracks, four records,

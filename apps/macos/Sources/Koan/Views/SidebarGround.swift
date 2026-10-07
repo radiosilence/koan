@@ -11,9 +11,12 @@ import SwiftUI
 /// column.
 ///
 /// In the theme, the column's content is lifted out of the glass into the
-/// same place beside it, and the glass is hidden: the sidebar shows the
-/// ground behind it, the wash or the column's flat `bg`, exactly as the page
-/// does. The outline view keeps its selection — what VoiceOver announces and
+/// column beside it, and the glass is hidden: the sidebar shows the ground
+/// behind it, the wash or the column's flat `bg`, exactly as the page does.
+/// AppKit may wrap the content in glass again, or show the glass, when the
+/// column collapses, comes back or goes full screen, so every move of this
+/// view, every resize of the split view and every unhiding of the glass looks
+/// again. The outline view keeps its selection — what VoiceOver announces and
 /// the arrow keys move — but does not draw it; the row draws the theme's mark.
 /// The theme is read at launch, so the platform's look is never touched.
 struct SidebarGround: NSViewRepresentable {
@@ -29,10 +32,15 @@ struct SidebarGround: NSViewRepresentable {
     final class Finder: NSView {
         var themed = false
         private weak var glass: NSGlassEffectView?
+        private weak var outline: NSOutlineView?
+        private var pins: [NSLayoutConstraint] = []
+        private var unhiding: NSKeyValueObservation?
+        private var resizes: NSObjectProtocol?
         private var lifting = false
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
+            if window == nil { stopWatching() }
             apply()
         }
 
@@ -40,37 +48,67 @@ struct SidebarGround: NSViewRepresentable {
 
         func apply() {
             guard themed, !lifting, window != nil else { return }
-            if glass == nil { lift() }
+            if let glass, glass.window == nil { self.glass = nil }
+            // Inside glass: on the first pass, or wrapped again since.
+            var view = superview
+            while let candidate = view, !(candidate is NSGlassEffectView) { view = candidate.superview }
+            if let wrapping = view as? NSGlassEffectView { lift(out: wrapping) }
             guard let glass else { return }
-            // AppKit shows the glass again when the column is collapsed and
-            // brought back.
-            glass.isHidden = true
+            if !glass.isHidden { glass.isHidden = true }
+            watch(glass)
+            if let outline, outline.window != nil, outline.selectionHighlightStyle == .none { return }
             guard let column = glass.superview else { return }
             Self.walk(column) { view in
-                if let outline = view as? NSOutlineView, outline.selectionHighlightStyle != .none {
-                    outline.selectionHighlightStyle = .none
+                guard let found = view as? NSOutlineView else { return }
+                found.selectionHighlightStyle = .none
+                outline = found
+            }
+        }
+
+        private func lift(out glass: NSGlassEffectView) {
+            guard let content = glass.contentView, let column = glass.superview else { return }
+            lifting = true
+            defer { lifting = false }
+            NSLayoutConstraint.deactivate(pins)
+            glass.contentView = nil
+            column.addSubview(content, positioned: .above, relativeTo: glass)
+            content.translatesAutoresizingMaskIntoConstraints = false
+            // To the column rather than the glass, which may go while the
+            // content stays.
+            pins = [
+                content.leadingAnchor.constraint(equalTo: column.leadingAnchor),
+                content.trailingAnchor.constraint(equalTo: column.trailingAnchor),
+                content.topAnchor.constraint(equalTo: column.topAnchor),
+                content.bottomAnchor.constraint(equalTo: column.bottomAnchor),
+            ]
+            NSLayoutConstraint.activate(pins)
+            if self.glass !== glass { stopWatching() }
+            self.glass = glass
+        }
+
+        private func watch(_ glass: NSGlassEffectView) {
+            if unhiding == nil {
+                unhiding = glass.observe(\.isHidden) { [weak self] glass, _ in
+                    guard !glass.isHidden else { return }
+                    Task { @MainActor in self?.apply() }
+                }
+            }
+            if resizes == nil {
+                var view = glass.superview
+                while let candidate = view, !(candidate is NSSplitView) { view = candidate.superview }
+                guard let split = view else { return }
+                resizes = NotificationCenter.default.addObserver(
+                    forName: NSSplitView.didResizeSubviewsNotification, object: split, queue: .main
+                ) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.apply() }
                 }
             }
         }
 
-        private func lift() {
-            var view = superview
-            while let candidate = view, !(candidate is NSGlassEffectView) { view = candidate.superview }
-            guard let glass = view as? NSGlassEffectView,
-                  let content = glass.contentView,
-                  let column = glass.superview else { return }
-            lifting = true
-            defer { lifting = false }
-            glass.contentView = nil
-            column.addSubview(content, positioned: .above, relativeTo: glass)
-            content.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                content.leadingAnchor.constraint(equalTo: glass.leadingAnchor),
-                content.trailingAnchor.constraint(equalTo: glass.trailingAnchor),
-                content.topAnchor.constraint(equalTo: glass.topAnchor),
-                content.bottomAnchor.constraint(equalTo: glass.bottomAnchor),
-            ])
-            self.glass = glass
+        private func stopWatching() {
+            unhiding = nil
+            if let resizes { NotificationCenter.default.removeObserver(resizes) }
+            resizes = nil
         }
 
         private static func walk(_ view: NSView, _ visit: (NSView) -> Void) {

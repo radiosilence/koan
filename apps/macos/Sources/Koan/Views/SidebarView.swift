@@ -42,7 +42,16 @@ struct SidebarView: View {
                     renaming = nil
                 }
             }
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { ui.sidebarWidth = $0 }
+            // Read again on appearing: the theme lifts the column out of the
+            // system's glass, which takes it out of the window and back.
+            .background {
+                GeometryReader { proxy in
+                    Color.clear
+                        .onAppear { ui.sidebarWidth = proxy.size.width }
+                        .onChange(of: proxy.size.width) { _, width in ui.sidebarWidth = width }
+                }
+            }
+            .onDisappear { ui.sidebarWidth = 0 }
     }
 
     @ViewBuilder
