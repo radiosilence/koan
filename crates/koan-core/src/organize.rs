@@ -786,12 +786,14 @@ fn run(
 
     let batch_id = batch_id();
     let floors = cleanup_floors(Some(base_dir));
+    // One for the run: a hundred files into one folder read its parents once.
+    let mut spelling = crate::index::spelling::Spelling::default();
 
     // The plan is the report: a move that fails has its own row demoted to an
     // error, so the caller sees the same table it confirmed, now saying what
     // actually happened to each file.
     for file_move in pending {
-        let failure = match execute_single_move(db, &file_move, &batch_id, &floors) {
+        let failure = match execute_single_move(db, &file_move, &batch_id, &floors, &mut spelling) {
             Ok(()) => verify_move(&file_move).err(),
             Err(e) => Some(e.to_string()),
         };
@@ -1090,6 +1092,7 @@ fn execute_single_move(
     file_move: &FileMove,
     batch_id: &str,
     floors: &[PathBuf],
+    spelling: &mut crate::index::spelling::Spelling,
 ) -> Result<(), OrganizeError> {
     if let Some(parent) = file_move.to.parent() {
         std::fs::create_dir_all(parent)?;
@@ -1097,7 +1100,6 @@ fn execute_single_move(
     // The destination comes from the tags, and a folder already there may
     // spell an accent another way. The rows take the directory's spelling, as
     // a scan would.
-    let mut spelling = crate::index::spelling::Spelling::default();
     let to = &spelling.on_disk(&file_move.to);
 
     let source_meta = std::fs::metadata(&file_move.from)?;
@@ -2639,6 +2641,7 @@ mod tests {
             &first,
             "batch-interrupted",
             std::slice::from_ref(&base),
+            &mut Default::default(),
         )
         .unwrap();
 

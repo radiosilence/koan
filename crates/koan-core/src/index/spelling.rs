@@ -53,32 +53,48 @@ impl Spelling {
     }
 
     fn entry(&mut self, dir: &Path, name: &OsStr) -> Option<OsString> {
-        let listing = self.listings.entry(dir.to_path_buf()).or_insert_with(|| {
-            std::fs::read_dir(dir)
-                .map(|entries| entries.flatten().map(|e| e.file_name()).collect())
-                .unwrap_or_default()
-        });
-        if listing.iter().any(|n| n == name) {
+        if self.listing(dir).iter().any(|n| n == name) {
             return Some(name.to_os_string());
         }
-        let wanted: String = name.to_string_lossy().nfc().collect();
-        if let Some(spelled) = listing
-            .iter()
-            .find(|n| n.to_string_lossy().nfc().eq(wanted.chars()))
-        {
-            return Some(spelled.clone());
-        }
-        // On a case-sensitive volume a name differing only in case is another
-        // file, and this one does not exist.
+        // Where the filesystem does not open the name as given, another
+        // spelling of it is another file, and this one does not exist.
         if !dir.join(name).exists() {
             return None;
         }
-        let wanted = wanted.to_lowercase();
-        listing
-            .iter()
-            .find(|n| n.to_string_lossy().nfc().collect::<String>().to_lowercase() == wanted)
-            .cloned()
+        let found = find_spelling(self.listing(dir), name);
+        if found.is_some() {
+            return found;
+        }
+        // It opens but the listing lacks it: the listing predates it.
+        self.listings.remove(dir);
+        find_spelling(self.listing(dir), name)
     }
+
+    fn listing(&mut self, dir: &Path) -> &[OsString] {
+        self.listings.entry(dir.to_path_buf()).or_insert_with(|| {
+            std::fs::read_dir(dir)
+                .map(|entries| entries.flatten().map(|e| e.file_name()).collect())
+                .unwrap_or_default()
+        })
+    }
+}
+
+/// The entry naming `name` in another Unicode normalisation, else in another
+/// case.
+fn find_spelling(listing: &[OsString], name: &OsStr) -> Option<OsString> {
+    if let Some(exact) = listing.iter().find(|n| *n == name) {
+        return Some(exact.clone());
+    }
+    let wanted: String = name.to_string_lossy().nfc().collect();
+    let folded = |n: &OsString| n.to_string_lossy().nfc().collect::<String>();
+    listing
+        .iter()
+        .find(|n| folded(n) == wanted)
+        .or_else(|| {
+            let wanted = wanted.to_lowercase();
+            listing.iter().find(|n| folded(n).to_lowercase() == wanted)
+        })
+        .cloned()
 }
 
 /// One path, resolved once.
@@ -104,8 +120,14 @@ mod tests {
         std::fs::create_dir(dir.path().join(&nfd)).unwrap();
         std::fs::write(dir.path().join(&nfd).join("song.wav"), b"").unwrap();
 
-        let got = on_disk(&dir.path().join(&nfc).join("song.wav"));
-        let disk = dir.path().join(&nfd).join("song.wav");
+        let asked = dir.path().join(&nfc).join("song.wav");
+        let got = on_disk(&asked);
+        // Where the filesystem tells the two apart, the other is another file.
+        let disk = if dir.path().join(&nfc).exists() {
+            dir.path().join(&nfd).join("song.wav")
+        } else {
+            asked
+        };
         assert_eq!(
             got.as_os_str().as_encoded_bytes(),
             disk.as_os_str().as_encoded_bytes(),
