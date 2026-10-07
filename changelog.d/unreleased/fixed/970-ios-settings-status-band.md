@@ -1,1 +1,1 @@
-- **No blank band at the foot of settings on iPhone in the kōan look.** The line reporting the last action's result takes no room until there is something to report, rather than holding a grey strip above the mini player on every settings page.
+- **No blank band at the foot of settings on iPhone in the kōan look.** 0.60.3 listed this as fixed, but the band remained on the settings pages: it was the line reporting the last action's result, held open on a grey ground above the mini player. That line now takes no room until there is something to report.
