@@ -535,20 +535,22 @@ fn cache_grew(bytes: u64) {
     crate::signal::engine_changed().bump();
 }
 
-fn cache_shrank(bytes: u64) {
-    let _ = CACHE_BYTES.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+pub(crate) fn cache_shrank(bytes: u64) {
+    let _ = CACHE_BYTES.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
         Some(n.saturating_sub(bytes))
     });
     crate::signal::engine_changed().bump();
 }
 
-/// Bytes on disk in the download cache, walked: what `measure_cache` and a
-/// clear count.
+/// Bytes on disk in the download cache, walked. A `.part` is left out: it is
+/// counted once it lands, and a walk racing the download would count it
+/// twice.
 pub fn cache_size_bytes(cfg: &Config) -> u64 {
     walkdir::WalkDir::new(cfg.cache_dir())
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_file())
+        .filter(|e| e.path().extension().is_none_or(|ext| ext != "part"))
         .filter_map(|e| e.metadata().ok())
         .map(|m| m.len())
         .sum()
