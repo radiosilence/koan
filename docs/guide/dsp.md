@@ -134,9 +134,13 @@ cancels; a result whose own target matches none of the set offers no others,
 since a difference across rigs would correct the rig rather than the sound.
 The difference is levelled at 1 kHz, smoothed over a twelfth of an octave and
 held within ±12 dB, and runs as a minimum-phase filter; the preamp lowers the
-level for any boost it adds. The targets are AutoEQ's, under its MIT licence;
-`crates/koan-core/src/audio/dsp/targets/SOURCES.md` records where each came
-from.
+level for any boost it adds. On a correction built from a measurement, the
+difference fades out between 6 and 12 kHz as the correction does (see
+[Headphone EQ, explained](headphone-eq.md#the-treble-is-left-alone)). The
+targets are AutoEQ's, under its MIT licence, but for Harman in-ear 2019, which
+is squig.link's own file so that a correction here aims where that site's
+presets do; `crates/koan-core/src/audio/dsp/targets/SOURCES.md` records where
+each came from.
 
 **Add a Target…** (or `koan dsp add-target FILE`) takes a CSV of frequency and
 level, or a squig.link export, for a target koan does not ship: a community

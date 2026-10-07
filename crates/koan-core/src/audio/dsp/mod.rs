@@ -272,9 +272,12 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
             Some((aim, made)) => {
                 let step = targets::choice_curve(&aim)
                     .zip(targets::choice_curve(&made))
-                    .map(|(from, to)| DspProfile {
+                    .zip(correction)
+                    .map(|((from, to), c)| DspProfile {
                         name: format!("\u{1}{i}\u{1}Target difference"),
-                        filters: vec![DspFilter::Graphic(targets::difference(&from, &to))],
+                        filters: vec![DspFilter::Graphic(profiles::target_step(
+                            c, all, &from, &to,
+                        ))],
                         ..Default::default()
                     });
                 held += usize::from(step.is_some());

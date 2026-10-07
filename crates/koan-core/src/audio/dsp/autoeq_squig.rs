@@ -688,16 +688,12 @@ fn autoeq(fr: &Fr, target: &Fr, max_bands: usize) -> Vec<Band> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::dsp::targets::{at, points};
+    use crate::audio::dsp::targets::points;
     use crate::config::DspFilter;
 
     const LEFT: &str = include_str!("testdata/aful-8s-super-review-L.txt");
     const RIGHT: &str = include_str!("testdata/aful-8s-super-review-R.txt");
     const CAL: &str = include_str!("testdata/squig-ief-2023-cal.txt");
-
-    fn amplitude_mean(a: f64, b: f64) -> f64 {
-        20.0 * ((10f64.powf(a / 20.0) + 10f64.powf(b / 20.0)) / 2.0).log10()
-    }
 
     /// The AFUL Performer 8S's channels as squig.link (Super* Review) hands
     /// them to its auto-EQ: each on the graph's points, the site's IEF 2023
@@ -716,12 +712,11 @@ mod tests {
     }
 
     /// The same measurement as koan keeps one fetched from squig.link: the
-    /// channels averaged on their own frequencies, then calibrated.
+    /// channels averaged on their own frequencies, then calibrated, by the
+    /// fetch's own steps.
     fn as_koan_has_it() -> Fr {
-        let (l, r, cal) = (points(LEFT), points(RIGHT), points(CAL));
-        l.iter()
-            .map(|&(f, db)| (f, amplitude_mean(db, at(&r, f)) - at(&cal, f)))
-            .collect()
+        use crate::audio::dsp::squig;
+        squig::calibrated(&squig::average(&points(LEFT), &points(RIGHT)), &points(CAL))
     }
 
     const PRESETS: [(&str, &str, &str); 2] = [

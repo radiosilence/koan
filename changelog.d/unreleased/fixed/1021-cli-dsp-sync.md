@@ -1,0 +1,2 @@
+- **EQ edits made with `koan dsp` reach the server.** The CLI exited before the background sync an edit starts could run, so its imports and changes stayed on the machine; it now syncs before exiting, warning rather than failing when the server cannot be reached.
+- **EQ sync forgets profiles no longer kept everywhere.** A profile deleted or moved to one device left its record of local edits behind; that record is now removed once the deletion has reached the server.
