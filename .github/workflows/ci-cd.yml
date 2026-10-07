@@ -12,15 +12,21 @@ env:
 
 # The macOS runners are few, so a run nobody will look at gives way to the
 # next. A pull request's newer push cancels its older run; on main, a newer
-# push cancels an older one that releases nothing. A release run is in a group
-# of its own and is never cancelled, notarisation included, and nor is a
-# manual run, which is how a failed release is retried. The group is chosen
-# before any job runs, so a release is told by the squash commit's title
-# (`release: vX.Y.Z (#n)`, as the release skill names its pull request), not
-# by `check-version`.
+# push cancels an older one that releases nothing. GitHub holds the newer run
+# ("waiting for ... to complete") until the cancelled one has stopped, which
+# takes as long as its slowest job takes to wind down.
+#
+# A run that may release is in a group of its own and is never cancelled,
+# notarisation included, and nor is a manual run, which is how a failed
+# release is retried. The group is chosen before any job runs, so it cannot
+# ask `check-version`. A push may release when its head commit is titled
+# `release: ` (as the release skill names its pull request) or changes
+# `Cargo.toml`, which `check-version` compares with the commit before: the
+# second catches a version bump merged under any other title, at the cost of
+# also keeping a dependency change from being cancelled.
 concurrency:
-  group: "ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.run_id) || startsWith(github.event.head_commit.message, 'release: ') && format('release-{0}', github.sha) || 'main' }}"
-  cancel-in-progress: "${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'release: ')) }}"
+  group: "ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.run_id) || (startsWith(github.event.head_commit.message, 'release: ') || contains(github.event.head_commit.modified, 'Cargo.toml')) && format('release-{0}', github.sha) || 'main' }}"
+  cancel-in-progress: "${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'release: ') && !contains(github.event.head_commit.modified, 'Cargo.toml')) }}"
 
 jobs:
   changes:
