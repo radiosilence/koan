@@ -43,12 +43,12 @@ css:
 install-dev:
     cargo build --release
     mkdir -p ~/.local/bin
-    cp target/release/koan ~/.local/bin/koan-dev
+    cp "${CARGO_TARGET_DIR:-target}/release/koan" ~/.local/bin/koan-dev
     @echo "Installed to ~/.local/bin/koan-dev"
 
 # Watch for changes and rebuild dev binary
 watch-dev:
-    cargo watch -s 'cargo build --release && cp target/release/koan ~/.local/bin/koan-dev && echo "✓ koan-dev updated"'
+    cargo watch -s 'cargo build --release && cp "${CARGO_TARGET_DIR:-target}/release/koan" ~/.local/bin/koan-dev && echo "✓ koan-dev updated"'
 
 # Clean build artifacts
 clean:
@@ -92,7 +92,7 @@ macos-ffi:
     # OS and every link is a page of "built for newer macOS version" warnings.
     export MACOSX_DEPLOYMENT_TARGET=26.0
     cargo build --release -p koan-ffi
-    lib=target/release/libkoan_ffi.a
+    lib=${CARGO_TARGET_DIR:-target}/release/libkoan_ffi.a
     # Stage the archive somewhere holding nothing else, and link against that.
     #
     # `-lkoan_ffi` over a directory containing both a .a and a .dylib picks the
@@ -630,7 +630,7 @@ ios-smoke FILE:
     cargo build -q -p koan-core --example end_of_queue --target aarch64-apple-ios-sim
     device=$(xcrun simctl list devices booted -j \
         | python3 -c 'import json,sys; print([d["udid"] for v in json.load(sys.stdin)["devices"].values() for d in v][0])')
-    bin=$PWD/target/aarch64-apple-ios-sim/debug/examples/end_of_queue
+    bin=$(cd "${CARGO_TARGET_DIR:-target}" && pwd)/aarch64-apple-ios-sim/debug/examples/end_of_queue
     # simctl only forwards environment prefixed for the child.
     echo "--- playing to the end of the queue"
     SIMCTL_CHILD_RUST_LOG=info xcrun simctl spawn "$device" "$bin" "{{FILE}}"
@@ -1180,19 +1180,20 @@ _demo-server library out:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build -q -p koan-cli
+    koan=${CARGO_TARGET_DIR:-target}/debug/koan
     dir=$(mktemp -d)
     port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
     password=demo-$RANDOM$RANDOM
     [ -z "{{library}}" ] || printf '[library]\nfolders = ["%s"]\n' "$(cd "{{library}}" && pwd)" > "$dir/config.toml"
-    KOAN_CONFIG_DIR=$dir KOAN_USERNAME=owner KOAN_PASSWORD=$password target/debug/koan auth setup >/dev/null
-    [ -z "{{library}}" ] || KOAN_CONFIG_DIR=$dir target/debug/koan scan >/dev/null 2>&1
+    KOAN_CONFIG_DIR=$dir KOAN_USERNAME=owner KOAN_PASSWORD=$password "$koan" auth setup >/dev/null
+    [ -z "{{library}}" ] || KOAN_CONFIG_DIR=$dir "$koan" scan >/dev/null 2>&1
     KOAN_CONFIG_DIR=$dir KOAN_SUBSONIC__ENABLED=true KOAN_GRAPHQL__AUTH_ENABLED=true \
-        nohup target/debug/koan --headless --port "$port" >"{{out}}/server.log" 2>&1 &
+        nohup "$koan" --headless --port "$port" >"{{out}}/server.log" 2>&1 &
     echo "$! $dir" > "{{out}}/server.pid"
     echo "$password" > "{{out}}/server.password"
     # A key as well: a koan server refuses token auth with a password, which is
     # all an account given through the environment can use.
-    KOAN_CONFIG_DIR=$dir target/debug/koan auth api-key create --username owner --name simulator </dev/null 2>/dev/null \
+    KOAN_CONFIG_DIR=$dir "$koan" auth api-key create --username owner --name simulator </dev/null 2>/dev/null \
         | sed 's/\x1b\[[0-9;]*m//g' | awk 'NF == 1 && length($1) > 30 { print $1 }' > "{{out}}/server.key"
     for _ in $(seq 60); do
         curl -sf "http://127.0.0.1:$port/rest/ping?f=json" >/dev/null && break
