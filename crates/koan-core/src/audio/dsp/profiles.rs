@@ -3065,23 +3065,26 @@ pub(super) fn fitted_to(correction: &DspProfile, target: &str) -> Option<Vec<con
 
 /// The bands squig.link's auto-EQ fits to bring `measured` to `target`, and
 /// its preamp to the hundredth of a decibel. A fit takes a good part of a
-/// second, so the last few are kept, by measurement and target.
+/// second, so recent ones are kept, by measurement and target, least
+/// recently used first out. Those the player asked for while loading its
+/// chain are kept apart, so pages fitting previews never push out what is
+/// playing and the next load of it does not stall on a refit.
 pub(super) fn squig_fit(
     measured: &[(f64, f64)],
     target: &[(f64, f64)],
 ) -> (Vec<config::DspFilter>, f64) {
-    use std::collections::HashMap;
-    use std::hash::{Hash, Hasher};
-    type Fitted = (Vec<config::DspFilter>, f64);
-    static FITS: parking_lot::Mutex<Option<HashMap<u64, Fitted>>> = parking_lot::Mutex::new(None);
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    for (hz, db) in measured.iter().chain([(0.0, 0.0)].iter()).chain(target) {
-        hz.to_bits().hash(&mut h);
-        db.to_bits().hash(&mut h);
-    }
-    let key = h.finish();
-    if let Some(hit) = FITS.lock().as_ref().and_then(|m| m.get(&key)) {
-        return hit.clone();
+    let key = fit_key(measured, target);
+    let playing = PLAYING_SCOPE.get();
+    {
+        let mut fits = FITS.lock();
+        let hit = match fits.playing.take(key) {
+            Some(hit) => Some((hit, true)),
+            None => fits.recent.take(key).map(|hit| (hit, playing)),
+        };
+        if let Some((hit, playing)) = hit {
+            fits.keep(key, hit.clone(), playing);
+            return hit;
+        }
     }
     let fit = super::autoeq_squig::fit(measured, target);
     let made = (
@@ -3091,13 +3094,88 @@ pub(super) fn squig_fit(
             .collect::<Vec<_>>(),
         (fit.preamp_db * 100.0).round() / 100.0,
     );
-    let mut fits = FITS.lock();
-    let fits = fits.get_or_insert_with(HashMap::new);
-    if fits.len() >= 32 {
-        fits.clear();
-    }
-    fits.insert(key, made.clone());
+    FITS.lock().keep(key, made.clone(), playing);
     made
+}
+
+fn fit_key(measured: &[(f64, f64)], target: &[(f64, f64)]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for (hz, db) in measured.iter().chain([(0.0, 0.0)].iter()).chain(target) {
+        hz.to_bits().hash(&mut h);
+        db.to_bits().hash(&mut h);
+    }
+    h.finish()
+}
+
+type Fitted = (Vec<config::DspFilter>, f64);
+
+/// Fits most recently used last, at most `cap` of them.
+struct Lru {
+    cap: usize,
+    entries: Vec<(u64, Fitted)>,
+}
+
+impl Lru {
+    const fn new(cap: usize) -> Self {
+        Self {
+            cap,
+            entries: Vec::new(),
+        }
+    }
+
+    fn take(&mut self, key: u64) -> Option<Fitted> {
+        let at = self.entries.iter().position(|(k, _)| *k == key)?;
+        Some(self.entries.remove(at).1)
+    }
+
+    fn put(&mut self, key: u64, fit: Fitted) {
+        self.take(key);
+        if self.entries.len() >= self.cap {
+            self.entries.remove(0);
+        }
+        self.entries.push((key, fit));
+    }
+}
+
+struct Fits {
+    /// What the player's chain was fitted with: a device or two, each with
+    /// its target and maybe a tuning's.
+    playing: Lru,
+    /// Everything else: previews, imports, pages.
+    recent: Lru,
+}
+
+impl Fits {
+    fn keep(&mut self, key: u64, fit: Fitted, playing: bool) {
+        if playing {
+            self.playing.put(key, fit);
+        } else {
+            self.recent.put(key, fit);
+        }
+    }
+}
+
+static FITS: parking_lot::Mutex<Fits> = parking_lot::Mutex::new(Fits {
+    playing: Lru::new(4),
+    recent: Lru::new(32),
+});
+
+thread_local! {
+    static PLAYING_SCOPE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` as the player loading its chain: the fits it makes or uses are
+/// kept apart from the ones previews make.
+pub fn for_playing<T>(f: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            PLAYING_SCOPE.set(self.0);
+        }
+    }
+    let _restore = Restore(PLAYING_SCOPE.replace(true));
+    f()
 }
 
 /// Make `name` a stack of `layers`, in order, creating it if there is none.
@@ -6045,5 +6123,39 @@ mod tests {
                 .unwrap()
                 .contains("rebuilt from AutoEQ's measurement")
         );
+    }
+
+    #[test]
+    fn previews_never_push_out_the_playing_fit() {
+        use super::super::targets;
+        let measured = read_measurement(&measured(6.0)).unwrap();
+        let aim = targets::choice_curve("harman-in-ear-2019").unwrap();
+        let fit = for_playing(|| squig_fit(&measured, &aim));
+        let key = fit_key(&measured, &aim);
+        let kept = |key| FITS.lock().playing.entries.iter().any(|(k, _)| *k == key);
+        assert!(kept(key));
+        for preview in 0..100u64 {
+            FITS.lock().keep(preview ^ 0x5eed, fit.clone(), false);
+        }
+        assert!(kept(key), "the playing fit is still kept");
+        assert_eq!(squig_fit(&measured, &aim), fit);
+        assert!(
+            kept(key),
+            "used again by a page, it stays with the player's"
+        );
+    }
+
+    #[test]
+    fn a_full_lru_lets_go_of_the_least_recently_used_alone() {
+        let fit = (Vec::new(), 0.0);
+        let mut lru = Lru::new(3);
+        for k in 0..3 {
+            lru.put(k, fit.clone());
+        }
+        let used = lru.take(0).unwrap();
+        lru.put(0, used);
+        lru.put(3, fit);
+        let keys: Vec<_> = lru.entries.iter().map(|(k, _)| *k).collect();
+        assert_eq!(keys, [2, 0, 3]);
     }
 }

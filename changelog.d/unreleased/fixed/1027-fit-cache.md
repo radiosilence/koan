@@ -1,0 +1,1 @@
+- **Opening EQ pages no longer slows the next track's start.** Fits from a measurement are kept least recently used first, and those the playing chain uses are kept apart from the ones EQ pages make for their previews, so browsing targets never forces the player to fit its correction again before playback starts.
