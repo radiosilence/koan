@@ -23,6 +23,7 @@ pub mod camilla;
 pub mod convolver;
 pub mod import;
 pub mod impulse;
+pub mod klippel;
 #[cfg(test)]
 mod null;
 pub mod profiles;

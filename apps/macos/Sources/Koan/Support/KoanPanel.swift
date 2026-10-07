@@ -110,9 +110,12 @@ final class KoanPanelCoordinator: NSObject, NSWindowDelegate {
         place()
         window.makeKey()
         NSAccessibility.post(element: window, notification: .created)
-        // The rows take the keyboard from the first of them; a menu's ticked
-        // row takes it from there, as the scope's preferred focus.
-        DispatchQueue.main.async { window.selectNextKeyView(nil) }
+        // The keyboard starts in the panel: on a menu's ticked row where
+        // SwiftUI has placed it by the scope's preferred focus, on the first
+        // control otherwise.
+        DispatchQueue.main.async {
+            if window.firstResponder === window { window.selectNextKeyView(nil) }
+        }
         watch(parent)
     }
 

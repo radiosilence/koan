@@ -241,6 +241,7 @@ struct RecordRoom: ViewModifier {
     @Environment(\.drawnOffscreen) private var offscreen
     @Environment(AppearanceModel.self) private var appearance
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(PlayingLevels.self) private var levels: PlayingLevels?
 
     /// The colour of a record the cache could not already answer for, and which
     /// record it was worked out for. Only consulted when the cache cannot.
@@ -249,6 +250,11 @@ struct RecordRoom: ViewModifier {
     /// out. Falling back to the accent instead flashes every tinted control to
     /// it and back again on the way to a record whose colour is not in yet.
     @State private var worn: Color?
+    /// Where the rainbow's accent is around the flag (see `Rainbow`).
+    @State private var rainbowStep = 0
+    /// Whether the app is in front. Followed by notification rather than
+    /// `scenePhase`, which read here re-runs the whole scene.
+    @State private var active = true
 
     /// Only for a colour that had to be worked out, which arrives after the page
     /// and would otherwise cut. A colour already in hand needs no ease: it lands
@@ -294,7 +300,15 @@ struct RecordRoom: ViewModifier {
     }
 
     /// The accent for that record, tone-mapped to its bands — in either look.
-    private var accent: KoanAccent { KoanAccent.of(record) }
+    /// With the rainbow drawn, the flag's, wherever its cycle has reached.
+    private var accent: KoanAccent {
+        appearance.rainbowDrawn ? .rainbow(rainbowStep) : KoanAccent.of(record)
+    }
+
+    /// Whether the rainbow's accent moves round the flag: only while it is
+    /// drawn, motion is allowed and the app is in front. Still, it holds one
+    /// hue: a phone playing in the background is not woken to change it.
+    private var cycles: Bool { appearance.rainbowDrawn && !reduceMotion && active }
 
     /// The colour to put on.
     private var tint: Color { accent.color }
@@ -321,6 +335,7 @@ struct RecordRoom: ViewModifier {
         let player = player
         let artCache = art
         let appearanceModel = appearance
+        let playingLevels = levels
         // Over an opaque ground, because this *replaces* the window's own
         // background rather than sitting on it — a half-transparent wash on its
         // own leaves you looking through the app at the desktop.
@@ -329,6 +344,7 @@ struct RecordRoom: ViewModifier {
             WindowWash(source: wash, player: player)
                 .environment(artCache)
                 .environment(appearanceModel)
+                .environment(playingLevels)
         }
 
         content
@@ -383,6 +399,26 @@ struct RecordRoom: ViewModifier {
             #endif
             .environment(\.roomTint, tint)
             .environment(\.koanAccent, accent)
+            .environment(\.koanRainbow, appearance.rainbowDrawn)
+            .environment(\.koanRainbowStep, rainbowStep)
+            // Each step is a new tint, and a tint is read by every control:
+            // a whole-window pass every `Rainbow.period`, while the rainbow is
+            // drawn. With it off this task is never started.
+            .task(id: cycles) {
+                guard cycles else { return }
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: Rainbow.period)
+                    guard !Task.isCancelled else { return }
+                    Rainbow.step = rainbowStep + 1
+                    withAnimation(KoanTheme.Motion.settle) { rainbowStep += 1 }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .appResignsActive)) { _ in active = false }
+            .onReceive(NotificationCenter.default.publisher(for: .appBecomesActive)) { _ in active = true }
+            .background { RainbowForTrack() }
+            .overlay { MirrorBall(active: active).ignoresSafeArea() }
+            .overlay { RainbowBurst().ignoresSafeArea() }
+            .overlay(alignment: .bottom) { RainbowToast() }
             // The theme's text button for every button that names no style.
             // Not on a television, whose shell gives them `TelevisionButton`:
             // a bare text button there shows no focus.

@@ -1,0 +1,1 @@
+- **Mac search and shelf tracks line up with the page.** Track rows under the albums on search results, Favourites and Recently played start on the same margin as the headings and tiles, with the play mark and the playing bars in a badge on the sleeve rather than in an empty column.

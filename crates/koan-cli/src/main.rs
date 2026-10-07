@@ -359,13 +359,17 @@ enum DspCommands {
     /// level, or a squig.link export) to a target. The file is taken as it
     /// is: a squig.link export already has both channels averaged and the
     /// site's calibration applied, but a site's raw `L.txt` or `R.txt` has
-    /// neither. `koan dsp squig` fetches both and does both
+    /// neither. `koan dsp squig` fetches both and does both. A speaker's
+    /// Klippel exports (`SPL Horizontal.txt`, `SPL Vertical.txt`) given
+    /// together are corrected from their listening window
     Measure {
-        path: PathBuf,
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
         /// The headphone, as the correction's name
         #[arg(long)]
         name: String,
-        #[arg(long, value_parser = ["in", "over"])]
+        /// A speaker's Klippel export is a speaker's, corrected to `flat`
+        #[arg(long, value_parser = ["in", "over", "speaker"])]
         ear: String,
         /// A target id, as `koan dsp target` lists them
         #[arg(long)]
@@ -889,11 +893,11 @@ fn dsp(command: Option<DspCommands>) {
         } => commands::cmd_dsp_target(&name, target.as_deref(), reset),
         DspCommands::AddTarget { path } => commands::cmd_dsp_add_target(&path),
         DspCommands::Measure {
-            path,
+            paths,
             name,
             ear,
             target,
-        } => commands::cmd_dsp_measure(&path, &name, ear == "in", &target),
+        } => commands::cmd_dsp_measure(&paths, &name, &ear, &target),
         DspCommands::Split {
             name,
             path,

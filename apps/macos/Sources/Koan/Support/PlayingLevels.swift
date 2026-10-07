@@ -7,6 +7,13 @@ import Foundation
 import KoanFFI
 import Observation
 
+/// What the analyser's frames are handed to: the playing bars, and gay mode's
+/// disco over the wash.
+@MainActor
+protocol LevelsListener: AnyObject {
+    func apply(_ bands: [Double])
+}
+
 /// The audio behind the playing indicators.
 ///
 /// One subscription for the whole app: the queue and a track list can both
@@ -39,7 +46,7 @@ final class PlayingLevels: Observable {
 
     /// The bars on screen. Weak, so a row that scrolls away is forgotten
     /// without having to say goodbye.
-    private let bars = NSHashTable<PlayingBarsView>.weakObjects()
+    private let bars = NSHashTable<AnyObject>.weakObjects()
 
     /// How high each bar stands, 0...1, low band to high. The spectrum in
     /// three columns: what the analyser says is coming out of the speakers,
@@ -119,7 +126,7 @@ final class PlayingLevels: Observable {
     }
 
     /// A bar that wants the music. The first one starts the follow.
-    func attach(_ bar: PlayingBarsView) {
+    func attach(_ bar: some LevelsListener) {
         bars.add(bar)
         bar.apply(bands)
         startFollowing()
@@ -139,7 +146,7 @@ final class PlayingLevels: Observable {
     /// A bar that has stopped listening — off stage, held still, or gone. The
     /// last one to leave ends the follow, and with nothing reading it the
     /// analyser parks.
-    func detach(_ bar: PlayingBarsView) {
+    func detach(_ bar: some LevelsListener) {
         bars.remove(bar)
         guard bars.allObjects.isEmpty else { return }
         follow?.cancel()
@@ -166,7 +173,7 @@ final class PlayingLevels: Observable {
         // most of a quiet passage, and it is not worth a commit a frame.
         guard next != bands else { return }
         bands = next
-        for bar in bars.allObjects { bar.apply(next) }
+        for bar in bars.allObjects { (bar as? LevelsListener)?.apply(next) }
     }
 
     private func matchDisplay() {

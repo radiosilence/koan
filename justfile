@@ -460,7 +460,7 @@ theme-leaks:
     # `SidebarGround.swift` finds the sidebar's glass to take it away.
     hits=$(grep -rnE '\.glassEffect\(|GlassEffectContainer|buttonStyle\(\.glass|NSGlassEffectView|UIGlassEffect|NSVisualEffectView|UIVisualEffectView|UIBlurEffect|(ultraThin|thin|regular|thick|ultraThick)Material\b|\(\.bar\)|toolbarBackground\(|\.popover\(|\.searchable\(|scrollEdgeEffectStyle\(.*\.soft' \
         apps/macos/Sources --include='*.swift' \
-        | grep -v -e 'Support/KoanTheme.swift' -e 'Support/Graphics.swift' -e 'Views/SidebarGround.swift' -e '// theme: raw' -e 'koanMaterial(' -e '\.glass(' -e 'scrollEdgeEffectStyle(.*KoanTheme\.isOn')
+        | grep -v -e 'Support/KoanTheme.swift' -e 'Support/Graphics.swift' -e 'Views/SidebarGround.swift' -e '// theme: raw' -e 'koanMaterial(' -e '\.glass(' -e 'KoanTheme\.ground(' -e 'scrollEdgeEffectStyle(.*KoanTheme\.isOn')
     if [ -n "$hits" ]; then
         found=1
         echo "$hits"

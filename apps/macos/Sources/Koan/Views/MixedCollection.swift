@@ -483,6 +483,11 @@ private final class MixedLayout: NSCollectionViewLayout {
                 }
                 let attribute = NSCollectionViewLayoutAttributes(forItemWith: path)
                 attribute.frame = CGRect(x: x, y: y, width: size.width, height: size.height)
+                // A track's highlight reaches past the margin, so that its
+                // row, inset by as much, starts on it with the tiles.
+                if kind == .tracks {
+                    attribute.frame = attribute.frame.insetBy(dx: -TrackItem.inset, dy: 0)
+                }
                 attributes[path] = attribute
                 x += size.width + spacing
                 lineHeight = max(lineHeight, size.height)
@@ -572,7 +577,7 @@ final class MixedCollectionView: NSCollectionView {
             let local = item.view.convert(point, from: self)
             switch item {
             case let tile as AlbumTile: overLink = tile.hover(at: local)
-            case let track as TrackItem: overLink = track.row.hover(at: local)
+            case let track as TrackItem: overLink = track.row.hover(at: track.row.convert(point, from: self))
             case let pill as ArtistPillItem: pill.hovering = true; overLink = true
             default: break
             }
@@ -601,7 +606,7 @@ final class MixedCollectionView: NSCollectionView {
             return
         }
         guard let track = item as? TrackItem else { return super.mouseDown(with: event) }
-        let hit = track.row.hit(at: track.view.convert(point, from: self))
+        let hit = track.row.hit(at: track.row.convert(point, from: self))
         if owner?.parent?.tracksSelect == false {
             if case .button(let action) = hit { return action() }
             resultPressed(event, at: path, hit: hit)
@@ -724,6 +729,8 @@ private final class SectionHeader: NSView, NSCollectionViewElement {
 /// A track row as a collection item, with the selection a table would draw.
 private final class TrackItem: NSCollectionViewItem {
     static let identifier = NSUserInterfaceItemIdentifier("TrackItem")
+    /// How far the row sits inside the highlight.
+    static let inset: CGFloat = 8
     let row = TrackTableRow()
     private let highlight = CALayer()
     /// The line a table draws between rows.
@@ -746,13 +753,13 @@ private final class TrackItem: NSCollectionViewItem {
         CATransaction.setDisableActions(true)
         highlight.frame = view.bounds
         // At the bottom edge; the view is not flipped.
-        separator.frame = CGRect(x: 8, y: 0, width: view.bounds.width - 16, height: 1 / (view.window?.backingScaleFactor ?? 2))
+        separator.frame = CGRect(x: Self.inset, y: 0, width: view.bounds.width - 2 * Self.inset, height: 1 / (view.window?.backingScaleFactor ?? 2))
         view.effectiveAppearance.performAsCurrentDrawingAppearance {
             separator.backgroundColor = NSColor.koanSeparator.cgColor
         }
         separator.isHidden = KoanTheme.isOn
         CATransaction.commit()
-        row.frame = view.bounds.insetBy(dx: 8, dy: 0)
+        row.frame = view.bounds.insetBy(dx: Self.inset, dy: 0)
     }
 
     override var isSelected: Bool {

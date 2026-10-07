@@ -1,0 +1,1 @@
+- **Mac search and shelf track rows answer where they are drawn.** The artist, the record and the sleeve took clicks and showed the pointing hand 8 pt to the left of where they sit.

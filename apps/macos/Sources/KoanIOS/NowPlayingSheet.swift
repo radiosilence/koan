@@ -90,6 +90,7 @@ struct NowPlayingSheet: View {
                     .font(.role(.titleSmall, system: .title3.weight(.semibold)))
                     .foregroundStyle(KoanTheme.style(.strong, system: .primary))
                     .lineLimit(1)
+                    .rainbowShimmer()
                 if player.resolving != nil {
                     Text("Loading…").koanCase()
                         .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
