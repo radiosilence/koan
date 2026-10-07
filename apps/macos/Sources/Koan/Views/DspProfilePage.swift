@@ -13,7 +13,7 @@ struct DspProfilePage: View {
     @State private var response: DspResponse?
     @State private var targets: DspTargets?
     /// Every target, for what a ready-made EQ was made for.
-    @State private var madeForChoices: [DspTargetOption] = []
+    @State private var madeForChoices = TargetGroups()
     @State private var addingTarget = false
     @State private var editingName = ""
     @State private var confirmingDelete = false
@@ -54,19 +54,28 @@ struct DspProfilePage: View {
                     }
                 }
 
-                Section("Used for") {
+                Section {
                     if d.devices.isEmpty {
                         Text("No output yet")
                             .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                            .koanCase()
                     }
                     ForEach(d.devices, id: \.self) { Text(dsp.label($0)) }
                     if let device = dsp.overview?.device {
+                        // The app's words follow the theme; the device's name
+                        // keeps its case.
                         if d.devices.contains(device) {
-                            Button("Stop using for \(dsp.label(device))") { dsp.use(nil) }
+                            Button { dsp.use(nil) } label: {
+                                Text("\(KoanTheme.label("Stop using for")) \(dsp.label(device))").textCase(nil)
+                            }
                         } else {
-                            Button("Use for \(dsp.label(device))") { dsp.use(d.name) }
+                            Button { dsp.use(d.name) } label: {
+                                Text("\(KoanTheme.label("Use for")) \(dsp.label(device))").textCase(nil)
+                            }
                         }
                     }
+                } header: {
+                    KoanSectionHeader("Used for")
                 }
 
                 // A stack with nothing of its own is what its layers are.
@@ -149,7 +158,7 @@ struct DspProfilePage: View {
                     ImpulseRow(ir: ir)
                 }
             } header: {
-                Text("Impulse responses")
+                KoanSectionHeader("Impulse responses")
             } footer: {
                 Text("A track at a rate with no response of its own is resampled to the nearest one here.")
                     .font(.role(.fine, system: .caption))
@@ -162,7 +171,7 @@ struct DspProfilePage: View {
         Section {
             LabeledContent("Preamp", value: "\(String(format: "%.1f", d.preampDb)) dB")
         } header: {
-            Text("Headroom")
+            KoanSectionHeader("Headroom")
         } footer: {
             Text(d.preampSet
                  ? "Set in this EQ."
@@ -172,8 +181,10 @@ struct DspProfilePage: View {
         }
 
         if !d.source.isEmpty {
-            Section("Imported from") {
+            Section {
                 ForEach(d.source, id: \.self) { Text($0).foregroundStyle(KoanTheme.style(.muted, system: .secondary)) }
+            } header: {
+                KoanSectionHeader("Imported from")
             }
         }
     }
@@ -183,7 +194,7 @@ struct DspProfilePage: View {
         response = await dsp.response(name)
         targets = await dsp.targets(name)
         if madeForChoices.isEmpty {
-            madeForChoices = await dsp.targetsFor(inEar: false) + dsp.targetsFor(inEar: true)
+            madeForChoices = await TargetGroups(over: dsp.targetsFor(inEar: false), inEar: dsp.targetsFor(inEar: true))
         }
         editingName = name
     }
@@ -223,7 +234,7 @@ private struct GroupSection: View {
             Button("Play Them All in Order") { dsp.setGroup(detail.name, false) }
             #endif
         } header: {
-            Text("Group: pick one")
+            KoanSectionHeader("Group: pick one")
         } footer: {
             Text(detail.layers.contains(where: \.on)
                  ? "One member plays at a time. Pick another and it plays in place of the last. Each member is an EQ of its own, with its own page."
@@ -328,7 +339,7 @@ private struct LayersSection: View {
             }
             #endif
         } header: {
-            Text("Plays first")
+            KoanSectionHeader("Plays first")
         } footer: {
             Text("Played in order, before this EQ's own bands. One switched off plays nothing.")
                 .font(.role(.fine, system: .caption))
@@ -436,6 +447,39 @@ struct RoleTag: View {
     }
 }
 
+/// Every target, by the headphones it is for, and those added once: each
+/// list of targets for an ear ends with the added ones, and a picker with a
+/// row twice cannot choose either. Neutral is a target of both ears, so a
+/// target's ear is said by the heading it is under.
+struct TargetGroups {
+    var over: [DspTargetOption] = []
+    var inEar: [DspTargetOption] = []
+    var added: [DspTargetOption] = []
+
+    init() {}
+
+    init(over: [DspTargetOption], inEar: [DspTargetOption]) {
+        let both = Set(over.map(\.id)).intersection(inEar.map(\.id))
+        self.over = over.filter { !both.contains($0.id) }
+        self.inEar = inEar.filter { !both.contains($0.id) }
+        added = over.filter { both.contains($0.id) }
+    }
+
+    var isEmpty: Bool { over.isEmpty && inEar.isEmpty && added.isEmpty }
+
+    /// The targets as a picker's rows, each tagged with its id, under a
+    /// heading for each group.
+    @ViewBuilder var rows: some View {
+        ForEach([("Over-ear", over), ("In-ear", inEar), ("Added", added)].filter { !$0.1.isEmpty }, id: \.0) { title, targets in
+            Section(KoanTheme.label(title)) {
+                ForEach(targets, id: \.id) { t in
+                    TargetRow(target: t).tag(t.id)
+                }
+            }
+        }
+    }
+}
+
 extension DspTargetOption {
     /// Its name, and what it does in a few plain words.
     var label: String { does.isEmpty ? name : "\(name): \(does)" }
@@ -473,7 +517,7 @@ private struct RoleSection: View {
     let dsp: DspModel
     let detail: DspProfileDetail
     /// Every target, for what a ready-made EQ was made for.
-    let madeForChoices: [DspTargetOption]
+    let madeForChoices: TargetGroups
     /// The targets this correction can move to, once its own is known.
     let targets: DspTargets?
     @Binding var adding: Bool
@@ -488,20 +532,14 @@ private struct RoleSection: View {
             KoanPicker("This is", selection: Binding(
                 get: { detail.role },
                 set: { dsp.setRole(detail.name, $0) }
-            ), options: [
-                ("A neutral correction", DspRole.correction),
-                ("A correction with a sound already in it", DspRole.baked),
-                ("A tuning to add on top", DspRole.tuning),
-            ])
+            ), options: [DspRole.correction, .baked, .tuning].map { (ProfileRole($0).label, $0) })
             if detail.role == .tuning, !madeForChoices.isEmpty {
                 Picker("Made against", selection: Binding(
                     get: { detail.tunedFor ?? "" },
                     set: { dsp.setTunedFor(detail.name, $0.isEmpty ? nil : $0) }
                 )) {
                     Text("Unknown").tag("")
-                    ForEach(madeForChoices, id: \.id) { t in
-                        TargetRow(target: t).tag(t.id)
-                    }
+                    madeForChoices.rows
                 }
                 #if os(iOS)
                 .pickerStyle(.navigationLink)
@@ -540,9 +578,7 @@ private struct RoleSection: View {
                         set: { dsp.setMadeFor(detail.name, $0.isEmpty ? nil : $0) }
                     )) {
                         Text("Unknown").tag("")
-                        ForEach(madeForChoices, id: \.id) { t in
-                            TargetRow(target: t).tag(t.id)
-                        }
+                        madeForChoices.rows
                     }
                     #if os(iOS)
                     .pickerStyle(.navigationLink)
@@ -550,7 +586,7 @@ private struct RoleSection: View {
                 }
             }
         } header: {
-            Text("What it's for")
+            KoanSectionHeader("What it's for")
         } footer: {
             Text(footer)
                 .font(.role(.fine, system: .caption))
@@ -640,7 +676,7 @@ private struct ScopeSection: View {
                     .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             }
         } header: {
-            Text("Sync")
+            KoanSectionHeader("Sync")
         } footer: {
             Text(detail.everywhere
                  ? "Everywhere: kept on every device signed in to your kōan server, and an edit on one reaches the rest. Which output plays it stays each device's own. Headphone corrections sync by default, since headphones move between devices."

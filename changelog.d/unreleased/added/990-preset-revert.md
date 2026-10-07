@@ -1,0 +1,1 @@
+- **Revert to a preset.** An output changed since its preset can go back to it from the EQ page, and the quick preset menus list the edited chain and the saved preset side by side.

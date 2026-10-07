@@ -32,13 +32,10 @@ struct RoleQuestion: View {
                 }
                 Section {
                     choice(.correction,
-                           "A neutral correction",
                            "Makes headphones or speakers sound neutral: an AutoEQ result, or a correction from a measurement such as spinorama's or REW's.")
                     choice(.baked,
-                           "A correction with a sound in it",
                            "Corrects and adds taste in one, as presets named for a sound do, like Qudelix's “Lush”.")
                     choice(.tuning,
-                           "A tuning",
                            "Taste on top of a correction: more bass, a darker treble.")
                 }
                 Section {
@@ -61,16 +58,13 @@ struct RoleQuestion: View {
         #endif
     }
 
-    private func choice(_ role: DspRole, _ title: String, _ example: String) -> some View {
+    private func choice(_ role: DspRole, _ example: String) -> some View {
         Button {
             dsp.answer(ask, role)
             dismiss()
         } label: {
             VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Text(title).koanText(.body)
-                    RoleTag(role: ProfileRole(role))
-                }
+                Text(KoanTheme.label(ProfileRole(role).label)).koanText(.body)
                 Text(example).koanText(.fine, .muted)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
