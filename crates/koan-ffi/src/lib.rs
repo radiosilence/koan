@@ -108,6 +108,10 @@ pub trait AudioSessionHost: Send + Sync {
     /// Also called on a session already active, when a track wants another
     /// rate.
     fn activate(&self, sample_rate: f64) -> Option<f64>;
+    /// Ask for `sample_rate` without activating, and answer
+    /// `AVAudioSession.sampleRate`: on a route change, when another app may
+    /// hold the session.
+    fn follow(&self, sample_rate: f64) -> f64;
     fn release(&self);
 }
 
@@ -118,6 +122,10 @@ struct SessionBridge(Arc<dyn AudioSessionHost>);
 impl koan_core::audio::ios_backend::AudioSession for SessionBridge {
     fn activate(&self, sample_rate: f64) -> Option<f64> {
         self.0.activate(sample_rate)
+    }
+
+    fn follow(&self, sample_rate: f64) -> f64 {
+        self.0.follow(sample_rate)
     }
 
     fn release(&self) {
