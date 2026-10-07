@@ -437,7 +437,12 @@ final class DspModel {
     /// The targets for in-ear or over-ear headphones, each with what it
     /// sounds like.
     func targetsFor(inEar: Bool) async -> [DspTargetOption] {
-        await engine.dspTargetsFor(inEar: inEar)
+        await targetsFor(inEar ? .inEar : .overEar)
+    }
+
+    /// The targets for a kind of headphone or a speaker.
+    func targetsFor(_ ear: DspEarKind) async -> [DspTargetOption] {
+        await engine.dspTargetsFor(ear: ear)
     }
 
     /// What correcting a measurement to a target would do, before saving.
@@ -446,7 +451,7 @@ final class DspModel {
     }
 
     /// What `text` is read as, as a measurement, or why it cannot be.
-    func describeMeasurement(_ text: String) async throws -> String {
+    func describeMeasurement(_ text: String) async throws -> DspMeasurementReading {
         try await engine.dspDescribeMeasurement(text: text)
     }
 
@@ -460,10 +465,10 @@ final class DspModel {
         try await engine.dspSquigFetch(site: hit.site, file: hit.file)
     }
 
-    /// Save a headphone's measurement corrected to a target, as a profile,
-    /// crediting where the measurement came from.
-    func saveMeasured(name: String, text: String, inEar: Bool, target: String, source: String? = nil) async throws -> String {
-        let saved = try await engine.dspSaveMeasured(name: name, text: text, inEar: inEar, target: target, source: source)
+    /// Save a headphone's or a speaker's measurement corrected to a target,
+    /// as a profile, crediting where the measurement came from.
+    func saveMeasured(name: String, text: String, ear: DspEarKind, target: String, source: String? = nil) async throws -> String {
+        let saved = try await engine.dspSaveMeasured(name: name, text: text, ear: ear, target: target, source: source)
         await changed()
         return saved
     }

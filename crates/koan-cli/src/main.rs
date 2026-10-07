@@ -368,7 +368,8 @@ enum DspCommands {
         /// The headphone, as the correction's name
         #[arg(long)]
         name: String,
-        #[arg(long, value_parser = ["in", "over"])]
+        /// A speaker's Klippel export is a speaker's, corrected to `flat`
+        #[arg(long, value_parser = ["in", "over", "speaker"])]
         ear: String,
         /// A target id, as `koan dsp target` lists them
         #[arg(long)]
@@ -896,7 +897,7 @@ fn dsp(command: Option<DspCommands>) {
             name,
             ear,
             target,
-        } => commands::cmd_dsp_measure(&paths, &name, ear == "in", &target),
+        } => commands::cmd_dsp_measure(&paths, &name, &ear, &target),
         DspCommands::Split {
             name,
             path,

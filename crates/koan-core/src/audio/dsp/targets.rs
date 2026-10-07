@@ -19,12 +19,13 @@ use std::path::{Path, PathBuf};
 
 use crate::config::{self, GraphicEq};
 
-/// Which kind of headphone a target is for. A target for one is not offered
-/// for the other: the measurements behind them differ.
+/// Which kind of headphone a target is for, or a speaker. A target for one
+/// is not offered for another: the measurements behind them differ.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ear {
     Over,
     In,
+    Speaker,
 }
 
 /// A target that ships with koan.
@@ -40,8 +41,8 @@ pub struct Target {
     data: &'static str,
 }
 
-/// The targets offered, over-ear then in-ear: neutral first, then each
-/// preference added to it, the most chosen first.
+/// The targets offered, over-ear, in-ear, then speakers: neutral first, then
+/// each preference added to it, the most chosen first.
 pub const TARGETS: &[Target] = &[
     Target {
         id: "diffuse-field-gras-kemar",
@@ -114,6 +115,14 @@ pub const TARGETS: &[Target] = &[
         character: "oratory1990's target for in-ears.",
         ear: Ear::In,
         data: include_str!("targets/oratory1990-in-ear.csv"),
+    },
+    Target {
+        id: "flat",
+        name: "Flat",
+        does: "",
+        character: "Neutral for a speaker: a flat listening window, as CTA-2034 and spinorama measurements aim for. Add a room tilt as a tuning.",
+        ear: Ear::Speaker,
+        data: include_str!("targets/flat.csv"),
     },
 ];
 
@@ -271,11 +280,13 @@ pub fn identify(result_target: &[(f64, f64)], ear: Ear) -> Option<&'static Targe
 const GUESS_MARGIN_DB: f64 = 1.5;
 
 /// The neutral and Harman targets for `ear`: what a tuning without a
-/// target said was most likely made against.
-fn usual(ear: Ear) -> [&'static str; 2] {
+/// target said was most likely made against. A speaker has only Flat, so
+/// nothing to choose between.
+fn usual(ear: Ear) -> Option<[&'static str; 2]> {
     match ear {
-        Ear::Over => ["diffuse-field-gras-kemar", "harman-over-ear-2018"],
-        Ear::In => ["diffuse-field-iso-11904-1", "harman-in-ear-2019"],
+        Ear::Over => Some(["diffuse-field-gras-kemar", "harman-over-ear-2018"]),
+        Ear::In => Some(["diffuse-field-iso-11904-1", "harman-in-ear-2019"]),
+        Ear::Speaker => None,
     }
 }
 
@@ -307,7 +318,8 @@ pub fn guess_made_against(eq: &[f64], ear: Ear, aim: &str) -> Option<&'static Ta
     if own < GUESS_MARGIN_DB {
         return None;
     }
-    let harman = levelled(&shipped(usual(ear)[1])?.curve(), &grid);
+    let usual = usual(ear)?;
+    let harman = levelled(&shipped(usual[1])?.curve(), &grid);
     let fit = |t: &Target| {
         let t = levelled(&t.curve(), &grid);
         let (sum, n) = grid
@@ -319,8 +331,7 @@ pub fn guess_made_against(eq: &[f64], ear: Ear, aim: &str) -> Option<&'static Ta
             });
         (sum / f64::from(n.max(1))).sqrt()
     };
-    let mut candidates: Vec<&'static Target> =
-        usual(ear).iter().filter_map(|id| shipped(id)).collect();
+    let mut candidates: Vec<&'static Target> = usual.iter().filter_map(|id| shipped(id)).collect();
     if let Some(a) = shipped(aim).filter(|a| a.ear == ear && !candidates.contains(a)) {
         candidates.push(a);
     }

@@ -798,6 +798,7 @@ pub struct DspMeasurement {
 pub enum DspEar {
     In,
     Over,
+    Speaker,
 }
 
 /// The bounds a profile must keep to be played: what any real correction

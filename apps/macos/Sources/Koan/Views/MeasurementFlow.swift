@@ -23,8 +23,9 @@ struct MeasurementFlow: View {
     @State private var preview: DspResponse?
     @State private var name: String
     @State private var problem: String?
-    /// What the measurement was read as: for a speaker, which of its curves.
-    @State private var reading: String?
+    /// What the measurement was read as: a speaker's or a headphone's, and
+    /// for a speaker which of its curves.
+    @State private var reading: DspMeasurementReading?
     @State private var saving = false
     /// Searching squig.link's sites, from the name the flow was opened with.
     @State private var squigQuery: String
@@ -98,7 +99,10 @@ struct MeasurementFlow: View {
                         if step != .learn {
                             Button("Back") {
                                 problem = nil
-                                step = Step(rawValue: step.rawValue - 1) ?? .learn
+                                // A speaker has no in-ear or over-ear to ask.
+                                step = step == .target && speaker
+                                    ? .file
+                                    : Step(rawValue: step.rawValue - 1) ?? .learn
                             }
                         }
                     }
@@ -241,17 +245,6 @@ struct MeasurementFlow: View {
     }
 
     private var ear: some View {
-        Group {
-            if let reading {
-                Section("Read as") {
-                    Text(reading).koanText(.meta, .muted)
-                }
-            }
-            earPicker
-        }
-    }
-
-    private var earPicker: some View {
         Section {
             Picker("Your headphones are", selection: $inEar) {
                 Text("In-ear").tag(true)
@@ -267,6 +260,17 @@ struct MeasurementFlow: View {
     }
 
     private var targetStep: some View {
+        Group {
+            if speaker, let reading {
+                Section("Read as") {
+                    Text(reading.note).koanText(.meta, .muted)
+                }
+            }
+            targetPicker
+        }
+    }
+
+    private var targetPicker: some View {
         Section {
             Picker("Target", selection: $target) {
                 ForEach(targets, id: \.id) { t in
@@ -295,20 +299,24 @@ struct MeasurementFlow: View {
                 Section {
                     EqGraph(response: preview, startOn: .headphone)
                 } footer: {
-                    Text("Measured shows your measurement, the target, and what your headphones will sound like with the correction. EQ shows the correction itself.")
+                    Text("Measured shows your measurement, the target, and what your \(speaker ? "speaker" : "headphones") will sound like with the correction. EQ shows the correction itself.")
                         .koanText(.fine, .muted)
                 }
             }
             Section {
                 TextField("Name", text: $name)
             } footer: {
-                Text("Usually the headphones' name. It becomes a correction: add tunings, like more bass, on top of it.")
+                Text("Usually the \(speaker ? "speaker's" : "headphones'") name. It becomes a correction: add tunings, like more bass or a room tilt, on top of it.")
                     .koanText(.fine, .muted)
             }
         }
     }
 
     // MARK: - Doing
+
+    /// A speaker's measurement: corrected to Flat, the one speaker target,
+    /// with no headphone target offered.
+    private var speaker: Bool { reading?.speaker == true }
 
     private var canGoOn: Bool {
         switch step {
@@ -345,6 +353,12 @@ struct MeasurementFlow: View {
                 reading = try await dsp.describeMeasurement(text)
             } catch {
                 problem = SettingsModel.describe(error)
+                return
+            }
+            if speaker {
+                targets = await dsp.targetsFor(.speaker)
+                target = targets.first { $0.id == "flat" }?.id ?? targets.first?.id
+                step = .target
                 return
             }
         default:
@@ -454,7 +468,8 @@ struct MeasurementFlow: View {
         saving = true
         Task {
             do {
-                let saved = try await dsp.saveMeasured(name: name, text: text, inEar: inEar, target: target, source: source)
+                let ear: DspEarKind = speaker ? .speaker : inEar ? .inEar : .overEar
+                let saved = try await dsp.saveMeasured(name: name, text: text, ear: ear, target: target, source: source)
                 self.saved(saved)
                 dismiss()
             } catch {

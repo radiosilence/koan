@@ -592,7 +592,11 @@ pub fn overview_for(device: Option<String>) -> Overview {
         in_ear: aim
             .as_deref()
             .and_then(super::targets::shipped)
-            .map(|t| t.ear == super::targets::Ear::In),
+            .and_then(|t| match t.ear {
+                super::targets::Ear::In => Some(true),
+                super::targets::Ear::Over => Some(false),
+                super::targets::Ear::Speaker => None,
+            }),
         aim: aim.as_deref().map(target_name),
         left_out: chain.and_then(|c| c.left_out),
         outputs: outputs(&cfg.dsp),
@@ -1149,6 +1153,7 @@ pub fn target_choices(name: &str) -> Option<TargetChoices> {
             match m.ear {
                 DspEar::In => targets::Ear::In,
                 DspEar::Over => targets::Ear::Over,
+                DspEar::Speaker => targets::Ear::Speaker,
             },
         ),
         (None, Some(t)) => {
@@ -2804,19 +2809,51 @@ pub fn read_measurement(text: &str) -> Result<super::targets::Curve, String> {
     reading(text).map(|(curve, _)| curve)
 }
 
-/// What a measurement is read as, said to the person before they go on:
-/// for a speaker's Klippel export, which of its curves.
-pub fn describe_measurement(text: &str) -> Result<String, String> {
+/// What a measurement is read as.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeasurementReading {
+    /// Said to the person before they go on: for a speaker's Klippel export,
+    /// which of its curves.
+    pub note: String,
+    /// A speaker's, corrected to Flat; otherwise a headphone's.
+    pub speaker: bool,
+}
+
+pub fn describe_measurement(text: &str) -> Result<MeasurementReading, String> {
     let (curve, used) = reading(text)?;
     Ok(match used {
-        Some(used) => used.describe(),
-        None => format!(
-            "{} points, from {:.0} Hz to {:.1} kHz.",
-            curve.len(),
-            curve.first().map_or(0.0, |p| p.0),
-            curve.last().map_or(0.0, |p| p.0) / 1000.0
-        ),
+        Some(used) => MeasurementReading {
+            note: used.describe(),
+            speaker: true,
+        },
+        None => MeasurementReading {
+            note: format!(
+                "{} points, from {:.0} Hz to {:.1} kHz.",
+                curve.len(),
+                curve.first().map_or(0.0, |p| p.0),
+                curve.last().map_or(0.0, |p| p.0) / 1000.0
+            ),
+            speaker: false,
+        },
     })
+}
+
+/// Whether a measurement for `ear` may be corrected to `target`: a speaker
+/// to the speaker target, a headphone to a headphone's. One added by hand
+/// is taken at its word.
+fn suits(ear: super::targets::Ear, target: &str) -> Result<(), String> {
+    use super::targets::{Ear, shipped};
+    match shipped(target) {
+        Some(t) if t.ear == Ear::Speaker && ear != Ear::Speaker => Err(format!(
+            "{} is a speaker target; a headphone is corrected to a headphone target",
+            t.name
+        )),
+        Some(t) if ear == Ear::Speaker && t.ear != Ear::Speaker => Err(format!(
+            "{} is a headphone target; a speaker is corrected to Flat",
+            t.name
+        )),
+        _ => Ok(()),
+    }
 }
 
 fn reading(text: &str) -> Result<(super::targets::Curve, Option<super::klippel::Used>), String> {
@@ -2834,7 +2871,10 @@ fn reading(text: &str) -> Result<(super::targets::Curve, Option<super::klippel::
 /// saved: the curves the Headphone view draws, and the EQ's own.
 pub fn preview_measurement(text: &str, target: &str, rate: u32) -> Result<Response, String> {
     use super::targets;
-    let measured = read_measurement(text)?;
+    let (measured, used) = reading(text)?;
+    if used.is_some() {
+        suits(targets::Ear::Speaker, target)?;
+    }
     let aim = targets::choice_curve(target).ok_or_else(|| format!("No target {target}"))?;
     let freqs = targets::grid();
     let (filters, preamp_db) = squig_fit(&measured, &aim);
@@ -3052,7 +3092,20 @@ fn measured_profile(
     if Config::cached().dsp.profiles.iter().any(|p| p.name == name) {
         return Err(format!("There is already an EQ called {name}"));
     }
-    let measured = read_measurement(text)?;
+    let (measured, used) = reading(text)?;
+    if used.is_some() && ear != DspEar::Speaker {
+        return Err(
+            "This is a speaker's measurement: it is corrected as a speaker, to Flat".into(),
+        );
+    }
+    suits(
+        match ear {
+            DspEar::In => targets::Ear::In,
+            DspEar::Over => targets::Ear::Over,
+            DspEar::Speaker => targets::Ear::Speaker,
+        },
+        target,
+    )?;
     let aim = targets::choice_curve(target).ok_or_else(|| format!("No target {target}"))?;
     // Kept at its own points and in full, and fitted as kept: a new target
     // fits again from the same curve, here or on another device.
@@ -4109,6 +4162,93 @@ mod tests {
             text.push_str(&format!("{hz:.2},{db:.2}\n"));
         }
         text
+    }
+
+    /// A file the importer cannot read says what it expected and what it
+    /// found, so pressing Next never does nothing.
+    #[test]
+    fn an_unreadable_measurement_says_what_it_expected_and_found() {
+        let path = read_measurement("~/Downloads/Speaker/SPL Vertical.txt").unwrap_err();
+        assert!(
+            path.contains("two-column CSV or a squig.link export"),
+            "{path}"
+        );
+        assert!(path.contains("file's path"), "{path}");
+        let short = read_measurement("20, 92.4\n21, 92.6\n").unwrap_err();
+        assert!(short.contains("this has 2 from 20 Hz to 21 Hz"), "{short}");
+        let prose = read_measurement("Hello there\nnothing numeric").unwrap_err();
+        assert!(prose.contains("“Hello there”"), "{prose}");
+    }
+
+    /// An Audio Science Review export is a speaker's: on-axis from one
+    /// plane, the listening window from both, said which, and corrected to
+    /// Flat only.
+    #[test]
+    fn a_klippel_export_is_a_speaker_measurement() {
+        use super::super::klippel::tests::export;
+        let tilt = |_: f64, hz: f64| 88.0 - (hz / 1000.0).log2();
+        let vertical = export("SPL Vertical", tilt);
+        let one = describe_measurement(&vertical).unwrap();
+        assert!(one.speaker);
+        assert!(
+            one.note.starts_with("A speaker's on-axis response"),
+            "{}",
+            one.note
+        );
+        assert!(one.note.contains("SPL Horizontal"), "{}", one.note);
+        let both = export("SPL Horizontal", tilt) + &vertical;
+        assert!(
+            describe_measurement(&both)
+                .unwrap()
+                .note
+                .contains("listening window (CTA-2034)")
+        );
+        let curve = read_measurement(&both).unwrap();
+        assert!(curve.last().unwrap().0 > 19_000.0);
+        assert!((super::super::targets::at(&curve, 4000.0) + 2.0).abs() < 0.01);
+        assert!(preview_measurement(&both, "harman-over-ear-2018", 48000).is_err());
+        assert!(!describe_measurement(&measured(6.0)).unwrap().speaker);
+        assert!(measured_profile("X", &both, DspEar::Over, "harman-over-ear-2018").is_err());
+        assert!(measured_profile("X", &both, DspEar::Speaker, "harman-over-ear-2018").is_err());
+        assert!(measured_profile("X", &measured(6.0), DspEar::In, "flat").is_err());
+    }
+
+    /// A speaker's listening window corrected to Flat: the fitted bands
+    /// bring it toward flat across the band they act in.
+    #[test]
+    fn a_speakers_listening_window_is_fitted_toward_flat() {
+        use super::super::klippel::tests::export;
+        // A bass hump, a presence dip and a lift, the same at every angle.
+        let level = |_: f64, hz: f64| {
+            let bump = |f: f64, db: f64| db * (-((hz / f).log2() * 2.0).powi(2)).exp();
+            85.0 + bump(120.0, 5.0) + bump(2500.0, -4.0) + bump(600.0, 2.5)
+        };
+        let both = export("SPL Horizontal", level) + &export("SPL Vertical", level);
+        let preview = preview_measurement(&both, "flat", 48000).unwrap();
+        // Spread about the mean, 30 Hz to 6 kHz: the preamp only shifts it.
+        let spread = |curve: &[f64]| {
+            let band: Vec<f64> = preview
+                .freqs
+                .iter()
+                .zip(curve)
+                .filter(|(hz, _)| (30.0..=6000.0).contains(*hz))
+                .map(|(_, db)| *db)
+                .collect();
+            let mean = band.iter().sum::<f64>() / band.len() as f64;
+            (band.iter().map(|d| (d - mean).powi(2)).sum::<f64>() / band.len() as f64).sqrt()
+        };
+        let before = spread(preview.measurement.as_ref().unwrap());
+        let after = spread(preview.predicted.as_ref().unwrap());
+        assert!(
+            preview
+                .target
+                .as_ref()
+                .unwrap()
+                .iter()
+                .all(|d| d.abs() < 1e-9)
+        );
+        assert!(before > 1.5, "{before}");
+        assert!(after < before / 3.0, "{before} → {after}");
     }
 
     /// A headphone measured and corrected to a target: a correction, kept

@@ -1237,6 +1237,51 @@ impl From<koan_core::audio::dsp::squig::Hit> for SquigHit {
     }
 }
 
+/// What a measurement is of: a kind of headphone, or a speaker.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DspEarKind {
+    InEar,
+    OverEar,
+    Speaker,
+}
+
+impl From<DspEarKind> for koan_core::config::DspEar {
+    fn from(e: DspEarKind) -> Self {
+        match e {
+            DspEarKind::InEar => Self::In,
+            DspEarKind::OverEar => Self::Over,
+            DspEarKind::Speaker => Self::Speaker,
+        }
+    }
+}
+
+impl From<DspEarKind> for koan_core::audio::dsp::targets::Ear {
+    fn from(e: DspEarKind) -> Self {
+        match e {
+            DspEarKind::InEar => Self::In,
+            DspEarKind::OverEar => Self::Over,
+            DspEarKind::Speaker => Self::Speaker,
+        }
+    }
+}
+
+/// What a measurement is read as: `note` to show, and whether it is a
+/// speaker's, corrected to Flat.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspMeasurementReading {
+    pub note: String,
+    pub speaker: bool,
+}
+
+impl From<koan_core::audio::dsp::profiles::MeasurementReading> for DspMeasurementReading {
+    fn from(r: koan_core::audio::dsp::profiles::MeasurementReading) -> Self {
+        Self {
+            note: r.note,
+            speaker: r.speaker,
+        }
+    }
+}
+
 /// A headphone target a correction can be moved to.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct DspTargetOption {
