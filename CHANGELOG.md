@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The kōan look, refined after 0.60.0.** Buttons come in three weights with at most one prominent action per screen, each on one line; lists, settings and the EQ pages sit on the theme's ground in square sections instead of black or carded rows; the EQ filter table is dense, with short type codes; checkboxes trail their labels; on iPhone, album and playlist headers scroll away and leave the title in the bar. The design rules are in `docs/design/koan-theme.md`.
+
 ## 0.60.1
 
 ### Added
@@ -10,7 +16,6 @@
 ### Changed
 
 - **Settings for the server come in sections.** The Server page had grown with every feature. It now holds the address, sign-in, sync, downloads and what the server offers; Account holds the password and API keys; People holds accounts, for admins; Devices gains pairing and the server play queue; Integrations holds ListenBrainz and assistants. On the Mac each is a tab, and on iPhone and iPad a page under Settings. Each shows only where the server has what it holds. The Apple TV keeps one page for the server.
-- **A release no longer waits on Apple's notary.** 0.59.0 never published because notarisation sat "In Progress" past the release's timeout. Releases now publish once everything is built and signed; a separate job notarises the macOS binaries and the app, staples the DMG into the release, and moves the Homebrew cask to it, re-runnable on its own without releasing again.
 - **Releases no longer queue behind stale runs.** A newer push cancels an older run of the same pull request, or an older run on main that releases nothing; release runs and manual runs are never cancelled. On main, the macOS and tvOS app builds run only when releasing, since the pull request built them already.
 - **API key and account errors read as errors in the system look too.** Settings showed them in the label colour there, and in the theme's red only under the kōan theme.
 - **EQ for headphones or speakers, and a steadier EQ page.** EQ copy speaks of any device rather than headphones alone. An imported EQ's role is asked in a sheet with an example for each answer and a Decide Later that says what it leaves. The EQ page draws what the output plays at a fixed height, easing between presets, and edits happen on the profile's own page.
@@ -42,6 +47,7 @@
 - **A larger Settings window on the Mac.** It opens at 820×780, can be resized, and keeps its size between launches, so the longer panes, EQ among them, no longer scroll on a laptop screen.
 - **A DSP change while playing no longer clicks.** Editing a band or switching a profile used to cut the output mid-waveform and restart it. The old processing now fades out over 15 ms and the new one fades in over the same, a short dip in place of a step. Pausing keeps its own, longer fade.
 - **Each EQ profile says what it is for.** A profile is a correction, a tuning, or baked (a correction with a tuning already in it, as most named presets are), shown as a badge wherever profiles are listed; imports ask which. A stack holds one correction: a second layer is refused, and a stack made before that rule still plays and says which two it holds. A correction's target is chosen inside it, and its bands and sync settings sit under "Bands, sync and more". "Kept: On every device" is now "Sync: Everywhere".
+- **A release no longer waits on Apple's notary.** 0.59.0 never published because notarisation sat "In Progress" past the release's timeout. Releases now publish once everything is built and signed; a separate job notarises the macOS binaries and the app, staples the DMG into the release, and moves the Homebrew cask to it, re-runnable on its own without releasing again.
 
 ### Fixed
 

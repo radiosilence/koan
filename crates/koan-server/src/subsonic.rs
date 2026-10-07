@@ -10619,6 +10619,7 @@ mod tests {
                 sha256: sha256_hex(file),
                 size: file.len() as u64,
             }],
+            unknown: Default::default(),
         }
     }
 
@@ -10815,6 +10816,7 @@ mod tests {
                 ..Default::default()
             },
             files: vec![],
+            unknown: Default::default(),
         };
         let body = post_form(
             app,
