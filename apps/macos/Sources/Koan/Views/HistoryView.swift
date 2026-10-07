@@ -120,13 +120,15 @@ struct HistoryView: View {
     private var list: some View {
                 List(selection: $selection) {
                     ForEach(days, id: \.key) { day in
-                        Section(day.key) {
+                        Section {
                             ForEach(day.entries, id: \.id) { entry in
                                 HistoryRow(entry: entry)
                                     .primaryTap { play([entry.id]) } menu: { menu(for: [entry.id]) }
                                     .washedRow()
                                     .tag(entry.id)
                             }
+                        } header: {
+                            KoanSectionHeader(day.key)
                         }
                     }
                 }
@@ -153,7 +155,7 @@ struct HistoryView: View {
                 .font(.role(.control, system: .callout))
                 .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             Spacer(minLength: 0)
-            Button("Clear…") { confirmingClear = true }
+            Button { confirmingClear = true } label: { Text("Clear…").koanCase() }
                 .disabled(entries.isEmpty)
         }
     }

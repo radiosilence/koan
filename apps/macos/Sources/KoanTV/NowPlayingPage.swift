@@ -185,12 +185,13 @@ private struct Scrubber: View {
         SeekBar()
             .padding(.vertical, 12)
             .padding(.horizontal, 16)
+            // In the theme the ring alone says it is focused.
             .background(
                 RoundedRectangle(cornerRadius: KoanTheme.radius(14))
-                    .fill(.white.opacity(focused ? 0.18 : 0))
-                    .stroke(.white.opacity(focused ? 0.6 : 0), lineWidth: 2)
+                    .fill(.white.opacity(focused && !KoanTheme.isOn ? 0.18 : 0))
+                    .stroke(.white.opacity(focused && !KoanTheme.isOn ? 0.6 : 0), lineWidth: 2)
             )
-            .scaleEffect(focused ? 1.02 : 1)
+            .scaleEffect(focused && !KoanTheme.isOn ? 1.02 : 1)
             .animation(.easeOut(duration: 0.15), value: focused)
             .koanFocus()
             .onMoveCommand { direction in

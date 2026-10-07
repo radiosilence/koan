@@ -18,7 +18,7 @@ struct IOSSearchView: View {
             .searchable(
                 text: $search.query,
                 placement: Self.placement,
-                prompt: "Artists, albums, tracks"
+                prompt: KoanTheme.label("Artists, albums, tracks")
             )
             .onSubmit(of: .search) { search.submit() }
     }

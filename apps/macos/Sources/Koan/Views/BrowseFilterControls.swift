@@ -16,7 +16,7 @@ struct BrowseFilterButton: View {
         Button { open = true } label: {
             #if os(tvOS)
             // In a row above the listing, with room for the name.
-            Label(count > 0 ? "Filters (\(count))" : "Filters", systemImage: symbol)
+            KoanLabel(count > 0 ? "Filters (\(count))" : "Filters", icon: symbol)
             #else
             HStack(spacing: 3) {
                 Image(systemName: symbol)
@@ -61,48 +61,62 @@ private struct BrowseFilterForm: View {
     @Environment(LibraryModel.self) private var library
 
     var body: some View {
+        // A television's form is the theme's container, which a Mac's
+        // popover cannot size itself to.
+        #if os(tvOS)
+        KoanForm { sections }
+            .task { await library.loadBrowseChoices() }
+        #else
+        Form { sections }
+            #if os(macOS)
+            .formStyle(.grouped)
+            #endif
+            .task { await library.loadBrowseChoices() }
+        #endif
+    }
+
+    @ViewBuilder private var sections: some View {
         @Bindable var library = library
-        Form {
-            Section {
-                Toggle("Favourites", isOn: $library.browseFilter.favourites)
-                Toggle("Recently Played", isOn: $library.browseFilter.recent)
-                Toggle("Downloaded", isOn: $library.browseFilter.downloaded)
-                // A track's codec says this already, and the track listing
-                // filters by codec rather than by what its record is in.
-                if library.section != .tracks {
-                    Toggle("Lossless", isOn: $library.browseFilter.lossless)
-                }
-            }
-            Section {
-                Picker("Codec", selection: $library.browseFilter.codec) {
-                    Text("Any").tag(String?.none)
-                    ForEach(offered(library.browseChoices?.codecs, current: library.browseFilter.codec), id: \.self) {
-                        Text($0).tag(String?.some($0))
-                    }
-                }
-                Picker("Genre", selection: $library.browseFilter.genre) {
-                    Text("Any").tag(String?.none)
-                    ForEach(offered(library.browseChoices?.genres, current: library.browseFilter.genre), id: \.self) {
-                        Text($0).tag(String?.some($0))
-                    }
-                }
-                LabeledContent("Years") {
-                    HStack(spacing: 4) {
-                        YearField(prompt: "From", value: $library.browseFilter.yearFrom)
-                        Text("–").foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                        YearField(prompt: "To", value: $library.browseFilter.yearTo)
-                    }
-                }
-            }
-            Section {
-                Button("Reset") { library.browseFilter = .none }
-                    .disabled(library.browseFilter.activeCount == 0)
+        Section {
+            Toggle("Favourites", isOn: $library.browseFilter.favourites)
+            Toggle("Recently Played", isOn: $library.browseFilter.recent)
+            Toggle("Downloaded", isOn: $library.browseFilter.downloaded)
+            // A track's codec says this already, and the track listing
+            // filters by codec rather than by what its record is in.
+            if library.section != .tracks {
+                Toggle("Lossless", isOn: $library.browseFilter.lossless)
             }
         }
-        #if os(macOS)
-        .formStyle(.grouped)
-        #endif
-        .task { await library.loadBrowseChoices() }
+        Section {
+            KoanPicker(
+                "Codec",
+                selection: $library.browseFilter.codec,
+                options: choices(offered(library.browseChoices?.codecs, current: library.browseFilter.codec)),
+                keepsCase: true
+            )
+            KoanPicker(
+                "Genre",
+                selection: $library.browseFilter.genre,
+                options: choices(offered(library.browseChoices?.genres, current: library.browseFilter.genre)),
+                keepsCase: true
+            )
+            LabeledContent("Years") {
+                HStack(spacing: 4) {
+                    YearField(prompt: "From", value: $library.browseFilter.yearFrom)
+                    Text("–").foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                    YearField(prompt: "To", value: $library.browseFilter.yearTo)
+                }
+            }
+        }
+        Section {
+            Button("Reset") { library.browseFilter = .none }
+                .disabled(library.browseFilter.activeCount == 0)
+        }
+    }
+
+    /// "Any", then the library's own values as they are written.
+    private func choices(_ values: [String]) -> [(label: String, value: String?)] {
+        [(KoanTheme.label("Any"), nil)] + values.map { ($0, $0) }
     }
 
     /// The choices, with the current one kept even when the library no longer

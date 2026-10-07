@@ -150,7 +150,11 @@ private struct TrackSortMenu: View {
                 }
             }
         } label: {
+            #if os(tvOS)
+            KoanLabel("Sort", icon: "arrow.up.arrow.down")
+            #else
             Label("Sort", systemImage: "arrow.up.arrow.down")
+            #endif
         }
     }
 }
@@ -173,7 +177,11 @@ private struct AlbumSortMenu: View {
                 }
             }
         } label: {
+            #if os(tvOS)
+            KoanLabel("Sort", icon: "arrow.up.arrow.down")
+            #else
             Label("Sort", systemImage: "arrow.up.arrow.down")
+            #endif
         }
     }
 }
