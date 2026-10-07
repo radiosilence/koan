@@ -697,7 +697,7 @@ private struct SidebarOverWash: ViewModifier {
         let washed = KoanTheme.washesWindow(appearance)
         content
             #if os(macOS)
-            .background(SidebarGround(clear: washed))
+            .background(SidebarGround(themed: KoanTheme.isOn))
             #endif
             .overlay(alignment: .trailing) {
                 if washed {
