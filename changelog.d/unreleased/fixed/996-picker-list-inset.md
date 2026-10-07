@@ -1,0 +1,1 @@
+- **Target pickers on iPhone reach their last row.** In the kōan look, the Made against, Corrected to, Target and Neutral is lists now open as pages that keep clear of the mini player and tab bar, so the bottom option can be tapped.
