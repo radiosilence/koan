@@ -623,6 +623,7 @@ pub fn tracks_from_server(db: &Database) -> u64 {
 /// empty shelves.
 pub fn forget_folder(db: &Database, folder: &Path) -> Result<u64, crate::db::connection::DbError> {
     // Rows are keyed by the disk's spelling; a folder named the other way would forget nothing.
+    let given = folder;
     let folder = &crate::index::spelling::on_disk(folder);
     let (lower, upper) = queries::folder_prefix_range(folder);
     // A scan of it underway would index again what this forgets: stop it, and
@@ -631,6 +632,9 @@ pub fn forget_folder(db: &Database, folder: &Path) -> Result<u64, crate::db::con
     let _lane = crate::index::lane::wait();
 
     let tx = crate::db::queries::write_transaction(&db.conn)?;
+    if given != folder {
+        queries::sources::respell_folder(&tx, given, folder)?;
+    }
     // The folder's files, and the tracks a rebuilt index has not yet re-read
     // from it.
     let tracks: Vec<i64> = {

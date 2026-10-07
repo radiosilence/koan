@@ -119,7 +119,7 @@ fn scan_folders_in_lane(
             // The files under it are stored as the directory spells them; the
             // root has to agree, or nothing under it matches a path an earlier
             // scan stored.
-            let path = super::spelling::on_disk(folder);
+            let path = library_folder(db, folder);
             let mut result = ScanResult::default();
             let found = walk(&path, &mut result);
             (path, found, result)
@@ -243,7 +243,7 @@ pub fn scan_dirs(
     let _turn = super::lane::enter(dirs, &mut opts);
     let mut result = ScanResult::default();
     let mut spelling = super::spelling::Spelling::default();
-    let library: Vec<PathBuf> = library.iter().map(|f| spelling.on_disk(f)).collect();
+    let library: Vec<PathBuf> = library.iter().map(|f| library_folder(db, f)).collect();
     let dirs: Vec<PathBuf> = dirs.iter().map(|d| spelling.on_disk(d)).collect();
 
     let mut files = Vec::new();
@@ -340,6 +340,29 @@ pub fn minimal_dirs(mut dirs: Vec<PathBuf>) -> Vec<PathBuf> {
         }
     }
     kept
+}
+
+/// A library folder as the disk spells it, with the rows stored under the
+/// spelling it was configured with moved there first
+/// (`sources::respell_folder`).
+fn library_folder(db: &Database, folder: &Path) -> PathBuf {
+    let path = super::spelling::on_disk(folder);
+    if path != folder {
+        let respelled = queries::write_transaction(&db.conn)
+            .map_err(crate::db::connection::DbError::from)
+            .and_then(|tx| {
+                queries::sources::respell_folder(&tx, folder, &path)?;
+                Ok(tx.commit()?)
+            });
+        if let Err(e) = respelled {
+            log::warn!(
+                "could not move {} to {}: {e}",
+                folder.display(),
+                path.display()
+            );
+        }
+    }
+    path
 }
 
 /// Whether a library folder is there to scan: readable, with something in it.
@@ -1085,6 +1108,73 @@ mod tests {
             )
             .unwrap();
         assert_eq!(plays, 1);
+    }
+
+    /// A library folder configured in another case than the disk's, whose
+    /// rows an earlier build stored under the configured spelling, keeps one
+    /// track per file once scans walk the disk's: the rows move across, and a
+    /// file already indexed under both is folded into its original track.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn rows_stored_under_a_library_folder_in_another_case_move_to_the_disks() {
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("Music");
+        let given = dir.path().join("music");
+        std::fs::create_dir_all(music.join("Artist")).unwrap();
+        if !given.exists() {
+            return;
+        }
+        for name in ["a.wav", "b.wav"] {
+            test_utils::generate_wav(&music.join("Artist").join(name), 44100, 1, 0.2, 16);
+        }
+        let db = test_db(dir.path());
+        scan_folder(&db, &music, ScanOptions::default(), None);
+        let original: Vec<i64> = tracks_with_uids(&db).iter().map(|t| t.0).collect();
+        // As an earlier build stored them, scanning the folder as configured.
+        let (from, to) = (
+            format!("{}/", music.display()),
+            format!("{}/", given.display()),
+        );
+        for (table, column) in [
+            ("tracks", "path"),
+            ("local_files", "path"),
+            ("scan_cache", "path"),
+        ] {
+            db.conn
+                .execute(
+                    &format!("UPDATE {table} SET {column} = replace({column}, ?1, ?2)"),
+                    [&from, &to],
+                )
+                .unwrap();
+        }
+        // And one file indexed a second time under the disk's spelling.
+        let twin = music.join("Artist/b.wav");
+        import_paths(&db, std::slice::from_ref(&twin));
+        assert_eq!(tracks_with_uids(&db).len(), 3);
+
+        scan_folder(&db, &given, ScanOptions::default(), None);
+
+        let tracks = tracks_with_uids(&db);
+        assert_eq!(
+            tracks.iter().map(|t| t.0).collect::<Vec<_>>(),
+            original,
+            "{tracks:?}"
+        );
+        assert!(
+            track_paths(&db).iter().all(|p| p.starts_with(&from)),
+            "{:?}",
+            track_paths(&db)
+        );
+        let stale: i64 = db
+            .conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM local_files WHERE substr(path, 1, length(?1)) = ?1)
+                      + (SELECT COUNT(*) FROM scan_cache WHERE substr(path, 1, length(?1)) = ?1)",
+                [&to],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stale, 0);
     }
 
     #[test]
