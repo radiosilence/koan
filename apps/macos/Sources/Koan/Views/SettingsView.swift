@@ -1507,7 +1507,9 @@ private struct DevicesSettings: View {
         let refused = model.settings.devicesRefused
         if !connections.isEmpty || !refused.isEmpty {
             Section {
-                ForEach(connections, id: \.self) { c in
+                // By place: two of the account's devices can share a name and
+                // have nothing else to tell them apart.
+                ForEach(Array(connections.enumerated()), id: \.offset) { _, c in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(c.name)
@@ -1538,7 +1540,7 @@ private struct DevicesSettings: View {
             } header: {
                 KoanSectionHeader("Connected now")
             } footer: {
-                Text("A device that can control this one uses its battery while it does. A device on this network can be disconnected here; one that has not proved it is yours can be refused, which keeps its address out. Your account's devices reach this one through the server for as long as they are signed in; revoke one under Server.")
+                Text("A device that can control this one uses its battery while it does. Disconnect hangs up a device on this network and keeps it from connecting again, and this device from connecting to it, until you play on it, pick it in Play on, or kōan restarts. Refuse keeps a device that has not proved it is yours out for good, by its address. Your account's devices reach this one through the server for as long as they are signed in; revoke one under Server.")
                     .koanText(.fine, .muted)
             }
         }

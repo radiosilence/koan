@@ -1211,6 +1211,9 @@ pub fn target() -> Option<String> {
 
 pub fn set_target(id: Option<String>) {
     cancel_wake(id.as_deref());
+    if let Some(id) = &id {
+        crate::remote::nearby::release(id);
+    }
     let listed = id
         .as_ref()
         .and_then(|id| list().into_iter().find(|d| d.id == *id));

@@ -118,10 +118,12 @@ through it, and every connection on the local network in either direction. A
 device that drives this one keeps it busy, so when kōan uses more battery than
 its time on screen explains, this is where to look.
 
-A device on the network that is controlling this one can be disconnected; it
-may connect again. One that has not proved it is yours, or shared with you,
-is listed by its address rather than by the name it gives, and can be
-refused: its address is kept in `devices.refused` and its connections are
+A device on the network that is controlling this one can be disconnected.
+Every connection from it ends, and until you play on it, pick it in Play on,
+or kōan restarts, it is not let back in and this device does not connect to
+it either. A device that has not proved it is yours, or shared with you, is
+listed by its address rather than by the name it gives, and can be refused
+for good: its address is kept in `devices.refused` and its connections are
 hung up as they arrive, until **Allow** takes it off the list. An address is
 all there is to know of a stranger, so one that moves to another address is
 not refused there. Your account's own devices are ended by revoking their

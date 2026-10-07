@@ -137,12 +137,71 @@ pub fn sessions() -> Vec<Session> {
     out
 }
 
-/// Hang up the connection to this device that `key` names. The device can
-/// dial again, unless its address is refused (`devices.refused`).
+/// A device the person disconnected: by the address it connected from, and
+/// by its id once it has given one.
+struct Held {
+    addr: String,
+    id: Option<String>,
+}
+
+/// Devices disconnected from Settings, held off until the person reaches
+/// for one again (`release`) or the app restarts. In memory only: refusing
+/// for good is `devices.refused`.
+static HELD: Mutex<Vec<Held>> = Mutex::new(Vec::new());
+
+fn held_addr(ip: &std::net::IpAddr) -> bool {
+    let ip = ip.to_canonical().to_string();
+    HELD.lock().iter().any(|h| h.addr == ip)
+}
+
+fn held_id(id: &str) -> bool {
+    HELD.lock().iter().any(|h| h.id.as_deref() == Some(id))
+}
+
+/// Hang up the connection to this device that `key` names, and hold the
+/// device off: every connection from its address or under its id ends, and
+/// it is neither accepted nor dialled again until `release` or a restart.
 pub fn end(key: u64) {
-    if let Some(i) = INBOUND.lock().iter().find(|i| i.session.key == Some(key)) {
+    let Some(held) = INBOUND
+        .lock()
+        .iter()
+        .find(|i| i.session.key == Some(key))
+        .map(|i| Held {
+            addr: i.session.addr.clone(),
+            id: i.session.id.clone(),
+        })
+    else {
+        return;
+    };
+    for i in INBOUND
+        .lock()
+        .iter()
+        .filter(|i| i.session.addr == held.addr || (held.id.is_some() && i.session.id == held.id))
+    {
         i.ended.store(true, Ordering::Relaxed);
         i.waker.wake();
+    }
+    let id = held.id.clone();
+    HELD.lock().push(held);
+    if let Some(id) = id
+        && let Some(conn) = CONNS.lock().as_ref().and_then(|c| c.get(&id))
+    {
+        conn.waker.wake();
+    }
+    devices::touch();
+}
+
+/// The person has reached for `id` again, playing on it or picking it: it is
+/// no longer held off, and is dialled at once.
+pub fn release(id: &str) {
+    let before = {
+        let mut held = HELD.lock();
+        let before = held.len();
+        held.retain(|h| h.id.as_deref() != Some(id));
+        before != held.len()
+    };
+    if before {
+        redial_device(id, "");
     }
 }
 
@@ -678,6 +737,7 @@ pub fn send_acked(id: &str, cmd: LinkCommand, ack: u64) -> bool {
 }
 
 fn send_envelope(id: &str, envelope: Envelope) -> bool {
+    release(id);
     // Asked before the connections are held: the device store is not to be
     // locked under them.
     queue(id, devices::listed_owner(id), envelope)
@@ -756,8 +816,8 @@ fn listen_once(local: &Local, port: u16, stop: &Arc<Stop>) -> Result<(), String>
 
     while !stop.stopped() {
         match listener.accept() {
-            Ok((_, addr)) if refused(&addr.ip()) => {
-                log::info!("nearby: {addr} is refused; hung up");
+            Ok((_, addr)) if refused(&addr.ip()) || held_addr(&addr.ip()) => {
+                log::info!("nearby: {addr} is refused or held off; hung up");
             }
             Ok((stream, addr)) => {
                 let (local, stop) = (local.clone(), stop.clone());
@@ -888,8 +948,11 @@ impl Serving<'_> {
                     Some(p) => log::info!("nearby: {id} proved itself: {:?}", p.peer),
                     None => log::info!("nearby: {id} proved nothing; trusted as the network is"),
                 }
-                if let Some((listed, _)) = &self.listed {
+                if let Some((listed, ended)) = &self.listed {
                     listed.said(&id, proven.as_ref().map(|p| p.peer.clone()));
+                    if held_id(&id) {
+                        ended.store(true, Ordering::Relaxed);
+                    }
                 }
                 self.proven =
                     proven.map(|p| (p, proof::Session::new(me, &id, &listen_nonce, &nonce)));
@@ -1166,6 +1229,26 @@ fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>, redial: Arc<Atomic
         let addr = at.lock().clone();
         let mut served = false;
         let started = Instant::now();
+        let held = FOUND
+            .lock()
+            .iter()
+            .find(|(k, _)| *k == key)
+            .and_then(|(_, f)| f.id.clone())
+            .is_some_and(|id| held_id(&id));
+        if held {
+            // Until `release` redials it, or the dialer is stopped.
+            let mut fds = [libc::pollfd {
+                fd: stop.waker_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            }];
+            // SAFETY: a live array of the length given.
+            unsafe { libc::poll(fds.as_mut_ptr(), 1, -1) };
+            stop.drain();
+            redial.store(false, Ordering::Relaxed);
+            wait = RETRY_MIN;
+            continue;
+        }
         match connect(&addr) {
             Ok(mut socket) => {
                 let fd = socket.get_ref().as_raw_fd();
@@ -1428,7 +1511,10 @@ impl wire::Session for Controlling<'_> {
     }
 
     fn done(&self) -> bool {
-        self.this_device || self.duplicate || self.stop.stopped()
+        self.this_device
+            || self.duplicate
+            || self.stop.stopped()
+            || self.id.as_deref().is_some_and(held_id)
     }
 }
 
@@ -2685,6 +2771,30 @@ mod tests {
         assert_eq!(c.proven, Some(Peer::Own));
         let state = serde_json::to_string(&LinkReport::State(LinkState::default())).unwrap();
         assert_eq!(c.checked(&state).as_deref(), Some(state.as_str()));
+    }
+
+    #[test]
+    fn a_disconnected_device_is_held_off_until_reached_for() {
+        let _store = crate::remote::devices::tests::STORE_LOCK.lock();
+        let addr: std::net::SocketAddr = "[::ffff:192.0.2.77]:50000".parse().unwrap();
+        let waker = Waker::new().unwrap();
+        let (listed, ended) = Listed::new(&addr, &waker);
+        listed.said("held-phone", None);
+        let key = listed.0;
+        let session = sessions().into_iter().find(|s| s.key == Some(key)).unwrap();
+        assert_eq!(session.addr, "192.0.2.77");
+        assert!(session.inbound);
+
+        end(key);
+        assert!(ended.load(Ordering::Relaxed));
+        assert!(held_addr(&addr.ip()));
+        assert!(held_id("held-phone"));
+        drop(listed);
+        assert!(sessions().iter().all(|s| s.key != Some(key)));
+
+        release("held-phone");
+        assert!(!held_id("held-phone"));
+        assert!(!held_addr(&addr.ip()));
     }
 
     /// A connection is proven once. A second `nearbyAuth`, from a device
