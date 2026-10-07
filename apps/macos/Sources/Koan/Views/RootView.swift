@@ -62,6 +62,7 @@ struct RootView: View {
 
         NavigationSplitView(columnVisibility: $columns) {
             SidebarView()
+                .modifier(SidebarOverWash())
                 // The column's minimum alone is not held when the window
                 // first lays out: the sidebar opened at its content's width
                 // and truncated its labels. The content's own minimum is.
@@ -656,7 +657,8 @@ private struct ClearsTransport: ViewModifier {
 }
 
 /// In the washed theme the toolbar and transport sit on the wash with nothing
-/// under them, so a page stops at their edges: a row passing beneath would
+/// under them and a hairline at the edge they share with the page, so a page
+/// stops at those edges: a row passing beneath would
 /// need a scrim or a fade to be told from their text. The toolbar's safe area
 /// becomes real space, so the AppKit lists that scroll into a safe area find
 /// none at the top, and everything past the edges is clipped.
@@ -669,9 +671,31 @@ private struct StopsAtBars: ViewModifier {
             .padding(.top, top)
             .padding(.bottom, bottom)
             .clipped()
+            // The toolbar's lower edge, as the transport's upper one is drawn.
+            .overlay(alignment: .top) {
+                Rectangle().fill(Color.koanRowRule).frame(height: KoanTheme.hairline).padding(.top, top)
+            }
             .ignoresSafeArea(.container, edges: .top)
             .background {
                 Color.clear.onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { top = $0 }
+            }
+    }
+}
+
+/// The sidebar column on the wash, in the theme with the wash under the whole
+/// window: no glass of the platform's, and a hairline where it meets the page.
+private struct SidebarOverWash: ViewModifier {
+    @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
+
+    func body(content: Content) -> some View {
+        let washed = KoanTheme.washesWindow(appearance)
+        content
+            .background(SidebarGround(clear: washed))
+            .overlay(alignment: .trailing) {
+                if washed {
+                    Rectangle().fill(Color.koanRowRule).frame(width: KoanTheme.hairline)
+                        .ignoresSafeArea()
+                }
             }
     }
 }
