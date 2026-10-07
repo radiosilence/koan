@@ -20,7 +20,7 @@ struct RoleQuestion: View {
                 Section {
                     Text(many
                          ? "kōan can't tell from the files what these EQs do."
-                         : "kōan can't tell from the file what \(ask.profile) does.")
+                         : "kōan can't tell from the file what \(ask.names.first ?? "this EQ") does.")
                         .koanText(.body)
                 } footer: {
                     if let into = ask.into {
@@ -49,8 +49,8 @@ struct RoleQuestion: View {
                         .koanButton(.text)
                 } footer: {
                     Text(many
-                         ? "Decide later: they're added as tunings, and you can change each one's role on its page."
-                         : "Decide later: it's added as a tuning, and you can change its role on its page.")
+                         ? "Decide later: they're kept as tunings, and you can change each one's role on its page."
+                         : "Decide later: it's kept as a tuning, and you can change its role on its page.")
                         .koanText(.fine, .muted)
                 }
             }

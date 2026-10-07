@@ -22,8 +22,8 @@ struct DspPlacement {
 struct RoleAsk: Identifiable {
     let names: [String]
     /// What goes into the chain: the group several presets became, or the
-    /// one profile made.
-    let profile: String
+    /// profiles made, the first of them as a correction.
+    let profiles: [String]
     let into: DspPlacement?
     var id: String { names.joined(separator: "\u{0}") }
 }
@@ -135,7 +135,7 @@ final class DspModel {
             lastError = nil
             // A group's members are alike, so one answer does for them all.
             if let first = summary.imported.first {
-                askRole = RoleAsk(names: summary.imported, profile: summary.group ?? first, into: into)
+                askRole = RoleAsk(names: summary.imported, profiles: summary.group.map { [$0] } ?? summary.imported, into: into)
             }
             importSummary = Self.describe(summary, files: urls.count)
         } catch KoanError.NeedsSampleRate {
@@ -198,7 +198,7 @@ final class DspModel {
         do {
             let name = try await run()
             lastError = nil
-            askRole = RoleAsk(names: [name], profile: name, into: nil)
+            askRole = RoleAsk(names: [name], profiles: [name], into: nil)
         } catch KoanError.NeedsSampleRate {
             needsRate = pending
         } catch {
@@ -419,11 +419,12 @@ final class DspModel {
             }
             guard let into = ask.into else { return }
             if role == .correction || role == .baked {
-                try await engine.dspAssignDevice(device: into.device, profile: ask.profile)
+                try await engine.dspAssignDevice(device: into.device, profile: ask.profiles.first)
             } else if into.stage == .eq {
                 let chain = await engine.dspOverviewFor(device: into.device).chain
-                guard !chain.contains(where: { $0.name == ask.profile }) else { return }
-                try await engine.dspSetTunings(device: into.device, tuning: chain + [DspTuningEntry(name: ask.profile, on: true)])
+                let added = ask.profiles.filter { name in !chain.contains { $0.name == name } }
+                guard !added.isEmpty else { return }
+                try await engine.dspSetTunings(device: into.device, tuning: chain + added.map { DspTuningEntry(name: $0, on: true) })
             }
         }
     }

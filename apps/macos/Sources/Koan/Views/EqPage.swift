@@ -23,8 +23,9 @@ struct EqSettings: View {
     // What the page presents is held here and presented from the form: a
     // modifier on a section of a list is applied to each of its rows, and
     // the presentation ends when that row is made again.
-    /// The stage whose Import… the file picker is open for.
-    @State private var importing: Stage?
+    @State private var importing = false
+    /// The stage whose Import… the file picker was opened for.
+    @State private var importStage: Stage?
     /// What a stage's picker asked for, presented once the picker has gone:
     /// a sheet asked for while another is leaving is never shown.
     @State private var adding: (Stage, StageAdd)?
@@ -126,11 +127,13 @@ struct EqSettings: View {
         .task(id: app.dsp.stamp) { app.dsp.reload() }
         #if !os(tvOS)
         .filePicker(
-            isPresented: Binding(get: { importing != nil }, set: { if !$0 { importing = nil } }),
+            isPresented: $importing,
             allowedContentTypes: [.item, .folder],
             allowsMultipleSelection: true
         ) { result in
-            if case let .success(urls) = result, !urls.isEmpty, let stage = importing, let device {
+            let stage = importStage
+            importStage = nil
+            if case let .success(urls) = result, !urls.isEmpty, let stage, let device {
                 app.dsp.importFiles(urls, into: DspPlacement(device: device, stage: stage))
             }
         }
@@ -147,7 +150,9 @@ struct EqSettings: View {
             guard let (stage, add) = adding else { return }
             adding = nil
             switch add {
-            case .importing: importing = stage
+            case .importing:
+                importStage = stage
+                importing = true
             case .autoEq: finding = AutoEqFind(query: "")
             case .measuring: measuring = true
             case let .splitting(name): splitting = ShownProfile(name: name)
