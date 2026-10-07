@@ -1029,6 +1029,59 @@ mod tests {
 
     /// Moved from one library folder to another: every folder is indexed
     /// before any is pruned, so the old path is not missed first.
+    /// A library that already holds one file twice, under the spelling
+    /// organize once stored and the directory's own, comes back to one track:
+    /// the older, with its history.
+    #[test]
+    fn a_file_stored_under_two_spellings_is_folded_into_one_track() {
+        use unicode_normalization::UnicodeNormalization;
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("music");
+        let nfd: String = "Björk".nfd().collect();
+        let nfc: String = "Björk".nfc().collect();
+        std::fs::create_dir_all(music.join(&nfd)).unwrap();
+        test_utils::generate_wav(&music.join(&nfd).join("Jóga.wav"), 44100, 1, 0.5, 16);
+        let on_disk = music
+            .join(&nfd)
+            .join("Jóga.wav")
+            .to_string_lossy()
+            .into_owned();
+        let organized = music
+            .join(&nfc)
+            .join("Jóga.wav")
+            .to_string_lossy()
+            .into_owned();
+        let db = test_db(dir.path());
+        scan_folder(&db, &music, ScanOptions::default(), None);
+        let original = tracks_with_uids(&db)[0].0;
+        queries::record_play(&db.conn, queries::LOCAL_USER, original, Some(1000)).unwrap();
+        // What organize stored before it took the directory's spelling.
+        queries::sources::rename_file(&db.conn, &on_disk, &organized).unwrap();
+        db.conn
+            .execute(
+                "UPDATE scan_cache SET path = ?1 WHERE path = ?2",
+                [&organized, &on_disk],
+            )
+            .unwrap();
+        // The scan that made the second row.
+        scan_folder(&db, &music, ScanOptions::default(), None);
+        scan_folder(&db, &music, ScanOptions::default(), None);
+
+        let tracks = tracks_with_uids(&db);
+        assert_eq!(tracks.len(), 1, "{tracks:?}");
+        assert_eq!(tracks[0].0, original);
+        assert_eq!(track_paths(&db), vec![on_disk]);
+        let plays: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM play_history WHERE track_id = ?1",
+                [original],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(plays, 1);
+    }
+
     #[test]
     fn a_file_moved_between_library_folders_keeps_its_track() {
         let dir = tempfile::tempdir().unwrap();

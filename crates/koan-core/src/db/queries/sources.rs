@@ -1116,6 +1116,39 @@ pub(crate) fn adopt_moved(conn: &Connection, old: &str, arrived: &[i64]) -> Resu
     Ok(true)
 }
 
+/// Fold the row a file got under `twin`, another spelling of `walked`, into
+/// the row a scan gave it under `walked`, the directory's own. The two are one
+/// file: organize once stored the spelling the tags gave, and the next scan
+/// indexed the directory's as a second track. The older track survives with
+/// both tracks' history, favourites and playlist places, and takes the walked
+/// file. Declined when both tracks have a server entry. Whether it folded.
+pub(crate) fn fold_twin(conn: &Connection, twin: &str, walked: &str) -> Result<bool, DbError> {
+    let (Some((old, _)), Some((new, _))) = (
+        load(conn, Kind::Local, twin)?,
+        load(conn, Kind::Local, walked)?,
+    ) else {
+        return Ok(false);
+    };
+    if old != new
+        && on_track(conn, Kind::Remote, old)?.is_some()
+        && on_track(conn, Kind::Remote, new)?.is_some()
+    {
+        return Ok(false);
+    }
+    conn.prepare_cached("DELETE FROM local_files WHERE path = ?1")?
+        .execute(params![twin])?;
+    conn.prepare_cached("DELETE FROM scan_cache WHERE path = ?1")?
+        .execute(params![twin])?;
+    let track = if old == new {
+        derive(conn, old)?;
+        old
+    } else {
+        merge_into_older(conn, old, new)?
+    };
+    log::info!("{twin} is {walked} spelled another way; folded into track {track}");
+    Ok(true)
+}
+
 /// Record what a source says, linking and deriving as needed. Returns the
 /// track and whether this source made a new one.
 ///
