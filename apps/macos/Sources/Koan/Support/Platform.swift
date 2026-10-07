@@ -558,6 +558,156 @@ extension View {
     }
 }
 
+#if os(iOS) || os(tvOS)
+extension View {
+    /// A short choice that rises from the bottom: the device trays. The
+    /// system's sheet, at half height and up, except on a phone in the theme,
+    /// where iOS draws a half-height sheet as a rounded card inset from the
+    /// screen's edges whatever its corner radius is told: there it is a
+    /// square panel on `bg` across the screen, under a rule, over the page
+    /// dimmed, as tall as its content and scrolling past a limit.
+    @ViewBuilder
+    func tray<Tray: View>(isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Tray) -> some View {
+        #if os(iOS)
+        if KoanTheme.isOn {
+            modifier(PhoneTray(isPresented: isPresented, tray: content))
+        } else {
+            systemTray(isPresented: isPresented, content: content)
+        }
+        #else
+        systemTray(isPresented: isPresented, content: content)
+        #endif
+    }
+
+    private func systemTray<Tray: View>(isPresented: Binding<Bool>, content: @escaping () -> Tray) -> some View {
+        sheet(isPresented: isPresented) {
+            ScrollView { content() }
+                .koanSheet()
+                .presentationDetents([.medium, .large])
+                .sheetGrabber()
+        }
+    }
+}
+#endif
+
+#if os(iOS)
+/// A cover with nothing of its own to draw, presented and dismissed without
+/// the system's slide: the panel moves itself, and the dim fades.
+private struct PhoneTray<Tray: View>: ViewModifier {
+    @Binding var isPresented: Bool
+    @ViewBuilder let tray: () -> Tray
+    @State private var covering = false
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: isPresented, initial: true) { _, open in
+                var instant = Transaction()
+                instant.disablesAnimations = true
+                withTransaction(instant) { covering = open }
+            }
+            .fullScreenCover(isPresented: $covering, onDismiss: { isPresented = false }) {
+                PhoneTrayPanel(close: { isPresented = false }, content: tray)
+                    .presentationBackground(.clear)
+            }
+    }
+}
+
+private struct PhoneTrayPanel<Tray: View>: View {
+    let close: () -> Void
+    @ViewBuilder let content: () -> Tray
+    @State private var shown = false
+    /// The content's own height: the panel stands as tall as it, to a limit.
+    @State private var height: CGFloat = 0
+    /// How far a drag has pulled the panel down.
+    @State private var pull: CGFloat = 0
+    /// Whether the content is scrolled to its top, where a downward drag
+    /// pulls the panel instead.
+    @State private var atTop = true
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        GeometryReader { proxy in
+            let below = proxy.size.height + proxy.safeAreaInsets.bottom
+            ZStack(alignment: .bottom) {
+                Color.black.opacity(shown ? 0.4 : 0)
+                    .ignoresSafeArea()
+                    .onTapGesture(perform: dismiss)
+                    .accessibilityHidden(true)
+                panel(limit: proxy.size.height * 0.85)
+                    .offset(y: shown ? pull : below)
+            }
+        }
+        .onAppear { animate { shown = true } }
+    }
+
+    private func panel(limit: CGFloat) -> some View {
+        let compact = sizeClass != .regular
+        return VStack(spacing: 0) {
+            Rectangle()
+                .fill(Color.koanRule)
+                .frame(width: 36, height: 3)
+                .padding(.vertical, KoanTheme.Space.s)
+                .accessibilityHidden(true)
+            ScrollView {
+                content().onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .onScrollGeometryChange(for: Bool.self) {
+                $0.contentOffset.y <= -$0.contentInsets.top + 0.5
+            } action: { _, top in
+                atTop = top
+            }
+            .frame(height: min(max(height, 1), limit))
+        }
+        .font(.koan(.body))
+        .foregroundStyle(Color.koanInk)
+        .frame(maxWidth: compact ? .infinity : 560)
+        .background(Color.koanBg.ignoresSafeArea(edges: .bottom))
+        .overlay(alignment: .top) {
+            Rectangle().fill(Color.koanRule).frame(height: KoanTheme.hairline)
+        }
+        .overlay {
+            if !compact {
+                Rectangle()
+                    .strokeBorder(Color.koanRule, lineWidth: KoanTheme.hairline)
+                    .ignoresSafeArea(edges: .bottom)
+            }
+        }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 12)
+                .onChanged { drag in
+                    guard atTop else { return }
+                    pull = max(0, drag.translation.height)
+                }
+                .onEnded { drag in
+                    guard pull > 0 else { return }
+                    if pull > 80 || drag.predictedEndTranslation.height > 240 {
+                        dismiss()
+                    } else {
+                        animate { pull = 0 }
+                    }
+                }
+        )
+        .accessibilityAddTraits(.isModal)
+        .accessibilityAction(.escape, dismiss)
+    }
+
+    private func dismiss() {
+        animate { shown = false } completion: { close() }
+    }
+
+    private func animate(_ change: () -> Void, completion: @escaping () -> Void = {}) {
+        if reduceMotion {
+            change()
+            completion()
+        } else {
+            withAnimation(KoanTheme.Motion.settle, change, completion: completion)
+        }
+    }
+}
+#endif
+
 extension View {
     /// The system file picker, which tvOS does not have: there are no files to
     /// pick on a television.
