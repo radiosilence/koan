@@ -981,9 +981,8 @@ struct AutoEqSearch: View {
             }
             .searchable(text: $query, prompt: "Headphone")
             .navigationTitle(KoanTheme.label("AutoEQ"))
-            .sheet(isPresented: $measuring) {
+            .formTray(isPresented: $measuring) {
                 MeasurementFlow(dsp: dsp, name: query) { _ in dismiss() }
-                    .koanSheet()
             }
             .toolbar {
                 KoanSheetAction(placement: .cancellationAction) {

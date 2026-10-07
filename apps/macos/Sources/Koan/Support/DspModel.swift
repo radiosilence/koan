@@ -553,7 +553,10 @@ final class DspModel {
         } else if p.layers > 0 {
             parts.append("Plays \(p.layers) \(p.layers == 1 ? "EQ" : "EQs") in order")
         }
-        if p.bands > 0 { parts.append("\(p.bands) \(p.bands == 1 ? "band" : "bands")") }
+        // A graphic curve is one filter of many points, as its page lists it.
+        if p.graphics > 0 { parts.append("graphic, \(p.points) \(p.points == 1 ? "point" : "points")") }
+        let bands = p.bands - p.graphics
+        if bands > 0 { parts.append("\(bands) \(bands == 1 ? "band" : "bands")") }
         if !p.rates.isEmpty {
             parts.append(p.rates.map(khz).joined(separator: ", ") + " kHz")
         }
