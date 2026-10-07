@@ -240,7 +240,7 @@ fn release_where(matches: impl Fn(&Held) -> bool) {
 /// Whether connections from `ip` are refused.
 fn refused(ip: &std::net::IpAddr) -> bool {
     let ip = ip.to_canonical().to_string();
-    Config::cached().devices.refused.iter().any(|r| *r == ip)
+    Config::cached().devices.refused.contains(&ip)
 }
 
 /// A connection to this device, listed for as long as it is held.
