@@ -1,134 +1,132 @@
 import KoanFFI
 import SwiftUI
 
-/// The DSP profiles a device can play through, and the one it does. Nil when
-/// there are no profiles to choose from, so places without a choice say
-/// nothing.
+/// The EQ presets a device can be set from, and which it was: a preset's
+/// name, Flat, or Unsaved for EQ no preset holds. Nil when there is no EQ at
+/// all to choose, so places without a choice say nothing.
 struct Presets {
+    /// The preset it was set from.
     let current: String?
-    let profiles: [String]
-    /// What a device with no profile is said to play: "Off" for one of this
-    /// device's own, "Original file" for a renderer.
-    let none: String
-    let enabled: Bool
+    /// Changed since it was set from `current`.
+    let edited: Bool
+    /// No correction and no tuning: it plays untouched.
+    let flat: Bool
+    let presets: [String]
+    /// Set it from a preset, or flat with nil.
     let choose: (String?) -> Void
-    /// The preset in use, where it is a group: its members, the one playing,
-    /// and choosing another. Only for this device's own outputs.
-    var group: (members: [String], playing: String?, select: (String) -> Void)?
-    /// The tuning on top of the preset, and the others to choose from. Only
-    /// for this device's own outputs, and not on a preset with one baked in.
-    var tuning: (current: String?, options: [String], choose: (String?) -> Void)?
-    /// Turning processing on, where this device can: nil for another device's
-    /// outputs, which are turned on there.
-    let enable: (() -> Void)?
+    /// The device whose EQ page Edit… opens: only this device's own.
+    let device: String?
 
     @MainActor
-    init?(dsp: DspModel, device: String, none: String) {
+    init?(dsp: DspModel, device: String) {
         guard let overview = dsp.overview, !overview.profiles.isEmpty else { return nil }
-        current = dsp.profile(for: device)
-        profiles = overview.profiles.map(\.name)
-        self.none = none
-        enabled = overview.enabled
-        choose = { dsp.assign($0, to: device) }
-        enable = { dsp.setEnabled(true) }
-        if let current = current,
-           let g = overview.profiles.first(where: { $0.name == current }),
-           !g.members.isEmpty
-        {
-            group = (g.members, g.playing, { dsp.select(current, $0) })
-        }
-        let tunings = overview.profiles.filter { $0.role == .tuning && $0.rates.isEmpty }.map(\.name)
-        let baked = overview.profiles.first { $0.name == current }?.role == .baked
-        if !tunings.isEmpty, !baked {
-            tuning = (dsp.tuning(for: device), tunings, { dsp.setTuning($0, for: device) })
-        }
+        let state = overview.outputs.first { $0.device == device }
+        current = state?.preset
+        edited = state?.presetEdited ?? false
+        flat = state?.flat ?? true
+        presets = overview.profiles.filter(\.preset).map(\.name)
+        choose = { dsp.applyPreset($0, to: device) }
+        self.device = device
     }
 
     /// An output of the device in view, from what that device published.
     @MainActor
-    init?(output: OutputInfo, of outputs: OutputsInfo, none: String, player: PlayerModel, dsp: DspModel) {
-        guard !outputs.profiles.isEmpty else { return nil }
+    init?(output: OutputInfo, of outputs: OutputsInfo, player: PlayerModel) {
+        guard !outputs.profiles.isEmpty || output.preset != nil || output.unsaved else { return nil }
         current = output.preset
-        profiles = outputs.profiles
-        self.none = none
-        enabled = outputs.dspEnabled
+        edited = output.preset != nil && output.unsaved
+        flat = output.preset == nil && !output.unsaved
+        presets = outputs.profiles
         choose = { player.setOutputPreset(device: output.id, profile: $0) }
-        enable = outputs.owner == nil ? { dsp.setEnabled(true) } : nil
+        device = outputs.owner == nil ? output.id : nil
     }
 
+    /// What it is set to, in a word or two.
     var summary: String {
-        guard let current else { return none }
-        let playing = tuning?.current.map { "\(current) + \($0)" } ?? current
-        return enabled ? playing : "\(playing), processing off"
+        if let current { return edited ? "\(current), edited" : current }
+        return flat ? "Flat" : "Unsaved"
     }
 }
 
-/// A device's presets as a menu: the profiles and the choice of none, with a
-/// tick on the one it plays through. While processing is off everywhere, the
-/// menu says so and offers to turn it on, so a choice is never one that
-/// silently does nothing.
+/// A device's presets as a menu: Flat and each preset, a tick on the one it
+/// was set from, and Edit… for the whole EQ page.
 struct PresetMenu<Label: View>: View {
+    @Environment(AppState.self) private var app
     let presets: Presets
     /// What the menu is for, such as the route a phone is playing to.
     var title: String?
     @ViewBuilder let label: () -> Label
+    #if os(macOS)
+    @Environment(\.openSettings) private var openSettings
+    #elseif os(iOS)
+    @State private var editing = false
+    #endif
 
     var body: some View {
         Menu {
-            if !presets.enabled {
-                Section {
-                    if let enable = presets.enable {
-                        Button("Turn On Processing", action: enable)
-                    } else {
-                        Text("Turn it on in that device's Settings")
-                    }
-                } header: {
-                    KoanSectionHeader("Processing is off")
-                }
-            }
             if let title {
                 Section(title) { picker }
             } else {
                 picker
             }
-            if let tuning = presets.tuning {
-                Section("Tuning") {
-                    Picker("Tuning", selection: Binding(
-                        get: { tuning.current ?? "" },
-                        set: { tuning.choose($0.isEmpty ? nil : $0) }
-                    )) {
-                        Text("None").tag("")
-                        ForEach(tuning.options, id: \.self) { Text($0).tag($0) }
-                    }
-                    .pickerStyle(.inline)
-                }
+            #if !os(tvOS)
+            if let device = presets.device {
+                Divider()
+                Button("Edit…") { edit(device) }
             }
-            if let group = presets.group {
-                Section("Group: pick one") {
-                    Picker("Playing", selection: Binding(
-                        get: { group.playing ?? "" },
-                        set: { group.select($0) }
-                    )) {
-                        ForEach(group.members, id: \.self) { Text($0).tag($0) }
-                    }
-                    .pickerStyle(.inline)
-                }
-            }
+            #endif
         } label: {
             label()
-        }.koanControl()
+        }
+        .koanControl()
         .accessibilityLabel("Preset: \(presets.summary)")
+        #if os(iOS)
+        .sheet(isPresented: $editing) {
+            NavigationStack {
+                EqSettings(device: presets.device)
+                    .navigationTitle(KoanTheme.label("EQ"))
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { editing = false }
+                        }
+                    }
+            }
+            .koanSheet()
+        }
+        #endif
     }
+
+    private func edit(_ device: String) {
+        #if os(macOS)
+        app.dsp.editing = device
+        openSettings()
+        #elseif os(iOS)
+        editing = true
+        #endif
+    }
+
+    private static var unsaved: String { "\u{0}unsaved" }
 
     private var picker: some View {
         Picker("Preset", selection: Binding(
-            get: { presets.current ?? "" },
-            set: { presets.choose($0.isEmpty ? nil : $0) }
+            get: { presets.current ?? (presets.flat ? "" : Self.unsaved) },
+            set: { tag in
+                guard tag != Self.unsaved else { return }
+                presets.choose(tag.isEmpty ? nil : tag)
+            }
         )) {
-            Text(presets.none).tag("")
-            Divider()
-            ForEach(presets.profiles, id: \.self) { Text($0).tag($0) }
-        }.koanControl()
+            Text("Flat").tag("")
+            if presets.current == nil, !presets.flat {
+                Text("Unsaved").tag(Self.unsaved)
+            }
+            if !presets.presets.isEmpty {
+                Divider()
+            }
+            ForEach(presets.presets, id: \.self) { name in
+                Text(name == presets.current && presets.edited ? "\(name) (edited)" : name).tag(name)
+            }
+        }
+        .koanControl()
         .pickerStyle(.inline)
     }
 }

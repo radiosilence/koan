@@ -85,7 +85,7 @@ enum Format {
         if let conv = dsp.convolutionRate, conv != f.sampleRate {
             what += ", resampled \(rate(f.sampleRate)) kHz → \(rate(conv)) kHz for convolution"
         }
-        return "Processed by the \u{201C}\(dsp.profile)\u{201D} profile: \(what)"
+        return "Processed by \u{201C}\(dsp.profile)\u{201D}: \(what)"
     }
 
     private static func deviceExplanation(_ f: StreamFormat) -> String {

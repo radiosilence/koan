@@ -55,6 +55,10 @@ final class DspModel {
     /// AutoEQ's profile for the output in use, by its name, while the output
     /// has none and the offer has not been turned down.
     private(set) var suggestion: AutoEqOffer?
+    /// A device whose EQ a preset menu's Edit… asked to show, on the Mac,
+    /// where the EQ page is a pane of the Settings window. The page takes it
+    /// and clears it.
+    var editing: String?
 
     enum Pending {
         case files([URL], name: String?)
@@ -322,6 +326,16 @@ final class DspModel {
         overview?.names[device] ?? device
     }
 
+    /// Copy `name` as it is now, as `new` or "<name> copy".
+    func duplicate(_ name: String, as new: String? = nil) {
+        act { _ = try await $0.dspDuplicate(name: name, new: new) }
+    }
+
+    /// Put `name` back as it was imported.
+    func revert(_ name: String) {
+        act { try await $0.dspRevert(name: name) }
+    }
+
     func remove(_ profile: String) {
         act { try await $0.dspRemove(name: profile) }
     }
@@ -486,8 +500,14 @@ final class DspModel {
     static func describe(_ p: DspProfileSummary) -> String {
         var parts: [String] = []
         if p.measured { parts.append("From a measurement") }
-        if p.layers > 0 { parts.append("\(p.layers) \(p.layers == 1 ? "layer" : "layers")") }
-        if p.bands > 0 { parts.append("\(p.bands) \(p.bands == 1 ? "filter" : "filters")") }
+        if !p.members.isEmpty {
+            parts.append("\(p.members.count) to pick from")
+        } else if p.preset {
+            parts.append(p.layers == 1 ? "1 part" : "\(p.layers) parts")
+        } else if p.layers > 0 {
+            parts.append("Plays \(p.layers) \(p.layers == 1 ? "EQ" : "EQs") in order")
+        }
+        if p.bands > 0 { parts.append("\(p.bands) \(p.bands == 1 ? "band" : "bands")") }
         if !p.rates.isEmpty {
             parts.append(p.rates.map(khz).joined(separator: ", ") + " kHz")
         }

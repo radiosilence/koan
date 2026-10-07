@@ -4,9 +4,9 @@ kōan can correct headphones, speakers and rooms on its own output, with filters
 designed elsewhere: headphone and IEM EQ from AutoEQ or squig.link, for players
 and DACs with no EQ of their own; room-correction impulse responses from REW,
 rePhase, Acourate, Audiolense or Home Audio Fidelity, Roon filter packs,
-CamillaDSP and Equalizer APO setups. A profile belongs to output devices, so
-plugging in the headphones selects their correction, and a device no profile
-names plays bit-perfect as before.
+CamillaDSP and Equalizer APO setups. A correction belongs to output devices, so
+plugging in the headphones selects theirs, and a device with nothing chosen
+plays bit-perfect as before.
 
 The processing runs on the decode thread, before the ring buffer, so the audio
 callback is the same whether anything is processed or not. A device that is
@@ -18,8 +18,8 @@ a preset brings back what it played.
 Processing applies to this device's own output. When it controls another
 device, that device's settings apply.
 
-A UPnP renderer is an output like any other and can have a profile of its own.
-Without one it is handed the original file, untouched. With one, kōan decodes
+A UPnP renderer is an output like any other and can have a correction or tuning of its own.
+Without either it is handed the original file, untouched. With either, kōan decodes
 and processes the queue itself and sends the renderer a single FLAC stream for
 as long as the format stays the same, dithered to the source's bit depth (24
 bits for lossy sources). The renderer never changes track inside that stream,
@@ -41,15 +41,15 @@ chat, or EQ text pasted into a message. A share is saved for the app and
 imported when kōan next comes to the front.
 
 Several whole presets chosen together, such as Equalizer APO, AutoEQ or
-Qudelix files or CamillaDSP YAML, become a **group**: a
-profile from each, named after its file, and a group holding them, named for
+Qudelix files or CamillaDSP YAML, become a **group**: an
+EQ from each, named after its file, and a group holding them, named for
 what their names share. A group plays one member at a time. Pick which on its
 page ("Group: pick one"), on the EQ page, or in an output's preset menu. Any
-stack of two or more layers can be made a group, and a group a stack again.
-A group can be a stack's layer, such as a group of corrections with a tuning
-on top.
+EQ that plays two or more others in order can be made a group, and a group such
+an EQ again. A group can be one of the EQs played, such as a group of
+corrections with a tuning on top.
 
-Files that are parts of one profile, such as an impulse response or a Convolver
+Files that are parts of one EQ, such as an impulse response or a Convolver
 `.cfg` a file per channel or rate, a folder, a zip, or REW's file for each
 side, still combine into one. Before importing several files the app says which will happen and
 lets you name the result. A name already taken gets a number, AutoEQ's
@@ -74,7 +74,7 @@ searched as one; each result keeps the name AutoEQ gives it.
 
 When the output's own name ends with a headphone's whole name as AutoEQ
 gives it, maker included ("Jo's Sony WH-1000XM4"), the same section offers
-AutoEQ's profile for it. The rule is strict because a wrong correction is
+AutoEQ's correction for it. The rule is strict because a wrong correction is
 worse than none: a name with a generation the index lacks ("Apple AirPods
 Pro 3") is offered nothing, and so are audio interfaces and DACs whose model
 happens to share a headphone's ("MOTU M2", "Hugo 2"). A short list of models
@@ -88,11 +88,11 @@ says roughly which headphone it is without naming the entry, the offer is
 generations and variants listed to pick from. Find in AutoEQ… covers the rest. Nothing is
 applied until you choose to, and turning the offer down for a device is
 remembered in `config.local.toml` (`dsp.autoeq_dismissed`). An output with a
-profile of its own is not offered one.
+correction of its own is not offered one.
 
 From the command line, `koan dsp autoeq search` matches names fuzzily against AutoEQ's index and
 lists each result with who measured it; `install` takes a result's number, or
-its exact name, and saves its parametric EQ as a profile named
+its exact name, and saves its parametric EQ as a correction named
 `<model> (AutoEQ, <source>)`:
 
 ```bash
@@ -111,7 +111,7 @@ kept is used. Numbers refer to that copy, so `install` never refreshes it.
 ### Targets
 
 An AutoEQ correction brings a headphone to one target, usually Harman's. A
-profile installed from AutoEQ keeps the result's measurement and the target it
+correction installed from AutoEQ keeps the result's measurement and the target it
 was made for beside it, and its page in Settings (or `koan dsp target NAME`)
 offers others for the same kind of headphone:
 
@@ -150,30 +150,30 @@ koan dsp target "Sennheiser HD 650 (AutoEQ, oratory1990)" --reset
 koan dsp add-target "My target.csv"
 ```
 
-### Layers
+### EQs that play others
 
-A profile can play others first: a headphone's correction, then a bass shelf
-or a treble tilt on top, without editing the correction. On a profile's page,
-**Add a Layer** puts another profile in front of its own filters; layers play
-in the order listed, each switched on or off, and a layer switched off plays
-nothing. Each plays as it would alone, its own layers and target included.
-A stack is assigned to an output like any profile, and one whose layers are
+An EQ can play others first: a headphone's correction, then a bass shelf
+or a treble tilt on top, without editing the correction. On an EQ's page,
+**Add an EQ** puts another EQ in front of its own bands; the EQs play
+in the order listed, each switched on or off, and one switched off plays
+nothing. Each plays as it would alone, the EQs it plays and its target included.
+Such an EQ is assigned to an output like any other, and one whose EQs are
 all off plays untouched if it has no filters of its own.
 
-Only EQ can be a layer: a profile with impulse responses plays them itself.
-A layer that is missing, or that would make a profile a layer of itself, is
-refused, and renaming a profile renames it in every stack; one a stack plays
-cannot be deleted until it is taken out.
+Only an EQ without impulse responses can be played this way: one with them
+plays them itself. An EQ that is missing, or that would make an EQ play itself,
+is refused, and renaming an EQ renames it wherever it is played; one that is
+played cannot be deleted until it is taken out.
 
 ```bash
 koan dsp import shelf.txt --name "Bass +3"     # Filter 1: ON LSC Fc 105 Hz Gain 3 dB Q 0.71
-koan dsp stack Desk "Sennheiser HD 650 (AutoEQ, oratory1990)" "Bass +3"
-koan dsp layer Desk "Bass +3" off
+koan dsp eq plays Desk "Sennheiser HD 650 (AutoEQ, oratory1990)" "Bass +3"
+koan dsp eq switch Desk "Bass +3" off
 ```
 
-A profile is named after what it came from; rename it on its page in Settings
-(or pass `--name`). Importing into a profile of the same name adds to it, so a
-room's responses and a headphone EQ can live in one profile.
+An EQ is named after what it came from; rename it on its page in Settings
+(or pass `--name`). Importing into an EQ of the same name adds to it, so a
+room's responses and a headphone EQ can live in one EQ.
 
 | Format | From | How rates and channels are matched |
 |---|---|---|
@@ -206,7 +206,7 @@ after a convolution, settings that depend on the sample rate (Equalizer APO's
 `If:`), and filter types with no equivalent here, such as raw IIR
 coefficients.
 
-kōan keeps what it imported under `dsp/<profile>/` beside the config, as one
+kōan keeps what it imported under `dsp/<name>/` beside the config, as one
 32-bit float WAV per rate, with a `.cfg` where the routes mix or delay channels.
 The originals are not needed again.
 
@@ -242,13 +242,13 @@ of the tuning has **On**, and **Options** to edit it, move it or take it out;
 tapping it opens its page. **Add EQ** adds another. An empty stage is a dashed
 place to add one. Each EQ's page draws its own curve. The curve is computed by
 the core from the same filters and impulse responses the DSP runs, at 48 kHz,
-so it shows what plays rather than what the filters were meant to do, layers
+so it shows what plays rather than what the filters were meant to do, the EQs it plays
 and a moved target included. The preamp is shown beside the curve rather than
 in it, so the curve lines up with the bands' own gains. The curve is the left
 channel's; a band on the right channel alone draws nothing there and has no
 handle. Each parametric band is drawn faintly behind the total. For a
 correction from AutoEQ, the Measured view draws the device as measured, the
-target it plays to, and the measurement with the profile applied.
+target it plays to, and the measurement with the correction applied.
 
 A tuning's bands are edited on its own page, opened from its block on the EQ
 page: in the table below its graph, or by dragging a peak or
@@ -262,7 +262,7 @@ that. To change the sound, add a tuning on top; to edit a correction anyway,
 make it a tuning on its page first.
 
 An imported EQ keeps what it was imported as. Once edited, `koan dsp revert NAME`
-puts it back, and `koan dsp copy NAME` keeps the edit as a profile of its own
+puts it back, and `koan dsp copy NAME` keeps the edit as an EQ of its own
 first. EQs imported before this was kept have nothing to go back to.
 
 ### Tunings of several EQs, and presets
@@ -272,12 +272,13 @@ each switched on or off. Each EQ made against a target other than the
 correction's has the difference between the two played with it, and where the
 chain cannot hold them all, the last ones are left out and the EQ page says
 which. A **preset** saves an output's correction and tuning under a name; an
-output set from it plays the same, and says when it was changed since. A stack
-made before presets, a correction with EQs on top, became a preset, and the
-outputs that played it play its correction and EQs, set from it.
+output set from it plays the same, and says when it was changed since. An EQ
+made before presets that played a correction with EQs on top became a preset,
+and the outputs that played it play its correction and EQs, set from it.
 
-The CLI does the same: `koan dsp tuning EQ... [--off EQ]...`,
-`koan dsp preset save NAME` and `koan dsp preset use NAME|flat`.
+The CLI does the same: `koan dsp set DEVICE --correction NAME --tuning EQ,EQ`,
+`koan dsp preset save NAME` and `koan dsp preset use NAME|flat`, with
+`koan dsp show` to read it back.
 
 Configs from before Flat with processing switched off open with every device
 flat, and what each played kept as a preset named for the device, unless it
@@ -285,58 +286,58 @@ was already set from a preset and not changed since.
 
 ## On every device
 
-Signed in to a kōan server, a profile can be kept on every device of the
-account. Each profile's **Sync** is either **Everywhere** or **This device**,
+Signed in to a kōan server, an EQ can be kept on every device of the
+account. Each EQ's **Sync** is either **Everywhere** or **This device**,
 chosen on its page. One synced everywhere goes through the server:
-filters, preamp, target, layers and the files in its folder (impulse responses,
+filters, preamp, target, the EQs it plays and the files in its folder (impulse responses,
 a routing `.cfg`, AutoEQ's measurement). Which output plays it is not synced,
 since the headphones on a Mac's DAC are not the AirPods on a phone; each device
 assigns it to its own outputs.
 
 Where it is kept follows from what it is until chosen. A correction installed
-from AutoEQ, a profile of bands made by hand, and a stack whose layers are all
-kept everywhere go everywhere: headphones move between devices. A profile with
+from AutoEQ, an EQ of bands made by hand, and an EQ that plays only EQs
+kept everywhere go everywhere: headphones move between devices. An EQ with
 impulse responses, a room or speaker correction, stays on its device, as does
 one assigned to a built-in output or a network amplifier. The first time a
-device syncs, the profiles it already had stay on it unless they came from
+device syncs, the EQs it already had stay on it unless they came from
 AutoEQ, so nothing leaves a device that was not made to travel or chosen to.
 
-A stack kept everywhere cannot have a layer kept on one device, since the other
-devices would not have it: adding one is refused, as is moving a layer of such
-a stack to one device. A stack kept on one device may layer profiles kept
+An EQ kept everywhere cannot play one kept on one device, since the other
+devices would not have it: adding one is refused, as is moving an EQ such an
+EQ plays to one device. An EQ kept on one device may play EQs kept
 everywhere, such as a speaker correction with a shared bass shelf on top.
 
-Each profile carries an id of its own, so a rename reaches every device. When
-two devices change one profile, the later change wins, counted from when it
+Each EQ carries an id of its own, so a rename reaches every device. When
+two devices change one EQ, the later change wins, counted from when it
 was made, so a change made offline keeps its time. A deletion reaches every
-device; so does moving a profile to one device, which removes it from the
-others. A stack elsewhere that layered it reports the missing layer. The same
-profile made on two devices before either synced, such as one headphone
-installed from AutoEQ on both, becomes one profile. "The same" is what they
+device; so does moving an EQ to one device, which removes it from the
+others. An EQ elsewhere that played it reports it missing. The same
+EQ made on two devices before either synced, such as one headphone
+installed from AutoEQ on both, becomes one EQ. "The same" is what they
 play, not how they are written: bands in another order, or a gain a few
-hundredths of a decibel apart, are the same profile. Two profiles of one name
+hundredths of a decibel apart, are the same EQ. Two EQs of one name
 that would sound different are both kept, each renamed for the device it came
-from ("Lush (Mac Studio)", "Lush (iPhone)"), and each profile's page says
-why. Stacks that play them follow the new names.
+from ("Lush (Mac Studio)", "Lush (iPhone)"), and each EQ's page says
+why. EQs that play them follow the new names.
 
-A file may be up to 32 MB, and an account's files up to 256 MB together. A
-profile past either stays on its device, and its page says it could not be
+A file may be up to 32 MB, and an account's files up to 256 MB together. An
+EQ past either stays on its device, and its page says it could not be
 kept. Turning down AutoEQ's suggestion for an output holds on every device.
 
-The server keeps the profiles in its database, per account, and offers them as
-the `koanDspProfiles` extension. Against a server without it, profiles stay on
+The server keeps the EQs in its database, per account, and offers them as
+the `koanDspProfiles` extension. Against a server without it, EQs stay on
 each device as before.
 
 ## Bounds
 
-Whatever a profile says, it plays within bounds: gains and the preamp within
+Whatever an EQ says, it plays within bounds: gains and the preamp within
 ±30 dB, a delay at most two seconds, Q from 0.01 to 100 and frequencies from
 1 Hz to 48 kHz, at most 64 bands on a channel and 256 filters in all. A value
 past a bound is clamped to it, one that is not a number is dropped with its
-filter, and the profile's page says what was adjusted. The config keeps what
-was written; profiles synced from another device arrive already adjusted.
+filter, and the EQ's page says what was adjusted. The config keeps what
+was written; EQs synced from another device arrive already adjusted.
 
-The whole chain a profile plays, its layers and a moved target included, has
+The whole chain an EQ plays, the EQs it plays and a moved target included, has
 budgets of its own: two seconds of delay on a channel in all, two graphic
 curves on a channel, eight mixes, and impulse responses of at most 262,145 taps
 (Harman's 780 pack at 192 kHz, the longest known to ship). The largest chain
@@ -372,47 +373,56 @@ core of an M-series Mac.
 
 ## Headroom
 
-EQ boosts and convolution can push a sample past full scale. Unless a profile
+EQ boosts and convolution can push a sample past full scale. Unless an EQ
 sets `preamp_db` itself, kōan works out the largest gain its filters apply at
 any frequency and lowers the level by that much first, as AutoEQ's own `Preamp`
 line does. ReplayGain is applied before it, with its own peak limiting, so the
-two do not compound. A profile's page shows the figure.
+two do not compound. An EQ's page shows the figure.
 
 ## Choosing
 
-Settings lists the profiles, with a tick on the one the output in use plays
-through, and a picker to change it. On the Mac the Play on menu, under the
-speaker in the transport bar, gives each output its preset: the row says which
-("Off", or "Original file" for a renderer), and the slider button beside it
-changes it, for that output whether or not it is the one playing. While what is
-heard is processed, the speaker carries a dot and the format badge names the
-processing. Each profile's page shows exactly what it
+**Manage EQ**, at the foot of the EQ page, lists every correction, EQ and
+preset, each with the devices it is used on. A group is a heading over its
+members; a group of EQs can be added to the tuning whole. Each row's
+**Options** opens it, renames it, saves it as a new one, reverts an import
+that was changed, keeps it on every device or this one, and deletes it, saying
+first where it is used. Files, AutoEQ and measurements come in from its foot;
+several files at once become a group.
+
+The preset menu is the quick way to switch: Flat, each preset, and **Edit…**,
+which opens the EQ page for that device. It reads the preset's name, Flat, or
+Unsaved for EQ no preset holds. On the Mac it is the slider button beside each
+output in the Play on menu, under the speaker in the transport bar, for that
+output whether or not it is the one playing. While what is heard is processed,
+the speaker carries a dot and the format badge names the processing. Each EQ's
+page shows exactly what it
 holds — every response's rate, channels, length, where it peaks and whether it
 mixes or delays channels, any bands, the headroom, and where it was imported
 from. Changes apply straight away, where playback is.
 
-On iOS, profiles follow the route: AirPods, wired headphones and the speaker are
+On iOS, the route is the device: AirPods, wired headphones and the speaker are
 each their own output. Now Playing shows the preset of the output playing, beside
 the AirPlay button: the route's, or a UPnP renderer's while the phone plays to
-one. Tapping it picks another for that output, which applies at once. It changes
-when the output does.
+one. Tapping it picks another preset for that output, which applies at once.
+It changes when the output does. On Apple TV the same menu has no Edit….
 
 ```bash
-koan dsp                        # list; * marks the current output's profile
-koan dsp use "Living room"      # the current output (or --device NAME) plays through it
-koan dsp clear                  # the current output is flat: it plays untouched
+koan dsp                                        # what the current output plays
+koan dsp set "Topping E30" --correction "Living room"   # correct it with Living room
+koan dsp flat "Topping E30"                     # it plays untouched
+koan dsp list                                   # every correction, EQ and preset
 koan dsp remove "Living room"
 ```
 
 ## Configuration
 
-Profiles describe the listening setup rather than taste, so they live in
+EQs describe the listening setup rather than taste, so they live in
 `config.local.toml`. Importing writes them there; they are plain TOML to edit by
 hand too:
 
 ```toml
 [dsp]
-enabled = true    # false bypasses every profile without deleting any
+enabled = true    # false, from before Flat, makes every device flat at start
 
 [[dsp.profiles]]
 name = "Living room"

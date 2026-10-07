@@ -161,9 +161,9 @@ struct NowPlayingPage: View {
             // a UIKit view, took the page's first focus from play/pause.
             if !player.isControllingAnother {
                 if let route = app.dsp.route,
-                   let presets = Presets(dsp: app.dsp, device: route, none: "Off") {
+                   let presets = Presets(dsp: app.dsp, device: route) {
                     PresetMenu(presets: presets, title: route) {
-                        KoanLabel(presets.current ?? presets.none, icon: "slider.horizontal.3")
+                        KoanLabel(presets.summary, icon: "slider.horizontal.3")
                     }
                 }
             }

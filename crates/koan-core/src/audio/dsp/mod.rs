@@ -98,6 +98,9 @@ pub struct OutputChain {
     /// What of the output's choices does not play, and why, to show where
     /// the EQ is: a tuning or a target difference left out.
     pub left_out: Option<String>,
+    /// The tuning's EQs left out entirely, by name, for a front end to say
+    /// what plays without reading `left_out`.
+    pub left_out_eqs: Vec<String>,
     /// The output's tuning plays.
     pub tuning_plays: bool,
 }
@@ -125,6 +128,7 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
     let correction = chosen.map(|c| member_playing(c, all));
     let baked = chosen.is_some_and(|c| profiles::shown_role(c, all) == DspRole::Baked);
     let mut notes: Vec<String> = Vec::new();
+    let mut dropped: Vec<String> = Vec::new();
     // The tunings switched on, in order, each one that cannot play said.
     let mut tunings: Vec<&DspProfile> = Vec::new();
     if dsp.enabled {
@@ -138,7 +142,7 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
                     Some("it is no longer a tuning".to_owned())
                 }
                 Some(_) => match (chosen, correction) {
-                    (Some(c), _) if baked => Some(format!("{} has a tuning baked in", c.name)),
+                    (Some(c), _) if baked => Some(format!("{} already includes a tuning", c.name)),
                     // A group without a member to play has nothing to put a
                     // layer on.
                     (Some(c), Some(m)) if m.group => {
@@ -148,7 +152,10 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
                 },
             };
             match why {
-                Some(why) => notes.push(format!("{} is left out: {why}.", entry.tuning)),
+                Some(why) => {
+                    notes.push(format!("{} is left out: {why}.", entry.tuning));
+                    dropped.push(entry.tuning.clone());
+                }
                 None => tunings.extend(all.iter().find(|p| p.name == entry.tuning)),
             }
         }
@@ -163,7 +170,7 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
             .tuning
             .clone(),
     };
-    let alone = |notes: &[String]| -> Option<OutputChain> {
+    let alone = |notes: &[String], dropped: &[String]| -> Option<OutputChain> {
         let left_out = (!notes.is_empty()).then(|| notes.join(" "));
         Some(match correction {
             Some(c) => OutputChain {
@@ -171,6 +178,7 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
                 all: all.clone(),
                 name: name.clone(),
                 left_out,
+                left_out_eqs: dropped.to_vec(),
                 tuning_plays: false,
             },
             // Without a correction to fall back on, the output plays
@@ -183,13 +191,14 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
                 all: all.clone(),
                 name: name.clone(),
                 left_out,
+                left_out_eqs: dropped.to_vec(),
                 tuning_plays: false,
             },
             None => return None,
         })
     };
     if tunings.is_empty() {
-        return alone(&notes);
+        return alone(&notes, &dropped);
     }
     // The correction's graphic curves come first in the chain's budget, then
     // each tuning's in order while they fit.
@@ -209,6 +218,7 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
                 "{} is left out: with what plays before it, it would play more graphic curves than a chain holds.",
                 t.name
             ));
+            dropped.push(t.name.clone());
             continue;
         }
         held += c;
@@ -297,11 +307,12 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
                     notes.push(format!(
                         "{tuning} is left out: with what plays before it, the chain is more than one can hold ({e})."
                     ));
+                    dropped.push(tuning);
                     if layers.is_empty() {
-                        return alone(&notes);
+                        return alone(&notes, &dropped);
                     }
                 } else {
-                    return alone(&notes);
+                    return alone(&notes, &dropped);
                 }
             }
         }
@@ -312,6 +323,7 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
         all: among,
         name,
         left_out,
+        left_out_eqs: dropped,
         tuning_plays: true,
     })
 }
@@ -387,21 +399,21 @@ fn resolve(
 ) -> Result<Vec<DspFilter>, DspError> {
     if stack.contains(&profile.name) {
         return Err(DspError::Layer(format!(
-            "{} is a layer of itself, through {}",
+            "{} plays itself, through {}",
             profile.name,
             stack.join(" → ")
         )));
     }
     if stack.len() >= MAX_LAYER_DEPTH {
         return Err(DspError::Layer(format!(
-            "{} nests layers more than {MAX_LAYER_DEPTH} deep",
+            "{} plays EQs that play others more than {MAX_LAYER_DEPTH} deep",
             stack[0]
         )));
     }
     *visits += 1;
     if *visits > MAX_LAYER_VISITS {
         return Err(DspError::Layer(format!(
-            "{} reaches its layers more than {MAX_LAYER_VISITS} times over",
+            "{} reaches the EQs it plays more than {MAX_LAYER_VISITS} times over",
             stack.first().unwrap_or(&profile.name)
         )));
     }
@@ -409,7 +421,7 @@ fn resolve(
     let mut out = Vec::new();
     let too_many = |stack: &[String]| {
         DspError::Layer(format!(
-            "{} comes to more than {MAX_CHAIN_FILTERS} filters with its layers",
+            "{} comes to more than {MAX_CHAIN_FILTERS} filters with the EQs it plays",
             stack[0]
         ))
     };
@@ -432,7 +444,7 @@ fn resolve(
             .find(|p| p.name == layer.profile)
             .ok_or_else(|| {
                 DspError::Layer(format!(
-                    "{} has no profile {} to layer",
+                    "{} plays {}, which is not there",
                     profile.name, layer.profile
                 ))
             })?;
@@ -440,7 +452,7 @@ fn resolve(
         // group's member plays alone, its responses as the group's own.
         if !profile.group && !responses(p, all).is_empty() {
             return Err(DspError::Layer(format!(
-                "{} has impulse responses, and only EQ can be a layer",
+                "{} has impulse responses: only bands can be played by another EQ",
                 p.name
             )));
         }

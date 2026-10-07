@@ -226,9 +226,9 @@ struct NowPlayingSheet: View {
             // This phone's own output's preset; another device's is chosen in
             // Output.
             if !player.isControllingAnother, let output,
-               let presets = Presets(dsp: app.dsp, device: output.device, none: output.none) {
+               let presets = Presets(dsp: app.dsp, device: output.device) {
                 if natural { Spacer(minLength: 8) }
-                let preset = presets.current.map { presets.enabled ? $0 : "\($0), off" } ?? presets.none
+                let preset = presets.summary
                 PresetMenu(presets: presets, title: output.name) {
                     Pill(
                         systemImage: "slider.horizontal.3",
@@ -246,11 +246,11 @@ struct NowPlayingSheet: View {
     /// What the music is coming out of, as profiles name it: a renderer the
     /// phone plays to, by its UDN, or else the route. Its preset is the one
     /// that is heard, so it is the one shown and changed.
-    private var output: (device: String, name: String, none: String)? {
+    private var output: (device: String, name: String)? {
         if let renderer = player.renderer {
-            return (renderer.udn, renderer.name, "Original file")
+            return (renderer.udn, renderer.name)
         }
-        return app.dsp.route.map { ($0, $0, "Off") }
+        return app.dsp.route.map { ($0, $0) }
     }
 }
 

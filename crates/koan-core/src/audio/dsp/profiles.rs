@@ -32,6 +32,197 @@ pub struct Summary {
     pub preset: bool,
     /// Changed since it was imported, so it can go back.
     pub edited: bool,
+    /// The devices it is chosen for: as their correction, in their tuning,
+    /// or as the preset they were set from.
+    pub used_on: Vec<String>,
+    /// Kept on every device of the account.
+    pub everywhere: bool,
+    /// The presets and groups that hold it.
+    pub held_by: Vec<String>,
+}
+
+/// What a device plays, as the apps' EQ page shows it: for a front end
+/// without one, such as the CLI and an assistant driving it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ChainView {
+    pub device: String,
+    pub correction: Option<String>,
+    /// The target the correction aims at, by name.
+    pub target: Option<String>,
+    pub tuning: Vec<TuningView>,
+    pub preset: Option<String>,
+    /// Changed since it was set from `preset`.
+    pub edited: bool,
+    /// The tuning's EQs that do not play, by name; `notes` says why.
+    pub left_out: Vec<String>,
+    pub notes: Option<String>,
+    /// No correction and no tuning: it plays untouched.
+    pub flat: bool,
+    /// The chain in words, as the EQ page says it.
+    pub sentence: String,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct TuningView {
+    pub name: String,
+    pub on: bool,
+}
+
+/// What `device` plays.
+pub fn chain_view(device: &str) -> ChainView {
+    let o = overview_for(Some(device.to_owned()));
+    let cfg = Config::cached();
+    let all = &cfg.dsp.profiles;
+    let chosen = cfg.dsp.profile_for(device);
+    let target = chosen
+        .and_then(|c| aims_at(c, all))
+        .map(|t| target_name(&t));
+    let includes = chosen.is_some_and(|c| shown_role(c, all) == DspRole::Baked);
+    let playing: Vec<&str> = if includes {
+        Vec::new()
+    } else {
+        o.chain
+            .iter()
+            .filter(|(name, on)| *on && !o.left_out_eqs.contains(name))
+            .map(|(name, _)| name.as_str())
+            .collect()
+    };
+    let sentence = match (&o.active, playing.is_empty()) {
+        (None, true) => format!("{device} is flat: the music plays untouched."),
+        (active, _) => {
+            let mut parts = Vec::new();
+            if let Some(c) = active {
+                parts.push(match &target {
+                    Some(t) => format!("corrected by {c} to {t}"),
+                    None => format!("corrected by {c}"),
+                });
+            }
+            if !playing.is_empty() {
+                parts.push(format!("tuned with {}", and_list(&playing)));
+            }
+            format!("Music to {device}, {}.", parts.join(", then "))
+        }
+    };
+    ChainView {
+        device: device.to_owned(),
+        flat: o.active.is_none() && o.chain.is_empty(),
+        correction: o.active,
+        target,
+        tuning: o
+            .chain
+            .into_iter()
+            .map(|(name, on)| TuningView { name, on })
+            .collect(),
+        edited: o.preset.as_ref().is_some_and(|(_, e)| *e),
+        preset: o.preset.map(|(name, _)| name),
+        left_out: o.left_out_eqs,
+        notes: o.left_out,
+        sentence,
+    }
+}
+
+/// "A", "A and B", "A, B and C".
+fn and_list(items: &[&str]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => (*one).to_owned(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// Set `device`'s whole chain: its correction (`Some(None)` for none), its
+/// tuning's EQs in order, all on. What is not given is left as it is, and
+/// giving the same twice changes nothing. Refused, naming the choices, for
+/// a correction or EQ that is not one.
+pub fn set_chain(
+    device: &str,
+    correction: Option<Option<&str>>,
+    tuning: Option<&[String]>,
+) -> Result<(), String> {
+    let cfg = Config::cached();
+    let all = &cfg.dsp.profiles;
+    let choices = |names: Vec<&str>| {
+        if names.is_empty() {
+            "none yet".to_owned()
+        } else {
+            names.join(", ")
+        }
+    };
+    if let Some(Some(name)) = correction {
+        let corrections: Vec<&str> = all
+            .iter()
+            .filter(|p| !p.preset && shown_role(p, all).corrects())
+            .map(|p| p.name.as_str())
+            .collect();
+        if all.iter().any(|p| p.name == name && p.preset) {
+            return Err(format!(
+                "{name} is a preset, not a correction: set it with `koan dsp preset use {name:?}`"
+            ));
+        }
+        if !corrections.contains(&name) {
+            return Err(format!(
+                "No correction called {name}. Corrections: {}",
+                choices(corrections)
+            ));
+        }
+    }
+    if let Some(eqs) = tuning {
+        let valid: Vec<&str> = all
+            .iter()
+            .filter(|p| !p.preset && check_tuning(&p.name, all).is_ok())
+            .map(|p| p.name.as_str())
+            .collect();
+        for (i, eq) in eqs.iter().enumerate() {
+            if !all.iter().any(|p| &p.name == eq) {
+                return Err(format!("No EQ called {eq}. EQs: {}", choices(valid)));
+            }
+            check_tuning(eq, all)?;
+            if eqs[..i].contains(eq) {
+                return Err(format!("{eq} is in the tuning twice"));
+            }
+        }
+        // Checked before anything is set, so a refusal changes nothing.
+        let then = match correction {
+            Some(c) => c.and_then(|c| all.iter().find(|p| p.name == c)),
+            None => cfg.dsp.profile_for(device),
+        };
+        if let Some(c) = then
+            && !eqs.is_empty()
+            && shown_role(c, all) == DspRole::Baked
+        {
+            return Err(baked_already(&c.name));
+        }
+    }
+    // One write, so the two never half-apply. What is not given stays, and
+    // so does the preset the device was set from, which then reads as edited.
+    let correction: Option<String> = match correction {
+        Some(c) => c.map(str::to_owned),
+        None => cfg.dsp.profile_for(device).map(|p| p.name.clone()),
+    };
+    let entries: Vec<(String, bool)> = match tuning {
+        Some(eqs) => eqs.iter().map(|e| (e.clone(), true)).collect(),
+        None => tunings_for(device),
+    };
+    let preset = preset_for(device).map(|(name, _)| name);
+    persist(|cfg| {
+        set_output(
+            cfg,
+            device,
+            correction.as_deref(),
+            &entries,
+            preset.as_deref(),
+        )
+    })
+}
+
+/// What a device is set to, for a menu of presets.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutputState {
+    pub device: String,
+    /// The preset it was set from, and whether it was changed since.
+    pub preset: Option<(String, bool)>,
+    /// No correction and no tuning: it plays untouched.
+    pub flat: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -48,6 +239,8 @@ pub struct Overview {
     pub tuning_plays: bool,
     /// What of that device's choices does not play, and why.
     pub left_out: Option<String>,
+    /// The EQs of its tuning left out entirely.
+    pub left_out_eqs: Vec<String>,
     /// Every output's tuning, by device: its first EQ.
     pub tunings: Vec<(String, String)>,
     /// That device's tuning: its EQs in order, each on or off.
@@ -56,6 +249,8 @@ pub struct Overview {
     /// since.
     pub preset: Option<(String, bool)>,
     pub profiles: Vec<Summary>,
+    /// Every device the EQ names, and what each is set to.
+    pub outputs: Vec<OutputState>,
 }
 
 /// The device the player resolves to: the configured one if it is there, or
@@ -90,7 +285,12 @@ pub fn overview_for(device: Option<String>) -> Overview {
             .and_then(|d| cfg.dsp.profile_for(d))
             .map(|p| p.name.clone()),
         tuning_plays: chain.as_ref().is_some_and(|c| c.tuning_plays),
+        left_out_eqs: chain
+            .as_ref()
+            .map(|c| c.left_out_eqs.clone())
+            .unwrap_or_default(),
         left_out: chain.and_then(|c| c.left_out),
+        outputs: outputs(&cfg.dsp),
         tunings: cfg.dsp.tunings.iter().fold(Vec::new(), |mut first, t| {
             if !first.iter().any(|(d, _): &(String, String)| d == &t.device) {
                 first.push((t.device.clone(), t.tuning.clone()));
@@ -130,10 +330,74 @@ pub fn overview_for(device: Option<String>) -> Overview {
                         .flatten(),
                     preset: p.preset,
                     edited: edited(p),
+                    used_on: used_on(&cfg.dsp, &p.name),
+                    held_by: cfg
+                        .dsp
+                        .profiles
+                        .iter()
+                        .filter(|q| {
+                            (q.preset || q.group) && q.layers.iter().any(|l| l.profile == p.name)
+                        })
+                        .map(|q| q.name.clone())
+                        .collect(),
+                    everywhere: scope(p, &cfg.dsp.profiles) == DspScope::Everywhere,
                 }
             })
             .collect(),
     }
+}
+
+/// Every device the EQ names, in the order first named, and what each is
+/// set to.
+fn outputs(dsp: &crate::config::DspConfig) -> Vec<OutputState> {
+    let mut devices: Vec<&str> = Vec::new();
+    for d in dsp
+        .profiles
+        .iter()
+        .filter(|p| !p.preset)
+        .flat_map(|p| p.devices.iter())
+        .chain(dsp.tunings.iter().map(|t| &t.device))
+        .chain(dsp.presets.iter().map(|p| &p.device))
+    {
+        if !devices.contains(&d.as_str()) {
+            devices.push(d);
+        }
+    }
+    devices
+        .into_iter()
+        .map(|d| OutputState {
+            device: d.to_owned(),
+            preset: preset_for(d),
+            flat: dsp.profile_for(d).is_none() && !dsp.tunings.iter().any(|t| t.device == d),
+        })
+        .collect()
+}
+
+/// The devices `name` is chosen for: as their correction, in their tuning,
+/// or as the preset they were set from.
+fn used_on(dsp: &crate::config::DspConfig, name: &str) -> Vec<String> {
+    let mut on: Vec<String> = Vec::new();
+    let correcting = dsp
+        .profiles
+        .iter()
+        .filter(|p| p.name == name && !p.preset)
+        .flat_map(|p| p.devices.iter());
+    let tuning = dsp
+        .tunings
+        .iter()
+        .filter(|t| t.tuning == name)
+        .map(|t| &t.device);
+    let preset = dsp
+        .presets
+        .iter()
+        .filter(|p| p.preset == name)
+        .map(|p| &p.device);
+    for d in correcting.chain(tuning).chain(preset) {
+        if !on.contains(d) {
+            on.push(d.clone());
+        }
+    }
+    on
 }
 
 /// Save an import as the profile `name`, or the name it came with. An existing
@@ -379,17 +643,17 @@ pub fn detail(name: &str) -> Option<Detail> {
 pub fn rename(old: &str, new: &str) -> Result<(), String> {
     let new = new.trim();
     if new.is_empty() {
-        return Err("A profile needs a name".into());
+        return Err("It needs a name".into());
     }
     if new == old {
         return Ok(());
     }
     let cfg = Config::cached();
     if cfg.dsp.profiles.iter().any(|p| p.name == new) {
-        return Err(format!("There is already a profile called {new}"));
+        return Err(format!("There is already an EQ called {new}"));
     }
     if !cfg.dsp.profiles.iter().any(|p| p.name == old) {
-        return Err(format!("No profile called {old}"));
+        return Err(format!("No EQ called {old}"));
     }
     let (from, to) = (
         Path::new("dsp").join(slug(old)),
@@ -468,7 +732,7 @@ pub fn set_made_for(name: &str, made_for: Option<&str>) -> Result<(), String> {
         .profiles
         .iter()
         .find(|p| p.name == name)
-        .ok_or_else(|| format!("No profile called {name}"))?;
+        .ok_or_else(|| format!("No EQ called {name}"))?;
     if p.measurement.is_some() {
         return Err(format!(
             "{name} is built from a measurement: choose the target it is corrected to instead"
@@ -628,7 +892,7 @@ pub fn assign(name: Option<&str>, device: &str) -> Result<(), String> {
     if let Some(name) = name {
         let cfg = Config::cached();
         let Some(p) = cfg.dsp.profiles.iter().find(|p| p.name == name) else {
-            return Err(format!("No profile called {name}"));
+            return Err(format!("No EQ called {name}"));
         };
         // A preset is never an output's correction: it sets one.
         if p.preset {
@@ -667,7 +931,7 @@ fn may_edit(name: &str) -> Result<(), String> {
         .profiles
         .iter()
         .find(|p| p.name == name)
-        .ok_or_else(|| format!("No profile called {name}"))?;
+        .ok_or_else(|| format!("No EQ called {name}"))?;
     editable(p, &cfg.dsp.profiles)
 }
 
@@ -895,16 +1159,6 @@ fn response_of(profile: &DspProfile, all: &[DspProfile], rate: u32) -> Option<Re
     })
 }
 
-/// The stacks `name` is a layer of.
-fn stacks_of(cfg: &Config, name: &str) -> Vec<String> {
-    cfg.dsp
-        .profiles
-        .iter()
-        .filter(|p| p.layers.iter().any(|l| l.profile == name))
-        .map(|p| p.name.clone())
-        .collect()
-}
-
 /// Play `member` of the group `group`, and none of the others.
 pub fn select(group: &str, member: &str) -> Result<(), String> {
     let cfg = Config::cached();
@@ -913,7 +1167,7 @@ pub fn select(group: &str, member: &str) -> Result<(), String> {
         .profiles
         .iter()
         .find(|p| p.name == group)
-        .ok_or_else(|| format!("No profile called {group}"))?;
+        .ok_or_else(|| format!("No EQ called {group}"))?;
     if !g.group {
         return Err(format!("{group} is not a group"));
     }
@@ -974,7 +1228,7 @@ pub fn make_group(name: &str, members: &[String]) -> Result<(), String> {
         return Err("A group needs a name".into());
     }
     if Config::cached().dsp.profiles.iter().any(|p| p.name == name) {
-        return Err(format!("There is already a profile called {name}"));
+        return Err(format!("There is already an EQ called {name}"));
     }
     let group = DspProfile {
         name: name.to_owned(),
@@ -1083,7 +1337,7 @@ pub fn set_scope(name: &str, to: DspScope) -> Result<(), String> {
     let profile = all
         .iter()
         .find(|p| p.name == name)
-        .ok_or_else(|| format!("No profile called {name}"))?;
+        .ok_or_else(|| format!("No EQ called {name}"))?;
     match to {
         DspScope::Everywhere => {
             if let Some(layer) = local_layer(&profile.layers, all) {
@@ -1095,7 +1349,7 @@ pub fn set_scope(name: &str, to: DspScope) -> Result<(), String> {
                 p.layers.iter().any(|l| l.profile == name) && scope(p, all) == DspScope::Everywhere
             }) {
                 return Err(format!(
-                    "{name} is a layer of {}, which is kept everywhere and would lose it on \
+                    "{name} is played by {}, which is kept everywhere and would lose it on \
                      your other devices. Keep {} on this device first",
                     stack.name, stack.name
                 ));
@@ -1217,7 +1471,7 @@ fn check_tuning(name: &str, all: &[DspProfile]) -> Result<(), String> {
     let t = all
         .iter()
         .find(|p| p.name == name)
-        .ok_or_else(|| format!("No profile called {name}"))?;
+        .ok_or_else(|| format!("No EQ called {name}"))?;
     if !super::responses(t, all).is_empty() {
         return Err(format!(
             "{name} has impulse responses, which correct a room or speakers: choose it as the correction instead"
@@ -1262,7 +1516,7 @@ pub fn revert(name: &str) -> Result<(), String> {
         .profiles
         .iter()
         .find(|p| p.name == name)
-        .ok_or_else(|| format!("No profile called {name}"))?;
+        .ok_or_else(|| format!("No EQ called {name}"))?;
     let Some(original) = p.original.clone() else {
         return Err(format!(
             "{name} was not imported, so there is nothing to go back to"
@@ -1286,10 +1540,10 @@ pub fn duplicate(name: &str, new: Option<&str>) -> Result<String, String> {
         .profiles
         .iter()
         .find(|p| p.name == name)
-        .ok_or_else(|| format!("No profile called {name}"))?;
+        .ok_or_else(|| format!("No EQ called {name}"))?;
     let new = match new.map(str::trim).filter(|n| !n.is_empty()) {
         Some(n) if free_name(n) != n => {
-            return Err(format!("There is already a profile called {n}"));
+            return Err(format!("There is already an EQ called {n}"));
         }
         Some(n) => n.to_owned(),
         None => free_name(&format!("{name} copy")),
@@ -1386,7 +1640,7 @@ pub fn save_preset(device: &str, name: &str) -> Result<String, String> {
     }
     let cfg = Config::cached();
     if cfg.dsp.profiles.iter().any(|p| p.name == name && !p.preset) {
-        return Err(format!("There is already a profile called {name}"));
+        return Err(format!("There is already an EQ called {name}"));
     }
     let layers = chain_of(&cfg.dsp, device);
     let unsaid = unsaid_correction(&cfg.dsp, device);
@@ -1499,7 +1753,21 @@ pub fn apply_preset(device: &str, name: Option<&str>) -> Result<(), String> {
             let p = all
                 .iter()
                 .find(|p| p.name == name && p.preset)
-                .ok_or_else(|| format!("No preset called {name}"))?;
+                .ok_or_else(|| {
+                    let presets: Vec<&str> = all
+                        .iter()
+                        .filter(|p| p.preset)
+                        .map(|p| p.name.as_str())
+                        .collect();
+                    format!(
+                        "No preset called {name}. Presets: {}",
+                        if presets.is_empty() {
+                            "none yet".to_owned()
+                        } else {
+                            presets.join(", ")
+                        }
+                    )
+                })?;
             let parts = preset_parts(&p.layers, all);
             for (t, _) in &parts.1 {
                 check_tuning(t, all)?;
@@ -1700,14 +1968,16 @@ fn migrate_presets() -> Result<(), String> {
 
 /// Why no tuning goes on top of `correction`.
 pub fn baked_already(correction: &str) -> String {
-    format!("{correction} already has a tuning baked in. Split it to swap tunings.")
+    format!(
+        "{correction} already includes a tuning. Split it into a correction and an EQ to change the tuning."
+    )
 }
 
 /// Say which target the tuning `name` was made against, or that it is not
 /// known: a target that ships or one added.
 pub fn set_tuned_for(name: &str, target: Option<&str>) -> Result<(), String> {
     if !Config::cached().dsp.profiles.iter().any(|p| p.name == name) {
-        return Err(format!("No profile called {name}"));
+        return Err(format!("No EQ called {name}"));
     }
     if let Some(t) = target
         && super::targets::choice_curve(t).is_none()
@@ -1754,7 +2024,7 @@ pub fn corrections_in(profile: &DspProfile, all: &[DspProfile]) -> Vec<String> {
 /// A correction by name and kind, as a warning names it: "Cantor (AutoEQ)".
 fn correction_label(p: &DspProfile) -> String {
     let kind = if role(p) == DspRole::Baked {
-        "baked"
+        "includes a tuning"
     } else if p.measurement.is_some() {
         "measured"
     } else if super::targets::autoeq_measurement(&dir(&p.name)).is_some() {
@@ -1786,7 +2056,7 @@ pub fn corrects_twice(profile: &DspProfile, all: &[DspProfile]) -> Option<String
         .collect();
     let (last, rest) = labels.split_last()?;
     Some(format!(
-        "This stack corrects twice: {} and {last}. Keep one.",
+        "This EQ corrects twice: {} and {last}. Keep one.",
         rest.join(", ")
     ))
 }
@@ -1794,7 +2064,7 @@ pub fn corrects_twice(profile: &DspProfile, all: &[DspProfile]) -> Option<String
 /// Why a chain with more than one correction is refused.
 pub fn two_corrections(corrections: &[String]) -> String {
     format!(
-        "This stack already corrects for {}. Remove that correction first, or add {} as a tuning instead.",
+        "This EQ already plays the correction {}. Take that out first, or add {} to a device's tuning instead.",
         corrections[0],
         corrections.get(1).map_or("this", String::as_str)
     )
@@ -1805,7 +2075,7 @@ pub fn two_corrections(corrections: &[String]) -> String {
 /// and gains no further correction.
 pub fn set_role(name: &str, to: DspRole) -> Result<(), String> {
     if !Config::cached().dsp.profiles.iter().any(|p| p.name == name) {
-        return Err(format!("No profile called {name}"));
+        return Err(format!("No EQ called {name}"));
     }
     persist(|cfg| {
         if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name) {
@@ -1955,7 +2225,7 @@ fn split(name: &str, text: &str, target: &str, rate: u32) -> Result<Split, Strin
     let p = all
         .iter()
         .find(|p| p.name == name)
-        .ok_or_else(|| format!("No profile called {name}"))?;
+        .ok_or_else(|| format!("No EQ called {name}"))?;
     if !super::responses(p, all).is_empty() {
         return Err(format!(
             "{name} has impulse responses: only an EQ splits into a correction and a tuning"
@@ -1966,7 +2236,7 @@ fn split(name: &str, text: &str, target: &str, rate: u32) -> Result<Split, Strin
     // folded into a curve for both.
     if !p.layers.is_empty() || p.group {
         return Err(format!(
-            "{name} plays other profiles: split the baked one among them instead"
+            "{name} plays other EQs: split the one among them that includes a tuning instead"
         ));
     }
     if p.filters.iter().any(|f| match f {
@@ -2123,10 +2393,10 @@ fn measured_profile(
     use super::targets;
     let name = name.trim();
     if name.is_empty() {
-        return Err("A profile needs a name".into());
+        return Err("It needs a name".into());
     }
     if Config::cached().dsp.profiles.iter().any(|p| p.name == name) {
-        return Err(format!("There is already a profile called {name}"));
+        return Err(format!("There is already an EQ called {name}"));
     }
     let measured = read_measurement(text)?;
     if targets::choice_curve(target).is_none() {
@@ -2160,7 +2430,7 @@ fn measured_profile(
 pub fn set_layers(name: &str, layers: Vec<crate::config::DspLayer>) -> Result<(), String> {
     let name = name.trim();
     if name.is_empty() {
-        return Err("A profile needs a name".into());
+        return Err("It needs a name".into());
     }
     if let Some(twice) = layers
         .iter()
@@ -2168,7 +2438,7 @@ pub fn set_layers(name: &str, layers: Vec<crate::config::DspLayer>) -> Result<()
         .find(|(i, l)| layers[..*i].iter().any(|e| e.profile == l.profile))
         .map(|(_, l)| &l.profile)
     {
-        return Err(format!("{twice} is in {name} twice; a layer plays once"));
+        return Err(format!("{twice} is in {name} twice; each plays once"));
     }
     let cfg = Config::cached();
     let mut all = cfg.dsp.profiles.clone();
@@ -2230,14 +2500,22 @@ pub fn set_layers(name: &str, layers: Vec<crate::config::DspLayer>) -> Result<()
     .map_err(|e| e.to_string())
 }
 
-/// Delete a profile, and the responses koan keeps for it. Refused while a
-/// stack plays it.
+/// Delete `name`, and the responses kōan keeps for it. The presets and groups that hold it go on without it; an
+/// EQ that plays it refuses, since what it plays is that EQ's to say.
 pub fn remove(name: &str) -> Result<(), String> {
-    let stacks = stacks_of(&Config::cached(), name);
-    if !stacks.is_empty() {
+    let cfg = Config::cached();
+    let playing: Vec<String> = cfg
+        .dsp
+        .profiles
+        .iter()
+        .filter(|p| !p.preset && !p.group && p.layers.iter().any(|l| l.profile == name))
+        .map(|p| p.name.clone())
+        .collect();
+    if !playing.is_empty() {
         return Err(format!(
-            "{name} is a layer of {}; take it out first",
-            stacks.join(", ")
+            "{} plays {name}: take it out of {} first",
+            playing.join(", "),
+            if playing.len() == 1 { "it" } else { "them" }
         ));
     }
     let shared = Config::cached()
@@ -2247,6 +2525,16 @@ pub fn remove(name: &str) -> Result<(), String> {
         .any(|p| p.name != name && slug(&p.name) == slug(name));
     persist(|cfg| {
         cfg.dsp.profiles.retain(|p| p.name != name);
+        for p in &mut cfg.dsp.profiles {
+            p.layers.retain(|l| l.profile != name);
+            // A group whose member playing went plays its first.
+            if p.group
+                && !p.layers.iter().any(|l| l.on)
+                && let Some(first) = p.layers.first_mut()
+            {
+                first.on = true;
+            }
+        }
         cfg.dsp.tunings.retain(|t| t.tuning != name);
         cfg.dsp.presets.retain(|p| p.preset != name);
     })
@@ -2843,7 +3131,10 @@ mod tests {
             }],
         )
         .unwrap_err();
-        assert!(refused.contains("only EQ can be a layer"), "{refused}");
+        assert!(
+            refused.contains("only bands can be played by another EQ"),
+            "{refused}"
+        );
     }
 
     /// A name already taken, or one whose files would go in a folder that is,
@@ -2944,7 +3235,7 @@ mod tests {
         let refused = set_layers("Desk", vec![layer("HD 650"), layer("Amp")]).unwrap_err();
         assert!(refused.contains("Amp is kept on this device"), "{refused}");
         let refused = set_scope("Bass", DspScope::Device).unwrap_err();
-        assert!(refused.contains("Bass is a layer of Desk"), "{refused}");
+        assert!(refused.contains("Bass is played by Desk"), "{refused}");
         set_scope("Speakers", DspScope::Everywhere).unwrap_err();
         set_scope("Desk", DspScope::Device).unwrap();
         set_scope("Bass", DspScope::Device).unwrap();
@@ -3073,13 +3364,13 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             refused,
-            "This stack already corrects for HD 650. Remove that correction first, or add HD 600 as a tuning instead."
+            "This EQ already plays the correction HD 650. Take that out first, or add HD 600 to a device's tuning instead."
         );
         // Said to be a correction, it is one: the stack says so.
         set_role("Warm", DspRole::Correction).unwrap();
         assert_eq!(
             detail("Desk").unwrap().corrects_twice.as_deref(),
-            Some("This stack corrects twice: HD 650 (ready-made) and Warm (correction). Keep one.")
+            Some("This EQ corrects twice: HD 650 (ready-made) and Warm (correction). Keep one.")
         );
         set_role("Warm", DspRole::Tuning).unwrap();
         set_role("HD 600", DspRole::Tuning).unwrap();
@@ -3308,7 +3599,7 @@ mod tests {
         };
         persist(stack).unwrap();
         let refused = preview_split("Stack", &text, target, 48_000).unwrap_err();
-        assert!(refused.contains("plays other profiles"), "{refused}");
+        assert!(refused.contains("plays other EQs"), "{refused}");
         let refused = preview_split("Left", &text, target, 48_000).unwrap_err();
         assert!(
             refused.contains("treats its channels differently"),
@@ -3614,6 +3905,155 @@ mod tests {
         );
     }
 
+    /// A whole chain set in one go, the same twice changing nothing; a name
+    /// that is not a correction or EQ refused with the choices, before
+    /// anything is set; and the chain said as the EQ page says it.
+    #[test]
+    fn a_chain_is_set_whole_and_said() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Wharfedale".into(),
+                filters: vec![band(100.0)],
+                role: Some(DspRole::Correction),
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Lush".into(),
+                filters: vec![band(60.0)],
+                role: Some(DspRole::Baked),
+                ..Default::default()
+            });
+            for (name, hz) in [("Warm", 80.0), ("Air", 9000.0)] {
+                c.dsp.profiles.push(DspProfile {
+                    name: name.into(),
+                    filters: vec![band(hz)],
+                    ..Default::default()
+                });
+            }
+        })
+        .unwrap();
+        let dac = "Scarlett";
+        let eqs = ["Warm".to_string(), "Air".to_string()];
+        assert_eq!(
+            chain_view(dac).sentence,
+            "Scarlett is flat: the music plays untouched."
+        );
+        set_chain(dac, Some(Some("Wharfedale")), Some(&eqs)).unwrap();
+        let once = std::fs::read_to_string(dir.path().join("config.local.toml")).unwrap();
+        set_chain(dac, Some(Some("Wharfedale")), Some(&eqs)).unwrap();
+        let twice = std::fs::read_to_string(dir.path().join("config.local.toml")).unwrap();
+        assert_eq!(once, twice, "the same twice changes nothing");
+        let view = chain_view(dac);
+        assert_eq!(view.correction.as_deref(), Some("Wharfedale"));
+        assert_eq!(view.tuning.len(), 2);
+        assert_eq!(
+            view.sentence,
+            "Music to Scarlett, corrected by Wharfedale, then tuned with Warm and Air."
+        );
+
+        let refused = set_chain(dac, Some(Some("Nope")), None).unwrap_err();
+        assert_eq!(
+            refused,
+            "No correction called Nope. Corrections: Wharfedale, Lush"
+        );
+        let refused = set_chain(dac, None, Some(&["Nope".to_string()])).unwrap_err();
+        assert_eq!(refused, "No EQ called Nope. EQs: Warm, Air");
+        let twice = ["Warm".to_string(), "Warm".to_string()];
+        let refused = set_chain(dac, Some(None), Some(&twice)).unwrap_err();
+        assert_eq!(refused, "Warm is in the tuning twice");
+        assert_eq!(
+            chain_view(dac).correction.as_deref(),
+            Some("Wharfedale"),
+            "a refusal changes nothing"
+        );
+        // A correction that includes a tuning takes none: nothing is set.
+        set_chain(dac, Some(Some("Lush")), Some(&eqs)).unwrap_err();
+        assert_eq!(chain_view(dac).correction.as_deref(), Some("Wharfedale"));
+        set_chain(dac, Some(Some("Lush")), Some(&[])).unwrap();
+        assert_eq!(
+            chain_view(dac).sentence,
+            "Music to Scarlett, corrected by Lush."
+        );
+        set_chain(dac, Some(None), None).unwrap();
+        assert!(chain_view(dac).flat);
+    }
+
+    /// Deleting an EQ takes it out of the presets and groups that hold it;
+    /// an EQ that plays it refuses, naming itself.
+    #[test]
+    fn a_deleted_eq_leaves_its_presets_and_groups() {
+        use crate::config::DspLayer;
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let layer = |p: &str, on: bool| DspLayer {
+            profile: p.into(),
+            on,
+        };
+        persist(|c| {
+            for (name, hz) in [("Warm", 60.0), ("Air", 9000.0)] {
+                c.dsp.profiles.push(DspProfile {
+                    name: name.into(),
+                    filters: vec![band(hz)],
+                    ..Default::default()
+                });
+            }
+            c.dsp.profiles.push(DspProfile {
+                name: "Evening".into(),
+                preset: true,
+                layers: vec![layer("Warm", true), layer("Air", true)],
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Tastes".into(),
+                group: true,
+                layers: vec![layer("Warm", true), layer("Air", false)],
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Both".into(),
+                layers: vec![layer("Air", true)],
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        let held = overview()
+            .profiles
+            .into_iter()
+            .find(|p| p.name == "Warm")
+            .unwrap()
+            .held_by;
+        assert_eq!(held, ["Evening", "Tastes"]);
+        assert_eq!(
+            remove("Air").unwrap_err(),
+            "Both plays Air: take it out of it first"
+        );
+        remove("Warm").unwrap();
+        let cfg = Config::cached();
+        let of = |n: &str| {
+            cfg.dsp
+                .profiles
+                .iter()
+                .find(|p| p.name == n)
+                .unwrap()
+                .layers
+                .clone()
+        };
+        assert_eq!(of("Evening"), vec![layer("Air", true)]);
+        assert_eq!(
+            of("Tastes"),
+            vec![layer("Air", true)],
+            "the group plays what is left"
+        );
+    }
+
     /// Processing switched off is every output flat, what each played kept
     /// as a preset named for it, unless a preset already holds it as it was.
     #[test]
@@ -3821,12 +4261,12 @@ mod tests {
         assert_eq!(plays(), ["200"], "the tuning waits");
         assert_eq!(
             overview_for(Some(dac.into())).left_out.as_deref(),
-            Some("Warm is left out: Lush has a tuning baked in."),
+            Some("Warm is left out: Lush already includes a tuning."),
             "and says why"
         );
         assert_eq!(
             set_tuning(dac, Some("Warm")).unwrap_err(),
-            "Lush already has a tuning baked in. Split it to swap tunings."
+            "Lush already includes a tuning. Split it into a correction and an EQ to change the tuning."
         );
 
         // A group corrects with its member playing, the tuning on top, and is
@@ -4050,7 +4490,9 @@ mod tests {
         let d = detail("Old").unwrap();
         assert_eq!(
             d.corrects_twice.as_deref(),
-            Some("This stack corrects twice: Cantor (AutoEQ) and Performer 8S (baked). Keep one.")
+            Some(
+                "This EQ corrects twice: Cantor (AutoEQ) and Performer 8S (includes a tuning). Keep one."
+            )
         );
         assert_eq!(
             d.layer_roles,
@@ -4075,7 +4517,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            refused.starts_with("This stack already corrects"),
+            refused.starts_with("This EQ already plays the correction"),
             "{refused}"
         );
 
@@ -4103,7 +4545,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             refused,
-            "This stack already corrects for Performer 8S. Remove that correction first, or add Cantor as a tuning instead."
+            "This EQ already plays the correction Performer 8S. Take that out first, or add Cantor to a device's tuning instead."
         );
     }
 

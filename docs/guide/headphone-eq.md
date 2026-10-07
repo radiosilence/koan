@@ -26,13 +26,13 @@ For example, at three pitches:
 
 Either way, the result is a **correction**. On top of it you can add **tunings**: changes that suit your taste rather than the headphone, such as more bass or a darker treble. A tuning plays after the correction and can be switched on and off.
 
-## Three kinds of profile
+## Three kinds of EQ
 
-Every profile is one of three, shown as a badge wherever profiles are listed:
+Every EQ is one of three, shown as a badge wherever EQs are listed:
 
 - **Correction**: makes your headphones or speakers neutral, that is, sound like the target. AutoEQ installs and corrections built from a measurement are corrections.
-- **Tuning**: your taste, added on top of a correction. Anything that isn't a correction starts as a tuning, and you can change it on the profile's page.
-- **Baked**: a correction with a tuning already in it. Most presets named for a sound are baked, such as Qudelix's "Lush" or a squig.link export to a target with extra bass. A baked profile counts as the correction, so adding a tuning on top would add taste twice.
+- **Tuning**: your taste, added on top of a correction. Anything that isn't a correction starts as a tuning, and you can change it on the EQ's page.
+- **Correction with a tuning in it**: a correction that already includes a tuning. Most EQs named for a sound are of this kind, such as Qudelix's "Lush" or a squig.link export to a target with extra bass. Such a correction counts as the correction, so adding a tuning on top would add taste twice.
 
 kōan can't tell from the file which an imported EQ is, so it asks.
 
@@ -40,13 +40,13 @@ The target belongs to the correction, and each says what it does against neutral
 
 ## One correction at a time
 
-A stack, a profile with layers, may hold only one correction, and a baked profile counts as one. Two corrections would each try to undo the same device, so the colour would be taken out twice and the sound would end up worse than with neither. kōan refuses a second one and says which correction the stack already has. Add your extra changes as a tuning instead.
+An EQ that plays others may hold only one correction, and a correction that already includes a tuning counts as one. Two corrections would each try to undo the same device, so the colour would be taken out twice and the sound would end up worse than with neither. kōan refuses a second one and says which correction it already has. Add your extra changes as a tuning instead.
 
-A stack made before kōan refused this still plays, and its page says what's wrong: "This stack corrects twice: Cantor (AutoEQ) and Performer 8S (baked). Keep one."
+An EQ made before kōan refused this still plays, and its page says what's wrong: "This EQ corrects twice: Cantor (AutoEQ) and Performer 8S (includes a tuning). Keep one."
 
-The top of each profile's page says what the chain does, one line per role, each with its badge: "Correction: AFUL Performer 8S → Harman in-ear 2019 (from measurement)", then "Tuning: Warm bass". A baked preset reads "Baked: AFUL Performer 8S Lush (correction + tuning in one)".
+The top of each EQ's page says what the chain does, one line per role, each with its badge: "Correction: AFUL Performer 8S → Harman in-ear 2019 (from measurement)", then "Tuning: Warm bass". A correction with a tuning in it reads "AFUL Performer 8S Lush (correction + tuning in one)".
 
-## Device, target, tuning: dynamic baking
+## Device, target, tuning
 
 Each output's EQ is three choices, made on the EQ page as the chain the music goes through, and it reads as a sentence: "Music to Topping E30, corrected by AFUL Performer 8S to Neutral (diffuse field), then tuned with Lush".
 
@@ -54,16 +54,16 @@ Each output's EQ is three choices, made on the EQ page as the chain the music go
 - **Target** belongs to the correction: what it makes neutral mean. Harman's targets add the bass and treble most listeners prefer; Neutral (diffuse field) adds nothing.
 - **Tuning** is optional, behind **Add EQ**: your taste on top, one or more EQs in order.
 
-kōan builds the chain itself, so no stack has to be made by hand: the correction, then the tuning. A tuning can say which target it was made against, on its own page under **Made against**. On headphones corrected to another target, kōan plays the difference between the two first, so the tuning sounds as it was made to whatever corrects the headphones. That is dynamic baking: what a preset like Qudelix's "Lush" bakes into one fixed EQ, worked out for each pair of headphones as it plays. A tuning whose target isn't known plays as it is.
+kōan builds the chain itself, so no EQ that plays others has to be made by hand: the correction, then the tuning. A tuning can say which target it was made against, on its own page under **Made against**. On headphones corrected to another target, kōan plays the difference between the two first, so the tuning sounds as it was made to whatever corrects the headphones. A finished preset like Qudelix's "Lush" fixes that difference into one EQ for one pair of headphones; kōan works it out for each pair as it plays. A tuning whose target isn't known plays as it is.
 
-A baked preset has its tuning in it already, so no tuning goes on top; the EQ page says so, and offers to split it. A group of tunings works as a quick switch between them. The tuning is this device's choice for that output, as the correction is, and the menu by the output in the transport offers it too.
+A correction that already includes a tuning needs none on top; the EQ page says so, and offers to split it. A group of tunings works as a quick switch between them. The tuning is this device's choice for that output, as the correction is, and the menu by the output in the transport offers it too.
 
-**Split into Correction + Tuning…**, on a baked preset's page or the EQ page, takes it apart with a measurement of the device and the target the preset counts as neutral (Harman, usually). The correction is the target minus the measurement; the tuning is everything the preset does beyond it, saved as a profile of its own, made against that target. A preview draws the two and their sum against the preset before anything is saved. The outputs that played the preset then play the correction with the tuning on top, and the tuning works on any other device too. The preset itself is kept.
+**Split into Correction + Tuning…**, on such a correction's page or the EQ page, takes it apart with a measurement of the device and the target it counts as neutral (Harman, usually). The correction is the target minus the measurement; the tuning is everything the correction does beyond it, saved as an EQ of its own, made against that target. A preview draws the two and their sum against the original before anything is saved. The outputs that played it then play the correction with the tuning on top, and the tuning works on any other device too. The original is kept.
 
 ## Which way for your headphones
 
-1. **Search for your headphones** in **Find in AutoEQ…** under EQ in Settings. If they are there, install them. You have a correction, and you can switch its target on the profile's page.
-2. **If they are not in AutoEQ**, choose **Use a measurement instead** and search for them under **Find it on squig.link**. kōan searches the catalogues of the reviewers' squig.link sites, each kept for a day, and lists every measurement of that model with its site, its rig where the site says, and its variant: tips, inserts, a port. Pick one measured on the rig your target assumes. kōan fetches its left and right channels, averages them, and credits the site on the profile. A measurement exported from squig.link or REW as a CSV file works too. Then pick in-ear or over-ear, and a target.
+1. **Search for your headphones** in **Find in AutoEQ…** under EQ in Settings. If they are there, install them. You have a correction, and you can switch its target on the correction's page.
+2. **If they are not in AutoEQ**, choose **Use a measurement instead** and search for them under **Find it on squig.link**. kōan searches the catalogues of the reviewers' squig.link sites, each kept for a day, and lists every measurement of that model with its site, its rig where the site says, and its variant: tips, inserts, a port. Pick one measured on the rig your target assumes. kōan fetches its left and right channels, averages them, and credits the site on the correction. A measurement exported from squig.link or REW as a CSV file works too. Then pick in-ear or over-ear, and a target.
 3. **If you already have an EQ** made for your headphones or speakers, import it and answer "What is this EQ?". Choose *A neutral correction* if it only corrects them, *A correction with a sound in it* if it's named for a sound or adds bass of its own, or *A tuning* if it's taste for on top. *Decide Later* leaves it a tuning, changed on its page. For a neutral correction, say which target it was made for if you know; if you don't, choose Unknown, and target switching stays off.
 
-Then add any tunings you like on top. See [Equalisation and convolution](dsp.md) for everything else profiles can do.
+Then add any tunings you like on top. See [Equalisation and convolution](dsp.md) for everything else EQs can do.

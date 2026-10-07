@@ -14,6 +14,10 @@ struct SettingsView: View {
     @Environment(ActivityModel.self) private var activity
 
     @State private var model: SettingsModel?
+    #if os(macOS)
+    /// The pane shown: the EQ pane when a preset menu's Edit… asks for it.
+    @State private var pane = "library"
+    #endif
     /// The server's accounts, loaded here rather than in their section: the
     /// list loading is what says the account is an admin's, and whether
     /// there is a People section at all.
@@ -61,31 +65,43 @@ struct SettingsView: View {
                 #if os(macOS)
                 // The panes side by side in a window sized to hold the largest
                 // of them, which is what a settings window is on macOS.
-                TabView {
+                TabView(selection: $pane) {
                     LibrarySettings(model: model)
                         .tabItem { Label("Library", systemImage: "music.note.house") }
+                        .tag("library")
                     RemoteSettings(model: model)
                         .tabItem { Label("Server", systemImage: "server.rack") }
+                        .tag("server")
                     if AccountSettings.shown(model, mirror) {
                         AccountSettings(model: model)
                             .tabItem { Label("Account", systemImage: "person.crop.circle") }
+                            .tag("account")
                     }
                     if PeoplePane.shown(model, people), let people {
                         PeoplePane(model: model, people: people)
                             .tabItem { Label("People", systemImage: "person.2") }
+                            .tag("people")
                     }
                     PlaybackSettings(model: model)
                         .tabItem { Label("Playback", systemImage: "hifispeaker") }
+                        .tag("playback")
                     EqSettings()
                         .tabItem { Label("EQ", systemImage: "slider.vertical.3") }
+                        .tag("eq")
                     DevicesSettings(model: model)
                         .tabItem { Label("Devices", systemImage: "laptopcomputer.and.iphone") }
+                        .tag("devices")
                     if IntegrationSections.shown(model, mirror) {
                         IntegrationsSettings()
                             .tabItem { Label("Integrations", systemImage: "puzzlepiece.extension") }
+                            .tag("integrations")
                     }
                     AppearanceSettings()
                         .tabItem { Label("Appearance", systemImage: "paintpalette") }
+                        .tag("appearance")
+                }
+                .onChange(of: app.dsp.editing, initial: true) { _, asked in
+                    if asked != nil { pane = "eq" }
                 }
                 .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                 #else
@@ -847,85 +863,11 @@ struct AutoEqFind: Identifiable {
     let query: String
 }
 
-/// Correction for the output in use: a profile of bands, impulse responses or
-/// both, imported from what other tools write.
-struct DspSettings: View {
-    @Environment(AppState.self) private var app
-    @Binding var importing: Bool
-    @Binding var finding: AutoEqFind?
-    @Binding var measuring: Bool
-    /// The profile whose page is open, on the Mac, where settings has no
-    /// navigation stack to push it onto.
-    @Binding var showing: String?
-
-    var body: some View {
-        let dsp = app.dsp
-        Section {
-            if let o = dsp.overview {
-                #if !os(tvOS)
-                if let offer = dsp.suggestion, o.device != nil {
-                    AutoEqSuggestion(offer: offer, dsp: dsp) { query in
-                        finding = AutoEqFind(query: query)
-                    }
-                }
-                #endif
-                ForEach(o.profiles, id: \.name) { p in
-                    #if os(iOS)
-                    NavigationLink {
-                        DspProfilePage(dsp: dsp, name: p.name)
-                            .koanHidesSystemTabBar()
-                    } label: {
-                        ProfileRow(profile: p, active: o.active == p.name)
-                    }
-                    .swipeActions {
-                        Button("Delete", role: .destructive) { dsp.remove(p.name) }
-                    }
-                    #else
-                    Button {
-                        showing = p.name
-                    } label: {
-                        ProfileRow(profile: p, active: o.active == p.name)
-                    }
-                    .buttonStyle(.plain)
-                    .contextMenu {
-                        Button("Delete", role: .destructive) { dsp.remove(p.name) }
-                    }
-                    #endif
-                }
-            }
-            // Profiles come in as files, and a television has none: they are
-            // imported on another device, and the TV picks them by output.
-            #if !os(tvOS)
-            Button("Import…") { importing = true }
-                .koanButton(.standard)
-            Button("Find in AutoEQ…") { finding = AutoEqFind(query: "") }
-                .koanButton(.standard)
-            Button("Use a Measurement…") { measuring = true }
-                .koanButton(.standard)
-            #endif
-            if let summary = dsp.importSummary {
-                Text(summary)
-                    .font(.role(.fine, system: .caption))
-                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-            }
-            if let error = dsp.lastError {
-                Text(error)
-                    .koanText(.fine, .bad)
-            }
-        } header: {
-            KoanSectionHeader("All EQ")
-        } footer: {
-            Text("AutoEQ and Equalizer APO text, impulse WAVs, Roon zips, Convolver .cfg and CamillaDSP configs, or a headphone found in AutoEQ by name. Importing under a name already used adds to that EQ.")
-                .koanText(.fine, .muted)
-        }
-    }
-}
-
 #if !os(tvOS)
 /// The output in use, recognised by its name as a headphone AutoEQ has
 /// measured, or roughly so: its profile, or a search for its model to pick
 /// the right one from. Offered once, quietly; nothing is applied until asked.
-private struct AutoEqSuggestion: View {
+struct AutoEqSuggestion: View {
     let offer: AutoEqOffer
     let dsp: DspModel
     let find: (String) -> Void
@@ -934,7 +876,7 @@ private struct AutoEqSuggestion: View {
         VStack(alignment: .leading, spacing: 6) {
             switch offer {
             case let .profile(entry):
-                Text("AutoEQ has a profile for \(entry.name). Use it?")
+                Text("AutoEQ has a correction for \(entry.name). Use it?")
                     .koanText(.body, .muted)
                 HStack {
                     Button("Use") { dsp.installAutoEq(entry) }
@@ -1078,42 +1020,6 @@ struct ShownProfile: Identifiable, Hashable {
     var id: String { name }
 }
 
-/// A profile in the list: its name, what it holds, and a tick on the one the
-/// output in use plays through.
-private struct ProfileRow: View {
-    let profile: DspProfileSummary
-    let active: Bool
-
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(profile.name)
-                    if profile.preset {
-                        Text("Preset").koanText(.fine, .muted)
-                    } else {
-                        RoleTag(role: ProfileRole(profile.role))
-                    }
-                }
-                if let problem = profile.problem {
-                    Text(problem)
-                        .koanText(.fine, .bad)
-                } else {
-                    Text(DspModel.describe(profile))
-                        .koanText(.fine, .muted)
-                }
-            }
-            Spacer()
-            if active {
-                Image(systemName: "checkmark")
-                    .koanText(.body, .accent)
-                    .accessibilityLabel("In use")
-            }
-        }
-        .contentShape(Rectangle())
-    }
-}
-
 /// The questions an import can stop on — what rate bare coefficients are at —
 /// and the offer of what it made for the output in use. On the settings page,
 /// and on iOS over everything, since a share can arrive anywhere.
@@ -1153,7 +1059,7 @@ struct DspImportPrompts: ViewModifier {
                 if let summary = dsp.importSummary {
                     Text(summary)
                 } else if let device = dsp.overview?.device, dsp.overview?.active == nil {
-                    Text("\(device) plays untouched until it has a profile.")
+                    Text("\(device) is flat until it has a correction or tuning.")
                 }
             }
             #if !os(tvOS)

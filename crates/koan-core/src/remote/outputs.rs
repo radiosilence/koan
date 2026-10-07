@@ -10,7 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{Config, DspProfile};
+use crate::config::Config;
 use crate::player::commands::PlayerCommand;
 use crate::player::state::SharedPlayerState;
 
@@ -30,8 +30,9 @@ pub struct LinkOutputs {
     /// The volume of the renderer it plays to, when it has one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub volume: Option<u8>,
-    /// Its DSP profiles, which any of its outputs can be given, and whether
-    /// processing is on at all.
+    /// Its EQ presets, which any of its outputs can be set from, and
+    /// whether processing is on at all (always, since a device is made flat
+    /// instead; kept for apps from before).
     #[serde(default)]
     pub profiles: Vec<String>,
     #[serde(default)]
@@ -53,9 +54,13 @@ pub struct LinkOutput {
     /// Playing or paused for something else: picking it takes it over.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub busy: bool,
-    /// The DSP profile it plays through.
+    /// The EQ preset it was set from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset: Option<String>,
+    /// Its EQ is not a preset as saved: changed since, or never saved. Flat
+    /// is neither this nor a preset.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unsaved: bool,
 }
 
 /// An output to play through.
@@ -159,27 +164,32 @@ pub fn refresh_for_controller() {
     }
 }
 
-/// The DSP profile `device` plays through: the one that lists it. Profiles are
+/// The preset `device` was set from, and whether its EQ is unsaved. EQ is
 /// keyed by the device's name, which on a phone is the route's port name, so
 /// the preset published for an output is the one its audio goes through.
-fn preset(profiles: &[DspProfile], device: &str) -> Option<String> {
-    profiles
-        .iter()
-        .find(|p| p.devices.iter().any(|d| d == device))
-        .map(|p| p.name.clone())
+fn preset(dsp: &crate::config::DspConfig, device: &str) -> (Option<String>, bool) {
+    let flat = dsp.profile_for(device).is_none() && !dsp.tunings.iter().any(|t| t.device == device);
+    match crate::audio::dsp::profiles::preset_for(device) {
+        Some((name, edited)) => (Some(name), edited),
+        None => (None, !flat),
+    }
 }
 
 /// Audio devices as published: each by its name, which is also its id, since
 /// a name is what `SetOutput` and `SetPreset` address it by.
-fn device_outputs(devices: &[(String, String)], profiles: &[DspProfile]) -> Vec<LinkOutput> {
+fn device_outputs(devices: &[(String, String)], dsp: &crate::config::DspConfig) -> Vec<LinkOutput> {
     devices
         .iter()
-        .map(|(name, kind)| LinkOutput {
-            preset: preset(profiles, name),
-            id: name.clone(),
-            name: name.clone(),
-            kind: kind.clone(),
-            ..Default::default()
+        .map(|(name, kind)| {
+            let (preset, unsaved) = preset(dsp, name);
+            LinkOutput {
+                preset,
+                unsaved,
+                id: name.clone(),
+                name: name.clone(),
+                kind: kind.clone(),
+                ..Default::default()
+            }
         })
         .collect()
 }
@@ -187,24 +197,25 @@ fn device_outputs(devices: &[(String, String)], profiles: &[DspProfile]) -> Vec<
 /// This device's outputs, as they are now.
 pub fn local(state: &SharedPlayerState) -> LinkOutputs {
     let cfg = Config::cached();
-    let devices = device_outputs(
-        DEVICES.lock().get_or_insert_with(list_devices),
-        &cfg.dsp.profiles,
-    );
+    let devices = device_outputs(DEVICES.lock().get_or_insert_with(list_devices), &cfg.dsp);
     let renderers = crate::upnp::discovery::renderers()
         .into_iter()
-        .map(|r| LinkOutput {
-            preset: preset(&cfg.dsp.profiles, r.device_name()),
-            busy: crate::upnp::discovery::busy(&r.udn),
-            detail: [r.manufacturer.as_str(), r.model.as_str()]
-                .iter()
-                .filter(|s| !s.is_empty())
-                .copied()
-                .collect::<Vec<_>>()
-                .join(" "),
-            id: r.udn,
-            name: r.name,
-            kind: "upnp".into(),
+        .map(|r| {
+            let (preset, unsaved) = preset(&cfg.dsp, r.device_name());
+            LinkOutput {
+                preset,
+                unsaved,
+                busy: crate::upnp::discovery::busy(&r.udn),
+                detail: [r.manufacturer.as_str(), r.model.as_str()]
+                    .iter()
+                    .filter(|s| !s.is_empty())
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                id: r.udn,
+                name: r.name,
+                kind: "upnp".into(),
+            }
         })
         .collect();
     let renderer = state.renderer();
@@ -217,7 +228,13 @@ pub fn local(state: &SharedPlayerState) -> LinkOutputs {
             (None, None) => OutputChoice::Default,
         },
         volume: renderer.and_then(|r| r.volume),
-        profiles: cfg.dsp.profiles.iter().map(|p| p.name.clone()).collect(),
+        profiles: cfg
+            .dsp
+            .profiles
+            .iter()
+            .filter(|p| p.preset)
+            .map(|p| p.name.clone())
+            .collect(),
         dsp_enabled: cfg.dsp.enabled,
     }
 }
@@ -243,14 +260,18 @@ pub fn set(
     }
 }
 
-/// Play `device` through `profile`, or untouched, and apply it where
-/// playback is.
+/// Set `device` from the preset `profile`, or flat, and apply it where
+/// playback is. A correction's name, from an app before presets, is chosen
+/// as the correction.
 pub fn set_preset(
     device: &str,
     profile: Option<&str>,
     player: &crossbeam_channel::Sender<PlayerCommand>,
 ) -> Result<(), String> {
-    crate::audio::dsp::profiles::assign(profile, device)?;
+    match profile {
+        None => crate::audio::dsp::profiles::apply_preset(device, None)?,
+        Some(name) => crate::audio::dsp::profiles::assign(Some(name), device)?,
+    }
     player
         .send(PlayerCommand::ReloadDsp)
         .map_err(|_| "The player has stopped.".to_string())
@@ -259,6 +280,7 @@ pub fn set_preset(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::DspProfile;
     use crate::remote::link::{LinkCommand, LinkState};
 
     /// A device's outputs survive the trip through the link, and a device
@@ -307,27 +329,43 @@ mod tests {
     }
 
     /// A phone publishes its route by the port's own name, with the preset
-    /// that route plays through: what `SetPreset` from another device then
-    /// assigns to, under the same name.
+    /// that route was set from: what `SetPreset` from another device then
+    /// sets it from, under the same name. A route with EQ no preset holds is
+    /// unsaved; one with none is flat.
     #[test]
     fn a_route_is_published_by_name_with_its_preset() {
-        let profiles = vec![DspProfile {
-            name: "Qudelix Harman".into(),
-            devices: vec!["Qudelix-5K".into()],
-            ..Default::default()
-        }];
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        crate::config::set_config_dir(dir.path());
+        Config::persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Qudelix Harman".into(),
+                devices: vec!["Qudelix-5K".into(), "Car".into()],
+                role: Some(crate::config::DspRole::Correction),
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        crate::audio::dsp::profiles::save_preset("Qudelix-5K", "Harman").unwrap();
+        let dsp = Config::cached().dsp.clone();
         let route = [("Qudelix-5K".to_string(), String::new())];
         assert_eq!(
-            device_outputs(&route, &profiles),
+            device_outputs(&route, &dsp),
             vec![LinkOutput {
                 id: "Qudelix-5K".into(),
                 name: "Qudelix-5K".into(),
-                preset: Some("Qudelix Harman".into()),
+                preset: Some("Harman".into()),
                 ..Default::default()
             }]
         );
+        let car = [("Car".to_string(), String::new())];
+        assert_eq!(device_outputs(&car, &dsp)[0].preset, None);
+        assert!(device_outputs(&car, &dsp)[0].unsaved);
         let speaker = [("Speaker".to_string(), String::new())];
-        assert_eq!(device_outputs(&speaker, &profiles)[0].preset, None);
+        assert_eq!(device_outputs(&speaker, &dsp)[0].preset, None);
+        assert!(!device_outputs(&speaker, &dsp)[0].unsaved, "flat");
     }
 
     /// Anyone on the network may play and pause, but where the sound goes,
