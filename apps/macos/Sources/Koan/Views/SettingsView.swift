@@ -148,6 +148,9 @@ struct SettingsView: View {
                         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
                         .scrollEdgeEffectHidden(true, for: .top)
                         .containerBackground(Color.koanBg, for: .window)
+                        // A window with no scene, as the evidence renderer's,
+                        // has nothing to hand that to.
+                        .background(Color.koanBg.ignoresSafeArea())
                     } else {
                         TabView(selection: $pane) {
                             ForEach(tabs) { tab in
