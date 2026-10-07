@@ -92,18 +92,23 @@ struct TabShell: View {
             TabSection {
                 ForEach(Self.librarySections, id: \.section) { item in
                     Tab(item.title, systemImage: item.icon, value: TabID.section(item.section)) {
-                        stack(.section(item.section)) { RouteView(route: .page(.section(item.section))) }
+                        stack(.section(item.section), grounded: false) { RouteView(route: .page(.section(item.section))) }
                     }
-                    .badge(item.section == .downloads ? mirror.activeTransfers : 0)
+                    // Read only where it can show: each transfer starting or ending
+                    // would otherwise re-run the whole shell.
+                    .badge(sidebar && item.section == .downloads ? mirror.activeTransfers : 0)
                 }
             } header: {
                 KoanSectionHeader("Library")
             }
+            // With the sidebar folded away, the bar keeps the four tabs; its
+            // sidebar button is the way back to these.
+            .defaultVisibility(.hidden, for: .tabBar)
             .hidden(!sidebar)
             TabSection {
                 ForEach(playlists.playlists, id: \.id) { playlist in
                     Tab(playlist.name, systemImage: Icon.playlist, value: TabID.section(.playlist(playlist.id))) {
-                        stack(.section(.playlist(playlist.id))) {
+                        stack(.section(.playlist(playlist.id)), grounded: false) {
                             RouteView(route: .page(.section(.playlist(playlist.id))))
                         }
                     }
@@ -119,6 +124,7 @@ struct TabShell: View {
             .sectionActions {
                 Button("New Playlist", systemImage: Icon.add) { playlists.naming = [] }
             }
+            .defaultVisibility(.hidden, for: .tabBar)
             .hidden(!sidebar)
             Tab("Settings", systemImage: "gearshape", value: TabID.settings) {
                 stack(.settings) { SettingsView() }
@@ -150,6 +156,7 @@ struct TabShell: View {
             }
         }
         .onChange(of: sidebar) { regroup() }
+        .onChange(of: playlists.playlists.map(\.id)) { _, ids in dropDeleted(ids) }
         #endif
         .toggleStyle(SystemSwitch())
         .modifier(Transport(
@@ -251,8 +258,9 @@ struct TabShell: View {
 
     /// A tab's navigation stack. Pages are drawn from their routes — see
     /// `RouteView` — and the navigator follows whatever is on top.
+    /// `grounded: false` for a root that is a `RouteView`, which grounds itself.
     private func stack<Root: View>(
-        _ tab: TabID, @ViewBuilder root: () -> Root
+        _ tab: TabID, grounded: Bool = true, @ViewBuilder root: () -> Root
     ) -> some View {
         let routes = paths[tab] ?? []
         // On stage is the top of the tab in front, and nothing else. A stack
@@ -261,16 +269,20 @@ struct TabShell: View {
         // bars nobody can see.
         let showing = tab == selection
         return NavigationStack(path: path(tab)) {
-            root()
-                .koanHidesSystemTabBar()
-                .environment(\.onStage, showing && routes.isEmpty)
-                .washedGround()
-                .roomBackground()
-                .navigationDestination(for: Route.self) { route in
-                    RouteView(route: route)
-                        .koanHidesSystemTabBar()
-                        .environment(\.onStage, showing && route == routes.last)
+            Group {
+                if grounded {
+                    root().washedGround().roomBackground()
+                } else {
+                    root()
                 }
+            }
+            .koanHidesSystemTabBar()
+            .environment(\.onStage, showing && routes.isEmpty)
+            .navigationDestination(for: Route.self) { route in
+                RouteView(route: route)
+                    .koanHidesSystemTabBar()
+                    .environment(\.onStage, showing && route == routes.last)
+            }
         }
     }
 
@@ -328,12 +340,13 @@ struct TabShell: View {
     /// page brings that tab forward, back at its root. Anything else is pushed
     /// on the tab in front, or popped back to if it is already in the stack.
     private func arrive(at page: Navigator.Page) {
+        // First: a pop back to a page another tab owns stays in this tab.
+        guard top(of: selection) != page else { return }
         if let owner = owner(of: page) {
             paths[owner] = []
             selection = owner
             return
         }
-        guard top(of: selection) != page else { return }
         var routes = paths[selection] ?? []
         if let index = routes.lastIndex(of: .page(page)) {
             routes.removeSubrange((index + 1)...)
@@ -378,6 +391,16 @@ struct TabShell: View {
             paths[selection] = []
             selection = .library
         }
+    }
+
+    /// The playlist showing in the sidebar was deleted elsewhere — on the
+    /// server, another device, or with its file. Its tab has gone, so leave it
+    /// for the queue, as the Mac does on deleting one.
+    private func dropDeleted(_ ids: [Int64]) {
+        guard case .section(.playlist(let id)) = selection, !ids.contains(id) else { return }
+        paths[selection] = nil
+        nav.forget(.playlist(id))
+        nav.show(.queue)
     }
 
     /// Whether the sidebar is the navigation: an iPad with room for it.
