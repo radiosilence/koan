@@ -2089,9 +2089,10 @@ private struct KoanFieldRole: ViewModifier {
             #if os(tvOS)
             if let shown {
                 // Faint rather than hidden: UIKit's focus passes over a view
-                // all but transparent. Clipped, since its focus shadow is drawn
-                // outside it and out of reach of the opacity.
-                box(content.focused($focused).opacity(0.02).clipped().overlay(alignment: .leading) {
+                // all but transparent. Without the system's focus effect,
+                // whose highlight is drawn outside the field and out of reach
+                // of the opacity.
+                box(content.focused($focused).focusEffectDisabled().opacity(0.02).overlay(alignment: .leading) {
                     Text(Self.text(shown))
                         .foregroundStyle(shown.value.isEmpty ? Color.koanMuted : Color.koanInk)
                         .lineLimit(1)
