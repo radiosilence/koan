@@ -441,10 +441,10 @@ struct MeasurementFlow: View {
 
     /// The other plane's file beside one of an Audio Science Review export.
     private static func otherPlane(of url: URL) -> URL? {
-        let other = switch url.lastPathComponent {
+        let other: String? = switch url.lastPathComponent {
         case "SPL Horizontal.txt": "SPL Vertical.txt"
         case "SPL Vertical.txt": "SPL Horizontal.txt"
-        default: nil as String?
+        default: nil
         }
         return other.map { url.deletingLastPathComponent().appendingPathComponent($0) }
     }
