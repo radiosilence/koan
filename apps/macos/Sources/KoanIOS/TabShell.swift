@@ -332,6 +332,10 @@ private struct Transport: ViewModifier {
     @Environment(\.horizontalSizeClass) private var width
     /// The bar's height as laid out, which Dynamic Type moves.
     @State private var barHeight: CGFloat = 0
+    /// How tall the keyboard stands, zero while none is up. The bar is behind
+    /// it then, and the room a page keeps for the bar would sit above the
+    /// keyboard as a blank strip over the page's own controls.
+    @State private var keyboardHeight: CGFloat = 0
     @Namespace private var underline
 
     func body(content: Content) -> some View {
@@ -345,9 +349,16 @@ private struct Transport: ViewModifier {
             // player as a row with the playhead along its top, the tabs flat
             // beneath it. Laid over the content and kept behind the keyboard,
             // as the platform's tab bar is. Each page makes room for it itself,
-            // from its height (`koanHidesSystemTabBar`).
+            // from its height (`koanHidesSystemTabBar`), less what the keyboard
+            // already covers.
             content
-                .environment(\.koanBarHeight, barHeight)
+                .environment(\.koanBarHeight, max(0, barHeight - keyboardHeight))
+                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) {
+                    keyboardHeight = ($0.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect)?.height ?? 0
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+                    keyboardHeight = 0
+                }
                 .overlay(alignment: .bottom) {
                     VStack(spacing: 0) {
                         player
