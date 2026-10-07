@@ -1,0 +1,1 @@
+- **The Mac's Settings window is drawn in the kōan look.** Its tabs were the system's glass toolbar buttons, with the chosen one dimmed almost out of sight. In the theme they are the theme's own tab row on the window's ground, lowercase, the chosen tab in the accent and underlined, with no glass anywhere in the window. The platform's look is unchanged.
