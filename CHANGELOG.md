@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.60.4
+
+### Fixed
+
+- **No blank band at the foot of settings on iPhone in the kōan look.** 0.60.3 listed this as fixed, but the band remained on the settings pages: it was the line reporting the last action's result, held open on a grey ground above the mini player. That line now takes no room until there is something to report.
+- **squig.link measurements fetch from every site, and a failed fetch says why under the result.** Sites that keep numbered samples or a separate measurements folder (squig.link's headphones, listener, doltonius) now fetch instead of failing. graph.hangout.audio serves its measurements only to its own pages, so its results are listed last and open the site in a browser. The entry point is now Find a Measurement….
+- **Lowercase where the kōan look writes text.** Empty pages, the Mac queue and history headings, search section headings and the iPhone's "nothing playing" follow the theme's case rule.
+- **The EQ options menu says where a profile is kept.** On iOS the "Keep on Every Device" item came apart into a greyed row and a blank checked one. It is now one item naming what it does, "Keep on Every Device" or "Keep on This Device Only", and when a stack or layer pins the profile where it is, the item is disabled and says why.
+
 ## 0.60.3
 
 ### Changed
