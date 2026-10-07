@@ -238,8 +238,9 @@ chain below, the correction in the accent and each EQ in a dash of its own,
 over the total. Each block shows its own curve. Tapping the correction chooses
 another, its target and a group's member, with **Add…** at the foot to import
 one, find one in AutoEQ or build one from a measurement or squig.link. Each EQ
-of the tuning has **On**, and **Options** to edit it, move it or take it out;
-tapping it opens its page. **Add EQ** adds another. An empty stage is a dashed
+of the tuning has **On**, and tapping it opens its page. On the iPhone, swipe
+it left to take it out of the tuning and right to move it up or down, or touch
+and hold it for the same; on the Mac, its **Options** menu does these. **Add EQ** adds another. An empty stage is a dashed
 place to add one.
 
 The correction's block names the target it corrects to ("to Neutral, in-ear
@@ -284,16 +285,18 @@ target it plays to, and the measurement with the correction applied.
 A tuning's bands are edited on its own page, opened from its block on the EQ
 page: in the table below its graph, or by dragging a peak or
 shelf on the graph itself. An edit is saved and heard straight away. Frequency
-is held to 10 Hz–22 kHz, gain to ±30 dB and Q to 0.1–20. Delays, mixes and
-graphic curves are shown but not edited here.
+is held to 10 Hz–22 kHz, gain to ±30 dB and Q to 0.1–20. A graphic curve's
+row opens a page of its points, each frequency and gain editable within the
+same limits; a point moved past another takes its place in order. Delays and
+mixes are shown but not edited here.
 
 A correction plays as made: its bands are shown and not edited, since a
 correction is what makes the device neutral and an edit to it is no longer
 that. To change the sound, add a tuning on top; to edit a correction anyway,
 make it a tuning on its page first.
 
-An imported EQ keeps what it was imported as. Once edited, `koan dsp revert NAME`
-puts it back, and `koan dsp copy NAME` keeps the edit as an EQ of its own
+An imported EQ keeps what it was imported as. Once edited, **Reset to File** on
+a graphic curve's page or `koan dsp revert NAME` puts it back, and `koan dsp copy NAME` keeps the edit as an EQ of its own
 first. EQs imported before this was kept have nothing to go back to.
 
 ### Tunings of several EQs, and presets

@@ -3244,6 +3244,23 @@ impl KoanEngine {
         .await
     }
 
+    /// Set the points of `name`'s graphic curve `index`, held within a
+    /// band's ranges and put in order of frequency.
+    pub async fn dsp_set_curve(
+        self: Arc<Self>,
+        name: String,
+        index: u32,
+        points: Vec<DspPoint>,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            let points: Vec<(f64, f64)> = points.iter().map(|p| (p.hz, p.db)).collect();
+            koan_core::audio::dsp::profiles::set_curve(&name, index as usize, &points)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
     /// Add a flat band at 1 kHz to `name`; its index among the filters.
     pub async fn dsp_add_band(self: Arc<Self>, name: String) -> Result<u32, KoanError> {
         offload::sequenced(move || {

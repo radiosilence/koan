@@ -1196,6 +1196,37 @@ pub fn set_band(
     found
 }
 
+/// Set the points of filter `index` of `name`, a graphic curve, each held
+/// within the ranges a band may have and put in order of frequency. Its
+/// channels are kept. Refused for a correction, which plays as made.
+pub fn set_curve(name: &str, index: usize, points: &[(f64, f64)]) -> Result<(), String> {
+    use crate::config::DspFilter;
+    may_edit(name)?;
+    if points.is_empty() {
+        return Err("A curve needs a point".into());
+    }
+    let mut points = points
+        .iter()
+        .map(|&(hz, db)| Ok((clamp(hz, &BAND_HZ)?, clamp(db, &BAND_DB)?)))
+        .collect::<Result<Vec<_>, String>>()?;
+    points.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut found = Err(format!("{name} has no curve {}", index + 1));
+    persist(|cfg| {
+        if let Some(DspFilter::Graphic(g)) = cfg
+            .dsp
+            .profiles
+            .iter_mut()
+            .find(|p| p.name == name)
+            .and_then(|p| p.filters.get_mut(index))
+        {
+            g.points = points;
+            found = Ok(());
+        }
+    })
+    .map_err(|e| e.to_string())?;
+    found
+}
+
 /// Add a band to `name`: flat, at 1 kHz, for shaping from there. Answers
 /// with its index among the profile's filters.
 pub fn add_band(name: &str) -> Result<usize, String> {
@@ -3209,6 +3240,52 @@ mod tests {
         assert_eq!(filters().len(), 1);
         assert!(remove_filter("Mine", 3).is_err());
         assert!(add_band("Nobody").is_err());
+        assert!(set_curve("Mine", 0, &[(100.0, 1.0)]).is_err(), "a band");
+    }
+
+    /// A graphic curve's points are set whole, clamped and in order of
+    /// frequency; a correction's are not.
+    #[test]
+    fn curves_are_edited_in_place() {
+        use crate::config::{DspFilter, DspProfile, GraphicEq};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let curve = DspFilter::Graphic(GraphicEq {
+            points: vec![(20.0, 0.0), (1000.0, 2.0)],
+            channels: vec![0],
+        });
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Mine".into(),
+                filters: vec![curve.clone()],
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Fixed".into(),
+                role: Some(crate::config::DspRole::Correction),
+                filters: vec![curve],
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        set_curve("Mine", 0, &[(5000.0, 99.0), (2.0, -1.0)]).unwrap();
+        assert_eq!(
+            detail("Mine").unwrap().filters[0],
+            DspFilter::Graphic(GraphicEq {
+                points: vec![(10.0, -1.0), (5000.0, 30.0)],
+                channels: vec![0],
+            })
+        );
+        assert!(set_curve("Mine", 0, &[]).is_err());
+        assert!(set_curve("Mine", 0, &[(f64::NAN, 0.0)]).is_err());
+        assert!(set_curve("Mine", 1, &[(100.0, 0.0)]).is_err());
+        assert!(
+            set_curve("Fixed", 0, &[(100.0, 0.0)]).is_err(),
+            "a correction"
+        );
     }
 
     /// A group plays one member, chosen like a radio button; a stack plays

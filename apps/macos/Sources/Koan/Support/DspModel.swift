@@ -491,6 +491,11 @@ final class DspModel {
         }
     }
 
+    /// Set the points of graphic curve `index` of `name`.
+    func setCurve(_ name: String, _ index: Int, _ points: [DspPoint]) {
+        act { try await $0.dspSetCurve(name: name, index: UInt32(index), points: points) }
+    }
+
     func addBand(_ name: String) {
         act { _ = try await $0.dspAddBand(name: name) }
     }

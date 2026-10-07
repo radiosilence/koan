@@ -2,8 +2,8 @@ import KoanFFI
 import SwiftUI
 
 /// A profile's filters as a table, its parametric bands editable in place:
-/// number, type, frequency, gain and Q. An edit plays at once. Delays, mixes
-/// and graphic curves are shown as they are.
+/// number, type, frequency, gain and Q. An edit plays at once. A graphic
+/// curve opens a page of its points; delays and mixes are shown as they are.
 struct BandTable: View {
     let dsp: DspModel
     let profile: String
@@ -58,6 +58,16 @@ struct BandTable: View {
                 Group {
                     if Self.editable(band.kind), !readOnly {
                         BandEditor(dsp: dsp, profile: profile, index: index, band: band)
+                    } else if band.kind == "graphic", !readOnly {
+                        #if os(tvOS)
+                        BandRow(band: band)
+                        #else
+                        NavigationLink {
+                            CurvePage(dsp: dsp, profile: profile, index: index)
+                        } label: {
+                            BandRow(band: band)
+                        }
+                        #endif
                     } else {
                         BandRow(band: band)
                     }
@@ -81,7 +91,7 @@ struct BandTable: View {
             #if !os(tvOS)
             if !readOnly {
                 Button("Add a Band") { dsp.addBand(profile) }
-                    .koanButton(.compact)
+                    .koanButton(.bordered)
             }
             #endif
         } header: {
@@ -128,39 +138,17 @@ private struct BandEditor: View {
             .tint(KoanTheme.style(.ink, system: .tint))
             .accessibilityLabel(BandTable.kinds.first { $0.id == kind }?.name ?? kind)
             .frame(maxWidth: .infinity, alignment: .leading)
-            field($freq, .freq, width: 72, digits: 0)
-            field($gain, .gain, width: 56, digits: 1)
-            field($q, .q, width: 50, digits: 2)
+            NumberField(value: $freq, focus: $focused, name: .freq, width: 72, digits: 0, commit: commit)
+            NumberField(value: $gain, focus: $focused, name: .gain, width: 56, digits: 1, commit: commit)
+            NumberField(value: $q, focus: $focused, name: .q, width: 50, digits: 2, commit: commit)
         }
         .onChange(of: focused) { was, _ in if was != nil { commit() } }
-        #if os(iOS)
-        // The decimal pad has no return key.
-        .toolbar {
-            if focused != nil {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") { focused = nil }
-                }
-            }
-        }
-        #endif
+        .decimalPadDone($focused)
         .onAppear(perform: read)
         .onChange(of: band.freq) { _, _ in read() }
         .onChange(of: band.gainDb) { _, _ in read() }
         .onChange(of: band.q) { _, _ in read() }
         .onChange(of: band.kind) { _, _ in read() }
-    }
-
-    private func field(_ value: Binding<Double>, _ name: Field, width: CGFloat, digits: Int) -> some View {
-        TextField("", value: value, format: .number.precision(.fractionLength(0 ... digits)))
-            .focused($focused, equals: name)
-            .multilineTextAlignment(.trailing)
-            .monospacedDigit()
-            .frame(width: width)
-            .onSubmit(commit)
-            #if os(iOS)
-            .keyboardType(.decimalPad)
-            #endif
     }
 
     private func read() {
@@ -172,3 +160,156 @@ private struct BandEditor: View {
         dsp.setBand(profile, index, kind: kind, freq: freq, gain: gain, q: q)
     }
 }
+
+/// A figure in a row of the table, committed when it is left or returned,
+/// with a rule beneath it so it reads as a field to tap.
+private struct NumberField<Field: Hashable>: View {
+    @Binding var value: Double
+    var focus: FocusState<Field?>.Binding
+    let name: Field
+    let width: CGFloat
+    let digits: Int
+    let commit: () -> Void
+
+    var body: some View {
+        TextField("", value: $value, format: .number.precision(.fractionLength(0 ... digits)))
+            .focused(focus, equals: name)
+            .multilineTextAlignment(.trailing)
+            .monospacedDigit()
+            .frame(width: width)
+            .onSubmit(commit)
+            #if os(iOS)
+            .keyboardType(.decimalPad)
+            #endif
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(KoanTheme.style(.rule, system: Color.secondary.opacity(0.4))) // theme: raw — the system look's own
+                    .frame(height: KoanTheme.hairline)
+                    .offset(y: 2)
+            }
+    }
+}
+
+private extension View {
+    /// The decimal pad has no return key: a Done above it while a field of
+    /// the row is focused.
+    func decimalPadDone<Field: Hashable>(_ focus: FocusState<Field?>.Binding) -> some View {
+        #if os(iOS)
+        toolbar {
+            if focus.wrappedValue != nil {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { focus.wrappedValue = nil }
+                }
+            }
+        }
+        #else
+        self
+        #endif
+    }
+}
+
+#if !os(tvOS)
+/// A graphic curve's points, each frequency and gain editable, held to the
+/// ranges a band has. An imported EQ can be put back as its file had it.
+struct CurvePage: View {
+    let dsp: DspModel
+    let profile: String
+    let index: Int
+
+    @State private var detail: DspProfileDetail?
+    @State private var confirmingReset = false
+
+    private var points: [DspPoint] {
+        guard let d = detail, d.bands.indices.contains(index) else { return [] }
+        return d.bands[index].curve
+    }
+
+    var body: some View {
+        KoanForm {
+            Section {
+                HStack(spacing: 8) {
+                    Text("#").frame(width: 32, alignment: .leading)
+                    Spacer()
+                    Text("Hz").frame(width: 80, alignment: .trailing)
+                    Text("dB").frame(width: 64, alignment: .trailing)
+                }
+                .koanText(.fine, .muted)
+                .listRowInsets(BandTable.rowInsets)
+                ForEach(Array(points.enumerated()), id: \.offset) { i, point in
+                    PointEditor(index: i, point: point) { edited in
+                        var changed = points
+                        changed[i] = edited
+                        dsp.setCurve(profile, index, changed)
+                    }
+                    .font(.role(.meta, system: .body))
+                    .listRowInsets(BandTable.rowInsets)
+                }
+            } header: {
+                KoanSectionHeader("Points")
+            } footer: {
+                Text("Edits play at once. Frequency and gain are held to 10 Hz–22 kHz and ±30 dB; a point moved past another takes its place in order.")
+                    .koanText(.fine, .muted)
+            }
+            if let d = detail, d.canRevert, d.edited {
+                Section {
+                    Button("Reset to File") { confirmingReset = true }
+                        .koanButton(.bordered)
+                } footer: {
+                    Text("Puts this EQ back as \(d.source.first ?? "its file") had it, every filter and the headroom with it.")
+                        .koanText(.fine, .muted)
+                }
+            }
+        }
+        .navigationTitle(KoanTheme.label("Graphic EQ"))
+        .task(id: dsp.stamp) { detail = await dsp.detail(profile) }
+        #if os(iOS)
+        .koanBackButton()
+        .koanHidesSystemTabBar()
+        .roomBackground()
+        #endif
+        .confirmationDialog("Reset \(profile) to its file?", isPresented: $confirmingReset, titleVisibility: .visible) {
+            Button("Reset", role: .destructive) { dsp.revert(profile) }
+        }
+    }
+}
+
+/// One point of a curve, each figure committed when it is left or returned.
+private struct PointEditor: View {
+    let index: Int
+    let point: DspPoint
+    let commit: (DspPoint) -> Void
+
+    @State private var hz = 0.0
+    @State private var db = 0.0
+    @FocusState private var focused: Field?
+
+    enum Field { case hz, db }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("\(index + 1)")
+                .koanText(.meta, .muted)
+                .monospacedDigit()
+                .frame(width: 32, alignment: .leading)
+            Spacer()
+            NumberField(value: $hz, focus: $focused, name: .hz, width: 80, digits: 1, commit: save)
+            NumberField(value: $db, focus: $focused, name: .db, width: 64, digits: 1, commit: save)
+        }
+        .onChange(of: focused) { was, _ in if was != nil { save() } }
+        .decimalPadDone($focused)
+        .onAppear(perform: read)
+        .onChange(of: point.hz) { _, _ in read() }
+        .onChange(of: point.db) { _, _ in read() }
+    }
+
+    private func read() {
+        (hz, db) = (point.hz, point.db)
+    }
+
+    private func save() {
+        guard hz != point.hz || db != point.db else { return }
+        commit(DspPoint(hz: hz, db: db))
+    }
+}
+#endif
