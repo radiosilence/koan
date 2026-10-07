@@ -1581,6 +1581,14 @@ pub(crate) mod bonjour {
         domain: CString,
     }
 
+    /// What one browse has heard since it last looked: the context its
+    /// `on_browse` callbacks are given, so no browse reads another's error.
+    #[derive(Default)]
+    struct Browsed {
+        seen: Vec<Seen>,
+        err: i32,
+    }
+
     extern "C" fn on_browse(
         _: Ref,
         flags: u32,
@@ -1591,16 +1599,16 @@ pub(crate) mod bonjour {
         domain: *const c_char,
         context: *mut c_void,
     ) {
-        if err != 0 {
-            BROWSE_ERR.store(err, std::sync::atomic::Ordering::Relaxed);
-            return;
-        }
-        // SAFETY: the context is the Vec `browse_once` passed, alive for
+        // SAFETY: the context is the `Browsed` the browse passed, alive for
         // the call to DNSServiceProcessResult that runs this; the strings are
         // the responder's, valid for this callback.
         unsafe {
-            let seen = &mut *(context as *mut Vec<Seen>);
-            seen.push(Seen {
+            let browsed = &mut *(context as *mut Browsed);
+            if err != 0 {
+                browsed.err = err;
+                return;
+            }
+            browsed.seen.push(Seen {
                 add: flags & FLAG_ADD != 0,
                 interface,
                 name: CStr::from_ptr(name).to_owned(),
@@ -1614,7 +1622,6 @@ pub(crate) mod bonjour {
     /// the local network.
     const POLICY_DENIED: i32 = -65570;
 
-    static BROWSE_ERR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
     static RESTART: std::sync::OnceLock<std::sync::Arc<crate::remote::wire::Waker>> =
         std::sync::OnceLock::new();
     static RESTART_ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -1678,7 +1685,7 @@ pub(crate) mod bonjour {
         use std::sync::atomic::Ordering;
         RESTART_ASKED.store(false, Ordering::Relaxed);
         let regtype = CString::new(super::SERVICE).map_err(|e| e.to_string())?;
-        let mut seen: Vec<Seen> = Vec::new();
+        let mut browsed = Browsed::default();
         let mut interfaces: std::collections::HashMap<String, usize> = Default::default();
         // What was announced before this browse began: anything not announced
         // again shortly is gone, withdrawn while this app was not looking.
@@ -1689,8 +1696,8 @@ pub(crate) mod bonjour {
             .collect();
         let settle = std::time::Instant::now() + std::time::Duration::from_secs(3);
         let mut sd: Ref = std::ptr::null_mut();
-        // SAFETY: `seen` outlives the reference, which is deallocated before
-        // this returns.
+        // SAFETY: `browsed` outlives the reference, which is deallocated
+        // before this returns.
         let err = unsafe {
             DNSServiceBrowse(
                 &mut sd,
@@ -1699,7 +1706,7 @@ pub(crate) mod bonjour {
                 regtype.as_ptr(),
                 std::ptr::null(),
                 on_browse,
-                (&mut seen as *mut Vec<Seen>).cast(),
+                (&mut browsed as *mut Browsed).cast(),
             )
         };
         if err != 0 {
@@ -1751,12 +1758,12 @@ pub(crate) mod bonjour {
             if unsafe { DNSServiceProcessResult(sd) } != 0 {
                 return finish(sd, Err("the responder went away".into()));
             }
-            let err = BROWSE_ERR.swap(0, Ordering::Relaxed);
+            let err = std::mem::take(&mut browsed.err);
             if err != 0 {
                 super::set_blocked(err == POLICY_DENIED);
                 return finish(sd, Err(format!("browse error {err}")));
             }
-            for s in seen.drain(..) {
+            for s in browsed.seen.drain(..) {
                 let name = s.name.to_string_lossy().into_owned();
                 // Announced once per interface it is reached on: gone only
                 // when gone from all of them, found on the first.
@@ -1905,10 +1912,10 @@ pub(crate) mod bonjour {
         let Ok(regtype) = CString::new(regtype) else {
             return Vec::new();
         };
-        let mut seen: Vec<Seen> = Vec::new();
+        let mut browsed = Browsed::default();
         let mut sd: Ref = std::ptr::null_mut();
-        // SAFETY: `seen` outlives the reference, which is deallocated before
-        // this returns.
+        // SAFETY: `browsed` outlives the reference, which is deallocated
+        // before this returns.
         let err = unsafe {
             DNSServiceBrowse(
                 &mut sd,
@@ -1917,7 +1924,7 @@ pub(crate) mod bonjour {
                 regtype.as_ptr(),
                 std::ptr::null(),
                 on_browse,
-                (&mut seen as *mut Vec<Seen>).cast(),
+                (&mut browsed as *mut Browsed).cast(),
             )
         };
         if err != 0 {
@@ -1944,14 +1951,17 @@ pub(crate) mod bonjour {
             if unsafe { DNSServiceProcessResult(sd) } != 0 {
                 break;
             }
+            if browsed.err != 0 {
+                log::info!("bonjour: browsing {regtype:?} failed ({})", browsed.err);
+                break;
+            }
         }
         // SAFETY: the reference DNSServiceBrowse returned, freed once.
         unsafe { DNSServiceRefDeallocate(sd) };
-        // `on_browse` reports a browse error through the shared slot; this
-        // browse is not the one that watches it.
-        BROWSE_ERR.store(0, std::sync::atomic::Ordering::Relaxed);
         let mut names = std::collections::HashSet::new();
-        seen.into_iter()
+        browsed
+            .seen
+            .into_iter()
             .filter(|s| s.add && names.insert(s.name.clone()))
             .filter_map(|s| {
                 resolve_raw(
@@ -2003,6 +2013,30 @@ pub(crate) mod bonjour {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn a_browse_error_lands_in_its_own_browse() {
+            let mut standing = Browsed::default();
+            let mut lookup = Browsed::default();
+            let browse = |browsed: &mut Browsed, err: i32| {
+                on_browse(
+                    std::ptr::null_mut(),
+                    FLAG_ADD,
+                    0,
+                    err,
+                    c"tv".as_ptr(),
+                    c"_airplay._tcp.".as_ptr(),
+                    c"local.".as_ptr(),
+                    (browsed as *mut Browsed).cast(),
+                );
+            };
+            browse(&mut lookup, POLICY_DENIED);
+            browse(&mut standing, 0);
+            assert_eq!(lookup.err, POLICY_DENIED);
+            assert!(lookup.seen.is_empty());
+            assert_eq!(standing.err, 0);
+            assert_eq!(standing.seen.len(), 1);
+        }
 
         #[test]
         fn a_txt_record_reads_back() {
