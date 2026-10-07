@@ -10,15 +10,18 @@ import SwiftUI
 /// only draws them.
 ///
 /// Given `handles`, each band has a point at its frequency and gain that can
-/// be dragged; `onDrag` is told where it was let go, and the curves follow
-/// once the profile has been changed and drawn again.
+/// be dragged, and its width pinched (option-dragged with a mouse) for Q.
+/// With `paints`, a drag away from every handle paints a graphic curve.
+/// `onEdit` is told of each step and of the end; the caller draws the edit
+/// by passing another `response`.
 struct EqGraph: View {
     let response: DspResponse
     /// An output's chain, stage by stage, each drawn as its block is, under
     /// the whole chain. Empty for a single profile.
     var parts: [Part] = []
     var handles: [Handle] = []
-    var onDrag: ((Int, Double, Double) -> Void)?
+    var paints = false
+    var onEdit: ((Edit) -> Void)?
     /// The view to open on, where there is a measurement to show.
     var startOn: Shown = .eq
 
@@ -29,12 +32,21 @@ struct EqGraph: View {
         let stroke: StageStroke
     }
 
-    /// A band's point: its index among the profile's filters, and where it is.
+    /// A band's point: its index among the profile's filters, where it is,
+    /// and its Q.
     struct Handle: Identifiable, Equatable {
         let index: Int
-        let hz: Double
-        let db: Double
+        var hz: Double
+        var db: Double
+        var q: Double
         var id: Int { index }
+    }
+
+    /// What a gesture did: moved or widened a band, or painted the curve
+    /// toward a point. `done` at the gesture's end.
+    enum Edit {
+        case band(Handle, done: Bool)
+        case paint(hz: Double, db: Double, done: Bool)
     }
 
     @State private var view: Shown = .eq
@@ -42,6 +54,14 @@ struct EqGraph: View {
     @State private var dragging: Handle?
     /// Whether a drag is under way, as against one let go and not yet drawn.
     @State private var grabbed = false
+    /// The drag paints rather than holding a handle.
+    @State private var painting = false
+    /// The handle last held, which a pinch away from every handle widens.
+    @State private var selected: Int?
+    /// The held handle's Q when the pinch or option-drag began.
+    @State private var startQ: Double?
+    /// A pinch is under way: a drag's finger moves nothing meanwhile.
+    @State private var pinching = false
 
     enum Shown: String, CaseIterable, Identifiable {
         case eq = "EQ"
@@ -143,15 +163,16 @@ struct EqGraph: View {
             }
         }
         .chartLegend(.hidden)
-        .onChange(of: handles) { _, _ in dragging = nil }
+        // Saves land while a drag goes on; the handle stays with the finger.
+        .onChange(of: handles) { _, _ in if !grabbed { dragging = nil } }
         #if !os(tvOS)
         .chartOverlay { proxy in
-            if showingEq, onDrag != nil {
+            if showingEq, onEdit != nil {
                 GeometryReader { geo in
                     Rectangle()
                         .fill(Color.clear)
                         .contentShape(Rectangle())
-                        .gesture(drag(proxy, geo))
+                        .gesture(drag(proxy, geo).simultaneously(with: pinch(proxy, geo)))
                 }
             }
         }
@@ -191,37 +212,103 @@ struct EqGraph: View {
                 guard let plot = proxy.plotFrame else { return }
                 let origin = geo[plot].origin
                 let at = CGPoint(x: g.location.x - origin.x, y: g.location.y - origin.y)
-                if !grabbed {
+                if !grabbed, !pinching {
                     grabbed = true
                     let start = CGPoint(x: g.startLocation.x - origin.x, y: g.startLocation.y - origin.y)
                     dragging = nearest(to: start, proxy)
+                    painting = dragging == nil && paints
+                    selected = dragging?.index ?? selected
+                    startQ = dragging?.q
                 }
-                guard let held = dragging,
-                      let hz: Double = proxy.value(atX: at.x),
+                guard let hz: Double = proxy.value(atX: at.x),
                       let db: Double = proxy.value(atY: at.y)
                 else { return }
-                dragging = Handle(
-                    index: held.index,
-                    hz: min(max(hz, 20), 20000),
-                    db: min(max(db, yDomain.lowerBound), yDomain.upperBound)
-                )
+                let (hzIn, dbIn) = (min(max(hz, 20), 20000), min(max(db, yDomain.lowerBound), yDomain.upperBound))
+                if painting {
+                    onEdit?(.paint(hz: hzIn, db: dbIn, done: false))
+                    return
+                }
+                guard !pinching, var held = dragging else { return }
+                #if os(macOS)
+                // Option-drag widens or narrows the band where it is: up for a
+                // higher Q.
+                if NSEvent.modifierFlags.contains(.option), let q = startQ {
+                    held.q = Self.clampQ(q * pow(2, -g.translation.height / 60))
+                    dragging = held
+                    onEdit?(.band(held, done: false))
+                    return
+                }
+                #endif
+                (held.hz, held.db) = (hzIn, dbIn)
+                dragging = held
+                onEdit?(.band(held, done: false))
             }
-            .onEnded { _ in
+            .onEnded { g in
                 // Held where it was let go until the edited profile is drawn.
                 grabbed = false
-                if let held = dragging { onDrag?(held.index, held.hz, held.db) }
+                // A pinch under way ends itself.
+                if pinching { return }
+                startQ = nil
+                if painting {
+                    painting = false
+                    if let plot = proxy.plotFrame {
+                        let origin = geo[plot].origin
+                        if let hz: Double = proxy.value(atX: g.location.x - origin.x),
+                           let db: Double = proxy.value(atY: g.location.y - origin.y) {
+                            onEdit?(.paint(
+                                hz: min(max(hz, 20), 20000),
+                                db: min(max(db, yDomain.lowerBound), yDomain.upperBound),
+                                done: true
+                            ))
+                        }
+                    }
+                } else if let held = dragging {
+                    onEdit?(.band(held, done: true))
+                }
+            }
+    }
+
+    /// A pinch widens the band under it, or the one last held: apart for a
+    /// wider band, a lower Q.
+    private func pinch(_ proxy: ChartProxy, _ geo: GeometryProxy) -> some Gesture {
+        MagnifyGesture()
+            .onChanged { g in
+                if !pinching {
+                    pinching = true
+                    var under: Handle?
+                    if let plot = proxy.plotFrame {
+                        let origin = geo[plot].origin
+                        under = nearest(to: CGPoint(x: g.startLocation.x - origin.x, y: g.startLocation.y - origin.y), proxy, within: 44)
+                    }
+                    guard let h = under ?? handles.first(where: { $0.index == selected }) else { return }
+                    dragging = h
+                    selected = h.index
+                    startQ = h.q
+                }
+                guard var held = dragging, let q = startQ else { return }
+                held.q = Self.clampQ(q / g.magnification)
+                dragging = held
+                onEdit?(.band(held, done: false))
+            }
+            .onEnded { _ in
+                pinching = false
+                guard startQ != nil else { return }
+                startQ = nil
+                if let held = dragging { onEdit?(.band(held, done: true)) }
             }
     }
     #endif
 
+    private static func clampQ(_ q: Double) -> Double { min(max(q, 0.1), 20) }
+
     /// The handle under `point`, within a finger's width of it.
-    private func nearest(to point: CGPoint, _ proxy: ChartProxy) -> Handle? {
+    private func nearest(to point: CGPoint, _ proxy: ChartProxy, within: CGFloat = 24) -> Handle? {
         handles
             .compactMap { h -> (Handle, CGFloat)? in
                 guard let at = proxy.position(for: (x: h.hz, y: h.db)) else { return nil }
                 return (h, hypot(at.x - point.x, at.y - point.y))
             }
-            .filter { $0.1 < 24 }
+            .filter { $0.1 < within }
             .min { $0.1 < $1.1 }?
             .0
     }

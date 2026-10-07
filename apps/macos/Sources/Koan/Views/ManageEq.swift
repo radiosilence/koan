@@ -115,13 +115,13 @@ struct ManageEq: View {
         #endif
         #if os(iOS)
         .navigationDestination(item: $showing) { shown in
-            DspProfilePage(dsp: dsp, name: shown.name)
+            DspProfilePage(dsp: dsp, name: shown.name, device: device)
                 .koanPushedPage()
         }
         #elseif os(macOS)
         .sheet(item: $showing) { shown in
             NavigationStack {
-                DspProfilePage(dsp: dsp, name: shown.name)
+                DspProfilePage(dsp: dsp, name: shown.name, device: device)
                     .toolbar {
                         KoanSheetAction(placement: .confirmationAction) {
                             Button("Done") { showing = nil }
