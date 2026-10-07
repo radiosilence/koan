@@ -191,7 +191,8 @@ fn index_folder(
     let total_files = audio_files.len();
     log::info!("found {} audio files in {}", total_files, path.display());
 
-    if !index_files(db, audio_files, opts, on_track, result, path) {
+    let scope = [path.to_path_buf()];
+    if !index_files(db, audio_files, &scope, opts, on_track, result, path) {
         return false;
     }
 
@@ -247,6 +248,7 @@ pub fn scan_dirs(
 
     let mut files = Vec::new();
     let mut playlists = Vec::new();
+    let mut walked = Vec::new();
     let mut settled = Vec::new();
     for dir in minimal_dirs(dirs) {
         let Some(root) = library.iter().find(|root| dir.starts_with(root)) else {
@@ -274,6 +276,7 @@ pub fn scan_dirs(
                 let found = walk(&dir, &mut result);
                 files.extend(found.audio);
                 playlists.extend(found.playlists);
+                walked.push(dir.clone());
                 if result.unreadable == before {
                     settled.push(dir);
                 }
@@ -288,7 +291,16 @@ pub fn scan_dirs(
     }
 
     let seen = stored_paths(&files);
-    if !index_files(db, files, &opts, on_track, &mut result, Path::new("")) || result.cancelled {
+    let indexed = index_files(
+        db,
+        files,
+        &walked,
+        &opts,
+        on_track,
+        &mut result,
+        Path::new(""),
+    );
+    if !indexed || result.cancelled {
         return result;
     }
     let arrived = std::mem::take(&mut result.arrived);
@@ -394,12 +406,15 @@ fn walk(path: &Path, result: &mut ScanResult) -> Walked {
 }
 
 /// Read and store the files that changed since they were last indexed.
+/// `scope` holds the directories and files they were walked from: the scan
+/// cache is read for those alone.
 ///
 /// Returns false when the scan could not run at all, with the reason in
 /// `result.errors` against `context`.
 fn index_files(
     db: &Database,
     mut audio_files: Vec<PathBuf>,
+    scope: &[PathBuf],
     opts: &ScanOptions,
     on_track: Option<&dyn Fn(ScanEvent)>,
     result: &mut ScanResult,
@@ -410,13 +425,11 @@ fn index_files(
         return true;
     }
 
-    // Filter to files that need scanning.
-    // Batch-load the entire scan_cache into a HashMap to avoid O(N) individual
-    // DB lookups (one per file). For 100k+ file libraries this is dramatically faster.
+    // The scope's cache entries in one read, rather than a lookup per file.
     let files_to_scan: Vec<PathBuf> = if opts.force {
         std::mem::take(&mut audio_files)
     } else {
-        let scan_cache = queries::load_scan_cache(&db.conn).unwrap_or_default();
+        let scan_cache = queries::load_scan_cache(&db.conn, scope).unwrap_or_default();
         // One stat per file; in parallel, since on a network mount each is a round trip.
         audio_files
             .par_iter()
@@ -678,6 +691,7 @@ pub fn import_paths(db: &Database, paths: &[PathBuf]) -> ImportResult {
     let mut result = ImportResult::default();
 
     let mut files: Vec<PathBuf> = Vec::new();
+    let mut scope = Vec::new();
     let mut seen = std::collections::HashSet::new();
     // Dropped paths are spelled by whoever dropped them, and Foundation spells
     // accents differently from the disk. Walked children come from the
@@ -700,6 +714,7 @@ pub fn import_paths(db: &Database, paths: &[PathBuf]) -> ImportResult {
             .map(|e| e.path().to_path_buf())
             .collect();
         found.sort();
+        scope.push(path);
         // A drop can name both a folder and a file inside it.
         files.extend(found.into_iter().filter(|f| seen.insert(f.clone())));
     }
@@ -715,6 +730,7 @@ pub fn import_paths(db: &Database, paths: &[PathBuf]) -> ImportResult {
     index_files(
         db,
         files.clone(),
+        &scope,
         &ScanOptions::default(),
         None,
         &mut scanned,
@@ -1013,6 +1029,59 @@ mod tests {
 
     /// Moved from one library folder to another: every folder is indexed
     /// before any is pruned, so the old path is not missed first.
+    /// A library that already holds one file twice, under the spelling
+    /// organize once stored and the directory's own, comes back to one track:
+    /// the older, with its history.
+    #[test]
+    fn a_file_stored_under_two_spellings_is_folded_into_one_track() {
+        use unicode_normalization::UnicodeNormalization;
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("music");
+        let nfd: String = "Björk".nfd().collect();
+        let nfc: String = "Björk".nfc().collect();
+        std::fs::create_dir_all(music.join(&nfd)).unwrap();
+        test_utils::generate_wav(&music.join(&nfd).join("Jóga.wav"), 44100, 1, 0.5, 16);
+        let on_disk = music
+            .join(&nfd)
+            .join("Jóga.wav")
+            .to_string_lossy()
+            .into_owned();
+        let organized = music
+            .join(&nfc)
+            .join("Jóga.wav")
+            .to_string_lossy()
+            .into_owned();
+        let db = test_db(dir.path());
+        scan_folder(&db, &music, ScanOptions::default(), None);
+        let original = tracks_with_uids(&db)[0].0;
+        queries::record_play(&db.conn, queries::LOCAL_USER, original, Some(1000)).unwrap();
+        // What organize stored before it took the directory's spelling.
+        queries::sources::rename_file(&db.conn, &on_disk, &organized).unwrap();
+        db.conn
+            .execute(
+                "UPDATE scan_cache SET path = ?1 WHERE path = ?2",
+                [&organized, &on_disk],
+            )
+            .unwrap();
+        // The scan that made the second row.
+        scan_folder(&db, &music, ScanOptions::default(), None);
+        scan_folder(&db, &music, ScanOptions::default(), None);
+
+        let tracks = tracks_with_uids(&db);
+        assert_eq!(tracks.len(), 1, "{tracks:?}");
+        assert_eq!(tracks[0].0, original);
+        assert_eq!(track_paths(&db), vec![on_disk]);
+        let plays: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM play_history WHERE track_id = ?1",
+                [original],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(plays, 1);
+    }
+
     #[test]
     fn a_file_moved_between_library_folders_keeps_its_track() {
         let dir = tempfile::tempdir().unwrap();

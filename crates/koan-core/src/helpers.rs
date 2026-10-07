@@ -588,7 +588,7 @@ pub fn cache_size_bytes(cfg: &Config) -> u64 {
 /// The trailing separator matters: without it `/Volumes/Music` also counts
 /// `/Volumes/Music Backup`.
 pub fn tracks_under(db: &Database, folder: &Path) -> u64 {
-    let (lower, upper) = queries::folder_prefix_range(folder);
+    let (lower, upper) = queries::folder_prefix_range(&crate::index::spelling::on_disk(folder));
     db.conn
         .query_row(
             "SELECT COUNT(*) FROM tracks WHERE path >= ?1 AND path < ?2",
@@ -631,23 +631,22 @@ pub fn forget_folder(db: &Database, folder: &Path) -> Result<u64, crate::db::con
     let _lane = crate::index::lane::wait();
 
     let tx = crate::db::queries::write_transaction(&db.conn)?;
-    let paths: Vec<String> = {
-        let mut stmt = tx.prepare("SELECT path FROM local_files WHERE path >= ?1 AND path < ?2")?;
+    // The folder's files, and the tracks a rebuilt index has not yet re-read
+    // from it.
+    let tracks: Vec<i64> = {
+        let mut stmt = tx.prepare(
+            "SELECT track_id FROM local_files WHERE path >= ?1 AND path < ?2
+             UNION
+             SELECT t.id FROM tracks t WHERE t.path >= ?1 AND t.path < ?2
+                AND NOT EXISTS (SELECT 1 FROM local_files f WHERE f.track_id = t.id)",
+        )?;
         let rows = stmt.query_map([&lower, &upper], |r| r.get(0))?;
         rows.collect::<rusqlite::Result<_>>()?
     };
     // A track also on the server keeps its row, minus the file.
-    for path in &paths {
-        queries::sources::remove(&tx, queries::sources::Kind::Local, path)?;
-    }
-    // Otherwise the folder added back would find its files cached as read and
-    // skip them, leaving their tracks without a file.
-    tx.execute(
-        "DELETE FROM scan_cache WHERE path >= ?1 AND path < ?2",
-        [&lower, &upper],
-    )?;
+    queries::sources::forget_tracks(&tx, &tracks, queries::sources::Forget::Demote)?;
     tx.commit()?;
-    Ok(paths.len() as u64)
+    Ok(tracks.len() as u64)
 }
 
 /// Forget everything that only existed on the server.

@@ -395,9 +395,26 @@ pub fn remove_stale_tracks_walked(
         .query_map(params![lower, upper], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     let total = paths.len() as i64;
-    let stale: Vec<String> = paths
+    let unwalked = paths
         .into_iter()
-        .filter(|path| !walked.is_some_and(|w| w.contains(path)))
+        .filter(|path| !walked.is_some_and(|w| w.contains(path)));
+    // A row the walk did not find under its own spelling but did under the
+    // directory's is the same file stored twice; see `sources::fold_twin`.
+    let mut spelling = crate::index::spelling::Spelling::default();
+    let mut unclaimed = Vec::new();
+    for path in unwalked {
+        let spelled = walked.and_then(|w| {
+            let on_disk = spelling.on_disk(Path::new(&path));
+            let on_disk = on_disk.to_string_lossy();
+            (on_disk != path.as_str() && w.contains(on_disk.as_ref())).then(|| on_disk.into_owned())
+        });
+        match spelled {
+            Some(on_disk) if sources::fold_twin(conn, &path, &on_disk)? => {}
+            _ => unclaimed.push(path),
+        }
+    }
+    let stale: Vec<String> = unclaimed
+        .into_iter()
         // A permission error, an ailing mount or a symlink whose target has
         // gone away is "cannot tell", not "deleted".
         .filter(|path| crate::index::known_missing(Path::new(path)))
@@ -428,11 +445,11 @@ pub fn remove_stale_tracks_walked(
         );
     }
 
+    let mut tracks = Vec::with_capacity(stale.len());
     for path in &stale {
-        conn.execute("DELETE FROM scan_cache WHERE path = ?1", params![path])?;
-        sources::remove(conn, sources::Kind::Local, path)?;
-        sources::forget_unread(conn, sources::Kind::Local, path)?;
+        tracks.extend(sources::track_of_file(conn, path)?);
     }
+    sources::forget_tracks(conn, &tracks, sources::Forget::Demote)?;
 
     Ok(stale)
 }

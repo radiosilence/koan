@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 22;
+pub const SCHEMA_VERSION: i64 = 23;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -141,7 +141,7 @@ fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
             path      TEXT PRIMARY KEY,
             mtime     INTEGER NOT NULL,
             size      INTEGER NOT NULL,
-            track_id  INTEGER REFERENCES tracks(id)
+            track_id  INTEGER REFERENCES tracks(id) ON DELETE CASCADE
         );
 
         -- Forgetting a track deletes its scan cache entry by track id, and the
@@ -174,7 +174,7 @@ fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
 
         CREATE TABLE IF NOT EXISTS lyrics_cache (
             id          INTEGER PRIMARY KEY,
-            track_id    INTEGER REFERENCES tracks(id),
+            track_id    INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
             source      TEXT NOT NULL,
             synced      INTEGER DEFAULT 0,
             content     TEXT NOT NULL,
@@ -911,6 +911,7 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
     )?;
     cascade_play_history(conn)?;
     autoincrement_play_history(conn)?;
+    cascade_track_caches(conn)?;
     snapshots_to_playlists(conn)?;
     per_user_favourites(conn)?;
     name_keys(conn)?;
@@ -1418,6 +1419,49 @@ fn cascade_play_history(conn: &Connection) -> rusqlite::Result<()> {
     );
     conn.pragma_update(None, "foreign_keys", "on")?;
     rebuild
+}
+
+/// Have a track's scan cache entry and lyrics go with it.
+///
+/// Both were keyed to the track without a delete rule, so every deleter had to
+/// name them, and one that did not left a scan cache entry claiming a file was
+/// read into a track that no longer exists. Rows already orphaned are deleted
+/// by `cascade_orphans` once the key cascades. Runs inside the upgrade, where
+/// foreign keys are already off.
+fn cascade_track_caches(conn: &Connection) -> rusqlite::Result<()> {
+    if !fk_cascades(conn, "scan_cache")? {
+        conn.execute_batch(
+            "CREATE TABLE scan_cache_new (
+                 path      TEXT PRIMARY KEY,
+                 mtime     INTEGER NOT NULL,
+                 size      INTEGER NOT NULL,
+                 track_id  INTEGER REFERENCES tracks(id) ON DELETE CASCADE
+             );
+             INSERT INTO scan_cache_new (path, mtime, size, track_id)
+                 SELECT path, mtime, size, track_id FROM scan_cache;
+             DROP TABLE scan_cache;
+             ALTER TABLE scan_cache_new RENAME TO scan_cache;
+             CREATE INDEX IF NOT EXISTS idx_scan_cache_track ON scan_cache(track_id);",
+        )?;
+    }
+    if !fk_cascades(conn, "lyrics_cache")? {
+        conn.execute_batch(
+            "CREATE TABLE lyrics_cache_new (
+                 id          INTEGER PRIMARY KEY,
+                 track_id    INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
+                 source      TEXT NOT NULL,
+                 synced      INTEGER DEFAULT 0,
+                 content     TEXT NOT NULL,
+                 fetched_at  INTEGER NOT NULL,
+                 UNIQUE(track_id)
+             );
+             INSERT INTO lyrics_cache_new (id, track_id, source, synced, content, fetched_at)
+                 SELECT id, track_id, source, synced, content, fetched_at FROM lyrics_cache;
+             DROP TABLE lyrics_cache;
+             ALTER TABLE lyrics_cache_new RENAME TO lyrics_cache;",
+        )?;
+    }
+    Ok(())
 }
 
 /// Give `play_history.id` `AUTOINCREMENT`, keeping every row and id.
@@ -2451,6 +2495,57 @@ mod tests {
             .unwrap();
         assert_eq!(remaining, 0, "ON DELETE CASCADE did not fire");
     }
+    #[test]
+    fn scan_and_lyrics_caches_from_before_the_cascade_go_with_their_track() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        conn.pragma_update(None, "foreign_keys", "off").unwrap();
+        conn.execute_batch(
+            "DROP TABLE scan_cache;
+             CREATE TABLE scan_cache (
+                 path      TEXT PRIMARY KEY,
+                 mtime     INTEGER NOT NULL,
+                 size      INTEGER NOT NULL,
+                 track_id  INTEGER REFERENCES tracks(id)
+             );
+             DROP TABLE lyrics_cache;
+             CREATE TABLE lyrics_cache (
+                 id          INTEGER PRIMARY KEY,
+                 track_id    INTEGER REFERENCES tracks(id),
+                 source      TEXT NOT NULL,
+                 synced      INTEGER DEFAULT 0,
+                 content     TEXT NOT NULL,
+                 fetched_at  INTEGER NOT NULL,
+                 UNIQUE(track_id)
+             );
+             INSERT INTO artists (id, name) VALUES (1, 'A');
+             INSERT INTO tracks (id, artist_id, title, source) VALUES (7, 1, 'T', 'local');
+             INSERT INTO scan_cache VALUES ('/m/t.flac', 1, 2, 7), ('/m/gone.flac', 1, 2, 999);
+             INSERT INTO lyrics_cache (track_id, source, content, fetched_at)
+                 VALUES (7, 'lrclib', 'la', 1), (999, 'lrclib', 'la', 1);",
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION - 1)
+            .unwrap();
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+
+        create_tables(&conn).unwrap();
+
+        assert!(fk_cascades(&conn, "scan_cache").unwrap());
+        assert!(fk_cascades(&conn, "lyrics_cache").unwrap());
+        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(
+            count("SELECT COUNT(*) FROM scan_cache WHERE track_id = 7"),
+            1
+        );
+        assert_eq!(count("SELECT COUNT(*) FROM scan_cache"), 1);
+        assert_eq!(count("SELECT COUNT(*) FROM lyrics_cache"), 1);
+
+        conn.execute("DELETE FROM tracks WHERE id = 7", []).unwrap();
+        assert_eq!(count("SELECT COUNT(*) FROM scan_cache"), 0);
+        assert_eq!(count("SELECT COUNT(*) FROM lyrics_cache"), 0);
+    }
+
     #[test]
     fn play_history_from_before_the_cascade_is_rebuilt_keeping_its_rows() {
         let conn = Connection::open_in_memory().unwrap();

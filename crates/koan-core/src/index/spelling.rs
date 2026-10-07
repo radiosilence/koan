@@ -15,8 +15,13 @@ use unicode_normalization::UnicodeNormalization;
 /// directory entry's own bytes. A file indexed under the other spelling is a
 /// file the next scan has no row for, so it gets a second one.
 ///
-/// Each accented component is looked up in the directory that holds it and
-/// replaced by the entry that names it, exact bytes first. Symlinks aren't
+/// Case is the same story: a case-insensitive volume opens `The Beatles` as
+/// `The beatles`, and a scan stores whichever the directory holds.
+///
+/// Each component is looked up in the directory that holds it and replaced by
+/// the entry that names it: exact bytes first, then the same name in another
+/// Unicode normalisation, then, only where the filesystem itself opens the
+/// name as given, the same name in another case. Symlinks aren't
 /// followed, so a symlinked library root keeps the path it was configured as.
 /// A directory that can't be read leaves its component as given. Listings are
 /// kept for the life of the resolver: a drop of a hundred files from one folder
@@ -34,10 +39,6 @@ impl Spelling {
                 out.push(component.as_os_str());
                 continue;
             };
-            if name.as_encoded_bytes().is_ascii() {
-                out.push(name);
-                continue;
-            }
             let dir = if out.as_os_str().is_empty() {
                 PathBuf::from(".")
             } else {
@@ -61,9 +62,21 @@ impl Spelling {
             return Some(name.to_os_string());
         }
         let wanted: String = name.to_string_lossy().nfc().collect();
-        listing
+        if let Some(spelled) = listing
             .iter()
             .find(|n| n.to_string_lossy().nfc().eq(wanted.chars()))
+        {
+            return Some(spelled.clone());
+        }
+        // On a case-sensitive volume a name differing only in case is another
+        // file, and this one does not exist.
+        if !dir.join(name).exists() {
+            return None;
+        }
+        let wanted = wanted.to_lowercase();
+        listing
+            .iter()
+            .find(|n| n.to_string_lossy().nfc().collect::<String>().to_lowercase() == wanted)
             .cloned()
     }
 }
@@ -107,6 +120,20 @@ mod tests {
         std::fs::create_dir(dir.path().join(&nfd)).unwrap();
         let disk = dir.path().join(&nfd);
         assert_eq!(on_disk(&disk), disk);
+    }
+
+    #[test]
+    fn a_name_in_another_case_becomes_the_directorys_own_only_where_it_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("The beatles")).unwrap();
+        let asked = dir.path().join("The Beatles").join("song.wav");
+        let insensitive = dir.path().join("THE BEATLES").exists();
+        let expected = if insensitive {
+            dir.path().join("The beatles").join("song.wav")
+        } else {
+            asked.clone()
+        };
+        assert_eq!(on_disk(&asked), expected);
     }
 
     #[test]
