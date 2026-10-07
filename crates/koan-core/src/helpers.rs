@@ -621,6 +621,7 @@ pub fn forget_remote(db: &Database) -> Result<u64, crate::db::connection::DbErro
     // account's EQ profiles were read. The profiles themselves stay.
     tx.execute_batch(
         "DELETE FROM history_outbox;
+         DELETE FROM favourite_outbox;
          UPDATE remote_servers SET history_cursor = NULL;
          DELETE FROM dsp_synced;
          DELETE FROM dsp_sync_cursor;",
@@ -982,14 +983,27 @@ pub fn reconcile_favourites(db: &Database, client: &SubsonicClient) -> Favourite
             "artist" => FavouriteKind::Artist,
             _ => FavouriteKind::Track,
         };
-        match send_favourite(client, kind, &change.remote_id, change.star) {
-            Ok(()) => {
-                out.pushed += 1;
-                if let Err(e) = queries::forget_favourite_change(&db.conn, &change) {
-                    log::warn!("could not clear a sent favourite change: {e}");
-                }
+        let sent = send_favourite(client, kind, &change.remote_id, change.star);
+        match &sent {
+            Ok(()) => out.pushed += 1,
+            // Refused for the account: signing in again changes the answer.
+            Err(SubsonicError::Api { code: 40..=44, .. }) => {
+                log::warn!("favourite change refused for the account; kept for the next sync");
+                continue;
             }
-            Err(e) => log::warn!("favourite change not sent; kept for the next sync: {e}"),
+            // Answered and refused, such as an item the server no longer has:
+            // asking again gets the same answer.
+            Err(e @ SubsonicError::Api { .. }) => {
+                log::warn!("favourite change refused by the server; dropped: {e}");
+            }
+            // Not reached.
+            Err(e) => {
+                log::warn!("favourite change not sent; kept for the next sync: {e}");
+                continue;
+            }
+        }
+        if let Err(e) = queries::forget_favourite_change(&db.conn, &change) {
+            log::warn!("could not clear a sent favourite change: {e}");
         }
     }
 
@@ -1042,27 +1056,39 @@ pub fn reconcile_favourites(db: &Database, client: &SubsonicClient) -> Favourite
     }
 
     // Read after the stars were: anything here now is newer than they are.
-    let changed: std::collections::HashSet<(String, String)> = queries::favourite_changes(&db.conn)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|c| (c.kind, c.remote_id))
-        .collect();
-    let settled = |kind: FavouriteKind, ids: Vec<String>| -> Vec<String> {
-        ids.into_iter()
-            .filter(|id| !changed.contains(&(kind.as_str().to_owned(), id.clone())))
-            .collect()
-    };
-    let songs = settled(FavouriteKind::Track, songs);
-    let albums = settled(FavouriteKind::Album, albums);
-    let artists = settled(FavouriteKind::Artist, artists);
-
-    out.imported +=
-        queries::import_remote_favourites(&db.conn, queries::LOCAL_USER, &songs).unwrap_or(0);
-    out.imported += queries::import_remote_favourite_albums(&db.conn, queries::LOCAL_USER, &albums)
-        .unwrap_or(0);
-    out.imported +=
-        queries::import_remote_favourite_artists(&db.conn, queries::LOCAL_USER, &artists)
-            .unwrap_or(0);
+    // The read and the imports are one transaction, so a change recorded
+    // between them waits for the imports rather than being written over.
+    let imported = queries::atomically(&db.conn, || -> rusqlite::Result<usize> {
+        let changed: std::collections::HashSet<(String, String)> =
+            queries::favourite_changes(&db.conn)?
+                .into_iter()
+                .map(|c| (c.kind, c.remote_id))
+                .collect();
+        let settled = |kind: FavouriteKind, ids: &[String]| -> Vec<String> {
+            ids.iter()
+                .filter(|id| !changed.contains(&(kind.as_str().to_owned(), (*id).clone())))
+                .cloned()
+                .collect()
+        };
+        let user = queries::LOCAL_USER;
+        Ok(queries::import_remote_favourites(
+            &db.conn,
+            user,
+            &settled(FavouriteKind::Track, &songs),
+        )? + queries::import_remote_favourite_albums(
+            &db.conn,
+            user,
+            &settled(FavouriteKind::Album, &albums),
+        )? + queries::import_remote_favourite_artists(
+            &db.conn,
+            user,
+            &settled(FavouriteKind::Artist, &artists),
+        )?)
+    });
+    match imported {
+        Ok(n) => out.imported += n,
+        Err(e) => log::warn!("could not import the server's favourites: {e}"),
+    }
     out
 }
 
@@ -2727,13 +2753,23 @@ mod favourite_sync_tests {
     use crate::db::queries::sample_meta;
     use std::sync::Mutex;
 
-    /// A server with song `s1` and album `a1` starred, recording every id it
-    /// is asked to star. With `unstar_fails`, it refuses every unstar.
-    fn serve(stars: Arc<Mutex<Vec<String>>>) -> String {
-        serve_with(stars, false)
+    /// How the server answers an unstar.
+    #[derive(Clone, Copy)]
+    enum Unstar {
+        Taken,
+        /// The connection closes unanswered, as a server out of reach.
+        Unreached,
+        /// An error answer, as for an item the server does not have.
+        Refused,
     }
 
-    fn serve_with(stars: Arc<Mutex<Vec<String>>>, unstar_fails: bool) -> String {
+    /// A server with song `s1` and album `a1` starred, recording every id it
+    /// is asked to star.
+    fn serve(stars: Arc<Mutex<Vec<String>>>) -> String {
+        serve_with(stars, Unstar::Taken)
+    }
+
+    fn serve_with(stars: Arc<Mutex<Vec<String>>>, unstar: Unstar) -> String {
         use std::io::{BufRead, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -2752,9 +2788,13 @@ mod favourite_sync_tests {
                     "getStarred2" => {
                         r#"{"subsonic-response":{"status":"ok","starred2":{"song":[{"id":"s1","title":"One"}],"album":[{"id":"a1","name":"Album"}]}}}"#
                     }
-                    "unstar" if unstar_fails => {
-                        r#"{"subsonic-response":{"status":"failed","error":{"code":0,"message":"down"}}}"#
-                    }
+                    "unstar" => match unstar {
+                        Unstar::Taken => r#"{"subsonic-response":{"status":"ok"}}"#,
+                        Unstar::Unreached => continue,
+                        Unstar::Refused => {
+                            r#"{"subsonic-response":{"status":"failed","error":{"code":70,"message":"not found"}}}"#
+                        }
+                    },
                     "star" => {
                         if let Some((_, id)) = query
                             .split('&')
@@ -2822,7 +2862,7 @@ mod favourite_sync_tests {
         let album = album(&db);
         queries::queue_favourite_change(&db.conn, "album", "a1", false).unwrap();
 
-        let url = serve_with(Arc::new(Mutex::new(Vec::new())), true);
+        let url = serve_with(Arc::new(Mutex::new(Vec::new())), Unstar::Unreached);
         reconcile_favourites(&db, &SubsonicClient::new(&url, "u", "pw"));
         let favourites = queries::favourite_album_id_set(&db.conn, queries::LOCAL_USER).unwrap();
         assert!(
@@ -2834,6 +2874,43 @@ mod favourite_sync_tests {
             1,
             "kept to send again"
         );
+    }
+
+    /// The server answered and said no: asking again gets the same answer,
+    /// and a change kept for ever would hide the item from every import.
+    #[test]
+    fn a_change_the_server_refuses_leaves_the_outbox() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        queries::queue_favourite_change(&db.conn, "album", "gone", false).unwrap();
+
+        let url = serve_with(Arc::new(Mutex::new(Vec::new())), Unstar::Refused);
+        reconcile_favourites(&db, &SubsonicClient::new(&url, "u", "pw"));
+        assert!(queries::favourite_changes(&db.conn).unwrap().is_empty());
+    }
+
+    /// A change sent while a newer one to the same item is made is cleared
+    /// without taking the newer one with it.
+    #[test]
+    fn clearing_a_sent_change_keeps_a_newer_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        queries::queue_favourite_change(&db.conn, "album", "a1", true).unwrap();
+        let sent = queries::favourite_changes(&db.conn).unwrap().remove(0);
+        queries::queue_favourite_change(&db.conn, "album", "a1", false).unwrap();
+        queries::queue_favourite_change(&db.conn, "album", "a1", true).unwrap();
+        queries::forget_favourite_change(&db.conn, &sent).unwrap();
+        assert_eq!(queries::favourite_changes(&db.conn).unwrap().len(), 1);
+    }
+
+    /// The changes name the old server's items, which mean nothing to the next.
+    #[test]
+    fn forgetting_the_server_forgets_its_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        queries::queue_favourite_change(&db.conn, "album", "a1", false).unwrap();
+        forget_remote(&db).unwrap();
+        assert!(queries::favourite_changes(&db.conn).unwrap().is_empty());
     }
 
     #[test]

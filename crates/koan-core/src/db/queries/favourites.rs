@@ -16,6 +16,7 @@ pub struct FavouriteChange {
     pub kind: String,
     pub remote_id: String,
     pub star: bool,
+    pub seq: i64,
 }
 
 /// Record a favourite changed here, replacing any earlier change to the same
@@ -28,7 +29,7 @@ pub fn queue_favourite_change(
 ) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO favourite_outbox (kind, remote_id, star) VALUES (?1, ?2, ?3)
-         ON CONFLICT(kind, remote_id) DO UPDATE SET star = excluded.star",
+         ON CONFLICT(kind, remote_id) DO UPDATE SET star = excluded.star, seq = seq + 1",
         params![kind, remote_id, star],
     )?;
     Ok(())
@@ -36,28 +37,30 @@ pub fn queue_favourite_change(
 
 /// Every favourite change the server is not yet known to have, oldest first.
 pub fn favourite_changes(conn: &Connection) -> rusqlite::Result<Vec<FavouriteChange>> {
-    let mut stmt =
-        conn.prepare_cached("SELECT id, kind, remote_id, star FROM favourite_outbox ORDER BY id")?;
+    let mut stmt = conn.prepare_cached(
+        "SELECT id, kind, remote_id, star, seq FROM favourite_outbox ORDER BY id",
+    )?;
     let rows = stmt.query_map([], |row| {
         Ok(FavouriteChange {
             id: row.get(0)?,
             kind: row.get(1)?,
             remote_id: row.get(2)?,
             star: row.get(3)?,
+            seq: row.get(4)?,
         })
     })?;
     rows.collect()
 }
 
-/// The server has `change`. A newer change to the same item, made since it
-/// was read, stays.
+/// The server has answered `change`. A newer change to the same item, made
+/// since it was read, stays.
 pub fn forget_favourite_change(
     conn: &Connection,
     change: &FavouriteChange,
 ) -> rusqlite::Result<()> {
     conn.execute(
-        "DELETE FROM favourite_outbox WHERE id = ?1 AND star = ?2",
-        params![change.id, change.star],
+        "DELETE FROM favourite_outbox WHERE id = ?1 AND seq = ?2",
+        params![change.id, change.seq],
     )?;
     Ok(())
 }

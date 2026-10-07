@@ -249,6 +249,9 @@ fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
             kind       TEXT NOT NULL,
             remote_id  TEXT NOT NULL,
             star       INTEGER NOT NULL,
+            -- Moved on by every change to the item, so clearing a change that
+            -- was sent never clears a newer one made while it was in flight.
+            seq        INTEGER NOT NULL DEFAULT 0,
             UNIQUE(kind, remote_id)
         );
 
