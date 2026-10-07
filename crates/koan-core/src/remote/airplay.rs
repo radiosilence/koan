@@ -184,13 +184,14 @@ pub fn wake(tv: &Tv, within: Duration, give_up: impl FnMut() -> bool) -> bool {
                 .to_socket_addrs()
                 .map(|a| a.collect::<Vec<_>>())
                 .unwrap_or_default();
-            match found.is_empty() {
-                false => out.extend(found),
-                true => out.extend(
+            if found.is_empty() {
+                out.extend(
                     tv.ip
                         .as_deref()
-                        .and_then(|ip| format!("{ip}:{}", i.port).parse().ok()),
-                ),
+                        .and_then(|ip| format!("{ip}:{}", i.port).parse::<SocketAddr>().ok()),
+                );
+            } else {
+                out.extend(found);
             }
         }
         log::info!("airplay: {}: knocking on {out:?} at +{}ms", tv.name, ms());
