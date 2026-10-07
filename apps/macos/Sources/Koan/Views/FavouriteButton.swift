@@ -14,7 +14,7 @@ struct FavouriteButton: View {
     var hint: String?
     let action: () -> Void
 
-    /// Gay mode: a favourite's heart is the flag, top to bottom.
+    /// Gay mode: a favourite's heart is the palette, top to bottom.
     @Environment(\.koanRainbow) private var rainbow
 
     var body: some View {

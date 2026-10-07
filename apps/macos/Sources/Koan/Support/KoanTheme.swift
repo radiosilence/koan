@@ -243,7 +243,7 @@ final class AppearanceModel {
         let on = !rainbowDrawn
         rainbowForTrack = false
         rainbow = on
-        rainbowToast = on ? Rainbow.sass.randomElement() : "gay mode off"
+        rainbowToast = (on ? Rainbow.on : Rainbow.off).randomElement()
         if on { rainbowBurst += 1 }
     }
 
@@ -255,7 +255,7 @@ final class AppearanceModel {
         if borrowed != rainbowForTrack { rainbowForTrack = borrowed }
         if borrowed {
             rainbowBurst += 1
-            rainbowToast = "brat mode 💚"
+            rainbowToast = Rainbow.bratToast
         }
     }
 }

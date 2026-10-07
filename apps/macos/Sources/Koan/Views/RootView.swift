@@ -250,7 +250,7 @@ struct RecordRoom: ViewModifier {
     /// out. Falling back to the accent instead flashes every tinted control to
     /// it and back again on the way to a record whose colour is not in yet.
     @State private var worn: Color?
-    /// Where the rainbow's accent is around the flag (see `Rainbow`).
+    /// Where the rainbow's accent is around the palette (see `Rainbow`).
     @State private var rainbowStep = 0
     /// Whether the app is in front. Followed by notification rather than
     /// `scenePhase`, which read here re-runs the whole scene.
@@ -300,12 +300,12 @@ struct RecordRoom: ViewModifier {
     }
 
     /// The accent for that record, tone-mapped to its bands — in either look.
-    /// With the rainbow drawn, the flag's, wherever its cycle has reached.
+    /// With the rainbow drawn, the palette's, wherever its cycle has reached.
     private var accent: KoanAccent {
         appearance.rainbowDrawn ? .rainbow(rainbowStep) : KoanAccent.of(record)
     }
 
-    /// Whether the rainbow's accent moves round the flag: only while it is
+    /// Whether the rainbow's accent moves round the palette: only while it is
     /// drawn, motion is allowed and the app is in front. Still, it holds one
     /// hue: a phone playing in the background is not woken to change it.
     private var cycles: Bool { appearance.rainbowDrawn && !reduceMotion && active }
