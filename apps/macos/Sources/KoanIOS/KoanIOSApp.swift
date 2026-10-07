@@ -104,10 +104,14 @@ struct KoanIOSApp: App {
                     remoteActivity = RemoteActivityController(engine: built.player.engine, mirror: built.mirror, art: built.art)
                     #endif
                     PushDelegate.requestAlertsIfSignedIn()
-                    // The session goes up before anything can be asked to play:
-                    // a RemoteIO unit on an inactive session produces silence
-                    // and reports success, which is the worst of both.
-                    session.activate()
+                    // Configured before anything can be asked to play, and
+                    // activated by the engine only when something does: koan
+                    // opening must not stop another app's music.
+                    session.prepare()
+                    let engine = built.player.engine
+                    engine.setAudioSession(host: AudioSession.Host { message in
+                        engine.logNote(message: message)
+                    })
                     // Whether the music was playing when the interruption
                     // began, which the pause below makes unreadable after.
                     var interruptedPlaying = false

@@ -45,6 +45,11 @@ const FADE_CHECK: std::time::Duration = std::time::Duration::from_millis(50);
 /// output that has stopped calling back never reports silence.
 const QUICK_FADE_LIMIT: std::time::Duration = std::time::Duration::from_millis(100);
 
+/// How long output stays stopped before the audio session is given back. Long
+/// enough that pausing to answer someone does not hand the speaker to another
+/// app; short enough that the app paused before koan came along resumes soon.
+const SESSION_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// When to look next for a DSP change's fade, begun at `since`, to have
 /// reached silence, for callbacks `period` long. The fade ends a known time
 /// after it began: once the callback next runs, up to a period later, and for
@@ -155,6 +160,9 @@ pub struct Player {
     in_flight: Option<InFlight>,
     /// When the silence after a rate switch runs out and the track is heard.
     lead_in_ends: Option<std::time::Instant>,
+    /// When the audio session goes back to the system, output having stopped:
+    /// see `audio::ios_backend::AudioSession`.
+    session_release_at: Option<std::time::Instant>,
     /// Bumped by every session opened and every one torn down, so that what a
     /// torn-down session reports after the fact is recognised as stale.
     session: u64,
@@ -372,6 +380,7 @@ impl Player {
             commands,
             transport: Transport::Idle,
             lead_in_ends: None,
+            session_release_at: None,
             dsp: None,
             dsp_restart: None,
             quick_start: false,
@@ -1910,6 +1919,7 @@ impl Player {
             }
         }
 
+        self.release_idle_session();
         self.follow_playhead();
         self.renderer_tick();
         self.publish();
@@ -2656,13 +2666,39 @@ impl Player {
         self.stop();
     }
 
+    /// Give the audio session back once output has been stopped for
+    /// `SESSION_GRACE`, so another app can play. A resume inside it finds the
+    /// session still active.
+    fn release_idle_session(&mut self) {
+        let running = self
+            .session()
+            .and_then(Session::engine)
+            .is_some_and(|e| e.is_running());
+        if running || !crate::audio::session_held() {
+            self.session_release_at = None;
+            return;
+        }
+        let now = std::time::Instant::now();
+        match self.session_release_at {
+            None => self.session_release_at = Some(now + SESSION_GRACE),
+            Some(at) if now >= at => {
+                self.session_release_at = None;
+                log::info!("output idle: releasing the audio session");
+                crate::audio::release_session();
+            }
+            Some(_) => {}
+        }
+    }
+
     /// When something changes that no command announces: one of the
-    /// session's events (`next_event`), or a sleep timer's time coming.
+    /// session's events (`next_event`), a sleep timer's time coming, or the
+    /// audio session's release.
     fn next_wake(&self) -> Option<std::time::Instant> {
         [
             self.next_event(),
             self.sleep.and_then(|s| s.at),
             self.sleep_wake(),
+            self.session_release_at,
         ]
         .into_iter()
         .flatten()

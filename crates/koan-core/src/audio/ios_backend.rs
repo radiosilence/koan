@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use super::backend::{AudioBackend, AudioEngineHandle, BackendError, DeviceInfo};
 use super::engine;
@@ -32,6 +32,55 @@ pub fn set_route(name: String) {
     let changed = ROUTE.write().replace(name.clone()).as_ref() != Some(&name);
     if changed {
         crate::remote::outputs::refresh_devices();
+    }
+}
+
+/// The app's audio session, as output needs it.
+///
+/// koan takes the session exclusively when it plays, and only then: an app
+/// that activates a `.playback` session on launch or on coming to the front
+/// stops whatever else the phone was playing, with nothing pressed. So the
+/// engine asks for the session the moment before its output unit starts, and
+/// the player lets it go once output has been stopped for a while.
+///
+/// Both are called on the player thread, in order, which is what keeps a
+/// release from landing between an activation and the start it was for.
+pub trait AudioSession: Send + Sync {
+    /// Make the session active for playback. Blocks until it is.
+    fn activate(&self);
+    /// Nothing has played for a while: deactivate, and tell the other apps
+    /// they may play again.
+    fn release(&self);
+}
+
+static SESSION: parking_lot::RwLock<Option<Arc<dyn AudioSession>>> = parking_lot::RwLock::new(None);
+
+/// The session has been activated and not since released.
+static HELD: AtomicBool = AtomicBool::new(false);
+
+/// Told once by the app, before anything can play.
+pub fn set_session(session: Arc<dyn AudioSession>) {
+    *SESSION.write() = Some(session);
+}
+
+/// Called by the engine just before its output unit starts.
+pub(crate) fn activate_session() {
+    let session = SESSION.read().clone();
+    if let Some(session) = session {
+        session.activate();
+        HELD.store(true, Ordering::Release);
+    }
+}
+
+pub(crate) fn session_held() -> bool {
+    HELD.load(Ordering::Acquire)
+}
+
+pub(crate) fn release_session() {
+    let session = SESSION.read().clone();
+    if let Some(session) = session {
+        HELD.store(false, Ordering::Release);
+        session.release();
     }
 }
 
