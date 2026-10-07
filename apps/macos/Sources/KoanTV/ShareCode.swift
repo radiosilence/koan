@@ -30,7 +30,7 @@ struct ShareCode: View {
                     .monospaced()
                     .lineLimit(2)
                 Button("Done") { dismiss() }
-                    .koanButton(.secondary)
+                    .koanButton(.standard)
                     .padding(.top, 24)
             }
             .frame(maxWidth: 640, alignment: .leading)

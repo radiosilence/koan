@@ -5767,12 +5767,12 @@ async fn link_session(
                                 });
                             }
                             Ok(LinkReport::Received { ack }) => {
-                                registry.received(&device, ack);
+                                registry.received(&username, &device, ack);
                             }
                             Ok(LinkReport::Ack { ack, outcome }) => {
-                                let device = device.clone();
+                                let (username, device) = (username.clone(), device.clone());
                                 tokio::task::spawn_blocking(move || {
-                                    registry.answered(&device, ack, outcome);
+                                    registry.answered(&username, &device, ack, outcome);
                                 });
                             }
                             Ok(LinkReport::Activity { token, device: shown, sandbox }) => {
@@ -10619,6 +10619,7 @@ mod tests {
                 sha256: sha256_hex(file),
                 size: file.len() as u64,
             }],
+            unknown: Default::default(),
         }
     }
 
@@ -10815,6 +10816,7 @@ mod tests {
                 ..Default::default()
             },
             files: vec![],
+            unknown: Default::default(),
         };
         let body = post_form(
             app,

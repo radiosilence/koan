@@ -402,9 +402,20 @@ final class DspModel {
         try await engine.dspPreviewMeasurement(text: text, target: target)
     }
 
-    /// Save a headphone's measurement corrected to a target, as a profile.
-    func saveMeasured(name: String, text: String, inEar: Bool, target: String) async throws -> String {
-        let saved = try await engine.dspSaveMeasured(name: name, text: text, inEar: inEar, target: target)
+    /// Measurements on squig.link sites matching `query`, best first.
+    func squigSearch(_ query: String) async throws -> [SquigHit] {
+        try await engine.dspSquigSearch(query: query)
+    }
+
+    /// `hit`'s measurement, its channels averaged, as frequency and level.
+    func squigFetch(_ hit: SquigHit) async throws -> String {
+        try await engine.dspSquigFetch(site: hit.site, file: hit.file)
+    }
+
+    /// Save a headphone's measurement corrected to a target, as a profile,
+    /// crediting where the measurement came from.
+    func saveMeasured(name: String, text: String, inEar: Bool, target: String, source: String? = nil) async throws -> String {
+        let saved = try await engine.dspSaveMeasured(name: name, text: text, inEar: inEar, target: target, source: source)
         imported = saved
         await changed()
         return saved

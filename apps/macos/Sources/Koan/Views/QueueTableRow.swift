@@ -54,8 +54,8 @@ final class QueueTableRow: NSTableCellView, TableRow {
     }
 
     static let identifier = NSUserInterfaceItemIdentifier("QueueTableRow")
-    static let height = RowMetrics.text + 2 * RowMetrics.padding
-    static let artHeight = RowMetrics.art + 2 * RowMetrics.artPadding + 2 * RowMetrics.padding
+    static var height: CGFloat { RowMetrics.text + 2 * RowMetrics.padding }
+    static var artHeight: CGFloat { RowMetrics.art + 2 * RowMetrics.artPadding + 2 * RowMetrics.padding }
 
     static func height(of line: QueueLine) -> CGFloat {
         switch line.kind {

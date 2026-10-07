@@ -88,7 +88,7 @@ struct ShelfView: View {
         let queued = mirror.queuedByTrack
         let current = player.currentTrackId
         let playing = player.isPlaying
-        let live = onStage && !reduceMotion && graphics.animatesIndicators
+        let live = onStage && !reduceMotion
         let key: [AnyHashable] = [
             AnyHashable(current), AnyHashable(playing), AnyHashable(live), AnyHashable(tint),
             AnyHashable(library.favouriteTrackIds), AnyHashable(library.favouriteAlbumIds),
@@ -166,9 +166,12 @@ struct ShelfView: View {
 
     private var list: some View {
                 List(selection: $selection) {
-                    if !artists.isEmpty { artistSection }
-                    if !albums.isEmpty { albumSection }
-                    if !tracks.isEmpty { trackSection }
+                    Group {
+                        if !artists.isEmpty { artistSection }
+                        if !albums.isEmpty { albumSection }
+                        if !tracks.isEmpty { trackSection }
+                    }
+                    .washedRow()
                 }
                 .insetList()
                 .washedGround()

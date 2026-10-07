@@ -171,6 +171,8 @@ koan dsp revert NAME                                        # an imported EQ bac
 koan dsp copy NAME [NEW]                                    # a copy as it is now, used by no output
 koan dsp tuned-for NAME TARGET|unknown                      # the target a tuning was made against
 koan dsp split NAME FILE --ear in|over --target TARGET      # a baked EQ into correction + tuning, from a measurement
+koan dsp squig QUERY [--limit N]                            # measurements on squig.link sites, numbered
+koan dsp squig QUERY --use-result N --target TARGET [--ear in|over] [--name NAME]  # a correction from one
 ```
 
 `--device` defaults to the current output: `[playback] output_device`, or the

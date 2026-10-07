@@ -44,7 +44,7 @@ struct ShortcutsSheet: View {
                 Spacer()
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
-                    .koanButton(.secondary)
+                    .koanButton(.standard)
             }
         }
         .padding(24)

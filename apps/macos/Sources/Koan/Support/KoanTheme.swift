@@ -12,7 +12,7 @@ import SwiftUI
 /// `appearance.theme = "koan"`. The tokens and components are set down in
 /// `docs/design/koan-theme.md`; this is their Swift form.
 ///
-/// Views name roles — `.koanText(.title)`, `.koanSurface()`, `.koanButton(.primary)`,
+/// Views name roles — `.koanText(.title)`, `.koanSurface()`, `.koanButton(.prominent)`,
 /// `KoanLabel` — and never a colour or a font. Each role draws the theme when it
 /// is on and the platform's nearest equivalent when it is off, so a converted
 /// view carries no styling of its own in either.
@@ -32,10 +32,25 @@ enum KoanTheme {
         guard isOn else { return }
         registerFace()
         #if os(iOS)
-        // Navigation titles are UIKit's, drawn from its appearance proxies.
+        // Navigation titles and subtitles are UIKit's, drawn from the bar's
+        // appearances: the system's own two, at rest and at the scroll edge,
+        // with the theme's type.
+        func themed(_ look: UINavigationBarAppearance) -> UINavigationBarAppearance {
+            look.largeTitleTextAttributes = [.font: UIFont.koan(.display), .foregroundColor: UIColor.koanStrong]
+            look.titleTextAttributes = [.font: UIFont.koan(.control), .foregroundColor: UIColor.koanStrong]
+            look.largeSubtitleTextAttributes = [.font: UIFont.koan(.fine), .foregroundColor: UIColor.koanMuted]
+            look.subtitleTextAttributes = [.font: UIFont.koan(.fine), .foregroundColor: UIColor.koanMuted]
+            return look
+        }
+        let rest = UINavigationBarAppearance()
+        rest.configureWithDefaultBackground()
+        let edge = UINavigationBarAppearance()
+        edge.configureWithTransparentBackground()
         let bar = UINavigationBar.appearance()
-        bar.largeTitleTextAttributes = [.font: UIFont.koan(.display), .foregroundColor: UIColor.koanStrong]
-        bar.titleTextAttributes = [.font: UIFont.koan(.control), .foregroundColor: UIColor.koanStrong]
+        bar.standardAppearance = themed(rest)
+        bar.compactAppearance = themed(rest.copy())
+        bar.scrollEdgeAppearance = themed(edge)
+        bar.compactScrollEdgeAppearance = themed(edge.copy())
         #endif
     }
 
@@ -48,6 +63,9 @@ enum KoanTheme {
         }
         CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
     }
+
+    /// How strongly the rule between rows shows: `ink` at this opacity.
+    nonisolated static let rowRuleOpacity: CGFloat = 0.12
 
     /// A title the app writes, lowercased in the theme, for the few places
     /// that take a bare string — navigation titles, AppKit labels. Everywhere
@@ -144,11 +162,19 @@ final class AppearanceModel {
         didSet { if recordColours != oldValue { engine.setRecordColours(on: recordColours) } }
     }
 
+    /// "Wash the whole window": on the Mac in the theme, sidebar, toolbar,
+    /// transport and lyrics are drawn clear over one wash. Off, they keep
+    /// their own grounds. Takes effect at once.
+    var washWindow: Bool {
+        didSet { if washWindow != oldValue { engine.setWashWindow(on: washWindow) } }
+    }
+
     init(engine: KoanEngine, appearance: Appearance) {
         self.engine = engine
         self.showIcons = appearance.icons
         self.koan = appearance.koan
         self.recordColours = appearance.recordColours
+        self.washWindow = appearance.washWindow
     }
 }
 
@@ -239,12 +265,15 @@ extension Color {
     static let koanStrong = Color.koan(dark: 0xFFFFFF, light: 0x111111)
     static let koanMuted = Color.koan(dark: 0x919191, light: 0x666666)
     static let koanBad = Color.koan(dark: 0xEF6B73, light: 0xC43F3F)
+    /// The rule between rows: `ink` at low opacity, so it takes on the wash
+    /// beneath it instead of drawing a grey grid over it.
+    static let koanRowRule = Color.koan(dark: 0xCCCCCC, light: 0x333333, alpha: KoanTheme.rowRuleOpacity)
 
-    fileprivate static func koan(dark: UInt32, light: UInt32) -> Color {
+    fileprivate static func koan(dark: UInt32, light: UInt32, alpha: CGFloat = 1) -> Color {
         #if canImport(AppKit)
-        Color(nsColor: NSColor.koan(dark: dark, light: light))
+        Color(nsColor: NSColor.koan(dark: dark, light: light, alpha: alpha))
         #else
-        Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? .rgb(dark) : .rgb(light) })
+        Color(uiColor: UIColor.koan(dark: dark, light: light, alpha: alpha))
         #endif
     }
 }
@@ -252,9 +281,10 @@ extension Color {
 #if canImport(AppKit)
 extension NSColor {
     /// A token, following the appearance it is drawn in.
-    static func koan(dark: UInt32, light: UInt32) -> NSColor {
+    static func koan(dark: UInt32, light: UInt32, alpha: CGFloat = 1) -> NSColor {
         NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .rgb(dark) : .rgb(light)
+            (appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor.rgb(dark) : .rgb(light))
+                .withAlphaComponent(alpha)
         }
     }
 
@@ -278,8 +308,9 @@ extension NSColor {
     /// Errors, warnings and hearts: `bad` in the theme, the given system
     /// colour otherwise.
     @MainActor static func koanBad(_ system: NSColor) -> NSColor { KoanTheme.isOn ? koanBadToken : system }
-    /// Hairlines between rows: `rule` in the theme.
-    @MainActor static var koanSeparator: NSColor { KoanTheme.isOn ? koanRule : .separatorColor }
+    static let koanRowRule = koan(dark: 0xCCCCCC, light: 0x333333, alpha: KoanTheme.rowRuleOpacity)
+    /// Hairlines between rows: `ink` at low opacity in the theme.
+    @MainActor static var koanSeparator: NSColor { KoanTheme.isOn ? koanRowRule : .separatorColor }
     /// A selected item's ground: `surface` in the theme.
     @MainActor static func koanSelection(_ system: NSColor) -> NSColor { KoanTheme.isOn ? koanSurface : system }
 
@@ -295,8 +326,8 @@ extension NSColor {
 #else
 extension UIColor {
     /// A token, following the appearance it is drawn in.
-    static func koan(dark: UInt32, light: UInt32) -> UIColor {
-        UIColor { $0.userInterfaceStyle == .dark ? .rgb(dark) : .rgb(light) }
+    static func koan(dark: UInt32, light: UInt32, alpha: CGFloat = 1) -> UIColor {
+        UIColor { ($0.userInterfaceStyle == .dark ? UIColor.rgb(dark) : .rgb(light)).withAlphaComponent(alpha) }
     }
 
     /// The tokens layer-drawn views read, as on the Mac.
@@ -621,6 +652,16 @@ extension KoanTheme {
         isOn ? theme : system
     }
 
+    /// Whether the wash runs under the whole window, every region clear over
+    /// it ("Wash the whole window"): the Mac, in the theme, unless turned off.
+    @MainActor static func washesWindow(_ appearance: AppearanceModel?) -> Bool {
+        #if os(macOS)
+        isOn && appearance?.washWindow != false
+        #else
+        false
+        #endif
+    }
+
     /// The bare ground of a page or a sheet: `bg` in the theme, `system`
     /// otherwise.
     nonisolated static func ground(_ system: some ShapeStyle) -> AnyShapeStyle {
@@ -789,8 +830,8 @@ extension View {
     /// A bar along the window's foot, such as the transport: flat `bg` with a
     /// rule along its top, full width. In the platform's look, a floating slab
     /// of glass with the given corner radius, inset from the window's edges.
-    func koanBar(radius: CGFloat, inset: CGFloat) -> some View {
-        modifier(KoanBarRole(radius: radius, inset: inset))
+    func koanBar(radius: CGFloat, inset: CGFloat, overWash: Bool = false) -> some View {
+        modifier(KoanBarRole(radius: radius, inset: inset, overWash: overWash))
     }
 
     /// A form as the theme lays one out: no cards, rows on the ground with
@@ -862,11 +903,18 @@ extension View {
 
 enum KoanSurface { case bg, surface }
 
+/// How much a control matters on its screen, as headings do for type: one
+/// prominent action per screen or group, the rest standard, and the small
+/// actions beside a row compact.
 enum KoanButtonKind {
-    /// The accent, outlined in it.
-    case primary
-    /// Ink, outlined in `muted`.
-    case secondary
+    /// The main thing done here: larger, in the accent, in a square outline.
+    /// One per screen or group.
+    case prominent
+    /// Text and its icon in ink, no outline; the default.
+    case standard
+    /// Smaller and tighter, for actions beside a row or a title: favourite,
+    /// ⋯, revoke, a sheet's lesser actions.
+    case compact
     /// `muted`, no outline; ink on hover. Bars' actions ("clear", "sleep").
     case text
     /// A glyph alone, with a 44-point hit area.
@@ -882,8 +930,17 @@ enum KoanButtonKind {
     /// gives them, and cards their own.
     fileprivate var setsType: Bool {
         switch self {
-        case .primary, .secondary, .text: true
+        case .prominent, .standard, .compact, .text: true
         case .icon, .iconOutlined, .card: false
+        }
+    }
+
+    /// The label's type role.
+    fileprivate var type: KoanType {
+        switch self {
+        case .prominent: .body
+        case .compact: .meta
+        default: .control
         }
     }
 }
@@ -1029,9 +1086,14 @@ private struct KoanButtonBody: View {
         if kind == .card {
             configuration.label
         } else if kind.setsType {
+            // One line, always: buttons in a row stand at one height. Truncated
+            // rather than pushed past the edge when a label holds a long name;
+            // its own size is what it asks for first.
             configuration.label
-                .font(.koan(.control))
+                .font(.koan(kind.type))
                 .textCase(.lowercase)
+                .lineLimit(1)
+                .layoutPriority(1)
                 .foregroundStyle(foreground(configuration))
         } else {
             configuration.label
@@ -1048,26 +1110,29 @@ private struct KoanButtonBody: View {
     }
 
     private func foreground(_ configuration: ButtonStyleConfiguration) -> AnyShapeStyle {
-        switch kind {
-        case .primary:
+        // A destructive action reads as one, whatever its kind.
+        if configuration.role == .destructive, kind != .card { return AnyShapeStyle(Color.koanBad) }
+        return switch kind {
+        case .prominent:
             accent.shade(scheme).readsAsText ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.koanInk)
-        case .secondary, .icon, .iconOutlined, .card: AnyShapeStyle(Color.koanInk)
+        case .standard, .compact, .icon, .iconOutlined, .card: AnyShapeStyle(Color.koanInk)
         case .text: AnyShapeStyle(configuration.isPressed ? Color.koanInk : Color.koanMuted)
         }
     }
 
     private var outline: AnyShapeStyle? {
         switch kind {
-        case .primary: AnyShapeStyle(.tint)
-        case .secondary: AnyShapeStyle(Color.koanMuted)
+        case .prominent: AnyShapeStyle(.tint)
         case .iconOutlined: AnyShapeStyle(Color.koanInk)
-        case .text, .icon, .card: nil
+        case .standard, .compact, .text, .icon, .card: nil
         }
     }
 
     private var padding: EdgeInsets {
         switch kind {
-        case .primary, .secondary: EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16)
+        case .prominent: EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
+        case .standard: EdgeInsets(top: 8, leading: 4, bottom: 8, trailing: 4)
+        case .compact: EdgeInsets(top: 4, leading: 2, bottom: 4, trailing: 2)
         case .text: EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0)
         case .icon, .card: EdgeInsets()
         case .iconOutlined: EdgeInsets(top: 7, leading: 7, bottom: 7, trailing: 7)
@@ -1134,7 +1199,12 @@ struct KoanToggleStyle: ToggleStyle {
         Button {
             configuration.isOn.toggle()
         } label: {
+            // The label leading and the box trailing, where a switch sits.
             HStack(spacing: KoanTheme.Space.m) {
+                configuration.label
+                    .font(.koan(.body))
+                    .foregroundStyle(Color.koanInk)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 ZStack {
                     if configuration.isOn {
                         Rectangle().fill(.tint)
@@ -1146,10 +1216,6 @@ struct KoanToggleStyle: ToggleStyle {
                     }
                 }
                 .frame(width: 14, height: 14)
-                configuration.label
-                    .font(.koan(.body))
-                    .foregroundStyle(Color.koanInk)
-                Spacer(minLength: 0)
             }
             .frame(minHeight: Self.hit)
             .contentShape(Rectangle())
@@ -1241,6 +1307,8 @@ private struct KoanRowRole: ViewModifier {
 }
 
 private struct KoanSidebarRole: ViewModifier {
+    @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
+
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
             #if os(tvOS)
@@ -1248,7 +1316,7 @@ private struct KoanSidebarRole: ViewModifier {
             #else
             content
                 .scrollContentBackground(.hidden)
-                .background(Color.koanBg)
+                .background(KoanTheme.washesWindow(appearance) ? Color.clear : Color.koanBg)
             #endif
         } else {
             content
@@ -1362,9 +1430,33 @@ private struct KoanChipRole: ViewModifier {
 private struct KoanBarRole: ViewModifier {
     let radius: CGFloat
     let inset: CGFloat
+    /// The window's transport, which the wash runs under. A bar in a sheet
+    /// keeps its ground: nothing is washed behind it.
+    let overWash: Bool
+    @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
 
     func body(content: Content) -> some View {
-        if KoanTheme.isOn {
+        if overWash && KoanTheme.washesWindow(appearance) {
+            // Over the wash, set off by a faint hairline and a scrim that fades
+            // in over its top quarter: rows scrolling under it fade out there
+            // and are gone behind its text. Lighter, and a row's text showed
+            // through the transport's.
+            content
+                .background {
+                    LinearGradient(
+                        stops: [
+                            .init(color: Color.koanBg.opacity(0), location: 0),
+                            .init(color: Color.koanBg.opacity(0.97), location: 0.25),
+                            .init(color: Color.koanBg, location: 1),
+                        ],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                    .ignoresSafeArea(edges: .bottom)
+                }
+                .overlay(alignment: .top) {
+                    Rectangle().fill(Color.koanRowRule).frame(height: KoanTheme.hairline)
+                }
+        } else if KoanTheme.isOn {
             content
                 .background(Color.koanBg)
                 .koanRule(.top)
@@ -1391,10 +1483,11 @@ private struct KoanFormRole: ViewModifier {
             // A television's form has no ground or separators to take over.
             content
             #else
+            // Rows give up their ground through `washedRow`, on the content.
             content
                 .scrollContentBackground(.hidden)
-                .listRowBackground(Color.clear)
-                .listRowSeparatorTint(Color.koanRule)
+                .font(.koan(.body))
+                .foregroundStyle(Color.koanInk)
             #endif
         } else {
             content.formStyle(.grouped)
@@ -1408,11 +1501,11 @@ private struct KoanListRole: ViewModifier {
             #if os(tvOS)
             content
             #else
+            // Rows give up their ground through `washedRow`, on the content.
             content
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
-                .listRowBackground(Color.clear)
-                .listRowSeparatorTint(Color.koanRule)
+                .listRowSeparatorTint(Color.koanRowRule)
                 .font(.koan(.body))
             #endif
         } else {
@@ -1473,6 +1566,7 @@ struct KoanDivider: View {
 #if !os(tvOS)
 private struct KoanToolbarRole: ViewModifier {
     let glass: Bool
+    @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
 
     func body(content: Content) -> some View {
         #if os(macOS)
@@ -1480,7 +1574,14 @@ private struct KoanToolbarRole: ViewModifier {
         #else
         let bar = ToolbarPlacement.navigationBar
         #endif
-        if KoanTheme.isOn {
+        if glass && KoanTheme.washesWindow(appearance) {
+            // No ground, and the soft edge rather than the hard one, whose
+            // grey band would stand in for the ground taken away. At `bare`
+            // the toolbar keeps its opaque ground: the soft edge is live blur.
+            content
+                .toolbarBackgroundVisibility(.hidden, for: bar)
+                .scrollEdgeEffectStyle(.soft, for: .top)
+        } else if KoanTheme.isOn {
             content
                 .toolbarBackground(Color.koanBg, for: bar)
                 .toolbarBackgroundVisibility(.visible, for: bar)
@@ -1614,8 +1715,9 @@ extension View {
 /// A form. In the platform's look, a grouped `Form`. In the theme, its
 /// sections stacked on the ground, header, rows and footer, with no cards:
 /// AppKit's grouped form draws a rounded card behind each section whatever it
-/// is told, so the theme does not use one there. iOS and tvOS forms take
-/// `.koanForm()` instead, which reaches their rows.
+/// is told, so the theme does not use one there. On iOS the theme's form is a
+/// grouped list: sections full width and square, rows on the ground, rules at
+/// one inset. tvOS forms take `.koanForm()`.
 struct KoanForm<Content: View>: View {
     @ViewBuilder let content: Content
 
@@ -1637,6 +1739,14 @@ struct KoanForm<Content: View>: View {
             .labeledContentStyle(KoanLabeledContentStyle())
         } else {
             Form { content }.formStyle(.grouped)
+        }
+        #elseif os(iOS)
+        if KoanTheme.isOn {
+            List { Group { content }.washedRow() }
+                .listStyle(.grouped)
+                .koanForm()
+        } else {
+            Form { content }.koanForm()
         }
         #else
         Form { content }.koanForm()

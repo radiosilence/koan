@@ -22,13 +22,13 @@ struct PlayingIndicator: View {
     /// The bars draw in the room's colour, which `.tint` cannot hand an
     /// AppKit view — see `EnvironmentValues.roomTint`.
     @Environment(\.roomTint) private var tint
-    @AppStorage("graphics") private var graphics = Graphics.full
     @Environment(\.powerSaving) private var powerSaving
 
-    /// Whether the bars follow the music. Reduce Motion asks them not to, and
-    /// so does the bottom of the graphics ladder; off stage nobody is looking.
+    /// Whether the bars follow the music. Reduce Motion and Low Power Mode ask
+    /// them not to; off stage nobody is looking. Every graphics level lets
+    /// them move: they cost next to nothing.
     private var live: Bool {
-        onStage && !reduceMotion && !powerSaving && graphics.animatesIndicators
+        onStage && !reduceMotion && !powerSaving
     }
 
     var body: some View {

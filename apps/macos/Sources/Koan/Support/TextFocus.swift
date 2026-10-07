@@ -23,6 +23,11 @@ final class TextFocus {
     private(set) var isEditing = false
 
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
+    /// The key window's first responder, watched. The field editor's own
+    /// notifications arrive at the first *edit*, not when a field takes focus,
+    /// so a field just clicked into would otherwise leave ⌥← seeking and ⌘Z
+    /// undoing the queue until something was typed.
+    @ObservationIgnored private var responder: NSKeyValueObservation?
 
     init() {
         let centre = NotificationCenter.default
@@ -56,16 +61,28 @@ final class TextFocus {
             centre.addObserver(
                 forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
             ) { [weak self] _ in
-                MainActor.assumeIsolated { self?.refresh() }
+                MainActor.assumeIsolated { self?.watchKeyWindow() }
             }
         )
+        // Made after launch, when the main window is usually key already and
+        // will not become key again until someone switches away and back.
+        watchKeyWindow()
+    }
+
+    /// Follows the key window's first responder, and reads it now.
+    private func watchKeyWindow() {
+        responder = NSApp.keyWindow?.observe(\.firstResponder) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.refresh() }
+        }
+        refresh()
     }
 
     /// Ask the responder chain directly. The notifications say when editing
     /// starts and stops; this is for the moments they cannot describe, like
     /// switching to a window that already had a focused field.
     private func refresh() {
-        isEditing = EditCommands.isEditingText
+        let editing = EditCommands.isEditingText
+        if editing != isEditing { isEditing = editing }
     }
 
     /// Nothing unregisters these. This lives as long as the app does, and a

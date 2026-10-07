@@ -47,7 +47,6 @@ struct QueueView: View {
     @Environment(TransferMeter.self) private var meter
     @Environment(\.roomTint) private var tint
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage("graphics") private var graphics = Graphics.full
     #endif
 
     /// Grouped or one row per track. Persisted because it is a preference about
@@ -133,7 +132,7 @@ struct QueueView: View {
     /// A `KoanTable` — see there for why the Mac's lists are AppKit.
     private func table(_ rows: [Row]) -> some View {
         let lines = rows.map(line)
-        let live = onStage && !reduceMotion && graphics.animatesIndicators
+        let live = onStage && !reduceMotion
         let offline = mirror.connection?.offline == true
         let jumpTarget: String? = switch ui.queueJumpTarget {
         case .top: rows.first?.id
@@ -333,14 +332,23 @@ struct QueueView: View {
             // view. A single icon has to choose between naming the mode you are
             // in and the mode you would get, and whichever it picks the other
             // reading is available and wrong.
-            Picker("Queue layout", selection: $grouped) {
-                Image(systemName: Icon.album).tag(true)
-                Image(systemName: Icon.queueSection).tag(false)
+            if KoanTheme.isOn {
+                // The theme's segmented control: the options bare, the chosen
+                // one lit, no track.
+                HStack(spacing: KoanTheme.Space.s) {
+                    layoutOption(true, Icon.album, "Group by album")
+                    layoutOption(false, Icon.queueSection, "One row per track")
+                }
+            } else {
+                Picker("Queue layout", selection: $grouped) {
+                    Image(systemName: Icon.album).tag(true)
+                    Image(systemName: Icon.queueSection).tag(false)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .help("Group by album, or one row per track")
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .help("Group by album, or one row per track")
 
             // Undo is a keyboard's idea of a control. The buttons exist to show
             // ⌘Z is available, and there is no ⌘Z on a phone.
@@ -374,7 +382,7 @@ struct QueueView: View {
                 #if os(tvOS)
                 Image(systemName: "ellipsis")
                 #else
-                Image(systemName: "ellipsis.circle")
+                Image(systemName: KoanTheme.isOn ? "ellipsis" : "ellipsis.circle")
                 #endif
             }
             #if os(tvOS)
@@ -394,6 +402,14 @@ struct QueueView: View {
         #endif
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
+    }
+
+    private func layoutOption(_ value: Bool, _ icon: String, _ label: String) -> some View {
+        Button { grouped = value } label: { Image(systemName: icon) }
+            .foregroundStyle(KoanTheme.style(grouped == value ? .accent : .muted))
+            .accessibilityLabel(label)
+            .accessibilityAddTraits(grouped == value ? .isSelected : [])
+            .help(label)
     }
 
     /// What the queue is, when it is still something someone chose.
