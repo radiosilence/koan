@@ -1588,6 +1588,10 @@ fn flatten_off() -> Result<(), String> {
     })
 }
 
+/// An output set from a preset by `migrate`: the device, its correction,
+/// its tuning and the preset.
+type Setting = (String, Option<String>, Vec<(String, bool)>, String);
+
 fn migrate_presets() -> Result<(), String> {
     let cfg = Config::cached();
     let all = &cfg.dsp.profiles;
@@ -1629,7 +1633,7 @@ fn migrate_presets() -> Result<(), String> {
         .collect();
     // Each output those set: its correction, and its tuning, the preset's
     // EQs then those it had on top.
-    let mut set: Vec<(String, Option<String>, Vec<(String, bool)>, String)> = Vec::new();
+    let mut set: Vec<Setting> = Vec::new();
     for (name, layers, devices) in &presets {
         let (correction, eqs) = preset_parts(layers, all);
         for device in devices {
