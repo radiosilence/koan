@@ -14,6 +14,7 @@ use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, Tr
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::units::{Duration, Time, TimeBase, Timestamp};
+use symphonia_common::apple::audio::alac::MagicCookie;
 use thiserror::Error;
 
 use crate::audio::dsp::{Chain, Setup};
@@ -504,11 +505,7 @@ fn probe_mss(mss: MediaSourceStream<'_>, hint: &Hint) -> Result<StreamInfo, Deco
         .as_ref()
         .map(|c| c.count() as u16)
         .unwrap_or(2);
-    let bit_depth = if is_opus {
-        None
-    } else {
-        Some(codec_params.bits_per_sample.unwrap_or(16) as u16)
-    };
+    let bit_depth = source_bit_depth(codec_params);
     let duration_ms = track_duration_ms(&*reader, track, sample_rate);
     let codec = codec_name(codec_params.codec);
 
@@ -904,11 +901,7 @@ fn decode_single(
         codec: codec_name(codec_params.codec),
         sample_rate,
         channels,
-        bit_depth: if is_opus_codec {
-            None
-        } else {
-            Some(codec_params.bits_per_sample.unwrap_or(16) as u16)
-        },
+        bit_depth: source_bit_depth(codec_params),
         bitrate_kbps,
         duration_ms,
     };
@@ -1209,6 +1202,25 @@ fn estimate_bitrate_from_codec_params(params: &AudioCodecParameters) -> Option<u
         .map(|c| c.count() as u32)
         .unwrap_or(2);
     Some(bpcs * sr * channels / 1000)
+}
+
+/// The source's bit depth, or `None` where the stream does not state one
+/// (lossy codecs). Symphonia's MP4 demuxer leaves `bits_per_sample` unset for
+/// ALAC, whose depth lives in the magic cookie.
+pub fn source_bit_depth(params: &AudioCodecParameters) -> Option<u16> {
+    if params.codec == CODEC_ID_OPUS {
+        return None;
+    }
+    if let Some(bits) = params.bits_per_sample {
+        return Some(bits as u16);
+    }
+    if params.codec == CODEC_ID_ALAC {
+        let cookie = params.extra_data.as_deref()?;
+        return MagicCookie::read(cookie)
+            .ok()
+            .map(|c| u16::from(c.bit_depth));
+    }
+    None
 }
 
 pub fn codec_name(codec: AudioCodecId) -> String {
@@ -1529,6 +1541,15 @@ mod tests {
             "codec should be PCM variant, got {}",
             info.codec
         );
+    }
+
+    #[test]
+    fn probe_file_reads_alac_bit_depth_from_the_magic_cookie() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/audio/testdata/24-bit-96k.m4a");
+        let info = probe_file(&path).expect("probe_file should succeed on ALAC in MP4");
+        assert_eq!(info.codec, "ALAC");
+        assert_eq!(info.sample_rate, 96000);
+        assert_eq!(info.bit_depth, Some(24));
     }
 
     #[test]

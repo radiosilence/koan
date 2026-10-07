@@ -1,0 +1,1 @@
+- **Now Playing shows the bit depth of 24-bit ALAC files.** It read 16 bits, because the depth of ALAC in MP4 is stored only in the codec configuration, which is now consulted. Lossy streams that state no depth show none instead of 16.

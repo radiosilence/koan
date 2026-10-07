@@ -2710,6 +2710,7 @@ dependencies = [
  "socket2",
  "subtle",
  "symphonia",
+ "symphonia-common",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
