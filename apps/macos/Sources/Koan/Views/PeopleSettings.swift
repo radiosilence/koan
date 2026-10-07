@@ -180,7 +180,7 @@ struct PeopleSettings: View {
                 Text("you").koanText(.body, .muted)
             }
             Spacer()
-            KoanPicker("Access", selection: Binding(
+            KoanPicker("Access", selection: Binding<AccountRole>(
                 get: { account.role },
                 set: { role in Task { await model.setRole(account.username, role) } }
             ), options: AccountRole.all.map { ($0.label, $0) })

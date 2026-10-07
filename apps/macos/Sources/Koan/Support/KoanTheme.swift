@@ -1373,14 +1373,14 @@ struct KoanPicker<Value: Hashable>: View {
 /// fill up to the value, and a square 8 × 8 `ink` thumb shown only on hover,
 /// focus or drag, in a 44-point hit area. The system's slider in the
 /// platform's look, and to assistive technologies in both.
-struct KoanSlider<Low: View, High: View>: View {
+struct KoanSlider<End: View>: View {
     let title: String
     @Binding var value: Double
     let range: ClosedRange<Double>
     let step: Double?
     let editing: (Bool) -> Void
-    @ViewBuilder let low: () -> Low
-    @ViewBuilder let high: () -> High
+    @ViewBuilder let low: () -> End
+    @ViewBuilder let high: () -> End
     @State private var hovering = false
     @State private var dragging = false
     @FocusState private var focused: Bool
@@ -1392,8 +1392,8 @@ struct KoanSlider<Low: View, High: View>: View {
         in range: ClosedRange<Double>,
         step: Double? = nil,
         onEditingChanged editing: @escaping (Bool) -> Void = { _ in },
-        @ViewBuilder low: @escaping () -> Low = { EmptyView() },
-        @ViewBuilder high: @escaping () -> High = { EmptyView() }
+        @ViewBuilder low: @escaping () -> End,
+        @ViewBuilder high: @escaping () -> End
     ) {
         self.title = title
         _value = value
@@ -1421,13 +1421,17 @@ struct KoanSlider<Low: View, High: View>: View {
     private var system: some View {
         Group {
             if let step {
-                Slider(value: $value, in: range, step: step, onEditingChanged: editing) {
-                    Text(title)
-                } minimumValueLabel: { low() } maximumValueLabel: { high() }
+                Slider(
+                    value: $value, in: range, step: step,
+                    label: { Text(title) }, minimumValueLabel: { low() }, maximumValueLabel: { high() },
+                    onEditingChanged: editing
+                )
             } else {
-                Slider(value: $value, in: range, onEditingChanged: editing) {
-                    Text(title)
-                } minimumValueLabel: { low() } maximumValueLabel: { high() }
+                Slider(
+                    value: $value, in: range,
+                    label: { Text(title) }, minimumValueLabel: { low() }, maximumValueLabel: { high() },
+                    onEditingChanged: editing
+                )
             }
         }
     }
@@ -1496,6 +1500,18 @@ struct KoanSlider<Low: View, High: View>: View {
             next = range.lowerBound + ((next - range.lowerBound) / step).rounded() * step
         }
         if next != value { value = next }
+    }
+}
+
+extension KoanSlider where End == EmptyView {
+    init(
+        _ title: String,
+        value: Binding<Double>,
+        in range: ClosedRange<Double>,
+        step: Double? = nil,
+        onEditingChanged editing: @escaping (Bool) -> Void = { _ in }
+    ) {
+        self.init(title, value: value, in: range, step: step, onEditingChanged: editing, low: { EmptyView() }, high: { EmptyView() })
     }
 }
 #endif

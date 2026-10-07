@@ -1512,12 +1512,10 @@ private struct AppearanceSettings: View {
                         set: { graphics = Graphics.allCases[Int($0.rounded())] }
                     ),
                     in: 0...Double(Graphics.allCases.count - 1),
-                    step: 1
-                ) {
-                    Text(Graphics.allCases.first?.label ?? "").koanText(.fine, .muted).koanCase()
-                } high: {
-                    Text(Graphics.allCases.last?.label ?? "").koanText(.fine, .muted).koanCase()
-                }
+                    step: 1,
+                    low: { Text(Graphics.allCases.first?.label ?? "").koanText(.fine, .muted).koanCase() },
+                    high: { Text(Graphics.allCases.last?.label ?? "").koanText(.fine, .muted).koanCase() }
+                )
                 #endif
                 Text("**\(graphics.label)** — \(graphics.detail)")
                     .koanText(.fine, .muted)
