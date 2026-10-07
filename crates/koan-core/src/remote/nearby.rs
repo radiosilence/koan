@@ -1003,6 +1003,7 @@ fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>, redial: Arc<Atomic
                     this_device: false,
                     duplicate: false,
                     handshake: Handshake::Plain,
+                    proven: None,
                     pending: Vec::new(),
                 };
                 let result = wire::drive(&mut socket, fd, &waker, &mut session);
@@ -1111,6 +1112,8 @@ struct Controlling<'a> {
     /// Already connected to this device another way: announced and typed in.
     duplicate: bool,
     handshake: Handshake,
+    /// Who the listener proved to be, if it proved anything.
+    proven: Option<proof::Peer>,
     /// Proof frames to send.
     pending: Vec<String>,
 }
@@ -1172,8 +1175,9 @@ impl Controlling<'_> {
         log::info!(
             "nearby: {listener} {} us; it proved itself: {:?}",
             if verified { "took" } else { "did not take" },
-            listener_is.map(|p| p.peer)
+            listener_is.as_ref().map(|p| &p.peer)
         );
+        self.proven = listener_is.map(|p| p.peer);
         self.handshake = if verified {
             Handshake::Signed(proof::Session::new(listener, me, listen_nonce, dial_nonce))
         } else {
@@ -1272,7 +1276,15 @@ impl wire::Session for Controlling<'_> {
                     crate::remote::levels::remote().received(id, f);
                 }
             }
-            Ok(LinkReport::Ack { ack, outcome }) => crate::remote::acks::resolve(ack, outcome),
+            Ok(LinkReport::Ack { ack, outcome }) => {
+                let Some(id) = &self.id else { return };
+                if answer_believed(devices::listed_owner(id), self.proven.as_ref()) {
+                    crate::remote::acks::resolve(ack, id, outcome);
+                } else {
+                    // The link, which the server vouches for, answers instead.
+                    log::warn!("nearby: an answer from {id}, which did not prove it is; ignored");
+                }
+            }
             Ok(_) => {}
             Err(e) => log::debug!("nearby: not a report ({e})"),
         }
@@ -1280,6 +1292,19 @@ impl wire::Session for Controlling<'_> {
 
     fn done(&self) -> bool {
         self.this_device || self.duplicate || self.stop.stopped()
+    }
+}
+
+/// Whether an answer from a listener can be believed of the device it said it
+/// is in its `Hello`, which anyone can say. One of the account's devices
+/// (`listed` is `Some(None)`) or one shared with it (`Some(Some(owner))`) must
+/// have proved it is that device, under that account; a stranger's word is
+/// all there is of a stranger.
+fn answer_believed(listed: Option<Option<String>>, proven: Option<&proof::Peer>) -> bool {
+    match listed {
+        None => true,
+        Some(None) => proven == Some(&proof::Peer::Own),
+        Some(Some(owner)) => matches!(proven, Some(proof::Peer::Shared(o)) if *o == owner),
     }
 }
 
@@ -2187,5 +2212,30 @@ mod admit_tests {
             admit(real, |cmd| cmd.from_the_network(false), |_, _| {}),
             Admitted::Command(LinkCommand::Pause, _, Some(_))
         ));
+    }
+}
+
+#[cfg(test)]
+mod answer_tests {
+    use super::*;
+    use crate::remote::proof::Peer;
+
+    #[test]
+    fn an_answer_in_a_listed_devices_name_needs_its_proof() {
+        // A stranger is taken at its word: there is nothing else.
+        assert!(answer_believed(None, None));
+        // The account's own phone, proven, and an impostor using its id.
+        assert!(answer_believed(Some(None), Some(&Peer::Own)));
+        assert!(!answer_believed(Some(None), None));
+        assert!(!answer_believed(
+            Some(None),
+            Some(&Peer::Shared("b".into()))
+        ));
+        // A device shared by account b, proven as b's, and not as another's.
+        let shared = || Some(Some("b".to_string()));
+        assert!(answer_believed(shared(), Some(&Peer::Shared("b".into()))));
+        assert!(!answer_believed(shared(), Some(&Peer::Shared("c".into()))));
+        assert!(!answer_believed(shared(), Some(&Peer::Own)));
+        assert!(!answer_believed(shared(), None));
     }
 }
