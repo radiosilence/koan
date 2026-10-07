@@ -225,13 +225,16 @@ struct EqSettings: View {
             )
             #if !os(tvOS)
             if let preset = o.preset, o.presetEdited {
-                LabeledContent("Changed since \(preset)") {
+                LabeledContent {
                     HStack {
                         Button("Save") { save(as: preset, over: true) }
                             .koanButton(.compact)
                         Button("Save as New…") { ask("Save as New Preset") }
                             .koanButton(.text)
                     }
+                } label: {
+                    // The preset's name keeps its case; the words are the app's.
+                    Text("\(KoanTheme.label("Changed since")) \(preset)").textCase(nil)
                 }
             } else if o.preset == nil, !flat {
                 Button("Save as Preset…") { ask("Save as Preset") }
