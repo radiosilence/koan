@@ -945,6 +945,26 @@ extension View {
     }
 }
 
+/// A sheet's action in its bar — Done, Cancel, Import: text in the theme, on
+/// no pane of glass, which iOS draws behind every bar item; the platform's
+/// button otherwise.
+struct KoanSheetAction<Content: View>: ToolbarContent {
+    let placement: ToolbarItemPlacement
+    @ViewBuilder let content: () -> Content
+
+    var body: some ToolbarContent {
+        // A television's bar has no glass to take away, and its own focus.
+        #if os(tvOS)
+        ToolbarItem(placement: placement, content: content)
+        #else
+        ToolbarItem(placement: placement) {
+            content().koanButtons(.text)
+        }
+        .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
+        #endif
+    }
+}
+
 enum KoanSurface { case bg, surface }
 
 /// How much a control matters on its screen, as headings do for type: one

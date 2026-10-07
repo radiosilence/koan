@@ -373,6 +373,18 @@ fn on_track(
         .optional()?)
 }
 
+/// What each source of `track` says, the file's first: the rows its columns
+/// are derived from, for a view that shows everything known about a track.
+pub fn sources_of_track(conn: &Connection, track: i64) -> Result<Vec<TrackMeta>, DbError> {
+    let mut out = Vec::new();
+    for kind in [Kind::Local, Kind::Remote] {
+        if let Some((_, meta)) = on_track(conn, kind, track)? {
+            out.push(meta);
+        }
+    }
+    Ok(out)
+}
+
 fn write(conn: &Connection, kind: Kind, track: i64, meta: &TrackMeta) -> Result<(), DbError> {
     conn.prepare_cached(&format!(
         "INSERT INTO {} (track_id, slot_key, artist_key, {COLUMNS})

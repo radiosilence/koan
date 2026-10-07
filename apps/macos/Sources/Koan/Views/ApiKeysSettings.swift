@@ -174,7 +174,7 @@ private struct NewKeySheet: View {
             .koanSheet()
             .navigationTitle(KoanTheme.label("New Key"))
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
+                KoanSheetAction(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
             }

@@ -39,13 +39,13 @@ private struct DspImportSheet: View {
             }
             .navigationTitle(KoanTheme.label("Import"))
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
+                KoanSheetAction(placement: .cancellationAction) {
                     Button("Cancel") {
                         dsp.pendingImport = nil
                         dismiss()
                     }
                 }
-                ToolbarItem(placement: .confirmationAction) {
+                KoanSheetAction(placement: .confirmationAction) {
                     Button("Import") {
                         dsp.confirmImport(name: name.trimmingCharacters(in: .whitespaces))
                         dismiss()

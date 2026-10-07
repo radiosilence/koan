@@ -1,0 +1,1 @@
+- **Track info and menu in Now Playing.** On iPhone, tapping the track's title opens everything the library knows about it: each source's tags, the file path and server ids, MusicBrainz ids and ReplayGain, in selectable text. A … beside the heart holds the menu track rows have: go to the album or artist, favourite, add to a playlist, share.

@@ -124,7 +124,7 @@ struct ManageEq: View {
             NavigationStack {
                 DspProfilePage(dsp: dsp, name: shown.name)
                     .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
+                        KoanSheetAction(placement: .confirmationAction) {
                             Button("Done") { showing = nil }
                         }
                     }

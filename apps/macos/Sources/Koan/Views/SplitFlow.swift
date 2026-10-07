@@ -75,10 +75,10 @@ struct SplitFlow: View {
             }
             .navigationTitle("Split \(name)")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
+                KoanSheetAction(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
-                ToolbarItem(placement: .confirmationAction) {
+                KoanSheetAction(placement: .confirmationAction) {
                     Button("Split") { split() }
                         .disabled(preview == nil || saving)
                 }

@@ -1264,6 +1264,31 @@ mod tests {
         Database { conn }
     }
 
+    #[test]
+    fn a_track_lists_each_source_file_first() {
+        let db = test_db();
+        let local = sample_meta("Archangel", "Burial", "Untrue");
+        let id = upsert_track(&db.conn, &local).unwrap();
+        let mut remote = local.clone();
+        remote.path = None;
+        remote.source = "remote".into();
+        remote.remote_id = Some("song-1".into());
+        remote.mbid = Some("recording".into());
+        assert_eq!(upsert_track(&db.conn, &remote).unwrap(), id, "one track");
+
+        let sources = crate::db::queries::sources_of_track(&db.conn, id).unwrap();
+        let kinds: Vec<&str> = sources.iter().map(|m| m.source.as_str()).collect();
+        assert_eq!(kinds, ["local", "remote"]);
+        assert_eq!(sources[0].path, local.path);
+        assert_eq!(sources[1].remote_id.as_deref(), Some("song-1"));
+        assert_eq!(sources[1].mbid.as_deref(), Some("recording"));
+        assert!(
+            crate::db::queries::sources_of_track(&db.conn, id + 1)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
     /// A resync passes every track through the upsert, and nearly all of them
     /// are as they were. None of that should reach the disk.
     #[test]

@@ -98,7 +98,7 @@ struct EqSettings: View {
             NavigationStack {
                 ManageEq(device: device, active: overview?.active, chain: overview?.chain ?? [])
                     .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
+                        KoanSheetAction(placement: .confirmationAction) {
                             Button("Done") { managing = false }
                         }
                     }
@@ -195,7 +195,7 @@ struct EqSettings: View {
             NavigationStack {
                 DspProfilePage(dsp: app.dsp, name: shown.name)
                     .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
+                        KoanSheetAction(placement: .confirmationAction) {
                             Button("Done") { showing = nil }
                         }
                     }
@@ -805,7 +805,7 @@ struct StagePicker: View {
             }
             .navigationTitle(KoanTheme.label(stage == .correction ? "Correction" : "Add EQ"))
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
+                KoanSheetAction(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
             }
@@ -927,7 +927,7 @@ struct EqExplainer: View {
             }
             .navigationTitle(KoanTheme.label("How EQ works"))
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
+                KoanSheetAction(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
             }
