@@ -52,9 +52,9 @@ enum KoanTheme {
         bar.scrollEdgeAppearance = themed(edge)
         bar.compactScrollEdgeAppearance = themed(edge.copy())
         #elseif os(tvOS)
-        // The tabs across the top and each page's title are UIKit's, drawn
-        // from their bars' appearances: the theme's type on no ground. The
-        // titles are lowercased where the tabs are made (`label`).
+        // The tabs across the top and each page's title are UIKit's: the
+        // theme's type, the tabs on no ground. The tab titles are lowercased
+        // where the tabs are made (`label`).
         let tabs = UITabBarAppearance()
         tabs.configureWithTransparentBackground()
         for item in [tabs.stackedLayoutAppearance, tabs.inlineLayoutAppearance, tabs.compactInlineLayoutAppearance] {
@@ -63,10 +63,11 @@ enum KoanTheme {
             item.focused.titleTextAttributes = [.font: UIFont.koan(.body)]
         }
         UITabBar.appearance().standardAppearance = tabs
-        let titles = UINavigationBarAppearance()
-        titles.configureWithTransparentBackground()
-        titles.titleTextAttributes = [.font: UIFont.koan(.title), .foregroundColor: UIColor.koanStrong]
-        UINavigationBar.appearance().standardAppearance = titles
+        // A television's navigation bar takes no appearance: setting one is
+        // an assertion in UIKit.
+        UINavigationBar.appearance().titleTextAttributes = [
+            .font: UIFont.koan(.title), .foregroundColor: UIColor.koanStrong,
+        ]
         // The search page's field, typed into from the keyboard across the top.
         UITextField.appearance(whenContainedInInstancesOf: [UISearchBar.self]).defaultTextAttributes = [
             .font: UIFont.koan(.title), .foregroundColor: UIColor.koanInk,
