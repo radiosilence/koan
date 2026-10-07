@@ -131,12 +131,12 @@ struct SettingsView: View {
                             }
                             .padding(.horizontal, KoanTheme.Space.m)
                             .padding(.bottom, KoanTheme.Space.xs)
-                            KoanDivider()
                             settingsPane(pane, model: model)
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                         }
+                        // The main window's titlebar: the theme's ground, no title.
                         .toolbar(removing: .title)
-                        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+                        .koanToolbar(glass: false)
                         .containerBackground(Color.koanBg, for: .window)
                     } else {
                         TabView(selection: $pane) {
@@ -1630,8 +1630,8 @@ private struct SettingsFrameAutosave: NSViewRepresentable {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             guard let window else { return }
-            // In the theme the tab row draws its own rule; the titlebar's
-            // would be a second one just above it.
+            // In the theme the titlebar is the window's ground, as the main
+            // window's is, with no line under it.
             if KoanTheme.isOn { window.titlebarSeparatorStyle = .none }
             guard window.frameAutosaveName.isEmpty else { return }
             // SwiftUI's Settings window is made without a resizable frame,

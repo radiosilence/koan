@@ -148,7 +148,7 @@ Flat and full-width, with a 1-point `rule` along its top and `bg` beneath, 64 po
 
 ### Settings tabs (Mac)
 
-The Settings window's panes are chosen from the tab bar's items, drawn by the theme in a row along the top of the window, under a `rule`: labels in `fine`, lowercase, with their glyphs above; unselected `muted`, selected `accent` and underlined. The window is on `bg`, with no title and no toolbar ground. The system's toolbar tabs are glass buttons no role reaches, so the theme does not use them; the platform's look keeps them.
+The Settings window's panes are chosen from the tab bar's items, drawn by the theme in a row along the top of the window, with no rule beneath: labels in `fine`, lowercase, with their glyphs above; unselected `muted`, selected `accent` and underlined. The window is on `bg`, its titlebar treated as the main window's (`koanToolbar`) with no title and no separator, so only the window's buttons sit above the row. The row follows Show icons. The system's toolbar tabs are glass buttons no role reaches, so the theme does not use them; the platform's look keeps them.
 
 ### Select bar (phone)
 
