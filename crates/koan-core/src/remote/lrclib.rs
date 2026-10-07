@@ -114,8 +114,8 @@ const ASIDES: [&str; 14] = [
     "remix",
 ];
 
-/// A title as matching sees it: lowercased, accents folded, a trailing
-/// " - …" and any bracketed aside dropped, an unbracketed featured credit cut
+/// A title as matching sees it: lowercased, accents folded, trailing " - …"
+/// parts naming an aside or a year dropped, as is any bracketed aside, an unbracketed featured credit cut
 /// to the end, and only letters and digits kept, single-spaced.
 fn normalise_title(title: &str) -> String {
     let folded: String = title
@@ -123,7 +123,12 @@ fn normalise_title(title: &str) -> String {
         .filter(|c| !is_combining_mark(*c))
         .collect::<String>()
         .to_lowercase();
-    let head = folded.split(" - ").next().unwrap_or_default();
+    let mut head = folded.as_str();
+    while let Some((before, tail)) = head.rsplit_once(" - ")
+        && words(tail).any(|w| ASIDES.contains(&w) || is_year(w))
+    {
+        head = before;
+    }
 
     let mut kept = String::new();
     let mut rest = head;
@@ -151,6 +156,10 @@ fn normalise_title(title: &str) -> String {
         out.push(w);
     }
     out.join(" ")
+}
+
+fn is_year(w: &str) -> bool {
+    w.len() == 4 && w.bytes().all(|b| b.is_ascii_digit())
 }
 
 fn words(s: &str) -> impl Iterator<Item = &str> {
@@ -232,6 +241,9 @@ mod tests {
     fn editions_and_accents_are_the_same_title() {
         for (a, b) in [
             ("Song - Remastered 2011", "Song"),
+            ("Song - 2011 Remaster", "Song"),
+            ("Song - Live at Wembley", "Song"),
+            ("Song - Single Version - 2011 Remaster", "Song"),
             ("Song (Live)", "Song"),
             ("Song (Deluxe Edition)", "Song"),
             ("Song [2009 Remaster]", "Song"),
@@ -241,6 +253,11 @@ mod tests {
             assert_eq!(normalise_title(a), normalise_title(b), "{a} / {b}");
         }
         assert_ne!(normalise_title("Song (Part Two)"), normalise_title("Song"));
+        assert_ne!(
+            normalise_title("Movement - Part 1"),
+            normalise_title("Movement - Part 2")
+        );
+        assert_eq!(normalise_title("Intro - Reprise"), "intro reprise");
     }
 
     /// Arcade Fire's WE: a search for the ninth track must not answer with
