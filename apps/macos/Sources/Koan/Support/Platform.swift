@@ -200,14 +200,65 @@ extension View {
         @ViewBuilder menu: @escaping () -> Menu
     ) -> some View {
         #if os(tvOS)
-        Button(action: action) { contentShape(Rectangle()) }
-            .buttonStyle(TelevisionRow())
-            .contextMenu { menu() }
+        if KoanTheme.isOn {
+            modifier(TelevisionMenuRow(action: action, menu: menu))
+        } else {
+            Button(action: action) { contentShape(Rectangle()) }
+                .buttonStyle(TelevisionRow())
+                .contextMenu { menu() }
+        }
         #else
         primaryTap(action)
         #endif
     }
 }
+
+#if os(tvOS)
+/// A row whose menu, in the theme, is a sheet of the theme's rows rather than
+/// the system's popover of grey pills. A long press of the remote opens it,
+/// as it does the system's. Focusable rather than a button: a button takes
+/// the press for itself, and a long one never reaches the gesture.
+private struct TelevisionMenuRow<Menu: View>: ViewModifier {
+    let action: () -> Void
+    @ViewBuilder let menu: () -> Menu
+    @State private var open = false
+    @FocusState private var focused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .contentShape(Rectangle())
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .foregroundStyle(Color.koanInk)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 6)
+            .koanFocusRing(focused, gap: 0)
+            .focusable()
+            .focused($focused)
+            .onLongPressGesture(minimumDuration: 0.5) { open = true }
+            .onTapGesture(perform: action)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(named: "Menu") { open = true }
+            .televisionPanel(isPresented: $open) {
+                menu().buttonStyle(MenuItem(close: { open = false }))
+            }
+    }
+
+    /// An item of the menu: runs, then closes the sheet, as a menu does.
+    private struct MenuItem: PrimitiveButtonStyle {
+        let close: () -> Void
+
+        func makeBody(configuration: Configuration) -> some View {
+            Button(role: configuration.role) {
+                close()
+                configuration.trigger()
+            } label: {
+                configuration.label.textCase(.lowercase)
+            }
+            .buttonStyle(TelevisionRow())
+        }
+    }
+}
+#endif
 
 extension Notification.Name {
     /// The app giving up the foreground — on iOS the last dependable moment
@@ -412,8 +463,13 @@ struct SystemSwitch: ToggleStyle {
         // A television's toggle is a row that says On or Off. Its label takes
         // the tint, which the room sets to the record's colour; the primary
         // colour lets a focused row draw it dark on white as other rows do.
-        Toggle(configuration)
-            .tint(.primary)
+        // The theme's is its square box.
+        if KoanTheme.isOn {
+            KoanToggleStyle().makeBody(configuration: configuration)
+        } else {
+            Toggle(configuration)
+                .tint(.primary)
+        }
         #else
         Toggle(configuration)
             .toggleStyle(.switch)
@@ -567,6 +623,8 @@ enum ShortcutRole {
 /// The system's own style takes the label's colour from the tint, which the
 /// app sets to its accent and the room to the record's colour, so a label
 /// could be mint on grey at rest and vanish into a tinted platter on focus.
+/// In the theme, the label alone in `ink`, and focus the accent's ring: no
+/// pill, platter, lift or shadow.
 struct TelevisionButton: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         Pill(label: configuration.label, pressed: configuration.isPressed)
@@ -579,29 +637,93 @@ struct TelevisionButton: ButtonStyle {
         @Environment(\.isEnabled) private var enabled
 
         var body: some View {
-            label
-                .foregroundStyle(KoanTheme.style(.ink, system: .primary))
-                .environment(\.colorScheme, focused ? .light : .dark)
-                .padding(.horizontal, 28)
-                .padding(.vertical, 14)
-                .background(
-                    Capsule().fill(.white.opacity(focused ? 1 : 0.14))
-                        .shadow(color: .black.opacity(focused ? 0.35 : 0), radius: 18, y: 8)
-                )
-                .opacity(enabled ? 1 : 0.45)
-                .scaleEffect(pressed ? 0.97 : focused ? 1.06 : 1)
-                .animation(.easeOut(duration: 0.15), value: focused)
+            if KoanTheme.isOn {
+                label
+                    .foregroundStyle(Color.koanInk)
+                    .padding(.horizontal, KoanTheme.Space.l)
+                    .padding(.vertical, KoanTheme.Space.m)
+                    .background(pressed ? Color.koanHover : .clear)
+                    .opacity(enabled ? 1 : 0.4)
+                    .koanFocusRing(focused, gap: 0)
+            } else {
+                label
+                    .foregroundStyle(Color.primary)
+                    .environment(\.colorScheme, focused ? .light : .dark)
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 14)
+                    .background(
+                        Capsule().fill(.white.opacity(focused ? 1 : 0.14))
+                            .shadow(color: .black.opacity(focused ? 0.35 : 0), radius: 18, y: 8)
+                    )
+                    .opacity(enabled ? 1 : 0.45)
+                    .scaleEffect(pressed ? 0.97 : focused ? 1.06 : 1)
+                    .animation(.easeOut(duration: 0.15), value: focused)
+            }
         }
+    }
+}
+
+extension View {
+    /// The theme's sheet on a television: a square panel on `bg` inside a
+    /// rule, over the page dimmed. A cover rather than a sheet, which tvOS
+    /// draws as a rounded card whatever its background is told; Menu closes
+    /// it as it closes a sheet. It stands as tall as its content, and scrolls
+    /// past a limit.
+    func televisionPanel<Panel: View>(
+        isPresented: Binding<Bool>,
+        title: String? = nil,
+        @ViewBuilder content: @escaping () -> Panel
+    ) -> some View {
+        fullScreenCover(isPresented: isPresented) {
+            TelevisionPanel(title: title, content: content)
+        }
+    }
+}
+
+private struct TelevisionPanel<Panel: View>: View {
+    let title: String?
+    @ViewBuilder let content: () -> Panel
+    /// The content's own height: the panel stands as tall as it, to a limit.
+    @State private var height: CGFloat = 0
+
+    var body: some View {
+        ScrollView {
+            stack.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(width: 960, height: min(max(height, 1), 880))
+        .background(Color.koanBg)
+        .overlay { Rectangle().strokeBorder(Color.koanRule, lineWidth: KoanTheme.hairline) }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .presentationBackground(Color.black.opacity(0.6))
+    }
+
+    private var stack: some View {
+        VStack(alignment: .leading, spacing: KoanTheme.Space.xs) {
+            if let title {
+                Text(title)
+                    .koanText(.titleSmall, .strong)
+                    .textCase(.lowercase)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, KoanTheme.Space.m)
+            }
+            content()
+        }
+        .font(.koan(.body))
+        .foregroundStyle(Color.koanInk)
+        .padding(KoanTheme.Space.xxl)
     }
 }
 
 /// A list row as a television draws one: the row's own colours at rest, and
 /// focused, a white platter with the row drawn as it would be on a light
 /// screen, so secondary text stays readable on it. A plain button would tint
-/// every label with the accent instead.
+/// every label with the accent instead. In the theme, the row on the ground
+/// as it is, and focus the accent's ring around it.
 struct TelevisionRow: ButtonStyle {
     /// The platter's opacity at rest: none for a row of content, a little for
-    /// a link, so a list of places reads as rows before one is focused.
+    /// a link, so a list of places reads as rows before one is focused. The
+    /// theme draws none.
     var resting: Double = 0
 
     func makeBody(configuration: Configuration) -> some View {
@@ -613,21 +735,37 @@ struct TelevisionRow: ButtonStyle {
         let pressed: Bool
         let resting: Double
         @Environment(\.isFocused) private var focused
+        @Environment(\.isEnabled) private var enabled
+        @Environment(\.koanRowsBleed) private var bleeds
 
         var body: some View {
-            label
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .foregroundStyle(KoanTheme.style(.ink, system: .primary))
-                .environment(\.colorScheme, focused ? .light : .dark)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: KoanTheme.radius(14))
-                        .fill(.white.opacity(focused ? 1 : resting))
-                        .shadow(color: .black.opacity(focused ? 0.35 : 0), radius: 18, y: 8)
-                )
-                .scaleEffect(pressed ? 0.98 : focused ? 1.02 : 1)
-                .animation(.easeOut(duration: 0.15), value: focused)
+            if KoanTheme.isOn {
+                // In a form the row's text keeps the headings' edge, and the
+                // ring stands out into the margin.
+                label
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .foregroundStyle(Color.koanInk)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 6)
+                    .background(pressed ? Color.koanHover : .clear)
+                    .opacity(enabled ? 1 : 0.4)
+                    .koanFocusRing(focused, gap: 0)
+                    .padding(.horizontal, bleeds ? -20 : 0)
+            } else {
+                label
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .foregroundStyle(Color.primary)
+                    .environment(\.colorScheme, focused ? .light : .dark)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: KoanTheme.radius(14))
+                            .fill(.white.opacity(focused ? 1 : resting))
+                            .shadow(color: .black.opacity(focused ? 0.35 : 0), radius: 18, y: 8)
+                    )
+                    .scaleEffect(pressed ? 0.98 : focused ? 1.02 : 1)
+                    .animation(.easeOut(duration: 0.15), value: focused)
+            }
         }
     }
 }

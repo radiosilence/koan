@@ -1003,7 +1003,7 @@ private struct QueueAlbumHeader: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(Format.title(group.title))
-                    .font(Self.titleFont)
+                    .font(.role(.titleSmall, system: Self.titleFont))
                     .foregroundStyle(KoanTheme.style(.ink, system: .primary))
                     .lineLimit(Format.titleLines)
 

@@ -141,18 +141,11 @@ private struct TrackSortMenu: View {
     @Environment(LibraryModel.self) private var library
 
     var body: some View {
-        Menu {
-            Picker("Sort", selection: Binding(
-                get: { library.trackSort },
-                set: { library.trackSort = $0 }
-            )) {
-                ForEach(TrackBrowseSort.offered(recent: library.browseFilter.recent, searching: !library.filter.isEmpty), id: \.self) { sort in
-                    Text(sort.label).tag(sort)
-                }
-            }
-        } label: {
-            Label("Sort", systemImage: "arrow.up.arrow.down")
-        }
+        SortMenu(
+            selection: Binding(get: { library.trackSort }, set: { library.trackSort = $0 }),
+            options: TrackBrowseSort.offered(recent: library.browseFilter.recent, searching: !library.filter.isEmpty)
+                .map { ($0.label, $0) }
+        )
     }
 }
 
@@ -161,17 +154,49 @@ private struct AlbumSortMenu: View {
     @Environment(LibraryModel.self) private var library
 
     var body: some View {
+        SortMenu(
+            selection: Binding(get: { library.albumSort }, set: { library.albumSort = $0 }),
+            options: AlbumSort.offered(
+                recent: library.browseFilter.recent, downloaded: library.browseFilter.downloaded,
+                searching: !library.filter.isEmpty
+            ).map { ($0.label, $0) }
+        )
+    }
+}
+
+/// A sort's choices under one control: a menu, or on a television in the
+/// theme, a panel of the theme's rows.
+private struct SortMenu<Value: Hashable>: View {
+    @Binding var selection: Value
+    let options: [(label: String, value: Value)]
+    #if os(tvOS)
+    @State private var open = false
+    #endif
+
+    var body: some View {
+        #if os(tvOS)
+        if KoanTheme.isOn {
+            Button { open = true } label: {
+                KoanLabel("Sort", icon: "arrow.up.arrow.down")
+            }
+            .televisionPanel(isPresented: $open, title: "Sort") {
+                TelevisionChoices(
+                    selection: $selection,
+                    options: options.map { (KoanTheme.label($0.label), $0.value) }
+                ) { open = false }
+            }
+        } else {
+            menu
+        }
+        #else
+        menu
+        #endif
+    }
+
+    private var menu: some View {
         Menu {
-            Picker("Sort", selection: Binding(
-                get: { library.albumSort },
-                set: { library.albumSort = $0 }
-            )) {
-                ForEach(AlbumSort.offered(
-                    recent: library.browseFilter.recent, downloaded: library.browseFilter.downloaded,
-                    searching: !library.filter.isEmpty
-                ), id: \.self) { sort in
-                    Text(sort.label).tag(sort)
-                }
+            Picker("Sort", selection: $selection) {
+                ForEach(options, id: \.value) { Text($0.label).tag($0.value) }
             }
         } label: {
             Label("Sort", systemImage: "arrow.up.arrow.down")

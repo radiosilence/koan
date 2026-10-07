@@ -46,11 +46,15 @@ struct SettingsView: View {
                 .roomBackground()
         } label: {
             #if os(tvOS)
-            // The symbols are of different widths; at television size a
-            // label's own spacing lets the wide ones touch their titles.
-            HStack(spacing: 24) {
-                Image(systemName: symbol).frame(width: 56)
-                Text(title)
+            if KoanTheme.isOn {
+                KoanLabel(title, icon: symbol)
+            } else {
+                // The symbols are of different widths; at television size a
+                // label's own spacing lets the wide ones touch their titles.
+                HStack(spacing: 24) {
+                    Image(systemName: symbol).frame(width: 56)
+                    Text(title)
+                }
             }
             #else
             KoanLabel(title, icon: symbol)
@@ -214,7 +218,7 @@ struct SettingsView: View {
 
 /// The result of the last action, or the reason it failed. One line, always in
 /// the same place — an action that reports nothing looks like it did nothing.
-/// On iOS in the theme it takes no room until there is something to say,
+/// On iOS and tvOS in the theme it takes no room until there is something to say,
 /// and then sits on the ground under a rule, as the theme's bar does: held
 /// open on `surface`, it would be a blank band above the mini player on every
 /// settings page.
@@ -222,7 +226,7 @@ private struct StatusLine: View {
     let model: SettingsModel
 
     var body: some View {
-        #if os(iOS)
+        #if os(iOS) || os(tvOS)
         if KoanTheme.isOn {
             if model.lastError != nil || model.lastResult != nil {
                 line
@@ -230,10 +234,12 @@ private struct StatusLine: View {
                     .koanRule(.top)
             }
         } else {
+            #if os(tvOS)
+            line.koanMaterial(.regularMaterial)
+            #else
             line.koanMaterial(.bar)
+            #endif
         }
-        #elseif os(tvOS)
-        line.koanMaterial(.regularMaterial)
         #else
         line.koanMaterial(.bar)
         #endif
@@ -579,12 +585,14 @@ private struct RemoteSettings: View {
             Section {
                 #if os(tvOS)
                 // tvOS has no stepper.
-                Picker("Parallel downloads", selection: Binding(
-                    get: { Int(model.settings.downloadWorkers) },
-                    set: { v in model.edit { $0.downloadWorkers = UInt32(v) } }
-                )) {
-                    ForEach(1...16, id: \.self) { Text("\($0)").tag($0) }
-                }.koanControl()
+                KoanPicker(
+                    "Parallel downloads",
+                    selection: Binding(
+                        get: { Int(model.settings.downloadWorkers) },
+                        set: { v in model.edit { $0.downloadWorkers = UInt32(v) } }
+                    ),
+                    options: (1...16).map { ("\($0)", $0) }
+                )
                 #else
                 KoanStepper(
                     "Parallel downloads: \(model.settings.downloadWorkers)",
@@ -842,11 +850,12 @@ private struct PlaybackSettings: View {
                 ])
                 if model.settings.replaygain != "off" {
                     #if os(tvOS)
-                    Picker("Pre-amp", selection: model.binding(\.preAmpDb)) {
-                        ForEach(Array(stride(from: -15.0, through: 15.0, by: 0.5)), id: \.self) { db in
-                            Text("\(db, specifier: "%.1f") dB").tag(db)
-                        }
-                    }.koanControl()
+                    KoanPicker(
+                        "Pre-amp",
+                        selection: model.binding(\.preAmpDb),
+                        options: stride(from: -15.0, through: 15.0, by: 0.5).map { (String(format: "%.1f dB", $0), $0) },
+                        keepsCase: true
+                    )
                     #else
                     KoanStepper(
                         "Pre-amp: \(String(format: "%.1f", model.settings.preAmpDb)) dB",
@@ -1503,9 +1512,7 @@ private struct AppearanceSettings: View {
                 // reordered, and the cheapest step was added last. tvOS has
                 // no slider; a picker in the same order stands in.
                 #if os(tvOS)
-                Picker("Level", selection: $graphics) {
-                    ForEach(Graphics.allCases, id: \.self) { Text($0.label).tag($0) }
-                }.koanControl()
+                KoanPicker("Level", selection: $graphics, options: Graphics.allCases.map { ($0.label, $0) })
                 #else
                 KoanSlider(
                     "Level",
