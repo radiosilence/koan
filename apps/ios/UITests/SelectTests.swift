@@ -1,6 +1,6 @@
 import XCTest
 
-/// Select mode on an album page, the album grid and the queue: ticking rows
+/// Select mode on an album page, the album grid, the queue and a shelf: ticking rows
 /// and tiles, the bar's verbs, and done. Screenshots of each step, for how it
 /// looks; assertions for what VoiceOver finds.
 @MainActor
@@ -100,6 +100,25 @@ final class SelectTests: XCTestCase {
         app.buttons[any: "Favourites"].tap()
         pause(3)
         snap("09-favourites")
+
+        // A shelf picks across its artists, records and tracks, as search does.
+        XCTAssertTrue(app.buttons[any: "Select"].waitForExistence(timeout: 3), "the shelf offers select")
+        app.buttons[any: "Select"].tap()
+        pause(1)
+        let tracks = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'track-'"))
+        if tracks.count > 1 {
+            tracks.element(boundBy: 0).tap()
+            tracks.element(boundBy: 1).tap()
+        }
+        pause(1)
+        snap("10-favourites-selecting")
+        XCTAssertTrue(app.staticTexts[any: "2 selected"].exists, "two shelf tracks ticked")
+        for verb in ["Play", "Play Next", "Add to Queue", "Add to Playlist", "Favourite"] {
+            XCTAssertTrue(app.buttons[any: verb].exists, "\(verb) in the shelf's bar")
+        }
+        app.buttons[any: "Done"].tap()
+        pause(1)
+        XCTAssertTrue(app.buttons[any: "Select"].exists, "done ends the shelf's select mode")
     }
 
     private func pause(_ seconds: TimeInterval) {
