@@ -3015,12 +3015,12 @@ impl KoanEngine {
         .await
     }
 
-    /// The targets for a kind of headphone, in-ear or over-ear, with what
-    /// each sounds like: shipped ones, then those added.
-    pub async fn dsp_targets_for(self: Arc<Self>, in_ear: bool) -> Vec<DspTargetOption> {
+    /// The targets for a kind of headphone, in-ear or over-ear, or for a
+    /// speaker, with what each sounds like: shipped ones, then those added.
+    pub async fn dsp_targets_for(self: Arc<Self>, ear: DspEarKind) -> Vec<DspTargetOption> {
         offload::offload(move || {
             use koan_core::audio::dsp::targets::{self, Ear};
-            let ear = if in_ear { Ear::In } else { Ear::Over };
+            let ear = Ear::from(ear);
             let mut out: Vec<DspTargetOption> = targets::TARGETS
                 .iter()
                 .filter(|t| t.ear == ear)
@@ -3052,6 +3052,21 @@ impl KoanEngine {
     ) -> Result<DspResponse, KoanError> {
         offload::offload(move || {
             koan_core::audio::dsp::profiles::preview_measurement(&text, &target, 48000)
+                .map(Into::into)
+                .map_err(|message| KoanError::BadArgument { message })
+        })
+        .await
+    }
+
+    /// What `text` is read as, as a measurement — a speaker's or a
+    /// headphone's, and for a speaker's Klippel export which of its curves —
+    /// or why it cannot be read.
+    pub async fn dsp_describe_measurement(
+        self: Arc<Self>,
+        text: String,
+    ) -> Result<DspMeasurementReading, KoanError> {
+        offload::offload(move || {
+            koan_core::audio::dsp::profiles::describe_measurement(&text)
                 .map(Into::into)
                 .map_err(|message| KoanError::BadArgument { message })
         })
@@ -3096,23 +3111,21 @@ impl KoanEngine {
         .await
     }
 
-    /// Save the headphone `name`, measured as `text`, corrected to `target`,
-    /// crediting `source` where the measurement came from one.
+    /// Save the headphone or speaker `name`, measured as `text`, corrected
+    /// to `target`, crediting `source` where the measurement came from one.
     pub async fn dsp_save_measured(
         self: Arc<Self>,
         name: String,
         text: String,
-        in_ear: bool,
+        ear: DspEarKind,
         target: String,
         source: Option<String>,
     ) -> Result<String, KoanError> {
         offload::sequenced(move || {
-            use koan_core::config::DspEar;
-            let ear = if in_ear { DspEar::In } else { DspEar::Over };
             let name = koan_core::audio::dsp::profiles::save_measured_from(
                 &name,
                 &text,
-                ear,
+                ear.into(),
                 &target,
                 source.as_deref(),
             )

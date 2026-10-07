@@ -51,5 +51,9 @@ file; the two part only above 19.75 kHz, by up to 0.6 dB. The unchanged file
 is kept as `../testdata/squig-harman-ie-2019-target.txt`, which a test holds
 this one to.
 
+`flat.csv` is koan's own: 0 dB at every point of the grid. It is the
+speaker target, the convention of CTA-2034 and spinorama measurements, which
+aim for a flat listening window; a room tilt is a tuning on top.
+
 Targets a person adds themselves (a CSV, or a squig.link export) are kept
 beside their config under `dsp/targets/`, not here, and are theirs to license.
