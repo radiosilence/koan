@@ -57,6 +57,8 @@ struct KoanClosePanel {
 
 extension EnvironmentValues {
     @Entry var koanClosePanel = KoanClosePanel()
+    /// The focus scope of the theme menu the view is in, if any.
+    @Entry var koanMenuRows: Namespace.ID?
 }
 
 @MainActor
@@ -66,10 +68,21 @@ final class KoanPanelCoordinator: NSObject, NSWindowDelegate {
     private var host: NSHostingController<AnyView>?
     private weak var anchor: NSView?
     private var monitors: [Any] = []
-    private var resign: NSObjectProtocol?
+    private var observers: [NSObjectProtocol] = []
 
     func show(_ root: AnyView, from view: NSView) {
-        guard let parent = view.window else { return }
+        // An anchor out of any window, such as a toolbar item moved into the
+        // overflow menu, has nowhere to hang a panel from: it is closed, so
+        // the control opens it again once it is back.
+        guard let home = view.window else {
+            close()
+            return
+        }
+        // The window that holds the page, or the panel this one opens from. A
+        // toolbar in full screen is a window of its own, which hides as the
+        // pointer leaves it.
+        var parent = home
+        while !(parent is KoanPanelWindow), let up = parent.parent { parent = up }
         anchor = view
         if let host {
             host.rootView = root
@@ -83,30 +96,43 @@ final class KoanPanelCoordinator: NSObject, NSWindowDelegate {
             backing: .buffered,
             defer: true
         )
+        window.isReleasedWhenClosed = false
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = false
         window.appearance = parent.effectiveAppearance
         window.contentViewController = host
         window.delegate = self
+        window.setAccessibilityRole(.popover)
         self.host = host
         self.window = window
         parent.addChildWindow(window, ordered: .above)
         place()
         window.makeKey()
-        watch()
+        NSAccessibility.post(element: window, notification: .created)
+        // The rows take the keyboard from the first of them; a menu's ticked
+        // row takes it from there, as the scope's preferred focus.
+        DispatchQueue.main.async { window.selectNextKeyView(nil) }
+        watch(parent)
     }
 
     func hide() {
         monitors.forEach(NSEvent.removeMonitor)
         monitors = []
-        if let resign { NotificationCenter.default.removeObserver(resign) }
-        resign = nil
+        observers.forEach(NotificationCenter.default.removeObserver)
+        observers = []
         guard let window else { return }
-        window.parent?.removeChildWindow(window)
+        let wasKey = window.isKeyWindow
+        let parent = window.parent
+        parent?.removeChildWindow(window)
         window.orderOut(nil)
         self.window = nil
         host = nil
+        // Focus goes back to the control that opened it, as a popover's does.
+        if wasKey, let parent {
+            parent.makeKey()
+            if let anchor { NSAccessibility.post(element: anchor, notification: .focusedUIElementChanged) }
+        }
     }
 
     nonisolated func windowDidResize(_ notification: Notification) {
@@ -117,23 +143,26 @@ final class KoanPanelCoordinator: NSObject, NSWindowDelegate {
     /// its leading edge on the anchor's and kept on the screen.
     private func place() {
         guard let window, let anchor, let parent = anchor.window else { return }
+        let top = window.parent ?? parent
         let gap: CGFloat = 4
         let button = parent.convertToScreen(anchor.convert(anchor.bounds, to: nil))
         let size = window.frame.size
-        let room = parent.frame
+        // A toolbar in full screen is a strip of a window: the screen is the
+        // room there.
+        let room = parent === top ? parent.frame : (top.screen?.visibleFrame ?? top.frame)
         let above = button.midY < room.midY
         var origin = CGPoint(
             x: button.minX,
             y: above ? button.maxY + gap : button.minY - gap - size.height
         )
-        if let screen = (parent.screen ?? NSScreen.main)?.visibleFrame {
+        if let screen = (top.screen ?? NSScreen.main)?.visibleFrame {
             origin.x = min(max(origin.x, screen.minX), screen.maxX - size.width)
             origin.y = min(max(origin.y, screen.minY), screen.maxY - size.height)
         }
         window.setFrameOrigin(origin)
     }
 
-    private func watch() {
+    private func watch(_ parent: NSWindow) {
         let outside = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
             guard let self, let window = self.window else { return event }
             // In the panel, or in a panel opened from it.
@@ -150,17 +179,24 @@ final class KoanPanelCoordinator: NSObject, NSWindowDelegate {
             self.close()
             return event
         }
+        // Only the panel the key is typed in: a panel opened from this one
+        // closes alone.
         let escape = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, event.keyCode == 53 else { return event }
+            guard let self, event.keyCode == 53, event.window === self.window else { return event }
             self.close()
             return nil
         }
         monitors = [outside, escape].compactMap(\.self)
-        resign = NotificationCenter.default.addObserver(
-            forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.close() }
-        }
+        let center = NotificationCenter.default
+        observers = [
+            center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.close() }
+            },
+            // The anchor moves with the window's layout; the panel follows it.
+            center.addObserver(forName: NSWindow.didResizeNotification, object: parent, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.place() }
+            },
+        ]
     }
 }
 
@@ -174,6 +210,7 @@ struct KoanMenu<Content: View, Label: View>: View {
     @ViewBuilder let content: () -> Content
     @ViewBuilder let label: () -> Label
     @State private var open = false
+    @Namespace private var rows
 
     var body: some View {
         #if os(macOS)
@@ -185,6 +222,16 @@ struct KoanMenu<Content: View, Label: View>: View {
                         .padding(.vertical, KoanTheme.Space.xs)
                         .frame(minWidth: 180, alignment: .leading)
                         .fixedSize()
+                        .focusScope(rows)
+                        .environment(\.koanMenuRows, rows)
+                        // Up and down move between rows, as in a menu.
+                        .onMoveCommand { direction in
+                            switch direction {
+                            case .down: NSApp.keyWindow?.selectNextKeyView(nil)
+                            case .up: NSApp.keyWindow?.selectPreviousKeyView(nil)
+                            default: break
+                            }
+                        }
                 }
         } else {
             Menu(content: content, label: label) // theme: raw — the platform's look
@@ -237,8 +284,12 @@ struct KoanMenuChoice<Label: View>: View {
         self.label = label
     }
 
+    #if os(macOS)
+    @Environment(\.koanMenuRows) private var rows
+    #endif
+
     var body: some View {
-        Button(action: action) {
+        let button = Button(action: action) {
             HStack(spacing: KoanTheme.Space.m) {
                 label()
                 Spacer(minLength: 0)
@@ -246,6 +297,15 @@ struct KoanMenuChoice<Label: View>: View {
             }
         }
         .accessibilityAddTraits(chosen ? .isSelected : [])
+        #if os(macOS)
+        if let rows {
+            button.prefersDefaultFocus(chosen, in: rows)
+        } else {
+            button
+        }
+        #else
+        button
+        #endif
     }
 }
 
@@ -302,28 +362,42 @@ private struct KoanMenuRow: PrimitiveButtonStyle {
     }
 }
 
+/// A real button, so the keyboard and VoiceOver reach it: focusable without
+/// Full Keyboard Access, as a menu's items are, and chosen with Return or
+/// Space. The row under the pointer or the keyboard takes `surface`.
 private struct KoanMenuRowBody: View {
     let configuration: PrimitiveButtonStyleConfiguration
     @Environment(\.koanClosePanel) private var close
     @Environment(\.isEnabled) private var enabled
     @State private var hovering = false
+    @FocusState private var focused: Bool
 
     var body: some View {
-        configuration.label
-            .font(.koan(.control))
-            .foregroundStyle(tone)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, KoanTheme.Space.m)
-            .padding(.vertical, KoanTheme.Space.xs)
-            .background(hovering && enabled ? Color.koanSurface : Color.clear)
-            .contentShape(Rectangle())
-            .onHover { hovering = $0 }
-            .onTapGesture {
-                guard enabled else { return }
-                configuration.trigger()
-                close()
-            }
-            .accessibilityAddTraits(.isButton)
+        Button(role: configuration.role, action: choose) {
+            configuration.label
+                .font(.koan(.control))
+                .foregroundStyle(tone)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, KoanTheme.Space.m)
+                .padding(.vertical, KoanTheme.Space.xs)
+                .background((hovering || focused) && enabled ? Color.koanSurface : Color.clear)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(interactions: .activate)
+        .focused($focused)
+        .focusEffectDisabled()
+        .onHover { hovering = $0 }
+        .onKeyPress(.return) {
+            guard enabled else { return .ignored }
+            choose()
+            return .handled
+        }
+    }
+
+    private func choose() {
+        configuration.trigger()
+        close()
     }
 
     private var tone: Color {

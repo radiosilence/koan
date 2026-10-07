@@ -460,7 +460,7 @@ theme-leaks:
     # `SidebarGround.swift` finds the sidebar's glass to take it away.
     hits=$(grep -rnE '\.glassEffect\(|GlassEffectContainer|buttonStyle\(\.glass|NSGlassEffectView|UIGlassEffect|NSVisualEffectView|UIVisualEffectView|UIBlurEffect|(ultraThin|thin|regular|thick|ultraThick)Material\b|\(\.bar\)|toolbarBackground\(|\.popover\(|\.searchable\(|scrollEdgeEffectStyle\(.*\.soft' \
         apps/macos/Sources --include='*.swift' \
-        | grep -v -e 'Support/KoanTheme.swift' -e 'Support/Graphics.swift' -e 'Views/SidebarGround.swift' -e '// theme: raw' -e 'koanMaterial(' -e '\.glass(' -e 'KoanTheme\.')
+        | grep -v -e 'Support/KoanTheme.swift' -e 'Support/Graphics.swift' -e 'Views/SidebarGround.swift' -e '// theme: raw' -e 'koanMaterial(' -e '\.glass(' -e 'scrollEdgeEffectStyle(.*KoanTheme\.isOn')
     if [ -n "$hits" ]; then
         found=1
         echo "$hits"
@@ -472,7 +472,7 @@ theme-leaks:
     # `KoanSlider` or `KoanStepper`.
     hits=$(grep -rnE 'pickerStyle\(\.(segmented|wheel|radioGroup|menu)\)|toggleStyle\(\.(switch|button|checkbox)\)|textFieldStyle\(\.(roundedBorder|squareBorder)\)|buttonStyle\(\.(bordered|borderedProminent)\)|(^|[^A-Za-z])(Slider|Stepper) *[({]' \
         apps/macos/Sources --include='*.swift' \
-        | grep -v -e 'Support/KoanTheme.swift' -e '// theme: raw' -e 'koanButton(' -e 'KoanTheme\.')
+        | grep -v -e 'Support/KoanTheme.swift' -e '// theme: raw' -e 'koanButton(.*system:')
     if [ -n "$hits" ]; then
         found=1
         echo "$hits"

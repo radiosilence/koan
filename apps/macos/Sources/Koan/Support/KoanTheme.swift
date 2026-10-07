@@ -901,8 +901,9 @@ extension View {
 
     /// The button a menu opens from: in the theme, one of the theme's buttons
     /// of `kind`, square, with no indicator, in place of the platform's rounded
-    /// pull-down. The list it opens is the system's (`NSMenu`, `UIMenu`), which
-    /// no app can draw; `KoanMenu` draws its own on the Mac. Unchanged in the
+    /// pull-down. A menu style, so the buttons around the menu keep theirs.
+    /// The list it opens is the system's (`NSMenu`, `UIMenu`), which no app
+    /// can draw; `KoanMenu` draws its own on the Mac. Unchanged in the
     /// platform's look.
     @ViewBuilder
     func koanMenuButton(_ kind: KoanButtonKind) -> some View {
@@ -910,9 +911,7 @@ extension View {
         self
         #else
         if KoanTheme.isOn {
-            menuStyle(.button)
-                .buttonStyle(KoanButtonStyle(kind: kind))
-                .menuIndicator(.hidden)
+            menuStyle(KoanMenuButtonStyle(kind: kind))
         } else {
             self
         }
@@ -1579,7 +1578,7 @@ struct KoanListPicker<Value: Hashable, Row: View>: View {
                     .font(.koan(.control))
                     .foregroundStyle(Color.koanInk)
                 }
-                .koanMenuButton(.bordered)
+                .koanButtons(.bordered)
                 .fixedSize()
             }
         } else {
@@ -2172,6 +2171,19 @@ private struct KoanFieldRole: ViewModifier {
         }
     }
 }
+
+#if !os(tvOS)
+private struct KoanMenuButtonStyle: MenuStyle {
+    let kind: KoanButtonKind
+
+    func makeBody(configuration: Configuration) -> some View {
+        Menu(configuration) // theme: raw — the role's own menu
+            .menuStyle(.button)
+            .buttonStyle(KoanButtonStyle(kind: kind))
+            .menuIndicator(.hidden)
+    }
+}
+#endif
 
 private struct KoanControlRole: ViewModifier {
     func body(content: Content) -> some View {
