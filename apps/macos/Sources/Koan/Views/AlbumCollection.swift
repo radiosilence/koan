@@ -921,7 +921,6 @@ private final class HeartButton: NSButton {
             // The theme's heart sits on `surface`, square, with no material.
             let flat = NSView()
             flat.wantsLayer = true
-            flat.layer?.backgroundColor = NSColor.koanSurface.cgColor
             flat.addSubview(glyph)
             ground = flat
         } else if glassy {
@@ -945,6 +944,21 @@ private final class HeartButton: NSButton {
     }
 
     required init?(coder: NSCoder) { fatalError("not decoded") }
+
+    /// The theme's ground, resolved against the appearance the heart is in
+    /// now: a layer keeps the colour it was given, whatever the window does.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        viewDidChangeEffectiveAppearance()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        guard KoanTheme.isOn, !(ground is NSGlassEffectView), !(ground is NSVisualEffectView) else { return }
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            ground.layer?.backgroundColor = NSColor.koanSurface.cgColor
+        }
+    }
 
     override func layout() {
         super.layout()

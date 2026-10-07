@@ -10,6 +10,8 @@ struct OutputEqSection: View {
     let dsp: DspModel
     let overview: DspOverview
     let device: String
+    /// Take a baked EQ apart, presented by the page.
+    var split: ((String) -> Void)?
     @State private var targets: DspTargets?
 
     private var correction: DspProfileSummary? {
@@ -38,7 +40,7 @@ struct OutputEqSection: View {
 
     var body: some View {
         Section {
-            Picker("Headphones", selection: Binding(
+            Picker("Correction", selection: Binding(
                 get: { overview.active ?? "" },
                 set: { dsp.assign($0.isEmpty ? nil : $0, to: device) }
             )) {
@@ -69,8 +71,17 @@ struct OutputEqSection: View {
 
             if correction?.role == .baked, let name = overview.active {
                 // Greyed with its reason, never silently missing.
+                #if os(tvOS)
+                Label("\(name) already has a tuning baked in. Split it on your phone or Mac to swap tunings.", systemImage: "info.circle")
+                    .koanText(.meta, .muted)
+                #else
                 Label("\(name) already has a tuning baked in. Split it to swap tunings.", systemImage: "info.circle")
                     .koanText(.meta, .muted)
+                // One EQ splits: not a stack or a group, nor responses.
+                if let split, let c = correction, c.rates.isEmpty, c.layers == 0 {
+                    Button("Split into Correction + Tuning…") { split(name) }
+                }
+                #endif
             } else if let tuning {
                 Picker("Tuning", selection: Binding(
                     get: { tuning.name },
@@ -117,7 +128,7 @@ struct OutputEqSection: View {
     /// The chain in words: what plays, and what could.
     private var sentence: String {
         guard let name = overview.active else {
-            return "Pick your headphones to make them neutral first."
+            return "Pick a correction for your headphones or speakers to make them neutral first."
         }
         var parts = [name]
         if let aim { parts.append("corrected to \(aim.name)") }

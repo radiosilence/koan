@@ -14,6 +14,11 @@ struct SettingsView: View {
     @Environment(ActivityModel.self) private var activity
 
     @State private var model: SettingsModel?
+    /// The server's accounts, loaded here rather than in their section: the
+    /// list loading is what says the account is an admin's, and whether
+    /// there is a People section at all.
+    @State private var people: PeopleModel?
+    @Environment(EngineMirror.self) private var mirror
     #if os(macOS)
     @Environment(\.controlActiveState) private var controlActive
     #else
@@ -30,6 +35,9 @@ struct SettingsView: View {
         NavigationLink {
             content()
                 .navigationTitle(KoanTheme.label(title))
+                // Pushed here rather than by a route, so it makes room for the
+                // theme's tab bar itself, as routes do.
+                .koanHidesSystemTabBar()
                 #if os(tvOS)
                 .roomBackground()
                 #endif
@@ -60,12 +68,24 @@ struct SettingsView: View {
                         .tabItem { Label("Library", systemImage: "music.note.house") }
                     RemoteSettings(model: model)
                         .tabItem { Label("Server", systemImage: "server.rack") }
+                    if AccountSettings.shown(model, mirror) {
+                        AccountSettings(model: model)
+                            .tabItem { Label("Account", systemImage: "person.crop.circle") }
+                    }
+                    if PeoplePane.shown(model, people), let people {
+                        PeoplePane(model: model, people: people)
+                            .tabItem { Label("People", systemImage: "person.2") }
+                    }
                     PlaybackSettings(model: model)
                         .tabItem { Label("Playback", systemImage: "hifispeaker") }
                     EqSettings()
                         .tabItem { Label("EQ", systemImage: "slider.vertical.3") }
                     DevicesSettings(model: model)
                         .tabItem { Label("Devices", systemImage: "laptopcomputer.and.iphone") }
+                    if IntegrationSections.shown(model, mirror) {
+                        IntegrationsSettings()
+                            .tabItem { Label("Integrations", systemImage: "puzzlepiece.extension") }
+                    }
                     AppearanceSettings()
                         .tabItem { Label("Appearance", systemImage: "paintpalette") }
                 }
@@ -86,6 +106,21 @@ struct SettingsView: View {
                         RemoteSettings(model: model)
                             .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                     }
+                    // A television keeps all of the server on its one page.
+                    #if !os(tvOS)
+                    if AccountSettings.shown(model, mirror) {
+                        pane("Account", "person.crop.circle") {
+                            AccountSettings(model: model)
+                                .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
+                        }
+                    }
+                    if PeoplePane.shown(model, people), let people {
+                        pane("People", "person.2") {
+                            PeoplePane(model: model, people: people)
+                                .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
+                        }
+                    }
+                    #endif
                     pane("Playback", "hifispeaker") {
                         PlaybackSettings(model: model)
                             .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
@@ -98,6 +133,14 @@ struct SettingsView: View {
                         DevicesSettings(model: model)
                             .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                     }
+                    #if !os(tvOS)
+                    if IntegrationSections.shown(model, mirror) {
+                        pane("Integrations", "puzzlepiece.extension") {
+                            IntegrationsSettings()
+                                .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
+                        }
+                    }
+                    #endif
                     pane("Appearance", "paintpalette") {
                         AppearanceSettings()
                     }
@@ -130,6 +173,17 @@ struct SettingsView: View {
                 model = await SettingsModel(engine: library.engine, activity: activity, art: library.art)
             }
         }
+        // Asked again for each account signed in as; an account that is not
+        // an admin's gets no list, and so no People section. A television
+        // manages no accounts, and asks for none.
+        #if !os(tvOS)
+        .task(id: model.map { "\($0.settings.remoteSignedIn) \($0.settings.remoteUrl) \($0.settings.remoteUsername)" }) {
+            guard let model, model.settings.remoteSignedIn else { return }
+            let people = people ?? PeopleModel(engine: library.engine)
+            self.people = people
+            await people.load()
+        }
+        #endif
         // The CLI and TUI write the same file; coming back to this window is
         // the moment to notice they did.
         #if os(macOS)
@@ -166,9 +220,9 @@ private struct StatusLine: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 8)
         #if os(tvOS)
-        .background(.regularMaterial)
+        .koanMaterial(.regularMaterial)
         #else
-        .background(.bar)
+        .koanMaterial(.bar)
         #endif
     }
 }
@@ -322,11 +376,6 @@ private struct RemoteSettings: View {
     @State private var username = ""
     @State private var confirmingSignOut = false
     @State private var copiedServer = false
-    @State private var changingPassword = false
-    @State private var currentPassword = ""
-    @State private var newPassword = ""
-    /// What the server holds, while asking before it replaces this queue.
-    @State private var replacingQueue: ServerQueue?
     /// The cache limit as typed, committed whole: "5" on the way to "50GB" is
     /// not a limit anyone set.
     @State private var cacheLimit: String?
@@ -339,26 +388,6 @@ private struct RemoteSettings: View {
         }
         url = ""
         Task { await state.offer(invite) }
-    }
-
-    /// Only the syncs wait on the database writer. Signing out is a config
-    /// write, and greying it out while a sync runs strands you on a server you
-    /// are trying to leave.
-    @ViewBuilder private var accountButtons: some View {
-        Button("Sync") { model.syncNow() }
-            .koanButton(.standard)
-            .disabled(activity.conflicts(with: [.remoteTracks]))
-        #if !os(tvOS)
-        if mirror.offers(PasswordChange.extensionName) {
-            Button("Change Password…") { changingPassword = true }
-                .koanButton(.compact)
-        }
-        #endif
-    }
-
-    private var signOutButton: some View {
-        Button("Sign Out", role: .destructive) { confirmingSignOut = true }
-            .koanButton(.compact)
     }
 
     var body: some View {
@@ -394,53 +423,30 @@ private struct RemoteSettings: View {
                         KoanLabel(EngineMirror.signInRefusedDetail, icon: "exclamationmark.triangle")
                             .koanText(.meta, .bad)
                     }
-                    // In a row where they fit, and one under another where they
-                    // do not: a button is one line, never two.
-                    ViewThatFits(in: .horizontal) {
-                        HStack {
-                            accountButtons
-                            Spacer()
-                            signOutButton
-                        }
-                        VStack(alignment: .leading) {
-                            accountButtons
-                            signOutButton
-                        }
+                    HStack {
+                        // Only the syncs wait on the database writer. Signing
+                        // out is a config write, and greying it out while a
+                        // sync runs strands you on a server you are trying to
+                        // leave.
+                        Button("Sync") { model.syncNow() }
+                            .koanButton(.standard)
+                            .disabled(activity.conflicts(with: [.remoteTracks]))
+                        Spacer()
+                        Button("Sign Out", role: .destructive) { confirmingSignOut = true }
+                            .koanButton(.compact)
                     }
                     .rowButtons()
                 } header: {
                     KoanSectionHeader("Signed in")
                 }
-                #if !os(tvOS)
-                .alert("Change your password", isPresented: $changingPassword) {
-                    SecureField("Current password", text: $currentPassword)
-                    SecureField("New password", text: $newPassword)
-                    Button("Change") {
-                        let (current, new) = (currentPassword, newPassword)
-                        currentPassword = ""
-                        newPassword = ""
-                        Task { _ = await model.changePassword(current: current, new: new) }
-                    }
-                    Button("Cancel", role: .cancel) {
-                        currentPassword = ""
-                        newPassword = ""
-                    }
-                } message: {
-                    Text("This device stays signed in. Your other devices, and other apps using this account, will have to sign in again.")
-                }
-                #endif
+                #if os(tvOS)
+                // A television keeps the server on one page: what a phone or a
+                // Mac splits into sections, less what needs a keyboard.
                 if mirror.offers(ApiKeysSettings.extensionName) {
                     ApiKeysSettings()
                 }
-                if mirror.offers(AssistantsSettings.extensionName) {
-                    AssistantsSettings()
-                }
-                // Accounts and pairings are managed from a device with a keyboard.
-                #if !os(tvOS)
-                PeopleSettings(signedInAs: model.settings.remoteUsername)
-                PairDevice()
+                IntegrationSections()
                 #endif
-                ScrobblingSettings()
                 ServerOffers()
             } else {
                 Section {
@@ -538,29 +544,11 @@ private struct RemoteSettings: View {
                     .koanText(.fine, .muted)
             }
 
+            #if os(tvOS)
             if model.settings.remoteSignedIn {
-            Section {
-                Toggle("Keep the queue on the server", isOn: Binding(
-                    get: { model.settings.playQueue },
-                    set: { on in
-                        Task {
-                            // Turning it on takes the server's queue in place of
-                            // this one, so say so first when there is one.
-                            if on, let saved = await model.serverQueue(), saved.savedTracks > 0 {
-                                replacingQueue = saved
-                            } else {
-                                await model.setServerQueue(on)
-                            }
-                        }
-                    }
-                )).koanToggle()
-            } header: {
-                KoanSectionHeader("Play queue")
-            } footer: {
-                Text("Saves this device's queue to your account on the server, where other apps can pick it up, and picks up a queue another app saved there when kōan starts. Moving music between kōan devices does not need it.")
-                    .koanText(.fine, .muted)
+                ServerQueueSection(model: model)
             }
-            }
+            #endif
 
             Section {
                 #if os(tvOS)
@@ -626,6 +614,149 @@ private struct RemoteSettings: View {
         } message: {
             Text("Tracks you also have as local files are kept either way. Keeping the rest leaves records in the library that cannot be played until you sign in again.")
         }
+    }
+
+    private func commitCacheLimit() {
+        guard let draft = cacheLimit else { return }
+        cacheLimit = nil
+        if draft != model.settings.cacheLimit { model.edit { $0.cacheLimit = draft } }
+    }
+}
+
+// MARK: - Account
+
+/// The signed-in account's own keys to the server: its password, and the API
+/// keys apps sign in with. Each where the server has it.
+private struct AccountSettings: View {
+    @Bindable var model: SettingsModel
+    @Environment(EngineMirror.self) private var mirror
+    @State private var changingPassword = false
+    @State private var currentPassword = ""
+    @State private var newPassword = ""
+
+    /// Whether there is anything here: signed in to a server with either.
+    static func shown(_ model: SettingsModel, _ mirror: EngineMirror) -> Bool {
+        model.settings.remoteSignedIn
+            && (mirror.offers(PasswordChange.extensionName) || mirror.offers(ApiKeysSettings.extensionName))
+    }
+
+    var body: some View {
+        KoanForm {
+            if mirror.offers(PasswordChange.extensionName) {
+                Section {
+                    LabeledContent("User", value: model.settings.remoteUsername)
+                    Button("Change Password…") { changingPassword = true }
+                        .koanButton(.compact)
+                } header: {
+                    KoanSectionHeader("Password")
+                } footer: {
+                    Text("This device stays signed in. Your other devices, and other apps using this account, will have to sign in again.")
+                        .koanText(.fine, .muted)
+                }
+                .alert("Change your password", isPresented: $changingPassword) {
+                    SecureField("Current password", text: $currentPassword)
+                    SecureField("New password", text: $newPassword)
+                    Button("Change") {
+                        let (current, new) = (currentPassword, newPassword)
+                        currentPassword = ""
+                        newPassword = ""
+                        Task { _ = await model.changePassword(current: current, new: new) }
+                    }
+                    Button("Cancel", role: .cancel) {
+                        currentPassword = ""
+                        newPassword = ""
+                    }
+                } message: {
+                    Text("This device stays signed in. Your other devices, and other apps using this account, will have to sign in again.")
+                }
+            }
+            if mirror.offers(ApiKeysSettings.extensionName) {
+                ApiKeysSettings()
+            }
+        }
+        .koanSheet()
+    }
+}
+
+// MARK: - People
+
+/// The server's accounts, for its admins. Shown only once the list has
+/// loaded, which the server allows an admin alone.
+private struct PeoplePane: View {
+    @Bindable var model: SettingsModel
+    let people: PeopleModel
+
+    static func shown(_ model: SettingsModel, _ people: PeopleModel?) -> Bool {
+        model.settings.remoteSignedIn && people?.accounts != nil
+    }
+
+    var body: some View {
+        KoanForm {
+            PeopleSettings(signedInAs: model.settings.remoteUsername, model: people)
+        }
+        .koanSheet()
+    }
+}
+
+// MARK: - Integrations
+
+/// What the account is connected to beyond kōan's own apps: ListenBrainz,
+/// and assistants over MCP. Each where the server has it.
+private struct IntegrationSections: View {
+    @Environment(EngineMirror.self) private var mirror
+
+    static func shown(_ model: SettingsModel, _ mirror: EngineMirror) -> Bool {
+        model.settings.remoteSignedIn
+            && (mirror.connection?.scrobbling == true || mirror.offers(AssistantsSettings.extensionName))
+    }
+
+    var body: some View {
+        if mirror.offers(AssistantsSettings.extensionName) {
+            AssistantsSettings()
+        }
+        ScrobblingSettings()
+    }
+}
+
+private struct IntegrationsSettings: View {
+    var body: some View {
+        KoanForm {
+            IntegrationSections()
+        }
+        .koanSheet()
+    }
+}
+
+// MARK: - Server play queue
+
+/// This device's queue kept on the server, for other apps to pick up.
+private struct ServerQueueSection: View {
+    @Bindable var model: SettingsModel
+    /// What the server holds, while asking before it replaces this queue.
+    @State private var replacingQueue: ServerQueue?
+
+    var body: some View {
+        Section {
+            Toggle("Keep the queue on the server", isOn: Binding(
+                get: { model.settings.playQueue },
+                set: { on in
+                    Task {
+                        // Turning it on takes the server's queue in place of
+                        // this one, so say so first when there is one.
+                        if on, let saved = await model.serverQueue(), saved.savedTracks > 0 {
+                            replacingQueue = saved
+                        } else {
+                            await model.setServerQueue(on)
+                        }
+                    }
+                }
+            )).koanToggle()
+        } header: {
+            KoanSectionHeader("Play queue")
+        } footer: {
+            Text("Saves this device's queue to your account on the server, where other apps can pick it up, and picks up a queue another app saved there when kōan starts. Moving music between kōan devices does not need it.")
+                .koanText(.fine, .muted)
+        }
         .confirmationDialog(
             "Replace this queue?",
             isPresented: Binding(
@@ -642,12 +773,6 @@ private struct RemoteSettings: View {
         } message: { saved in
             Text("Your server has a queue of \(saved.savedTracks) \(saved.savedTracks == 1 ? "track" : "tracks") saved by \(saved.savedBy). Keeping the queue on the server replaces the one on this device with it.")
         }
-    }
-
-    private func commitCacheLimit() {
-        guard let draft = cacheLimit else { return }
-        cacheLimit = nil
-        if draft != model.settings.cacheLimit { model.edit { $0.cacheLimit = draft } }
     }
 }
 
@@ -731,9 +856,22 @@ struct EqSettings: View {
     @State private var importing = false
     @State private var finding: AutoEqFind?
     @State private var measuring = false
+    /// A baked EQ being split into correction and tuning.
+    @State private var splitting: ShownProfile?
     @State private var showing: String?
 
     private var active: String? { app.dsp.overview?.active }
+
+    /// The way to the profile's own page, where its bands are edited.
+    @ViewBuilder private func editLink(_ name: String) -> some View {
+        #if os(iOS)
+        NavigationLink("Edit") { DspProfilePage(dsp: app.dsp, name: name) }
+        #elseif os(macOS)
+        Button("Edit") { showing = name }
+            .koanButton(.text)
+        #endif
+    }
+
     /// The tuning on top, where one plays: none waits on a correction with
     /// one baked in, or one the chain cannot hold.
     private var tuning: String? {
@@ -743,8 +881,36 @@ struct EqSettings: View {
 
     var body: some View {
         KoanForm {
+            // What the output plays, drawn first and always the same height,
+            // so choosing another preset changes the curve and not the page.
+            // Bands are edited on the profile's own page.
+            if let o = app.dsp.overview, o.device != nil, !o.profiles.isEmpty {
+                Section {
+                    Group {
+                        if let response {
+                            EqGraph(response: response)
+                                .koanAnimation(KoanTheme.Motion.normal, value: response.total)
+                        } else {
+                            Text("Plays untouched")
+                                .koanText(.meta, .muted)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                    }
+                    .frame(height: 290, alignment: .top)
+                } header: {
+                    HStack {
+                        Text(tuning.map { "\(active ?? "") + \($0)" } ?? active ?? "No EQ")
+                        Spacer()
+                        if let active {
+                            editLink(active)
+                        }
+                    }
+                }
+            }
             if let o = app.dsp.overview, let device = o.device, !o.profiles.isEmpty {
-                OutputEqSection(dsp: app.dsp, overview: o, device: device)
+                OutputEqSection(dsp: app.dsp, overview: o, device: device) {
+                    splitting = ShownProfile(name: $0)
+                }
             }
             if let active, let detail, detail.group {
                 Section {
@@ -759,28 +925,13 @@ struct EqSettings: View {
                     KoanSectionHeader("Group: pick one")
                 }
             }
-            if let active, let response, let detail {
-                Section {
-                    // With a tuning on top, the graph is the output's whole
-                    // chain, and the correction's handles would sit off it.
-                    EqGraph(response: response, handles: tuning == nil ? BandTable.handles(detail.bands) : []) { index, hz, db in
-                        let b = detail.bands[index]
-                        app.dsp.setBand(active, index, kind: b.kind, freq: hz, gain: db, q: b.q)
-                    }
-                } header: {
-                    Text(tuning.map { "\(active) + \($0)" } ?? active).koanText(.fine, .ink).textCase(nil)
-                }
-                BandTable(dsp: app.dsp, profile: active, bands: detail.bands)
-            }
             DspSettings(importing: $importing, finding: $finding, measuring: $measuring, showing: $showing)
         }
         .koanSheet()
         .task(id: "\(active ?? "")\u{0}\(tuning ?? "")\u{0}\(app.dsp.stamp)") {
-            response = if let active {
-                tuning == nil ? await app.dsp.response(active) : await app.dsp.outputResponse()
-            } else {
-                nil
-            }
+            // The old curve stays until the new one is drawn, so the page
+            // never empties between presets.
+            response = if active == nil { nil } else { await app.dsp.outputResponse() }
             detail = if let active { await app.dsp.detail(active) } else { nil }
         }
         .task(id: app.dsp.stamp) { app.dsp.reload() }
@@ -800,20 +951,17 @@ struct EqSettings: View {
         .sheet(isPresented: $measuring) {
             MeasurementFlow(dsp: app.dsp).koanSheet()
         }
+        .sheet(item: $splitting) { baked in
+            SplitFlow(dsp: app.dsp, name: baked.name).koanSheet()
+        }
         // A profile imported from a file: a neutral correction, one with a
         // tuning already in it, or taste to add on top? kōan cannot tell,
         // and a chain corrects once.
-        .confirmationDialog(
-            app.dsp.askRole?.count ?? 0 > 1 ? "What are these EQs?" : "What is this EQ?",
-            isPresented: Binding(get: { app.dsp.askRole != nil }, set: { if !$0 { app.dsp.askRole = nil } }),
-            titleVisibility: .visible,
-            presenting: app.dsp.askRole
-        ) { names in
-            Button("A neutral correction for these headphones") { app.dsp.setRole(names, .correction) }
-            Button("A correction with a sound already in it") { app.dsp.setRole(names, .baked) }
-            Button("A tuning to add on top") { app.dsp.setRole(names, .tuning) }
-        } message: { _ in
-            Text("A correction makes your headphones neutral; a stack holds one. Most presets named for a sound, like “Lush”, are a correction with a tuning baked in. A tuning is taste, like more bass, and plays on top of a correction.")
+        .sheet(item: Binding(
+            get: { app.dsp.askRole.map(RoleAsk.init) },
+            set: { if $0 == nil { app.dsp.askRole = nil } }
+        )) { ask in
+            RoleQuestion(dsp: app.dsp, names: ask.names).koanSheet()
         }
         #endif
         #if os(macOS)
@@ -872,6 +1020,7 @@ struct DspSettings: View {
                     #if os(iOS)
                     NavigationLink {
                         DspProfilePage(dsp: dsp, name: p.name)
+                            .koanHidesSystemTabBar()
                     } label: {
                         ProfileRow(profile: p, active: o.active == p.name)
                     }
@@ -1213,50 +1362,57 @@ private struct ScrobblingSettings: View {
             Section {
                 if let c = connection {
                     Text("Scrobbling to ListenBrainz as \(c.account)")
+                        .koanText(.body)
                     if let refused = c.error {
-                        Label(refused, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(KoanTheme.style(.bad, system: .orange))
+                        KoanLabel(refused, icon: "exclamationmark.triangle")
+                            .koanText(.meta, .bad)
                         Text("Disconnect, then connect again with a current token. Plays recorded meanwhile are kept and sent.")
-                            .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                            .koanText(.meta, .muted)
                     } else if c.pending > 0 {
                         Text(Format.count(c.pending, "play") + " waiting to be sent")
-                            .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                            .koanText(.meta, .muted)
                     }
                     #if !os(tvOS)
                     Button("Disconnect", role: .destructive, action: disconnect)
+                        .koanButton(.compact)
                         .disabled(busy)
                     #endif
                 } else if !loaded {
-                    Text("Checking…").foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                    Text("Checking…").koanText(.body, .muted)
                 } else if statusFailed {
                     Button("Try Again") { Task { await load() } }
+                        .koanButton(.standard)
                 } else {
                     #if os(tvOS)
                     Text("Not connected. Connect ListenBrainz from kōan on a phone or Mac.")
-                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                        .koanText(.body, .muted)
                     #else
-                    SecureField("User token", text: $token, prompt: Text("ListenBrainz user token"))
-                        .verbatimEntry()
-                        .onSubmit(connect)
+                    LabeledContent("User token") {
+                        SecureField("User token", text: $token, prompt: Text("ListenBrainz user token"))
+                            .verbatimEntry()
+                            .onSubmit(connect)
+                            .koanField()
+                    }
                     HStack {
                         Link("Find your token", destination: URL(string: "https://listenbrainz.org/settings/")!)
+                            .koanButton(.text)
                         Spacer()
                         Button("Connect", action: connect)
+                            .koanButton(.prominent)
                             .disabled(busy || token.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                     .rowButtons()
                     #endif
                 }
                 if let error {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(KoanTheme.style(.bad, system: .red))
+                    KoanLabel(error, icon: "exclamationmark.triangle")
+                        .koanText(.meta, .bad)
                 }
             } header: {
-                Text("Scrobbling")
+                KoanSectionHeader("Scrobbling")
             } footer: {
                 Text("The server sends what you play to ListenBrainz, from every app signed in as you, your history included when you connect. The token is kept on the server.")
-                    .font(.role(.fine, system: .caption))
-                    .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
+                    .koanText(.fine, .muted)
             }
             .task(id: mirror.connection?.scrobbling) { await load() }
         }
@@ -1379,6 +1535,14 @@ private struct DevicesSettings: View {
 
     var body: some View {
         KoanForm {
+            // Pairing is approved from a device with a keyboard; a television
+            // keeps its play queue setting with the server's.
+            #if !os(tvOS)
+            if model.settings.remoteSignedIn {
+                PairDevice()
+                ServerQueueSection(model: model)
+            }
+            #endif
             Section {
                 Toggle("Discoverable on this network", isOn: model.binding(\.devicesDiscoverable)).koanToggle()
                 Picker("Devices on this network", selection: model.binding(\.devicesNearbyControl)) {
@@ -1655,6 +1819,8 @@ private struct SettingsFrameAutosave: NSViewRepresentable {
 enum SettingsEvidence {
     static func pages(_ state: AppState) async -> [(name: String, size: CGSize, view: AnyView)] {
         let model = await SettingsModel(engine: state.library.engine, activity: state.activity, art: state.art)
+        let people = PeopleModel(engine: state.library.engine)
+        await people.load()
         // What the Settings scene injects, so a pane renders as it does there.
         func page(_ view: some View) -> AnyView {
             AnyView(
@@ -1672,6 +1838,9 @@ enum SettingsEvidence {
         return [
             ("settings-library", size, page(LibrarySettings(model: model))),
             ("settings-server", size, page(RemoteSettings(model: model))),
+            ("settings-account", size, page(AccountSettings(model: model))),
+            ("settings-people", size, page(PeoplePane(model: model, people: people))),
+            ("settings-integrations", size, page(IntegrationsSettings())),
             ("settings-playback", size, page(PlaybackSettings(model: model))),
             ("settings-eq", size, page(EqSettings())),
             ("settings-devices", size, page(DevicesSettings(model: model))),

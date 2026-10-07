@@ -613,7 +613,7 @@ struct ControlButton: View {
         .help(help)
         .accessibilityLabel(help)
         #if os(macOS)
-        .popover(isPresented: $open, arrowEdge: .top) { ControlPicker() }
+        .popover(isPresented: $open, arrowEdge: .top) { ControlPicker().koanPopover() }
         #endif
     }
 
@@ -663,7 +663,7 @@ struct OutputButton: View {
         .help(help)
         .accessibilityLabel(help)
         #if os(macOS)
-        .popover(isPresented: $open, arrowEdge: .top) { OutputPicker() }
+        .popover(isPresented: $open, arrowEdge: .top) { OutputPicker().koanPopover() }
         #endif
     }
 

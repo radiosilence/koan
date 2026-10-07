@@ -376,6 +376,20 @@ final class DspModel {
         return saved
     }
 
+    /// What splitting the baked EQ `name` would give: the correction, the
+    /// tuning, their sum, and the EQ itself.
+    func previewSplit(_ name: String, text: String, target: String) async throws -> DspResponse {
+        try await engine.dspPreviewSplit(name: name, text: text, target: target)
+    }
+
+    /// Split the baked EQ `name` into a correction and a tuning; the outputs
+    /// that played it play the two.
+    func splitBaked(_ name: String, text: String, inEar: Bool, target: String) async throws -> [String] {
+        let made = try await engine.dspSplitBaked(name: name, text: text, inEar: inEar, target: target)
+        await changed()
+        return made
+    }
+
     /// Keep `name` on every device of the account, or on this one alone.
     func setScope(_ name: String, everywhere: Bool) {
         act { try await $0.dspSetScope(name: name, everywhere: everywhere) }

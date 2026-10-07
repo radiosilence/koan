@@ -127,8 +127,8 @@ final class LibraryModel {
             trackSort = .lastPlayed
         case .search(let query):
             carried = query
-            albumSort = .recentlyAdded
-            trackSort = .artist
+            albumSort = .bestMatch
+            trackSort = .bestMatch
         case .downloaded:
             filter.downloaded = true
             albumSort = .downloaded

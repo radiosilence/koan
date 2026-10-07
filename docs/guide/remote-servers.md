@@ -88,7 +88,7 @@ Signed in to a kōan server, history is shared. The server keeps the account's p
 
 ## The play queue on the server
 
-Off by default, Settings → Server → **Keep the queue on the server** keeps this device's queue in the account's play queue on the server, where Subsonic clients such as Feishin or Symfonium save theirs. A queue started in another client can then be picked up in kōan, and the reverse. Between kōan devices it is not needed: [Play on and Move here](devices.md#controlling-and-moving) move the queue live.
+Off by default, Settings → Devices → **Keep the queue on the server** (on the Apple TV, Settings → Server) keeps this device's queue in the account's play queue on the server, where Subsonic clients such as Feishin or Symfonium save theirs. A queue started in another client can then be picked up in kōan, and the reverse. Between kōan devices it is not needed: [Play on and Move here](devices.md#controlling-and-moving) move the queue live.
 
 Turning it on replaces this device's queue with the one the server holds, after asking; with nothing saved there, this device's queue is saved instead. While it is on, queue edits are saved a second after they stop, and a change of track, a pause, and the app going to the background save the queue with the playhead. When kōan starts it takes the server's queue in place of its own only if another client saved one since this device did. Tracks only this device has are left out of what it saves, and a queue of more than 1,500 tracks is not saved, since the server cannot take one that long yet. Turning it off leaves both queues as they are. The setting is this device's own (`remote.play_queue` in `config.local.toml`).
 

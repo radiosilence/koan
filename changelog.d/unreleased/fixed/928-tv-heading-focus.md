@@ -1,0 +1,1 @@
+- **Shelf and search headings are readable when focused on the Apple TV.** A focused "Artists ›" or "Albums ›" heading drew the header's light text on the white focus platter; it now takes the TV's row style, which darkens the text on focus.

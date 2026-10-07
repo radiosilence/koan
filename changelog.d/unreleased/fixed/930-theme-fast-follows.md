@@ -1,0 +1,1 @@
+- **The kōan theme, finished in places.** Large titles draw in Geist Mono's lighter weights; track lengths of an hour or more and long formats fit their columns; the Mac's output, control and filter popovers, and the last materials, draw on the theme's ground; the album grid's heart follows light and dark; and the iPhone's tabs tell VoiceOver which of four they are.

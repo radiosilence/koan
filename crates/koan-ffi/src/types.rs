@@ -1010,6 +1010,9 @@ pub enum AlbumSort {
     /// Fully on this device first, then by how much is: the Downloaded
     /// shelf's order.
     Downloaded,
+    /// The closest match to the search first: the search shelf's order.
+    /// Without a search, `RecentlyAdded`.
+    BestMatch,
 }
 
 /// Narrowing the album and artist browsers by what the records are. The web
@@ -1054,6 +1057,9 @@ pub enum TrackBrowseSort {
     /// Most recently played first. Only with [`BrowseFilter::recent`]; without
     /// it, by title.
     LastPlayed,
+    /// The closest match to the search first: the search shelf's order.
+    /// Without a search, as `Artist`.
+    BestMatch,
 }
 
 /// A page of the track browser, and how many tracks pass its filters in all.
@@ -1305,6 +1311,8 @@ pub struct DspResponse {
     /// For a chain with both: the correction alone, and the tuning on top.
     pub correction: Option<Vec<f64>>,
     pub tuning: Option<Vec<f64>>,
+    /// For a split's preview: the baked EQ it comes from.
+    pub original: Option<Vec<f64>>,
 }
 
 impl From<koan_core::audio::dsp::profiles::Response> for DspResponse {
@@ -1328,6 +1336,7 @@ impl From<koan_core::audio::dsp::profiles::Response> for DspResponse {
             preamp_db: r.preamp_db,
             correction: r.correction,
             tuning: r.tuning,
+            original: r.original,
         }
     }
 }

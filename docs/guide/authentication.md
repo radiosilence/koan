@@ -53,7 +53,7 @@ days by default), so a machine that connects that often stays signed in until
 
 ## User management
 
-Admins manage accounts on the web UI's Users page, from the apps' Settings, over
+Admins manage accounts on the web UI's Users page, from the apps' Settings → People, over
 GraphQL (`users`, `createUser`, `inviteUser`, `setUserRole`, `setUserPassword`,
 `deleteUser`, which MCP clients can call too), or with the CLI.
 
@@ -111,7 +111,7 @@ the account in the apps' Settings, or with `setUserPassword`. Any of them signs
 every device out, invited ones included, since a password change revokes the
 account's sessions and API keys.
 
-Anyone can change their own password from the apps' Settings → Server, with
+Anyone can change their own password from the apps' Settings → Account, with
 **Change Password…**, giving the current one. The device changing it stays
 signed in: the server answers with a new key for it, as signing in does, and
 the account's other devices sign out. Both go through
@@ -132,7 +132,7 @@ password or a pasted invite, so it signs in by being approved from somewhere
 that is already signed in. It opens a WebSocket at `/rest/koanPair` (listed as
 the `koanPair` extension) with no credentials and is given a code, shown as
 `XXXX-XXXX`, and a link, `https://koan.rocks/pair/#s=…&p=…`. Opening the link in
-koan on a phone or Mac, typing the code under Settings → Server → Pair a device,
+koan on a phone or Mac, typing the code under Settings → Devices → Pair a device,
 or typing it on the server's `/pair` page asks "Sign in this device?"; approving
 makes an API key on the approver's account, named after the device, and the
 server sends it down the waiting socket. The device is told the moment it is
@@ -345,7 +345,7 @@ koan subsonic disable
 ```
 
 Signed-in users manage their own keys in the web UI under **API keys**, and in
-the apps under Settings → Server → API keys, where the server lists the
+the apps under Settings → Account → API keys, where the server lists the
 `koanApiKeys` extension (`/rest/koanApiKeys`, and `koanCreateApiKey` and
 `koanRevokeApiKey` by POST), signed with an API key or the account's own password: an app password cannot make or revoke keys, so one that leaks cannot outlive its revocation. Both list each key's name, when it was made and
 when it was last used, never the key itself. A new key is shown once. Each

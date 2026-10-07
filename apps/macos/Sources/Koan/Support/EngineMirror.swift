@@ -47,6 +47,15 @@ final class EngineMirror: Observable {
     private var _playhead = Playhead(positionMs: 0, playing: false, at: .now)
     private var _seekableMs: UInt64 = 0
     private var _queue: [QueueItem] = []
+    /// The queue as last sent whole, which `_queue` is with the latest patch
+    /// applied; and where each row of it is, by queue item and by what it
+    /// came from.
+    private var _queueBase: [QueueItem] = []
+    private var _queueAt: [String: Int] = [:]
+    private var _rowsByTrack: [Int64: [Int]] = [:]
+    private var _rowsByPlaylistEntry: [Int64: [Int]] = [:]
+    /// The rows the latest patch changed, to put back before the next.
+    private var _patched: [Int] = []
     private var _queueVersion: UInt64 = 0
     private var _queuedByTrack: [Int64: QueueItem] = [:]
     private var _queuedByPlaylistEntry: [Int64: QueueItem] = [:]
@@ -115,6 +124,25 @@ final class EngineMirror: Observable {
         return _queue
     }
 
+    /// The queue's rows as last sent whole, each with its status as it was
+    /// then.
+    ///
+    /// Moves when the queue is edited, and not when a track changes or a
+    /// download lands: those arrive as patches to `queue`. A long list lays
+    /// itself out from this and has each row it draws read `queueItem(_:)`, so
+    /// a track change redraws the rows on screen rather than regrouping every
+    /// row in the queue.
+    var queueRows: [QueueItem] {
+        access(\.queueRows)
+        return _queueBase
+    }
+
+    /// One row of the queue as it reads now. Observed as `queue`.
+    func queueItem(_ id: String) -> QueueItem? {
+        access(\.queue)
+        return _queueAt[id].map { _queue[$0] }
+    }
+
     /// The other devices koan can play on. Their playheads are as reported
     /// when this arrived; see `devicesAt`.
     var devices: [DeviceInfo] {
@@ -176,10 +204,11 @@ final class EngineMirror: Observable {
         return _outputs
     }
 
-    /// Bumped by every queue mutation. Observed as `queue`: it arrives with the
-    /// rows and means the same thing.
+    /// Moves whenever the queue is sent whole: on every edit, and not on a
+    /// track change or a download. Observed as `queueRows`, which it arrives
+    /// with and means the same thing.
     var queueVersion: UInt64 {
-        access(\.queue)
+        access(\.queueRows)
         return _queueVersion
     }
 
@@ -303,19 +332,51 @@ final class EngineMirror: Observable {
                 mutate(\.seekableMs) { _seekableMs = seekableMs }
             }
         case .queue(let items, let version):
+            mutate(\.queueRows) {
+                mutate(\.queue) {
+                    _queueBase = items
+                    _queue = items
+                    _queueVersion = version
+                    _patched = []
+                    _queueAt = Dictionary(
+                        items.enumerated().map { ($1.queueItemId, $0) },
+                        uniquingKeysWith: { first, _ in first }
+                    )
+                    _rowsByTrack = [:]
+                    _rowsByPlaylistEntry = [:]
+                    for (row, item) in items.enumerated() {
+                        if let track = item.trackId { _rowsByTrack[track, default: []].append(row) }
+                        if let entry = item.playlistEntryId { _rowsByPlaylistEntry[entry, default: []].append(row) }
+                    }
+                    _queuedByTrack = _rowsByTrack.compactMapValues(preferred)
+                    _queuedByPlaylistEntry = _rowsByPlaylistEntry.compactMapValues(preferred)
+                }
+            }
+        case .queuePatch(let base, let items):
+            // A patch to a queue that has been sent whole since is stale; and
+            // an empty one on an unpatched queue says nothing.
+            guard base == _queueVersion, !(items.isEmpty && _patched.isEmpty) else { return }
             mutate(\.queue) {
-                _queue = items
-                _queueVersion = version
-                _queuedByTrack = Dictionary(
-                    items.compactMap { item in item.trackId.map { ($0, item) } },
-                    // A track queued twice: prefer the entry that is doing
-                    // something over one still sitting idle.
-                    uniquingKeysWith: { a, b in b.status == .queued ? a : b }
-                )
-                _queuedByPlaylistEntry = Dictionary(
-                    items.compactMap { item in item.playlistEntryId.map { ($0, item) } },
-                    uniquingKeysWith: { a, b in b.status == .queued ? a : b }
-                )
+                var touched = _patched
+                for row in _patched { _queue[row] = _queueBase[row] }
+                _patched = []
+                for item in items {
+                    guard let row = _queueAt[item.queueItemId] else { continue }
+                    _queue[row] = item
+                    _patched.append(row)
+                    touched.append(row)
+                }
+                // A patch never changes which track or playlist entry a row
+                // is, so only those indexes need asking again.
+                for row in touched {
+                    let item = _queue[row]
+                    if let track = item.trackId {
+                        _queuedByTrack[track] = _rowsByTrack[track].flatMap(preferred)
+                    }
+                    if let entry = item.playlistEntryId {
+                        _queuedByPlaylistEntry[entry] = _rowsByPlaylistEntry[entry].flatMap(preferred)
+                    }
+                }
             }
         case .lock(let lock):
             mutate(\.lock) { _lock = lock }
@@ -356,6 +417,15 @@ final class EngineMirror: Observable {
             }
         case .outputs(let outputs):
             mutate(\.outputs) { _outputs = outputs }
+        }
+    }
+
+    /// Of the rows holding one track: a track queued twice prefers the entry
+    /// that is doing something over one still sitting idle.
+    private func preferred(_ rows: [Int]) -> QueueItem? {
+        rows.map { _queue[$0] }.reduce(QueueItem?.none) { held, next in
+            guard let held else { return next }
+            return next.status == .queued ? held : next
         }
     }
 

@@ -7,7 +7,7 @@ kōan exposes two tools over the Model Context Protocol. The client reads the Gr
 
 ## Connecting to a server
 
-The web UI's **Assistants** page has the address to copy and these steps; opening `/mcp` in a browser goes there too. The apps show the same address under Settings → Server → Assistants, with a link to that page; the server lists the `koanMcp` extension, and `/rest/koanMcp` gives the address, only once `sharing.public_url` is set. In Claude, open Settings → Connectors → Add custom connector, and enter `https://<your server>/mcp`. Claude opens the server's sign-in page; sign in with your kōan account and approve. Any MCP client that supports OAuth connects the same way.
+The web UI's **Assistants** page has the address to copy and these steps; opening `/mcp` in a browser goes there too. The apps show the same address under Settings → Integrations → Assistants, with a link to that page; the server lists the `koanMcp` extension, and `/rest/koanMcp` gives the address, only once `sharing.public_url` is set. In Claude, open Settings → Connectors → Add custom connector, and enter `https://<your server>/mcp`. Claude opens the server's sign-in page; sign in with your kōan account and approve. Any MCP client that supports OAuth connects the same way.
 
 The server is its own OAuth authorization server, so nothing else is needed in front of it, but it must know the address it is reached at: set `sharing.public_url` (e.g. `https://music.example.com`). Without it the server offers no sign-in, since an address taken from request headers could be chosen by whoever sends them.
 
