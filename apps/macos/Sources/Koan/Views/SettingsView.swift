@@ -617,10 +617,11 @@ private struct RemoteSettings: View {
                     .koanField()
                 }
                 LabeledContent("Using") {
-                    HStack {
-                        Text(Format.bytes(Int64(model.settings.cacheBytes)))
+                    HStack(spacing: KoanTheme.Space.l) {
+                        Text(Format.bytes(Int64(mirror.cacheBytes)))
+                            .monospacedDigit()
                         Button("Clear") { model.clearCache() }
-                            .koanButton(.text, system: .borderless)
+                            .koanButton(.compact, system: .bordered)
                             .disabled(activity.conflicts(with: [.downloads]))
                     }
                 }

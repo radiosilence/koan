@@ -20,7 +20,19 @@ final class SettingsModel {
 
     private(set) var settings: Settings
     private(set) var lastError: String?
-    private(set) var lastResult: String?
+    /// What the last thing done here came to. Gone after a few seconds, as
+    /// the app's other notices are; an error stays until the next action.
+    private(set) var lastResult: String? {
+        didSet {
+            dismissal?.cancel()
+            guard let shown = lastResult else { return }
+            dismissal = Task { [weak self] in
+                guard (try? await Task.sleep(for: .seconds(6))) != nil else { return }
+                if self?.lastResult == shown { self?.lastResult = nil }
+            }
+        }
+    }
+    @ObservationIgnored private var dismissal: Task<Void, Never>?
 
     /// Typed here rather than in `settings`, because it never comes back out of
     /// the engine — the credential store is write-only from this side.

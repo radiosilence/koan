@@ -179,8 +179,15 @@ pub fn remove_vanished_remote(
             conn.execute_batch("RELEASE remove_vanished")?;
             // A downloaded copy goes with its track; nothing would ever play
             // or clean it up otherwise.
+            let mut freed = 0;
             for path in downloads {
-                let _ = std::fs::remove_file(path);
+                let size = std::fs::metadata(&path).map_or(0, |m| m.len());
+                if std::fs::remove_file(&path).is_ok() {
+                    freed += size;
+                }
+            }
+            if freed > 0 {
+                crate::helpers::cache_shrank(freed);
             }
             Ok(n)
         }
