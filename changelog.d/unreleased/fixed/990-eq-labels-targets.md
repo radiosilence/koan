@@ -1,0 +1,1 @@
+- **EQ names and targets.** Preset and device names keep their case in pickers, roles read Correction, Correction + Tuning and Tuning, and Made against lists each target once, under Over-ear, In-ear and Added, so a choice there sticks.
