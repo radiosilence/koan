@@ -937,7 +937,15 @@ extension View {
     /// A text field: the theme's type on a `surface` field, square, no bezel.
     /// The platform's field otherwise.
     func koanField() -> some View {
-        modifier(KoanFieldRole())
+        modifier(KoanFieldRole(shown: nil))
+    }
+
+    /// `koanField()` for a field a television shows, given what it holds and
+    /// says when empty. tvOS draws its text fields as rounded platters that
+    /// no style removes, so there the theme draws the box and its text itself
+    /// over the field, which stays to take focus and open the keyboard.
+    func koanField(_ value: String, prompt: String, secure: Bool = false) -> some View {
+        modifier(KoanFieldRole(shown: KoanFieldShown(value: value, prompt: prompt, secure: secure)))
     }
 
     /// A pop-up picker, menu or stepper: the system control, in `ink` and the
@@ -2198,7 +2206,14 @@ private struct KoanListRole: ViewModifier {
     }
 }
 
+struct KoanFieldShown {
+    let value: String
+    let prompt: String
+    let secure: Bool
+}
+
 private struct KoanFieldRole: ViewModifier {
+    let shown: KoanFieldShown?
     #if os(tvOS)
     /// A plain field draws no focus of its own on a television; the ring is
     /// all that says which field the remote is on.
@@ -2207,20 +2222,44 @@ private struct KoanFieldRole: ViewModifier {
 
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
-            content
-                .textFieldStyle(.plain)
-                .font(.koan(.control))
-                .foregroundStyle(Color.koanInk)
-                .padding(.horizontal, KoanTheme.Space.m)
-                .padding(.vertical, KoanTheme.Space.s)
-                .background(Color.koanSurface)
-                #if os(tvOS)
-                .focused($focused)
-                .koanFocusRing(focused)
-                #endif
+            #if os(tvOS)
+            if let shown {
+                // Faint rather than hidden: UIKit's focus passes over a view
+                // all but transparent. Without the system's focus effect,
+                // whose highlight is drawn outside the field and out of reach
+                // of the opacity.
+                box(content.focused($focused).focusEffectDisabled().opacity(0.02).overlay(alignment: .leading) {
+                    Text(Self.text(shown))
+                        .foregroundStyle(shown.value.isEmpty ? Color.koanMuted : Color.koanInk)
+                        .lineLimit(1)
+                        .allowsHitTesting(false)
+                })
+            } else {
+                box(content.textFieldStyle(.plain).focused($focused))
+            }
+            #else
+            box(content.textFieldStyle(.plain))
+            #endif
         } else {
             content
         }
+    }
+
+    private func box(_ field: some View) -> some View {
+        field
+            .font(.koan(.control))
+            .foregroundStyle(Color.koanInk)
+            .padding(.horizontal, KoanTheme.Space.m)
+            .padding(.vertical, KoanTheme.Space.s)
+            .background(Color.koanSurface)
+            #if os(tvOS)
+            .koanFocusRing(focused)
+            #endif
+    }
+
+    private static func text(_ shown: KoanFieldShown) -> String {
+        if shown.value.isEmpty { return shown.prompt }
+        return shown.secure ? String(repeating: "•", count: shown.value.count) : shown.value
     }
 }
 

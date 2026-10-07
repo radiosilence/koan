@@ -164,7 +164,7 @@ struct SignInPage: View {
                 .frame(width: 900)
                 .onSubmit(start)
                 .disabled(connecting)
-                .koanField()
+                .koanField(server, prompt: "https://music.example.com")
             if connecting {
                 ProgressView()
                     .frame(width: 240)
