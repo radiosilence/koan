@@ -13,8 +13,9 @@
 //! A peer that proves it is one of this account's devices, or one shared with
 //! it, is trusted as that rather than by the connection it came over: the
 //! listener's `Hello` carries a nonce, and the two ends sign each other's
-//! (`remote::proof`). After that every command is signed. A peer that proves
-//! nothing is a stranger or, under Full control, a nearby device, as before.
+//! (`remote::proof`). After that every command is signed, and every report
+//! back when both ends know to. A peer that proves nothing is a stranger or,
+//! under Full control, a nearby device, as before.
 
 use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
@@ -63,6 +64,14 @@ enum ProofFrame {
         sig: String,
         command: String,
     },
+    /// A report from a listener that signs them, as JSON, signed for this
+    /// session.
+    #[serde(rename = "nearbySignedReport")]
+    SignedReport {
+        seq: u64,
+        sig: String,
+        report: String,
+    },
 }
 
 fn frame(f: &ProofFrame) -> Option<String> {
@@ -75,9 +84,209 @@ struct Conn {
     waker: Arc<Waker>,
     /// Who the listener proved to be, if it proved anything.
     proven: Option<proof::Peer>,
+    /// Where it was reached.
+    addr: String,
+    /// When it said who it is, in Unix seconds.
+    since: i64,
 }
 
 static CONNS: Mutex<Option<HashMap<String, Conn>>> = Mutex::new(None);
+
+/// A connection to this device or from it, as Settings lists it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Session {
+    /// What `end` takes. Only a connection to this device has one: one this
+    /// device made is its own to keep.
+    pub key: Option<u64>,
+    /// The other device dialled this one, and can control it.
+    pub inbound: bool,
+    /// Its device id: as its proof or its `Hello` gave it. `None` from a
+    /// dialler that has not said.
+    pub id: Option<String>,
+    /// Its address: the one it connected from, or the one dialled.
+    pub addr: String,
+    /// Who it proved to be, if it proved anything.
+    pub proven: Option<Peer>,
+    /// Unix seconds.
+    pub since: i64,
+}
+
+/// A connection to this device: what is listed, and what ends it.
+struct Inbound {
+    session: Session,
+    ended: Arc<AtomicBool>,
+    waker: Arc<Waker>,
+}
+
+static INBOUND: Mutex<Vec<Inbound>> = Mutex::new(Vec::new());
+
+/// Every connection on the network, to this device and from it.
+pub fn sessions() -> Vec<Session> {
+    let mut out: Vec<Session> = INBOUND.lock().iter().map(|i| i.session.clone()).collect();
+    if let Some(conns) = CONNS.lock().as_ref() {
+        out.extend(conns.iter().map(|(id, c)| Session {
+            key: None,
+            inbound: false,
+            id: Some(id.clone()),
+            addr: c.addr.clone(),
+            proven: c.proven.clone(),
+            since: c.since,
+        }));
+    }
+    out.sort_by_key(|s| s.since);
+    out
+}
+
+/// A device the person disconnected: by the address it connected from, and
+/// by its id once it has given one.
+struct Held {
+    addr: String,
+    id: Option<String>,
+    /// It proved it is the device `id` names.
+    proven: bool,
+}
+
+/// Devices disconnected from Settings, held off until the person reaches
+/// for one again (`release`) or the app restarts. In memory only: refusing
+/// for good is `devices.refused`.
+static HELD: Mutex<Vec<Held>> = Mutex::new(Vec::new());
+
+fn held_addr(ip: &std::net::IpAddr) -> bool {
+    let ip = ip.to_canonical().to_string();
+    HELD.lock().iter().any(|h| h.addr == ip)
+}
+
+fn held_id(id: &str) -> bool {
+    HELD.lock().iter().any(|h| h.id.as_deref() == Some(id))
+}
+
+/// Hang up the connection to this device that `key` names, and hold the
+/// device off: every connection from its address or under its id ends, and
+/// it is neither accepted nor dialled again until `release` or a restart.
+pub fn end(key: u64) {
+    let Some(held) = INBOUND
+        .lock()
+        .iter()
+        .find(|i| i.session.key == Some(key))
+        .map(|i| Held {
+            addr: i.session.addr.clone(),
+            id: i.session.id.clone(),
+            proven: i.session.proven.is_some(),
+        })
+    else {
+        return;
+    };
+    for i in INBOUND
+        .lock()
+        .iter()
+        .filter(|i| i.session.addr == held.addr || (held.id.is_some() && i.session.id == held.id))
+    {
+        i.ended.store(true, Ordering::Relaxed);
+        i.waker.wake();
+    }
+    let id = held.id.clone();
+    {
+        // Once per address: a second Disconnect adds nothing, bar an id.
+        let mut all = HELD.lock();
+        match all.iter_mut().find(|h| h.addr == held.addr) {
+            Some(h) if h.id.is_none() => *h = held,
+            Some(_) => {}
+            None => all.push(held),
+        }
+    }
+    if let Some(id) = id
+        && let Some(conn) = CONNS.lock().as_ref().and_then(|c| c.get(&id))
+    {
+        conn.waker.wake();
+    }
+    devices::touch();
+}
+
+/// The devices held off: each address, and the id it proved if it proved one.
+pub fn held() -> Vec<(String, Option<String>)> {
+    HELD.lock()
+        .iter()
+        .map(|h| (h.addr.clone(), h.id.clone().filter(|_| h.proven)))
+        .collect()
+}
+
+/// The person has reached for `id` again, playing on it or picking it: it is
+/// no longer held off, and is dialled at once.
+pub fn release(id: &str) {
+    release_where(|h| h.id.as_deref() == Some(id));
+}
+
+/// Let the device held off at `addr` back in, as Allow in Settings does.
+pub fn release_addr(addr: &str) {
+    release_where(|h| h.addr == addr);
+}
+
+fn release_where(matches: impl Fn(&Held) -> bool) {
+    let released: Vec<Held> = {
+        let mut held = HELD.lock();
+        let (out, kept) = held.drain(..).partition(|h| matches(h));
+        *held = kept;
+        out
+    };
+    if released.is_empty() {
+        return;
+    }
+    for id in released.iter().filter_map(|h| h.id.as_deref()) {
+        redial_device(id, "");
+    }
+    devices::touch();
+}
+
+/// Whether connections from `ip` are refused.
+fn refused(ip: &std::net::IpAddr) -> bool {
+    let ip = ip.to_canonical().to_string();
+    Config::cached().devices.refused.contains(&ip)
+}
+
+/// A connection to this device, listed for as long as it is held.
+struct Listed(u64);
+
+impl Listed {
+    fn new(addr: &std::net::SocketAddr, waker: &Arc<Waker>) -> (Self, Arc<AtomicBool>) {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let key = NEXT.fetch_add(1, Ordering::Relaxed);
+        let ended = Arc::new(AtomicBool::new(false));
+        INBOUND.lock().push(Inbound {
+            session: Session {
+                key: Some(key),
+                inbound: true,
+                id: None,
+                addr: addr.ip().to_canonical().to_string(),
+                proven: None,
+                since: chrono::Utc::now().timestamp(),
+            },
+            ended: ended.clone(),
+            waker: waker.clone(),
+        });
+        devices::touch();
+        (Self(key), ended)
+    }
+
+    /// The dialler has said who it is, and proved it or not.
+    fn said(&self, id: &str, proven: Option<Peer>) {
+        if let Some(i) = INBOUND
+            .lock()
+            .iter_mut()
+            .find(|i| i.session.key == Some(self.0))
+        {
+            i.session.id = Some(id.to_owned());
+            i.session.proven = proven;
+        }
+        devices::touch();
+    }
+}
+
+impl Drop for Listed {
+    fn drop(&mut self) {
+        INBOUND.lock().retain(|i| i.session.key != Some(self.0));
+        devices::touch();
+    }
+}
 
 /// What is running, so a change of settings can stop and start it.
 struct Running {
@@ -560,6 +769,7 @@ pub fn send_acked(id: &str, cmd: LinkCommand, ack: u64) -> bool {
 }
 
 fn send_envelope(id: &str, envelope: Envelope) -> bool {
+    release(id);
     // Asked before the connections are held: the device store is not to be
     // locked under them.
     queue(id, devices::listed_owner(id), envelope)
@@ -638,12 +848,15 @@ fn listen_once(local: &Local, port: u16, stop: &Arc<Stop>) -> Result<(), String>
 
     while !stop.stopped() {
         match listener.accept() {
+            Ok((_, addr)) if refused(&addr.ip()) || held_addr(&addr.ip()) => {
+                log::info!("nearby: {addr} is refused or held off; hung up");
+            }
             Ok((stream, addr)) => {
                 let (local, stop) = (local.clone(), stop.clone());
                 let _ = std::thread::Builder::new()
                     .name("koan-nearby-peer".into())
                     .spawn(move || {
-                        if let Err(e) = serve(stream, &local, &stop) {
+                        if let Err(e) = serve(stream, addr, &local, &stop) {
                             log::info!("nearby: {addr}: {e}");
                         }
                     });
@@ -682,7 +895,12 @@ impl Stop {
 }
 
 /// Serve one device that connected to this one.
-fn serve(stream: TcpStream, local: &Local, stop: &Arc<Stop>) -> Result<(), String> {
+fn serve(
+    stream: TcpStream,
+    addr: std::net::SocketAddr,
+    local: &Local,
+    stop: &Arc<Stop>,
+) -> Result<(), String> {
     // Apple's accept hands back the listener's non-blocking mode, under which
     // a request that arrives a moment after the connection fails the handshake.
     stream.set_nonblocking(false).map_err(|e| e.to_string())?;
@@ -700,6 +918,7 @@ fn serve(stream: TcpStream, local: &Local, stop: &Arc<Stop>) -> Result<(), Strin
     wire::wake_on_engine_change(&waker);
     stop.also_wake(&waker);
     let mut session = Serving {
+        listed: Some(Listed::new(&addr, &waker)),
         local,
         stop,
         greeted: false,
@@ -710,6 +929,7 @@ fn serve(stream: TcpStream, local: &Local, stop: &Arc<Stop>) -> Result<(), Strin
         nonce: proof::nonce(),
         answered: false,
         proven: None,
+        reports: None,
         pending: Vec::new(),
     };
     wire::drive(&mut socket, fd, &waker, &mut session)
@@ -734,8 +954,13 @@ struct Serving<'a> {
     answered: bool,
     /// The dialler, once proven, and the session its commands are signed for.
     proven: Option<(Proven, proof::Session)>,
+    /// The session this end's reports are signed for, once the handshake
+    /// says both ends sign them.
+    reports: Option<proof::Session>,
     /// Proof frames to send.
     pending: Vec<String>,
+    /// This connection as Settings lists it, and the flag that ends it.
+    listed: Option<(Listed, Arc<AtomicBool>)>,
 }
 
 impl Serving<'_> {
@@ -755,9 +980,21 @@ impl Serving<'_> {
                     Some(p) => log::info!("nearby: {id} proved itself: {:?}", p.peer),
                     None => log::info!("nearby: {id} proved nothing; trusted as the network is"),
                 }
+                if let Some((listed, ended)) = &self.listed {
+                    listed.said(&id, proven.as_ref().map(|p| p.peer.clone()));
+                    if held_id(&id) {
+                        ended.store(true, Ordering::Relaxed);
+                    }
+                }
                 self.proven =
                     proven.map(|p| (p, proof::Session::new(me, &id, &listen_nonce, &nonce)));
                 let sig = proof::sign_listen(&id, me, &nonce, &listen_nonce, verified);
+                if sig.is_some() && proof::signs_reports(&listen_nonce, &nonce) {
+                    self.reports = Some(proof::Session::reports(me, &id, &listen_nonce, &nonce));
+                    // Sent again, signed: a state slipped in ahead of the
+                    // handshake would otherwise stand until the next change.
+                    self.sent = None;
+                }
                 self.pending
                     .extend(frame(&ProofFrame::Proof { verified, sig }));
             }
@@ -777,7 +1014,7 @@ impl Serving<'_> {
                 let peer = by.peer.clone();
                 self.run(envelope, &peer);
             }
-            ProofFrame::Proof { .. } => {}
+            ProofFrame::Proof { .. } | ProofFrame::SignedReport { .. } => {}
         }
     }
 
@@ -849,12 +1086,26 @@ impl wire::Session for Serving<'_> {
         if let Some(f) = self.levels.as_mut().and_then(|w| w.take()) {
             out.push(LinkReport::Levels { f });
         }
-        let mut out: Vec<String> = out
-            .iter()
-            .filter_map(|r| serde_json::to_string(r).ok())
-            .collect();
-        out.append(&mut self.pending);
-        out
+        // The proof goes first: the dialler checks what follows against it.
+        let mut texts = std::mem::take(&mut self.pending);
+        for report in out {
+            let Ok(json) = serde_json::to_string(&report) else {
+                continue;
+            };
+            match &mut self.reports {
+                Some(session) => match session.sign(&json) {
+                    Some((seq, sig)) => texts.extend(frame(&ProofFrame::SignedReport {
+                        seq,
+                        sig,
+                        report: json,
+                    })),
+                    // Signed out since: the dialler refuses anything unsigned.
+                    None => log::warn!("nearby: no key to sign a report with; dropped"),
+                },
+                None => texts.push(json),
+            }
+        }
+        texts
     }
 
     fn incoming(&mut self, text: &str) {
@@ -884,6 +1135,10 @@ impl wire::Session for Serving<'_> {
 
     fn done(&self) -> bool {
         self.stop.stopped()
+            || self
+                .listed
+                .as_ref()
+                .is_some_and(|(_, ended)| ended.load(Ordering::Relaxed))
     }
 }
 
@@ -1006,6 +1261,26 @@ fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>, redial: Arc<Atomic
         let addr = at.lock().clone();
         let mut served = false;
         let started = Instant::now();
+        let held = FOUND
+            .lock()
+            .iter()
+            .find(|(k, _)| *k == key)
+            .and_then(|(_, f)| f.id.clone())
+            .is_some_and(|id| held_id(&id));
+        if held {
+            // Until `release` redials it, or the dialer is stopped.
+            let mut fds = [libc::pollfd {
+                fd: stop.waker_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            }];
+            // SAFETY: a live array of the length given.
+            unsafe { libc::poll(fds.as_mut_ptr(), 1, -1) };
+            stop.drain();
+            redial.store(false, Ordering::Relaxed);
+            wait = RETRY_MIN;
+            continue;
+        }
         match connect(&addr) {
             Ok(mut socket) => {
                 let fd = socket.get_ref().as_raw_fd();
@@ -1021,6 +1296,7 @@ fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>, redial: Arc<Atomic
                     duplicate: false,
                     handshake: Handshake::Plain,
                     proven: None,
+                    reports: None,
                     pending: Vec::new(),
                 };
                 let result = wire::drive(&mut socket, fd, &waker, &mut session);
@@ -1131,6 +1407,10 @@ struct Controlling<'a> {
     handshake: Handshake,
     /// Who the listener proved to be, if it proved anything.
     proven: Option<proof::Peer>,
+    /// The listener, and the session its reports are signed for, once it has
+    /// proved itself and the handshake says it signs them: from then on an
+    /// unsigned report is one slipped into the stream.
+    reports: Option<(Proven, proof::Session)>,
     /// Proof frames to send.
     pending: Vec<String>,
 }
@@ -1194,12 +1474,20 @@ impl Controlling<'_> {
             if verified { "took" } else { "did not take" },
             listener_is.as_ref().map(|p| &p.peer)
         );
+        self.reports = listener_is
+            .clone()
+            .filter(|_| proof::signs_reports(listen_nonce, dial_nonce))
+            .map(|p| {
+                let session = proof::Session::reports(listener, me, listen_nonce, dial_nonce);
+                (p, session)
+            });
         self.proven = listener_is.map(|p| p.peer);
         if let Some(id) = &self.id
             && let Some(conn) = CONNS.lock().as_mut().and_then(|c| c.get_mut(id))
         {
             conn.proven = self.proven.clone();
         }
+        devices::touch();
         self.handshake = if verified {
             Handshake::Signed(proof::Session::new(listener, me, listen_nonce, dial_nonce))
         } else {
@@ -1249,6 +1537,53 @@ impl wire::Session for Controlling<'_> {
         if let Ok(ProofFrame::Proof { verified, sig }) = serde_json::from_str(text) {
             return self.answered(verified, sig);
         }
+        if let Some(report) = self.checked(text) {
+            self.report(&report);
+        }
+    }
+
+    fn done(&self) -> bool {
+        self.this_device
+            || self.duplicate
+            || self.stop.stopped()
+            || self.id.as_deref().is_some_and(held_id)
+    }
+}
+
+impl Controlling<'_> {
+    /// The report `text` is or carries, if it is one to read. Once the
+    /// listener signs its reports, only those it signed for this connection,
+    /// in order. Before then, or from a listener this end cannot check, a
+    /// report signed or not is trusted as the network is.
+    fn checked<'t>(&mut self, text: &'t str) -> Option<std::borrow::Cow<'t, str>> {
+        if let Ok(ProofFrame::SignedReport { seq, sig, report }) = serde_json::from_str(text) {
+            if let Some((by, session)) = self.reports.as_mut()
+                && !session.accept(by, seq, &sig, &report)
+            {
+                log::warn!("nearby: a report not signed for this connection; refused");
+                return None;
+            }
+            return Some(report.into());
+        }
+        if self.reports.is_some() {
+            log::warn!("nearby: an unsigned report on a connection that signs them; refused");
+            return None;
+        }
+        Some(text.into())
+    }
+
+    /// The listener's id, if what it reports can be taken as that device's:
+    /// see `proven_as_listed`.
+    fn vouched(&self) -> Option<&str> {
+        let id = self.id.as_deref()?;
+        let vouched = proven_as_listed(devices::listed_owner(id), self.proven.as_ref());
+        if !vouched {
+            log::debug!("nearby: a report from {id}, which did not prove it is; ignored");
+        }
+        vouched.then_some(id)
+    }
+
+    fn report(&mut self, text: &str) {
         match serde_json::from_str::<LinkReport>(text) {
             Ok(LinkReport::Hello(mut hello)) => {
                 if devices::this_id().as_deref() == Some(hello.id.as_str()) {
@@ -1269,6 +1604,8 @@ impl wire::Session for Controlling<'_> {
                         outbox: Vec::new(),
                         waker: self.waker.clone(),
                         proven: None,
+                        addr: self.addr.to_string(),
+                        since: chrono::Utc::now().timestamp(),
                     },
                 );
                 self.id = Some(hello.id.clone());
@@ -1289,32 +1626,27 @@ impl wire::Session for Controlling<'_> {
                 }
                 devices::nearby_hello(hello, self.addr);
             }
+            // From a listed device that did not prove it is that device, the
+            // link's word stands: a Hello stripped of its nonce on the way
+            // would otherwise have this end take anything for that device's.
             Ok(LinkReport::State(state)) => {
-                if let Some(id) = &self.id {
+                if let Some(id) = self.vouched() {
                     devices::nearby_state(id, state);
                 }
             }
             Ok(LinkReport::Levels { f }) => {
-                if let Some(id) = &self.id {
+                if let Some(id) = self.vouched() {
                     crate::remote::levels::remote().received(id, f);
                 }
             }
             Ok(LinkReport::Ack { ack, outcome }) => {
-                let Some(id) = &self.id else { return };
-                if proven_as_listed(devices::listed_owner(id), self.proven.as_ref()) {
+                if let Some(id) = self.vouched() {
                     crate::remote::acks::resolve(ack, id, outcome);
-                } else {
-                    // The link, which the server vouches for, answers instead.
-                    log::warn!("nearby: an answer from {id}, which did not prove it is; ignored");
                 }
             }
             Ok(_) => {}
             Err(e) => log::debug!("nearby: not a report ({e})"),
         }
-    }
-
-    fn done(&self) -> bool {
-        self.this_device || self.duplicate || self.stop.stopped()
     }
 }
 
@@ -2220,7 +2552,9 @@ mod tests {
             nonce: proof::nonce(),
             answered: false,
             proven: None,
+            reports: None,
             pending: Vec::new(),
+            listed: None,
         }
     }
 
@@ -2230,7 +2564,11 @@ mod tests {
 
     /// The dialler `dialer`'s half of the handshake, from this process's key.
     fn auth(s: &mut Serving, dialer: &str) -> (String, proof::Session) {
-        let dial_nonce = proof::nonce().unwrap();
+        auth_with(s, dialer, proof::nonce().unwrap())
+    }
+
+    /// The same, over the nonce `dial_nonce`.
+    fn auth_with(s: &mut Serving, dialer: &str, dial_nonce: String) -> (String, proof::Session) {
         let listen_nonce = s.nonce.clone().unwrap();
         let sig = proof::sign_dial("mac", dialer, &listen_nonce, &dial_nonce).unwrap();
         let session = proof::Session::new("mac", dialer, &listen_nonce, &dial_nonce);
@@ -2308,6 +2646,238 @@ mod tests {
                 (LinkCommand::Next, CommandSource::Account),
             ]
         );
+    }
+
+    #[test]
+    fn a_listener_signs_its_reports_when_both_ends_do() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let r = rig(&[("phone", None), ("mac", None)]);
+        let mut s = serving(&r);
+        wire::Session::outgoing(&mut s);
+        let listen_nonce = s.nonce.clone().unwrap();
+        let (dial_nonce, _) = auth(&mut s, "phone");
+        let out = wire::Session::outgoing(&mut s);
+        let Ok(ProofFrame::Proof { sig, .. }) = serde_json::from_str(&out[0]) else {
+            panic!("the proof goes first: {out:?}");
+        };
+        let mac = proof::verify_listen(
+            "phone",
+            "mac",
+            &dial_nonce,
+            &listen_nonce,
+            true,
+            &sig.unwrap(),
+        )
+        .unwrap();
+        let mut session = proof::Session::reports("mac", "phone", &listen_nonce, &dial_nonce);
+        let reports: Vec<String> = out[1..]
+            .iter()
+            .map(|t| match serde_json::from_str(t) {
+                Ok(ProofFrame::SignedReport { seq, sig, report }) => {
+                    assert!(session.accept(&mac, seq, &sig, &report));
+                    report
+                }
+                _ => panic!("unsigned: {t}"),
+            })
+            .collect();
+        assert!(
+            reports.iter().any(|r| r.contains(r#""type":"state""#)),
+            "the state is sent again, signed: {reports:?}"
+        );
+    }
+
+    #[test]
+    fn a_listener_reports_unsigned_to_an_older_dialler() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let r = rig(&[("phone", None), ("mac", None)]);
+        let mut s = serving(&r);
+        wire::Session::outgoing(&mut s);
+        // An older dialler's nonce carries no mark.
+        auth_with(&mut s, "phone", "b2xkZXI=".into());
+        assert!(answer(&mut s).0);
+        s.sent = None;
+        let out = wire::Session::outgoing(&mut s);
+        assert!(!out.is_empty());
+        assert!(
+            out.iter()
+                .all(|t| serde_json::from_str::<LinkReport>(t).is_ok()),
+            "{out:?}"
+        );
+    }
+
+    fn controlling<'a>(stop: &'a Arc<Stop>) -> Controlling<'a> {
+        Controlling {
+            stop,
+            waker: Waker::new().unwrap(),
+            key: "id:mac",
+            addr: "10.0.0.2:7979",
+            id: None,
+            this_device: false,
+            duplicate: false,
+            handshake: Handshake::Plain,
+            proven: None,
+            reports: None,
+            pending: Vec::new(),
+        }
+    }
+
+    /// The dialler's side: the listener "mac" answers its proof, signed.
+    fn answered(c: &mut Controlling, listen_nonce: &str, dial_nonce: &str) {
+        c.handshake = Handshake::Awaiting {
+            listener: "mac".into(),
+            me: "phone".into(),
+            listen_nonce: listen_nonce.into(),
+            dial_nonce: dial_nonce.into(),
+        };
+        let sig = proof::sign_listen("phone", "mac", dial_nonce, listen_nonce, true);
+        c.answered(true, sig);
+    }
+
+    #[test]
+    fn a_dialler_reads_only_reports_signed_for_its_connection() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _r = rig(&[("phone", None), ("mac", None)]);
+        let stop = Stop::new().unwrap();
+        let mut c = controlling(&stop);
+        let (listen_nonce, dial_nonce) = (proof::nonce().unwrap(), proof::nonce().unwrap());
+        answered(&mut c, &listen_nonce, &dial_nonce);
+        assert_eq!(c.proven, Some(Peer::Own));
+
+        let state = serde_json::to_string(&LinkReport::State(LinkState::default())).unwrap();
+        assert!(c.checked(&state).is_none(), "unsigned");
+        let mut session = proof::Session::reports("mac", "phone", &listen_nonce, &dial_nonce);
+        let (seq, sig) = session.sign(&state).unwrap();
+        let signed = json(&ProofFrame::SignedReport {
+            seq,
+            sig: sig.clone(),
+            report: state.clone(),
+        });
+        assert_eq!(c.checked(&signed).as_deref(), Some(state.as_str()));
+        assert!(c.checked(&signed).is_none(), "replayed");
+        let forged = serde_json::to_string(&LinkReport::Ack {
+            ack: 1,
+            outcome: AckOutcome::Done,
+        })
+        .unwrap();
+        let altered = json(&ProofFrame::SignedReport {
+            seq: seq + 1,
+            sig,
+            report: forged,
+        });
+        assert!(c.checked(&altered).is_none(), "altered");
+        // Signed for another connection.
+        let mut other = proof::Session::reports("mac", "phone", &dial_nonce, &listen_nonce);
+        let (seq, sig) = other.sign(&state).unwrap();
+        let elsewhere = json(&ProofFrame::SignedReport {
+            seq: seq + 5,
+            sig,
+            report: state.clone(),
+        });
+        assert!(c.checked(&elsewhere).is_none(), "another session");
+    }
+
+    /// A Hello stripped of its nonce leaves the listener unproven. For one
+    /// of the account's devices, its nearby reports are then not taken.
+    #[test]
+    fn an_account_device_that_proves_nothing_is_not_mirrored() {
+        let _store = crate::remote::devices::tests::STORE_LOCK.lock();
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _r = rig(&[("phone", None), ("mac", None)]);
+        let id = "unproven-mac";
+        devices::set_account(vec![crate::remote::link::LinkDevice {
+            id: id.into(),
+            name: id.into(),
+            platform: "macos".into(),
+            linked: true,
+            state: None,
+            last_seen: None,
+            wakeable: None,
+            owner: None,
+            acks: false,
+        }]);
+        let stop = Stop::new().unwrap();
+        let mut c = controlling(&stop);
+        let hello = LinkHello {
+            id: id.into(),
+            name: id.into(),
+            platform: "macos".into(),
+            library: None,
+            acks: true,
+            nonce: None,
+        };
+        c.incoming(&serde_json::to_string(&LinkReport::Hello(hello)).unwrap());
+        assert_eq!(c.id.as_deref(), Some(id));
+        let forged = LinkState {
+            playing: true,
+            ..Default::default()
+        };
+        c.incoming(&serde_json::to_string(&LinkReport::State(forged)).unwrap());
+        assert_eq!(devices::last_report(id), None);
+        CONNS.lock().as_mut().unwrap().remove(id);
+        devices::set_account(Vec::new());
+    }
+
+    #[test]
+    fn a_dialler_reads_an_older_listeners_reports_unsigned() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _r = rig(&[("phone", None), ("mac", None)]);
+        let stop = Stop::new().unwrap();
+        let mut c = controlling(&stop);
+        answered(&mut c, "b2xkZXI=", &proof::nonce().unwrap());
+        assert_eq!(c.proven, Some(Peer::Own));
+        let state = serde_json::to_string(&LinkReport::State(LinkState::default())).unwrap();
+        assert_eq!(c.checked(&state).as_deref(), Some(state.as_str()));
+    }
+
+    #[test]
+    fn a_disconnected_device_is_held_off_until_reached_for() {
+        let _store = crate::remote::devices::tests::STORE_LOCK.lock();
+        let addr: std::net::SocketAddr = "[::ffff:192.0.2.77]:50000".parse().unwrap();
+        let waker = Waker::new().unwrap();
+        let (listed, ended) = Listed::new(&addr, &waker);
+        listed.said("held-phone", None);
+        let key = listed.0;
+        let session = sessions().into_iter().find(|s| s.key == Some(key)).unwrap();
+        assert_eq!(session.addr, "192.0.2.77");
+        assert!(session.inbound);
+
+        end(key);
+        assert!(ended.load(Ordering::Relaxed));
+        assert!(held_addr(&addr.ip()));
+        assert!(held_id("held-phone"));
+        drop(listed);
+        assert!(sessions().iter().all(|s| s.key != Some(key)));
+
+        // Its id was only its word: listed by address.
+        assert!(held().contains(&("192.0.2.77".into(), None)));
+        release("held-phone");
+        assert!(!held_id("held-phone"));
+        assert!(!held_addr(&addr.ip()));
+
+        // Held before it said who it is: only Allow, by address, lets it in.
+        let (listed, _) = Listed::new(&addr, &waker);
+        end(listed.0);
+        drop(listed);
+        release("held-phone");
+        assert!(held_addr(&addr.ip()));
+        // Disconnected twice: held once.
+        let (listed, _) = Listed::new(&addr, &waker);
+        end(listed.0);
+        end(listed.0);
+        drop(listed);
+        assert_eq!(held().iter().filter(|(a, _)| a == "192.0.2.77").count(), 1);
+        release_addr("192.0.2.77");
+        assert!(!held_addr(&addr.ip()));
     }
 
     /// A connection is proven once. A second `nearbyAuth`, from a device
@@ -2458,6 +3028,8 @@ mod proof_tests {
                 outbox: Vec::new(),
                 waker,
                 proven: None,
+                addr: String::new(),
+                since: 0,
             },
         );
         let outbox = || CONNS.lock().as_ref().unwrap()[id].outbox.len();

@@ -1420,6 +1420,8 @@ private struct DevicesSettings: View {
             background
             #endif
 
+            connected
+
             Section {
                 ForEach(model.settings.devicesAddresses, id: \.self) { addr in
                     HStack {
@@ -1495,6 +1497,84 @@ private struct DevicesSettings: View {
             }
         }
         .koanSheet()
+    }
+
+    /// Who is connected to this device, and whom it is connected to, each
+    /// with a way to end it where this device can: a connection on the
+    /// network is hung up here, and a stranger's address can be refused.
+    @ViewBuilder private var connected: some View {
+        let connections = mirror.connection?.connections ?? []
+        let refused = model.settings.devicesRefused
+        let held = mirror.connection?.held ?? []
+        if !connections.isEmpty || !refused.isEmpty || !held.isEmpty {
+            Section {
+                // By place: two of the account's devices can share a name and
+                // have nothing else to tell them apart.
+                ForEach(Array(connections.enumerated()), id: \.offset) { _, c in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(c.name)
+                            Text(Self.detail(c)).koanText(.fine, .muted)
+                        }
+                        Spacer()
+                        if c.key != nil {
+                            if !c.own, c.owner == nil, c.addr != nil {
+                                Button("Refuse", role: .destructive) { model.endConnection(c, refuse: true) }
+                                    .koanButton(.bordered, system: .borderless)
+                            }
+                            Button("Disconnect") { model.endConnection(c, refuse: false) }
+                                .koanButton(.bordered, system: .borderless)
+                        }
+                    }
+                }
+                ForEach(held, id: \.addr) { h in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            if let name = h.name {
+                                Text(name)
+                            } else {
+                                Text(h.addr).monospaced()
+                            }
+                            Text("Disconnected until allowed back").koanText(.fine, .muted)
+                        }
+                        Spacer()
+                        Button("Allow") { model.allowHeld(h) }
+                            .koanButton(.bordered, system: .borderless)
+                    }
+                }
+                ForEach(refused, id: \.self) { addr in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(addr).monospaced()
+                            Text("Refused").koanText(.fine, .muted)
+                        }
+                        Spacer()
+                        Button("Allow") { model.edit { $0.devicesRefused.removeAll { $0 == addr } } }
+                            .koanButton(.bordered, system: .borderless)
+                    }
+                }
+            } header: {
+                KoanSectionHeader("Connected now")
+            } footer: {
+                Text("A device that can control this one uses its battery while it does. Disconnect hangs up a device on this network and keeps it from connecting again, and this device from connecting to it, until you allow it back here, play on it, pick it in Play on, or kōan restarts. Refuse keeps a device that has not proved it is yours out for good, by its address. Your account's devices reach this one through the server for as long as they are signed in; revoke one under Server.")
+                    .koanText(.fine, .muted)
+            }
+        }
+    }
+
+    /// What a connection is, and since when.
+    private static func detail(_ c: ConnectedInfo) -> String {
+        let who = if c.own { "your device" } else if let owner = c.owner { "shared by \(owner)" } else { "not proved" }
+        let what = switch (c.viaServer, c.inbound) {
+        case (true, false): "your server"
+        case (true, true): "your device, through the server"
+        case (false, true): "can control this device on this network, \(who)"
+        case (false, false): "this device is connected to it on this network, \(who)"
+        }
+        guard let since = c.since else { return what.prefix(1).uppercased() + what.dropFirst() }
+        let date = Date(timeIntervalSince1970: TimeInterval(since))
+        let at = date.formatted(date: Calendar.current.isDateInToday(date) ? .omitted : .abbreviated, time: .shortened)
+        return what.prefix(1).uppercased() + what.dropFirst() + " · since \(at)"
     }
 
     /// The server's accounts matching what is typed, not shared with yet.
