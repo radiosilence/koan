@@ -58,6 +58,10 @@ final class TrackTableRow: NSTableCellView, TableRow {
         let showsAlbum: Bool
         var columns = TrackColumns.all
         var leadWidth: CGFloat = 22
+        /// No lead column: the play mark, a tick or the bars sit on the
+        /// sleeve, which then starts at the row's edge. For tracks listed
+        /// among tiles, which line up with them and have no number to show.
+        var leadOnSleeve = false
         /// Whether the page is picking, and what — the lead is a tick then.
         var picking = false
         var picked: Set<Playable.Key> = []
@@ -109,6 +113,8 @@ final class TrackTableRow: NSTableCellView, TableRow {
     private let mark = CALayer()
     private var bars: PlayingBarsView?
     private let sleeve = CALayer()
+    /// Dims the sleeve under the mark or the bars when they sit on it.
+    private let scrim = CALayer()
     /// What a sleeve shows until, or instead of, its art: the ensō on a grey
     /// ground, as `AlbumArtwork` draws it, or a note for a track on no record.
     private let placeholder = CAShapeLayer()
@@ -135,7 +141,12 @@ final class TrackTableRow: NSTableCellView, TableRow {
     init() {
         super.init(frame: .zero)
         wantsLayer = true
-        for layer in [mark, sleeve, availability, heart, note] { self.layer?.addSublayer(layer) }
+        for layer in [mark, sleeve, scrim, availability, heart, note] { self.layer?.addSublayer(layer) }
+        scrim.zPosition = 1
+        mark.zPosition = 2
+        scrim.cornerRadius = KoanTheme.radius(3)
+        scrim.backgroundColor = NSColor.black.withAlphaComponent(0.45).cgColor
+        scrim.isHidden = true
         sleeve.cornerRadius = KoanTheme.radius(3)
         sleeve.masksToBounds = true
         sleeve.contentsGravity = .resizeAspectFill
@@ -175,6 +186,7 @@ final class TrackTableRow: NSTableCellView, TableRow {
         let isHeading = item.isHeading
         for view in [number, title, artist, dot, album, quality, duration] as [NSView] { view.isHidden = isHeading }
         for layer in [mark, sleeve, availability, heart, note] { layer.isHidden = isHeading }
+        if isHeading { scrim.isHidden = true }
         heading.isHidden = !isHeading
         if case .heading(let text) = item.kind {
             heading.stringValue = KoanTheme.label(text)
@@ -238,7 +250,8 @@ final class TrackTableRow: NSTableCellView, TableRow {
         // column does not twitch.
         let ticked = context.picked.contains(Playable.track(track).key)
         let showsMark = hovered != nil || context.picking
-        number.isHidden = showsMark || current
+        let onSleeve = context.leadOnSleeve && context.showsAlbum
+        number.isHidden = showsMark || current || onSleeve
         number.textColor = selected ? onAccent : .koanTertiaryLabel
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -246,12 +259,13 @@ final class TrackTableRow: NSTableCellView, TableRow {
         if context.picking {
             markImage = ticked
                 ? Symbol.image("checkmark.circle.fill", size: 13, colours: [.white, context.tint], appearance: appearance)
-                : Symbol.image("circle", size: 13, colours: [.koanTertiaryLabel], appearance: appearance)
+                : Symbol.image("circle", size: 13, colours: [onSleeve ? .white : .koanTertiaryLabel], appearance: appearance)
         } else if showsMark {
-            markImage = Symbol.image("play.circle.fill", size: 15, colours: [selected ? .white : context.tint], appearance: appearance)
+            markImage = Symbol.image("play.circle.fill", size: 15, colours: [selected || onSleeve ? .white : context.tint], appearance: appearance)
         }
+        scrim.isHidden = !onSleeve || !(showsMark || current)
         CATransaction.commit()
-        showBars(current && !showsMark, live: context.barsLive && context.isPlaying, context: context, selected: selected)
+        showBars(current && !showsMark, live: context.barsLive && context.isPlaying, context: context, selected: selected || onSleeve)
 
         title.textColor = current && !selected ? context.tint : (selected ? onAccent : .koanLabel)
         let artistLinked = hovered == .artist && track.artistId != nil
@@ -381,21 +395,27 @@ final class TrackTableRow: NSTableCellView, TableRow {
             return
         }
         var x: CGFloat = 0
+        let side = RowMetrics.sleeve
+        let onSleeve = context.leadOnSleeve && context.showsAlbum
 
-        let lead = CGRect(x: x, y: 0, width: context.leadWidth, height: height)
+        let lead = onSleeve
+            ? CGRect(x: 0, y: (height - side) / 2, width: side, height: side)
+            : CGRect(x: x, y: 0, width: context.leadWidth, height: height)
         let numberHeight = lineHeight(Self.numberFont)
         number.frame = CGRect(x: lead.minX, y: (height - numberHeight) / 2, width: lead.width, height: numberHeight)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        mark.frame = Symbol.frame(of: markImage, centredIn: lead.offsetBy(dx: 4, dy: 0))
+        mark.frame = Symbol.frame(of: markImage, centredIn: onSleeve ? lead : lead.offsetBy(dx: 4, dy: 0))
+        scrim.frame = lead
         if let bars {
             let size = bars.intrinsicContentSize
-            bars.frame = CGRect(x: lead.maxX - size.width, y: (height - size.height) / 2, width: size.width, height: size.height)
+            bars.frame = onSleeve
+                ? CGRect(x: lead.midX - size.width / 2, y: lead.midY - size.height / 2, width: size.width, height: size.height)
+                : CGRect(x: lead.maxX - size.width, y: (height - size.height) / 2, width: size.width, height: size.height)
         }
-        x = lead.maxX + Self.spacing
+        x = onSleeve ? 0 : lead.maxX + Self.spacing
 
         if context.showsAlbum {
-            let side = RowMetrics.sleeve
             sleeve.frame = CGRect(x: x, y: (height - side) / 2, width: side, height: side)
             let inset = side * 0.26
             placeholder.frame = sleeve.bounds
@@ -453,7 +473,9 @@ final class TrackTableRow: NSTableCellView, TableRow {
 
     private func part(at point: NSPoint) -> Part {
         if item?.isHeading != false { return .elsewhere }
-        if point.x < (context?.leadWidth ?? 22) + 4 { return .lead }
+        if let context, context.leadOnSleeve, context.showsAlbum {
+            if point.x < RowMetrics.sleeve + 4 { return .lead }
+        } else if point.x < (context?.leadWidth ?? 22) + 4 { return .lead }
         if artist.frame.contains(point) { return .artist }
         if context?.showsAlbum == true, album.frame.contains(point) { return .album }
         if context?.columns.contains(.heart) == true, heart.frame.insetBy(dx: -3, dy: -3).contains(point) { return .heart }
