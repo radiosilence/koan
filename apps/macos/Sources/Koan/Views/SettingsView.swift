@@ -38,9 +38,7 @@ struct SettingsView: View {
                 // Pushed here rather than by a route, so it makes room for the
                 // theme's tab bar itself, as routes do.
                 .koanHidesSystemTabBar()
-                #if os(tvOS)
                 .roomBackground()
-                #endif
         } label: {
             #if os(tvOS)
             // The symbols are of different widths; at television size a
@@ -144,11 +142,10 @@ struct SettingsView: View {
                     pane("Appearance", "paintpalette") {
                         AppearanceSettings()
                     }
-                    Section {} footer: {
-                        Text(AppVersion.text)
-                            .koanText(.fine, .muted)
-                            .frame(maxWidth: .infinity)
-                    }
+                    Text(AppVersion.text)
+                        .koanText(.fine, .muted)
+                        .frame(maxWidth: .infinity)
+                        .washedRow()
                 }
                 .koanList()
                 .navigationTitle(KoanTheme.label("Settings"))
