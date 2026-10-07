@@ -98,6 +98,7 @@ struct SplitFlow: View {
             }
             .task(id: "\(file ?? "")\u{0}\(target ?? "")") { await refresh() }
         }
+        .koanSheetStack()
         #if os(macOS)
         .frame(minWidth: 520, minHeight: 600)
         #endif

@@ -406,8 +406,9 @@ macos-test: macos-ffi
 ios_deployment_target := "26.0"
 tv_deployment_target := "26.0"
 
-# Styling that bypasses the kōan theme: a raw font, colour, label style or
-# corner in the apps' views rather than a role from `Support/KoanTheme.swift`.
+# Styling that bypasses the kōan theme: a raw font, colour, label style,
+# corner or page ground in the apps' views rather than a role from
+# `Support/KoanTheme.swift`.
 # The theme is the default, so each of these is a place it does not reach.
 # A line that must stay raw says why with `// theme: raw` and is skipped.
 theme-leaks:
@@ -431,7 +432,7 @@ theme-leaks:
     found=0
     for pattern in "${patterns[@]}"; do
         hits=$(grep -rnE "$pattern" apps/macos/Sources --include='*.swift' \
-            | grep -v -e 'Support/KoanTheme.swift' -e '// theme: raw' -e 'role(\.' -e 'KoanTheme\.' -e 'Support/Graphics.swift' -e '\.pointSize' -e 'koanBad(' -e 'koanSelection(')
+            | grep -v -e 'Support/KoanTheme.swift' -e '// theme: raw' -e 'role(\.' -e 'NSFont.role(' -e 'KoanTheme\.' -e 'Support/Graphics.swift' -e '\.pointSize' -e 'koanBad(' -e 'koanSelection(')
         if [ -n "$hits" ]; then
             found=1
             echo "$hits"
@@ -444,6 +445,48 @@ theme-leaks:
         found=1
         echo "$hits"
     fi
+    # The wash is the only ground; pages are transparent over it. Nothing paints
+    # a page black or in the system's background colours.
+    hits=$(grep -rnE '(\.background|containerBackground)\(Color\.black[^.]|Color\.black\.ignoresSafeArea|(Color|UIColor|NSColor)\(?\.?(systemBackground|secondarySystemBackground|systemGroupedBackground|windowBackgroundColor)|\.background\(\.background\)' \
+        apps/macos/Sources --include='*.swift' | grep -v -e 'Support/KoanTheme.swift' -e '// theme: raw')
+    if [ -n "$hits" ]; then
+        found=1
+        echo "$hits"
+    fi
+    # A List or Form paints an opaque ground unless it gives it up through the
+    # theme's role; a stack paints one behind every page it pushes unless the
+    # page hands over its own through `koanPushedPage()`. Each check reads the
+    # expression a match opens, by indentation: a list's modifier chain, or a
+    # push's destination up to the brace that closes it.
+    chain='
+        function indent(s) { match(s, /^ */); return RLENGTH }
+        { line[NR] = $0 }
+        END {
+            for (i = 1; i <= NR; i++) {
+                if (line[i] !~ start || line[i] ~ /^ *\/\// || line[i] ~ /\/\/ theme: raw/) continue
+                base = indent(line[i]); ok = line[i] ~ role
+                for (j = i + 1; j <= NR && !ok; j++) {
+                    if (line[j] ~ /^ *$/) continue
+                    n = indent(line[j])
+                    if (n < base) break
+                    if (destination && n == base && line[j] ~ /^ *\}/) break
+                    if (!destination && n == base && line[j] !~ /^ *(\.|#|\}|\)|\/\/)/) break
+                    ok = line[j] ~ role
+                }
+                if (!ok) printf "%s:%d:%s\n", FILENAME, i, line[i]
+            }
+        }'
+    while IFS= read -r file; do
+        hits=$(awk -v start='(^|[^A-Za-z.])(List|Form) *[({]' \
+                -v role='washedGround|koanList|koanForm|koanSidebar|scrollContentBackground' \
+                -v destination=0 "$chain" "$file"
+            awk -v start='[.]navigationDestination[(]|NavigationLink *[{]' \
+                -v role='koanPushedPage' -v destination=1 "$chain" "$file")
+        if [ -n "$hits" ]; then
+            found=1
+            echo "$hits"
+        fi
+    done < <(find apps/macos/Sources -name '*.swift' ! -path '*/KoanFFI/*' ! -name 'KoanTheme.swift')
     [ "$found" = 0 ] && echo "no theme leaks" || { echo "theme leaks above"; exit 1; }
 
 # Type-check the shared SwiftUI sources against the iOS SDK.

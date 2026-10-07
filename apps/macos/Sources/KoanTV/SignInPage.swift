@@ -82,8 +82,7 @@ struct SignInPage: View {
         // television is a narrow card, too small for a form read from across
         // the room. Menu closes it.
         .fullScreenCover(isPresented: $manual, onDismiss: recheck) {
-            NavigationStack { SettingsView() }
-                .background(Color.black.ignoresSafeArea())
+            NavigationStack { SettingsView().roomBackground() }
         }
         // The form's sign-in runs as an activity, and can finish after the
         // cover has been closed.

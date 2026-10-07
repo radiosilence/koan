@@ -39,11 +39,7 @@ struct SettingsView: View {
         NavigationLink {
             content()
                 .navigationTitle(KoanTheme.label(title))
-                // Pushed here rather than by a route, so it makes room for the
-                // theme's tab bar and draws its way back itself, as routes do.
-                .koanBackButton()
-                .koanHidesSystemTabBar()
-                .roomBackground()
+                .koanPushedPage()
         } label: {
             #if os(tvOS)
             if KoanTheme.isOn {
@@ -949,7 +945,7 @@ struct AutoEqSearch: View {
                     List(dsp.autoEqMakers, id: \.name) { maker in
                         NavigationLink {
                             AutoEqModels(dsp: dsp, maker: maker.name) { dismiss() }
-                                .koanBackButton()
+                                .koanPushedPage()
                         } label: {
                             LabeledContent {
                                 Text("\(maker.results)")
@@ -957,7 +953,9 @@ struct AutoEqSearch: View {
                                 Text(maker.name).textCase(nil)
                             }
                         }
+                        .washedRow()
                     }
+                    .washedGround()
                     .task { await dsp.loadAutoEqMakers() }
                 } else {
                     List(dsp.autoEqResults, id: \.profileName) { entry in
@@ -965,7 +963,9 @@ struct AutoEqSearch: View {
                             dsp.installAutoEq(entry)
                             dismiss()
                         }
+                        .washedRow()
                     }
+                    .washedGround()
                     .overlay {
                         if dsp.autoEqResults.isEmpty {
                             ContentUnavailableView {
@@ -997,6 +997,7 @@ struct AutoEqSearch: View {
                 await dsp.searchAutoEq(query)
             }
         }
+        .koanSheetStack()
         #if os(macOS)
         .frame(minWidth: 420, minHeight: 460)
         #endif
@@ -1038,7 +1039,9 @@ private struct AutoEqModels: View {
                 dsp.installAutoEq(entry)
                 done()
             }
+            .washedRow()
         }
+        .washedGround()
         .navigationTitle(maker)
         .task { models = await dsp.autoEqModels(maker) }
     }

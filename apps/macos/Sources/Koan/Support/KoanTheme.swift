@@ -1488,6 +1488,7 @@ struct KoanListPicker<Value: Hashable, Row: View>: View {
         if KoanTheme.isOn {
             NavigationLink {
                 KoanListPickerPage(title: title, selection: $selection, sections: sections, row: row)
+                    .koanPushedPage()
             } label: {
                 LabeledContent(title) {
                     Text(name(selection))
@@ -1559,8 +1560,6 @@ private struct KoanListPickerPage<Value: Hashable, Row: View>: View {
             }
         }
         .navigationTitle(KoanTheme.label(title))
-        .koanBackButton()
-        .koanHidesSystemTabBar()
     }
 }
 #endif
@@ -2392,6 +2391,57 @@ extension View {
     /// misses it stops scrolling with its last rows under the bar.
     func koanHidesSystemTabBar() -> some View {
         modifier(KoanHidesSystemTabBar())
+    }
+
+    /// A page pushed onto a navigation stack: its way back, room for the
+    /// theme's tab bar, and its ground. A stack paints an opaque ground behind
+    /// every page it pushes, black in dark mode, so each page hands over its
+    /// own: the wash in a tab, the sheet's `bg` in a sheet's stack (see
+    /// `koanSheetStack()`). Every push takes this; `just theme-leaks` flags
+    /// one that does not.
+    func koanPushedPage() -> some View {
+        modifier(KoanPushedPage())
+    }
+
+    /// A navigation stack presented as a sheet: what it pushes keeps the
+    /// sheet's ground rather than taking the wash.
+    func koanSheetStack() -> some View {
+        environment(\.koanPageGround, .sheet)
+    }
+}
+
+enum KoanPageGround { case wash, sheet }
+
+extension EnvironmentValues {
+    @Entry var koanPageGround = KoanPageGround.wash
+}
+
+private struct KoanPushedPage: ViewModifier {
+    @Environment(\.koanPageGround) private var ground
+
+    func body(content: Content) -> some View {
+        #if os(macOS)
+        // A Mac's stacks are in sheets, which draw their ground beneath them.
+        content
+        #else
+        let page = content
+            .koanBackButton()
+            .koanHidesSystemTabBar()
+        switch ground {
+        case .wash:
+            page.roomBackground()
+        case .sheet:
+            #if os(iOS)
+            if KoanTheme.isOn {
+                page.containerBackground(Color.koanBg, for: .navigation)
+            } else {
+                page
+            }
+            #else
+            page
+            #endif
+        }
+        #endif
     }
 }
 
