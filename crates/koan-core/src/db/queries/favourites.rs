@@ -8,6 +8,60 @@ use super::auth::resolve_user;
 // through merges, and a rebuilt index re-reads its sources into the rows it
 // has, so they outlive that too.
 
+/// A favourite changed on this device, waiting to be confirmed by a sync:
+/// `kind` is `track`, `album` or `artist`, and `remote_id` the server's id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FavouriteChange {
+    pub id: i64,
+    pub kind: String,
+    pub remote_id: String,
+    pub star: bool,
+}
+
+/// Record a favourite changed here, replacing any earlier change to the same
+/// item: only the latest is worth sending.
+pub fn queue_favourite_change(
+    conn: &Connection,
+    kind: &str,
+    remote_id: &str,
+    star: bool,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO favourite_outbox (kind, remote_id, star) VALUES (?1, ?2, ?3)
+         ON CONFLICT(kind, remote_id) DO UPDATE SET star = excluded.star",
+        params![kind, remote_id, star],
+    )?;
+    Ok(())
+}
+
+/// Every favourite change the server is not yet known to have, oldest first.
+pub fn favourite_changes(conn: &Connection) -> rusqlite::Result<Vec<FavouriteChange>> {
+    let mut stmt =
+        conn.prepare_cached("SELECT id, kind, remote_id, star FROM favourite_outbox ORDER BY id")?;
+    let rows = stmt.query_map([], |row| {
+        Ok(FavouriteChange {
+            id: row.get(0)?,
+            kind: row.get(1)?,
+            remote_id: row.get(2)?,
+            star: row.get(3)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// The server has `change`. A newer change to the same item, made since it
+/// was read, stays.
+pub fn forget_favourite_change(
+    conn: &Connection,
+    change: &FavouriteChange,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "DELETE FROM favourite_outbox WHERE id = ?1 AND star = ?2",
+        params![change.id, change.star],
+    )?;
+    Ok(())
+}
+
 /// `user`'s favourite tracks.
 pub fn load_favourites(conn: &Connection, user: i64) -> rusqlite::Result<HashSet<i64>> {
     let user = resolve_user(conn, user)?;

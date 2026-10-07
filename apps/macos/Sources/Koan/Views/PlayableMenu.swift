@@ -403,11 +403,27 @@ struct FavouriteHeaderButton: View {
 
     var body: some View {
         Button { library.toggleFavourite(playable) } label: {
-            Label(isOn ? "Favourited" : "Favourite", systemImage: isOn ? Icon.favourited : Icon.favourite)
+            label
                 .foregroundStyle(isOn ? KoanTheme.style(.bad, system: .red) : KoanTheme.style(.ink, system: .primary))
         }
         .help(isOn ? "Remove from favourites" : "Add to favourites")
         .koanButtons(.compact)
+    }
+
+    /// One control in the theme: the heart and its word at the theme's
+    /// smallest gap, where a `Label` sets them a column apart. The 44-point
+    /// target is the button's, around both.
+    @ViewBuilder private var label: some View {
+        let title = isOn ? "Favourited" : "Favourite"
+        let icon = isOn ? Icon.favourited : Icon.favourite
+        if KoanTheme.isOn {
+            HStack(spacing: KoanTheme.Space.xs) {
+                Image(systemName: icon).accessibilityHidden(true)
+                Text(title)
+            }
+        } else {
+            Label(title, systemImage: icon)
+        }
     }
 }
 

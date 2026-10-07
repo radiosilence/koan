@@ -827,24 +827,46 @@ pub fn sync_favourite_to_remote(db: &Database, track_id: i64, star: bool) {
         log::warn!("not syncing favourite: track {track_id} has no remote id");
         return;
     };
-    let Some(client) = subsonic_client(&cfg) else {
+    push_favourite(db, &cfg, FavouriteKind::Track, remote_id, star);
+}
+
+/// Send a favourite changed here to the server now, and keep it in the
+/// outbox until a sync has seen the server agree. The push is answered in a
+/// moment; a sync already reading the server's stars is not, and would
+/// otherwise put back what was just taken off.
+fn push_favourite(db: &Database, cfg: &Config, kind: FavouriteKind, remote_id: String, star: bool) {
+    if let Err(e) = queries::queue_favourite_change(&db.conn, kind.as_str(), &remote_id, star) {
+        log::warn!("could not record a favourite change: {e}");
+    }
+    let Some(client) = subsonic_client(cfg) else {
         log::warn!("not syncing favourite: no usable server credentials");
         return;
     };
     std::thread::Builder::new()
         .name("koan-fav-sync".into())
-        .spawn(move || {
-            let result = if star {
-                client.star(&remote_id)
-            } else {
-                client.unstar(&remote_id)
-            };
-            match result {
-                Ok(()) => log::info!("synced favourite to remote: {remote_id} = {star}"),
+        .spawn(
+            move || match send_favourite(&client, kind, &remote_id, star) {
+                Ok(()) => log::info!("synced favourite to remote: {kind:?} {remote_id} = {star}"),
                 Err(e) => log::warn!("failed to sync favourite to remote: {e}"),
-            }
-        })
+            },
+        )
         .ok();
+}
+
+fn send_favourite(
+    client: &SubsonicClient,
+    kind: FavouriteKind,
+    remote_id: &str,
+    star: bool,
+) -> Result<(), crate::remote::client::SubsonicError> {
+    match (kind, star) {
+        (FavouriteKind::Track, true) => client.star(remote_id),
+        (FavouriteKind::Track, false) => client.unstar(remote_id),
+        (FavouriteKind::Album, true) => client.star_album(remote_id),
+        (FavouriteKind::Album, false) => client.unstar_album(remote_id),
+        (FavouriteKind::Artist, true) => client.star_artist(remote_id),
+        (FavouriteKind::Artist, false) => client.unstar_artist(remote_id),
+    }
 }
 
 /// Everything a sync is.
@@ -937,17 +959,39 @@ pub struct FavouriteSync {
 
 /// Reconcile favourites with the server, both directions.
 ///
-/// Stars every local favourite the server knows about but has not starred,
-/// then imports everything the server has starred. Union rather than mirror:
-/// neither side records an unstar, so treating one as authoritative would
-/// silently delete favourites made on the other. Reading the server's stars
-/// first keeps a sync from re-sending every favourite, one request each.
+/// Sends the favourites changed here first, then stars every local favourite
+/// the server knows about but has not starred, then imports everything the
+/// server has starred. Union rather than mirror: the server records no
+/// unstar, so treating it as authoritative would silently delete favourites
+/// made here. Reading the server's stars first keeps a sync from re-sending
+/// every favourite, one request each.
+///
+/// A change made here that the server has not taken, or made while this ran,
+/// stays in the outbox, and the server's stars are not imported over it: they
+/// may have been read before it reached the server.
 ///
 /// Covers albums and artists as well as tracks — `getStarred2` returns all
 /// three from one request, and reading only songs would leave a starred album
 /// invisible to koan.
 pub fn reconcile_favourites(db: &Database, client: &SubsonicClient) -> FavouriteSync {
     let mut out = FavouriteSync::default();
+
+    for change in queries::favourite_changes(&db.conn).unwrap_or_default() {
+        let kind = match change.kind.as_str() {
+            "album" => FavouriteKind::Album,
+            "artist" => FavouriteKind::Artist,
+            _ => FavouriteKind::Track,
+        };
+        match send_favourite(client, kind, &change.remote_id, change.star) {
+            Ok(()) => {
+                out.pushed += 1;
+                if let Err(e) = queries::forget_favourite_change(&db.conn, &change) {
+                    log::warn!("could not clear a sent favourite change: {e}");
+                }
+            }
+            Err(e) => log::warn!("favourite change not sent; kept for the next sync: {e}"),
+        }
+    }
 
     let starred = match client.get_starred_all() {
         Ok(s) => s,
@@ -997,6 +1041,21 @@ pub fn reconcile_favourites(db: &Database, client: &SubsonicClient) -> Favourite
         }
     }
 
+    // Read after the stars were: anything here now is newer than they are.
+    let changed: std::collections::HashSet<(String, String)> = queries::favourite_changes(&db.conn)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|c| (c.kind, c.remote_id))
+        .collect();
+    let settled = |kind: FavouriteKind, ids: Vec<String>| -> Vec<String> {
+        ids.into_iter()
+            .filter(|id| !changed.contains(&(kind.as_str().to_owned(), id.clone())))
+            .collect()
+    };
+    let songs = settled(FavouriteKind::Track, songs);
+    let albums = settled(FavouriteKind::Album, albums);
+    let artists = settled(FavouriteKind::Artist, artists);
+
     out.imported +=
         queries::import_remote_favourites(&db.conn, queries::LOCAL_USER, &songs).unwrap_or(0);
     out.imported += queries::import_remote_favourite_albums(&db.conn, queries::LOCAL_USER, &albums)
@@ -1014,6 +1073,17 @@ pub enum FavouriteKind {
     Track,
     Album,
     Artist,
+}
+
+impl FavouriteKind {
+    /// How the outbox names it.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Track => "track",
+            Self::Album => "album",
+            Self::Artist => "artist",
+        }
+    }
 }
 
 /// Push an album or artist favourite to the server.
@@ -1039,26 +1109,7 @@ pub fn sync_collection_favourite_to_remote(
         log::warn!("not syncing favourite: {kind:?} {id} has no remote id");
         return;
     };
-    let Some(client) = subsonic_client(&cfg) else {
-        log::warn!("not syncing favourite: no usable server credentials");
-        return;
-    };
-    std::thread::Builder::new()
-        .name("koan-fav-sync".into())
-        .spawn(move || {
-            let result = match (kind, star) {
-                (FavouriteKind::Album, true) => client.star_album(&remote_id),
-                (FavouriteKind::Album, false) => client.unstar_album(&remote_id),
-                (FavouriteKind::Artist, true) => client.star_artist(&remote_id),
-                (FavouriteKind::Artist, false) => client.unstar_artist(&remote_id),
-                (FavouriteKind::Track, _) => Ok(()),
-            };
-            match result {
-                Ok(()) => log::info!("synced favourite to remote: {kind:?} {remote_id} = {star}"),
-                Err(e) => log::warn!("failed to sync favourite to remote: {e}"),
-            }
-        })
-        .ok();
+    push_favourite(db, &cfg, kind, remote_id, star);
 }
 
 /// Why signing in to a remote server failed.
@@ -2676,8 +2727,13 @@ mod favourite_sync_tests {
     use crate::db::queries::sample_meta;
     use std::sync::Mutex;
 
-    /// A server with song `s1` starred, recording every id it is asked to star.
+    /// A server with song `s1` and album `a1` starred, recording every id it
+    /// is asked to star. With `unstar_fails`, it refuses every unstar.
     fn serve(stars: Arc<Mutex<Vec<String>>>) -> String {
+        serve_with(stars, false)
+    }
+
+    fn serve_with(stars: Arc<Mutex<Vec<String>>>, unstar_fails: bool) -> String {
         use std::io::{BufRead, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -2694,7 +2750,10 @@ mod favourite_sync_tests {
                 let (path, query) = target.split_once('?').unwrap_or((target, ""));
                 let body = match path.rsplit('/').next().unwrap() {
                     "getStarred2" => {
-                        r#"{"subsonic-response":{"status":"ok","starred2":{"song":[{"id":"s1","title":"One"}]}}}"#
+                        r#"{"subsonic-response":{"status":"ok","starred2":{"song":[{"id":"s1","title":"One"}],"album":[{"id":"a1","name":"Album"}]}}}"#
+                    }
+                    "unstar" if unstar_fails => {
+                        r#"{"subsonic-response":{"status":"failed","error":{"code":0,"message":"down"}}}"#
                     }
                     "star" => {
                         if let Some((_, id)) = query
@@ -2735,6 +2794,72 @@ mod favourite_sync_tests {
         let sync = reconcile_favourites(&db, &SubsonicClient::new(&url, "u", "pw"));
         assert_eq!(sync.pushed, 1);
         assert_eq!(*stars.lock().unwrap(), ["s2"]);
+    }
+
+    /// An album with remote id `a1`, not a favourite here.
+    fn album(db: &Database) -> i64 {
+        let mut meta = sample_meta("One", "Artist", "Album");
+        meta.path = Some("/music/One.flac".into());
+        let track = queries::upsert_track(&db.conn, &meta).unwrap();
+        let album: i64 = db
+            .conn
+            .query_row("SELECT album_id FROM tracks WHERE id = ?1", [track], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        db.conn
+            .execute("UPDATE albums SET remote_id = 'a1' WHERE id = ?1", [album])
+            .unwrap();
+        album
+    }
+
+    /// Unfavourited here while the server still lists it: a sync that read
+    /// the server's stars before the unstar reached it must not put it back.
+    #[test]
+    fn an_unstar_the_server_has_not_taken_is_not_undone() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let album = album(&db);
+        queries::queue_favourite_change(&db.conn, "album", "a1", false).unwrap();
+
+        let url = serve_with(Arc::new(Mutex::new(Vec::new())), true);
+        reconcile_favourites(&db, &SubsonicClient::new(&url, "u", "pw"));
+        let favourites = queries::favourite_album_id_set(&db.conn, queries::LOCAL_USER).unwrap();
+        assert!(
+            !favourites.contains(&album),
+            "the server's stale star came back"
+        );
+        assert_eq!(
+            queries::favourite_changes(&db.conn).unwrap().len(),
+            1,
+            "kept to send again"
+        );
+    }
+
+    #[test]
+    fn a_change_the_server_takes_leaves_the_outbox() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        queries::queue_favourite_change(&db.conn, "track", "s2", true).unwrap();
+
+        let stars = Arc::new(Mutex::new(Vec::new()));
+        let url = serve(stars.clone());
+        let sync = reconcile_favourites(&db, &SubsonicClient::new(&url, "u", "pw"));
+        assert_eq!(sync.pushed, 1);
+        assert_eq!(*stars.lock().unwrap(), ["s2"]);
+        assert!(queries::favourite_changes(&db.conn).unwrap().is_empty());
+    }
+
+    /// A second change to the same item replaces the first.
+    #[test]
+    fn only_the_latest_change_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        queries::queue_favourite_change(&db.conn, "album", "a1", false).unwrap();
+        queries::queue_favourite_change(&db.conn, "album", "a1", true).unwrap();
+        let changes = queries::favourite_changes(&db.conn).unwrap();
+        assert_eq!(changes.len(), 1);
+        assert!(changes[0].star);
     }
 }
 

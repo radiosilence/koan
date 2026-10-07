@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 21;
+pub const SCHEMA_VERSION: i64 = 22;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -238,6 +238,18 @@ fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
             id          TEXT PRIMARY KEY,
             body        TEXT NOT NULL,
             created_at  INTEGER NOT NULL
+        );
+
+        -- Favourites changed here that the server is not yet known to have.
+        -- A sync pushes them before it reads the server's stars, and imports
+        -- none of the server's over one still here: the server's list can be
+        -- older than the change.
+        CREATE TABLE IF NOT EXISTS favourite_outbox (
+            id         INTEGER PRIMARY KEY,
+            kind       TEXT NOT NULL,
+            remote_id  TEXT NOT NULL,
+            star       INTEGER NOT NULL,
+            UNIQUE(kind, remote_id)
         );
 
         CREATE TABLE IF NOT EXISTS link_outbox (
