@@ -961,10 +961,15 @@ struct KoanSheetAction<Content: View>: ToolbarContent {
     @ViewBuilder let content: () -> Content
 
     var body: some ToolbarContent {
+        // A television's bar has no glass to take away, and its own focus.
+        #if os(tvOS)
+        ToolbarItem(placement: placement, content: content)
+        #else
         ToolbarItem(placement: placement) {
             content().koanButtons(.text)
         }
         .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
+        #endif
     }
 }
 

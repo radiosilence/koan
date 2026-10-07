@@ -1,0 +1,1 @@
+- **Now Playing and sheet buttons on iPhone.** In the kōan look, Now Playing fills the screen with square corners instead of opening as a rounded sheet, and sheets' Done, Cancel and confirm buttons are plain text rather than glass circles.
