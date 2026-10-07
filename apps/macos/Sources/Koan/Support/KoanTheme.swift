@@ -2090,10 +2090,10 @@ private struct KoanFieldRole: ViewModifier {
 }
 
 #if os(tvOS)
-/// A tvOS text field draws a rounded platter from its border style, which
-/// SwiftUI sets on the field itself, so neither a plain style nor UIKit's
-/// appearance reaches it. Laid behind the field, this turns the border off
-/// for the field it sits under, leaving the theme's square box.
+/// A tvOS text field draws a rounded platter, a blur inside the field,
+/// whatever its style or border says. Laid behind the field, this clears the
+/// blur of the field it sits under, leaving the theme's square box; the
+/// text, drawn inside the same view, stays.
 private struct SquareFieldBorder: UIViewRepresentable {
     func makeUIView(context: Context) -> Probe { Probe() }
     func updateUIView(_ view: Probe, context: Context) { view.setNeedsLayout() }
@@ -2107,11 +2107,18 @@ private struct SquareFieldBorder: UIViewRepresentable {
             for _ in 0..<6 {
                 guard let current = node else { return }
                 if let field = Self.field(in: current, at: centre) {
-                    field.borderStyle = .none
+                    Self.clearPlatter(in: field)
                     return
                 }
                 node = current.superview
             }
+        }
+
+        private static func clearPlatter(in view: UIView) {
+            if let blur = view as? UIVisualEffectView {
+                blur.effect = nil
+            }
+            view.subviews.forEach(clearPlatter)
         }
 
         /// The text field under `point`, in window coordinates: a form holds

@@ -160,7 +160,7 @@ final class TVBackTests: XCTestCase {
         reach(app.buttons[any: "Albums"], by: .down)
         press(.select)
         pause(3)
-        XCTAssertTrue(record("Album 1").waitForExistence(timeout: 5), "the grid, unfiltered")
+        XCTAssertGreaterThan(records().count, 1, "the grid, unfiltered")
         let field = app.textFields["name-filter"]
         reach(field, by: .up)
         snap("10-filter-focused")
@@ -172,16 +172,14 @@ final class TVBackTests: XCTestCase {
         pause(3)
         XCTAssertEqual(app.state, .runningForeground, "Menu leaves the keyboard, not the app")
         snap("11-filtered")
-        XCTAssertTrue(record("Album 3").exists, "the record named stays")
-        XCTAssertFalse(record("Album 1").exists, "records not named go")
+        let titles = records()
+        XCTAssertFalse(titles.isEmpty, "the records named stay")
+        XCTAssertTrue(titles.allSatisfy { $0.hasPrefix("Album 3") }, "only records named, not \(titles)")
     }
 
-    /// A record's tile by its title, however its label runs on: "Album 1"
-    /// and not "Album 10".
-    private func record(_ title: String) -> XCUIElement {
-        app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label MATCHES[c] %@", "\(title)(,.*)?"))
-            .firstMatch
+    /// The titles of the album tiles on screen.
+    private func records() -> [String] {
+        app.staticTexts.matching(NSPredicate(format: "label MATCHES %@", "Album [0-9]+")).allElementsBoundByIndex.map(\.label)
     }
 
     /// Along the tab bar to `tab`.
