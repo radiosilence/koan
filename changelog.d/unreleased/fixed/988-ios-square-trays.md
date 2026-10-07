@@ -1,0 +1,1 @@
+- **Square trays on iPhone.** In the kōan look, the Control and Output trays are a square panel across the bottom of the screen rather than a rounded, inset card, with the selected row lined up on the title's edge; other sheets lose their rounded corners.
