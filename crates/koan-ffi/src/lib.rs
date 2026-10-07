@@ -852,12 +852,13 @@ impl KoanEngine {
                 &queries::ArtistQuery {
                     search: trimmed(&search),
                     favourites_of: filter.favourites.then_some(queries::LOCAL_USER),
-                    // Recently Played's own order: the artist browser has no
-                    // sort to choose another by.
+                    // Recently Played's own order, or the search shelf's: the
+                    // artist browser has no sort to choose another by.
+                    // Without a search, relevance is by name.
                     order: if played.is_some() {
                         queries::ArtistOrder::LastPlayed
                     } else {
-                        queries::ArtistOrder::Name
+                        queries::ArtistOrder::Relevance
                     },
                     played,
                     filter: album_filter(&filter),
@@ -1010,6 +1011,7 @@ impl KoanEngine {
                 TrackBrowseSort::Album => (queries::TrackOrder::Album, false),
                 TrackBrowseSort::Duration => (queries::TrackOrder::Duration, false),
                 TrackBrowseSort::LastPlayed => (queries::TrackOrder::LastPlayed, true),
+                TrackBrowseSort::BestMatch => (queries::TrackOrder::Relevance, false),
             };
             let (user, now) = (queries::LOCAL_USER, shelves::now());
             let listing = shelves::Tracks {
@@ -1097,62 +1099,6 @@ impl KoanEngine {
                     name: items[i].1.clone(),
                     kind,
                 })
-                .collect())
-        })
-        .await
-    }
-
-    /// Fuzzy-matched albums, as rows.
-    ///
-    /// Rows rather than ids: a caller handed ids can only resolve them against
-    /// a catalogue of its own — which is the copy this exists to make
-    /// unnecessary. Only the matches are read as rows.
-    pub async fn fuzzy_albums(
-        self: Arc<Self>,
-        query: String,
-        limit: u32,
-    ) -> Result<Vec<Album>, KoanError> {
-        offload::offload(move || {
-            let ids = self.fuzzy_ids(queries::CorpusKind::Album, &query, limit)?;
-            let db = self.db()?;
-            let rows = queries::list_albums(
-                &db.conn,
-                &queries::AlbumQuery {
-                    ids: Some(&ids),
-                    filter: offline_filter(),
-                    ..Default::default()
-                },
-            )
-            .map_err(db_err)?;
-            Ok(in_rank_order(&ids, rows, |a| a.id)
-                .into_iter()
-                .map(Album::from)
-                .collect())
-        })
-        .await
-    }
-
-    /// Fuzzy-matched artists, as rows. See [`Self::fuzzy_albums`].
-    pub async fn fuzzy_artists(
-        self: Arc<Self>,
-        query: String,
-        limit: u32,
-    ) -> Result<Vec<Artist>, KoanError> {
-        offload::offload(move || {
-            let ids = self.fuzzy_ids(queries::CorpusKind::Artist, &query, limit)?;
-            let db = self.db()?;
-            let rows = queries::list_artists(
-                &db.conn,
-                &queries::ArtistQuery {
-                    ids: Some(&ids),
-                    filter: offline_filter(),
-                    ..Default::default()
-                },
-            )
-            .map_err(db_err)?;
-            Ok(in_rank_order(&ids, rows, |a| a.id)
-                .into_iter()
-                .map(Artist::from)
                 .collect())
         })
         .await
@@ -4907,21 +4853,6 @@ impl KoanEngine {
             .map_err(db_err)
     }
 
-    /// The ids of the best `limit` matches for `query`, best first.
-    fn fuzzy_ids(
-        &self,
-        kind: queries::CorpusKind,
-        query: &str,
-        limit: u32,
-    ) -> Result<Vec<i64>, KoanError> {
-        let items = self.corpus(kind)?;
-        let texts: Vec<&str> = items.iter().map(|(_, t)| t.as_str()).collect();
-        Ok(fuzzy_rank(&texts, query, limit)
-            .into_iter()
-            .map(|i| items[i].0)
-            .collect())
-    }
-
     /// Say that the library's rows changed. The watcher turns this into a
     /// `Library` slice when it wakes.
     ///
@@ -6032,6 +5963,7 @@ fn album_order(sort: AlbumSort, seed: i64) -> queries::AlbumOrder {
         AlbumSort::Random => queries::AlbumOrder::Random(seed),
         AlbumSort::LastPlayed => queries::AlbumOrder::LastPlayed,
         AlbumSort::Downloaded => queries::AlbumOrder::Downloaded,
+        AlbumSort::BestMatch => queries::AlbumOrder::Relevance,
     }
 }
 
@@ -6045,14 +5977,6 @@ fn recent(f: &BrowseFilter) -> Option<queries::PlayedSince> {
                 .played
         })
         .flatten()
-}
-
-/// `rows` in the order of `ids`, for rows read back by id in whatever order
-/// the database chose.
-fn in_rank_order<T>(ids: &[i64], rows: Vec<T>, id: impl Fn(&T) -> i64) -> Vec<T> {
-    let mut by_id: std::collections::HashMap<i64, T> =
-        rows.into_iter().map(|r| (id(&r), r)).collect();
-    ids.iter().filter_map(|i| by_id.remove(i)).collect()
 }
 
 /// Rank `texts` against `query`, best first, and return the indices of the top

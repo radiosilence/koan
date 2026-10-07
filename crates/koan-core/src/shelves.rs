@@ -43,7 +43,9 @@ pub enum Shelf<'a> {
     /// played first, each once.
     Recent,
     /// What matches `q`: names for records and artists, the full-text index
-    /// for tracks.
+    /// for tracks, the closest matches first. When nothing of a kind holds
+    /// `q` as typed, that kind's closest fuzzy matches, so a typo still finds
+    /// what was meant.
     Search(&'a str),
     /// What can play on this device, downloaded or in the library. Records
     /// count with any track here, fully there first, and each carries how
@@ -68,7 +70,7 @@ impl<'a> Shelf<'a> {
             },
             Shelf::Search(q) => AlbumQuery {
                 search: Some(q),
-                order: AlbumOrder::RecentlyAdded,
+                order: AlbumOrder::Relevance,
                 ..Default::default()
             },
             Shelf::Downloaded => AlbumQuery {
@@ -97,7 +99,7 @@ impl<'a> Shelf<'a> {
             },
             Shelf::Search(q) => ArtistQuery {
                 search: Some(q),
-                order: ArtistOrder::Name,
+                order: ArtistOrder::Relevance,
                 ..Default::default()
             },
             Shelf::Downloaded => ArtistQuery {
@@ -136,7 +138,7 @@ impl<'a> Shelf<'a> {
                     search: Some(q.to_owned()),
                     ..Default::default()
                 },
-                order: TrackOrder::ArtistAlbumDiscTrack,
+                order: TrackOrder::Relevance,
                 descending: false,
             },
             Shelf::Downloaded => Tracks {
@@ -432,5 +434,156 @@ mod tests {
                     .collect::<Vec<_>>()
             );
         }
+    }
+
+    /// Artists whose names hold "krew" at the start, at a later word, inside a
+    /// word, and others that hold only its letters, scattered.
+    fn krew_library(db: &Database) {
+        for (artist, album) in [
+            ("Okrewa", "Inside"),
+            ("The Krew", "Word"),
+            ("Krewella", "Get Wet"),
+            ("Kreayshawn", "Somethin' 'Bout Kreay"),
+            ("Kryptic Minds", "One of Us"),
+            ("Fckn Crew", "Crew Cuts"),
+            ("Black Country, New Road", "Ants From Up There"),
+            ("DJ Brisk", "Rewind"),
+        ] {
+            for title in ["Alive", "Live for the Night"] {
+                upsert_track(
+                    &db.conn,
+                    &sample_meta(&format!("{album} {title}"), artist, album),
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    /// Every kind's count is its whole listing's length, and its preview the
+    /// listing's head.
+    fn assert_agrees(db: &Database, q: &str) -> Summary {
+        let user = queries::LOCAL_USER;
+        let shelf = Shelf::Search(q);
+        let s = summary(&db.conn, shelf, user, NOW, false).unwrap();
+        let ids = |v: Vec<i64>, n: u32| v.into_iter().take(n as usize).collect::<Vec<_>>();
+
+        let artists = queries::list_artists(&db.conn, &shelf.artists(user, NOW)).unwrap();
+        assert_eq!(s.artists.total, artists.len() as u64, "{q}: artists");
+        assert_eq!(
+            s.artists.preview.iter().map(|a| a.id).collect::<Vec<_>>(),
+            ids(artists.iter().map(|a| a.id).collect(), PREVIEW_ARTISTS),
+        );
+        let albums = queries::list_albums(&db.conn, &shelf.albums(user, NOW)).unwrap();
+        assert_eq!(s.albums.total, albums.len() as u64, "{q}: albums");
+        assert_eq!(
+            s.albums.preview.iter().map(|a| a.id).collect::<Vec<_>>(),
+            ids(albums.iter().map(|a| a.id).collect(), PREVIEW_ALBUMS),
+        );
+        let tracks = shelf.tracks(user, NOW).page(&db.conn, 1000, 0).unwrap();
+        assert_eq!(s.tracks.total, tracks.len() as u64, "{q}: tracks");
+        assert_eq!(
+            s.tracks.preview.iter().map(|t| t.id).collect::<Vec<_>>(),
+            ids(tracks.iter().map(|t| t.id).collect(), PREVIEW_TRACKS),
+        );
+        s
+    }
+
+    #[test]
+    fn a_search_lists_the_closest_matches_first_and_no_scattered_ones() {
+        let db = db();
+        krew_library(&db);
+        let s = assert_agrees(&db, "Krew");
+        let artists: Vec<_> = s.artists.preview.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(
+            artists,
+            ["Krewella", "The Krew", "Okrewa"],
+            "the name's start, then a later word's, then anywhere; nothing scattered"
+        );
+        let albums: Vec<_> = s.albums.preview.iter().map(|a| a.title.as_str()).collect();
+        assert_eq!(albums, ["Get Wet", "Word", "Inside"]);
+        assert_eq!(s.tracks.preview[0].artist_name, "Krewella");
+        assert!(
+            s.tracks
+                .preview
+                .iter()
+                .all(|t| t.artist_name != "Black Country, New Road")
+        );
+    }
+
+    #[test]
+    fn a_typo_falls_back_to_the_closest_fuzzy_matches() {
+        let db = db();
+        krew_library(&db);
+        for typo in ["Krewela", "krwella"] {
+            let s = assert_agrees(&db, typo);
+            let artists: Vec<_> = s.artists.preview.iter().map(|a| a.name.as_str()).collect();
+            assert_eq!(artists[0], "Krewella", "{typo}");
+            assert!(
+                !artists.contains(&"Black Country, New Road"),
+                "{typo}: {artists:?}"
+            );
+            assert_eq!(s.albums.preview[0].title, "Get Wet", "{typo}");
+            assert!(s.tracks.total > 0, "{typo}");
+            assert!(
+                s.tracks.preview.iter().all(|t| t.artist_name == "Krewella"),
+                "{typo}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_search_reads_nucleos_operators_as_characters() {
+        let db = db();
+        krew_library(&db);
+        let s = assert_agrees(&db, "^x");
+        assert!(s.is_empty(), "nothing holds these characters");
+    }
+
+    #[test]
+    fn a_search_of_punctuation_finds_what_is_named_it() {
+        let db = db();
+        krew_library(&db);
+        for (title, artist, album_artist, album) in [
+            ("Sick!!!", "Machine Girl", "Machine Girl", "Gemini"),
+            ("Am/Fm", "!!!", "Various Artists", "Mix"),
+            ("Hello? Is This Thing On?", "!!!", "!!!", "Myth Takes"),
+            ("Must Be the Moon", "!!!", "!!!", "Myth Takes"),
+        ] {
+            let mut m = sample_meta(title, artist, album);
+            m.album_artist = Some(album_artist.into());
+            upsert_track(&db.conn, &m).unwrap();
+        }
+        let s = assert_agrees(&db, "!!!");
+        let artists: Vec<_> = s.artists.preview.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(artists, ["!!!"]);
+        assert_eq!(s.albums.preview[0].title, "Myth Takes");
+        let tracks: Vec<_> = s.tracks.preview.iter().map(|t| t.title.as_str()).collect();
+        assert_eq!(tracks.last(), Some(&"Sick!!!"), "{tracks:?}");
+        assert!(
+            s.tracks.preview[..3].iter().all(|t| t.artist_name == "!!!"),
+            "{tracks:?}"
+        );
+    }
+
+    #[test]
+    fn a_fallback_sees_what_was_written_since_the_last_search() {
+        let db = db();
+        krew_library(&db);
+        let before = summary(
+            &db.conn,
+            Shelf::Search("Polr Bear"),
+            queries::LOCAL_USER,
+            NOW,
+            false,
+        )
+        .unwrap();
+        assert!(before.artists.preview.is_empty());
+        upsert_track(
+            &db.conn,
+            &sample_meta("Fluffy", "Polar Bear", "Held On The Tips Of Fingers"),
+        )
+        .unwrap();
+        let s = assert_agrees(&db, "Polr Bear");
+        assert_eq!(s.artists.preview[0].name, "Polar Bear");
     }
 }
