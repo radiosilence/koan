@@ -61,8 +61,16 @@ pub fn parse(text: &str) -> Result<Parsed, String> {
 /// A preamp given per channel that comes to the same on both sides of a
 /// stereo pair and on every other channel the file names, as squig.link's
 /// two-channel export writes it, is the profile's preamp rather than a band
-/// on each channel. Preamps that differ stay as gain bands on their channels.
+/// on each channel. Preamps that differ stay as gain bands on their channels,
+/// as they do in a file with a `Copy`, whose mix a gain ahead of it changes.
 fn common_preamp(parsed: &mut Parsed) {
+    if parsed
+        .filters
+        .iter()
+        .any(|f| matches!(f, DspFilter::Mix(_)))
+    {
+        return;
+    }
     let preamp = |f: &DspFilter| matches!(f, DspFilter::Band(b) if b.kind == EqFilterKind::Gain);
     let mut named: BTreeMap<u16, f64> = BTreeMap::new();
     for f in &parsed.filters {
@@ -622,6 +630,17 @@ mod tests {
             "no gain bands left"
         );
         assert_eq!(p.filters.len(), 16, "eight peaks a side");
+
+        // A `Copy` mixes after the preamps: they stay gain bands.
+        let mixed = "Channel: L R\nPreamp: -5 dB\nCopy: L=L+C R=R+C\n";
+        let p = parse(mixed).unwrap();
+        assert_eq!(p.preamp_db, None);
+        let gains = p
+            .filters
+            .iter()
+            .filter(|f| matches!(f, DspFilter::Band(b) if b.kind == EqFilterKind::Gain))
+            .count();
+        assert_eq!(gains, 1);
     }
 
     /// A Qudelix 5K preset export: a type line, `//` comments, a preamp and
