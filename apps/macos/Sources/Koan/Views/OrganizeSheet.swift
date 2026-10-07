@@ -56,22 +56,24 @@ struct OrganizeSheet: View {
 
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 12) {
-                Picker("Pattern", selection: $organize.patternName) {
-                    ForEach(organize.patterns, id: \.name) { pattern in
-                        Text(pattern.name).tag(pattern.name as String?)
-                    }
-                }.koanControl()
+                KoanPicker(
+                    "Pattern",
+                    selection: $organize.patternName,
+                    options: organize.patterns.map { ($0.name, $0.name as String?) },
+                    keepsCase: true
+                )
                 .frame(maxWidth: 240, alignment: .leading)
                 .disabled(organize.editing)
 
                 // Only worth asking when there is a choice. With one library
                 // folder the answer is that folder, and the row below says so.
                 if organize.folders.count > 1 {
-                    Picker("Into", selection: $organize.baseDir) {
-                        ForEach(organize.folders, id: \.self) { folder in
-                            Text(shortFolder(folder)).tag(folder)
-                        }
-                    }.koanControl()
+                    KoanPicker(
+                        "Into",
+                        selection: $organize.baseDir,
+                        options: organize.folders.map { (shortFolder($0), $0) },
+                        keepsCase: true
+                    )
                     .frame(maxWidth: 240, alignment: .leading)
                 }
 

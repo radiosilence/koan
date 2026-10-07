@@ -341,7 +341,8 @@ private struct RendererVolume: View {
                     #else
                     Image(systemName: "speaker.fill")
                         .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                    Slider(
+                    KoanSlider(
+                        "Volume on \(name)",
                         value: Binding(
                             get: { dragging ?? Double(volume) },
                             set: { dragging = $0 }
@@ -354,7 +355,7 @@ private struct RendererVolume: View {
                             }
                         }
                     )
-                    .accessibilityLabel("Volume on \(name)")
+                    .labelsHidden()
                     Image(systemName: "speaker.wave.3.fill")
                         .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     #endif

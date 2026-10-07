@@ -198,38 +198,43 @@ struct EqSettings: View {
     /// The device, and the preset it was set from, or Flat, or Unsaved.
     @ViewBuilder private func head(_ o: DspOverview, _ device: String) -> some View {
         Section {
-            Picker("Device", selection: Binding(
-                get: { device },
-                set: { picked = $0 == app.dsp.overview?.device ? nil : $0 }
-            )) {
-                ForEach(devices(o), id: \.self) { d in
-                    Text(d == app.dsp.overview?.device ? "\(app.dsp.label(d)) (in use)" : app.dsp.label(d)).tag(d)
-                }
-            }
-            .koanControl()
-            Picker("Preset", selection: Binding(
-                get: { o.preset ?? (flat ? Self.flatTag : Self.unsavedTag) },
-                set: { tag in
-                    guard tag != Self.unsavedTag else { return }
-                    app.dsp.applyPreset(tag == Self.flatTag ? nil : tag, to: device)
-                }
-            )) {
-                Text("Flat").tag(Self.flatTag)
-                if o.preset == nil, !flat {
-                    Text("Unsaved").tag(Self.unsavedTag)
-                }
-                ForEach(presets(o), id: \.self) { Text($0).tag($0) }
-            }
-            .koanControl()
+            KoanPicker(
+                "Device",
+                selection: Binding(
+                    get: { device },
+                    set: { picked = $0 == app.dsp.overview?.device ? nil : $0 }
+                ),
+                options: devices(o).map { d in
+                    (d == app.dsp.overview?.device ? "\(app.dsp.label(d)) (\(KoanTheme.label("In use")))" : app.dsp.label(d), d)
+                },
+                keepsCase: true
+            )
+            KoanPicker(
+                "Preset",
+                selection: Binding(
+                    get: { o.preset ?? (flat ? Self.flatTag : Self.unsavedTag) },
+                    set: { tag in
+                        guard tag != Self.unsavedTag else { return }
+                        app.dsp.applyPreset(tag == Self.flatTag ? nil : tag, to: device)
+                    }
+                ),
+                options: [(KoanTheme.label("Flat"), Self.flatTag)]
+                    + (o.preset == nil && !flat ? [(KoanTheme.label("Unsaved"), Self.unsavedTag)] : [])
+                    + presets(o).map { ($0, $0) },
+                keepsCase: true
+            )
             #if !os(tvOS)
             if let preset = o.preset, o.presetEdited {
-                LabeledContent("Changed since \(preset)") {
+                LabeledContent {
                     HStack {
                         Button("Save") { save(as: preset, over: true) }
                             .koanButton(.compact)
                         Button("Save as New…") { ask("Save as New Preset") }
                             .koanButton(.text)
                     }
+                } label: {
+                    // The preset's name keeps its case; the words are the app's.
+                    Text("\(KoanTheme.label("Changed since")) \(preset)").textCase(nil)
                 }
             } else if o.preset == nil, !flat {
                 Button("Save as Preset…") { ask("Save as Preset") }
@@ -319,6 +324,7 @@ struct EqSettings: View {
                 .overlay(alignment: .top) {
                     Text("Flat: plays untouched")
                         .koanText(.meta, .muted)
+                        .koanCase()
                         .padding(.top, KoanTheme.Space.xl)
                 }
         }
@@ -432,13 +438,13 @@ struct EqChain: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            end("Music in", systemImage: "music.note")
+            end(KoanTheme.label("Music in"), systemImage: "music.note")
             link
             if let correction {
                 StageBlock(
                     title: "Correction",
                     name: correction.name,
-                    detail: correction.role == .baked ? "Already includes a tuning" : DspModel.describe(correction),
+                    detail: correction.role == .baked ? KoanTheme.label("Already includes a tuning") : DspModel.describe(correction),
                     db: curves[correction.name],
                     stroke: .correction,
                     action: { choose(.correction) }
@@ -454,12 +460,13 @@ struct EqChain: View {
             link
             Text("Tuning")
                 .koanText(.fine, .muted)
+                .koanCase()
                 .padding(.vertical, 4)
             ForEach(Array(overview.chain.enumerated()), id: \.element.name) { i, entry in
                 StageBlock(
                     title: "EQ \(i + 1)",
                     name: entry.name,
-                    detail: entry.on ? nil : "Off",
+                    detail: entry.on ? nil : KoanTheme.label("Off"),
                     db: curves[entry.name],
                     stroke: .eq(i),
                     action: { open(entry.name) }
@@ -491,7 +498,7 @@ struct EqChain: View {
             }
             #if !os(tvOS)
             if correction?.role != .baked {
-                Placeholder(title: overview.chain.isEmpty ? "Tuning" : nil, prompt: "Add EQ", action: { choose(.eq) })
+                Placeholder(title: nil, prompt: "Add EQ", action: { choose(.eq) })
                 link
             }
             #endif
@@ -561,6 +568,7 @@ private struct StageBlock<Controls: View>: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(title)
                             .koanText(.fine, .muted)
+                            .koanCase()
                         Text(name)
                             .koanText(.body)
                             .lineLimit(1)
@@ -596,10 +604,11 @@ private struct Placeholder: View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 2) {
                 if let title {
-                    Text(title).koanText(.fine, .muted)
+                    Text(title).koanText(.fine, .muted).koanCase()
                 }
                 Label(prompt, systemImage: "plus")
                     .koanText(.body, .accent)
+                    .koanCase()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(KoanTheme.Space.s)
@@ -718,13 +727,15 @@ struct StagePicker: View {
                 #endif
             }
             if let c = correction, !c.members.isEmpty {
-                Picker("Playing", selection: Binding(
-                    get: { c.playing ?? c.members.first ?? "" },
-                    set: { dsp.select(name, $0) }
-                )) {
-                    ForEach(c.members, id: \.self) { Text($0).tag($0) }
-                }
-                .koanControl()
+                KoanPicker(
+                    "Playing",
+                    selection: Binding(
+                        get: { c.playing ?? c.members.first ?? "" },
+                        set: { dsp.select(name, $0) }
+                    ),
+                    options: c.members.map { ($0, $0) },
+                    keepsCase: true
+                )
             }
             if let c = correction, c.role == .baked {
                 Label("\(name) already includes a tuning, so no other tuning plays on it. Split it into a correction and a tuning to change that.", systemImage: "info.circle")
