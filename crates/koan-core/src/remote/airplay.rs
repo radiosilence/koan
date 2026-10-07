@@ -84,15 +84,23 @@ pub fn current(tv: Option<&Tv>, host: &str) -> bool {
 /// `within` runs out. Every attempt is a SYN, which is what a sleep proxy
 /// wakes the host for; the first that is accepted means it is awake.
 /// `addrs` is asked afresh each round, since a TV waking may come back on
-/// other ports.
+/// other ports. A first round with nothing to knock on gives up at once:
+/// no sleep proxy answers for the TV here (away from home, unplugged), and
+/// the push should not wait on it.
 pub fn knock_until_awake(
     mut addrs: impl FnMut() -> Vec<SocketAddr>,
     within: Duration,
     mut give_up: impl FnMut() -> bool,
 ) -> bool {
     let until = Instant::now() + within;
+    let mut first = true;
     loop {
-        for addr in addrs() {
+        let round = addrs();
+        if first && round.is_empty() {
+            return false;
+        }
+        first = false;
+        for addr in round {
             let left = until.saturating_duration_since(Instant::now());
             if left.is_zero() || give_up() {
                 return false;
@@ -330,6 +338,22 @@ mod tests {
             || false
         ));
         assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn nothing_to_knock_on_gives_up_at_once() {
+        let started = Instant::now();
+        let mut rounds = 0;
+        assert!(!knock_until_awake(
+            || {
+                rounds += 1;
+                Vec::new()
+            },
+            Duration::from_secs(20),
+            || false
+        ));
+        assert_eq!(rounds, 1);
+        assert!(started.elapsed() < Duration::from_millis(200));
     }
 
     #[test]
