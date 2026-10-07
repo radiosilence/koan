@@ -272,12 +272,16 @@ each switched on or off. Each EQ made against a target other than the
 correction's has the difference between the two played with it, and where the
 chain cannot hold them all, the last ones are left out and the EQ page says
 which. A **preset** saves an output's correction and tuning under a name; an
-output set from it plays the same, and says when it was changed since. An EQ
+output set from it plays the same, and says when it was changed since. A
+changed output can be saved over the preset, saved as a new one, or reverted
+to the preset as saved, which is setting it from the preset again; the quick
+preset menus list the edited chain and the saved preset side by side. An EQ
 made before presets that played a correction with EQs on top became a preset,
 and the outputs that played it play its correction and EQs, set from it.
 
 The CLI does the same: `koan dsp set DEVICE --correction NAME --tuning EQ,EQ`,
-`koan dsp preset save NAME` and `koan dsp preset use NAME|flat`, with
+`koan dsp preset save NAME` and `koan dsp preset use NAME|flat` (which also
+reverts an edited output to the preset), with
 `koan dsp show` to read it back.
 
 Configs from before Flat with processing switched off open with every device

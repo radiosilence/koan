@@ -3771,6 +3771,15 @@ mod tests {
             Some(("Late night".into(), true)),
             "edited"
         );
+        // Reverting is setting it from the preset again: the tuning, on and
+        // off, as saved.
+        apply_preset(other, Some("Late night")).unwrap();
+        assert_eq!(preset_for(other), Some(("Late night".into(), false)));
+        assert_eq!(
+            tunings_for(other),
+            list(&[("Warm", true), ("Spare", false)])
+        );
+        assert_eq!(plays(other), plays(dac));
         assert!(save_preset(other, "Warm").is_err(), "not over an EQ");
         // Flat: nothing, and untouched.
         apply_preset(other, None).unwrap();
@@ -4277,6 +4286,10 @@ mod tests {
         assert_eq!(plays(), ["step", "60", "100"]);
         // Made against the correction's own target, or nothing said: as it is.
         set_tuned_for("Warm", Some("harman-over-ear-2018")).unwrap();
+        assert_eq!(
+            detail("Warm").unwrap().tuned_for.as_deref(),
+            Some("harman-over-ear-2018")
+        );
         assert_eq!(plays(), ["60", "100"]);
         set_tuned_for("Warm", None).unwrap();
         assert_eq!(plays(), ["60", "100"]);

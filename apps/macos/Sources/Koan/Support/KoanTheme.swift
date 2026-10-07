@@ -1386,12 +1386,15 @@ struct KoanPicker<Value: Hashable>: View {
             LabeledContent {
                 Menu {
                     Picker(title, selection: $selection) {
-                        ForEach(options, id: \.value) { Text(shown($0.label)).tag($0.value) }
+                        ForEach(options, id: \.value) { Text(shown($0.label)).textCase(nil).tag($0.value) }
                     }
                     .pickerStyle(.inline)
                 } label: {
                     HStack(spacing: KoanTheme.Space.xs) {
+                        // Cased by `shown` alone: a menu's label takes the
+                        // case of the button style around it.
                         Text(shown(options.first { $0.value == selection }?.label ?? ""))
+                            .textCase(nil)
                             .lineLimit(1)
                         KoanIcon("chevron.up.chevron.down").font(.koan(.fine))
                     }
@@ -1440,6 +1443,7 @@ private struct TelevisionPicker<Value: Hashable>: View {
                     .textCase(.lowercase)
                 Spacer(minLength: 0)
                 Text(options.first { $0.value == selection }?.label ?? "")
+                    .textCase(nil)
                     .font(.koan(.control))
                     .foregroundStyle(Color.koanMuted)
             }
@@ -1466,7 +1470,7 @@ struct TelevisionChoices<Value: Hashable>: View {
                 chosen()
             } label: {
                 HStack(spacing: KoanTheme.Space.m) {
-                    Text(option.label)
+                    Text(option.label).textCase(nil)
                     Spacer(minLength: 0)
                     if option.value == selection {
                         KoanIcon("checkmark")

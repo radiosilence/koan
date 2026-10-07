@@ -228,15 +228,24 @@ struct EqSettings: View {
             KoanPicker(
                 "Preset",
                 selection: Binding(
-                    get: { o.preset ?? (flat ? Self.flatTag : Self.unsavedTag) },
+                    get: {
+                        guard let preset = o.preset else { return flat ? Self.flatTag : Self.unsavedTag }
+                        return o.presetEdited ? Self.editedTag : preset
+                    },
                     set: { tag in
-                        guard tag != Self.unsavedTag else { return }
+                        guard tag != Self.unsavedTag, tag != Self.editedTag else { return }
                         app.dsp.applyPreset(tag == Self.flatTag ? nil : tag, to: device)
                     }
                 ),
                 options: [(KoanTheme.label("Flat"), Self.flatTag)]
                     + (o.preset == nil && !flat ? [(KoanTheme.label("Unsaved"), Self.unsavedTag)] : [])
-                    + presets(o).map { ($0, $0) },
+                    // A preset changed since: as edited, chosen, and as saved,
+                    // which goes back to it.
+                    + presets(o).flatMap { name in
+                        (name == o.preset && o.presetEdited
+                            ? [("\(name) (\(KoanTheme.label("edited")))", Self.editedTag)]
+                            : []) + [(name, name)]
+                    },
                 keepsCase: true
             )
             #if !os(tvOS)
@@ -245,6 +254,8 @@ struct EqSettings: View {
                     HStack {
                         Button("Save") { save(as: preset, over: true) }
                             .koanButton(.compact)
+                        Button("Revert") { app.dsp.applyPreset(preset, to: device) }
+                            .koanButton(.text)
                         Button("Save as New…") { ask("Save as New Preset") }
                             .koanButton(.text)
                     }
@@ -276,6 +287,7 @@ struct EqSettings: View {
 
     private static let flatTag = "\u{0}flat"
     private static let unsavedTag = "\u{0}unsaved"
+    private static let editedTag = "\u{0}edited"
 
     /// The outputs to choose among: the one in use first, then this Mac's,
     /// then any the EQ names.

@@ -49,7 +49,8 @@ struct Presets {
 }
 
 /// A device's presets as a menu: Flat and each preset, a tick on the one it
-/// was set from, and Edit… for the whole EQ page.
+/// was set from, and Edit… for the whole EQ page. A preset changed since is
+/// listed twice: as edited, ticked, and as saved, which goes back to it.
 struct PresetMenu<Label: View>: View {
     @Environment(AppState.self) private var app
     let presets: Presets
@@ -106,12 +107,16 @@ struct PresetMenu<Label: View>: View {
     }
 
     private static var unsaved: String { "\u{0}unsaved" }
+    private static var edited: String { "\u{0}edited" }
 
     private var picker: some View {
         Picker("Preset", selection: Binding(
-            get: { presets.current ?? (presets.flat ? "" : Self.unsaved) },
+            get: {
+                guard let current = presets.current else { return presets.flat ? "" : Self.unsaved }
+                return presets.edited ? Self.edited : current
+            },
             set: { tag in
-                guard tag != Self.unsaved else { return }
+                guard tag != Self.unsaved, tag != Self.edited else { return }
                 presets.choose(tag.isEmpty ? nil : tag)
             }
         )) {
@@ -123,7 +128,10 @@ struct PresetMenu<Label: View>: View {
                 Divider()
             }
             ForEach(presets.presets, id: \.self) { name in
-                Text(name == presets.current && presets.edited ? "\(name) (edited)" : name).tag(name)
+                if name == presets.current, presets.edited {
+                    Text("\(name) (\(KoanTheme.label("edited")))").tag(Self.edited)
+                }
+                Text(name).tag(name)
             }
         }
         .koanControl()
