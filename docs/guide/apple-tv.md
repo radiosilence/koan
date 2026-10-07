@@ -55,7 +55,8 @@ after the `#`, which a browser does not send, so koan.rocks never sees them.
 The Library tab lists albums, artists, favourites, playlists, recently played,
 what is downloaded and the history. Tracks are listed from a shelf's or a
 search's "See all", filtered. On the album, artist and track listings, the filters and the sort sit in a row above the listing; move up from
-the first row to reach them.
+the first row to reach them. Albums, Artists, History and Playlists also have
+a field above the listing that narrows it by name.
 
 ![The album grid, with the filter and sort buttons above it](../../site/public/screens/tv-albums.webp)
 ![The album filters, open over the grid](../../site/public/screens/tv-filters.webp)

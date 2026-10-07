@@ -1,1 +1,0 @@
-- **Release builds of the Apple apps compile again.** Swift 6.3.3 crashed compiling the optimised macOS and tvOS apps on the preset menu's picker, which passed a method as the binding's setter. The setter is a closure again.

@@ -1871,9 +1871,10 @@ pub fn cache_path_for_track(
 /// Resolve a track to its path + load state (without downloading).
 /// Returns (path, `ItemState::Ready`) for local/cached, (cache path, `ItemState::Pending`)
 /// for remote — a track with no copy here yet has to be fetched before it plays.
-/// A copy found in the cache that the row does not name is recorded.
+/// A copy found in the cache that the row does not name is added to `found`,
+/// for the caller to record.
 fn resolve_item_path(
-    conn: &rusqlite::Connection,
+    found: &mut Vec<(i64, PathBuf)>,
     cfg: &Config,
     track: &queries::TrackRow,
     remote_url: Option<&str>,
@@ -1900,7 +1901,9 @@ fn resolve_item_path(
         Some(queries::PlaybackSource::Remote(_)) => {
             let dest = cache_path_for_track(&cfg.cache_dir(), track, album_date);
             if dest.exists() && is_cached_audio(&dest) {
-                adopt_cached(conn, track, &dest);
+                if track.cached_path.as_deref() != Some(&*dest.to_string_lossy()) {
+                    found.push((track.id, dest.clone()));
+                }
                 (dest, ItemState::Ready)
             } else {
                 (dest, ItemState::Pending)
@@ -1959,16 +1962,36 @@ fn playlist_items_with(
     let ids: Vec<i64> = tracks.iter().map(|t| t.id).collect();
     let extras = queries::queue_item_extras(&db.conn, &ids).unwrap_or_default();
 
-    tracks
+    let mut found = Vec::new();
+    let items = tracks
         .iter()
         .map(|track| {
             let extra = extras.get(&track.id);
             let remote_url = extra.and_then(|e| e.remote_url.as_deref());
             let album_date = extra.and_then(|e| e.album_date.as_deref());
-            let (path, state) = resolve_item_path(&db.conn, cfg, track, remote_url, album_date);
+            let (path, state) = resolve_item_path(&mut found, cfg, track, remote_url, album_date);
             playlist_item_from_track(track, album_date, path, state)
         })
-        .collect()
+        .collect();
+    // Bookkeeping an enqueue should not wait behind a scan for: skipped while
+    // a writer holds the lock, and found again the next time the track is
+    // queued, or at launch (`adopt_cached_files`).
+    if !found.is_empty() {
+        let recorded = crate::db::connection::without_waiting(&db.conn, |conn| {
+            queries::atomically(conn, || {
+                found.iter().try_for_each(|(id, path)| {
+                    queries::set_cached_path(conn, *id, &path.to_string_lossy())
+                })
+            })
+        });
+        if let Err(e) = recorded {
+            log::debug!(
+                "left {} cached file(s) unrecorded for now: {e}",
+                found.len()
+            );
+        }
+    }
+    items
 }
 
 // ---------------------------------------------------------------------------
