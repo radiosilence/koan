@@ -4237,6 +4237,51 @@ mod tests {
         }
     }
 
+    /// A tuning on a correction takes its headroom from the chain's summed
+    /// response, not the correction's own preamp: boosts that cancel leave
+    /// the chain at unity.
+    #[test]
+    fn a_layered_chain_has_the_headroom_of_its_sum() {
+        use crate::config::{DspFilter, EqFilter, EqFilterKind};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let peak = |gain_db| {
+            DspFilter::Band(EqFilter {
+                kind: EqFilterKind::Peaking,
+                freq: 1000.0,
+                gain_db,
+                q: 1.0,
+                channels: Vec::new(),
+            })
+        };
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Boost".into(),
+                role: Some(DspRole::Correction),
+                filters: vec![peak(6.0)],
+                preamp_db: Some(-6.0),
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Cut".into(),
+                role: Some(DspRole::Tuning),
+                filters: vec![peak(-6.0)],
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        set_chain("DAC", Some(Some("Boost")), Some(&[])).unwrap();
+        let alone = output_response("DAC", 48_000).unwrap();
+        assert!((alone.preamp_db + 6.0).abs() < 0.01, "{}", alone.preamp_db);
+        set_chain("DAC", None, Some(&["Cut".to_string()])).unwrap();
+        let both = output_response("DAC", 48_000).unwrap();
+        assert!(both.total.iter().all(|db| db.abs() < 0.01));
+        assert!(both.preamp_db.abs() < 0.01, "{}", both.preamp_db);
+    }
+
     /// One correction to a chain: a second layer is refused, naming the one
     /// already there, and one made so by its role is warned of; tuning on
     /// top is fine.
