@@ -1501,6 +1501,11 @@ impl Config {
     where
         F: FnOnce(&mut Config),
     {
+        // Each write reads both files and writes them back whole, so two at
+        // once would lose whichever finished first: the player's volume and a
+        // setting changed in the app, say.
+        static ONE_AT_A_TIME: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+        let _one = ONE_AT_A_TIME.lock();
         let before = Self::from_files()?;
         let mut after = before.clone();
         mutate(&mut after);
@@ -1621,16 +1626,81 @@ fn write_document(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, &contents)?;
+    // Written beside the file and renamed over it, so a read never sees it
+    // half written.
+    let target = link_target(path);
+    let temp = unique_beside(&target);
+    let written = write_new(&temp, &target, contents.as_bytes(), secret)
+        .and_then(|()| fs::rename(&temp, &target));
+    if let Err(e) = written {
+        let _ = fs::remove_file(&temp);
+        return Err(e.into());
+    }
     #[cfg(target_os = "tvos")]
     kept::written(path, contents.as_bytes());
-    #[cfg(unix)]
-    if secret {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+/// Where a write to `path` lands: a symlink, as dotfiles keep, is followed
+/// rather than replaced, even when what it points at does not exist yet.
+fn link_target(path: &Path) -> PathBuf {
+    let mut target = path.to_path_buf();
+    for _ in 0..40 {
+        let Ok(next) = fs::read_link(&target) else {
+            break;
+        };
+        target = match target.parent() {
+            Some(parent) if next.is_relative() => parent.join(next),
+            _ => next,
+        };
     }
+    target
+}
+
+/// A name beside `target` no other writer, in this process or another, is
+/// using.
+fn unique_beside(target: &Path) -> PathBuf {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let name = target
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    target.with_file_name(format!(".{name}.{}.{n}.tmp", std::process::id()))
+}
+
+/// Create `temp` holding `contents`, never readable by more than `target`
+/// already is: a secret file is 0600 from the moment it exists, any other
+/// keeps the mode the file it replaces had.
+fn write_new(temp: &Path, target: &Path, contents: &[u8], secret: bool) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    let kept_mode = {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let kept_mode = (!secret)
+            .then(|| fs::metadata(target).ok())
+            .flatten()
+            .map(|m| m.permissions().mode() & 0o7777);
+        options.mode(if secret {
+            0o600
+        } else {
+            kept_mode.unwrap_or(0o666)
+        });
+        kept_mode
+    };
     #[cfg(not(unix))]
-    let _ = secret;
+    let _ = (target, secret);
+    let mut file = options.open(temp)?;
+    file.write_all(contents)?;
+    // The umask can narrow the mode asked for at creation; the file being
+    // replaced had what it had.
+    #[cfg(unix)]
+    if let Some(mode) = kept_mode {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(mode))?;
+    }
     Ok(())
 }
 
@@ -2636,6 +2706,64 @@ fps = 30
         fs::create_dir_all(&dir).unwrap();
         set_config_dir(&dir);
         (config_file_path(), config_local_file_path())
+    }
+
+    /// A write lands where a symlink points, even one pointing at nothing
+    /// yet; the secret file is 0600, the other keeps its mode; nothing is left
+    /// beside them.
+    #[cfg(unix)]
+    #[test]
+    fn a_write_keeps_links_modes_and_no_leftovers() {
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = PERSIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let dotfiles = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(
+            dotfiles.path().join("config.toml"),
+            dir.path().join("config.toml"),
+        )
+        .unwrap();
+        set_config_dir(dir.path());
+
+        Config::persist(|c| c.graphql.port = 4100).unwrap();
+        assert!(
+            fs::symlink_metadata(config_file_path())
+                .unwrap()
+                .is_symlink()
+        );
+        assert!(
+            fs::read_to_string(dotfiles.path().join("config.toml"))
+                .unwrap()
+                .contains("4100")
+        );
+
+        fs::set_permissions(
+            dotfiles.path().join("config.toml"),
+            fs::Permissions::from_mode(0o640),
+        )
+        .unwrap();
+        Config::persist(|c| {
+            c.graphql.port = 4101;
+            c.remote.password = "hunter2".into();
+        })
+        .unwrap();
+        let mode = |p: PathBuf| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(dotfiles.path().join("config.toml")), 0o640);
+        assert_eq!(mode(config_local_file_path()), 0o600);
+        assert!(
+            fs::symlink_metadata(config_file_path())
+                .unwrap()
+                .is_symlink()
+        );
+
+        let names = |d: &Path| -> Vec<String> {
+            fs::read_dir(d)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .collect()
+        };
+        assert!(!names(dir.path()).iter().any(|n| n.ends_with(".tmp")));
+        assert_eq!(names(dotfiles.path()), vec!["config.toml".to_string()]);
     }
 
     /// A read racing directory switches never caches one directory's config

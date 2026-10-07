@@ -138,29 +138,65 @@ struct AlbumDetailView: View {
     let albumId: Int64
 
     @Environment(LibraryModel.self) private var library
+    @Environment(Navigator.self) private var nav
 
     /// Whatever the navigator loaded before it brought us here, so the first
-    /// body evaluation already has the whole page. Guarded on the id because
-    /// history can move faster than a read.
+    /// body evaluation already has the whole page.
     private var record: LibraryModel.AlbumRecord? {
-        let held = library.detailRecord
-        return held?.albumId == albumId ? held : nil
+        library.detailRecord(album: albumId)
     }
 
     var body: some View {
         Trace.event("album-body")
         FrameTimer.shared.evaluated()
-        return TrackListView(
-            title: record?.album?.title ?? "Album",
-            subtitle: subtitle,
-            tracks: record?.tracks ?? [],
-            artwork: .album(albumId),
-            artistLink: record?.album?.artistId,
-            playable: record?.album.map { Playable.album($0) }
-        )
-        // Only for a library change — the record itself arrived before the page
-        // did. A download landing writes a cached path onto one of these rows.
-        .reloading(on: albumId) { await library.prepare(album: albumId) }
+        return page
+            // For a library change — the record itself arrived before the page
+            // did, and a download landing writes a cached path onto one of
+            // these rows — or for a record let go while the page was kept.
+            .reloading(on: Held(albumId: albumId, held: record != nil)) {
+                await library.prepare(album: albumId)
+            }
+    }
+
+    private struct Held: Equatable {
+        let albumId: Int64
+        let held: Bool
+    }
+
+    /// Never a record page with nothing on it: still reading, gone from the
+    /// library, or the read failed, each said as such.
+    @ViewBuilder private var page: some View {
+        if let record, record.album != nil {
+            TrackListView(
+                title: record.album?.title ?? "",
+                subtitle: subtitle,
+                tracks: record.tracks,
+                artwork: .album(albumId),
+                artistLink: record.album?.artistId,
+                playable: record.album.map { Playable.album($0) }
+            )
+        } else if let record {
+            VStack(spacing: 16) {
+                EmptyState(
+                    icon: "questionmark.square.dashed",
+                    title: record.failed ? "Couldn't read this album" : "This album isn't in the library any more"
+                )
+                HStack {
+                    if nav.canGoBack {
+                        Button("Go Back") { nav.goBack() }
+                    }
+                    // A record gone from the library is read again when the
+                    // library next moves; a failed read is worth retrying.
+                    if record.failed {
+                        Button("Try Again") { Task { await library.prepare(album: albumId) } }
+                    }
+                }
+                .koanButtons(.standard)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            SlowReadProgress()
+        }
     }
 
     private var subtitle: String {
@@ -173,6 +209,25 @@ struct AlbumDetailView: View {
             parts.append(Format.duration(total))
         }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// Nothing, then a spinner if the read is still going after a beat. The
+/// library is local, so a record nearly always lands within a frame or two,
+/// and a spinner that flashes on every page says there was something to wait
+/// for when there was not.
+private struct SlowReadProgress: View {
+    @State private var slow = false
+
+    var body: some View {
+        Group {
+            if slow { ProgressView() }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task {
+            try? await Task.sleep(for: .milliseconds(300))
+            slow = true
+        }
     }
 }
 

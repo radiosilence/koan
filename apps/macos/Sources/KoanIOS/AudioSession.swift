@@ -1,5 +1,6 @@
 import AVFAudio
 import Foundation
+import KoanFFI
 
 /// The half of iOS audio that the engine cannot own.
 ///
@@ -49,14 +50,16 @@ final class AudioSession {
     }
     private let observers = Tokens()
 
-    func activate(preferredSampleRate: Double? = nil) {
-        configure(preferredSampleRate: preferredSampleRate)
+    /// Category and buffer size, and the notifications. Not activation: an
+    /// active `.playback` session stops whatever else is playing, so it is
+    /// activated only when koan plays — by the engine, through `Host`.
+    func prepare() {
+        configure()
         observe()
     }
 
-    /// Category, buffer size and activation: also what a media services
-    /// reset undoes.
-    private func configure(preferredSampleRate: Double? = nil) {
+    /// Category and buffer size: also what a media services reset undoes.
+    private func configure() {
         let session = AVAudioSession.sharedInstance()
         do {
             // `.playback` is what keeps producing audio with the screen locked
@@ -64,25 +67,75 @@ final class AudioSession {
             // the bundle, without which the process is suspended and the audio
             // thread with it.
             try session.setCategory(.playback, mode: .default, options: [])
-            if let preferredSampleRate {
-                // A request, not an instruction. iOS may answer with something
-                // else, and everything crosses the system mixer regardless —
-                // which is why koan makes no bit-perfect claim here.
-                try session.setPreferredSampleRate(preferredSampleRate)
-            }
             // Larger than the default of a few milliseconds, so the render
             // thread wakes a twentieth as often. Latency is no cost to a music
             // player — the ring holds seconds, and pause fades out anyway —
             // and each wake is the CPU leaving idle.
             try session.setPreferredIOBufferDuration(0.093)
-            try session.setActive(true)
         } catch {
-            NSLog("koan: audio session refused activation: \(error)")
+            NSLog("koan: audio session refused its configuration: \(error)")
         }
     }
 
-    /// What the session settled on, as against what was asked for.
-    var sampleRate: Double { AVAudioSession.sharedInstance().sampleRate }
+    /// What the engine calls, on the player thread, the moment before its
+    /// output starts and once it has been stopped for a while. Exclusive when
+    /// active, as playing bit-for-bit wants; on release the app koan
+    /// interrupted is told it may resume.
+    final class Host: AudioSessionHost, @unchecked Sendable {
+        /// Where activation failures are written.
+        let note: @Sendable (String) -> Void
+
+        init(note: @escaping @Sendable (String) -> Void) {
+            self.note = note
+        }
+
+        /// `sampleRate` is what the output was built for, asked for as the
+        /// preferred rate: a USB DAC that supports it is switched to it, while
+        /// the speaker, Bluetooth and AirPlay keep their own and RemoteIO
+        /// resamples. Answers the rate the hardware runs at, so the format
+        /// badge shows which happened; nil when iOS refuses activation —
+        /// during a call, or from the background with no remote command
+        /// behind it — and the engine then does not start.
+        func activate(sampleRate: Double) -> Double? {
+            let session = AVAudioSession.sharedInstance()
+            prefer(sampleRate)
+            do {
+                try session.setActive(true)
+                return session.sampleRate
+            } catch {
+                note("audio session refused activation: \(error)")
+                return nil
+            }
+        }
+
+        /// A route change: the new route asked for the output's rate, and
+        /// the rate it runs at answered. Not an activation, which would take
+        /// the session back from an app that interrupted koan.
+        func follow(sampleRate: Double) -> Double {
+            prefer(sampleRate)
+            return AVAudioSession.sharedInstance().sampleRate
+        }
+
+        /// A preference already set is left alone, so asking again on a
+        /// route change cannot itself change the route.
+        private func prefer(_ sampleRate: Double) {
+            let session = AVAudioSession.sharedInstance()
+            guard session.preferredSampleRate != sampleRate else { return }
+            do {
+                try session.setPreferredSampleRate(sampleRate)
+            } catch {
+                note("audio session refused \(sampleRate) Hz: \(error)")
+            }
+        }
+
+        func release() {
+            do {
+                try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            } catch {
+                note("audio session refused deactivation: \(error)")
+            }
+        }
+    }
 
     private func observe() {
         let centre = NotificationCenter.default
@@ -174,23 +227,20 @@ final class AudioSession {
     }
 
     /// The app is in front again. An interruption nothing ended leaves the
-    /// session down; take it back, so pressing play plays. Resuming is the
-    /// person's to do.
+    /// output stopped by iOS; have it rebuilt, so pressing play plays. The
+    /// session itself is left alone until then: whatever interrupted koan may
+    /// still be playing. Resuming is the person's to do.
     func recoverIfInterrupted() {
         guard interrupted else { return }
-        note?("session still interrupted on returning; taking it back")
+        note?("session still interrupted on returning; rebuilding the output")
         end(resume: false)
     }
 
-    /// Reactivate the session and have the output rebuilt: the unit iOS
-    /// stopped for the interruption will not start again on its own.
+    /// Have the output rebuilt: the unit iOS stopped for the interruption will
+    /// not start again on its own. The session is activated by the engine as
+    /// the rebuilt output starts, and only if it does.
     private func end(resume: Bool) {
         interrupted = false
-        do {
-            try AVAudioSession.sharedInstance().setActive(true)
-        } catch {
-            note?("could not reactivate the session: \(error)")
-        }
         onInterruptionEnded?(resume)
     }
 

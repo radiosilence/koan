@@ -21,6 +21,9 @@ pub enum EngineError {
     OSStatus(i32),
     #[error("failed to find the output audio component")]
     NoOutputComponent,
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+    #[error("the audio session could not be activated")]
+    SessionInactive,
     #[cfg(target_os = "macos")]
     #[error("device error: {0}")]
     Device(#[from] device::DeviceError),
@@ -75,6 +78,10 @@ pub struct AudioEngine {
     in_callback: Arc<AtomicBool>,
     fade: Arc<FadeControl>,
     lead_in: Arc<AtomicU64>,
+    /// The rate the unit was built for, which the audio session is asked for
+    /// on iOS and tvOS.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    sample_rate: f64,
 }
 
 // SAFETY: AudioEngine contains an AudioUnit (opaque C pointer) and a *mut CallbackData.
@@ -205,6 +212,9 @@ impl AudioEngine {
 
         // Set stream format on the input scope of the output element.
         // This tells the AudioUnit what format we'll provide in the render callback.
+        // On iOS that stays the rate of the samples: RemoteIO converts to the
+        // hardware rate the session granted when the two differ, and does no
+        // conversion when the session was granted this rate.
         let bytes_per_sample = mem::size_of::<f32>() as u32;
         let asbd = AudioStreamBasicDescription {
             mSampleRate: sample_rate,
@@ -264,10 +274,17 @@ impl AudioEngine {
             in_callback,
             fade,
             lead_in,
+            sample_rate,
         })
     }
 
     pub fn start(&self) -> Result<()> {
+        // A RemoteIO unit started on an inactive session reports success and
+        // produces silence.
+        #[cfg(any(target_os = "ios", target_os = "tvos"))]
+        if !super::ios_backend::activate_session(self.sample_rate) {
+            return Err(EngineError::SessionInactive);
+        }
         self.running.store(true, Ordering::Release);
         check(unsafe { AudioOutputUnitStart(self.audio_unit) })
     }

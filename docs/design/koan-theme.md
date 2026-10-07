@@ -81,12 +81,11 @@ The accent follows the record playing, and is tone-mapped the same way in both t
 | `accent-lightness` | 0.70–0.85 | 0.45–0.60 |
 | `accent-chroma` | 0.10–0.19 | 0.10–0.19 |
 | `accent-no-hue` | 0.04 | 0.04 |
-| `accent-bad-gap` | 25° | 25° |
 
 - Within the band, the accent takes the most vivid lightness that reaches 4.5:1 on `bg` and `surface`: the darkest of the band in dark mode, the lightest in light.
 - Where no lightness in the band does, the accent is used for fills, indicators and rings only, at 3:1, and text that would have been the accent is `ink`.
 - A sleeve whose chroma is under `accent-no-hue`, and no record at all, give mint.
-- A hue within `accent-bad-gap` of `bad`'s moves to the edge of that gap, so a red record never reads as an error.
+- The hue is never moved. A red record gives a red accent, even one close to `bad`; errors are told apart by where they appear and what they say, not by hue alone.
 - A change of record eases to the new accent over 0.35 s, and only when the colour was not already known; one in hand lands with the record.
 - "Colours from the record" (`appearance.record_colours`) off pins the accent to mint and removes the wash, in both themes.
 
@@ -109,11 +108,15 @@ Three weights, assigned by the [rules](#rules); labels are lowercase and stay on
 - **Prominent:** the label in `accent`, a 1-point `accent` outline, `body` type, padding 12 × 20. Pressed: `hover` fill. At most one per screen.
 - **Standard:** the label (and glyph) in `ink`, no outline, `control` type, padding 8 × 4.
 - **Compact:** as standard in `meta` type, padding 4 × 2.
-- **Destructive:** compact, in `bad`.
+- **Bordered:** compact, in a 1-point `muted` outline, padding 6 × 12. A secondary action standing in a form row, such as copy, scan or sign out, where bare text would not read as something to press.
+- **Link:** the label in `muted`, underlined, no outline; `ink` when pressed. Anything that goes somewhere (a web page, another page) and a lesser action inline with text.
+- **Destructive:** compact or bordered, in `bad`.
 - **Text button:** the label in `muted`, no outline, used in bars ("clear", "sleep"). Hover: `ink`.
 - **Icon button** (transport): the glyph in `ink`, at least 44 × 44 pt to hit, with no outline, except play/pause, which has a square 1-point `ink` outline.
 - **Disabled:** label and outline at 40 % opacity.
 - **Focus** (keyboard, and tvOS): a 2-point `accent` ring outside the control. On a television, no lift, shadow or glass.
+
+A text action that is not standard or prominent and not in a bar is bordered or underlined: bordered is a button, underlined is a link. *Why:* bare text in a form row reads as a value rather than something to press, and an underline is the long-standing sign that text goes somewhere.
 
 ### Toggle
 

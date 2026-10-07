@@ -233,6 +233,7 @@ fn command_loop(client: GraphQLClient, rx: Receiver<PlayerCommand>) {
             | PlayerCommand::RestartOutput
             | PlayerCommand::ClearOutputDevice
             | PlayerCommand::ReloadDsp
+            | PlayerCommand::RouteChanged
             | PlayerCommand::TrackReady(_)
             | PlayerCommand::TrackStreamReady(_)
             | PlayerCommand::StreamProbed { .. }

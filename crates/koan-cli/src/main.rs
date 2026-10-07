@@ -1179,7 +1179,7 @@ mod tests {
     /// read.
     #[test]
     fn dsp_show_json_keys() {
-        use koan_core::audio::dsp::profiles::{ChainView, TuningView};
+        use koan_core::audio::dsp::profiles::{ChainView, Join, TuningView};
         let view = ChainView {
             device: "Scarlett".into(),
             correction: Some("Wharfedale".into()),
@@ -1187,6 +1187,10 @@ mod tests {
             tuning: vec![TuningView {
                 name: "Lush".into(),
                 on: true,
+                made_for: Some("Neutral".into()),
+                matched: Some(true),
+                join: Some(Join::Matched),
+                note: None,
             }],
             preset: None,
             edited: false,
@@ -1220,7 +1224,14 @@ mod tests {
         );
         assert_eq!(
             value["tuning"][0],
-            serde_json::json!({ "name": "Lush", "on": true })
+            serde_json::json!({
+                "name": "Lush",
+                "on": true,
+                "made_for": "Neutral",
+                "matched": true,
+                "join": { "state": "matched" },
+                "note": null,
+            })
         );
     }
 

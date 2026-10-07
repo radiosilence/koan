@@ -96,10 +96,10 @@ struct SettingsView: View {
                     DevicesSettings(model: model)
                         .tabItem { Label("Devices", systemImage: "laptopcomputer.and.iphone") }
                         .tag("devices")
-                    if IntegrationSections.shown(model, mirror) {
-                        IntegrationsSettings()
-                            .tabItem { Label("Integrations", systemImage: "puzzlepiece.extension") }
-                            .tag("integrations")
+                    if ServerCapabilitySections.shown(model, mirror) {
+                        ServerCapabilitiesSettings()
+                            .tabItem { Label("Server Capabilities", systemImage: "puzzlepiece.extension") }
+                            .tag("server-capabilities")
                     }
                     AppearanceSettings()
                         .tabItem { Label("Appearance", systemImage: "paintpalette") }
@@ -153,9 +153,9 @@ struct SettingsView: View {
                             .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                     }
                     #if !os(tvOS)
-                    if IntegrationSections.shown(model, mirror) {
-                        pane("Integrations", "puzzlepiece.extension") {
-                            IntegrationsSettings()
+                    if ServerCapabilitySections.shown(model, mirror) {
+                        pane("Server Capabilities", "puzzlepiece.extension") {
+                            ServerCapabilitiesSettings()
                                 .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                         }
                     }
@@ -313,7 +313,7 @@ private struct LibrarySettings: View {
                 }
                 // Adding a folder starts a scan, so it waits for the one running.
                 Button("Add Folder…") { choosingFolder = true }
-                    .koanButton(.standard)
+                    .koanButton(.bordered)
                     .disabled(activity.conflicts(with: .localLibrary))
             } header: {
                 KoanSectionHeader("Folders")
@@ -325,9 +325,9 @@ private struct LibrarySettings: View {
             Section {
                 HStack {
                     Button("Scan") { model.scan() }
-                        .koanButton(.standard)
+                        .koanButton(.bordered)
                     Button("Rescan Everything") { model.scan(force: true) }
-                        .koanButton(.standard)
+                        .koanButton(.bordered)
                         .help("Re-read every file's tags, ignoring the scan cache")
                 }
                 .rowButtons()
@@ -349,7 +349,7 @@ private struct LibrarySettings: View {
                 Button("Clear Library Index…", role: .destructive) {
                     confirmingRebuild = true
                 }
-                .koanButton(.compact)
+                .koanButton(.bordered)
                 .disabled(activity.conflicts(with: .wholeLibrary))
             } header: {
                 KoanSectionHeader("Rebuild")
@@ -466,11 +466,11 @@ private struct RemoteSettings: View {
                         // sync runs strands you on a server you are trying to
                         // leave.
                         Button("Sync") { model.syncNow() }
-                            .koanButton(.standard)
+                            .koanButton(.bordered)
                             .disabled(activity.conflicts(with: [.remoteTracks]))
                         Spacer()
                         Button("Sign Out", role: .destructive) { confirmingSignOut = true }
-                            .koanButton(.compact)
+                            .koanButton(.bordered)
                     }
                     .rowButtons()
                 } header: {
@@ -482,7 +482,7 @@ private struct RemoteSettings: View {
                 if mirror.offers(ApiKeysSettings.extensionName) {
                     ApiKeysSettings()
                 }
-                IntegrationSections()
+                ServerCapabilitySections()
                 #endif
                 ServerOffers()
             } else {
@@ -617,10 +617,11 @@ private struct RemoteSettings: View {
                     .koanField()
                 }
                 LabeledContent("Using") {
-                    HStack {
-                        Text(Format.bytes(Int64(model.settings.cacheBytes)))
+                    HStack(spacing: KoanTheme.Space.l) {
+                        Text(Format.bytes(Int64(mirror.cacheBytes)))
+                            .monospacedDigit()
                         Button("Clear") { model.clearCache() }
-                            .koanButton(.text, system: .borderless)
+                            .koanButton(.compact, system: .bordered)
                             .disabled(activity.conflicts(with: [.downloads]))
                     }
                 }
@@ -680,7 +681,7 @@ private struct AccountSettings: View {
                 Section {
                     LabeledContent("User", value: model.settings.remoteUsername)
                     Button("Change Password…") { changingPassword = true }
-                        .koanButton(.compact)
+                        .koanButton(.bordered)
                 } header: {
                     KoanSectionHeader("Password")
                 } footer: {
@@ -732,11 +733,11 @@ private struct PeoplePane: View {
     }
 }
 
-// MARK: - Integrations
+// MARK: - Server capabilities
 
-/// What the account is connected to beyond kōan's own apps: ListenBrainz,
-/// and assistants over MCP. Each where the server has it.
-private struct IntegrationSections: View {
+/// What the server does on the account's behalf: scrobbling to ListenBrainz,
+/// and serving assistants over MCP. Each where the server has it.
+private struct ServerCapabilitySections: View {
     @Environment(EngineMirror.self) private var mirror
 
     static func shown(_ model: SettingsModel, _ mirror: EngineMirror) -> Bool {
@@ -752,10 +753,10 @@ private struct IntegrationSections: View {
     }
 }
 
-private struct IntegrationsSettings: View {
+private struct ServerCapabilitiesSettings: View {
     var body: some View {
         KoanForm {
-            IntegrationSections()
+            ServerCapabilitySections()
         }
         .koanSheet()
     }
@@ -818,6 +819,9 @@ private struct PlaybackSettings: View {
 
     var body: some View {
         KoanForm {
+            // On a phone or a television the route is the only device, and
+            // choosing it belongs to the system's route picker.
+            #if os(macOS)
             Section {
                 KoanPicker(
                     "Output",
@@ -834,6 +838,7 @@ private struct PlaybackSettings: View {
                 Text("kōan asks the device to run at the source's sample rate, so nothing is resampled unless the device refuses.")
                     .koanText(.fine, .muted)
             }
+            #endif
 
             Section {
                 Toggle("Fade on pause", isOn: model.binding(\.fadeOnPause)).koanToggle()
@@ -907,7 +912,7 @@ struct AutoEqSuggestion: View {
             case let .search(query):
                 HStack {
                     Button("Find \(query) in AutoEQ…") { find(query) }
-                        .koanButton(.standard)
+                        .koanButton(.bordered)
                     dismiss
                     Spacer()
                 }
@@ -919,7 +924,7 @@ struct AutoEqSuggestion: View {
 
     private var dismiss: some View {
         Button("Not for This Device") { dsp.dismissSuggestion() }
-            .koanButton(.text)
+            .koanButton(.link)
     }
 }
 
@@ -1143,14 +1148,14 @@ private struct ScrobblingSettings: View {
                     }
                     #if !os(tvOS)
                     Button("Disconnect", role: .destructive, action: disconnect)
-                        .koanButton(.compact)
+                        .koanButton(.bordered)
                         .disabled(busy)
                     #endif
                 } else if !loaded {
                     Text("Checking…").koanText(.body, .muted)
                 } else if statusFailed {
                     Button("Try Again") { Task { await load() } }
-                        .koanButton(.standard)
+                        .koanButton(.bordered)
                 } else {
                     #if os(tvOS)
                     Text("Not connected. Connect ListenBrainz from kōan on a phone or Mac.")
@@ -1164,7 +1169,7 @@ private struct ScrobblingSettings: View {
                     }
                     HStack {
                         Link("Find your token", destination: URL(string: "https://listenbrainz.org/settings/")!)
-                            .koanButton(.text)
+                            .koanButton(.link)
                         Spacer()
                         Button("Connect", action: connect)
                             .koanButton(.prominent)
@@ -1347,7 +1352,7 @@ private struct DevicesSettings: View {
                         Button("Remove", role: .destructive) {
                             model.edit { $0.devicesAddresses.removeAll { $0 == addr } }
                         }
-                        .koanButton(.text, system: .borderless)
+                        .koanButton(.bordered, system: .borderless)
                     }
                 }
                 HStack {
@@ -1356,7 +1361,7 @@ private struct DevicesSettings: View {
                         .onSubmit(add)
                         .koanField()
                     Button("Add", action: add)
-                        .koanButton(.standard)
+                        .koanButton(.bordered)
                         .disabled(address.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             } header: {
@@ -1373,7 +1378,7 @@ private struct DevicesSettings: View {
                             Text(account)
                             Spacer()
                             Button("Stop sharing", role: .destructive) { share(account, allow: false) }
-                                .koanButton(.text, system: .borderless)
+                                .koanButton(.bordered, system: .borderless)
                         }
                     }
                     HStack {
@@ -1389,7 +1394,7 @@ private struct DevicesSettings: View {
                             .onSubmit { share(grantee, allow: true) }
                             .koanField()
                         Button("Share") { share(grantee, allow: true) }
-                            .koanButton(.standard)
+                            .koanButton(.bordered)
                             .disabled(grantee.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                     #if !os(macOS)
@@ -1615,7 +1620,7 @@ enum SettingsEvidence {
             ("settings-server", size, page(RemoteSettings(model: model))),
             ("settings-account", size, page(AccountSettings(model: model))),
             ("settings-people", size, page(PeoplePane(model: model, people: people))),
-            ("settings-integrations", size, page(IntegrationsSettings())),
+            ("settings-server-capabilities", size, page(ServerCapabilitiesSettings())),
             ("settings-playback", size, page(PlaybackSettings(model: model))),
             ("settings-eq", size, page(EqSettings())),
             ("settings-devices", size, page(DevicesSettings(model: model))),

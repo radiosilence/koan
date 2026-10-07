@@ -297,22 +297,24 @@ struct ArtistDetailView: View {
                             .transition(.opacity)
                     }
                     VStack(alignment: .leading, spacing: 6) {
-                        HStack(alignment: .firstTextBaseline, spacing: 14) {
+                        HStack(alignment: .top, spacing: 14) {
                             #if !os(tvOS)
                             if let artist {
                                 PlayableHeaderButton(
                                     playable: .artist(id: artist.id, name: artist.name)
                                 )
-                                .alignmentGuide(.firstTextBaseline) { $0[.bottom] * 0.78 }
                             }
                             #endif
                             Text(artist?.name ?? "Artist")
                                 // The album page's title size, on each platform.
                                 #if os(tvOS)
                                 .font(.role(.display, system: .system(size: 48, weight: .semibold)))
+                                .headerTitleTop(.display, systemSize: 48)
                                 #else
                                 .font(.role(.title, system: .system(size: 26, weight: .semibold)))
+                                .headerTitleTop(.title, systemSize: 26)
                                 #endif
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                         Text(Format.count(Int64(albums.count), "album"))
                             .font(.role(.control, system: .callout))
@@ -405,6 +407,7 @@ private struct ArtistBio: View {
                         .accessibilityHint(url.absoluteString)
                     #else
                     Link("From Wikipedia", destination: url)
+                        .koanButton(.link)
                     #endif
                 }
                 if let imageCredit {

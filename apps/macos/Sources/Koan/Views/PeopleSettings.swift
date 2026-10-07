@@ -109,7 +109,7 @@ struct PeopleSettings: View {
                                 }
                             }
                         }
-                        .koanButton(.standard)
+                        .koanButton(.bordered)
                         .disabled(newUsername.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                     .rowButtons()
@@ -236,7 +236,7 @@ struct InviteSheet: View {
                     #endif
                     if let mail = URL(string: invite.mailto) {
                         Link(destination: mail) { KoanLabel("Open in Mail", icon: "envelope") }
-                            .koanButton(.standard)
+                            .koanButton(.link)
                     }
                     Button {
                         Pasteboard.write(html: invite.emailHtml, text: invite.emailText)
@@ -244,14 +244,14 @@ struct InviteSheet: View {
                     } label: {
                         KoanLabel(copied == "email" ? "Copied" : "Copy Email", icon: "doc.on.doc")
                     }
-                    .koanButton(.standard)
+                    .koanButton(.bordered)
                     Button {
                         Pasteboard.write(text: invite.link)
                         copied = "link"
                     } label: {
                         KoanLabel(copied == "link" ? "Copied" : "Copy Link", icon: "link")
                     }
-                    .koanButton(.standard)
+                    .koanButton(.bordered)
                 } header: {
                     KoanSectionHeader("Invite for \(invite.username)")
                 }

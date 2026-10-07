@@ -101,6 +101,8 @@ pub struct OutputChain {
     /// The tuning's EQs left out entirely, by name, for a front end to say
     /// what plays without reading `left_out`.
     pub left_out_eqs: Vec<String>,
+    /// `left_out` a sentence at a time, by the EQ each is about.
+    pub eq_notes: Vec<(String, String)>,
     /// The output's tuning plays.
     pub tuning_plays: bool,
 }
@@ -127,7 +129,7 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
     let chosen = dsp.profile_for(device);
     let correction = chosen.map(|c| member_playing(c, all));
     let baked = chosen.is_some_and(|c| profiles::shown_role(c, all) == DspRole::Baked);
-    let mut notes: Vec<String> = Vec::new();
+    let mut notes: Vec<(String, String)> = Vec::new();
     let mut dropped: Vec<String> = Vec::new();
     // The tunings switched on, in order, each one that cannot play said.
     let mut tunings: Vec<&DspProfile> = Vec::new();
@@ -153,7 +155,10 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
             };
             match why {
                 Some(why) => {
-                    notes.push(format!("{} is left out: {why}.", entry.tuning));
+                    notes.push((
+                        entry.tuning.clone(),
+                        format!("{} is left out: {why}.", entry.tuning),
+                    ));
                     dropped.push(entry.tuning.clone());
                 }
                 None => tunings.extend(all.iter().find(|p| p.name == entry.tuning)),
@@ -170,8 +175,17 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
             .tuning
             .clone(),
     };
-    let alone = |notes: &[String], dropped: &[String]| -> Option<OutputChain> {
-        let left_out = (!notes.is_empty()).then(|| notes.join(" "));
+    let said = |notes: &[(String, String)]| {
+        (!notes.is_empty()).then(|| {
+            notes
+                .iter()
+                .map(|(_, n)| n.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+    };
+    let alone = |notes: &[(String, String)], dropped: &[String]| -> Option<OutputChain> {
+        let left_out = said(notes);
         Some(match correction {
             Some(c) => OutputChain {
                 profile: c.clone(),
@@ -179,6 +193,7 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
                 name: name.clone(),
                 left_out,
                 left_out_eqs: dropped.to_vec(),
+                eq_notes: notes.to_vec(),
                 tuning_plays: false,
             },
             // Without a correction to fall back on, the output plays
@@ -192,6 +207,7 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
                 name: name.clone(),
                 left_out,
                 left_out_eqs: dropped.to_vec(),
+                eq_notes: notes.to_vec(),
                 tuning_plays: false,
             },
             None => return None,
@@ -214,9 +230,12 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
     for t in tunings {
         let c = curves(t);
         if held + c > dsp_bounds::CHAIN_GRAPHICS {
-            notes.push(format!(
-                "{} is left out: with what plays before it, it would play more graphic curves than a chain holds.",
-                t.name
+            notes.push((
+                t.name.clone(),
+                format!(
+                    "{} is left out: with what plays before it, it would play more graphic curves than a chain holds.",
+                    t.name
+                ),
             ));
             dropped.push(t.name.clone());
             continue;
@@ -240,9 +259,12 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
             .filter(|(aim, made)| aim != made && targets::same_ear(aim, made));
         let step = match wanted {
             Some(_) if held >= dsp_bounds::CHAIN_GRAPHICS => {
-                notes.push(format!(
-                    "{} plays without the target difference: the chain's graphic curves are full, so it may not sound as made.",
-                    t.name
+                notes.push((
+                    t.name.clone(),
+                    format!(
+                        "{} plays without the target difference: the chain's graphic curves are full, so it may not sound as made.",
+                        t.name
+                    ),
                 ));
                 None
             }
@@ -300,12 +322,18 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
             Err(e) => {
                 if let Some((step, _, tuning)) = layers.iter_mut().rev().find(|l| l.0.is_some()) {
                     *step = None;
-                    notes.push(format!(
-                        "{tuning} plays without the target difference: with it, the chain is more than one can hold, so it may not sound as made."
+                    notes.push((
+                        tuning.clone(),
+                        format!(
+                            "{tuning} plays without the target difference: with it, the chain is more than one can hold, so it may not sound as made."
+                        ),
                     ));
                 } else if let Some((_, _, tuning)) = layers.pop() {
-                    notes.push(format!(
-                        "{tuning} is left out: with what plays before it, the chain is more than one can hold ({e})."
+                    notes.push((
+                        tuning.clone(),
+                        format!(
+                            "{tuning} is left out: with what plays before it, the chain is more than one can hold ({e})."
+                        ),
                     ));
                     dropped.push(tuning);
                     if layers.is_empty() {
@@ -317,13 +345,14 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
             }
         }
     };
-    let left_out = (!notes.is_empty()).then(|| notes.join(" "));
+    let left_out = said(&notes);
     Some(OutputChain {
         profile,
         all: among,
         name,
         left_out,
         left_out_eqs: dropped,
+        eq_notes: notes,
         tuning_plays: true,
     })
 }
@@ -343,7 +372,11 @@ fn member_playing<'a>(profile: &'a DspProfile, all: &'a [DspProfile]) -> &'a Dsp
 
 /// The target the tuning `profile` was made against: for a group, its
 /// playing member's, and for a stack, its own or its first layer's on.
-fn made_against(profile: &DspProfile, all: &[DspProfile], depth: usize) -> Option<String> {
+pub(crate) fn made_against(
+    profile: &DspProfile,
+    all: &[DspProfile],
+    depth: usize,
+) -> Option<String> {
     if depth > MAX_LAYER_DEPTH {
         return None;
     }

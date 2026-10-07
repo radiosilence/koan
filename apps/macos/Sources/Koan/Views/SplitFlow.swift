@@ -39,14 +39,16 @@ struct SplitFlow: View {
                 }
                 if !targets.isEmpty {
                     Section {
-                        Picker("Neutral is", selection: $target) {
-                            ForEach(targets, id: \.id) { t in
-                                TargetRow(target: t).tag(Optional(t.id))
+                        KoanListPicker(
+                            title: "Neutral is",
+                            selection: $target,
+                            sections: [(nil, targets.map { Optional($0.id) })],
+                            name: { id in targets.first { $0.id == id }?.name ?? "" }
+                        ) { id in
+                            if let t = targets.first(where: { $0.id == id }) {
+                                TargetRow(target: t)
                             }
                         }
-                        #if os(iOS)
-                        .pickerStyle(.navigationLink)
-                        #endif
                     } footer: {
                         Text("The target \(name) was made for. Harman is the usual one; the tuning is what it does beyond it.")
                             .koanText(.fine, .muted)

@@ -1271,6 +1271,12 @@ pub struct DspOverview {
     pub tunings: std::collections::HashMap<String, String>,
     /// The output's tuning: its EQs in the order they play.
     pub chain: Vec<DspTuningEntry>,
+    /// How each EQ of `chain` meets the correction, in the same order.
+    pub joins: Vec<DspEqJoin>,
+    /// The target the output's correction aims at, by name.
+    pub aim: Option<String>,
+    /// Whether that target is for in-ears; none where it is not known.
+    pub in_ear: Option<bool>,
     /// The preset the output was set from, and whether it was changed since.
     pub preset: Option<String>,
     pub preset_edited: bool,
@@ -1297,6 +1303,49 @@ pub struct DspTuningEntry {
     pub name: String,
     /// Switched off, it stays in the tuning and plays nothing.
     pub on: bool,
+}
+
+/// How an EQ of the tuning meets the correction ahead of it.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspEqJoin {
+    /// The target it was made against, by name.
+    pub made_for: Option<String>,
+    /// None where nothing is compared: no correction, or one whose target
+    /// is not known, or an EQ that does not play.
+    pub join: Option<DspJoin>,
+    /// What of it does not play as chosen, and why.
+    pub note: Option<String>,
+    /// For a converted join, the target difference that plays, in dB on
+    /// the response grid.
+    pub step: Vec<f64>,
+    /// For an unknown join, the target it looks made against.
+    pub suggestion: Option<DspTargetName>,
+}
+
+/// A target by id and name.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspTargetName {
+    pub id: String,
+    pub name: String,
+}
+
+/// What a tuning adds on a correction, said to be made against `target`
+/// (none for not saying), in dB on the response grid.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspMadeAgainstPreview {
+    pub target: Option<String>,
+    pub db: Vec<f64>,
+}
+
+#[derive(uniffi::Enum, Debug, Clone, PartialEq)]
+pub enum DspJoin {
+    /// Made against the target the correction aims at.
+    Matched,
+    /// Made against another: the difference from `from` to `to` plays
+    /// first.
+    Converted { from: String, to: String },
+    /// Made against a target not said: a target may be applied twice.
+    Unknown,
 }
 
 #[derive(uniffi::Record, Debug, Clone)]
@@ -1685,6 +1734,26 @@ impl From<koan_core::audio::dsp::profiles::Overview> for DspOverview {
                 .into_iter()
                 .map(|(name, on)| DspTuningEntry { name, on })
                 .collect(),
+            joins: o
+                .joins
+                .into_iter()
+                .map(|j| {
+                    use koan_core::audio::dsp::profiles::Join;
+                    DspEqJoin {
+                        made_for: j.made_for,
+                        join: j.join.map(|j| match j {
+                            Join::Matched => DspJoin::Matched,
+                            Join::Converted { from, to } => DspJoin::Converted { from, to },
+                            Join::Unknown => DspJoin::Unknown,
+                        }),
+                        note: j.note,
+                        step: j.step,
+                        suggestion: j.suggestion.map(|(id, name)| DspTargetName { id, name }),
+                    }
+                })
+                .collect(),
+            aim: o.aim,
+            in_ear: o.in_ear,
             preset_edited: o.preset.as_ref().is_some_and(|(_, e)| *e),
             preset: o.preset.map(|(name, _)| name),
             profiles: o

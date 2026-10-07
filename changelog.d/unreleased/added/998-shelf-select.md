@@ -1,0 +1,1 @@
+- **Select on the shelves.** Favourites, Recently Played and Downloaded on iPhone and iPad have a "select" button too, picking artists, records and tracks together for the bar at the foot of the page.

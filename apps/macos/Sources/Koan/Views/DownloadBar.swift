@@ -7,11 +7,12 @@ import UIKit
 import KoanFFI
 import QuartzCore
 
-/// How much of a record is on this device, along the foot of its sleeve, and
-/// whether more of it is arriving. Partly here and still, it is a muted bar.
-/// While any of its tracks download it takes the tint and advances with their
-/// bytes, which `TransferMeter` hands it at the display's rate; when the last
-/// one settles it is still again.
+/// How much of a record is on this device, filling up the left edge of its
+/// sleeve, and whether more of it is arriving. Partly here and still, it is a
+/// muted bar. While any of its tracks download it takes the tint and rises
+/// with their bytes, which `TransferMeter` hands it at the display's rate;
+/// when the last one settles it is still again. A record wholly here shows
+/// none: there is nothing left to measure.
 final class DownloadBarLayer: CALayer {
     private let fill = CALayer()
     private var onDevice: AlbumOnDevice?
@@ -21,8 +22,6 @@ final class DownloadBarLayer: CALayer {
 
     override init() {
         super.init()
-        cornerRadius = KoanTheme.radius(1.5)
-        fill.cornerRadius = KoanTheme.radius(1.5)
         addSublayer(fill)
         isHidden = true
     }
@@ -40,7 +39,7 @@ final class DownloadBarLayer: CALayer {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         self.onDevice = onDevice
-        isHidden = onDevice == nil
+        isHidden = onDevice.map { $0.have >= $0.total && !downloading } ?? true
         backgroundColor = CGColor(gray: 0, alpha: 0.35)
         fill.backgroundColor = downloading ? tint : muted
         if !downloading { arriving = 0 }
@@ -67,13 +66,16 @@ final class DownloadBarLayer: CALayer {
         if let onDevice, onDevice.total > 0 {
             fraction = min((Double(onDevice.have) + arriving) / Double(onDevice.total), 1)
         }
-        fill.frame = CGRect(x: 0, y: 0, width: bounds.width * fraction, height: bounds.height)
+        // Flipped geometry on both platforms: the foot is at maxY.
+        let height = bounds.height * fraction
+        fill.frame = CGRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
     }
 
-    /// Where the bar sits on a sleeve `side` points across: along its foot,
-    /// clear of the heart in the corner.
-    static func frame(side: CGFloat, flipped: Bool) -> CGRect {
-        CGRect(x: 8, y: flipped ? side - 8 - 3 : 8, width: max(side - 16 - 34, 0), height: 3)
+    /// Where the bar sits on a sleeve `side` points across: flush along its
+    /// left edge, the whole height, inside a layer clipped to the sleeve's
+    /// corners.
+    static func frame(side: CGFloat) -> CGRect {
+        CGRect(x: 0, y: 0, width: 3, height: side)
     }
 }
 
@@ -114,6 +116,9 @@ struct DownloadedBar: UIViewRepresentable {
             super.init(frame: frame)
             isUserInteractionEnabled = false
             isAccessibilityElement = false
+            layer.cornerRadius = KoanTheme.radius(6)
+            layer.cornerCurve = .continuous
+            layer.masksToBounds = true
             layer.addSublayer(bar)
             registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: BarView, _) in
                 view.restyle()
@@ -145,7 +150,7 @@ struct DownloadedBar: UIViewRepresentable {
             super.layoutSubviews()
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            bar.frame = DownloadBarLayer.frame(side: bounds.width, flipped: true)
+            bar.frame = DownloadBarLayer.frame(side: bounds.width)
             CATransaction.commit()
         }
     }

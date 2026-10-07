@@ -1,0 +1,1 @@
+- **Album pages no longer open empty.** Each album page now keeps its own record, so a read for another page that finishes late can no longer replace it; before, the page showed "Album" with no tracks until the library next changed. A record that has gone from the library, or that could not be read, is now said as such, with a way back and, after a failed read, a retry.

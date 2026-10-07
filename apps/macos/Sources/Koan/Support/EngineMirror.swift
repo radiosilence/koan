@@ -64,6 +64,7 @@ final class EngineMirror: Observable {
     private var _figures: [Int64: TransferFigure] = [:]
     private var _libraryVersion: UInt64 = 0
     private var _historyVersion: UInt64 = 0
+    private var _cacheBytes: UInt64 = 0
     private var _scanning = false
     private var _syncing = false
     private var _syncProgress: SyncProgress?
@@ -267,6 +268,13 @@ final class EngineMirror: Observable {
         return _historyVersion
     }
 
+    /// Bytes in the download cache, kept by the engine as downloads land and
+    /// leave.
+    var cacheBytes: UInt64 {
+        access(\.cacheBytes)
+        return _cacheBytes
+    }
+
     // MARK: - Reading the fast slice
     //
     // Behind calls rather than a property, so a view has to mean it. Reading
@@ -393,6 +401,10 @@ final class EngineMirror: Observable {
             mutate(\.libraryVersion) { _libraryVersion = version }
         case .history(let version):
             mutate(\.historyVersion) { _historyVersion = version }
+        case .cache(let bytes):
+            if bytes != _cacheBytes {
+                mutate(\.cacheBytes) { _cacheBytes = bytes }
+            }
         case .tasks(let scanning, let syncing):
             if scanning != _scanning || syncing != _syncing {
                 mutate(\.tasks) {

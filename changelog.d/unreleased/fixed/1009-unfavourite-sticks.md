@@ -1,0 +1,1 @@
+- **Unfavouriting sticks.** Taking the heart off a record, artist or track while signed in to a server no longer turns it back on: a sync that read the server's favourites before the change reached it put it back. Changes now wait on the device until the server has them, which also keeps one made offline.

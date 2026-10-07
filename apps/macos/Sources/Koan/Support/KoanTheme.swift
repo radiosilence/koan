@@ -405,8 +405,8 @@ enum KoanTone {
 // MARK: - Accent
 
 /// The accent for a record, tone-mapped as the spec sets out: the sleeve's hue
-/// kept, its lightness and chroma moved into a band per appearance in OKLCH,
-/// clear of `bad`'s hue. Mint when there is no record or no usable hue. The
+/// kept, its lightness and chroma moved into a band per appearance in OKLCH.
+/// Mint when there is no record or no usable hue. The
 /// room's tint in both looks, not only the kōan theme's.
 ///
 /// Built from the colour `Color.dominant` already works out for the room, so
@@ -441,10 +441,6 @@ struct KoanAccent: Equatable, Sendable {
     static let chroma = 0.10...0.19
     /// Under this, a sleeve has no hue worth carrying, and the accent is mint.
     static let noHue = 0.04
-    /// Degrees of hue kept between the accent and `bad`, so a red record never
-    /// reads as an error.
-    static let badGap = 25.0
-
     func shade(_ scheme: ColorScheme) -> Shade { scheme == .dark ? dark : light }
 
     private static func color(dark: Shade, light: Shade) -> Color {
@@ -484,8 +480,8 @@ struct KoanAccent: Equatable, Sendable {
             linear: (Double(resolved.linearRed), Double(resolved.linearGreen), Double(resolved.linearBlue))
         )
         guard c >= Self.noHue,
-              let dark = Self.shade(hue: h, chroma: c, band: Self.darkBand, bad: 0xEF6B73, bg: 0x1E1E1E, surface: 0x2A2A2A),
-              let light = Self.shade(hue: h, chroma: c, band: Self.lightBand, bad: 0xC43F3F, bg: 0xFFFFFF, surface: 0xF2F2F2)
+              let dark = Self.shade(hue: h, chroma: c, band: Self.darkBand, bg: 0x1E1E1E, surface: 0x2A2A2A),
+              let light = Self.shade(hue: h, chroma: c, band: Self.lightBand, bg: 0xFFFFFF, surface: 0xF2F2F2)
         else { self = .mint; return }
         self.init(dark: dark, light: light)
     }
@@ -500,13 +496,9 @@ struct KoanAccent: Equatable, Sendable {
     /// dark mode, the lightest in light — or failing that, the one that clears
     /// 3:1 as a fill.
     private static func shade(
-        hue: Double, chroma: Double, band: ClosedRange<Double>,
-        bad: UInt32, bg: UInt32, surface: UInt32
+        hue h: Double, chroma: Double, band: ClosedRange<Double>,
+        bg: UInt32, surface: UInt32
     ) -> Shade? {
-        let badHue = OKLCH.from(srgb: bad).h
-        var h = hue
-        let d = (h - badHue + 540).truncatingRemainder(dividingBy: 360) - 180
-        if abs(d) < badGap { h = (badHue + (d >= 0 ? badGap : -badGap) + 360).truncatingRemainder(dividingBy: 360) }
         let c = min(max(chroma, Self.chroma.lowerBound), Self.chroma.upperBound)
         let darkMode = band == darkBand
         let steps = (0...50).map { band.lowerBound + (band.upperBound - band.lowerBound) * Double($0) / 50 }
@@ -967,6 +959,13 @@ enum KoanButtonKind {
     /// Smaller and tighter, for actions beside a row or a title: favourite,
     /// ⋯, revoke, a sheet's lesser actions.
     case compact
+    /// Compact, in a hairline `muted` outline: a secondary action standing in
+    /// a form row, where bare text would not read as something to press.
+    case bordered
+    /// `muted` and underlined; ink on hover. An action that reads as a link:
+    /// it goes somewhere, or it is a lesser action inline with text. A bare
+    /// text action is underlined, an outlined one is not.
+    case link
     /// `muted`, no outline; ink on hover. Bars' actions ("clear", "sleep").
     case text
     /// A glyph alone, with a 44-point hit area.
@@ -982,7 +981,7 @@ enum KoanButtonKind {
     /// gives them, and cards their own.
     fileprivate var setsType: Bool {
         switch self {
-        case .prominent, .standard, .compact, .text: true
+        case .prominent, .standard, .compact, .bordered, .link, .text: true
         case .icon, .iconOutlined, .card: false
         }
     }
@@ -991,7 +990,7 @@ enum KoanButtonKind {
     fileprivate var type: KoanType {
         switch self {
         case .prominent: .body
-        case .compact: .meta
+        case .compact, .bordered: .meta
         default: .control
         }
     }
@@ -1146,6 +1145,7 @@ private struct KoanButtonBody: View {
                 .textCase(.lowercase)
                 .lineLimit(1)
                 .layoutPriority(1)
+                .underline(kind == .link)
                 .foregroundStyle(foreground(configuration))
         } else {
             configuration.label
@@ -1167,8 +1167,8 @@ private struct KoanButtonBody: View {
         return switch kind {
         case .prominent:
             accent.shade(scheme).readsAsText ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.koanInk)
-        case .standard, .compact, .icon, .iconOutlined, .card: AnyShapeStyle(Color.koanInk)
-        case .text: AnyShapeStyle(configuration.isPressed ? Color.koanInk : Color.koanMuted)
+        case .standard, .compact, .bordered, .icon, .iconOutlined, .card: AnyShapeStyle(Color.koanInk)
+        case .text, .link: AnyShapeStyle(configuration.isPressed ? Color.koanInk : Color.koanMuted)
         }
     }
 
@@ -1176,7 +1176,8 @@ private struct KoanButtonBody: View {
         switch kind {
         case .prominent: AnyShapeStyle(.tint)
         case .iconOutlined: AnyShapeStyle(Color.koanInk)
-        case .standard, .compact, .text, .icon, .card: nil
+        case .bordered: AnyShapeStyle(Color.koanMuted)
+        case .standard, .compact, .link, .text, .icon, .card: nil
         }
     }
 
@@ -1185,7 +1186,8 @@ private struct KoanButtonBody: View {
         case .prominent: EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
         case .standard: EdgeInsets(top: 8, leading: 4, bottom: 8, trailing: 4)
         case .compact: EdgeInsets(top: 4, leading: 2, bottom: 4, trailing: 2)
-        case .text: EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0)
+        case .bordered: EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
+        case .text, .link: EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0)
         case .icon, .card: EdgeInsets()
         case .iconOutlined: EdgeInsets(top: 7, leading: 7, bottom: 7, trailing: 7)
         }
@@ -1203,7 +1205,7 @@ private struct KoanButtonBody: View {
         // The small actions beside a title or a row, which a finger still
         // has to land on.
         #if os(iOS)
-        case .compact: 44
+        case .compact, .link: 44
         #endif
         default: nil
         }
@@ -1446,6 +1448,102 @@ struct KoanPicker<Value: Hashable>: View {
         .koanControl()
     }
 }
+
+/// A choice from a list long enough to want a page of its own, each option
+/// drawn by `row`, in sections. On iOS in the theme, a row that pushes the
+/// options as a page that keeps clear of the theme's tab bar: the page
+/// SwiftUI pushes for a `.navigationLink` picker is its own, and nothing can
+/// give it the bar's inset, so its last rows sat under the mini player. The
+/// platform's picker otherwise, pushed on iOS as before.
+struct KoanListPicker<Value: Hashable, Row: View>: View {
+    let title: String
+    @Binding var selection: Value
+    let sections: [(title: String?, values: [Value])]
+    /// What the chosen value is called, beside the title.
+    let name: (Value) -> String
+    @ViewBuilder let row: (Value) -> Row
+
+    var body: some View {
+        #if os(iOS)
+        if KoanTheme.isOn {
+            NavigationLink {
+                KoanListPickerPage(title: title, selection: $selection, sections: sections, row: row)
+            } label: {
+                LabeledContent(title) {
+                    Text(name(selection))
+                        .koanText(.control, .muted)
+                        .lineLimit(1)
+                }
+            }
+        } else {
+            picker.pickerStyle(.navigationLink)
+        }
+        #else
+        picker
+        #endif
+    }
+
+    private var picker: some View {
+        Picker(title, selection: $selection) {
+            ForEach(sections.indices, id: \.self) { i in
+                if let heading = sections[i].title {
+                    Section(KoanTheme.label(heading)) { options(sections[i].values) }
+                } else {
+                    options(sections[i].values)
+                }
+            }
+        }
+    }
+
+    private func options(_ values: [Value]) -> some View {
+        ForEach(values, id: \.self) { row($0).tag($0) }
+    }
+}
+
+#if os(iOS)
+/// The options of a `KoanListPicker`, as a page: the chosen one ticked, and
+/// back to the page before on a choice, as the platform's picker goes.
+private struct KoanListPickerPage<Value: Hashable, Row: View>: View {
+    let title: String
+    @Binding var selection: Value
+    let sections: [(title: String?, values: [Value])]
+    @ViewBuilder let row: (Value) -> Row
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        KoanForm {
+            ForEach(sections.indices, id: \.self) { i in
+                Section {
+                    ForEach(sections[i].values, id: \.self) { value in
+                        Button {
+                            selection = value
+                            dismiss()
+                        } label: {
+                            HStack(spacing: KoanTheme.Space.m) {
+                                row(value)
+                                Spacer(minLength: 0)
+                                if value == selection {
+                                    KoanIcon("checkmark")
+                                }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(value == selection ? .isSelected : [])
+                    }
+                } header: {
+                    if let heading = sections[i].title {
+                        KoanSectionHeader(KoanTheme.label(heading))
+                    }
+                }
+            }
+        }
+        .navigationTitle(KoanTheme.label(title))
+        .koanBackButton()
+        .koanHidesSystemTabBar()
+    }
+}
+#endif
 
 #if os(tvOS)
 private struct TelevisionPicker<Value: Hashable>: View {

@@ -61,18 +61,14 @@ struct EqSettings: View {
                     EqChain(
                         overview: o,
                         device: app.dsp.label(device),
-                        aim: aim,
                         curves: curves,
                         choose: { choosing = $0 },
                         open: { showing = ShownProfile(name: $0) },
-                        set: { app.dsp.setTunings($0, for: device) }
+                        set: { app.dsp.setTunings($0, for: device) },
+                        madeFor: { app.dsp.setTunedFor($0, $1) }
                     )
-                    if let leftOut = o.leftOut {
-                        Label(leftOut, systemImage: "exclamationmark.triangle")
-                            .koanText(.meta, .bad)
-                    }
                 } footer: {
-                    Text(EqChain.sentence(o, device: app.dsp.label(device), aim: aim))
+                    Text(EqChain.sentence(o, device: app.dsp.label(device)))
                         .koanText(.fine, .muted)
                 }
             }
@@ -91,7 +87,7 @@ struct EqSettings: View {
                     Text(error).koanText(.fine, .bad)
                 }
                 Button("Manage EQ") { managing = true }
-                    .koanButton(.text)
+                    .koanButton(.link)
             }
         }
         .koanSheet()
@@ -253,11 +249,11 @@ struct EqSettings: View {
                 LabeledContent {
                     HStack {
                         Button("Save") { save(as: preset, over: true) }
-                            .koanButton(.compact)
+                            .koanButton(.bordered)
                         Button("Revert") { app.dsp.applyPreset(preset, to: device) }
-                            .koanButton(.text)
+                            .koanButton(.link)
                         Button("Save as New…") { ask("Save as New Preset") }
-                            .koanButton(.text)
+                            .koanButton(.link)
                     }
                 } label: {
                     // The preset's name keeps its case; the words are the app's.
@@ -279,7 +275,7 @@ struct EqSettings: View {
                 Button { explaining = true } label: {
                     Label("How EQ works", systemImage: "info.circle")
                 }
-                .koanButton(.text)
+                .koanButton(.link)
                 #endif
             }
         }
@@ -374,9 +370,6 @@ struct EqSettings: View {
         return parts
     }
 
-    /// The target the correction aims at, for the sentence.
-    @State private var aim: String?
-
     private func load() async {
         let o = await app.dsp.overview(for: picked)
         overview = o
@@ -390,12 +383,6 @@ struct EqSettings: View {
             drawn[name] = await app.dsp.response(name)?.total
         }
         curves = drawn
-        if let active = o.active, let targets = await app.dsp.targets(active) {
-            let id = targets.chosen ?? targets.madeFor?.id
-            aim = targets.choices.first { $0.id == id }?.name
-        } else {
-            aim = nil
-        }
     }
 }
 
@@ -429,11 +416,14 @@ struct StageStroke {
 struct CurveThumb: View {
     let db: [Double]
     let stroke: StageStroke
+    /// The dB at the top edge, shared where thumbnails are compared; the
+    /// curve's own peak, at least 6 dB, otherwise.
+    var range: Double?
 
     var body: some View {
         Canvas { context, size in
             guard db.count > 1 else { return }
-            let range = max(6, db.map(abs).max() ?? 0)
+            let range = self.range ?? max(6, db.map(abs).max() ?? 0)
             var path = Path()
             for (i, v) in db.enumerated() {
                 let point = CGPoint(
@@ -451,14 +441,19 @@ struct CurveThumb: View {
 
 /// The chain as blocks joined by a line: music in, the correction, the
 /// tuning's EQs, the device out. An empty stage is a dashed place to add one.
+/// Above each EQ, how it meets the correction: the line in the accent where
+/// it was made against the correction's target, the conversion koan plays
+/// where it was made against another, and a warning where that is not set,
+/// since then a target may be applied twice.
 struct EqChain: View {
     let overview: DspOverview
     let device: String
-    let aim: String?
     let curves: [String: [Double]]
     let choose: (Stage) -> Void
     let open: (String) -> Void
     let set: ([DspTuningEntry]) -> Void
+    /// Say what an EQ was made against: its name, a target's id.
+    let madeFor: (String, String) -> Void
 
     private var correction: DspProfileSummary? {
         overview.profiles.first { $0.name == overview.active }
@@ -472,14 +467,18 @@ struct EqChain: View {
                 StageBlock(
                     title: "Correction",
                     name: correction.name,
-                    detail: correction.role == .baked ? KoanTheme.label("Already includes a tuning") : DspModel.describe(correction),
+                    detail: correction.role == .baked
+                        ? KoanTheme.label("Already includes a tuning")
+                        : ([DspModel.describe(correction)] + [overview.aim.map { "to \($0)" }].compactMap { $0 })
+                            .filter { !$0.isEmpty }
+                            .joined(separator: " · "),
                     db: curves[correction.name],
                     stroke: .correction,
                     action: { choose(.correction) }
                 ) {
                     #if !os(tvOS)
                     Button("Show") { open(correction.name) }
-                        .koanButton(.text)
+                        .koanButton(.link)
                     #endif
                 }
             } else {
@@ -491,10 +490,14 @@ struct EqChain: View {
                 .koanCase()
                 .padding(.vertical, 4)
             ForEach(Array(overview.chain.enumerated()), id: \.element.name) { i, entry in
+                let meets = overview.joins.indices.contains(i) ? overview.joins[i] : nil
+                if i > 0 || meets?.join != nil || meets?.note != nil {
+                    join(meets, eq: entry.name)
+                }
                 StageBlock(
                     title: "EQ \(i + 1)",
                     name: entry.name,
-                    detail: entry.on ? nil : KoanTheme.label("Off"),
+                    detail: entry.on ? meets?.madeFor.map { "made for \($0)" } : KoanTheme.label("Off"),
                     db: curves[entry.name],
                     stroke: .eq(i),
                     action: { open(entry.name) }
@@ -522,6 +525,8 @@ struct EqChain: View {
                     .fixedSize()
                     #endif
                 }
+            }
+            if !overview.chain.isEmpty {
                 link
             }
             #if !os(tvOS)
@@ -533,7 +538,7 @@ struct EqChain: View {
             end("\(device) out", systemImage: "hifispeaker")
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(Self.sentence(overview, device: device, aim: aim))
+        .accessibilityLabel(Self.sentence(overview, device: device))
     }
 
     private func move(_ i: Int, by step: Int) {
@@ -550,6 +555,60 @@ struct EqChain: View {
             .accessibilityHidden(true)
     }
 
+    /// The line into an EQ, saying how it meets the correction, and what of
+    /// it does not play as chosen.
+    private func join(_ meets: DspEqJoin?, eq: String) -> some View {
+        let matched = meets?.join == .matched
+        return VStack(alignment: .leading, spacing: 2) {
+            switch meets?.join {
+            case .matched:
+                Label("Matched", systemImage: "checkmark")
+                    .koanText(.fine, .accent)
+                    .koanCase()
+            case let .converted(from, to):
+                HStack(spacing: KoanTheme.Space.m) {
+                    Text("Target difference: \(from) → \(to)")
+                        .koanText(.fine, .muted)
+                    if let step = meets?.step, step.count > 1 {
+                        CurveThumb(db: step, stroke: StageStroke(style: KoanTheme.style(.muted, system: Color.secondary), dash: [])) // theme: raw — the system look's own
+                    }
+                }
+            case .unknown:
+                #if os(tvOS)
+                Label("Made against: unknown. This may apply a target twice", systemImage: "exclamationmark.triangle")
+                    .koanText(.fine, .bad)
+                #else
+                Button { open(eq) } label: {
+                    Label("Made against: unknown. This may apply a target twice; set it", systemImage: "exclamationmark.triangle")
+                        .koanText(.fine, .bad)
+                        .multilineTextAlignment(.leading)
+                }
+                .buttonStyle(.plain)
+                if let suggestion = meets?.suggestion {
+                    Button("Looks made for \(suggestion.name). Use that?") { madeFor(eq, suggestion.id) }
+                        .koanButton(.link)
+                }
+                #endif
+            case nil:
+                EmptyView()
+            }
+            if let note = meets?.note {
+                Label(note, systemImage: "exclamationmark.triangle")
+                    .koanText(.fine, .bad)
+            }
+        }
+        .padding(.vertical, 4)
+        .frame(minHeight: 14, alignment: .leading)
+        .padding(.leading, 18 + KoanTheme.Space.m)
+        .background(alignment: .leading) {
+            Rectangle()
+                .fill(matched ? AnyShapeStyle(.tint) : KoanTheme.style(.rule, system: Color.secondary.opacity(0.5))) // theme: raw — the system look's own
+                .frame(width: matched ? 2 : KoanTheme.hairline)
+                .padding(.leading, 18)
+                .accessibilityHidden(true)
+        }
+    }
+
     private func end(_ title: String, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
             .koanText(.meta, .muted)
@@ -559,11 +618,22 @@ struct EqChain: View {
     /// The chain in words, for the page's footer and for VoiceOver.
     /// What plays: the EQs switched on and not left out, and none on a
     /// correction that already includes a tuning.
-    static func sentence(_ o: DspOverview, device: String, aim: String?) -> String {
+    static func sentence(_ o: DspOverview, device: String) -> String {
+        let aim = o.aim
         let includes = o.profiles.first { $0.name == o.active }?.role == .baked
         let eqs = includes ? [] : o.chain.filter { entry in
             entry.on && !o.leftOutEqs.contains(entry.name)
         }.map(\.name)
+        // As core's `joined` says each, for the CLI.
+        let meets: [String] = zip(o.chain, o.joins).compactMap { entry, meets in
+            guard eqs.contains(entry.name), let aim else { return nil }
+            switch meets.join {
+            case .matched: return "\(entry.name) was made for \(aim): matched."
+            case let .converted(_, to): return "\(entry.name) was made for \(to), so the difference from \(aim) plays first."
+            case .unknown: return "What \(entry.name) was made against is not set, so it may apply a target twice."
+            case nil: return nil
+            }
+        }
         guard o.active != nil || !eqs.isEmpty else {
             return "\(device) is flat: the music plays untouched."
         }
@@ -574,7 +644,7 @@ struct EqChain: View {
         if !eqs.isEmpty {
             parts.append("tuned with " + ListFormatter.localizedString(byJoining: eqs))
         }
-        return "Music to \(device), " + parts.joined(separator: ", then ") + "."
+        return (["Music to \(device), " + parts.joined(separator: ", then ") + "."] + meets).joined(separator: " ")
     }
 }
 
@@ -650,6 +720,18 @@ private struct Placeholder: View {
     }
 }
 
+/// A target among a correction's choices, its default marked.
+private struct TargetChoiceRow: View {
+    let targets: DspTargets
+    let id: String
+
+    var body: some View {
+        if let c = targets.choices.first(where: { $0.id == id }) {
+            TargetRow(target: c, isDefault: c.id == targets.madeFor?.id)
+        }
+    }
+}
+
 /// Where an Add… in a stage's picker leads, presented by the page.
 enum StageAdd {
     case importing, autoEq, measuring
@@ -712,11 +794,11 @@ struct StagePicker: View {
                 }
                 Section {
                     Button("Import a File…") { add(.importing) }
-                        .koanButton(.standard)
+                        .koanButton(.bordered)
                     Button("Find in AutoEQ…") { add(.autoEq) }
-                        .koanButton(.standard)
+                        .koanButton(.bordered)
                     Button("Find a Measurement…") { add(.measuring) }
-                        .koanButton(.standard)
+                        .koanButton(.bordered)
                 } header: {
                     KoanSectionHeader("Add…")
                 }
@@ -736,23 +818,28 @@ struct StagePicker: View {
         #endif
     }
 
+    private func targetPicker(_ name: String, _ targets: DspTargets) -> some View {
+        let selection = Binding(
+            get: { targets.chosen ?? targets.madeFor?.id ?? "" },
+            set: { (id: String) in dsp.chooseTarget(name, id == targets.madeFor?.id ? nil : id) }
+        )
+        let ids: [String] = targets.choices.map(\.id)
+        return KoanListPicker(
+            title: "Target",
+            selection: selection,
+            sections: [(title: nil, values: ids)],
+            name: { (id: String) -> String in targets.choices.first { $0.id == id }?.name ?? "" },
+            row: { (id: String) in TargetChoiceRow(targets: targets, id: id) }
+        )
+    }
+
     /// The correction chosen: the target it aims at, a group's member, or
     /// for one with a tuning baked in, the way to take it apart.
     @ViewBuilder private func current(_ name: String) -> some View {
         Section {
             if let targets, correction?.role == .correction {
-                Picker("Target", selection: Binding(
-                    get: { targets.chosen ?? targets.madeFor?.id ?? "" },
-                    set: { id in dsp.chooseTarget(name, id == targets.madeFor?.id ? nil : id) }
-                )) {
-                    ForEach(targets.choices, id: \.id) { c in
-                        TargetRow(target: c, isDefault: c.id == targets.madeFor?.id).tag(c.id)
-                    }
-                }
-                .koanControl()
-                #if os(iOS)
-                .pickerStyle(.navigationLink)
-                #endif
+                targetPicker(name, targets)
+                    .koanControl()
             }
             if let c = correction, !c.members.isEmpty {
                 KoanPicker(

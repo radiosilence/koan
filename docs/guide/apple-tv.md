@@ -73,6 +73,10 @@ record and finds it in your library by name, then plays it from the first
 track. "Play kōan" carries on with the queue and "Pause kōan" pauses it,
 with kōan in the background as well as on screen.
 
+## Sample rates
+
+The Apple TV app asks tvOS for each track's sample rate and shows the rate the output then runs at; over HDMI that is the one the television or receiver negotiates, and a different one means tvOS resampled. See [Sample rates on iOS](../getting-started.md#sample-rates-on-ios).
+
 ## What it leaves out
 
 It is a device to play on rather than to curate: playlists are made on a phone

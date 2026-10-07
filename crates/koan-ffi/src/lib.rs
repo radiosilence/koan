@@ -96,6 +96,43 @@ pub trait ProgressReporter: Send + Sync {
     fn advanced(&self, done: u64, detail: String);
 }
 
+/// The iOS and tvOS audio session, which the app owns: activated by the
+/// engine the moment before it plays, released by the player once output has
+/// stopped for a while. Called on the player thread; `activate` must not
+/// return until the session is active, and answers `None` if it could not be
+/// made so. See `koan_core::audio::ios_backend::AudioSession`.
+#[uniffi::export(with_foreign)]
+pub trait AudioSessionHost: Send + Sync {
+    /// Ask for `sample_rate` as the session's preferred rate, activate, and
+    /// answer `AVAudioSession.sampleRate`; `None` if activation was refused.
+    /// Also called on a session already active, when a track wants another
+    /// rate.
+    fn activate(&self, sample_rate: f64) -> Option<f64>;
+    /// Ask for `sample_rate` without activating, and answer
+    /// `AVAudioSession.sampleRate`: on a route change, when another app may
+    /// hold the session.
+    fn follow(&self, sample_rate: f64) -> f64;
+    fn release(&self);
+}
+
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
+struct SessionBridge(Arc<dyn AudioSessionHost>);
+
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
+impl koan_core::audio::ios_backend::AudioSession for SessionBridge {
+    fn activate(&self, sample_rate: f64) -> Option<f64> {
+        self.0.activate(sample_rate)
+    }
+
+    fn follow(&self, sample_rate: f64) -> f64 {
+        self.0.follow(sample_rate)
+    }
+
+    fn release(&self) {
+        self.0.release();
+    }
+}
+
 /// Send `log` output to `~/.config/koan/koan.log`, the same file the CLI
 /// writes.
 ///
@@ -1536,9 +1573,14 @@ impl KoanEngine {
                 .ok_or_else(|| KoanError::NotFound {
                     message: format!("track {track_id}"),
                 })?;
-            let now_favourite = queries::toggle_favourite(&db.conn, queries::LOCAL_USER, track_id)
-                .map_err(fav_err)?;
-            koan_core::helpers::sync_favourite_to_remote(&db, track_id, now_favourite);
+            // One transaction with the change it queues for the server, so a
+            // sync importing the server's favourites sees both or neither.
+            let now_favourite = queries::atomically(&db.conn, || {
+                let now = queries::toggle_favourite(&db.conn, queries::LOCAL_USER, track_id)?;
+                koan_core::helpers::sync_favourite_to_remote(&db, track_id, now);
+                Ok(now)
+            })
+            .map_err(fav_err)?;
             Ok(now_favourite)
         })
         .await
@@ -1594,14 +1636,18 @@ impl KoanEngine {
                 .ok_or_else(|| KoanError::NotFound {
                     message: format!("album {album_id}"),
                 })?;
-            let now = queries::toggle_favourite_album(&db.conn, queries::LOCAL_USER, album_id)
-                .map_err(fav_err)?;
-            koan_core::helpers::sync_collection_favourite_to_remote(
-                &db,
-                koan_core::helpers::FavouriteKind::Album,
-                album_id,
-                now,
-            );
+            // As for a track: the favourite and its queued change together.
+            let now = queries::atomically(&db.conn, || {
+                let now = queries::toggle_favourite_album(&db.conn, queries::LOCAL_USER, album_id)?;
+                koan_core::helpers::sync_collection_favourite_to_remote(
+                    &db,
+                    koan_core::helpers::FavouriteKind::Album,
+                    album_id,
+                    now,
+                );
+                Ok(now)
+            })
+            .map_err(fav_err)?;
             Ok(now)
         })
         .await
@@ -1619,14 +1665,19 @@ impl KoanEngine {
                 .ok_or_else(|| KoanError::NotFound {
                     message: format!("artist {artist_id}"),
                 })?;
-            let now = queries::toggle_favourite_artist(&db.conn, queries::LOCAL_USER, artist_id)
-                .map_err(fav_err)?;
-            koan_core::helpers::sync_collection_favourite_to_remote(
-                &db,
-                koan_core::helpers::FavouriteKind::Artist,
-                artist_id,
-                now,
-            );
+            // As for a track: the favourite and its queued change together.
+            let now = queries::atomically(&db.conn, || {
+                let now =
+                    queries::toggle_favourite_artist(&db.conn, queries::LOCAL_USER, artist_id)?;
+                koan_core::helpers::sync_collection_favourite_to_remote(
+                    &db,
+                    koan_core::helpers::FavouriteKind::Artist,
+                    artist_id,
+                    now,
+                );
+                Ok(now)
+            })
+            .map_err(fav_err)?;
             Ok(now)
         })
         .await
@@ -3275,6 +3326,40 @@ impl KoanEngine {
         .await
     }
 
+    /// What the tuning `name` looks made against on `device` (the output in
+    /// use with `None`), where it does not say.
+    pub async fn dsp_suggest_made_against(
+        self: Arc<Self>,
+        name: String,
+        device: Option<String>,
+    ) -> Option<DspTargetName> {
+        offload::offload(move || {
+            let device = device.or_else(|| self.dsp_device())?;
+            koan_core::audio::dsp::profiles::suggest_made_against(&name, &device)
+                .map(|(id, name)| DspTargetName { id, name })
+        })
+        .await
+    }
+
+    /// What the tuning `name` adds on `device`'s correction for each target
+    /// it could be said to be made against.
+    pub async fn dsp_made_against_previews(
+        self: Arc<Self>,
+        name: String,
+        device: Option<String>,
+    ) -> Vec<DspMadeAgainstPreview> {
+        offload::offload(move || {
+            let Some(device) = device.or_else(|| self.dsp_device()) else {
+                return Vec::new();
+            };
+            koan_core::audio::dsp::profiles::made_against_previews(&name, &device)
+                .into_iter()
+                .map(|(target, db)| DspMadeAgainstPreview { target, db })
+                .collect()
+        })
+        .await
+    }
+
     /// What `name` does to the sound at `rate`, for drawing. `None` for a
     /// profile that is not there or would not play.
     pub async fn dsp_response(self: Arc<Self>, name: String, rate: u32) -> Option<DspResponse> {
@@ -3357,14 +3442,24 @@ impl KoanEngine {
         .await
     }
 
+    /// Hand the engine the app's audio session, before anything can play.
+    /// Does nothing off iOS and tvOS.
+    pub fn set_audio_session(&self, host: Arc<dyn AudioSessionHost>) {
+        #[cfg(any(target_os = "ios", target_os = "tvos"))]
+        koan_core::audio::ios_backend::set_session(Arc::new(SessionBridge(host)));
+        #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+        let _ = host;
+    }
+
     /// The name of the port iOS routes audio to, on each route change: what
-    /// profiles are chosen by on a phone. Does nothing elsewhere.
+    /// profiles are chosen by on a phone, and the cue to read the session's
+    /// rate again. Does nothing elsewhere.
     pub async fn set_audio_route(self: Arc<Self>, name: String) -> Result<(), KoanError> {
         #[cfg(any(target_os = "ios", target_os = "tvos"))]
         {
             offload::sequenced(move || {
                 koan_core::audio::ios_backend::set_route(name);
-                self.send_local(PlayerCommand::ReloadDsp)
+                self.send_local(PlayerCommand::RouteChanged)
             })
             .await
         }
@@ -3427,7 +3522,7 @@ impl KoanEngine {
         offload::offload(move || {
             let cfg = Config::load().unwrap_or_default();
             let cache_dir = cfg.cache_dir();
-            let cache_bytes = koan_core::helpers::cache_size_bytes(&cfg);
+            let cache_bytes = koan_core::helpers::cache_bytes();
 
             let db = self.db().ok();
             Settings {
@@ -4632,6 +4727,9 @@ impl KoanEngine {
                     out.publish(StateSlice::History {
                         version: koan_core::player::history::version(),
                     });
+                    out.publish(StateSlice::Cache {
+                        bytes: koan_core::helpers::cache_bytes(),
+                    });
 
                     out.publish(StateSlice::Tasks {
                         scanning: engine
@@ -5069,6 +5167,14 @@ impl KoanEngine {
         // sees files left by a previous run.
         let cfg = Config::load().unwrap_or_default();
         koan_core::helpers::sweep_partial_downloads(&cfg);
+        // Once, off the launch path; the count is kept from here on.
+        {
+            let cfg = cfg.clone();
+            std::thread::Builder::new()
+                .name("koan-cache-measure".into())
+                .spawn(move || koan_core::helpers::measure_cache(&cfg))
+                .ok();
+        }
         // Before the session is restored, so the queue finds its downloads.
         if let Err(e) = koan_core::helpers::relocate_cached_paths(&db, &cfg.cache_dir()) {
             log::warn!("could not re-root cached paths: {e}");
@@ -5378,6 +5484,7 @@ impl KoanEngine {
             | PlayerCommand::SetOutputDevice(_)
             | PlayerCommand::ClearOutputDevice
             | PlayerCommand::ReloadDsp
+            | PlayerCommand::RouteChanged
             | PlayerCommand::RestartOutput
             | PlayerCommand::UseRenderer(_)
             | PlayerCommand::ResumeRenderer(_)

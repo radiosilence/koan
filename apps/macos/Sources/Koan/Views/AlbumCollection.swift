@@ -480,6 +480,7 @@ final class AlbumTile: NSCollectionViewItem {
         dim.backgroundColor = NSColor.black.withAlphaComponent(0.35).cgColor
         dim.opacity = 0
         sleeve.addSublayer(dim)
+        sleeve.addSublayer(downloadBar)
 
         playMark.contents = Symbol.image("play.circle.fill", size: 34, colours: [.white])
         playMark.isHidden = true
@@ -500,7 +501,6 @@ final class AlbumTile: NSCollectionViewItem {
         codec.alignmentMode = .center
         badge.addSublayer(codec)
         layer.addSublayer(badge)
-        layer.addSublayer(downloadBar)
 
         ring.cornerRadius = KoanTheme.radius(6)
         ring.cornerCurve = .continuous
@@ -721,7 +721,7 @@ final class AlbumTile: NSCollectionViewItem {
         badge.cornerRadius = KoanTheme.radius(badge.frame.height / 2)
         codec.frame = CGRect(x: 6, y: 2, width: textWidth, height: textHeight)
         codec.contentsScale = view.window?.backingScaleFactor ?? 2
-        downloadBar.frame = DownloadBarLayer.frame(side: side, flipped: true)
+        downloadBar.frame = DownloadBarLayer.frame(side: side)
         CATransaction.commit()
 
         spinner?.frame = CGRect(x: art.midX - 8, y: art.midY - 8, width: 16, height: 16)

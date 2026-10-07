@@ -500,7 +500,7 @@ ios-ffi platform="iphonesimulator":
     # A target directory per deployment target, because cargo does not count
     # that variable as a reason to rebuild: lowering it relinked objects built
     # for the old version, and the linker warned about every one of them.
-    out=target/ios-{{ios_deployment_target}}
+    out=${CARGO_TARGET_DIR:-target}/ios-{{ios_deployment_target}}
     cargo build --release -p koan-ffi --target "$triple" --target-dir "$out"
     rm -rf "target/ios-link/{{platform}}" && mkdir -p "target/ios-link/{{platform}}"
     cp "$out/$triple/release/libkoan_ffi.a" "target/ios-link/{{platform}}/"
@@ -920,7 +920,7 @@ tv-ffi platform="appletvsimulator":
     # As in `ios-ffi`: C dependencies compile against the current SDK, and
     # rustc must target the same version.
     export TVOS_DEPLOYMENT_TARGET={{tv_deployment_target}}
-    out=target/tv-{{tv_deployment_target}}
+    out=${CARGO_TARGET_DIR:-target}/tv-{{tv_deployment_target}}
     cargo build --release -p koan-ffi --target "$triple" --target-dir "$out"
     rm -rf "target/tv-link/{{platform}}" && mkdir -p "target/tv-link/{{platform}}"
     cp "$out/$triple/release/libkoan_ffi.a" "target/tv-link/{{platform}}/"

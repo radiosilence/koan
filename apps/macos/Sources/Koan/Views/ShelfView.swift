@@ -33,6 +33,13 @@ struct ShelfView: View {
     @Environment(LibraryModel.self) private var library
 
     @State private var selection: Set<Int64> = []
+    #if os(iOS)
+    /// Select mode, across the artists, records and tracks, as in search.
+    /// Ranges and select-all are the Mac's, which keeps its own page, so the
+    /// pick has no grid to extend over.
+    @State private var pick = PlayableSelection { [] }
+    @Environment(\.onStage) private var onStage
+    #endif
     #if os(macOS)
     @Environment(EngineMirror.self) private var mirror
     @Environment(CoverArtCache.self) private var art
@@ -78,6 +85,9 @@ struct ShelfView: View {
         }
         #if os(iOS)
         .navigationSubtitle(counts)
+        .playableSelectMode(pick, engine: library.engine, available: !(artists.isEmpty && albums.isEmpty && tracks.isEmpty))
+        .onChange(of: onStage) { _, now in if !now { pick.end() } }
+        .onDisappear { pick.end() }
         #endif
     }
 
@@ -251,7 +261,7 @@ struct ShelfView: View {
         Section {
             FlowLayout(spacing: 8) {
                 ForEach(artists, id: \.id) { artist in
-                    ArtistPill(name: artist.name, artistId: artist.id)
+                    ArtistPill(name: artist.name, artistId: artist.id, selection: shelfPick)
                 }
             }
             .padding(.vertical, 4)
@@ -276,7 +286,7 @@ struct ShelfView: View {
                 // headings do; a short last row keeps the others' columns.
                 HStack(alignment: .top, spacing: Self.tileSpacing) {
                     ForEach(row, id: \.id) { album in
-                        AlbumGridCell(album: album)
+                        AlbumGridCell(album: album, selection: shelfPick)
                             .frame(maxWidth: .infinity)
                     }
                     ForEach(row.count..<max(row.count, albumColumns), id: \.self) { _ in
@@ -311,21 +321,38 @@ struct ShelfView: View {
             // Once per pass, not once per row — see `TrackListView`.
             let allTrackIds = tracks.map(\.id)
             ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
-                TrackRow(
-                    track: track,
-                    position: index + 1,
-                    // Gathered from all over, so a row carries its own sleeve
-                    // and says which record it came from.
-                    showsAlbum: true,
-                    allTrackIds: allTrackIds
-                )
+                HStack(spacing: 10) {
+                    if let shelfPick, shelfPick.isActive {
+                        SelectionTick(key: Playable.track(track).key, selection: shelfPick)
+                    }
+                    TrackRow(
+                        track: track,
+                        position: index + 1,
+                        // Gathered from all over, so a row carries its own sleeve
+                        // and says which record it came from.
+                        showsAlbum: true,
+                        allTrackIds: allTrackIds
+                    )
+                }
                 .rowBehaviour(playable: .track(track))
-                .primaryTap { play([track.id]) } menu: { menu(for: [track.id]) }
+                .primaryTap {
+                    if shelfPick?.take(.track(track)) == true { return }
+                    play([track.id])
+                } menu: { menu(for: [track.id]) }
                 .accessibilityIdentifier("track-\(track.id)")
             }
         } header: {
             sectionHead("Tracks", total: summary?.trackTotal ?? 0, list: .tracks)
         }
+    }
+
+    /// The pick the page's items take part in, where the page has one.
+    private var shelfPick: PlayableSelection? {
+        #if os(iOS)
+        pick
+        #else
+        nil
+        #endif
     }
 
     // MARK: - Actions

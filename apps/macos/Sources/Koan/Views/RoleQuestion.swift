@@ -43,7 +43,7 @@ struct RoleQuestion: View {
                         dsp.answer(ask, nil)
                         dismiss()
                     }
-                        .koanButton(.text)
+                        .koanButton(.link)
                 } footer: {
                     Text(many
                          ? "Decide later: they're kept as tunings, and you can change each one's role on its page."

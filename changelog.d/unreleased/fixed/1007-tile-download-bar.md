@@ -1,0 +1,1 @@
+- **Album tiles show downloads up the left edge.** The bar fills from the foot of the sleeve's left edge, full height, so a half-downloaded record reads as half; it used to stop short of the heart, making a whole record look partly here. A record wholly on the device shows no bar.

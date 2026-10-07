@@ -117,11 +117,11 @@ offers others for the same kind of headphone:
 
 | Target | Character |
 |---|---|
-| Neutral (diffuse field), over-ear | Even sound from every direction: no bass or treble preference, brighter than Harman |
+| Neutral, over-ear (diffuse field) | Even sound from every direction: no bass or treble preference, brighter than Harman |
 | Harman over-ear 2018 | Neutral plus what most listeners in Harman's research preferred: a warm bass shelf, a forward upper midrange, a soft top end |
 | Harman over-ear 2018, no bass shelf | The same with a flat low end |
 | oratory1990 over-ear | oratory1990's target, close to Harman's |
-| Neutral (diffuse field), in-ear | The eardrum's response to even sound from every direction (ISO 11904-1): no bass or treble preference |
+| Neutral, in-ear (diffuse field) | The eardrum's response to even sound from every direction (ISO 11904-1): no bass or treble preference |
 | Harman in-ear 2019 | Harman's in-ear target: a bigger bass shelf and more treble than over-ear |
 | Harman in-ear 2019, no bass shelf | The same with a flat low end |
 | AutoEQ in-ear | AutoEQ's own in-ear target |
@@ -240,7 +240,38 @@ another, its target and a group's member, with **Add…** at the foot to import
 one, find one in AutoEQ or build one from a measurement or squig.link. Each EQ
 of the tuning has **On**, and **Options** to edit it, move it or take it out;
 tapping it opens its page. **Add EQ** adds another. An empty stage is a dashed
-place to add one. Each EQ's page draws its own curve. The curve is computed by
+place to add one.
+
+The correction's block names the target it corrects to ("to Neutral, in-ear
+(diffuse field)"), and each EQ the target it was made against ("made for Neutral"). The
+line into each EQ says how the two meet. Drawn in the accent and marked
+**Matched**, the EQ was made against the correction's own target and plays as
+made. Made against another target, it shows the conversion kōan plays first
+("Target difference: Neutral → Harman in-ear 2019"), which is correct and not
+a warning. Where the EQ does not say what it was made against, nothing can be
+converted, and if it already includes a target, as a finished preset like
+"Lush" does, that target is applied twice on top of the correction's: the line
+says so, and tapping it opens the EQ's page to set **Made against**. A
+converted line draws the difference kōan plays beside its label.
+
+An imported EQ cannot say what it was made against, so kōan offers a guess:
+"Looks made for Harman in-ear 2019. Use that?", on the line into it and under
+**Made against** on its page, set only when accepted. A tuning is mostly a
+preference said against the target beneath it, and preferences sit near
+Harman's, so a tuning made against neutral carries Harman's bass shelf and
+one made against Harman does not. Of neutral, Harman and the correction's own
+target, kōan offers the one whose difference from Harman the tuning matches,
+when it matches by at least 1.5 dB RMS (20 Hz to 10 kHz) better than the
+next. It offers nothing otherwise, nor for a tuning within 1.5 dB RMS of
+flat, which has nothing to judge by, nor for a group, whose Made against
+covers every member that does not say its own. The EQ's graph also draws what it adds on
+the correction in use with the target chosen, and on a phone each **Made
+against** choice shows that curve, so a wrong choice shows as a bass shelf
+doubled or taken out. **Made against** lists the targets for the kind of
+headphone the correction is for first, and the rest under Other. Why an EQ
+is left out, such as a correction with a tuning in it chosen as a tuning, is
+said on the line into it. VoiceOver reads each of these after the chain's
+sentence. Each EQ's page draws its own curve. The curve is computed by
 the core from the same filters and impulse responses the DSP runs, at 48 kHz,
 so it shows what plays rather than what the filters were meant to do, the EQs it plays
 and a moved target included. The preamp is shown beside the curve rather than

@@ -12,7 +12,10 @@ pub mod dsp;
 #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos"))]
 pub mod engine;
 pub mod fade;
-#[cfg(any(target_os = "ios", target_os = "tvos"))]
+// Built on macOS for its tests: the rate it reports is the session's, and that
+// logic needs no phone.
+#[cfg(any(target_os = "ios", target_os = "tvos", all(test, target_os = "macos")))]
+#[cfg_attr(not(any(target_os = "ios", target_os = "tvos")), allow(dead_code))]
 pub mod ios_backend;
 pub mod opus;
 pub mod replaygain;
@@ -37,6 +40,32 @@ pub fn platform_backend() -> Box<dyn AudioBackend> {
     {
         Box::new(ios_backend::IosAudioBackend)
     }
+}
+
+/// Whether output holds the platform's audio session: on iOS and tvOS, since
+/// the engine last started and until the player releases it. Never elsewhere,
+/// where there is no session to hold.
+pub(crate) fn session_held() -> bool {
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+    {
+        ios_backend::session_held()
+    }
+    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+    {
+        false
+    }
+}
+
+pub(crate) fn release_session() {
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+    ios_backend::release_session();
+}
+
+/// The platform's audio route changed: on iOS and tvOS, ask the new one for
+/// the output's rate and report what it runs at.
+pub(crate) fn follow_route() {
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+    ios_backend::follow_route();
 }
 
 /// Cross-platform facade: list output devices via the platform backend.
