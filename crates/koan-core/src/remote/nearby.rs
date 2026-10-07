@@ -1326,6 +1326,17 @@ impl Controlling<'_> {
         Some(text.into())
     }
 
+    /// The listener's id, if what it reports can be taken as that device's:
+    /// see `proven_as_listed`.
+    fn vouched(&self) -> Option<&str> {
+        let id = self.id.as_deref()?;
+        let vouched = proven_as_listed(devices::listed_owner(id), self.proven.as_ref());
+        if !vouched {
+            log::debug!("nearby: a report from {id}, which did not prove it is; ignored");
+        }
+        vouched.then_some(id)
+    }
+
     fn report(&mut self, text: &str) {
         match serde_json::from_str::<LinkReport>(text) {
             Ok(LinkReport::Hello(mut hello)) => {
@@ -1367,23 +1378,22 @@ impl Controlling<'_> {
                 }
                 devices::nearby_hello(hello, self.addr);
             }
+            // From a listed device that did not prove it is that device, the
+            // link's word stands: a Hello stripped of its nonce on the way
+            // would otherwise have this end take anything for that device's.
             Ok(LinkReport::State(state)) => {
-                if let Some(id) = &self.id {
+                if let Some(id) = self.vouched() {
                     devices::nearby_state(id, state);
                 }
             }
             Ok(LinkReport::Levels { f }) => {
-                if let Some(id) = &self.id {
+                if let Some(id) = self.vouched() {
                     crate::remote::levels::remote().received(id, f);
                 }
             }
             Ok(LinkReport::Ack { ack, outcome }) => {
-                let Some(id) = &self.id else { return };
-                if proven_as_listed(devices::listed_owner(id), self.proven.as_ref()) {
+                if let Some(id) = self.vouched() {
                     crate::remote::acks::resolve(ack, id, outcome);
-                } else {
-                    // The link, which the server vouches for, answers instead.
-                    log::warn!("nearby: an answer from {id}, which did not prove it is; ignored");
                 }
             }
             Ok(_) => {}
@@ -2487,6 +2497,49 @@ mod tests {
             report: state.clone(),
         });
         assert!(c.checked(&elsewhere).is_none(), "another session");
+    }
+
+    /// A Hello stripped of its nonce leaves the listener unproven. For one
+    /// of the account's devices, its nearby reports are then not taken.
+    #[test]
+    fn an_account_device_that_proves_nothing_is_not_mirrored() {
+        let _store = crate::remote::devices::tests::STORE_LOCK.lock();
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _r = rig(&[("phone", None), ("mac", None)]);
+        let id = "unproven-mac";
+        devices::set_account(vec![crate::remote::link::LinkDevice {
+            id: id.into(),
+            name: id.into(),
+            platform: "macos".into(),
+            linked: true,
+            state: None,
+            last_seen: None,
+            wakeable: None,
+            owner: None,
+            acks: false,
+        }]);
+        let stop = Stop::new().unwrap();
+        let mut c = controlling(&stop);
+        let hello = LinkHello {
+            id: id.into(),
+            name: id.into(),
+            platform: "macos".into(),
+            library: None,
+            acks: true,
+            nonce: None,
+        };
+        c.incoming(&serde_json::to_string(&LinkReport::Hello(hello)).unwrap());
+        assert_eq!(c.id.as_deref(), Some(id));
+        let forged = LinkState {
+            playing: true,
+            ..Default::default()
+        };
+        c.incoming(&serde_json::to_string(&LinkReport::State(forged)).unwrap());
+        assert_eq!(devices::last_report(id), None);
+        CONNS.lock().as_mut().unwrap().remove(id);
+        devices::set_account(Vec::new());
     }
 
     #[test]

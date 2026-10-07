@@ -1608,7 +1608,7 @@ pub fn this_id() -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -1641,7 +1641,7 @@ mod tests {
 
     /// The store is process-wide: each test walks it through its states with
     /// this held, rather than racing the others over it.
-    static STORE_LOCK: Mutex<()> = Mutex::new(());
+    pub(crate) static STORE_LOCK: Mutex<()> = Mutex::new(());
 
     fn hello(id: &str) -> LinkHello {
         LinkHello {
