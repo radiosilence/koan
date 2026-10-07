@@ -96,6 +96,31 @@ pub trait ProgressReporter: Send + Sync {
     fn advanced(&self, done: u64, detail: String);
 }
 
+/// The iOS and tvOS audio session, which the app owns: activated by the
+/// engine the moment before it plays, released by the player once output has
+/// stopped for a while. Called on the player thread; `activate` must not
+/// return until the session is active, and answers false if it could not be
+/// made so. See `koan_core::audio::ios_backend::AudioSession`.
+#[uniffi::export(with_foreign)]
+pub trait AudioSessionHost: Send + Sync {
+    fn activate(&self, sample_rate: f64) -> bool;
+    fn release(&self);
+}
+
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
+struct SessionBridge(Arc<dyn AudioSessionHost>);
+
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
+impl koan_core::audio::ios_backend::AudioSession for SessionBridge {
+    fn activate(&self, sample_rate: f64) -> bool {
+        self.0.activate(sample_rate)
+    }
+
+    fn release(&self) {
+        self.0.release();
+    }
+}
+
 /// Send `log` output to `~/.config/koan/koan.log`, the same file the CLI
 /// writes.
 ///
@@ -3355,6 +3380,15 @@ impl KoanEngine {
             self.send_local(PlayerCommand::ReloadDsp)
         })
         .await
+    }
+
+    /// Hand the engine the app's audio session, before anything can play.
+    /// Does nothing off iOS and tvOS.
+    pub fn set_audio_session(&self, host: Arc<dyn AudioSessionHost>) {
+        #[cfg(any(target_os = "ios", target_os = "tvos"))]
+        koan_core::audio::ios_backend::set_session(Arc::new(SessionBridge(host)));
+        #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+        let _ = host;
     }
 
     /// The name of the port iOS routes audio to, on each route change: what

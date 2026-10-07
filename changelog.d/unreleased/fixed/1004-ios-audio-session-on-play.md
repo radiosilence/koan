@@ -1,0 +1,1 @@
+- **Opening koan on iPhone no longer stops other apps' audio.** The audio session is now activated when koan starts playing, not at launch or on returning to the app. It is given back five seconds after playback stops, and the app koan interrupted is told it may resume.
