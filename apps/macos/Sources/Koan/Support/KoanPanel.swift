@@ -195,8 +195,61 @@ struct KoanMenu<Content: View, Label: View>: View {
     }
 }
 
-#if os(macOS)
+/// A choice inside a `KoanMenu`: in the theme on the Mac, the options as rows
+/// with a tick on the chosen one; the system's inline picker otherwise.
+struct KoanMenuChoices<Value: Hashable>: View {
+    let title: String
+    @Binding var selection: Value
+    let options: [(label: String, value: Value)]
 
+    var body: some View {
+        #if os(macOS)
+        if KoanTheme.isOn {
+            ForEach(options, id: \.value) { option in
+                KoanMenuChoice(option.label, chosen: option.value == selection) { selection = option.value }
+            }
+        } else {
+            picker
+        }
+        #else
+        picker
+        #endif
+    }
+
+    private var picker: some View {
+        Picker(title, selection: $selection) {
+            ForEach(options, id: \.value) { Text($0.label).tag($0.value) }
+        }
+        .pickerStyle(.inline)
+        .labelsHidden()
+    }
+}
+
+/// One option of a theme menu, ticked when it is the one chosen.
+struct KoanMenuChoice: View {
+    let label: String
+    let chosen: Bool
+    let action: () -> Void
+
+    init(_ label: String, chosen: Bool, action: @escaping () -> Void) {
+        self.label = label
+        self.chosen = chosen
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: KoanTheme.Space.m) {
+                Text(label)
+                Spacer(minLength: 0)
+                KoanIcon("checkmark").opacity(chosen ? 1 : 0)
+            }
+        }
+        .accessibilityAddTraits(chosen ? .isSelected : [])
+    }
+}
+
+#if os(macOS)
 /// A row of a `KoanMenu`: the label in `control` type, `surface` under the
 /// pointer, `bad` for a destructive action.
 private struct KoanMenuRow: PrimitiveButtonStyle {
