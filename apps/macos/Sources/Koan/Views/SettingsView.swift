@@ -159,7 +159,7 @@ struct SettingsView: View {
         // screen, resizable, and kept at whatever size it was last given. A
         // phone gets whatever it has.
         #if os(macOS)
-        .frame(minWidth: 600, idealWidth: 820, maxWidth: .infinity, minHeight: 480, idealHeight: 780, maxHeight: .infinity)
+        .frame(minWidth: 600, idealWidth: 920, maxWidth: .infinity, minHeight: 480, idealHeight: 780, maxHeight: .infinity)
         .background(SettingsFrameAutosave())
         #endif
         #if os(macOS)
@@ -1704,10 +1704,15 @@ private struct AppearanceSettings: View {
             }
             Section {
                 Toggle("Colours from the record", isOn: $appearance.recordColours).koanToggle()
+                #if os(macOS)
+                if KoanTheme.isOn {
+                    Toggle("Wash the whole window", isOn: $appearance.washWindow).koanToggle()
+                }
+                #endif
             } header: {
                 KoanSectionHeader("Colour")
             } footer: {
-                Text("The record playing colours the window behind the page, and the accent on selection and progress. Off, there is no wash and the accent is kōan's mint, in either theme.")
+                Text("The record playing colours the window behind the page, and the accent on selection and progress. Off, there is no wash and the accent is kōan's mint, in either theme. Washing the whole window draws the sidebar, toolbar, transport and lyrics clear over it; off, they keep grounds of their own. That choice is provisional, while the look is decided.")
                     .koanText(.fine, .muted)
             }
             Section {
@@ -1804,6 +1809,9 @@ private struct SettingsFrameAutosave: NSViewRepresentable {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             guard let window, window.frameAutosaveName.isEmpty else { return }
+            // SwiftUI's Settings window is made without a resizable frame,
+            // whatever the scene's resizability says.
+            window.styleMask.insert(.resizable)
             window.setFrameUsingName("KoanSettings")
             window.setFrameAutosaveName("KoanSettings")
         }

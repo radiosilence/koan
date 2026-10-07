@@ -162,11 +162,19 @@ final class AppearanceModel {
         didSet { if recordColours != oldValue { engine.setRecordColours(on: recordColours) } }
     }
 
+    /// "Wash the whole window": on the Mac in the theme, sidebar, toolbar,
+    /// transport and lyrics are drawn clear over one wash. Off, they keep
+    /// their own grounds. Takes effect at once.
+    var washWindow: Bool {
+        didSet { if washWindow != oldValue { engine.setWashWindow(on: washWindow) } }
+    }
+
     init(engine: KoanEngine, appearance: Appearance) {
         self.engine = engine
         self.showIcons = appearance.icons
         self.koan = appearance.koan
         self.recordColours = appearance.recordColours
+        self.washWindow = appearance.washWindow
     }
 }
 
@@ -644,6 +652,16 @@ extension KoanTheme {
         isOn ? theme : system
     }
 
+    /// Whether the wash runs under the whole window, every region clear over
+    /// it ("Wash the whole window"): the Mac, in the theme, unless turned off.
+    @MainActor static func washesWindow(_ appearance: AppearanceModel?) -> Bool {
+        #if os(macOS)
+        isOn && appearance?.washWindow != false
+        #else
+        false
+        #endif
+    }
+
     /// The bare ground of a page or a sheet: `bg` in the theme, `system`
     /// otherwise.
     nonisolated static func ground(_ system: some ShapeStyle) -> AnyShapeStyle {
@@ -812,8 +830,8 @@ extension View {
     /// A bar along the window's foot, such as the transport: flat `bg` with a
     /// rule along its top, full width. In the platform's look, a floating slab
     /// of glass with the given corner radius, inset from the window's edges.
-    func koanBar(radius: CGFloat, inset: CGFloat) -> some View {
-        modifier(KoanBarRole(radius: radius, inset: inset))
+    func koanBar(radius: CGFloat, inset: CGFloat, overWash: Bool = false) -> some View {
+        modifier(KoanBarRole(radius: radius, inset: inset, overWash: overWash))
     }
 
     /// A form as the theme lays one out: no cards, rows on the ground with
@@ -1068,12 +1086,14 @@ private struct KoanButtonBody: View {
         if kind == .card {
             configuration.label
         } else if kind.setsType {
-            // One line, always: buttons in a row stand at one height.
+            // One line, always: buttons in a row stand at one height. Truncated
+            // rather than pushed past the edge when a label holds a long name;
+            // its own size is what it asks for first.
             configuration.label
                 .font(.koan(kind.type))
                 .textCase(.lowercase)
                 .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
                 .foregroundStyle(foreground(configuration))
         } else {
             configuration.label
@@ -1287,6 +1307,8 @@ private struct KoanRowRole: ViewModifier {
 }
 
 private struct KoanSidebarRole: ViewModifier {
+    @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
+
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
             #if os(tvOS)
@@ -1294,7 +1316,7 @@ private struct KoanSidebarRole: ViewModifier {
             #else
             content
                 .scrollContentBackground(.hidden)
-                .background(Color.koanBg)
+                .background(KoanTheme.washesWindow(appearance) ? Color.clear : Color.koanBg)
             #endif
         } else {
             content
@@ -1408,9 +1430,33 @@ private struct KoanChipRole: ViewModifier {
 private struct KoanBarRole: ViewModifier {
     let radius: CGFloat
     let inset: CGFloat
+    /// The window's transport, which the wash runs under. A bar in a sheet
+    /// keeps its ground: nothing is washed behind it.
+    let overWash: Bool
+    @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
 
     func body(content: Content) -> some View {
-        if KoanTheme.isOn {
+        if overWash && KoanTheme.washesWindow(appearance) {
+            // Over the wash, set off by a faint hairline and a scrim that fades
+            // in over its top quarter: rows scrolling under it fade out there
+            // and are gone behind its text. Lighter, and a row's text showed
+            // through the transport's.
+            content
+                .background {
+                    LinearGradient(
+                        stops: [
+                            .init(color: Color.koanBg.opacity(0), location: 0),
+                            .init(color: Color.koanBg.opacity(0.97), location: 0.25),
+                            .init(color: Color.koanBg, location: 1),
+                        ],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                    .ignoresSafeArea(edges: .bottom)
+                }
+                .overlay(alignment: .top) {
+                    Rectangle().fill(Color.koanRowRule).frame(height: KoanTheme.hairline)
+                }
+        } else if KoanTheme.isOn {
             content
                 .background(Color.koanBg)
                 .koanRule(.top)
@@ -1520,6 +1566,7 @@ struct KoanDivider: View {
 #if !os(tvOS)
 private struct KoanToolbarRole: ViewModifier {
     let glass: Bool
+    @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
 
     func body(content: Content) -> some View {
         #if os(macOS)
@@ -1527,7 +1574,14 @@ private struct KoanToolbarRole: ViewModifier {
         #else
         let bar = ToolbarPlacement.navigationBar
         #endif
-        if KoanTheme.isOn {
+        if glass && KoanTheme.washesWindow(appearance) {
+            // No ground, and the soft edge rather than the hard one, whose
+            // grey band would stand in for the ground taken away. At `bare`
+            // the toolbar keeps its opaque ground: the soft edge is live blur.
+            content
+                .toolbarBackgroundVisibility(.hidden, for: bar)
+                .scrollEdgeEffectStyle(.soft, for: .top)
+        } else if KoanTheme.isOn {
             content
                 .toolbarBackground(Color.koanBg, for: bar)
                 .toolbarBackgroundVisibility(.visible, for: bar)

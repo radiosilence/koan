@@ -1605,6 +1605,8 @@ pub struct Appearance {
     pub icons: bool,
     /// The wash and the accent take their colour from the record playing.
     pub record_colours: bool,
+    /// On the Mac in the kōan theme, the wash under the whole window.
+    pub wash_window: bool,
 }
 
 /// Everything the settings window reads and writes.

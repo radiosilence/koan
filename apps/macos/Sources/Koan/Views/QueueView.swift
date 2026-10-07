@@ -47,7 +47,6 @@ struct QueueView: View {
     @Environment(TransferMeter.self) private var meter
     @Environment(\.roomTint) private var tint
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage("graphics") private var graphics = Graphics.full
     #endif
 
     /// Grouped or one row per track. Persisted because it is a preference about
@@ -133,7 +132,7 @@ struct QueueView: View {
     /// A `KoanTable` — see there for why the Mac's lists are AppKit.
     private func table(_ rows: [Row]) -> some View {
         let lines = rows.map(line)
-        let live = onStage && !reduceMotion && graphics.animatesIndicators
+        let live = onStage && !reduceMotion
         let offline = mirror.connection?.offline == true
         let jumpTarget: String? = switch ui.queueJumpTarget {
         case .top: rows.first?.id

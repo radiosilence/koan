@@ -29,7 +29,6 @@ struct PlaylistView: View {
     @Environment(\.roomTint) private var tint
     @Environment(\.onStage) private var onStage
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage("graphics") private var graphics = Graphics.full
     #endif
 
     /// Selection is local `@State` for the same reason the queue's is, and
@@ -192,7 +191,7 @@ struct PlaylistView: View {
                 ))
             }
         }
-        let live = onStage && !reduceMotion && graphics.animatesIndicators
+        let live = onStage && !reduceMotion
         let key: [AnyHashable] = [
             AnyHashable(player.isPlaying), AnyHashable(live), AnyHashable(onStage), AnyHashable(tint), AnyHashable(library.favouriteTrackIds),
         ]

@@ -32,7 +32,6 @@ struct TrackListView: View {
     @Environment(\.roomTint) private var tint
     @Environment(\.onStage) private var onStage
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage("graphics") private var graphics = Graphics.full
     #endif
 
     /// Whether the header scrolls with the tracks, as on a phone, where a
@@ -74,7 +73,7 @@ struct TrackListView: View {
         let queued = mirror.queuedByTrack
         let current = player.currentTrackId
         let playing = player.isPlaying
-        let live = onStage && !reduceMotion && graphics.animatesIndicators
+        let live = onStage && !reduceMotion
         // What the rows draw that can change under them, as one value. Download
         // progress is not: `TransferMeter` hands it to the rings directly.
         let key = [
