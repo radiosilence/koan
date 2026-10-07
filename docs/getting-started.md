@@ -22,6 +22,12 @@ The iOS app plays from a server; a phone has no music folder to scan. Sign in un
 
 On an iPad with room for it, the iOS app's sidebar is the Mac's: Queue, the library's sections, the playlists and Settings, each opening its page beside it. Narrower, in Split View or Slide Over, the app folds back into the iPhone's tabs, with the sections under Library.
 
+### Sample rates on iOS
+
+The Mac switches the output device to each track's sample rate, so playback is bit-perfect. iOS does not let an app do that: koan's audio goes through the system mixer at whatever rate the route runs. Through a USB DAC (USB-C, or Lightning with the Camera Adapter) that supports the track's rate, the output can match the source. With the built-in speaker or an Apple headphone adapter the hardware runs at a fixed rate (48 kHz at most without an external DAC) and iOS resamples. Bluetooth is lossy (AAC, or SBC on other headphones) and never bit-perfect, and AirPlay carries 16-bit/44.1 kHz Apple Lossless.
+
+The iOS app sets no preferred sample rate for the source and does not read back the rate the route settled on, so its format badge shows the track's own rate and cannot tell you whether iOS resampled. The Apple TV app behaves the same way; over HDMI the rate is the one the television or receiver negotiates.
+
 ## History and Recently played
 
 Both apps keep what you play. **History** lists every play by day, and is where a play is forgotten. **Recently Played**, beside it in the Mac's and the iPad's sidebar and the iPhone's Library tab, answers "what was that record I had on yesterday": the records, artists and tracks of the last 30 days, each once however often it played, newest first. Both follow each play as it is recorded.
