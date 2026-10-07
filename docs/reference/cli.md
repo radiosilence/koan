@@ -184,8 +184,10 @@ koan dsp show "Scarlett 4i4 USB" --json
 
 `show --json` gives `device`, `correction`, `target`, `tuning` (each `name` and
 `on`), `preset`, `edited`, `left_out` (EQs that do not play), `notes` (why),
-`flat` and `sentence`; `list --json` and `preset list --json` give each one's
-`name`, `used_on` and `edited`. A refusal says what is wrong and the valid
+`flat` and `sentence`. `list --json` gives each one's `name`, `kind`
+(`correction`, `eq` or `preset`), `used_on`, `edited`, `members` (a group's)
+and `problem` (why it would not load); `preset list --json` gives each
+preset's `name`, `used_on` and `edited`. A refusal says what is wrong and the valid
 choices ("No correction called X. Corrections: …") and exits non-zero.
 
 The names from before still work, out of the help: `use` (now `set

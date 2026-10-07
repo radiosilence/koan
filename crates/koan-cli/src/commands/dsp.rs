@@ -19,6 +19,10 @@ fn device(named: Option<String>) -> String {
 /// What `device` (the current output if not named) plays: the sentence the
 /// EQ page says, then each stage.
 pub fn cmd_dsp_show(named: Option<String>, json: bool) {
+    // A machine with no output, such as a server, lists what there is.
+    if named.is_none() && profiles::current_device().is_none() {
+        return cmd_dsp_list(json);
+    }
     let view = profiles::chain_view(&device(named));
     if json {
         println!(
@@ -86,30 +90,8 @@ pub fn cmd_dsp_flat(named: Option<String>) {
 /// Every correction, EQ and preset, with where each is used.
 pub fn cmd_dsp_list(json: bool) {
     let o = profiles::overview();
-    let kind = |p: &profiles::Summary| {
-        if p.preset {
-            "preset"
-        } else if p.role.corrects() {
-            "correction"
-        } else {
-            "eq"
-        }
-    };
     if json {
-        let items: Vec<serde_json::Value> = o
-            .profiles
-            .iter()
-            .map(|p| {
-                serde_json::json!({
-                    "name": p.name,
-                    "kind": kind(p),
-                    "used_on": p.used_on,
-                    "edited": p.edited,
-                    "members": p.members,
-                    "problem": p.problem,
-                })
-            })
-            .collect();
+        let items: Vec<serde_json::Value> = o.profiles.iter().map(list_item).collect();
         println!(
             "{}",
             serde_json::to_string_pretty(&items).expect("serialises")
@@ -153,6 +135,29 @@ pub fn cmd_dsp_list(json: bool) {
             }
         }
     }
+}
+
+/// What it is: a preset, a correction or an EQ.
+fn kind(p: &profiles::Summary) -> &'static str {
+    if p.preset {
+        "preset"
+    } else if p.role.corrects() {
+        "correction"
+    } else {
+        "eq"
+    }
+}
+
+/// One item of `koan dsp list --json`.
+pub fn list_item(p: &profiles::Summary) -> serde_json::Value {
+    serde_json::json!({
+        "name": p.name,
+        "kind": kind(p),
+        "used_on": p.used_on,
+        "edited": p.edited,
+        "members": p.members,
+        "problem": p.problem,
+    })
 }
 
 /// The presets, with the devices set from each.

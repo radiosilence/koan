@@ -172,11 +172,14 @@ pub fn set_chain(
             .filter(|p| !p.preset && check_tuning(&p.name, all).is_ok())
             .map(|p| p.name.as_str())
             .collect();
-        for eq in eqs {
+        for (i, eq) in eqs.iter().enumerate() {
             if !all.iter().any(|p| &p.name == eq) {
                 return Err(format!("No EQ called {eq}. EQs: {}", choices(valid)));
             }
             check_tuning(eq, all)?;
+            if eqs[..i].contains(eq) {
+                return Err(format!("{eq} is in the tuning twice"));
+            }
         }
         // Checked before anything is set, so a refusal changes nothing.
         let then = match correction {
@@ -190,14 +193,26 @@ pub fn set_chain(
             return Err(baked_already(&c.name));
         }
     }
-    if let Some(correction) = correction {
-        assign(correction, device)?;
-    }
-    if let Some(eqs) = tuning {
-        let entries: Vec<(String, bool)> = eqs.iter().map(|e| (e.clone(), true)).collect();
-        set_tunings(device, &entries)?;
-    }
-    Ok(())
+    // One write, so the two never half-apply. What is not given stays, and
+    // so does the preset the device was set from, which then reads as edited.
+    let correction: Option<String> = match correction {
+        Some(c) => c.map(str::to_owned),
+        None => cfg.dsp.profile_for(device).map(|p| p.name.clone()),
+    };
+    let entries: Vec<(String, bool)> = match tuning {
+        Some(eqs) => eqs.iter().map(|e| (e.clone(), true)).collect(),
+        None => tunings_for(device),
+    };
+    let preset = preset_for(device).map(|(name, _)| name);
+    persist(|cfg| {
+        set_output(
+            cfg,
+            device,
+            correction.as_deref(),
+            &entries,
+            preset.as_deref(),
+        )
+    })
 }
 
 /// What a device is set to, for a menu of presets.
@@ -3934,6 +3949,14 @@ mod tests {
         );
         let refused = set_chain(dac, None, Some(&["Nope".to_string()])).unwrap_err();
         assert_eq!(refused, "No EQ called Nope. EQs: Warm, Air");
+        let twice = ["Warm".to_string(), "Warm".to_string()];
+        let refused = set_chain(dac, Some(None), Some(&twice)).unwrap_err();
+        assert_eq!(refused, "Warm is in the tuning twice");
+        assert_eq!(
+            chain_view(dac).correction.as_deref(),
+            Some("Wharfedale"),
+            "a refusal changes nothing"
+        );
         // A correction that includes a tuning takes none: nothing is set.
         set_chain(dac, Some(Some("Lush")), Some(&eqs)).unwrap_err();
         assert_eq!(chain_view(dac).correction.as_deref(), Some("Wharfedale"));

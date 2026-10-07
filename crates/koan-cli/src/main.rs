@@ -477,7 +477,7 @@ const DSP_EXAMPLES: &str = "Examples:
 #[derive(Subcommand)]
 enum EqCommands {
     /// Make an EQ that plays others in the order given. A device's
-    /// correction and tuning are set with `tuning` and `preset`; this
+    /// correction and tuning are set with `set` and `preset`; this
     /// builds one EQ from several. Creates it if need be
     Plays { name: String, eqs: Vec<String> },
     /// Switch one of the EQs it plays on or off
@@ -1189,6 +1189,42 @@ mod tests {
             value["tuning"][0],
             serde_json::json!({ "name": "Lush", "on": true })
         );
+    }
+
+    /// `koan dsp list --json` keeps these keys for each item.
+    #[test]
+    fn dsp_list_json_keys() {
+        use koan_core::audio::dsp::profiles::Summary;
+        use koan_core::config::DspRole;
+        let item = commands::dsp_list_item(&Summary {
+            name: "Lush".into(),
+            devices: vec![],
+            bands: 1,
+            layers: 0,
+            rates: vec![],
+            problem: None,
+            role: DspRole::Baked,
+            measured: false,
+            members: vec![],
+            playing: None,
+            preset: false,
+            edited: false,
+            used_on: vec!["Scarlett".into()],
+            everywhere: false,
+            held_by: vec![],
+        });
+        let mut keys: Vec<&str> = item
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            ["edited", "kind", "members", "name", "problem", "used_on"]
+        );
+        assert_eq!(item["kind"], "correction");
     }
 
     #[test]
