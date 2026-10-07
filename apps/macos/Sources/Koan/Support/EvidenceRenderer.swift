@@ -139,6 +139,26 @@ enum EvidenceRenderer {
                 )
             }
         }
+        // The Settings window, framed: its tabs are the window's toolbar.
+        let settings = ProcessInfo.processInfo.environment["KOAN_RENDER_PAGES"]?.split(separator: ",")
+            .contains { "window-settings".hasPrefix($0) } ?? true
+        if let framed, settings {
+            let window = FramedWindow(
+                SettingsView()
+                    .environment(state)
+                    .environment(state.player)
+                    .environment(state.library)
+                    .environment(state.activity)
+                    .environment(state.art)
+                    .environment(state.mirror)
+                    .environment(\.roomTint, .koanAccent)
+                    .koanTheme(state.appearance),
+                size: CGSize(width: min(framed.width, 920), height: min(framed.height, 780))
+            )
+            for dark in schemes {
+                await window.capture(dark: dark, to: dir.appending(path: "window-settings-\(dark ? "dark" : "light").png"))
+            }
+        }
         NSApp.terminate(nil)
     }
 
