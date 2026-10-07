@@ -149,7 +149,7 @@ Equalisation and convolution, per output device. See
 
 ```bash
 koan dsp [show] [DEVICE] [--json]                # what a device plays: the chain in a sentence, then each stage
-koan dsp set DEVICE --correction NAME|none --tuning EQ,EQ…|none   # the whole chain in one go; repeating it changes nothing
+koan dsp set DEVICE --correction NAME|none --tuning EQ,EQ…|none   # the whole chain in one go; repeating it changes nothing; an empty value is none
 koan dsp flat [DEVICE]                           # no correction or tuning: plays untouched
 koan dsp list [--json]                           # every correction, EQ and preset, and where each is used
 koan dsp preset save NAME [--device NAME]        # a device's correction and tuning, saved together
@@ -164,7 +164,7 @@ koan dsp autoeq install NUMBER|NAME [--source SOURCE] [--device NAME]
 koan dsp target NAME [--use TARGET | --reset]    # move an AutoEQ correction to another target
 koan dsp add-target FILE                         # a target from a CSV or squig.link export
 koan dsp measure FILE --name NAME --ear in|over --target TARGET  # correct a headphone from its measurement
-koan dsp response [DEVICE] [--correction NAME] [--tuning EQ,...] [--rate HZ]  # what the chain plays, as CSV on AutoEQ's grid; nothing saved
+koan dsp response [DEVICE] [--correction NAME] [--tuning EQ,...|none] [--rate HZ]  # what the chain plays, as CSV on AutoEQ's grid; nothing saved
 koan dsp role NAME correction|tuning|mixed       # mixed: a correction that already includes a tuning
 koan dsp made-for NAME TARGET|unknown            # the target a ready-made EQ was made for
 koan dsp tuned-for NAME TARGET|unknown           # the target a tuning was made against

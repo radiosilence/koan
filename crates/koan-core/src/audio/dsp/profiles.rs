@@ -226,6 +226,20 @@ pub fn chain_view(device: &str) -> ChainView {
                 said.push(' ');
                 said.push_str(&j);
             }
+            // The tuning stays the device's under a correction that
+            // includes one, and plays again once that correction goes.
+            let skipped: Vec<&str> = o
+                .chain
+                .iter()
+                .filter(|(_, on)| includes && *on)
+                .map(|(name, _)| name.as_str())
+                .collect();
+            if let (Some(c), false) = (active, skipped.is_empty()) {
+                said.push_str(&format!(
+                    " Its tuning, {}, is skipped: {c} already includes one.",
+                    and_list(&skipped)
+                ));
+            }
             said
         }
     };
@@ -4171,6 +4185,58 @@ mod tests {
         assert_ne!(step, targets::difference(&neutral, &harman));
     }
 
+    /// A correction fitted to a measurement plays its stored bands, exactly,
+    /// through the device's chain, and they are squig.link's Harman preset.
+    #[test]
+    fn a_fitted_correction_plays_its_bands() {
+        use crate::config::{DspFilter, EqFilter, EqFilterKind};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let bands: Vec<DspFilter> = [
+            (190.0, -2.2, 0.7),
+            (740.0, -1.8, 2.4),
+            (1700.0, -2.7, 1.5),
+            (2100.0, -1.0, 5.6),
+            (2800.0, 1.6, 4.2),
+            (4200.0, 5.6, 0.7),
+            (4600.0, -1.8, 5.3),
+        ]
+        .into_iter()
+        .map(|(freq, gain_db, q)| {
+            DspFilter::Band(EqFilter {
+                kind: EqFilterKind::Peaking,
+                freq,
+                gain_db,
+                q,
+                channels: Vec::new(),
+            })
+        })
+        .collect();
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Performer 8S".into(),
+                role: Some(DspRole::Correction),
+                fitted: Some(DspMeasurement {
+                    ear: DspEar::In,
+                    target: "harman-in-ear-2019".into(),
+                }),
+                filters: bands.clone(),
+                preamp_db: Some(-4.99),
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        let played = chain_response("IEMs", Some("Performer 8S"), None, 48_000).unwrap();
+        let freqs: Vec<f64> = played.iter().map(|(hz, _)| *hz).collect();
+        let stored = super::super::response(&bands, &freqs, 48_000);
+        for ((hz, db), want) in played.iter().zip(&stored) {
+            assert!((db - want).abs() < 0.01, "{hz} Hz: {db} against {want}");
+        }
+    }
+
     /// One correction to a chain: a second layer is refused, naming the one
     /// already there, and one made so by its role is warned of; tuning on
     /// top is fine.
@@ -4849,6 +4915,15 @@ mod tests {
         // A correction that includes a tuning takes none: nothing is set.
         set_chain(dac, Some(Some("Lush")), Some(&eqs)).unwrap_err();
         assert_eq!(chain_view(dac).correction.as_deref(), Some("Wharfedale"));
+        // Changing only the correction keeps the tuning, which is said
+        // skipped rather than hidden.
+        set_chain(dac, Some(Some("Lush")), None).unwrap();
+        let view = chain_view(dac);
+        assert_eq!(view.tuning.len(), 2);
+        assert_eq!(
+            view.sentence,
+            "Music to Scarlett, corrected by Lush. Its tuning, Warm and Air, is skipped: Lush already includes one."
+        );
         set_chain(dac, Some(Some("Lush")), Some(&[])).unwrap();
         assert_eq!(
             chain_view(dac).sentence,

@@ -76,11 +76,16 @@ pub fn cmd_dsp_show(named: Option<String>, json: bool) {
     }
 }
 
+/// An EQ named on the command line: an empty name or `none` is none.
+fn eq_named(name: &str) -> bool {
+    !name.trim().is_empty() && name != "none"
+}
+
 /// Set `device`'s correction and tuning in one go.
 pub fn cmd_dsp_set(device: &str, correction: Option<&str>, tuning: Option<&[String]>) {
-    let correction = correction.map(|c| Some(c).filter(|c| *c != "none"));
+    let correction = correction.map(|c| Some(c).filter(|c| eq_named(c)));
     let tuning: Option<Vec<String>> =
-        tuning.map(|t| t.iter().filter(|n| n.as_str() != "none").cloned().collect());
+        tuning.map(|t| t.iter().filter(|n| eq_named(n)).cloned().collect());
     profiles::set_chain(device, correction, tuning.as_deref()).unwrap_or_else(|e| fail(e));
     println!("{}", profiles::chain_view(device).sentence);
 }
@@ -461,8 +466,10 @@ pub fn cmd_dsp_response(
     let device = named
         .or_else(profiles::current_device)
         .unwrap_or_else(|| "\u{1}response".to_owned());
-    let curve =
-        profiles::chain_response(&device, correction, tuning, rate).unwrap_or_else(|e| fail(e));
+    let tuning: Option<Vec<String>> =
+        tuning.map(|t| t.iter().filter(|n| eq_named(n)).cloned().collect());
+    let curve = profiles::chain_response(&device, correction, tuning.as_deref(), rate)
+        .unwrap_or_else(|e| fail(e));
     println!("frequency,db");
     for (hz, db) in curve {
         println!("{hz:.2},{db:.4}");
@@ -523,7 +530,7 @@ pub fn cmd_dsp_tuning(names: &[String], off: &[String], named: Option<String>) {
     let device = device(named);
     let list: Vec<(String, bool)> = names
         .iter()
-        .filter(|n| n.as_str() != "none")
+        .filter(|n| eq_named(n))
         .map(|n| (n.clone(), !off.contains(n)))
         .collect();
     profiles::set_tunings(&device, &list).unwrap_or_else(|e| fail(e));
