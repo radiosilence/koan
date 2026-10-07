@@ -20,17 +20,19 @@ Everything is set up in Settings: **Library** adds folders and scans them, **Ser
 
 The iOS app plays from a server; a phone has no music folder to scan. Sign in under Settings → Server, or open an invite link from the server's admin. It needs iOS 26 or later.
 
+On an iPad with room for it, the iOS app's sidebar is the Mac's: Queue, the library's sections, the playlists and Settings, each opening its page beside it. Narrower, in Split View or Slide Over, the app folds back into the iPhone's tabs, with the sections under Library.
+
 ## History and Recently played
 
-Both apps keep what you play. **History** lists every play by day, and is where a play is forgotten. **Recently Played**, beside it in the Mac's sidebar and the iOS Library tab, answers "what was that record I had on yesterday": the records, artists and tracks of the last 30 days, each once however often it played, newest first. Both follow each play as it is recorded.
+Both apps keep what you play. **History** lists every play by day, and is where a play is forgotten. **Recently Played**, beside it in the Mac's and the iPad's sidebar and the iPhone's Library tab, answers "what was that record I had on yesterday": the records, artists and tracks of the last 30 days, each once however often it played, newest first. Both follow each play as it is recorded.
 
 Recently Played and Favourites show the first few of each kind. Each section's heading gives how many there are in all and opens the Albums, Artists or Tracks browser filtered to the shelf, in the shelf's order; the filter shows in the browser's filter control and is cleared there. Search's sections do the same. On the Mac, **Tracks**, beside Albums and Artists, lists every track in the library with the same filters; the iOS and Apple TV apps reach the track listing only filtered, from a "See all", since the whole library as one list is more than a phone or a television should draw and queue at once.
 
 ## Downloaded and offline
 
-**Downloaded**, in the Mac's sidebar and the iOS Library tab, is a shelf like Favourites: the artists, records and tracks with files on this device, records fully there first, each with a bar along the foot of its sleeve showing how much of it is. On the Mac every record in the library folder is whole.
+**Downloaded**, in the Mac's and the iPad's sidebar and the iPhone's Library tab, is a shelf like Favourites: the artists, records and tracks with files on this device, records fully there first, each with a bar along the foot of its sleeve showing how much of it is. On the Mac every record in the library folder is whole.
 
-On iOS, when the server cannot be reached for a few seconds while the app is open, kōan goes offline: every list, from Albums and search to Favourites and playlists, shows only what is on the phone, the queue greys out tracks that are not, and the Library tab says so. It goes back online by itself when the server answers again. **Settings → Offline mode** turns it on by hand, for a train with a signal that comes and goes. A server without kōan's link (Navidrome) gives no signal for this, so there only the switch applies.
+On iOS, when the server cannot be reached for a few seconds while the app is open, kōan goes offline: every list, from Albums and search to Favourites and playlists, shows only what is on the device, the queue greys out tracks that are not, and the Library tab (on an iPad, the sidebar) says so. It goes back online by itself when the server answers again. **Settings → Offline mode** turns it on by hand, for a train with a signal that comes and goes. A server without kōan's link (Navidrome) gives no signal for this, so there only the switch applies.
 
 ## The terminal UI
 
