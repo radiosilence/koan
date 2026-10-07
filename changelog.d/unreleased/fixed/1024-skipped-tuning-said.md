@@ -1,0 +1,1 @@
+- **A tuning skipped under a mixed correction is said.** `koan dsp set` and `koan dsp show` name the device's tuning when a correction that already includes one leaves it out, and `--tuning` takes `none` or an empty value for no tuning, `koan dsp response` included.
