@@ -109,8 +109,14 @@ final class EqGraphTests: XCTestCase {
         return Double(value)
     }
 
+    /// Both layers: EQs are this machine's, so the first save moves the
+    /// tuning from `config.toml` to `config.local.toml`.
     private func saved() throws -> String {
-        try String(contentsOf: config.appending(path: "config.toml"), encoding: .utf8)
+        try ["config.toml", "config.local.toml"]
+            .map { config.appending(path: $0) }
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+            .map { try String(contentsOf: $0, encoding: .utf8) }
+            .joined(separator: "\n")
     }
 
     /// Waits for the file to change and settle: saves come several times a
