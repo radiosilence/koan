@@ -465,10 +465,24 @@ theme-leaks:
         found=1
         echo "$hits"
     fi
+    # Controls are square and flat in the theme: a raw segmented, wheel or
+    # radio picker, a switch, a rounded field, a bordered button, or a slider
+    # or stepper of the platform's goes through `KoanSegmentedPicker`,
+    # `KoanChoices`, `koanToggle`, `koanField`, `koanButton(_:system:)`,
+    # `KoanSlider` or `KoanStepper`.
+    hits=$(grep -rnE 'pickerStyle\(\.(segmented|wheel|radioGroup|menu)\)|toggleStyle\(\.(switch|button|checkbox)\)|textFieldStyle\(\.(roundedBorder|squareBorder)\)|buttonStyle\(\.(bordered|borderedProminent)\)|(^|[^A-Za-z])(Slider|Stepper) *[({]' \
+        apps/macos/Sources --include='*.swift' \
+        | grep -v -e 'Support/KoanTheme.swift' -e '// theme: raw' -e 'koanButton(' -e 'KoanTheme\.')
+    if [ -n "$hits" ]; then
+        found=1
+        echo "$hits"
+    fi
     # A List or Form paints an opaque ground unless it gives it up through the
     # theme's role; a stack paints one behind every page it pushes unless the
     # page hands over its own through `koanPushedPage()`; a toolbar item sits
-    # on a pane of glass unless `KoanTheme.pane` takes it away. Each check reads the
+    # on a pane of glass unless `KoanTheme.pane` takes it away; a picker or a
+    # menu draws the platform's rounded pop-up unless `koanControl()` (or
+    # `koanMenuButton`, or a bare `menuStyle`) gives it the theme's button. Each check reads the
     # expression a match opens, by indentation: a list's modifier chain, or a
     # push's destination up to the brace that closes it.
     chain='
@@ -496,7 +510,11 @@ theme-leaks:
             awk -v start='[.]navigationDestination[(]|NavigationLink *[{]' \
                 -v role='koanPushedPage' -v destination=1 "$chain" "$file"
             awk -v start='(^|[^A-Za-z])ToolbarItem(Group)? *[(]' \
-                -v role='sharedBackgroundVisibility' -v destination=0 "$chain" "$file")
+                -v role='sharedBackgroundVisibility' -v destination=0 "$chain" "$file"
+            awk -v start='(^|[^A-Za-z])Picker *[(]' \
+                -v role='koanControl' -v destination=0 "$chain" "$file"
+            awk -v start='(^|[^A-Za-z.])Menu *[({]' \
+                -v role='koanControl|koanMenuButton|menuStyle' -v destination=0 "$chain" "$file")
         if [ -n "$hits" ]; then
             found=1
             echo "$hits"

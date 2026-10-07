@@ -353,12 +353,12 @@ struct PlaylistView: View {
             // Both modes shown with the active one lit, the way the
             // queue does it: a single icon has to choose between naming
             // the mode you are in and the mode you would get.
-            Picker("Playlist layout", selection: groupedBinding) {
-                Image(systemName: Icon.album).tag(true)
-                Image(systemName: Icon.queueSection).tag(false)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            KoanSegmentedPicker(
+                options: [("Group by album", true), ("One row per track", false)],
+                selection: groupedBinding,
+                title: "Playlist layout",
+                icons: [Icon.album, Icon.queueSection]
+            )
             .fixedSize()
             .help("Group by album, or one row per track — remembered for this playlist")
 

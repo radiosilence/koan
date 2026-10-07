@@ -500,7 +500,7 @@ struct SystemSwitch: ToggleStyle {
         }
         #else
         Toggle(configuration)
-            .toggleStyle(.switch)
+            .toggleStyle(.switch) // theme: raw — the platform's look
             .tint(.green)
         #endif
     }
@@ -830,11 +830,16 @@ extension View {
 extension View {
     /// The bordered text field, or the system's own on tvOS, which has no
     /// rounded-border style.
+    @ViewBuilder
     func borderedField() -> some View {
         #if os(tvOS)
         textFieldStyle(.automatic)
         #else
-        textFieldStyle(.roundedBorder)
+        if KoanTheme.isOn {
+            koanField()
+        } else {
+            textFieldStyle(.roundedBorder) // theme: raw — the platform's look
+        }
         #endif
     }
 }

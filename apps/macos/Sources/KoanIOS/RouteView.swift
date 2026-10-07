@@ -200,8 +200,8 @@ private struct SortMenu<Value: Hashable>: View {
     }
 
     private var menu: some View {
-        Menu {
-            Picker("Sort", selection: $selection) {
+        Menu { // theme: raw — callers give it `koanControl()`
+            Picker("Sort", selection: $selection) { // theme: raw — a menu's items
                 ForEach(options, id: \.value) { Text($0.label).tag($0.value) }
             }
         } label: {

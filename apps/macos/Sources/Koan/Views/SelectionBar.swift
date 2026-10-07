@@ -60,7 +60,7 @@ struct SelectionBar: View {
                     item("Play Next", short: "Next", icon: Icon.playNext) { player.playNext(trackIds: $0) }
                     item("Add to Queue", short: "Queue", icon: Icon.queue) { player.enqueue(trackIds: $0) }
                 }
-                Menu {
+                Menu { // theme: raw — its label is the bar's own item, with no bezel
                     AddToPlaylistItems { body in run(body) }
                 } label: {
                     BarItem(title: "Add to Playlist", short: "Playlist", icon: Icon.playlist)

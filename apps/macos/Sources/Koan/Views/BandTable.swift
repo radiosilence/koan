@@ -129,13 +129,15 @@ private struct BandEditor: View {
                 .frame(width: 22, alignment: .leading)
             // The short form in the row, the names in the menu.
             Menu {
-                Picker("Type", selection: Binding(get: { kind }, set: { kind = $0; commit() })) {
+                Picker("Type", selection: Binding(get: { kind }, set: { kind = $0; commit() })) { // theme: raw — a menu's items
                     ForEach(BandTable.kinds, id: \.id) { Text($0.name).tag($0.id) }
                 }
             } label: {
                 Text(BandTable.kinds.first { $0.id == kind }?.short ?? kind)
+                    .textCase(nil)
             }
             // Not `koanControl`, whose `control` type would outweigh the row's.
+            .koanMenuButton(.text)
             .tint(KoanTheme.style(.ink, system: .tint))
             .accessibilityLabel(BandTable.kinds.first { $0.id == kind }?.name ?? kind)
             .frame(maxWidth: .infinity, alignment: .leading)

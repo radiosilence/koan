@@ -54,6 +54,7 @@ struct DspProfilePage: View {
             }
             Section {
                 TextField("Name", text: $editingName)
+                    .koanField()
                     .onSubmit(rename)
             }
             if let message = notice ?? dsp.lastError {
@@ -333,14 +334,14 @@ private struct GroupSection: View {
 
     var body: some View {
         Section {
-            Picker("Playing", selection: Binding(
-                get: { detail.layers.first(where: \.on)?.profile ?? detail.layers.first?.profile ?? "" },
-                set: { dsp.select(detail.name, $0) }
-            )) {
-                ForEach(detail.layers, id: \.profile) { Text($0.profile).tag($0.profile) }
-            }
-            .pickerStyle(.inline)
-            .labelsHidden()
+            KoanChoices(
+                title: "Playing",
+                selection: Binding(
+                    get: { detail.layers.first(where: \.on)?.profile ?? detail.layers.first?.profile ?? "" },
+                    set: { dsp.select(detail.name, $0) }
+                ),
+                values: detail.layers.map(\.profile)
+            ) { Text($0) }
             #if !os(tvOS)
             Button("Play Them All in Order") { dsp.setGroup(detail.name, false) }
             #endif
@@ -390,6 +391,7 @@ private struct LayersSection: View {
                 }
             }
         }
+        .koanControl()
     }
 
     var body: some View {

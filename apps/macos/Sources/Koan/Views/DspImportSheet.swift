@@ -34,7 +34,7 @@ private struct DspImportSheet: View {
                          : "They are parts of one setup, such as a response for each channel, so they play together as one EQ.")
                 }
                 Section(plan.group ? "Group name" : "Name") {
-                    TextField("Name", text: $name)
+                    TextField("Name", text: $name).koanField()
                 }
             }
             .navigationTitle(KoanTheme.label("Import"))

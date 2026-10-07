@@ -575,7 +575,7 @@ private struct LocalNetworkBlocked: View {
                 }
             }
             .font(.role(.fine, system: .caption))
-            .buttonStyle(.bordered)
+            .koanButton(.bordered, system: .bordered)
             .controlSize(.small)
             #endif
         }

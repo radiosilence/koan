@@ -187,10 +187,10 @@ struct KoanMenu<Content: View, Label: View>: View {
                         .fixedSize()
                 }
         } else {
-            Menu(content: content, label: label)
+            Menu(content: content, label: label) // theme: raw — the platform's look
         }
         #else
-        Menu(content: content, label: label)
+        Menu(content: content, label: label) // theme: raw — the platform's look
         #endif
     }
 }
@@ -217,7 +217,7 @@ struct KoanMenuChoices<Value: Hashable>: View {
     }
 
     private var picker: some View {
-        Picker(title, selection: $selection) {
+        Picker(title, selection: $selection) { // theme: raw — the platform's look
             ForEach(options, id: \.value) { Text($0.label).tag($0.value) }
         }
         .pickerStyle(.inline)
@@ -226,26 +226,70 @@ struct KoanMenuChoices<Value: Hashable>: View {
 }
 
 /// One option of a theme menu, ticked when it is the one chosen.
-struct KoanMenuChoice: View {
-    let label: String
+struct KoanMenuChoice<Label: View>: View {
     let chosen: Bool
     let action: () -> Void
+    @ViewBuilder let label: () -> Label
 
-    init(_ label: String, chosen: Bool, action: @escaping () -> Void) {
-        self.label = label
+    init(chosen: Bool, action: @escaping () -> Void, @ViewBuilder label: @escaping () -> Label) {
         self.chosen = chosen
         self.action = action
+        self.label = label
     }
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: KoanTheme.Space.m) {
-                Text(label)
+                label()
                 Spacer(minLength: 0)
                 KoanIcon("checkmark").opacity(chosen ? 1 : 0)
             }
         }
         .accessibilityAddTraits(chosen ? .isSelected : [])
+    }
+}
+
+extension KoanMenuChoice where Label == Text {
+    init(_ title: String, chosen: Bool, action: @escaping () -> Void) {
+        self.init(chosen: chosen, action: action) { Text(title) }
+    }
+}
+
+/// A choice set out in a form: in the theme on the Mac, the options as rows
+/// with a tick on the chosen one, in place of AppKit's round radio buttons;
+/// the system's inline picker otherwise, which a phone draws as ticked rows.
+struct KoanChoices<Value: Hashable, Row: View>: View {
+    let title: String
+    @Binding var selection: Value
+    let values: [Value]
+    @ViewBuilder let row: (Value) -> Row
+
+    var body: some View {
+        #if os(macOS)
+        if KoanTheme.isOn {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(values, id: \.self) { value in
+                    KoanMenuChoice(chosen: value == selection) { selection = value } label: { row(value) }
+                        .padding(.vertical, KoanTheme.Space.xs)
+                        .koanButton(.card)
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(title)
+        } else {
+            picker
+        }
+        #else
+        picker
+        #endif
+    }
+
+    private var picker: some View {
+        Picker(title, selection: $selection) { // theme: raw — the platform's look
+            ForEach(values, id: \.self) { row($0).tag($0) }
+        }
+        .pickerStyle(.inline)
+        .labelsHidden()
     }
 }
 

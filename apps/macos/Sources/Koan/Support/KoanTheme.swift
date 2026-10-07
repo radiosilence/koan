@@ -892,9 +892,31 @@ extension View {
     }
 
     /// A pop-up picker, menu or stepper: the system control, in `ink` and the
-    /// theme's type rather than the accent. Unchanged in the platform's look.
+    /// theme's type rather than the accent, and a menu's button the theme's
+    /// square bordered one (`koanMenuButton(.bordered)`). Unchanged in the
+    /// platform's look.
     func koanControl() -> some View {
         modifier(KoanControlRole())
+    }
+
+    /// The button a menu opens from: in the theme, one of the theme's buttons
+    /// of `kind`, square, with no indicator, in place of the platform's rounded
+    /// pull-down. The list it opens is the system's (`NSMenu`, `UIMenu`), which
+    /// no app can draw; `KoanMenu` draws its own on the Mac. Unchanged in the
+    /// platform's look.
+    @ViewBuilder
+    func koanMenuButton(_ kind: KoanButtonKind) -> some View {
+        #if os(tvOS)
+        self
+        #else
+        if KoanTheme.isOn {
+            menuStyle(.button)
+                .buttonStyle(KoanButtonStyle(kind: kind))
+                .menuIndicator(.hidden)
+        } else {
+            self
+        }
+        #endif
     }
 
     /// A list as the theme lays one out: rows on the ground with rules between
@@ -1377,16 +1399,25 @@ struct KoanSegmentedPicker<Value: Hashable>: View {
     let options: [(label: String, value: Value)]
     @Binding var selection: Value
     var title: String = ""
+    /// A glyph per option, drawn in place of its label, which VoiceOver and
+    /// the help tag still read.
+    var icons: [String]? = nil
 
     var body: some View {
         if KoanTheme.isOn {
             HStack(spacing: 18) {
-                ForEach(options, id: \.value) { option in
+                ForEach(Array(options.enumerated()), id: \.element.value) { index, option in
                     let chosen = option.value == selection
                     Button {
                         selection = option.value
                     } label: {
-                        Text(option.label)
+                        Group {
+                            if let icons {
+                                KoanIcon(icons[index]).accessibilityLabel(option.label)
+                            } else {
+                                Text(option.label)
+                            }
+                        }
                             .font(.koan(.control))
                             .textCase(.lowercase)
                             .foregroundStyle(chosen ? Color.koanInk : Color.koanMuted)
@@ -1397,6 +1428,7 @@ struct KoanSegmentedPicker<Value: Hashable>: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .help(icons == nil ? "" : option.label)
                     .accessibilityAddTraits(chosen ? .isSelected : [])
                 }
             }
@@ -1405,7 +1437,13 @@ struct KoanSegmentedPicker<Value: Hashable>: View {
             .koanAnimation(KoanTheme.Motion.fast, value: selection)
         } else {
             Picker(title, selection: $selection) {
-                ForEach(options, id: \.value) { Text($0.label).tag($0.value) }
+                ForEach(Array(options.enumerated()), id: \.element.value) { index, option in
+                    if let icons {
+                        Image(systemName: icons[index]).tag(option.value)
+                    } else {
+                        Text(option.label).tag(option.value)
+                    }
+                }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -1414,7 +1452,8 @@ struct KoanSegmentedPicker<Value: Hashable>: View {
 }
 
 /// A pop-up picker. In the theme on the Mac and a phone, a menu whose label
-/// is the chosen option in `control` type and `ink`: AppKit's pop-up button and
+/// is the chosen option in `control` type and `ink`, in the theme's square
+/// bordered button: AppKit's pop-up button and
 /// UIKit's picker draw their own value in the system face, on the Mac in a
 /// rounded bezel, whatever the environment says. Options the app writes are
 /// lowercased; `keepsCase` keeps options that are data, such as device and
@@ -1461,10 +1500,8 @@ struct KoanPicker<Value: Hashable>: View {
                     .font(.koan(.control))
                     .foregroundStyle(Color.koanInk)
                 }
+                .koanMenuButton(.bordered)
                 #if os(macOS)
-                .menuStyle(.button)
-                .buttonStyle(.plain)
-                .menuIndicator(.hidden)
                 .fixedSize()
                 #endif
                 .tint(Color.koanInk)
@@ -1518,6 +1555,35 @@ struct KoanListPicker<Value: Hashable, Row: View>: View {
             }
         } else {
             picker.pickerStyle(.navigationLink)
+        }
+        #elseif os(macOS)
+        if KoanTheme.isOn {
+            // The theme's menu, whose rows can be the options' own rows: an
+            // `NSMenu` draws each as a line of text.
+            LabeledContent(title) {
+                KoanMenu {
+                    ForEach(sections.indices, id: \.self) { i in
+                        if let heading = sections[i].title {
+                            KoanSectionHeader(KoanTheme.label(heading))
+                                .padding(.horizontal, KoanTheme.Space.m)
+                        }
+                        ForEach(sections[i].values, id: \.self) { value in
+                            KoanMenuChoice(chosen: value == selection) { selection = value } label: { row(value) }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: KoanTheme.Space.xs) {
+                        Text(name(selection)).textCase(nil).lineLimit(1)
+                        KoanIcon("chevron.up.chevron.down").font(.koan(.fine))
+                    }
+                    .font(.koan(.control))
+                    .foregroundStyle(Color.koanInk)
+                }
+                .koanMenuButton(.bordered)
+                .fixedSize()
+            }
+        } else {
+            picker
         }
         #else
         picker
@@ -2111,6 +2177,7 @@ private struct KoanControlRole: ViewModifier {
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
             content
+                .koanMenuButton(.bordered)
                 .font(.koan(.control))
                 .tint(Color.koanInk)
         } else {
