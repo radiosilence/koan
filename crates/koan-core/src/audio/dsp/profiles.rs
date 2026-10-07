@@ -894,7 +894,7 @@ pub fn detail(name: &str) -> Option<Detail> {
         preset: profile.preset,
         edited: edited(profile),
         can_revert: profile.original.is_some(),
-        read_only: shown_role(profile, &cfg.dsp.profiles).corrects(),
+        read_only: editable(profile, &cfg.dsp.profiles).is_err(),
     })
 }
 
@@ -1979,7 +1979,13 @@ pub fn read_only(name: &str) -> String {
 /// to a measurement whatever it is said to be: its bands are fitted again to
 /// each new target, and an edit would be lost.
 fn editable(profile: &DspProfile, all: &[DspProfile]) -> Result<(), String> {
-    if profile.fitted.is_some() || shown_role(profile, all).corrects() {
+    if profile.fitted.is_some() {
+        return Err(format!(
+            "{} is fitted to a measurement, and fitted again for each target, so an edit would be lost: add a tuning on top to change the sound",
+            profile.name
+        ));
+    }
+    if shown_role(profile, all).corrects() {
         return Err(read_only(&profile.name));
     }
     Ok(())
@@ -3658,8 +3664,10 @@ mod tests {
             })
         })
         .unwrap();
+        assert!(detail("Fitted").unwrap().read_only);
         assert!(preview_band("Fitted", 0, "peaking", 1000.0, 6.0, 1.0, 48000).is_none());
-        assert!(set_band("Fitted", 0, "peaking", 1000.0, 6.0, 1.0).is_err());
+        let refused = set_band("Fitted", 0, "peaking", 1000.0, 6.0, 1.0).unwrap_err();
+        assert!(refused.contains("fitted to a measurement"), "{refused}");
         assert!(save_as_copy("Fitted", None, None, None).is_err());
     }
 
