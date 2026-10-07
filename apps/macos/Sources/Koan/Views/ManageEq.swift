@@ -38,11 +38,11 @@ struct ManageEq: View {
             #if !os(tvOS)
             Section {
                 Button("Import a File…") { importing = true }
-                    .koanButton(.standard)
+                    .koanButton(.bordered)
                 Button("Find in AutoEQ…") { finding = AutoEqFind(query: "") }
-                    .koanButton(.standard)
+                    .koanButton(.bordered)
                 Button("Find a Measurement…") { measuring = true }
-                    .koanButton(.standard)
+                    .koanButton(.bordered)
                 if let summary = dsp.importSummary {
                     Text(summary).koanText(.fine, .muted)
                 }
@@ -174,7 +174,7 @@ struct ManageEq: View {
                 #if !os(tvOS)
                 if let device, group.role == .tuning {
                     Button("Add All to Tuning") { addToTuning(group.members, device) }
-                        .koanButton(.text)
+                        .koanButton(.link)
                 }
                 Menu("Options") { actions(group, o) }
                     .koanControl()
