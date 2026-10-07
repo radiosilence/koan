@@ -61,11 +61,9 @@ impl Spelling {
         if !dir.join(name).exists() {
             return None;
         }
-        let found = find_spelling(self.listing(dir), name);
-        if found.is_some() {
-            return found;
-        }
-        // It opens but the listing lacks it: the listing predates it.
+        // It opens but is not in the listing as given: another spelling of
+        // an entry, or an entry made since the listing was read. Read again,
+        // so the second is found exactly rather than matched to a sibling.
         self.listings.remove(dir);
         find_spelling(self.listing(dir), name)
     }
@@ -156,6 +154,26 @@ mod tests {
             asked.clone()
         };
         assert_eq!(on_disk(&asked), expected);
+    }
+
+    #[test]
+    fn an_entry_made_after_its_directory_was_listed_is_found_as_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("b")).unwrap();
+        let mut spelling = Spelling::default();
+        assert_eq!(
+            spelling.on_disk(&dir.path().join("b")),
+            dir.path().join("b")
+        );
+
+        // On a case-insensitive volume this is `b` again.
+        std::fs::create_dir_all(dir.path().join("B")).unwrap();
+        let expected = if std::fs::read_dir(dir.path()).unwrap().count() == 2 {
+            dir.path().join("B")
+        } else {
+            dir.path().join("b")
+        };
+        assert_eq!(spelling.on_disk(&dir.path().join("B")), expected);
     }
 
     #[test]
