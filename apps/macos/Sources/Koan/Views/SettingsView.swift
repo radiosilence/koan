@@ -854,7 +854,7 @@ struct AutoEqFind: Identifiable {
 struct DspSettings: View {
     @Environment(AppState.self) private var app
     @Binding var importing: Bool
-    @Binding fileprivate var finding: AutoEqFind?
+    @Binding var finding: AutoEqFind?
     @Binding var measuring: Bool
     /// The profile whose page is open, on the Mac, where settings has no
     /// navigation stack to push it onto.
