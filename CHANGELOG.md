@@ -1,11 +1,5 @@
 # Changelog
 
-## Unreleased
-
-### Changed
-
-- **The kōan look, refined after 0.60.0.** Buttons come in three weights with at most one prominent action per screen, each on one line; lists, settings and the EQ pages sit on the theme's ground in square sections instead of black or carded rows; the EQ filter table is dense, with short type codes; checkboxes trail their labels; on iPhone, album and playlist headers scroll away and leave the title in the bar. The design rules are in `docs/design/koan-theme.md`.
-
 ## 0.60.1
 
 ### Added
@@ -19,6 +13,7 @@
 - **Releases no longer queue behind stale runs.** A newer push cancels an older run of the same pull request, or an older run on main that releases nothing; release runs and manual runs are never cancelled. On main, the macOS and tvOS app builds run only when releasing, since the pull request built them already.
 - **API key and account errors read as errors in the system look too.** Settings showed them in the label colour there, and in the theme's red only under the kōan theme.
 - **EQ for headphones or speakers, and a steadier EQ page.** EQ copy speaks of any device rather than headphones alone. An imported EQ's role is asked in a sheet with an example for each answer and a Decide Later that says what it leaves. The EQ page draws what the output plays at a fixed height, easing between presets, and edits happen on the profile's own page.
+- **The kōan look, refined after 0.60.0.** Buttons come in three weights with at most one prominent action per screen, each on one line; lists, settings and the EQ pages sit on the theme's ground in square sections instead of black or carded rows; the EQ filter table is dense, with short type codes; checkboxes trail their labels; on iPhone, album and playlist headers scroll away and leave the title in the bar. The design rules are in `docs/design/koan-theme.md`.
 
 ### Fixed
 
@@ -29,6 +24,7 @@
 - **Play on a record starts at its first track.** With the first track still on the server and later ones cached, playback could begin at the first cached track: a stream opened ahead of the download that gave out with nothing heard was taken for a track that had played. It is now waited for and played from disk when it lands; only a track that has failed is passed over.
 - **Search counts match the results shown, closest matches first.** Each section of the search page is now the head of the listing its "See all" opens, ordered by how closely names match: the whole name, then its start, then a later word, then anywhere. Weak fuzzy matches (letters scattered across a name) are no longer listed; fuzzy matching is used only when nothing holds the query as typed, so typos still find what was meant. The album and track browsers gain a Best Match sort while searching.
 - **A queue of tens of thousands of tracks stays responsive.** The engine sent the whole queue to the app on every track change and download, which on a phone meant decoding and regrouping every row each time until the app lagged and was killed. The queue is now sent whole only when it is edited, with the rows whose status moved sent on their own in between, and the iOS queue draws only the rows on screen.
+- **EQ fixes.** An EQ's page on iPhone no longer shows the tab bar over its foot, and changing the target a tuning was made against now syncs to your other devices.
 
 ## 0.60.0
 
