@@ -53,6 +53,9 @@ struct ArtworkBleed: View {
     }
 
     @Environment(\.powerSaving) private var powerSaving
+    /// For gay mode's disco, which pulses with the music. Optional, as the
+    /// appearance is: the window's background is handed it explicitly.
+    @Environment(PlayingLevels.self) private var levels: PlayingLevels?
     @Environment(\.colorScheme) private var scheme
     /// Optional: the window's background is built outside the environment
     /// the app hands its views, and is given this explicitly.
@@ -92,11 +95,13 @@ struct ArtworkBleed: View {
                 drifts: breathes,
                 tone: scheme == .dark ? .dark : .light
             )
+            .overlay { disco }
             .opacity(KoanTheme.wash)
             .allowsHitTesting(false)
             .task(id: source) { await load() }
         } else {
             DriftingWash(image: answered ?? nil, pending: answered == nil, drifts: breathes, tone: systemTone)
+                .overlay { disco }
                 .opacity(0.5)
                 .mask(
                     LinearGradient(
@@ -108,6 +113,15 @@ struct ArtworkBleed: View {
                 .backgroundExtensionEffect()
                 .allowsHitTesting(false)
                 .task(id: source) { await load() }
+        }
+    }
+
+    /// Gay mode's disco over the flag, breathing with the music. Only while
+    /// the rainbow is drawn and motion allowed: it is what keeps the analyser
+    /// awake.
+    @ViewBuilder private var disco: some View {
+        if rainbow, breathes, let levels {
+            RainbowPulse(levels: levels)
         }
     }
 

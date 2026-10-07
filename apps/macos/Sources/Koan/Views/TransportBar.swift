@@ -138,6 +138,7 @@ struct TransportBar: View {
                     Text(entry.title)
                         .koanText(.meta, .strong)
                         .lineLimit(1)
+                        .rainbowShimmer()
                     // Both names go where they say they go, rather than the
                     // line as a whole meaning one of them. `LinkText` is the
                     // same one the rows and headers use.
