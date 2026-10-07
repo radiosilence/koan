@@ -577,7 +577,7 @@ final class MixedCollectionView: NSCollectionView {
             let local = item.view.convert(point, from: self)
             switch item {
             case let tile as AlbumTile: overLink = tile.hover(at: local)
-            case let track as TrackItem: overLink = track.row.hover(at: local)
+            case let track as TrackItem: overLink = track.row.hover(at: track.row.convert(point, from: self))
             case let pill as ArtistPillItem: pill.hovering = true; overLink = true
             default: break
             }
@@ -606,7 +606,7 @@ final class MixedCollectionView: NSCollectionView {
             return
         }
         guard let track = item as? TrackItem else { return super.mouseDown(with: event) }
-        let hit = track.row.hit(at: track.view.convert(point, from: self))
+        let hit = track.row.hit(at: track.row.convert(point, from: self))
         if owner?.parent?.tracksSelect == false {
             if case .button(let action) = hit { return action() }
             resultPressed(event, at: path, hit: hit)
