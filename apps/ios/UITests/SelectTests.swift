@@ -87,6 +87,10 @@ final class SelectTests: XCTestCase {
         pause(1)
         XCTAssertTrue(app.buttons[any: "Appearance"].waitForExistence(timeout: 3), "back at the settings root")
         snap("09b-settings-root")
+        app.swipeUp(velocity: .fast)
+        app.swipeUp(velocity: .fast)
+        pause(1)
+        snap("09c-settings-end")
 
         // Chosen again, the tab goes back to its root.
         app.buttons[any: "Library"].tap()

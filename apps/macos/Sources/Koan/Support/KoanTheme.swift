@@ -2405,6 +2405,11 @@ private struct KoanHidesSystemTabBar: ViewModifier {
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     Color.clear.frame(height: bar)
                 }
+                // Room under the last row, so a page scrolled to its end
+                // stops short of the bar's rule rather than against it. On
+                // the scroll content alone: a bar a page pins to its foot
+                // still meets the mini player.
+                .contentMargins(.bottom, KoanTheme.Space.xxl, for: .scrollContent)
                 // The bar draws its own ground. The platform's edge effect
                 // would otherwise paint the inset as a grey band over the
                 // page's last rows, where content should pass under the bar.
