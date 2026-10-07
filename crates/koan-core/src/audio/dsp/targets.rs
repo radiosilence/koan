@@ -344,6 +344,15 @@ pub fn on_grid_db(step: &GraphicEq) -> Vec<f64> {
 /// sampled every twelfth of an octave, which the graphic filter interpolates
 /// between.
 pub fn difference(from: &[(f64, f64)], to: &[(f64, f64)]) -> GraphicEq {
+    let mut g = unbounded(from, to);
+    for (_, db) in &mut g.points {
+        *db = db.clamp(-MAX_DB, MAX_DB);
+    }
+    g
+}
+
+/// [`difference`], without the ±12 dB bound.
+fn unbounded(from: &[(f64, f64)], to: &[(f64, f64)]) -> GraphicEq {
     let grid = grid();
     let (a, b) = (levelled(from, &grid), levelled(to, &grid));
     // A curve that is not a target's makes no difference at all, rather than
@@ -371,8 +380,8 @@ pub fn difference(from: &[(f64, f64)], to: &[(f64, f64)]) -> GraphicEq {
     let mut next = 20.0;
     for (&hz, &db) in grid.iter().zip(&smoothed) {
         if hz >= next || Some(&hz) == grid.last() {
-            let db = if db.is_nan() { 0.0 } else { db };
-            points.push((hz, db.clamp(-MAX_DB, MAX_DB)));
+            let db = if db.is_finite() { db } else { 0.0 };
+            points.push((hz, db));
             next = hz * 2f64.powf(1.0 / 12.0);
         }
     }
@@ -382,6 +391,13 @@ pub fn difference(from: &[(f64, f64)], to: &[(f64, f64)]) -> GraphicEq {
     }
 }
 
+/// [`difference`] held back in the treble as a correction built from a
+/// measurement is: what a tuning plays on such a correction, so the two sum
+/// to the tapered difference between the tuning's target and the
+/// measurement, whichever target the correction aims at.
+pub fn tapered_difference(from: &[(f64, f64)], to: &[(f64, f64)]) -> GraphicEq {
+    tapered(difference(from, to))
+}
 // --- Targets a person adds ---------------------------------------------------
 
 /// Where added targets are kept, one CSV each.
@@ -502,31 +518,39 @@ pub fn measurement(dsp_dir: &Path) -> Option<Curve> {
     Some(parse(&text)).filter(|c| !c.is_empty())
 }
 
-/// Above here, measurements of one headphone on different rigs disagree
-/// most, and a correction is held to `TREBLE_DB`; it narrows to that from
-/// `TREBLE_FROM` on.
-const TREBLE_FROM: f64 = 6_000.0;
-const TREBLE_AT: f64 = 10_000.0;
-const TREBLE_DB: f64 = 3.0;
+/// A correction built from a measurement acts in full up to `TAPER_FROM`,
+/// and fades to nothing at `TAPER_TO`, linearly against log frequency. Above
+/// 6 kHz a measurement says more about the rig and the fit in the ear than
+/// about the headphone; squig.link's auto-EQ stops there too, so a
+/// correction and its tunings reproduce that site's presets.
+const TAPER_FROM: f64 = 6_000.0;
+const TAPER_TO: f64 = 12_000.0;
 
-/// What brings a headphone measured as `measurement` to `target`: their
-/// difference, made as a target swap's is (levelled at 1 kHz, smoothed,
-/// within ±12 dB), and held to ±3 dB in the treble, where a measurement
-/// says least about the headphone and most about the rig.
-pub fn correction(measurement: &[(f64, f64)], target: &[(f64, f64)]) -> GraphicEq {
-    let mut g = difference(measurement, target);
+/// How much of a measured correction acts at `hz`: 1 to `TAPER_FROM`, 0
+/// from `TAPER_TO`.
+pub fn taper(hz: f64) -> f64 {
+    if hz <= TAPER_FROM {
+        1.0
+    } else if hz >= TAPER_TO {
+        0.0
+    } else {
+        1.0 - (hz / TAPER_FROM).ln() / (TAPER_TO / TAPER_FROM).ln()
+    }
+}
+
+fn tapered(mut g: GraphicEq) -> GraphicEq {
     for (hz, db) in &mut g.points {
-        let limit = if *hz <= TREBLE_FROM {
-            MAX_DB
-        } else if *hz >= TREBLE_AT {
-            TREBLE_DB
-        } else {
-            let t = (*hz / TREBLE_FROM).ln() / (TREBLE_AT / TREBLE_FROM).ln();
-            MAX_DB + (TREBLE_DB - MAX_DB) * t
-        };
-        *db = db.clamp(-limit, limit);
+        *db *= taper(*hz);
     }
     g
+}
+
+/// What brings a headphone measured as `measurement` to `target`: their
+/// difference, levelled at 1 kHz and smoothed as a target swap's is, and
+/// tapered off above 6 kHz (see [`taper`]). Not bounded: a tuning after it
+/// may undo part of it, and a bound on one would not compose with the other.
+pub fn correction(measurement: &[(f64, f64)], target: &[(f64, f64)]) -> GraphicEq {
+    tapered(unbounded(measurement, target))
 }
 
 /// What an AutoEQ install in `dsp_dir` kept of its result: the headphone as
@@ -549,13 +573,18 @@ pub fn moved(target: &[(f64, f64)], step: &GraphicEq) -> Curve {
 }
 
 /// Whether two targets are for the same kind of headphone. A target added
-/// by hand says nothing of it, and is taken at its word.
+/// by hand says nothing of it, and is taken at its word. The diffuse field
+/// on GRAS KEMAR is the neutral of either: in-ears are measured on the same
+/// ear simulator, and against ISO 11904-1 it differs by a rig, which a
+/// correction and a tuning made against it share.
 pub fn same_ear(a: &str, b: &str) -> bool {
     match (shipped(a), shipped(b)) {
-        (Some(a), Some(b)) => a.ear == b.ear,
+        (Some(a), Some(b)) => a.ear == b.ear || a.id == EITHER_EAR || b.id == EITHER_EAR,
         _ => true,
     }
 }
+
+const EITHER_EAR: &str = "diffuse-field-gras-kemar";
 
 /// The curve a chosen target id names: one that ships, or one added.
 pub fn choice_curve(id: &str) -> Option<Curve> {
@@ -601,6 +630,126 @@ pub fn result_column(text: &str, column: &str) -> Curve {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The AFUL Performer 8S as squig.link (Super* Review) shows and
+    /// auto-EQs it: the channels averaged by amplitude, the site's IEF 2023
+    /// calibration subtracted.
+    fn squig_8s() -> Curve {
+        let side = |text| points(text);
+        let both = crate::audio::dsp::squig::average(
+            &side(include_str!("testdata/aful-8s-super-review-L.txt")),
+            &side(include_str!("testdata/aful-8s-super-review-R.txt")),
+        );
+        crate::audio::dsp::squig::calibrated(
+            &both,
+            &points(include_str!("testdata/squig-ief-2023-cal.txt")),
+        )
+    }
+
+    /// `step` on the grid, as the DSP plays it.
+    fn played(steps: &[GraphicEq]) -> Vec<f64> {
+        let filters: Vec<_> = steps
+            .iter()
+            .cloned()
+            .map(crate::config::DspFilter::Graphic)
+            .collect();
+        crate::audio::dsp::response(&filters, &grid(), 48_000)
+    }
+
+    /// RMS of `ours` against `theirs` over `lo..=hi` Hz, after matching their
+    /// mean level over 200 Hz to 2 kHz.
+    fn rms_after_matching(ours: &[f64], theirs: &[f64], lo: f64, hi: f64) -> f64 {
+        let grid = grid();
+        let mid: Vec<f64> = grid
+            .iter()
+            .zip(ours.iter().zip(theirs))
+            .filter(|(hz, _)| (200.0..=2000.0).contains(*hz))
+            .map(|(_, (o, t))| t - o)
+            .collect();
+        let k = mid.iter().sum::<f64>() / mid.len() as f64;
+        let d: Vec<f64> = grid
+            .iter()
+            .zip(ours.iter().zip(theirs))
+            .filter(|(hz, _)| (lo..=hi).contains(*hz))
+            .map(|(_, (o, t))| o + k - t)
+            .collect();
+        (d.iter().map(|x| x * x).sum::<f64>() / d.len() as f64).sqrt()
+    }
+
+    /// A correction to neutral from the measurement squig.link uses, with a
+    /// tuning of the target minus neutral on it, plays what that site's
+    /// auto-EQ preset for the target does: within half a decibel up to
+    /// 10 kHz, where the preset stops correcting, and a decibel and a half
+    /// above, where it leaves the headphone alone and so does koan.
+    #[test]
+    fn a_correction_and_a_tuning_reproduce_squiglinks_presets() {
+        let measured = squig_8s();
+        let neutral = shipped("diffuse-field-iso-11904-1").unwrap().curve();
+        let presets = [
+            (
+                "Harman 2019",
+                shipped("harman-in-ear-2019").unwrap().curve(),
+                include_str!("testdata/aful-8s-squig-harman-2019.txt"),
+            ),
+            (
+                "Super 22",
+                points(include_str!("testdata/squig-super-22-target.txt")),
+                include_str!("testdata/aful-8s-squig-super-22.txt"),
+            ),
+        ];
+        for (name, target, preset) in presets {
+            let ours = played(&[
+                correction(&measured, &neutral),
+                tapered_difference(&neutral, &target),
+            ]);
+            let filters = crate::audio::dsp::apo::parse(preset).unwrap().filters;
+            let theirs = crate::audio::dsp::response(&filters, &grid(), 48_000);
+            let below = rms_after_matching(&ours, &theirs, 20.0, 10_000.0);
+            let above = rms_after_matching(&ours, &theirs, 10_000.0, 20_000.0);
+            println!("{name}: RMS {below:.2} dB to 10 kHz, {above:.2} dB above");
+            assert!(below <= 0.5, "{name}: {below:.2} dB RMS to 10 kHz");
+            assert!(above <= 1.5, "{name}: {above:.2} dB RMS above 10 kHz");
+        }
+    }
+
+    /// A correction to neutral with Harman's difference from neutral on it is
+    /// a correction to Harman: the taper is shared, so the two compose.
+    #[test]
+    fn a_correction_and_a_target_difference_compose() {
+        let measured = squig_8s();
+        let neutral = shipped("diffuse-field-iso-11904-1").unwrap().curve();
+        let harman = shipped("harman-in-ear-2019").unwrap().curve();
+        let chained = played(&[
+            correction(&measured, &neutral),
+            tapered_difference(&neutral, &harman),
+        ]);
+        let direct = played(&[correction(&measured, &harman)]);
+        let worst = chained
+            .iter()
+            .zip(&direct)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f64::max);
+        assert!(worst <= 0.1, "{worst:.3} dB apart");
+        // Above 12 kHz neither does anything.
+        let grid = grid();
+        let top = grid.iter().position(|&hz| hz >= 12_500.0).unwrap();
+        assert!(direct[top..].iter().all(|d| d.abs() < 0.05));
+    }
+
+    /// The Harman in-ear target koan ships is squig.link's own file, put on
+    /// AutoEQ's grid: a preset made there aims where a correction here does.
+    #[test]
+    fn harman_in_ear_is_squiglinks() {
+        let squig = parse(include_str!("testdata/squig-harman-ie-2019-target.txt"));
+        let ours = shipped("harman-in-ear-2019").unwrap().curve();
+        for (hz, db) in ours {
+            let theirs = at(&squig, hz);
+            assert!(
+                (db - theirs).abs() <= 0.05,
+                "{hz} Hz: {db} against {theirs}"
+            );
+        }
+    }
 
     #[test]
     fn every_target_is_on_autoeqs_grid() {

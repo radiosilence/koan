@@ -164,6 +164,7 @@ koan dsp autoeq install NUMBER|NAME [--source SOURCE] [--device NAME]
 koan dsp target NAME [--use TARGET | --reset]    # move an AutoEQ correction to another target
 koan dsp add-target FILE                         # a target from a CSV or squig.link export
 koan dsp measure FILE --name NAME --ear in|over --target TARGET  # correct a headphone from its measurement
+koan dsp response [DEVICE] [--correction NAME] [--tuning EQ,...] [--rate HZ]  # what the chain plays, as CSV on AutoEQ's grid; nothing saved
 koan dsp role NAME correction|tuning|mixed       # mixed: a correction that already includes a tuning
 koan dsp made-for NAME TARGET|unknown            # the target a ready-made EQ was made for
 koan dsp tuned-for NAME TARGET|unknown           # the target a tuning was made against

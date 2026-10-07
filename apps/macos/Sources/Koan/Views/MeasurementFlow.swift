@@ -207,7 +207,7 @@ struct MeasurementFlow: View {
             } header: {
                 Text("Find it on squig.link")
             } footer: {
-                Text("Measurements reviewers publish on their squig.link sites. Pick one measured on the rig your target assumes, where the site says; the site is credited on the correction.")
+                Text("Measurements reviewers publish on their squig.link sites. Pick one measured on the rig your target assumes, where the site says, and to match a site's own EQ presets, its measurement; the site is credited on the correction.")
                     .koanText(.fine, .muted)
             }
             Section {

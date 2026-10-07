@@ -452,6 +452,23 @@ pub fn cmd_dsp_squig(
 }
 
 /// Split the baked EQ `name` into a correction and a tuning.
+pub fn cmd_dsp_response(
+    named: Option<String>,
+    correction: Option<&str>,
+    tuning: Option<&[String]>,
+    rate: u32,
+) {
+    let device = named
+        .or_else(profiles::current_device)
+        .unwrap_or_else(|| "\u{1}response".to_owned());
+    let curve =
+        profiles::chain_response(&device, correction, tuning, rate).unwrap_or_else(|e| fail(e));
+    println!("frequency,db");
+    for (hz, db) in curve {
+        println!("{hz:.2},{db:.4}");
+    }
+}
+
 pub fn cmd_dsp_split(name: &str, path: &std::path::Path, in_ear: bool, target: &str) {
     use koan_core::config::DspEar;
     let text =

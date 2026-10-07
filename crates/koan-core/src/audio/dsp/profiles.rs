@@ -145,11 +145,13 @@ fn joins(
                 .filter(|(eq, _)| *eq == name)
                 .map(|(_, n)| n.as_str())
                 .collect();
-            let step = match (&join, &aim, &made) {
-                (Some(Join::Converted { .. }), Some(a), Some(m)) => targets::choice_curve(a)
-                    .zip(targets::choice_curve(m))
-                    .map(|(from, to)| targets::on_grid_db(&targets::difference(&from, &to)))
-                    .unwrap_or_default(),
+            let step = match (&join, &aim, &made, dsp.profile_for(device)) {
+                (Some(Join::Converted { .. }), Some(a), Some(m), Some(c)) => {
+                    targets::choice_curve(a)
+                        .zip(targets::choice_curve(m))
+                        .map(|(from, to)| targets::on_grid_db(&target_step(c, all, &from, &to)))
+                        .unwrap_or_default()
+                }
                 _ => Vec::new(),
             };
             let suggestion = match (&join, &aim) {
@@ -291,7 +293,10 @@ pub fn made_against_previews(name: &str, device: &str) -> Vec<(Option<String>, V
     use super::targets;
     let cfg = Config::cached();
     let all = &cfg.dsp.profiles;
-    let Some(aim) = cfg.dsp.profile_for(device).and_then(|c| aims_at(c, all)) else {
+    let Some(correction) = cfg.dsp.profile_for(device) else {
+        return Vec::new();
+    };
+    let Some(aim) = aims_at(correction, all) else {
         return Vec::new();
     };
     let Some(eq) = all
@@ -314,8 +319,12 @@ pub fn made_against_previews(name: &str, device: &str) -> Vec<(Option<String>, V
             let plays = if id == aim || !targets::same_ear(&aim, &id) {
                 eq.clone()
             } else {
-                let step =
-                    targets::on_grid_db(&targets::difference(&from, &targets::choice_curve(&id)?));
+                let step = targets::on_grid_db(&target_step(
+                    correction,
+                    all,
+                    &from,
+                    &targets::choice_curve(&id)?,
+                ));
                 eq.iter().zip(&step).map(|(e, s)| e + s).collect()
             };
             Some((Some(id), plays))
@@ -1709,6 +1718,86 @@ pub fn aims_at(profile: &DspProfile, all: &[DspProfile]) -> Option<String> {
                 .as_ref()
                 .map(|t| t.chosen.clone().unwrap_or_else(|| t.made_for.clone()))
         })
+}
+
+/// The target difference a tuning made against `made` plays on the
+/// correction of `profile`'s chain, which aims at `aim`. Tapered where the
+/// correction is built from a measurement, as that correction is, so the two
+/// sum to the tuning's target, tapered, minus the measurement.
+pub fn target_step(
+    profile: &DspProfile,
+    all: &[DspProfile],
+    aim: &[(f64, f64)],
+    made: &[(f64, f64)],
+) -> crate::config::GraphicEq {
+    use super::targets;
+    let measured = corrections_in(profile, all)
+        .into_iter()
+        .next()
+        .and_then(|first| all.iter().find(|p| p.name == first))
+        .is_some_and(|c| {
+            c.measurement.is_some()
+                || c.target
+                    .as_ref()
+                    .is_some_and(|t| t.chosen.as_ref().is_some_and(|to| *to != t.made_for))
+                    && targets::autoeq_measurement(&dir(&c.name)).is_some()
+        });
+    if measured {
+        targets::tapered_difference(aim, made)
+    } else {
+        targets::difference(aim, made)
+    }
+}
+
+/// What `device`'s chain plays, in dB on `targets::grid()` at `rate`: its
+/// correction, any target difference and its tuning, as one curve, preamp
+/// aside. With `correction` or `tuning` given, those stand in for the
+/// device's own, in this call only; nothing is saved. What an independent
+/// check compares with another tool's curves.
+pub fn chain_response(
+    device: &str,
+    correction: Option<&str>,
+    tuning: Option<&[String]>,
+    rate: u32,
+) -> Result<Vec<(f64, f64)>, String> {
+    let mut dsp = Config::cached().dsp.clone();
+    let named = |dsp: &crate::config::DspConfig, name: &str| -> Result<(), String> {
+        dsp.profiles
+            .iter()
+            .any(|p| p.name == name)
+            .then_some(())
+            .ok_or_else(|| format!("No EQ called {name}"))
+    };
+    if let Some(c) = correction {
+        named(&dsp, c)?;
+        for p in &mut dsp.profiles {
+            p.devices.retain(|d| d != device);
+            if p.name == c {
+                p.devices.push(device.to_owned());
+            }
+        }
+    }
+    if let Some(t) = tuning {
+        for name in t {
+            named(&dsp, name)?;
+        }
+        dsp.tunings.retain(|t| t.device != device);
+        dsp.tunings
+            .extend(t.iter().map(|name| crate::config::DspOutputTuning {
+                device: device.to_owned(),
+                tuning: name.clone(),
+                on: true,
+            }));
+    }
+    let freqs = super::targets::grid();
+    let filters = match super::output_chain(&dsp, device) {
+        Some(chain) => {
+            super::chain(&chain.profile, &chain.all, &mut Vec::new()).map_err(|e| e.to_string())?
+        }
+        None => Vec::new(),
+    };
+    let total = super::response(&filters, &freqs, rate);
+    Ok(freqs.into_iter().zip(total).collect())
 }
 
 /// The first EQ of `device`'s tuning: what an app showing one shows.

@@ -381,6 +381,21 @@ enum DspCommands {
         #[arg(long)]
         target: String,
     },
+    /// What a device's chain plays, as CSV of frequency and dB on AutoEQ's
+    /// grid, preamp aside. `--correction` and `--tuning` stand in for the
+    /// device's own for this one reading; nothing is saved
+    Response {
+        device: Option<String>,
+        /// A correction's name, in place of the device's
+        #[arg(long)]
+        correction: Option<String>,
+        /// EQs in the order they play, separated by commas, in place of the
+        /// device's tuning
+        #[arg(long, value_delimiter = ',')]
+        tuning: Option<Vec<String>>,
+        #[arg(long, default_value_t = 48_000)]
+        rate: u32,
+    },
     /// Say what an EQ is for: a neutral correction, a tuning on top of
     /// one, or `mixed`, a correction that already includes a tuning. A
     /// device has one correction
@@ -801,6 +816,12 @@ fn main() {
                 target,
             } => commands::cmd_dsp_split(&name, &path, ear == "in", &target),
             DspCommands::Role { name, role } => commands::cmd_dsp_role(&name, &role),
+            DspCommands::Response {
+                device,
+                correction,
+                tuning,
+                rate,
+            } => commands::cmd_dsp_response(device, correction.as_deref(), tuning.as_deref(), rate),
             DspCommands::Squig {
                 query,
                 limit,
