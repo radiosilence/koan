@@ -102,6 +102,12 @@ pub struct EqJoin {
     /// not known, a headphone of another kind, or an EQ that does not play.
     pub join: Option<Join>,
     pub note: Option<String>,
+    /// For a converted join, the target difference that plays, in dB on
+    /// `targets::grid()`.
+    pub step: Vec<f64>,
+    /// For an unknown join, the target it looks made against, by id and
+    /// name: see [`suggest_made_against`].
+    pub suggestion: Option<(String, String)>,
 }
 
 /// How each EQ of `device`'s tuning meets its correction, in order. `notes`
@@ -138,10 +144,23 @@ fn joins(
                 .filter(|(eq, _)| *eq == name)
                 .map(|(_, n)| n.as_str())
                 .collect();
+            let step = match (&join, &aim, &made) {
+                (Some(Join::Converted { .. }), Some(a), Some(m)) => targets::choice_curve(a)
+                    .zip(targets::choice_curve(m))
+                    .map(|(from, to)| targets::on_grid_db(&targets::difference(&from, &to)))
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            let suggestion = match (&join, &aim) {
+                (Some(Join::Unknown), Some(a)) => guess(&name, all, a),
+                _ => None,
+            };
             EqJoin {
                 made_for: made.as_deref().map(target_name),
                 join,
                 note: (!said.is_empty()).then(|| said.join(" ")),
+                step,
+                suggestion,
             }
         })
         .collect()
@@ -216,6 +235,76 @@ pub fn chain_view(device: &str) -> ChainView {
         notes: o.left_out,
         sentence,
     }
+}
+
+/// What the tuning `name` looks made against, as an id and a name, played on
+/// a correction aiming at `aim`: see [`targets::guess_made_against`].
+fn guess(name: &str, all: &[DspProfile], aim: &str) -> Option<(String, String)> {
+    let ear = super::targets::shipped(aim)?.ear;
+    let p = all.iter().find(|p| p.name == name)?;
+    // A group's Made against is every member's that does not say, and a
+    // guess from the member playing is no guess at the others.
+    if p.group {
+        return None;
+    }
+    let eq = response_of(p, all, 48_000)?.total;
+    super::targets::guess_made_against(&eq, ear, aim).map(|t| (t.id.to_owned(), t.name.to_owned()))
+}
+
+/// What the tuning `name` looks made against, on `device`, where it does not
+/// say: worked out from its curve against the target `device`'s correction
+/// aims at, for the person to accept or not. Never set without asking.
+pub fn suggest_made_against(name: &str, device: &str) -> Option<(String, String)> {
+    let cfg = Config::cached();
+    let all = &cfg.dsp.profiles;
+    let p = all.iter().find(|p| p.name == name)?;
+    if shown_role(p, all) != DspRole::Tuning || super::made_against(p, all, 0).is_some() {
+        return None;
+    }
+    let aim = cfg.dsp.profile_for(device).and_then(|c| aims_at(c, all))?;
+    guess(name, all, &aim)
+}
+
+/// What the tuning `name` adds on `device`'s correction for each target it
+/// could say it was made against, in dB on `targets::grid()`: itself, with
+/// the target difference ahead of it where the target is another of the
+/// same kind of headphone. `None` is not saying, which plays it as it is.
+/// A wrong choice shows as a preference applied twice or taken out. Empty
+/// where the correction's target is not known.
+pub fn made_against_previews(name: &str, device: &str) -> Vec<(Option<String>, Vec<f64>)> {
+    use super::targets;
+    let cfg = Config::cached();
+    let all = &cfg.dsp.profiles;
+    let Some(aim) = cfg.dsp.profile_for(device).and_then(|c| aims_at(c, all)) else {
+        return Vec::new();
+    };
+    let Some(eq) = all
+        .iter()
+        .find(|p| p.name == name)
+        .and_then(|p| response_of(p, all, 48_000))
+        .map(|r| r.total)
+    else {
+        return Vec::new();
+    };
+    let Some(from) = targets::choice_curve(&aim) else {
+        return Vec::new();
+    };
+    let ids = targets::TARGETS
+        .iter()
+        .map(|t| t.id.to_owned())
+        .chain(targets::added().into_iter().map(|a| a.id));
+    std::iter::once((None, eq.clone()))
+        .chain(ids.filter_map(|id| {
+            let plays = if id == aim || !targets::same_ear(&aim, &id) {
+                eq.clone()
+            } else {
+                let step =
+                    targets::on_grid_db(&targets::difference(&from, &targets::choice_curve(&id)?));
+                eq.iter().zip(&step).map(|(e, s)| e + s).collect()
+            };
+            Some((Some(id), plays))
+        }))
+        .collect()
 }
 
 /// How `eq` meets a correction aiming at `aim`, as a sentence: what the EQ
@@ -360,6 +449,8 @@ pub struct Overview {
     pub joins: Vec<EqJoin>,
     /// The target that device's correction aims at, by name.
     pub aim: Option<String>,
+    /// Whether that target is for in-ears; none where it is not known.
+    pub in_ear: Option<bool>,
     /// The preset that device was set from, and whether it was changed
     /// since.
     pub preset: Option<(String, bool)>,
@@ -409,6 +500,12 @@ pub fn overview_for(device: Option<String>) -> Overview {
             (Some(d), None) => joins(&cfg.dsp, d, &[], &[]),
             (None, _) => Vec::new(),
         },
+        in_ear: device
+            .as_deref()
+            .and_then(|d| cfg.dsp.profile_for(d))
+            .and_then(|c| aims_at(c, &cfg.dsp.profiles))
+            .and_then(|t| super::targets::shipped(&t))
+            .map(|t| t.ear == super::targets::Ear::In),
         aim: device
             .as_deref()
             .and_then(|d| cfg.dsp.profile_for(d))
@@ -4301,6 +4398,132 @@ mod tests {
         }
     }
 
+    /// A tuning that does not say what it was made against is offered the
+    /// target its curve fits: the same preset split against Harman and
+    /// against neutral, as a person brought them in.
+    #[test]
+    fn a_tuning_is_offered_the_target_it_looks_made_against() {
+        use super::super::targets;
+        use crate::config::DspTarget;
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let eq = |name: &str, text: &str| DspProfile {
+            name: name.into(),
+            filters: super::super::apo::parse(text).unwrap().filters,
+            role: Some(DspRole::Tuning),
+            ..Default::default()
+        };
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Performer 8S".into(),
+                filters: vec![band(100.0)],
+                target: Some(DspTarget {
+                    made_for: "harman-in-ear-2019".into(),
+                    chosen: None,
+                }),
+                ..Default::default()
+            });
+            c.dsp
+                .profiles
+                .push(eq("Lush", include_str!("testdata/lush-tuning-harman.txt")));
+            c.dsp.profiles.push(eq(
+                "Lush N",
+                include_str!("testdata/lush-tuning-neutral.txt"),
+            ));
+        })
+        .unwrap();
+        let dac = "Q5K";
+        assign(Some("Performer 8S"), dac).unwrap();
+        let harman = "harman-in-ear-2019";
+        let neutral = "diffuse-field-iso-11904-1";
+        let suggested = |name: &str| suggest_made_against(name, dac).map(|(id, _)| id);
+        assert_eq!(suggested("Lush").as_deref(), Some(harman));
+        assert_eq!(suggested("Lush N").as_deref(), Some(neutral));
+        // The same on a correction to neutral: the guess is of the tuning.
+        choose_target("Performer 8S", Some(neutral)).unwrap();
+        assert_eq!(suggested("Lush").as_deref(), Some(harman));
+        assert_eq!(suggested("Lush N").as_deref(), Some(neutral));
+        choose_target("Performer 8S", None).unwrap();
+
+        // Nothing to judge by: a flat tuning, or one small band, is offered
+        // nothing, rather than Harman for the shelf it lacks.
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Flat".into(),
+                filters: vec![crate::config::DspFilter::Band(crate::config::EqFilter {
+                    kind: crate::config::EqFilterKind::Peaking,
+                    freq: 1000.0,
+                    gain_db: 0.0,
+                    q: 1.0,
+                    channels: vec![],
+                })],
+                role: Some(DspRole::Tuning),
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Air".into(),
+                filters: vec![crate::config::DspFilter::Band(crate::config::EqFilter {
+                    kind: crate::config::EqFilterKind::Peaking,
+                    freq: 8000.0,
+                    gain_db: 2.0,
+                    q: 1.0,
+                    channels: vec![],
+                })],
+                role: Some(DspRole::Tuning),
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        assert_eq!(suggested("Flat"), None);
+        assert_eq!(suggested("Air"), None);
+        // Nor a group, whose Made against would be every member's.
+        make_group("Both", &["Lush".into(), "Lush N".into()]).unwrap();
+        assert_eq!(suggested("Both"), None);
+
+        // At the join, while it is unknown.
+        set_tunings(dac, &[("Lush N".into(), true)]).unwrap();
+        let join = || overview_for(Some(dac.into())).joins[0].clone();
+        assert_eq!(join().join, Some(Join::Unknown));
+        assert_eq!(
+            join().suggestion.map(|(id, _)| id).as_deref(),
+            Some(neutral)
+        );
+
+        // Said wrongly, Harman's bass shelf plays twice: the preview shows it.
+        let low = targets::grid().iter().position(|&hz| hz >= 30.0).unwrap();
+        let previews = made_against_previews("Lush N", dac);
+        let bass = |id: &str| {
+            previews
+                .iter()
+                .find(|(t, _)| t.as_deref() == Some(id))
+                .unwrap()
+                .1[low]
+        };
+        assert!(
+            bass(harman) - bass(neutral) > 6.0,
+            "{} {}",
+            bass(harman),
+            bass(neutral)
+        );
+
+        // Said rightly, the conversion plays, and the join carries its curve:
+        // Harman's shelf taken out ahead of a tuning that puts it back.
+        set_tuned_for("Lush N", Some(neutral)).unwrap();
+        assert_eq!(suggested("Lush N"), None, "nothing to suggest once said");
+        let j = join();
+        assert!(
+            matches!(j.join, Some(Join::Converted { .. })),
+            "{:?}",
+            j.join
+        );
+        assert_eq!(j.step.len(), targets::grid().len());
+        assert!(j.step[low] < -3.0, "{}", j.step[low]);
+        assert_eq!(j.suggestion, None);
+    }
+
     /// An output plays its tuning on top of its correction, with the
     /// difference between the correction's target and the one the tuning was
     /// made against: dynamic baking. Never on a correction with a tuning
@@ -4469,6 +4692,7 @@ mod tests {
                 made_for: Some(target_name("harman-in-ear-2019")),
                 join: None,
                 note: Some("Warm is left out: Lush already includes a tuning.".into()),
+                ..Default::default()
             },
             "at the EQ it is about"
         );

@@ -3304,6 +3304,40 @@ impl KoanEngine {
         .await
     }
 
+    /// What the tuning `name` looks made against on `device` (the output in
+    /// use with `None`), where it does not say.
+    pub async fn dsp_suggest_made_against(
+        self: Arc<Self>,
+        name: String,
+        device: Option<String>,
+    ) -> Option<DspTargetName> {
+        offload::offload(move || {
+            let device = device.or_else(|| self.dsp_device())?;
+            koan_core::audio::dsp::profiles::suggest_made_against(&name, &device)
+                .map(|(id, name)| DspTargetName { id, name })
+        })
+        .await
+    }
+
+    /// What the tuning `name` adds on `device`'s correction for each target
+    /// it could be said to be made against.
+    pub async fn dsp_made_against_previews(
+        self: Arc<Self>,
+        name: String,
+        device: Option<String>,
+    ) -> Vec<DspMadeAgainstPreview> {
+        offload::offload(move || {
+            let Some(device) = device.or_else(|| self.dsp_device()) else {
+                return Vec::new();
+            };
+            koan_core::audio::dsp::profiles::made_against_previews(&name, &device)
+                .into_iter()
+                .map(|(target, db)| DspMadeAgainstPreview { target, db })
+                .collect()
+        })
+        .await
+    }
+
     /// What `name` does to the sound at `rate`, for drawing. `None` for a
     /// profile that is not there or would not play.
     pub async fn dsp_response(self: Arc<Self>, name: String, rate: u32) -> Option<DspResponse> {
