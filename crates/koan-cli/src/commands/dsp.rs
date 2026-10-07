@@ -109,11 +109,11 @@ pub fn cmd_dsp_use(name: &str, named: Option<String>) {
     println!("{} plays through '{}'", device.bold(), name.bold());
 }
 
-/// Stop processing `device` (the current output if not named).
+/// Make `device` (the current output if not named) flat.
 pub fn cmd_dsp_clear(named: Option<String>) {
     let device = device(named);
-    profiles::assign(None, &device).unwrap_or_else(|e| fail(e));
-    println!("{} plays untouched", device.bold());
+    profiles::apply_preset(&device, None).unwrap_or_else(|e| fail(e));
+    println!("{} is flat: it plays untouched", device.bold());
 }
 
 /// AutoEQ's results matching `query`, best first, numbered as `install`
@@ -381,9 +381,4 @@ pub fn cmd_dsp_tuned_for(name: &str, target: Option<&str>) {
 pub fn cmd_dsp_remove(name: &str) {
     profiles::remove(name).unwrap_or_else(|e| fail(e));
     println!("{} '{}'", "removed".green(), name.bold());
-}
-
-pub fn cmd_dsp_enable(enabled: bool) {
-    profiles::set_enabled(enabled).unwrap_or_else(|e| fail(e));
-    println!("dsp {}", if enabled { "on" } else { "off" });
 }

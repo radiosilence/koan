@@ -48,11 +48,11 @@ The top of each profile's page says what the chain does, one line per role, each
 
 ## Device, target, tuning: dynamic baking
 
-Each output's EQ is three choices, made on the EQ page under the output's name, and it reads as a sentence: "AFUL Performer 8S, corrected to Neutral (diffuse field), tuned with Lush".
+Each output's EQ is three choices, made on the EQ page as the chain the music goes through, and it reads as a sentence: "Music to Topping E30, corrected by AFUL Performer 8S to Neutral (diffuse field), then tuned with Lush".
 
 - **Correction** is the correction for what the output plays through: headphones or speakers. Choosing it is all most people need.
 - **Target** belongs to the correction: what it makes neutral mean. Harman's targets add the bass and treble most listeners prefer; Neutral (diffuse field) adds nothing.
-- **Tuning** is optional, behind **Add a Tuning…**: your taste on top.
+- **Tuning** is optional, behind **Add EQ**: your taste on top, one or more EQs in order.
 
 kōan builds the chain itself, so no stack has to be made by hand: the correction, then the tuning. A tuning can say which target it was made against, on its own page under **Made against**. On headphones corrected to another target, kōan plays the difference between the two first, so the tuning sounds as it was made to whatever corrects the headphones. That is dynamic baking: what a preset like Qudelix's "Lush" bakes into one fixed EQ, worked out for each pair of headphones as it plays. A tuning whose target isn't known plays as it is.
 
