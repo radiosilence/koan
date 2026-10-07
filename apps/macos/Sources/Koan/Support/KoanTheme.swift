@@ -202,12 +202,51 @@ final class AppearanceModel {
         didSet { if washWindow != oldValue { engine.setWashWindow(on: washWindow) } }
     }
 
+    /// Gay mode as it was left on this device (see `Rainbow`). Saved to
+    /// config.local.toml; never synced, never offered in Settings.
+    var rainbow: Bool {
+        didSet {
+            Rainbow.drawn = rainbowDrawn
+            if rainbow != oldValue { engine.setRainbow(on: rainbow) }
+        }
+    }
+
+    /// Gay mode for the track playing alone, rolled when it started. Never saved.
+    private(set) var rainbowForTrack = false {
+        didSet { Rainbow.drawn = rainbowDrawn }
+    }
+
+    /// Whether the rainbow is drawn: switched on, or brought out by the track.
+    var rainbowDrawn: Bool { rainbow || rainbowForTrack }
+
+    /// What the last switch said, for `RainbowToast`.
+    var rainbowToast: String?
+
     init(engine: KoanEngine, appearance: Appearance) {
         self.engine = engine
         self.showIcons = appearance.icons
         self.koan = appearance.koan
         self.recordColours = appearance.recordColours
         self.washWindow = appearance.washWindow
+        self.rainbow = appearance.rainbow
+        Rainbow.drawn = appearance.rainbow
+    }
+
+    /// The secret gesture: off if the rainbow is drawn, whoever drew it, and
+    /// on otherwise.
+    func toggleRainbow() {
+        let on = !rainbowDrawn
+        rainbowForTrack = false
+        rainbow = on
+        rainbowToast = on ? "gay mode 🏳️‍🌈" : "gay mode off"
+    }
+
+    /// A track has started. A Charli XCX track brings the rainbow out for
+    /// itself one time in four, unless it is already on by choice; any other
+    /// track puts a borrowed one away.
+    func trackStarted(_ entry: QueueItem?) {
+        let borrowed = !rainbow && entry.map(Rainbow.isCharli) == true && Int.random(in: 0..<4) == 0
+        if borrowed != rainbowForTrack { rainbowForTrack = borrowed }
     }
 }
 
@@ -486,7 +525,7 @@ struct KoanAccent: Equatable, Sendable {
         self.init(dark: dark, light: light)
     }
 
-    private init(dark: Shade, light: Shade) {
+    init(dark: Shade, light: Shade) {
         self.dark = dark
         self.light = light
         self.color = Self.color(dark: dark, light: light)
@@ -495,7 +534,7 @@ struct KoanAccent: Equatable, Sendable {
     /// The most vivid lightness in the band that reads as text — the darkest in
     /// dark mode, the lightest in light — or failing that, the one that clears
     /// 3:1 as a fill.
-    private static func shade(
+    static func shade(
         hue h: Double, chroma: Double, band: ClosedRange<Double>,
         bg: UInt32, surface: UInt32
     ) -> Shade? {
@@ -1358,6 +1397,7 @@ struct KoanSegmentedPicker<Value: Hashable>: View {
     let options: [(label: String, value: Value)]
     @Binding var selection: Value
     var title: String = ""
+    @Environment(\.koanRainbow) private var rainbow
 
     var body: some View {
         if KoanTheme.isOn {
@@ -1373,7 +1413,7 @@ struct KoanSegmentedPicker<Value: Hashable>: View {
                             .foregroundStyle(chosen ? Color.koanInk : Color.koanMuted)
                             .padding(.bottom, 5)
                             .overlay(alignment: .bottom) {
-                                if chosen { Rectangle().fill(.tint).frame(height: KoanTheme.hairline) }
+                                if chosen { Rectangle().fill(KoanTheme.marker(rainbow: rainbow)).frame(height: KoanTheme.hairline) }
                             }
                             .contentShape(Rectangle())
                     }
@@ -1892,6 +1932,7 @@ private struct KoanSidebarRole: ViewModifier {
 
 private struct KoanNavRowRole: ViewModifier {
     let selected: Bool
+    @Environment(\.koanRainbow) private var rainbow
 
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
@@ -1900,7 +1941,7 @@ private struct KoanNavRowRole: ViewModifier {
                 .foregroundStyle(KoanTheme.style(selected ? .accent : .muted))
                 .listRowBackground(
                     Rectangle().fill(.clear).overlay(alignment: .leading) {
-                        if selected { Rectangle().fill(.tint).frame(width: 2) }
+                        if selected { Rectangle().fill(KoanTheme.marker(rainbow: rainbow, vertical: true)).frame(width: 2) }
                     }
                 )
                 .accessibilityAddTraits(selected ? .isSelected : [])
@@ -2217,6 +2258,7 @@ struct KoanTabItem: View {
     /// platform's tab bar says it.
     var position: (index: Int, count: Int)?
     @Environment(\.koanIcons) private var icons
+    @Environment(\.koanRainbow) private var rainbow
 
     var body: some View {
         VStack(spacing: 4) {
@@ -2229,7 +2271,7 @@ struct KoanTabItem: View {
                 .padding(.bottom, 3)
                 .overlay(alignment: .bottom) {
                     if selected {
-                        let line = Rectangle().fill(.tint).frame(height: KoanTheme.hairline)
+                        let line = Rectangle().fill(KoanTheme.marker(rainbow: rainbow)).frame(height: KoanTheme.hairline)
                         if let underline {
                             line.matchedGeometryEffect(id: "underline", in: underline)
                         } else {

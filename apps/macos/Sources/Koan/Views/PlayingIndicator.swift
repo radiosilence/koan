@@ -134,8 +134,15 @@ final class PlayingBarsView: LayerView {
 
     override func appearanceChanged() { paint() }
 
+    /// Gay mode spreads the bars a third of the flag apart, moving round it
+    /// with the accent; on a selected row they stay the row's white. Every
+    /// step of the rainbow is a new tint, which is what repaints them.
     private func paint() {
         let colour = resolved(tint)
-        for bar in bars { bar.backgroundColor = colour }
+        for (index, bar) in bars.enumerated() {
+            bar.backgroundColor = Rainbow.drawn && tint != .white
+                ? resolved(PlatformColor(KoanAccent.rainbow(Rainbow.step + index * 4).color))
+                : colour
+        }
     }
 }

@@ -3665,6 +3665,14 @@ impl KoanEngine {
         }
     }
 
+    /// The rainbow, on this device. Saved at once; the app redraws from its
+    /// own copy.
+    pub fn set_rainbow(&self, on: bool) {
+        if let Err(e) = Config::persist(|cfg| cfg.appearance.rainbow = on) {
+            log::warn!("appearance: rainbow not saved: {e}");
+        }
+    }
+
     /// Show icons beside labels in the kōan theme, or not. Saved at once;
     /// the app redraws from its own copy.
     pub fn set_theme_icons(&self, on: bool) {
@@ -3682,6 +3690,7 @@ impl KoanEngine {
             icons: cfg.appearance.theme_icons,
             record_colours: cfg.appearance.record_colours,
             wash_window: cfg.appearance.wash_window,
+            rainbow: cfg.appearance.rainbow,
         }
     }
 

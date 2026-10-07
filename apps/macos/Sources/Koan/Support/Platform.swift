@@ -299,6 +299,15 @@ extension Notification.Name {
         #endif
     }
 
+    /// The app taking the foreground again.
+    static var appBecomesActive: Notification.Name {
+        #if canImport(AppKit)
+        NSApplication.didBecomeActiveNotification
+        #else
+        UIApplication.didBecomeActiveNotification
+        #endif
+    }
+
     /// The app is about to quit.
     static var appTerminates: Notification.Name {
         #if canImport(AppKit)
