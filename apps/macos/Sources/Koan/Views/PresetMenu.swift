@@ -153,7 +153,7 @@ struct PresetMenu<Label: View>: View {
     }
 
     private var picker: some View {
-        Picker("Preset", selection: Binding(get: { selected }, set: select)) {
+        Picker("Preset", selection: Binding(get: { selected }, set: { select($0) })) {
             Text("Flat").tag("")
             if presets.current == nil, !presets.flat {
                 Text("Unsaved").tag(Self.unsaved)
