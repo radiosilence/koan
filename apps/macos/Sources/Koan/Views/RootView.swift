@@ -690,7 +690,9 @@ private struct SidebarOverWash: ViewModifier {
     func body(content: Content) -> some View {
         let washed = KoanTheme.washesWindow(appearance)
         content
+            #if os(macOS)
             .background(SidebarGround(clear: washed))
+            #endif
             .overlay(alignment: .trailing) {
                 if washed {
                     Rectangle().fill(Color.koanRowRule).frame(width: KoanTheme.hairline)
