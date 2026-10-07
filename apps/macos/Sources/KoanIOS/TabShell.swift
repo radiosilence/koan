@@ -10,6 +10,11 @@ import SwiftUI
 /// own iPad layout, a bar across the top that opens into a sidebar, and it is
 /// one shell to test rather than two. `RootView`'s split view is the Mac's.
 ///
+/// Where there is room for the sidebar, it is the Mac's: the library's
+/// sections and the playlists are tabs of their own, each opening its page
+/// beside it, and the Library tab, which only lists them, is hidden. At compact
+/// width they fold back behind it.
+///
 /// The navigator stays authoritative either way — the tab bar sets a section,
 /// and going deeper inside a tab leaves the selection where it is, which is
 /// what a tab bar is for.
@@ -27,6 +32,7 @@ struct TabShell: View {
     /// never flashes the sign-in page on launch.
     @State private var signedIn = true
     #endif
+    @Environment(\.horizontalSizeClass) private var width
     @State private var showingNowPlaying = false
     @State private var showingDevices = false
     /// Which tab is showing. Held rather than derived from the navigator: a
@@ -73,10 +79,53 @@ struct TabShell: View {
             Tab("Queue", systemImage: Icon.queueSection, value: TabID.queue) {
                 stack(.queue) { QueueView() }
             }
+            #if os(tvOS)
             Tab("Library", systemImage: "music.note.house", value: TabID.library) {
                 stack(.library) { LibraryTab() }
             }
-            #if !os(tvOS)
+            #else
+            // Only lists what the sidebar shows as its own rows.
+            Tab("Library", systemImage: "music.note.house", value: TabID.library) {
+                stack(.library) { LibraryTab() }
+            }
+            .hidden(sidebar)
+            TabSection {
+                ForEach(Self.librarySections, id: \.section) { item in
+                    Tab(item.title, systemImage: item.icon, value: TabID.section(item.section)) {
+                        stack(.section(item.section), grounded: false) { RouteView(route: .page(.section(item.section))) }
+                    }
+                    // Read only where it can show: each transfer starting or ending
+                    // would otherwise re-run the whole shell.
+                    .badge(sidebar && item.section == .downloads ? mirror.activeTransfers : 0)
+                }
+            } header: {
+                KoanSectionHeader("Library")
+            }
+            // With the sidebar folded away, the bar keeps the four tabs; its
+            // sidebar button is the way back to these.
+            .defaultVisibility(.hidden, for: .tabBar)
+            .hidden(!sidebar)
+            TabSection {
+                ForEach(playlists.playlists, id: \.id) { playlist in
+                    Tab(playlist.name, systemImage: Icon.playlist, value: TabID.section(.playlist(playlist.id))) {
+                        stack(.section(.playlist(playlist.id)), grounded: false) {
+                            RouteView(route: .page(.section(.playlist(playlist.id))))
+                        }
+                    }
+                    .contextMenu {
+                        Button("Play", systemImage: Icon.play) { play(playlist) }
+                        Button("Shuffle", systemImage: Icon.shuffle) { play(playlist, shuffled: true) }
+                    }
+                }
+            } header: {
+                KoanSectionHeader("Playlists")
+            }
+            // The Mac's "New Playlist…" row.
+            .sectionActions {
+                Button("New Playlist", systemImage: Icon.add) { playlists.naming = [] }
+            }
+            .defaultVisibility(.hidden, for: .tabBar)
+            .hidden(!sidebar)
             Tab("Settings", systemImage: "gearshape", value: TabID.settings) {
                 stack(.settings) { SettingsView() }
             }
@@ -97,6 +146,17 @@ struct TabShell: View {
         .tabViewStyle(.tabBarOnly)
         #else
         .tabViewStyle(.sidebarAdaptable)
+        // Open, as the Mac's is: it is where everything but the queue lives.
+        .defaultAdaptableTabBarPlacement(.sidebar)
+        // What the Library tab says atop its list, with no Library tab to say it.
+        .tabViewSidebarHeader {
+            if sidebar, LibraryStatus.showing(mirror) {
+                VStack(alignment: .leading, spacing: 6) { LibraryStatus() }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .onChange(of: sidebar) { regroup() }
+        .onChange(of: playlists.playlists.map(\.id)) { _, ids in dropDeleted(ids) }
         #endif
         .toggleStyle(SystemSwitch())
         .modifier(Transport(
@@ -198,8 +258,9 @@ struct TabShell: View {
 
     /// A tab's navigation stack. Pages are drawn from their routes — see
     /// `RouteView` — and the navigator follows whatever is on top.
+    /// `grounded: false` for a root that is a `RouteView`, which grounds itself.
     private func stack<Root: View>(
-        _ tab: TabID, @ViewBuilder root: () -> Root
+        _ tab: TabID, grounded: Bool = true, @ViewBuilder root: () -> Root
     ) -> some View {
         let routes = paths[tab] ?? []
         // On stage is the top of the tab in front, and nothing else. A stack
@@ -208,25 +269,31 @@ struct TabShell: View {
         // bars nobody can see.
         let showing = tab == selection
         return NavigationStack(path: path(tab)) {
-            root()
-                .koanHidesSystemTabBar()
-                .environment(\.onStage, showing && routes.isEmpty)
-                .washedGround()
-                .roomBackground()
-                .navigationDestination(for: Route.self) { route in
-                    RouteView(route: route)
-                        .koanHidesSystemTabBar()
-                        .environment(\.onStage, showing && route == routes.last)
+            Group {
+                if grounded {
+                    root().washedGround().roomBackground()
+                } else {
+                    root()
                 }
+            }
+            .koanHidesSystemTabBar()
+            .environment(\.onStage, showing && routes.isEmpty)
+            .navigationDestination(for: Route.self) { route in
+                RouteView(route: route)
+                    .koanHidesSystemTabBar()
+                    .environment(\.onStage, showing && route == routes.last)
+            }
         }
     }
 
-    /// Four, deliberately. Five is where iOS starts folding tabs into More,
-    /// and More brings a navigation stack of its own.
+    /// Four in the tab bar, deliberately. Five is where iOS starts folding tabs
+    /// into More, and More brings a navigation stack of its own.
     enum TabID: Hashable {
         case queue, library, settings, search
         /// tvOS only, where Now Playing is a page rather than a sheet.
         case nowPlaying
+        /// A row of the iPad's sidebar: a library section or a playlist.
+        case section(Navigator.Section)
 
         /// The page the tab itself is, under anything pushed onto it. The
         /// library is a list of sections rather than one, and settings is not
@@ -235,6 +302,7 @@ struct TabShell: View {
             switch self {
             case .queue: .section(.queue)
             case .search: .section(.searchResults)
+            case .section(let section): .section(section)
             case .library, .settings, .nowPlaying: nil
             }
         }
@@ -272,12 +340,13 @@ struct TabShell: View {
     /// page brings that tab forward, back at its root. Anything else is pushed
     /// on the tab in front, or popped back to if it is already in the stack.
     private func arrive(at page: Navigator.Page) {
-        if let owner = [TabID.queue, .search].first(where: { $0.root == page }) {
+        // First: a pop back to a page another tab owns stays in this tab.
+        guard top(of: selection) != page else { return }
+        if let owner = owner(of: page) {
             paths[owner] = []
             selection = owner
             return
         }
-        guard top(of: selection) != page else { return }
         var routes = paths[selection] ?? []
         if let index = routes.lastIndex(of: .page(page)) {
             routes.removeSubrange((index + 1)...)
@@ -285,6 +354,84 @@ struct TabShell: View {
             routes.append(.page(page))
         }
         paths[selection] = routes
+    }
+
+    /// The tab whose own page this is, if one is showing.
+    private func owner(of page: Navigator.Page) -> TabID? {
+        if let tab = [TabID.queue, .search].first(where: { $0.root == page }) { return tab }
+        guard sidebar, let section = page.section else { return nil }
+        let listed = if case .playlist(let id) = section {
+            playlists.playlist(id: id) != nil
+        } else {
+            Self.librarySections.contains { $0.section == section }
+        }
+        return listed ? .section(section) : nil
+    }
+
+    /// The width changed across the line where the sidebar appears. A sidebar
+    /// tab folds into the Library tab's stack, under the row that leads to it,
+    /// and back out again the other way.
+    private func regroup() {
+        if sidebar {
+            guard selection == .library else { return }
+            var routes = paths[.library] ?? []
+            paths[.library] = []
+            if routes.first == .playlists { routes.removeFirst() }
+            var owner = TabID.section(.albums)
+            if let page = routes.first?.page, let tab = self.owner(of: page) {
+                owner = tab
+                routes.removeFirst()
+            }
+            paths[owner] = routes
+            selection = owner
+            follow(owner)
+        } else if case .section(let section) = selection {
+            let lead: [Route] = if case .playlist = section { [.playlists] } else { [] }
+            paths[.library] = lead + [.page(.section(section))] + (paths[selection] ?? [])
+            paths[selection] = []
+            selection = .library
+        }
+    }
+
+    /// The playlist showing in the sidebar was deleted elsewhere — on the
+    /// server, another device, or with its file. Its tab has gone, so leave it
+    /// for the queue, as the Mac does on deleting one.
+    private func dropDeleted(_ ids: [Int64]) {
+        guard case .section(.playlist(let id)) = selection, !ids.contains(id) else { return }
+        paths[selection] = nil
+        nav.forget(.playlist(id))
+        nav.show(.queue)
+    }
+
+    /// Whether the sidebar is the navigation: an iPad with room for it.
+    private var sidebar: Bool {
+        #if os(tvOS)
+        false
+        #else
+        width == .regular
+        #endif
+    }
+
+    /// The sidebar's library rows, in the Mac's order. No Tracks, for the
+    /// reason the Library tab gives.
+    private static let librarySections: [(section: Navigator.Section, title: String, icon: String)] = [
+        (.albums, "Albums", Icon.album),
+        (.artists, "Artists", Icon.artist),
+        (.favourites, "Favourites", Icon.favourite),
+        (.recentlyPlayed, "Recently Played", Icon.recentlyPlayed),
+        (.onDevice, "Downloaded", Icon.onDevice),
+        (.playHistory, "History", Icon.history),
+        (.downloads, "Downloads", Icon.downloads),
+    ]
+
+    /// Play it where you stand, as the Mac's sidebar does.
+    private func play(_ playlist: Playlist, shuffled: Bool = false) {
+        let engine = playlists.engine
+        Task {
+            _ = try? await engine.playPlaylist(
+                playlistId: playlist.id, startEntry: nil, shuffled: shuffled
+            )
+        }
     }
 
     #if os(tvOS)
