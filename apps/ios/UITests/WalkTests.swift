@@ -16,6 +16,11 @@ final class WalkTests: XCTestCase {
         // Silent, and blind to UPnP renderers: tests share a machine with its owner.
         app.launchEnvironment["KOAN_PLAYBACK__MUTED"] = "true"
         app.launchEnvironment["KOAN_PLAYBACK__RENDERERS"] = "false"
+        // Settings passed through from `just ios-walk`, such as the theme: the
+        // test runner sees `TEST_RUNNER_KOAN_*` as `KOAN_*`.
+        for (key, value) in ProcessInfo.processInfo.environment where key.hasPrefix("KOAN_") {
+            app.launchEnvironment[key] = value
+        }
         app.launch()
     }
 

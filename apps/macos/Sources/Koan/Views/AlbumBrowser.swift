@@ -179,6 +179,14 @@ struct EmptyState: View {
     var detail: String?
 
     var body: some View {
+        if KoanTheme.isOn {
+            KoanUnavailable(title, icon: icon, detail: detail)
+        } else {
+            platform
+        }
+    }
+
+    private var platform: some View {
         VStack(spacing: 10) {
             Image(systemName: icon)
                 .font(.role(.display, system: .system(size: 32, weight: .light)))
