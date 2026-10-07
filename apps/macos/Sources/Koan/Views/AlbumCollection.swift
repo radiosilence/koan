@@ -924,12 +924,12 @@ private final class HeartButton: NSButton {
             flat.addSubview(glyph)
             ground = flat
         } else if glassy {
-            let glass = NSGlassEffectView()
+            let glass = NSGlassEffectView() // theme: raw
             glass.style = .clear
             glass.contentView = glyph
             ground = glass
         } else {
-            let flat = NSVisualEffectView()
+            let flat = NSVisualEffectView() // theme: raw
             flat.material = .hudWindow
             flat.blendingMode = .withinWindow
             flat.wantsLayer = true
@@ -954,7 +954,7 @@ private final class HeartButton: NSButton {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        guard KoanTheme.isOn, !(ground is NSGlassEffectView), !(ground is NSVisualEffectView) else { return }
+        guard KoanTheme.isOn, !(ground is NSGlassEffectView), !(ground is NSVisualEffectView) else { return } // theme: raw
         effectiveAppearance.performAsCurrentDrawingAppearance {
             ground.layer?.backgroundColor = NSColor.koanSurface.cgColor
         }
@@ -964,7 +964,7 @@ private final class HeartButton: NSButton {
         super.layout()
         ground.frame = bounds
         glyph.frame = bounds
-        if let glass = ground as? NSGlassEffectView {
+        if let glass = ground as? NSGlassEffectView { // theme: raw
             glass.cornerRadius = KoanTheme.radius(bounds.height / 2)
         } else {
             ground.layer?.cornerRadius = KoanTheme.radius(bounds.height / 2)

@@ -979,7 +979,7 @@ struct AutoEqSearch: View {
                     }
                 }
             }
-            .searchable(text: $query, prompt: "Headphone")
+            .koanSearchable(text: $query, prompt: "Headphone")
             .navigationTitle(KoanTheme.label("AutoEQ"))
             .formTray(isPresented: $measuring) {
                 MeasurementFlow(dsp: dsp, name: query) { _ in dismiss() }

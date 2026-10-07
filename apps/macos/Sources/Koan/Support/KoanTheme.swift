@@ -933,6 +933,25 @@ extension View {
         modifier(KoanPopoverRole())
     }
 
+    #if os(macOS)
+    /// A popover. In the theme, the theme's square panel (`KoanPanelAnchor`)
+    /// with no arrow and no rounded glass; the system's popover, pointing from
+    /// `arrowEdge`, otherwise. `just theme-leaks` flags `.popover` anywhere
+    /// but here.
+    @ViewBuilder
+    func koanPopover<Panel: View>(
+        isPresented: Binding<Bool>,
+        arrowEdge: Edge,
+        @ViewBuilder content: @escaping () -> Panel
+    ) -> some View {
+        if KoanTheme.isOn {
+            background(KoanPanelAnchor(isPresented: isPresented, panel: content))
+        } else {
+            popover(isPresented: isPresented, arrowEdge: arrowEdge, content: content)
+        }
+    }
+    #endif
+
     /// A sheet's chrome: `bg` beneath, no material, the theme's type for
     /// everything that does not set its own.
     func koanSheet() -> some View {
@@ -2189,6 +2208,7 @@ private struct KoanSheetRole: ViewModifier {
                 .foregroundStyle(Color.koanInk)
                 #if os(macOS)
                 .background(Color.koanBg)
+                .presentationBackground(Color.koanBg)
                 .scrollContentBackground(.hidden)
                 #elseif os(tvOS)
                 // Only where it is presented: a settings page takes this too,
@@ -2324,9 +2344,11 @@ private struct SwipeBack: UIViewControllerRepresentable {
 #endif
 
 extension View {
-    /// A page's search field. In the theme on iOS, a flat `surface` field under
-    /// the title with a bare clear button, in place of the platform's glass
-    /// capsule and its glass close button. `.searchable` everywhere else.
+    /// A page's search field. In the theme on iOS and the Mac, a flat `surface`
+    /// field under the title with a bare clear button, in place of the
+    /// platform's glass capsule (iOS) or glass toolbar item (the Mac).
+    /// `.searchable` everywhere else. `just theme-leaks` flags `.searchable`
+    /// outside this role.
     @ViewBuilder
     func koanSearchable(
         text: Binding<String>,
@@ -2334,7 +2356,7 @@ extension View {
         prompt: String,
         onSubmit: @escaping () -> Void = {}
     ) -> some View {
-        #if os(iOS)
+        #if !os(tvOS)
         if KoanTheme.isOn {
             safeAreaInset(edge: .top, spacing: 0) {
                 KoanSearchField(text: text, prompt: prompt, onSubmit: onSubmit)
@@ -2352,7 +2374,7 @@ extension View {
     }
 }
 
-#if os(iOS)
+#if !os(tvOS)
 /// The theme's search field: a glyph, the field and, once there is something
 /// to clear, a bare clear button, on `surface`.
 private struct KoanSearchField: View {
@@ -2366,10 +2388,12 @@ private struct KoanSearchField: View {
                 .foregroundStyle(Color.koanMuted)
                 .accessibilityHidden(true)
             TextField(KoanTheme.label(prompt), text: $text)
-                .submitLabel(.search)
                 .onSubmit(onSubmit)
                 .autocorrectionDisabled()
+                #if os(iOS)
+                .submitLabel(.search)
                 .textInputAutocapitalization(.never)
+                #endif
                 .accessibilityLabel(prompt)
             if !text.isEmpty {
                 Button { text = "" } label: {

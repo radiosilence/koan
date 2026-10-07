@@ -104,6 +104,7 @@ struct EqSettings: View {
                     }
             }
             .frame(minWidth: 480, minHeight: 520)
+            .koanSheet()
         }
         #else
         .navigationDestination(isPresented: $managing) {

@@ -202,6 +202,7 @@ private extension View {
                     Spacer()
                     Button("Done") { focus.wrappedValue = nil }
                 }
+                .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
             }
         }
         #else

@@ -96,7 +96,7 @@ struct SelectionBar: View {
         .background {
             // The platform's look draws its bars over the page; this one sits
             // on a ground of its own as they do.
-            if !KoanTheme.isOn { Rectangle().fill(.bar).ignoresSafeArea(edges: .bottom) }
+            if !KoanTheme.isOn { Color.clear.koanMaterial(.bar).ignoresSafeArea(edges: .bottom) }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Selection")

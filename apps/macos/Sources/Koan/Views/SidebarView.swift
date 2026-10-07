@@ -108,7 +108,7 @@ struct SidebarView: View {
         .scrollEdgeEffectHidden(false, for: .top)
         // The field belongs to the sidebar, not the window: in the toolbar it
         // would sit on top of the lyrics inspector.
-        .searchable(text: $search.query, placement: .sidebar, prompt: "Search")
+        .searchable(text: $search.query, placement: .sidebar, prompt: "Search") // theme: raw — in the sidebar, not on glass
         .searchSuggestions { SearchSuggestions() }
         .searchFocused($searchFocused)
         // `/`, the way it works in the TUI. The field is somewhere else on
