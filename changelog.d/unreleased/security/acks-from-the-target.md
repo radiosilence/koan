@@ -1,0 +1,1 @@
+- **Answers to commands come only from the device the command went to.** Nearby connections are not encrypted, so a command's id could be read off the network, and any device this one had dialled could report it done or refused. A sender now hears an answer only from its target, on either route.

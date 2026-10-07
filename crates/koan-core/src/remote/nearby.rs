@@ -1272,7 +1272,11 @@ impl wire::Session for Controlling<'_> {
                     crate::remote::levels::remote().received(id, f);
                 }
             }
-            Ok(LinkReport::Ack { ack, outcome }) => crate::remote::acks::resolve(ack, outcome),
+            Ok(LinkReport::Ack { ack, outcome }) => {
+                if let Some(id) = &self.id {
+                    crate::remote::acks::resolve(ack, id, outcome);
+                }
+            }
             Ok(_) => {}
             Err(e) => log::debug!("nearby: not a report ({e})"),
         }
