@@ -1,0 +1,1 @@
+- **Device tray drag.** In the kōan look on iPhone, dragging the Control or Output tray down closes it.
