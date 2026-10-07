@@ -1,0 +1,1 @@
+- **The EQ options menu says where a profile is kept.** On iOS the "Keep on Every Device" item came apart into a greyed row and a blank checked one. It is now one item naming what it does, "Keep on Every Device" or "Keep on This Device Only", and when a stack or layer pins the profile where it is, the item is disabled and says why.
