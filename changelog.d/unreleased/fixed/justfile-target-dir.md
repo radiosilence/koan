@@ -1,0 +1,1 @@
+- **Build recipes honour `CARGO_TARGET_DIR`.** `macos-ffi`, `install-dev`, `watch-dev`, `ios-smoke` and the demo server looked for cargo's output under `target/` and failed when it was built elsewhere.
