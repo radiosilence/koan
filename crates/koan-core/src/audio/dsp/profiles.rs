@@ -4651,6 +4651,7 @@ mod tests {
                 made_for: Some(target_name("harman-in-ear-2019")),
                 join: None,
                 note: Some("Warm is left out: Lush already includes a tuning.".into()),
+                ..Default::default()
             },
             "at the EQ it is about"
         );
