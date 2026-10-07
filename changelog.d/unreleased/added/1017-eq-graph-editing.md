@@ -1,0 +1,1 @@
+- **EQ: edit a tuning on its graph.** Drag a band for frequency and gain and pinch it for Q, or paint a graphic curve with a brush; the curve redraws as you drag and the edit plays as it goes. Save as Copy keeps an edit as its own EQ in the original's place in the tuning and leaves the original as it was.
