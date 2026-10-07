@@ -72,7 +72,7 @@ struct ApiKeysSettings: View {
                             }
                         }
                     }
-                    .koanButton(.standard)
+                    .koanButton(.bordered)
                     .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
                 .rowButtons()
@@ -123,7 +123,7 @@ struct ApiKeysSettings: View {
                     .help("To stop using it, sign out")
             } else {
                 Button("Revoke", role: .destructive) { revoking = key }
-                    .koanButton(.compact, system: .borderless)
+                    .koanButton(.bordered, system: .borderless)
             }
         }
     }
@@ -162,7 +162,7 @@ private struct NewKeySheet: View {
                     } label: {
                         KoanLabel(copied ? "Copied" : "Copy Key", icon: "doc.on.doc")
                     }
-                    .koanButton(.standard)
+                    .koanButton(.bordered)
                     #endif
                 } header: {
                     KoanSectionHeader("Key for \(key.name)")

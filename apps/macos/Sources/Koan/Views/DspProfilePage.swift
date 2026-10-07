@@ -623,7 +623,7 @@ private struct RoleSection: View {
                     Button("Looks made for \(suggestion.name). Use that?") {
                         dsp.setTunedFor(detail.name, suggestion.id)
                     }
-                    .koanButton(.text)
+                    .koanButton(.link)
                 }
             }
             #if !os(tvOS)

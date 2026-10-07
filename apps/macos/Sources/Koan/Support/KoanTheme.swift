@@ -959,6 +959,13 @@ enum KoanButtonKind {
     /// Smaller and tighter, for actions beside a row or a title: favourite,
     /// ⋯, revoke, a sheet's lesser actions.
     case compact
+    /// Compact, in a hairline `muted` outline: a secondary action standing in
+    /// a form row, where bare text would not read as something to press.
+    case bordered
+    /// `muted` and underlined; ink on hover. An action that reads as a link:
+    /// it goes somewhere, or it is a lesser action inline with text. A bare
+    /// text action is underlined, an outlined one is not.
+    case link
     /// `muted`, no outline; ink on hover. Bars' actions ("clear", "sleep").
     case text
     /// A glyph alone, with a 44-point hit area.
@@ -974,7 +981,7 @@ enum KoanButtonKind {
     /// gives them, and cards their own.
     fileprivate var setsType: Bool {
         switch self {
-        case .prominent, .standard, .compact, .text: true
+        case .prominent, .standard, .compact, .bordered, .link, .text: true
         case .icon, .iconOutlined, .card: false
         }
     }
@@ -983,7 +990,7 @@ enum KoanButtonKind {
     fileprivate var type: KoanType {
         switch self {
         case .prominent: .body
-        case .compact: .meta
+        case .compact, .bordered: .meta
         default: .control
         }
     }
@@ -1138,6 +1145,7 @@ private struct KoanButtonBody: View {
                 .textCase(.lowercase)
                 .lineLimit(1)
                 .layoutPriority(1)
+                .underline(kind == .link)
                 .foregroundStyle(foreground(configuration))
         } else {
             configuration.label
@@ -1159,8 +1167,8 @@ private struct KoanButtonBody: View {
         return switch kind {
         case .prominent:
             accent.shade(scheme).readsAsText ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.koanInk)
-        case .standard, .compact, .icon, .iconOutlined, .card: AnyShapeStyle(Color.koanInk)
-        case .text: AnyShapeStyle(configuration.isPressed ? Color.koanInk : Color.koanMuted)
+        case .standard, .compact, .bordered, .icon, .iconOutlined, .card: AnyShapeStyle(Color.koanInk)
+        case .text, .link: AnyShapeStyle(configuration.isPressed ? Color.koanInk : Color.koanMuted)
         }
     }
 
@@ -1168,7 +1176,8 @@ private struct KoanButtonBody: View {
         switch kind {
         case .prominent: AnyShapeStyle(.tint)
         case .iconOutlined: AnyShapeStyle(Color.koanInk)
-        case .standard, .compact, .text, .icon, .card: nil
+        case .bordered: AnyShapeStyle(Color.koanMuted)
+        case .standard, .compact, .link, .text, .icon, .card: nil
         }
     }
 
@@ -1177,7 +1186,8 @@ private struct KoanButtonBody: View {
         case .prominent: EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
         case .standard: EdgeInsets(top: 8, leading: 4, bottom: 8, trailing: 4)
         case .compact: EdgeInsets(top: 4, leading: 2, bottom: 4, trailing: 2)
-        case .text: EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0)
+        case .bordered: EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
+        case .text, .link: EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0)
         case .icon, .card: EdgeInsets()
         case .iconOutlined: EdgeInsets(top: 7, leading: 7, bottom: 7, trailing: 7)
         }
@@ -1195,7 +1205,7 @@ private struct KoanButtonBody: View {
         // The small actions beside a title or a row, which a finger still
         // has to land on.
         #if os(iOS)
-        case .compact: 44
+        case .compact, .link: 44
         #endif
         default: nil
         }

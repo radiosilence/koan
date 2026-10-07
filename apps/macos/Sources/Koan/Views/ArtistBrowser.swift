@@ -405,6 +405,7 @@ private struct ArtistBio: View {
                         .accessibilityHint(url.absoluteString)
                     #else
                     Link("From Wikipedia", destination: url)
+                        .koanButton(.link)
                     #endif
                 }
                 if let imageCredit {

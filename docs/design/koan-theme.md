@@ -108,11 +108,15 @@ Three weights, assigned by the [rules](#rules); labels are lowercase and stay on
 - **Prominent:** the label in `accent`, a 1-point `accent` outline, `body` type, padding 12 × 20. Pressed: `hover` fill. At most one per screen.
 - **Standard:** the label (and glyph) in `ink`, no outline, `control` type, padding 8 × 4.
 - **Compact:** as standard in `meta` type, padding 4 × 2.
-- **Destructive:** compact, in `bad`.
+- **Bordered:** compact, in a 1-point `muted` outline, padding 6 × 12. A secondary action standing in a form row, such as copy, scan or sign out, where bare text would not read as something to press.
+- **Link:** the label in `muted`, underlined, no outline; `ink` when pressed. Anything that goes somewhere (a web page, another page) and a lesser action inline with text.
+- **Destructive:** compact or bordered, in `bad`.
 - **Text button:** the label in `muted`, no outline, used in bars ("clear", "sleep"). Hover: `ink`.
 - **Icon button** (transport): the glyph in `ink`, at least 44 × 44 pt to hit, with no outline, except play/pause, which has a square 1-point `ink` outline.
 - **Disabled:** label and outline at 40 % opacity.
 - **Focus** (keyboard, and tvOS): a 2-point `accent` ring outside the control. On a television, no lift, shadow or glass.
+
+A text action that is not standard or prominent and not in a bar is bordered or underlined: bordered is a button, underlined is a link. *Why:* bare text in a form row reads as a value rather than something to press, and an underline is the long-standing sign that text goes somewhere.
 
 ### Toggle
 

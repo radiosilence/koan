@@ -87,7 +87,7 @@ struct EqSettings: View {
                     Text(error).koanText(.fine, .bad)
                 }
                 Button("Manage EQ") { managing = true }
-                    .koanButton(.text)
+                    .koanButton(.link)
             }
         }
         .koanSheet()
@@ -249,11 +249,11 @@ struct EqSettings: View {
                 LabeledContent {
                     HStack {
                         Button("Save") { save(as: preset, over: true) }
-                            .koanButton(.compact)
+                            .koanButton(.bordered)
                         Button("Revert") { app.dsp.applyPreset(preset, to: device) }
-                            .koanButton(.text)
+                            .koanButton(.link)
                         Button("Save as New…") { ask("Save as New Preset") }
-                            .koanButton(.text)
+                            .koanButton(.link)
                     }
                 } label: {
                     // The preset's name keeps its case; the words are the app's.
@@ -275,7 +275,7 @@ struct EqSettings: View {
                 Button { explaining = true } label: {
                     Label("How EQ works", systemImage: "info.circle")
                 }
-                .koanButton(.text)
+                .koanButton(.link)
                 #endif
             }
         }
@@ -478,7 +478,7 @@ struct EqChain: View {
                 ) {
                     #if !os(tvOS)
                     Button("Show") { open(correction.name) }
-                        .koanButton(.text)
+                        .koanButton(.link)
                     #endif
                 }
             } else {
@@ -586,7 +586,7 @@ struct EqChain: View {
                 .buttonStyle(.plain)
                 if let suggestion = meets?.suggestion {
                     Button("Looks made for \(suggestion.name). Use that?") { madeFor(eq, suggestion.id) }
-                        .koanButton(.text)
+                        .koanButton(.link)
                 }
                 #endif
             case nil:
@@ -794,11 +794,11 @@ struct StagePicker: View {
                 }
                 Section {
                     Button("Import a File…") { add(.importing) }
-                        .koanButton(.standard)
+                        .koanButton(.bordered)
                     Button("Find in AutoEQ…") { add(.autoEq) }
-                        .koanButton(.standard)
+                        .koanButton(.bordered)
                     Button("Find a Measurement…") { add(.measuring) }
-                        .koanButton(.standard)
+                        .koanButton(.bordered)
                 } header: {
                     KoanSectionHeader("Add…")
                 }

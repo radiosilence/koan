@@ -99,7 +99,7 @@ final class WalkTests: XCTestCase {
         // The server's sections, where the server and the account have them.
         for (name, shot) in [
             ("Account", "09d-account"), ("People", "09e-people"),
-            ("Devices", "09f-devices"), ("Integrations", "09g-integrations"),
+            ("Devices", "09f-devices"), ("Server Capabilities", "09g-server-capabilities"),
             ("Appearance", "09c-appearance"),
         ] {
             if open(app.buttons.matching(NSPredicate(format: "label ==[c] %@", name)).firstMatch) {

@@ -24,7 +24,7 @@ struct AssistantsSettings: View {
                 } label: {
                     KoanLabel(copied ? "Copied" : "Copy Address", icon: "doc.on.doc")
                 }
-                .koanButton(.standard)
+                .koanButton(.bordered)
                 .task(id: copied) {
                     guard copied else { return }
                     try? await Task.sleep(for: .seconds(1.5))
@@ -34,7 +34,7 @@ struct AssistantsSettings: View {
                     Link(destination: connect) {
                         KoanLabel("How to Connect an Assistant", icon: "arrow.up.right.square")
                     }
-                    .koanButton(.text)
+                    .koanButton(.link)
                 }
                 #endif
             } else if error == nil {

@@ -24,6 +24,8 @@ struct KoanThemeSheet: View {
             HStack(spacing: KoanTheme.Space.m) {
                 Button { } label: { KoanLabel("Play", icon: Icon.play) }.koanButton(.prominent)
                 Button { } label: { KoanLabel("Shuffle", icon: Icon.shuffle) }.koanButton(.standard)
+                Button("Copy") { }.koanButton(.bordered)
+                Button("Find your token") { }.koanButton(.link)
                 Button("Clear") { }.koanButton(.text)
                 Button { } label: { KoanLabel("Sleep", icon: "moon", style: .compact) }.koanButton(.icon)
                 Button { } label: { Image(systemName: "pause.fill") }.koanButton(.iconOutlined)
