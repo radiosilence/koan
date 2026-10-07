@@ -440,8 +440,11 @@ core of an M-series Mac.
 EQ boosts and convolution can push a sample past full scale. Unless an EQ
 sets `preamp_db` itself, kōan works out the largest gain its filters apply at
 any frequency and lowers the level by that much first, as AutoEQ's own `Preamp`
-line does. ReplayGain is applied before it, with its own peak limiting, so the
-two do not compound. An EQ's page shows the figure.
+line does. With a tuning on top of a correction, the level comes from what the
+whole chain plays, not the correction's own preamp, so a correction and tuning
+whose boosts cancel play as loud as a single EQ with the same curve and A/B
+comparisons are fair. ReplayGain is applied before it, with its own peak
+limiting, so the two do not compound. An EQ's page shows the figure.
 
 ## Choosing
 
