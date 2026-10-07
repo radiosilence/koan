@@ -24,7 +24,7 @@ enum EvidenceRenderer {
         try? await Task.sleep(for: .seconds(2))
 
         var pages: [(name: String, size: CGSize, view: AnyView)] = [
-            ("eq", CGSize(width: 620, height: 760), AnyView(
+            ("eq", CGSize(width: 620, height: 1500), AnyView(
                 EqSettings().environment(state)
             )),
         ]

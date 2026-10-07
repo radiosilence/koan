@@ -301,7 +301,8 @@ enum DspCommands {
         #[arg(long)]
         device: Option<String>,
     },
-    /// Play an output device (the current one by default) untouched
+    /// Make an output device (the current one by default) flat: no
+    /// correction and no tuning, so it plays untouched
     Clear {
         #[arg(long)]
         device: Option<String>,
@@ -414,10 +415,23 @@ enum DspCommands {
         #[command(subcommand)]
         command: AutoeqCommands,
     },
-    /// Bypass every profile
-    Off,
-    /// Stop bypassing
-    On,
+}
+
+#[derive(Subcommand)]
+enum PresetCommands {
+    /// Save an output's correction and tuning (the current output by
+    /// default) as a preset
+    Save {
+        name: String,
+        #[arg(long)]
+        device: Option<String>,
+    },
+    /// Set an output from a preset, or `flat`: no correction and no tuning
+    Use {
+        name: String,
+        #[arg(long)]
+        device: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -775,8 +789,6 @@ fn main() {
                     device,
                 } => commands::cmd_dsp_autoeq_install(&entry, source.as_deref(), device),
             },
-            DspCommands::Off => commands::cmd_dsp_enable(false),
-            DspCommands::On => commands::cmd_dsp_enable(true),
         },
         Some(Commands::Cache(sub)) => match sub {
             CacheCommands::Status => commands::cmd_cache_status(),

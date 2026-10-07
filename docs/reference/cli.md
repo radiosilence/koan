@@ -153,7 +153,7 @@ koan dsp import "Harman 780.zip"                # Roon zip, .cfg, WAVs, CamillaD
 koan dsp import L48.wav R48.wav --name Room --device "Topping E30"
 koan dsp import room.txt --rate 48000           # coefficients that do not say their rate
 koan dsp use "Living room" [--device NAME]      # play a device through a profile
-koan dsp clear [--device NAME]                  # play a device untouched
+koan dsp clear [--device NAME]                  # make a device flat: no correction or tuning, played untouched
 koan dsp remove NAME
 koan dsp autoeq search QUERY [--limit N] [--refresh]   # AutoEQ results by headphone name, numbered
 koan dsp autoeq install NUMBER|NAME [--source SOURCE] [--device NAME]
@@ -173,7 +173,6 @@ koan dsp tuned-for NAME TARGET|unknown                      # the target a tunin
 koan dsp split NAME FILE --ear in|over --target TARGET      # a baked EQ into correction + tuning, from a measurement
 koan dsp squig QUERY [--limit N]                            # measurements on squig.link sites, numbered
 koan dsp squig QUERY --use-result N --target TARGET [--ear in|over] [--name NAME]  # a correction from one
-koan dsp off | on                               # bypass every profile, or stop bypassing
 ```
 
 `--device` defaults to the current output: `[playback] output_device`, or the

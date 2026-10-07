@@ -840,152 +840,9 @@ private struct PlaybackSettings: View {
     }
 }
 
-/// EQ for the output in use: what its profile does to the sound, drawn,
-/// then the profiles and where they come from. A page of its own: the graph
-/// wants the room, and a correction is chosen, shaped and checked here.
-struct EqSettings: View {
-    @Environment(AppState.self) private var app
-    @State private var response: DspResponse?
-    @State private var detail: DspProfileDetail?
-    // What the page presents is held here and presented from the form: a
-    // modifier on a section of a list is applied to each of its rows, and
-    // the presentation ends when that row is made again.
-    @State private var importing = false
-    @State private var finding: AutoEqFind?
-    @State private var measuring = false
-    /// A baked EQ being split into correction and tuning.
-    @State private var splitting: ShownProfile?
-    @State private var showing: String?
-
-    private var active: String? { app.dsp.overview?.active }
-
-    /// The way to the profile's own page, where its bands are edited.
-    @ViewBuilder private func editLink(_ name: String) -> some View {
-        #if os(iOS)
-        NavigationLink("Edit") {
-            DspProfilePage(dsp: app.dsp, name: name)
-                .koanHidesSystemTabBar()
-        }
-        #elseif os(macOS)
-        Button("Edit") { showing = name }
-            .koanButton(.text)
-        #endif
-    }
-
-    /// The tuning on top, where one plays: none waits on a correction with
-    /// one baked in, or one the chain cannot hold.
-    private var tuning: String? {
-        guard let o = app.dsp.overview, o.tuningPlays else { return nil }
-        return o.tuning
-    }
-
-    var body: some View {
-        KoanForm {
-            // What the output plays, drawn first and always the same height,
-            // so choosing another preset changes the curve and not the page.
-            // Bands are edited on the profile's own page.
-            if let o = app.dsp.overview, o.device != nil, !o.profiles.isEmpty {
-                Section {
-                    Group {
-                        if let response {
-                            EqGraph(response: response)
-                                .koanAnimation(KoanTheme.Motion.normal, value: response.total)
-                        } else {
-                            Text("Plays untouched")
-                                .koanText(.meta, .muted)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        }
-                    }
-                    .frame(height: 290, alignment: .top)
-                } header: {
-                    HStack {
-                        Text(tuning.map { "\(active ?? "") + \($0)" } ?? active ?? "No EQ")
-                        Spacer()
-                        if let active {
-                            editLink(active)
-                        }
-                    }
-                }
-            }
-            if let o = app.dsp.overview, let device = o.device, !o.profiles.isEmpty {
-                OutputEqSection(dsp: app.dsp, overview: o, device: device) {
-                    splitting = ShownProfile(name: $0)
-                }
-            }
-            if let active, let detail, detail.group {
-                Section {
-                    Picker("Playing", selection: Binding(
-                        get: { detail.layers.first(where: \.on)?.profile ?? detail.layers.first?.profile ?? "" },
-                        set: { app.dsp.select(active, $0) }
-                    )) {
-                        ForEach(detail.layers, id: \.profile) { Text($0.profile).tag($0.profile) }
-                    }
-                    .koanControl()
-                } header: {
-                    KoanSectionHeader("Group: pick one")
-                }
-            }
-            DspSettings(importing: $importing, finding: $finding, measuring: $measuring, showing: $showing)
-        }
-        .koanSheet()
-        .task(id: "\(active ?? "")\u{0}\(tuning ?? "")\u{0}\(app.dsp.stamp)") {
-            // The old curve stays until the new one is drawn, so the page
-            // never empties between presets.
-            response = if active == nil { nil } else { await app.dsp.outputResponse() }
-            detail = if let active { await app.dsp.detail(active) } else { nil }
-        }
-        .task(id: app.dsp.stamp) { app.dsp.reload() }
-        .filePicker(
-            isPresented: $importing,
-            allowedContentTypes: [.item, .folder],
-            allowsMultipleSelection: true
-        ) { result in
-            if case let .success(urls) = result, !urls.isEmpty {
-                app.dsp.importFiles(urls)
-            }
-        }
-        #if !os(tvOS)
-        .sheet(item: $finding) { find in
-            AutoEqSearch(dsp: app.dsp, query: find.query).koanSheet()
-        }
-        .sheet(isPresented: $measuring) {
-            MeasurementFlow(dsp: app.dsp).koanSheet()
-        }
-        .sheet(item: $splitting) { baked in
-            SplitFlow(dsp: app.dsp, name: baked.name).koanSheet()
-        }
-        // A profile imported from a file: a neutral correction, one with a
-        // tuning already in it, or taste to add on top? kōan cannot tell,
-        // and a chain corrects once.
-        .sheet(item: Binding(
-            get: { app.dsp.askRole.map(RoleAsk.init) },
-            set: { if $0 == nil { app.dsp.askRole = nil } }
-        )) { ask in
-            RoleQuestion(dsp: app.dsp, names: ask.names).koanSheet()
-        }
-        #endif
-        #if os(macOS)
-        .sheet(item: Binding(
-            get: { showing.map(ShownProfile.init) },
-            set: { showing = $0?.name }
-        )) { shown in
-            NavigationStack {
-                DspProfilePage(dsp: app.dsp, name: shown.name)
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Done") { showing = nil }
-                        }
-                    }
-            }
-            .frame(minWidth: 480, minHeight: 440)
-        }
-        #endif
-    }
-}
-
 /// Find in AutoEQ, open: empty from its button, a model from an offer for
 /// the output in use.
-private struct AutoEqFind: Identifiable {
+struct AutoEqFind: Identifiable {
     let id = UUID()
     let query: String
 }
@@ -995,7 +852,7 @@ private struct AutoEqFind: Identifiable {
 struct DspSettings: View {
     @Environment(AppState.self) private var app
     @Binding var importing: Bool
-    @Binding fileprivate var finding: AutoEqFind?
+    @Binding var finding: AutoEqFind?
     @Binding var measuring: Bool
     /// The profile whose page is open, on the Mac, where settings has no
     /// navigation stack to push it onto.
@@ -1005,10 +862,6 @@ struct DspSettings: View {
         let dsp = app.dsp
         Section {
             if let o = dsp.overview {
-                Toggle("Process audio", isOn: Binding(
-                    get: { o.enabled },
-                    set: { dsp.setEnabled($0) }
-                )).koanToggle()
                 #if !os(tvOS)
                 if let offer = dsp.suggestion, o.device != nil {
                     AutoEqSuggestion(offer: offer, dsp: dsp) { query in
@@ -1060,9 +913,9 @@ struct DspSettings: View {
                     .koanText(.fine, .bad)
             }
         } header: {
-            KoanSectionHeader("EQ and convolution")
+            KoanSectionHeader("All EQ")
         } footer: {
-            Text("AutoEQ and Equalizer APO text, impulse WAVs, Roon zips, Convolver .cfg and CamillaDSP configs, or a headphone found in AutoEQ by name. Importing into a profile of the same name adds to it. An output without a profile plays untouched.")
+            Text("AutoEQ and Equalizer APO text, impulse WAVs, Roon zips, Convolver .cfg and CamillaDSP configs, or a headphone found in AutoEQ by name. Importing under a name already used adds to that EQ.")
                 .koanText(.fine, .muted)
         }
     }
@@ -1110,7 +963,7 @@ private struct AutoEqSuggestion: View {
 
 /// AutoEQ's results by headphone name. Choosing one installs it and plays the
 /// output in use through it.
-private struct AutoEqSearch: View {
+struct AutoEqSearch: View {
     let dsp: DspModel
     @Environment(\.dismiss) private var dismiss
     @State private var query: String
@@ -1220,7 +1073,7 @@ private struct AutoEqModels: View {
 }
 #endif
 
-private struct ShownProfile: Identifiable {
+struct ShownProfile: Identifiable, Hashable {
     let name: String
     var id: String { name }
 }
@@ -1236,7 +1089,11 @@ private struct ProfileRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(profile.name)
-                    RoleTag(role: ProfileRole(profile.role))
+                    if profile.preset {
+                        Text("Preset").koanText(.fine, .muted)
+                    } else {
+                        RoleTag(role: ProfileRole(profile.role))
+                    }
                 }
                 if let problem = profile.problem {
                     Text(problem)

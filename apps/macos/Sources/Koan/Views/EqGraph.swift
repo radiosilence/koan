@@ -14,10 +14,20 @@ import SwiftUI
 /// once the profile has been changed and drawn again.
 struct EqGraph: View {
     let response: DspResponse
+    /// An output's chain, stage by stage, each drawn as its block is, under
+    /// the whole chain. Empty for a single profile.
+    var parts: [Part] = []
     var handles: [Handle] = []
     var onDrag: ((Int, Double, Double) -> Void)?
     /// The view to open on, where there is a measurement to show.
     var startOn: Shown = .eq
+
+    /// A stage of a chain: its name, its curve, and how its block draws it.
+    struct Part {
+        let name: String
+        let db: [Double]
+        let stroke: StageStroke
+    }
 
     /// A band's point: its index among the profile's filters, and where it is.
     struct Handle: Identifiable, Equatable {
@@ -79,9 +89,15 @@ struct EqGraph: View {
                     // Each band neutral, so the accent is the curve that plays.
                     .foregroundStyle(KoanTheme.style(.muted, system: .tint).opacity(0.15))
                 }
+                // An output's chain: each stage as its block draws it, under
+                // the whole.
+                ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
+                    lines(curves: [Curve(name: part.name, db: part.db)],
+                          color: part.stroke.style, width: 1.2, dash: part.stroke.dash)
+                }
                 // A chain with a correction and tuning: each in its role's
                 // colour, under the two together.
-                if let correction = response.correction, let tuning = response.tuning {
+                if parts.isEmpty, let correction = response.correction, let tuning = response.tuning {
                     lines(curves: [Curve(name: "Correction", db: correction)],
                           color: AnyShapeStyle(ProfileRole.correction.color.opacity(0.7)), width: 1.2, dashed: true)
                     lines(curves: [Curve(name: "Tuning", db: tuning)],
@@ -92,7 +108,8 @@ struct EqGraph: View {
                     lines(curves: [Curve(name: "Original", db: original)],
                           color: KoanTheme.style(.muted, system: Color.secondary), width: 1.2, dashed: true)
                 }
-                lines(curves: [Curve(name: "EQ", db: response.total)], color: AnyShapeStyle(.tint), width: 2)
+                lines(curves: [Curve(name: "EQ", db: response.total)],
+                      color: parts.isEmpty ? AnyShapeStyle(.tint) : StageStroke.total.style, width: 2)
                 ForEach(shownHandles) { h in
                     PointMark(x: .value("Hz", h.hz), y: .value("dB", h.db))
                         .symbolSize(grabbed && h.index == dragging?.index ? 120 : 60)
@@ -151,12 +168,13 @@ struct EqGraph: View {
         curves: [Curve],
         color: AnyShapeStyle,
         width: CGFloat,
-        dashed: Bool = false
+        dashed: Bool = false,
+        dash: [CGFloat]? = nil
     ) -> some ChartContent {
         ForEach(curves.flatMap { curve in points(curve.db).map { (curve.name, $0) } }, id: \.1.id) { name, p in
             LineMark(x: .value("Hz", p.hz), y: .value("dB", p.db), series: .value("Curve", name))
                 .foregroundStyle(color)
-                .lineStyle(StrokeStyle(lineWidth: width, dash: dashed ? [4, 3] : []))
+                .lineStyle(StrokeStyle(lineWidth: width, dash: dash ?? (dashed ? [4, 3] : [])))
         }
     }
 
@@ -211,9 +229,14 @@ struct EqGraph: View {
     // MARK: - The legend
 
     @ViewBuilder private var legend: some View {
-        HStack(spacing: 14) {
+        FlowLayout(spacing: 10) {
             if showingEq {
-                if response.correction != nil, response.tuning != nil {
+                if !parts.isEmpty {
+                    ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
+                        key(part.name, part.stroke.style, dash: part.stroke.dash)
+                    }
+                    key("Total", StageStroke.total.style)
+                } else if response.correction != nil, response.tuning != nil {
                     key("Correction", AnyShapeStyle(ProfileRole.correction.color.opacity(0.7)), dashed: true)
                     key("Tuning", AnyShapeStyle(ProfileRole.tuning.color))
                     key("Total", AnyShapeStyle(.tint))
@@ -232,17 +255,18 @@ struct EqGraph: View {
                 key("Target", AnyShapeStyle(KoanTheme.style(.ink).opacity(0.55)), dashed: true)
                 key("Corrected", AnyShapeStyle(.tint))
             }
-            Spacer()
             Text("Preamp \(String(format: "%.1f", response.preampDb)) dB")
                 .monospacedDigit()
         }
         .koanText(.fine, .muted)
     }
 
-    private func key(_ name: String, _ color: AnyShapeStyle, dashed: Bool = false, thin: Bool = false) -> some View {
+    private func key(
+        _ name: String, _ color: AnyShapeStyle, dashed: Bool = false, thin: Bool = false, dash: [CGFloat]? = nil
+    ) -> some View {
         HStack(spacing: 5) {
             Capsule()
-                .stroke(color, style: StrokeStyle(lineWidth: thin ? 1 : 2, dash: dashed ? [3, 2] : []))
+                .stroke(color, style: StrokeStyle(lineWidth: thin ? 1 : 2, dash: dash ?? (dashed ? [3, 2] : [])))
                 .frame(width: 14, height: 2)
             Text(name)
         }
@@ -282,6 +306,7 @@ struct EqGraph: View {
     private var shown: [[Double]] {
         if showingEq {
             return [response.total, response.correction ?? [], response.tuning ?? [], response.original ?? []]
+                + parts.map(\.db)
                 + response.bands.map(\.db) + [handles.map(\.db)]
         }
         return [response.measurement, response.target, response.predicted].compactMap { $0 }

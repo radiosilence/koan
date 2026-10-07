@@ -9,9 +9,11 @@ plugging in the headphones selects their correction, and a device no profile
 names plays bit-perfect as before.
 
 The processing runs on the decode thread, before the ring buffer, so the audio
-callback is the same with DSP on as off. With DSP off, or on a device without a
-profile, nothing runs at all: the samples reach the device untouched, and the
-format badge says when they did not ("FLAC 24/96 · FIR").
+callback is the same whether anything is processed or not. A device that is
+flat, with no correction and no tuning, runs nothing at all: the samples reach
+it untouched, and the format badge says when they did not ("FLAC 24/96 · FIR").
+There is no switch to turn processing off; a device is made flat instead, and
+a preset brings back what it played.
 
 Processing applies to this device's own output. When it controls another
 device, that device's settings apply.
@@ -208,12 +210,37 @@ kōan keeps what it imported under `dsp/<profile>/` beside the config, as one
 32-bit float WAV per rate, with a `.cfg` where the routes mix or delay channels.
 The originals are not needed again.
 
+## Words
+
+- **Correction** makes a device neutral: headphones or speakers, measured and
+  brought to a target. A device has one, and it plays as it was made.
+- **Tuning** is taste on top of the correction: one or more EQs, played in
+  order, each switched on or off.
+- **EQ** is one set of bands, edited on its own page.
+- **Preset** is a correction and tuning saved together under a name, to switch
+  a device between or set another device from.
+- **Flat** is a device with nothing chosen, which plays untouched.
+
 ## The EQ page
 
-The apps' EQ settings draw what the output in use plays, its correction and
-any tuning on top, at the head of the page and always at the same height, so
-choosing another preset changes the curve and not the page; with nothing
-chosen it says the output plays untouched. Each profile's page draws its own. The curve is computed by
+The apps' EQ page is the chain a device plays, read top to bottom: music in,
+the correction, the tuning's EQs, the device out. **Device** at the top picks
+which device, starting with the output in use; **Preset** sets it from a
+preset, or Flat, and reads **Unsaved** for a chain no preset holds. After a
+change to a device set from a preset, **Save** puts the change in the preset
+and **Save as New…** keeps it as another; **ⓘ How EQ works** explains the
+words.
+
+Under them, the curve of the whole chain, always at the same height, so
+choosing another preset changes the curve and not the page; a flat device
+says it plays untouched. Each stage is drawn in the stroke of its block in the
+chain below, the correction in the accent and each EQ in a dash of its own,
+over the total. Each block shows its own curve. Tapping the correction chooses
+another, its target and a group's member, with **Add…** at the foot to import
+one, find one in AutoEQ or build one from a measurement or squig.link. Each EQ
+of the tuning has **On**, and **Options** to edit it, move it or take it out;
+tapping it opens its page. **Add EQ** adds another. An empty stage is a dashed
+place to add one. Each EQ's page draws its own curve. The curve is computed by
 the core from the same filters and impulse responses the DSP runs, at 48 kHz,
 so it shows what plays rather than what the filters were meant to do, layers
 and a moved target included. The preamp is shown beside the curve rather than
@@ -223,8 +250,8 @@ handle. Each parametric band is drawn faintly behind the total. For a
 correction from AutoEQ, the Measured view draws the device as measured, the
 target it plays to, and the measurement with the profile applied.
 
-A tuning's bands are edited on its own page, opened by **Edit** in the graph's
-header on the EQ page: in the table below its graph, or by dragging a peak or
+A tuning's bands are edited on its own page, opened from its block on the EQ
+page: in the table below its graph, or by dragging a peak or
 shelf on the graph itself. An edit is saved and heard straight away. Frequency
 is held to 10 Hz–22 kHz, gain to ±30 dB and Q to 0.1–20. Delays, mixes and
 graphic curves are shown but not edited here.
@@ -249,9 +276,12 @@ output set from it plays the same, and says when it was changed since. A stack
 made before presets, a correction with EQs on top, became a preset, and the
 outputs that played it play its correction and EQs, set from it.
 
-The apps show one EQ of the tuning for now; the CLI sets all of them:
-`koan dsp tuning EQ... [--off EQ]...`, `koan dsp preset save NAME` and
-`koan dsp preset use NAME|flat`.
+The CLI does the same: `koan dsp tuning EQ... [--off EQ]...`,
+`koan dsp preset save NAME` and `koan dsp preset use NAME|flat`.
+
+Configs from before Flat with processing switched off open with every device
+flat, and what each played kept as a preset named for the device, unless it
+was already set from a preset and not changed since.
 
 ## On every device
 
@@ -365,14 +395,12 @@ On iOS, profiles follow the route: AirPods, wired headphones and the speaker are
 each their own output. Now Playing shows the preset of the output playing, beside
 the AirPlay button: the route's, or a UPnP renderer's while the phone plays to
 one. Tapping it picks another for that output, which applies at once. It changes
-when the output does. While processing is off everywhere,
-the preset menu says so on both platforms and offers to turn it back on.
+when the output does.
 
 ```bash
 koan dsp                        # list; * marks the current output's profile
 koan dsp use "Living room"      # the current output (or --device NAME) plays through it
-koan dsp clear                  # the current output plays untouched
-koan dsp off | on               # bypass every profile, or stop bypassing
+koan dsp clear                  # the current output is flat: it plays untouched
 koan dsp remove "Living room"
 ```
 
