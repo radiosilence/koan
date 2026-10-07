@@ -1,0 +1,1 @@
+- **EQ fixes.** An EQ's page on iPhone no longer shows the tab bar over its foot, and changing the target a tuning was made against now syncs to your other devices.
