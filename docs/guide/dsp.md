@@ -240,7 +240,21 @@ another, its target and a group's member, with **Add…** at the foot to import
 one, find one in AutoEQ or build one from a measurement or squig.link. Each EQ
 of the tuning has **On**, and **Options** to edit it, move it or take it out;
 tapping it opens its page. **Add EQ** adds another. An empty stage is a dashed
-place to add one. Each EQ's page draws its own curve. The curve is computed by
+place to add one.
+
+The correction's block names the target it corrects to ("to Neutral (diffuse
+field)"), and each EQ the target it was made against ("made for Neutral"). The
+line into each EQ says how the two meet. Drawn in the accent and marked
+**Matched**, the EQ was made against the correction's own target and plays as
+made. Made against another target, it shows the conversion kōan plays first
+("Target difference: Neutral → Harman in-ear 2019"), which is correct and not
+a warning. Where the EQ does not say what it was made against, nothing can be
+converted, and if it already includes a target, as a finished preset like
+"Lush" does, that target is applied twice on top of the correction's: the line
+says so, and tapping it opens the EQ's page to set **Made against**. Why an EQ
+is left out, such as a correction with a tuning in it chosen as a tuning, is
+said on the line into it. VoiceOver reads each of these after the chain's
+sentence. Each EQ's page draws its own curve. The curve is computed by
 the core from the same filters and impulse responses the DSP runs, at 48 kHz,
 so it shows what plays rather than what the filters were meant to do, the EQs it plays
 and a moved target included. The preamp is shown beside the curve rather than

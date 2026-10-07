@@ -1,0 +1,1 @@
+- **The EQ chain shows how each EQ meets the correction.** The line into an EQ is drawn in the accent where it was made against the correction's target, shows the target difference kōan plays where it was made against another, and warns where Made against is not set, since a target may then be applied twice. `koan dsp show --json` gives each EQ's `made_for`, `matched` and `join`.
