@@ -1,0 +1,1 @@
+- **A record without cover art no longer keeps the previous record's colours.** The wash fades to the bare ground and the accent returns to mint, while a cover that is still loading keeps the current colours until it arrives.
