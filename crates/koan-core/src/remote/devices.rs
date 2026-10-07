@@ -143,6 +143,10 @@ pub type Then = Box<dyn FnOnce(Option<acks::AckOutcome>) + Send>;
 /// A stage of waking a device, in the order they are tried.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Waking {
+    /// Knocking on an Apple TV's AirPlay service until the box answers: a
+    /// sleeping one is woken by the sleep proxy answering for it, so that the
+    /// push after this can reach koan there.
+    Tv,
     /// Dialling it on the local network: seen there a moment ago, it may not
     /// be suspended yet.
     Network,
@@ -202,6 +206,9 @@ pub struct SeenNearby {
     pub addr: String,
     /// Unix seconds.
     pub at: i64,
+    /// An Apple TV's AirPlay announcement, knocked on to wake it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tv: Option<crate::remote::airplay::Tv>,
 }
 
 /// A device not reached on the network in this long is forgotten.
@@ -554,7 +561,15 @@ pub fn remembered_nearby() -> Vec<SeenNearby> {
 }
 
 pub fn nearby_hello(hello: LinkHello, addr: &str) {
-    changed(|s| {
+    let host = crate::remote::airplay::host_of(addr).to_string();
+    let look = changed(|s| {
+        let tv = s
+            .seen
+            .iter()
+            .find(|n| n.id == hello.id)
+            .and_then(|n| n.tv.clone())
+            .filter(|tv| crate::remote::airplay::current(Some(tv), &host));
+        let look = hello.platform == "tvos" && tv.is_none();
         s.seen.retain(|n| n.id != hello.id);
         s.seen.push(SeenNearby {
             id: hello.id.clone(),
@@ -562,6 +577,7 @@ pub fn nearby_hello(hello: LinkHello, addr: &str) {
             platform: hello.platform.clone(),
             addr: addr.to_string(),
             at: chrono::Utc::now().timestamp(),
+            tv,
         });
         s.save();
         s.live
@@ -571,12 +587,52 @@ pub fn nearby_hello(hello: LinkHello, addr: &str) {
         s.lan_heard
             .insert(hello.id.clone(), chrono::Utc::now().timestamp());
         s.nearby.retain(|n| n.hello.id != hello.id);
+        let found = look.then(|| (hello.id.clone(), hello.name.clone()));
         s.nearby.push(Nearby {
             hello,
             state: None,
             at: Instant::now(),
         });
+        found
     });
+    if let Some((id, name)) = look {
+        record_tv(id, name, addr.to_string());
+    }
+}
+
+/// Find the AirPlay announcement of the Apple TV `id`, met at `addr`, and keep
+/// it to wake the TV by when koan there is asleep.
+fn record_tv(id: String, name: String, addr: String) {
+    let _ = std::thread::Builder::new()
+        .name("koan-airplay".into())
+        .spawn(move || {
+            let Some(tv) = crate::remote::airplay::record(&addr, &name) else {
+                log::info!("airplay: {name}: no AirPlay announcement from {addr}");
+                return;
+            };
+            log::info!(
+                "airplay: {name} is {} on {} ({})",
+                tv.name,
+                tv.host,
+                tv.mac.as_deref().unwrap_or("no MAC")
+            );
+            with(|s| {
+                if let Some(n) = s.seen.iter_mut().find(|n| n.id == id) {
+                    n.tv = Some(tv);
+                    s.save();
+                }
+            });
+        });
+}
+
+/// The Apple TV `id` is, as its AirPlay announcement had it while awake.
+fn tv_of(id: &str) -> Option<crate::remote::airplay::Tv> {
+    with(|s| {
+        s.seen
+            .iter()
+            .find(|n| n.id == id)
+            .and_then(|n| n.tv.clone())
+    })
 }
 
 pub fn nearby_state(id: &str, state: LinkState) {
@@ -867,11 +923,21 @@ const NETWORK_RECENT: i64 = 60;
 const NETWORK_WAIT: Duration = Duration::from_secs(3);
 const PUSH_WAIT: Duration = Duration::from_secs(6);
 const NOTIFICATION_WAIT: Duration = Duration::from_secs(45);
+/// How long an Apple TV is knocked on before the push goes anyway.
+const TV_KNOCK: Duration = Duration::from_secs(20);
+/// After the box answers, how long koan there has to be heard from on the
+/// network before the push: it may only have been asleep with the box.
+const TV_WAIT: Duration = Duration::from_secs(2);
 
 /// The stages to try, each with how long to wait on it. A device that
-/// nothing can wake through the server is only tried on the network.
-fn wake_plan(seen_nearby_recently: bool, wakeable: bool) -> Vec<(Waking, Duration)> {
+/// nothing can wake through the server is only tried on the network. An
+/// Apple TV with an AirPlay announcement on record is woken first, so the
+/// box is up for what follows.
+fn wake_plan(tv: bool, seen_nearby_recently: bool, wakeable: bool) -> Vec<(Waking, Duration)> {
     let mut plan = Vec::new();
+    if tv {
+        plan.push((Waking::Tv, TV_WAIT));
+    }
     if seen_nearby_recently {
         plan.push((Waking::Network, NETWORK_WAIT));
     }
@@ -998,7 +1064,8 @@ pub fn wake(id: &str) {
     };
     let now = chrono::Utc::now().timestamp();
     // A stranger on the network has nothing to answer a push with.
-    let plan = wake_plan(recently_on_network(&id, now), device.wakeable);
+    let tv = (device.platform == "tvos").then(|| tv_of(&id)).flatten();
+    let plan = wake_plan(tv.is_some(), recently_on_network(&id, now), device.wakeable);
     if plan.is_empty() {
         return;
     }
@@ -1013,6 +1080,7 @@ pub fn wake(id: &str) {
             let started = Instant::now();
             let ms = || started.elapsed().as_millis();
             let current = || wake_is_current(generation);
+            let mut box_silent = false;
             let ended = run_wake(
                 &plan,
                 current,
@@ -1020,6 +1088,18 @@ pub fn wake(id: &str) {
                     log::info!("wake: {name}: {stage:?} at +{}ms", ms());
                     changed(|s| s.waking.insert(id.clone(), stage.clone()));
                     match stage {
+                        Waking::Tv => {
+                            if let Some(tv) = &tv {
+                                let awake = crate::remote::airplay::wake(tv, TV_KNOCK, || {
+                                    !current() || reachable(&id)
+                                });
+                                box_silent = !awake && current() && !reachable(&id);
+                                // Awake, koan there may answer the network
+                                // before any push.
+                                crate::remote::nearby::dial_now();
+                            }
+                            Ok(())
+                        }
                         Waking::Network => {
                             crate::remote::nearby::dial_now();
                             Ok(())
@@ -1052,6 +1132,12 @@ pub fn wake(id: &str) {
                     true
                 },
             );
+            let ended = match ended {
+                Ended::Failed(_) if box_silent => Ended::Failed(format!(
+                    "Couldn't wake {name}: the Apple TV did not answer on this network."
+                )),
+                ended => ended,
+            };
             match &ended {
                 Ended::Reached(stage) => {
                     log::info!("wake: {name}: reached at +{}ms, after {stage:?}", ms());
@@ -2011,7 +2097,7 @@ mod tests {
     /// Run a wake with a device that answers in stage `answers_in`, if any:
     /// the stages started, and how it ended.
     fn walk(recent: bool, answers_in: Option<Waking>) -> (Vec<Waking>, Ended) {
-        let plan = wake_plan(recent, true);
+        let plan = wake_plan(false, recent, true);
         let mut started = Vec::new();
         let current = std::cell::RefCell::new(None);
         let ended = run_wake(
@@ -2034,14 +2120,62 @@ mod tests {
         let (tried, _) = walk(false, None);
         assert_eq!(tried, [Waking::Push, Waking::Notification]);
         assert_eq!(
-            wake_plan(true, false)
+            wake_plan(false, true, false)
                 .iter()
                 .map(|(w, _)| w.clone())
                 .collect::<Vec<_>>(),
             [Waking::Network],
             "a stranger is only ever tried on the network"
         );
-        assert!(wake_plan(false, false).is_empty());
+        assert!(wake_plan(false, false, false).is_empty());
+    }
+
+    #[test]
+    fn an_apple_tv_on_record_is_woken_before_the_push() {
+        let stages =
+            |plan: Vec<(Waking, Duration)>| plan.into_iter().map(|(w, _)| w).collect::<Vec<_>>();
+        assert_eq!(
+            stages(wake_plan(true, false, true)),
+            [Waking::Tv, Waking::Push, Waking::Notification]
+        );
+        assert_eq!(
+            stages(wake_plan(true, true, true)),
+            [
+                Waking::Tv,
+                Waking::Network,
+                Waking::Push,
+                Waking::Notification
+            ]
+        );
+    }
+
+    #[test]
+    fn an_apple_tv_met_on_the_network_keeps_its_airplay_record() {
+        with(|s| *s = Store::default());
+        // Named so that no TV on the network running the tests matches it.
+        let tv = crate::remote::airplay::Tv {
+            name: "koan test TV".into(),
+            host: "koan-test-tv.local.".into(),
+            mac: Some("AA:BB:CC:DD:EE:FF".into()),
+            ip: Some("10.0.0.4".into()),
+        };
+        let hello = |id: &str| LinkHello {
+            id: id.into(),
+            name: "koan test TV".into(),
+            platform: "tvos".into(),
+            library: None,
+            acks: true,
+            nonce: None,
+        };
+        nearby_hello(hello("tv"), "koan-test-tv.local:50000");
+        with(|s| s.seen[0].tv = Some(tv.clone()));
+        // Met again on the same host, on another port: the record stands.
+        nearby_hello(hello("tv"), "KOAN-test-tv.local:50001");
+        assert_eq!(tv_of("tv"), Some(tv));
+        // On another host, it is not that TV's any more.
+        nearby_hello(hello("tv"), "koan-test-other.local:50001");
+        assert_eq!(tv_of("tv"), None);
+        with(|s| *s = Store::default());
     }
 
     #[test]
@@ -2063,14 +2197,14 @@ mod tests {
         let (tried, ended) = walk(false, None);
         assert_eq!(tried.last(), Some(&Waking::Notification));
         assert!(matches!(ended, Ended::Failed(why) if why.contains("notification")));
-        let plan = wake_plan(false, true);
+        let plan = wake_plan(false, false, true);
         assert!(plan[0].1 <= Duration::from_secs(8) && plan[0].1 >= Duration::from_secs(5));
     }
 
     #[test]
     fn a_stage_that_cannot_start_ends_the_wake_with_why() {
         let ended = run_wake(
-            &wake_plan(false, true),
+            &wake_plan(false, false, true),
             || true,
             |_| Err("Not connected".into()),
             |_| true,
@@ -2085,7 +2219,7 @@ mod tests {
         let live = std::cell::Cell::new(true);
         let mut tried = Vec::new();
         let ended = run_wake(
-            &wake_plan(true, true),
+            &wake_plan(false, true, true),
             || live.get(),
             |stage| {
                 tried.push(stage.clone());
@@ -2199,7 +2333,7 @@ mod tests {
         let listed = list().into_iter().find(|d| d.id == "stranger").unwrap();
         assert!(listed.asleep && listed.wakeable);
         assert!(choosable("stranger").is_ok());
-        let plan = wake_plan(false, listed.wakeable);
+        let plan = wake_plan(false, false, listed.wakeable);
         assert_eq!(plan[0].0, Waking::Push, "asks the server");
         with(|s| *s = Store::default());
     }

@@ -97,6 +97,7 @@ private struct DeviceRow: View {
         }
         if let stage = device.waking {
             return switch stage {
+            case "tv": "Waking… waking the Apple TV"
             case "network": "Waking… trying it on this network"
             case "push": "Waking… sent a wake through your server"
             default: "Waking… tap the notification on \(device.name)"
