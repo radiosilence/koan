@@ -17,7 +17,9 @@
 //! also asked to send one (`kDNSServiceFlagsWakeOnResolve`), which it does
 //! itself, from the MAC address the AirPlay announcement carries.
 
-use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+#[cfg(target_vendor = "apple")]
+use std::net::ToSocketAddrs;
+use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 
 /// The services an Apple TV announces that are knocked on to wake it.
