@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.60.9
+
+### Added
+
+- **Play on wakes a sleeping Apple TV.** A phone or Mac records the TV's AirPlay announcement while it is awake, and opens a connection to it when kōan there is asleep, so the Bonjour Sleep Proxy wakes the box before the server's push wakes kōan.
+
+### Fixed
+
+- **Opening EQ pages no longer slows the next track's start.** Fits from a measurement are kept least recently used first, and those the playing chain uses are kept apart from the ones EQ pages make for their previews, so browsing targets never forces the player to fit its correction again before playback starts.
+- **Lyrics no longer show another song's words.** The lyrics panel shows only lyrics fetched for the track that is playing, so a quick track change can no longer leave the previous song's lyrics on screen. When LRCLIB has no exact match, a search result is used only if its title (ignoring featured artists) and length (within two seconds) match the track; otherwise the panel shows no lyrics.
+
 ## 0.60.8
 
 ### Fixed
