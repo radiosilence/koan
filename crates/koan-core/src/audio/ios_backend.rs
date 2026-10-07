@@ -312,6 +312,7 @@ mod tests {
         // The DAC pulled out: the speaker is asked for the same rate, and
         // the player hears the one it runs at. Plugged back in, the DAC is
         // switched to the track's rate again.
+        backend.set_device_sample_rate(&device, 44100.0).unwrap();
         dac.unplugged.store(true, Ordering::Relaxed);
         follow_route();
         assert_eq!(f64::from_bits(heard.load(Ordering::Relaxed)), 48000.0);

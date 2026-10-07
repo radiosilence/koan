@@ -5417,6 +5417,7 @@ impl KoanEngine {
             | PlayerCommand::SetOutputDevice(_)
             | PlayerCommand::ClearOutputDevice
             | PlayerCommand::ReloadDsp
+            | PlayerCommand::RouteChanged
             | PlayerCommand::RestartOutput
             | PlayerCommand::UseRenderer(_)
             | PlayerCommand::ResumeRenderer(_)
