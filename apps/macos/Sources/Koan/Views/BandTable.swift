@@ -64,6 +64,7 @@ struct BandTable: View {
                         #else
                         NavigationLink {
                             CurvePage(dsp: dsp, profile: profile, index: index)
+                                .koanPushedPage()
                         } label: {
                             BandRow(band: band)
                         }
@@ -263,10 +264,6 @@ struct CurvePage: View {
         }
         .navigationTitle(KoanTheme.label("Graphic EQ"))
         .task(id: dsp.stamp) { detail = await dsp.detail(profile) }
-        #if os(iOS)
-        .koanBackButton()
-        .koanHidesSystemTabBar()
-        #endif
         .confirmationDialog("Reset \(profile) to its file?", isPresented: $confirmingReset, titleVisibility: .visible) {
             Button("Reset", role: .destructive) { dsp.revert(profile) }
         }

@@ -1205,6 +1205,10 @@ pub fn set_curve(name: &str, index: usize, points: &[(f64, f64)]) -> Result<(), 
     if points.is_empty() {
         return Err("A curve needs a point".into());
     }
+    let most = crate::config::dsp_bounds::GRAPHIC_POINTS;
+    if points.len() > most {
+        return Err(format!("A curve has at most {most} points"));
+    }
     let mut points = points
         .iter()
         .map(|&(hz, db)| Ok((clamp(hz, &BAND_HZ)?, clamp(db, &BAND_DB)?)))
@@ -3280,6 +3284,10 @@ mod tests {
             })
         );
         assert!(set_curve("Mine", 0, &[]).is_err());
+        let most = crate::config::dsp_bounds::GRAPHIC_POINTS;
+        let many: Vec<(f64, f64)> = (0..=most).map(|i| (20.0 + i as f64, 0.0)).collect();
+        assert!(set_curve("Mine", 0, &many).is_err(), "too many points");
+        assert!(set_curve("Mine", 0, &many[..most]).is_ok());
         assert!(set_curve("Mine", 0, &[(f64::NAN, 0.0)]).is_err());
         assert!(set_curve("Mine", 1, &[(100.0, 0.0)]).is_err());
         assert!(
