@@ -1501,6 +1501,11 @@ impl Config {
     where
         F: FnOnce(&mut Config),
     {
+        // Each write reads both files and writes them back whole, so two at
+        // once would lose whichever finished first: the player's volume and a
+        // setting changed in the app, say.
+        static ONE_AT_A_TIME: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+        let _one = ONE_AT_A_TIME.lock();
         let before = Self::from_files()?;
         let mut after = before.clone();
         mutate(&mut after);
@@ -1621,16 +1626,24 @@ fn write_document(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, &contents)?;
-    #[cfg(target_os = "tvos")]
-    kept::written(path, contents.as_bytes());
+    // Written beside the file and renamed over it, so a read never sees it
+    // half written. A symlink, as dotfiles keep, is followed rather than
+    // replaced.
+    let target = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut temp = target.clone().into_os_string();
+    temp.push(".tmp");
+    let temp = PathBuf::from(temp);
+    fs::write(&temp, &contents)?;
     #[cfg(unix)]
     if secret {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        fs::set_permissions(&temp, fs::Permissions::from_mode(0o600))?;
     }
     #[cfg(not(unix))]
     let _ = secret;
+    fs::rename(&temp, &target)?;
+    #[cfg(target_os = "tvos")]
+    kept::written(path, contents.as_bytes());
     Ok(())
 }
 
