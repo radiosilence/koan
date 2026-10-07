@@ -72,15 +72,15 @@ struct TabShell: View {
         TabView(selection: tab) {
             #if os(tvOS)
             // The room's first page: what is playing, at the size a sofa reads.
-            Tab("Now Playing", systemImage: "play.circle", value: TabID.nowPlaying) {
+            Tab(Self.title("Now Playing"), systemImage: "play.circle", value: TabID.nowPlaying) {
                 NowPlayingPage()
             }
             #endif
-            Tab("Queue", systemImage: Icon.queueSection, value: TabID.queue) {
+            Tab(Self.title("Queue"), systemImage: Icon.queueSection, value: TabID.queue) {
                 stack(.queue) { QueueView() }
             }
             #if os(tvOS)
-            Tab("Library", systemImage: "music.note.house", value: TabID.library) {
+            Tab(Self.title("Library"), systemImage: "music.note.house", value: TabID.library) {
                 stack(.library) { LibraryTab() }
             }
             #else
@@ -130,12 +130,18 @@ struct TabShell: View {
                 stack(.settings) { SettingsView() }
             }
             #endif
+            #if os(tvOS)
+            Tab(Self.title("Search"), systemImage: Icon.search, value: TabID.search, role: .search) {
+                stack(.search) { IOSSearchView() }
+            }
+            #else
             Tab(value: TabID.search, role: .search) {
                 stack(.search) { IOSSearchView() }
             }
+            #endif
             // Last on a television, where it is visited least.
             #if os(tvOS)
-            Tab("Settings", systemImage: "gearshape", value: TabID.settings) {
+            Tab(Self.title("Settings"), systemImage: "gearshape", value: TabID.settings) {
                 stack(.settings) { SettingsView() }
             }
             #endif
@@ -401,6 +407,16 @@ struct TabShell: View {
         paths[selection] = nil
         nav.forget(.playlist(id))
         nav.show(.queue)
+    }
+
+    /// A tab's title: lowercase in the theme on a television, whose tab bar
+    /// is the one the theme keeps.
+    private static func title(_ text: String) -> String {
+        #if os(tvOS)
+        KoanTheme.label(text)
+        #else
+        text
+        #endif
     }
 
     /// Whether the sidebar is the navigation: an iPad with room for it.

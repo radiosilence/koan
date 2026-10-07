@@ -51,6 +51,27 @@ enum KoanTheme {
         bar.compactAppearance = themed(rest.copy())
         bar.scrollEdgeAppearance = themed(edge)
         bar.compactScrollEdgeAppearance = themed(edge.copy())
+        #elseif os(tvOS)
+        // The tabs across the top and each page's title are UIKit's: the
+        // theme's type, the tabs on no ground. The tab titles are lowercased
+        // where the tabs are made (`label`).
+        let tabs = UITabBarAppearance()
+        tabs.configureWithTransparentBackground()
+        for item in [tabs.stackedLayoutAppearance, tabs.inlineLayoutAppearance, tabs.compactInlineLayoutAppearance] {
+            item.normal.titleTextAttributes = [.font: UIFont.koan(.body), .foregroundColor: UIColor.koanMuted]
+            item.selected.titleTextAttributes = [.font: UIFont.koan(.body), .foregroundColor: UIColor.koanInk]
+            item.focused.titleTextAttributes = [.font: UIFont.koan(.body)]
+        }
+        UITabBar.appearance().standardAppearance = tabs
+        // A television's navigation bar takes no appearance: setting one is
+        // an assertion in UIKit.
+        UINavigationBar.appearance().titleTextAttributes = [
+            .font: UIFont.koan(.title), .foregroundColor: UIColor.koanStrong,
+        ]
+        // The search page's field, typed into from the keyboard across the top.
+        UITextField.appearance(whenContainedInInstancesOf: [UISearchBar.self]).defaultTextAttributes = [
+            .font: UIFont.koan(.title), .foregroundColor: UIColor.koanInk,
+        ]
         #endif
     }
 
@@ -249,7 +270,17 @@ private struct KoanLabelStyle: LabelStyle {
         switch (icons, style) {
         case (false, _): Label(configuration).labelStyle(.titleOnly)
         case (true, .compact): Label(configuration).labelStyle(.iconOnly)
+        #if os(tvOS)
+        // The symbols are of different widths; at television size a label's
+        // own spacing lets the wide ones touch their titles.
+        case (true, .full):
+            HStack(spacing: 24) {
+                configuration.icon.frame(width: 56)
+                configuration.title
+            }
+        #else
         case (true, .full): Label(configuration).labelStyle(.titleAndIcon)
+        #endif
         }
     }
 }
@@ -553,6 +584,9 @@ extension EnvironmentValues {
     /// How tall the theme's own tab bar and mini player stand over a phone's
     /// pages, as laid out; zero where the platform's bar is drawn.
     @Entry var koanBarHeight: CGFloat = 0
+    /// Rows in a television's form, whose text starts on the headings' edge
+    /// with the focus ring out in the margin.
+    @Entry var koanRowsBleed = false
 }
 
 // MARK: - Type
@@ -684,7 +718,7 @@ extension KoanTheme {
     }
 }
 
-#if os(iOS)
+#if !os(macOS)
 extension UIFont {
     /// A role of the theme's type scale, for UIKit's own drawing (navigation
     /// titles), scaled with Dynamic Type as the role's text style is.
@@ -700,7 +734,12 @@ extension UIFont {
             ? UIFont.monospacedSystemFont(ofSize: role.size, weight: weight)
             : UIFont(descriptor: wanted, size: role.size)
         let style: UIFont.TextStyle = switch role.scalesWith {
+        #if os(tvOS)
+        // tvOS has no Large Title style; Title 1 is its largest.
+        case .largeTitle: .title1
+        #else
         case .largeTitle: .largeTitle
+        #endif
         case .title: .title1
         case .title2: .title2
         case .callout: .callout
@@ -1156,18 +1195,13 @@ private struct KoanButtonBody: View {
 private struct KoanToggleRole: ViewModifier {
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
-            #if os(tvOS)
-            content
-            #else
             content.toggleStyle(KoanToggleStyle())
-            #endif
         } else {
             content
         }
     }
 }
 
-#if !os(tvOS)
 #if os(macOS)
 /// A form row's label in a column of its own, so the fields beside a run of
 /// labels start at one edge. The label is a toggle's: `body`, `ink`,
@@ -1191,8 +1225,8 @@ struct KoanLabeledContentStyle: LabeledContentStyle {
 }
 #endif
 
-#if os(iOS)
-/// A form row on a phone: the label leading in `body` and `ink`, as a toggle's
+#if !os(macOS)
+/// A form row on a phone or a television: the label leading in `body` and `ink`, as a toggle's
 /// is, and the value trailing in `control` and `muted`. A field or control in
 /// the value keeps its own type. Without this a row's label takes whatever
 /// size the system's form gives a row beside a field.
@@ -1212,14 +1246,21 @@ struct KoanRowLabelStyle: LabeledContentStyle {
 #endif
 
 /// A square box: a `muted` outline off, filled with the accent and checked in
-/// `bg` on.
+/// `bg` on. On a television the row is the button, ringed when focused.
 struct KoanToggleStyle: ToggleStyle {
     @Environment(\.isEnabled) private var enabled
+    @Environment(\.koanAccent) private var accent
     /// A finger's target on a phone; a pointer needs no more than the row.
     #if os(macOS)
     private static let hit: CGFloat = 24
     #else
     private static let hit: CGFloat = 44
+    #endif
+    /// The box, at the distance the device is read from.
+    #if os(tvOS)
+    private static let box: CGFloat = 26
+    #else
+    private static let box: CGFloat = 14
     #endif
 
     func makeBody(configuration: Configuration) -> some View {
@@ -1235,27 +1276,35 @@ struct KoanToggleStyle: ToggleStyle {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 ZStack {
                     if configuration.isOn {
+                        #if os(tvOS)
+                        // The accent's own colour: a television sets no tint.
+                        Rectangle().fill(accent.color)
+                        #else
                         Rectangle().fill(.tint)
+                        #endif
                         Image(systemName: "checkmark")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: Self.box * 0.64, weight: .bold))
                             .foregroundStyle(Color.koanBg)
                     } else {
                         Rectangle().strokeBorder(Color.koanMuted, lineWidth: KoanTheme.hairline)
                     }
                 }
-                .frame(width: 14, height: 14)
+                .frame(width: Self.box, height: Self.box)
             }
             .frame(minHeight: Self.hit)
             .contentShape(Rectangle())
         }
+        #if os(tvOS)
+        .buttonStyle(TelevisionRow())
+        #else
         .buttonStyle(.plain)
         .opacity(enabled ? 1 : 0.4)
+        #endif
         .koanAnimation(KoanTheme.Motion.fast, value: configuration.isOn)
         .accessibilityValue(configuration.isOn ? "On" : "Off")
         .accessibilityAddTraits(.isToggle)
     }
 }
-#endif
 
 /// A segmented control as the theme draws it: options as text, `control` type,
 /// 18 apart; the chosen one in `ink`, underlined in the accent. A view of its
@@ -1306,7 +1355,9 @@ struct KoanSegmentedPicker<Value: Hashable>: View {
 /// UIKit's picker draw their own value in the system face, on the Mac in a
 /// rounded bezel, whatever the environment says. Options the app writes are
 /// lowercased; `keepsCase` keeps options that are data, such as device and
-/// preset names. The system picker, through `.koanControl()`, everywhere else.
+/// preset names. On a television in the theme, a row naming the choice that
+/// opens the options as a sheet of rows: the system's menu is a popover of
+/// grey pills. The system picker, through `.koanControl()`, everywhere else.
 struct KoanPicker<Value: Hashable>: View {
     let title: String
     @Binding var selection: Value
@@ -1322,7 +1373,11 @@ struct KoanPicker<Value: Hashable>: View {
 
     var body: some View {
         #if os(tvOS)
-        picker
+        if KoanTheme.isOn {
+            TelevisionPicker(title: title, selection: $selection, options: options.map { (shown($0.label), $0.value) })
+        } else {
+            picker
+        }
         #else
         if KoanTheme.isOn {
             LabeledContent {
@@ -1367,6 +1422,59 @@ struct KoanPicker<Value: Hashable>: View {
         .koanControl()
     }
 }
+
+#if os(tvOS)
+private struct TelevisionPicker<Value: Hashable>: View {
+    let title: String
+    @Binding var selection: Value
+    let options: [(label: String, value: Value)]
+    @State private var open = false
+
+    var body: some View {
+        Button { open = true } label: {
+            HStack(spacing: KoanTheme.Space.m) {
+                Text(title)
+                Spacer(minLength: 0)
+                Text(options.first { $0.value == selection }?.label ?? "")
+                    .font(.koan(.control))
+                    .foregroundStyle(Color.koanMuted)
+            }
+        }
+        .buttonStyle(TelevisionRow())
+        .accessibilityValue(options.first { $0.value == selection }?.label ?? "")
+        .televisionPanel(isPresented: $open, title: title) {
+            TelevisionChoices(selection: $selection, options: options) { open = false }
+        }
+    }
+}
+
+/// A choice of options as the theme's rows, the chosen one ticked: what a
+/// picker or a menu of choices opens on a television.
+struct TelevisionChoices<Value: Hashable>: View {
+    @Binding var selection: Value
+    let options: [(label: String, value: Value)]
+    let chosen: () -> Void
+
+    var body: some View {
+        ForEach(options, id: \.value) { option in
+            Button {
+                selection = option.value
+                chosen()
+            } label: {
+                HStack(spacing: KoanTheme.Space.m) {
+                    Text(option.label)
+                    Spacer(minLength: 0)
+                    if option.value == selection {
+                        KoanIcon("checkmark")
+                    }
+                }
+            }
+            .buttonStyle(TelevisionRow())
+            .accessibilityAddTraits(option.value == selection ? .isSelected : [])
+        }
+    }
+}
+#endif
 
 #if !os(tvOS)
 /// A slider as the theme draws it: a 1-point `rule` track, a 3-point accent
@@ -1677,29 +1785,30 @@ private struct KoanFocusRole: ViewModifier {
 }
 
 extension View {
-    /// The ring tvOS focus draws in the theme: the accent, outside the
-    /// control. No lift, no shadow, no glass.
-    fileprivate func koanFocusRing(_ on: Bool) -> some View {
-        modifier(KoanFocusRing(on: on))
+    /// The ring tvOS focus draws in the theme: 2 points of the accent, `gap`
+    /// outside the control, or on its edge for a row that runs the width of
+    /// the page. No lift, no shadow, no glass.
+    func koanFocusRing(_ on: Bool, gap: CGFloat? = nil) -> some View {
+        modifier(KoanFocusRing(on: on, gap: gap))
     }
 }
 
 /// The accent's own colour rather than `.tint`, which a television never
-/// sets: the system's default there is white on white platters. Heavier
-/// than a pointer's ring, to be found from across the room.
+/// sets: the system's default there is white on white platters.
 private struct KoanFocusRing: ViewModifier {
     let on: Bool
+    let gap: CGFloat?
     @Environment(\.koanAccent) private var accent
 
     func body(content: Content) -> some View {
         #if os(tvOS)
-        let (width, gap): (CGFloat, CGFloat) = (4, 8)
+        let standoff = gap ?? 8
         #else
-        let (width, gap): (CGFloat, CGFloat) = (2, 4)
+        let standoff = gap ?? 4
         #endif
         content.overlay {
             if on {
-                Rectangle().strokeBorder(accent.color, lineWidth: width).padding(-gap)
+                Rectangle().strokeBorder(accent.color, lineWidth: 2).padding(-standoff)
             }
         }
     }
@@ -1796,6 +1905,8 @@ private struct KoanFormRole: ViewModifier {
             #elseif os(tvOS)
             // A television's form has no ground or separators to take over.
             content
+                .font(.koan(.body))
+                .foregroundStyle(Color.koanInk)
             #else
             // Rows give up their ground through `washedRow`, on the content.
             content
@@ -1813,7 +1924,7 @@ private struct KoanListRole: ViewModifier {
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
             #if os(tvOS)
-            content
+            content.font(.koan(.body))
             #else
             // Rows give up their ground through `washedRow`, on the content.
             content
@@ -1957,7 +2068,9 @@ private struct KoanSheetRole: ViewModifier {
                 .background(Color.koanBg)
                 .scrollContentBackground(.hidden)
                 #elseif os(tvOS)
-                .background(Color.koanBg)
+                // Only where it is presented: a settings page takes this too,
+                // and its ground is the wash.
+                .presentationBackground(Color.koanBg)
                 #else
                 .presentationBackground(Color.koanBg)
                 .scrollContentBackground(.hidden)
@@ -2064,7 +2177,27 @@ struct KoanForm<Content: View>: View {
             Form { content }.koanForm()
         }
         #else
-        Form { content }.koanForm()
+        // A television's `Form` draws every row on a grey platter and the
+        // focused one white, whatever it is told; in the theme the sections
+        // stack on the ground, as on the Mac, and each row is a control of
+        // the theme's.
+        if KoanTheme.isOn {
+            ScrollView {
+                VStack(alignment: .leading, spacing: KoanTheme.Space.l) {
+                    content
+                }
+                .padding(.vertical, KoanTheme.Space.xl)
+                .padding(.horizontal, 20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .environment(\.koanRowsBleed, true)
+            .koanForm()
+            .toggleStyle(KoanToggleStyle())
+            .buttonStyle(TelevisionRow())
+            .labeledContentStyle(KoanRowLabelStyle())
+        } else {
+            Form { content }.koanForm()
+        }
         #endif
     }
 }
@@ -2100,7 +2233,8 @@ struct KoanUnavailable: View {
                 }
             }
             .padding(KoanTheme.Space.xxl)
-            .frame(maxWidth: 420)
+            // Room for a title on one line, at the size the device is read at.
+            .frame(maxWidth: 420 * KoanType.body.size / 15)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ContentUnavailableView(title, systemImage: icon, description: detail.map(Text.init))
