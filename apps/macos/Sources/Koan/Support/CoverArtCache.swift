@@ -113,6 +113,12 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         return memory.object(forKey: Self.key(source, size) as NSString)
     }
 
+    /// Whether the record has been looked at and has no art. `false` is also
+    /// a record not looked at yet.
+    func isAbsent(_ source: AlbumArtwork.Source) -> Bool {
+        locked { absent.contains(Self.key(source)) }
+    }
+
     private func locked<T>(_ body: () -> T) -> T {
         bookkeeping.lock()
         defer { bookkeeping.unlock() }
@@ -182,9 +188,11 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// The colour if it has already been worked out.
     ///
     /// For a caller that has to answer in the frame it is asked — nothing is
-    /// fetched and nothing is decoded. `nil` means "not yet", never "no colour".
-    func cachedColour(for source: AlbumArtwork.Source) -> Color? {
-        locked { colours[Self.key(source)] } ?? nil
+    /// fetched and nothing is decoded. The outer `nil` means "not yet"; the
+    /// inner one a record known to have no art, or art with no colour.
+    func cachedColour(for source: AlbumArtwork.Source) -> Color?? {
+        let key = Self.key(source)
+        return locked { absent.contains(key) ? .some(nil) : colours[key] }
     }
 
     /// Remembered per record: the wash re-asks every time you navigate, and the
