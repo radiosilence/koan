@@ -678,7 +678,7 @@ struct StagePicker: View {
                         .koanButton(.standard)
                     Button("Find in AutoEQ…") { add(.autoEq) }
                         .koanButton(.standard)
-                    Button("Use a Measurement or squig.link…") { add(.measuring) }
+                    Button("Find a Measurement…") { add(.measuring) }
                         .koanButton(.standard)
                 } header: {
                     KoanSectionHeader("Add…")

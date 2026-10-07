@@ -406,11 +406,16 @@ pub fn cmd_dsp_squig(
                 .rig
                 .map(|r| format!(" · {r} rig"))
                 .unwrap_or_default();
+            let locked = if h.site.locked.is_some() {
+                " · cannot be fetched"
+            } else {
+                ""
+            };
             println!(
                 "{}  {}  {}",
                 format!("{:>3}", i + 1).dimmed(),
                 h.name().bold(),
-                format!("{}{rig}", h.site.label()).dimmed()
+                format!("{}{rig}{locked}", h.site.label()).dimmed()
             );
         }
         return;

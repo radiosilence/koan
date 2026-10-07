@@ -32,6 +32,10 @@ struct MeasurementFlow: View {
     @State private var searchNote: String?
     /// The result being fetched.
     @State private var picking: SquigHit?
+    /// The result the measurement came from.
+    @State private var fetched: SquigHit?
+    /// Why the last result tapped could not be fetched, shown under it.
+    @State private var fetchProblem: (hit: SquigHit, message: String)?
     /// Where the measurement came from, credited on the correction.
     @State private var source: String?
 
@@ -47,7 +51,7 @@ struct MeasurementFlow: View {
 
         var title: String {
             switch self {
-            case .learn: "Use a measurement"
+            case .learn: "Find a measurement"
             case .file: "Your measurement"
             case .ear: "In-ear or over-ear"
             case .target: "Choose a target"
@@ -75,26 +79,36 @@ struct MeasurementFlow: View {
             }
             .navigationTitle(KoanTheme.label(step.title))
             .toolbar {
+                // Cancel and Back as one item of text: two items share one
+                // pane of glass on iOS, too narrow for both words.
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    if step == .review {
-                        Button("Save") { save() }
-                            .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || saving)
-                    } else {
-                        Button("Next") { Task { await next() } }
-                            .disabled(!canGoOn)
-                    }
-                }
-                if step != .learn {
-                    ToolbarItem(placement: .navigation) {
-                        Button("Back") {
-                            problem = nil
-                            step = Step(rawValue: step.rawValue - 1) ?? .learn
+                    HStack(spacing: 16) {
+                        Button("Cancel") { dismiss() }
+                        if step != .learn {
+                            Button("Back") {
+                                problem = nil
+                                step = Step(rawValue: step.rawValue - 1) ?? .learn
+                            }
                         }
                     }
+                    .koanButtons(.text)
+                    .fixedSize()
                 }
+                .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
+                ToolbarItem(placement: .confirmationAction) {
+                    Group {
+                        if step == .review {
+                            Button("Save") { save() }
+                                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || saving)
+                        } else {
+                            Button("Next") { Task { await next() } }
+                                .disabled(!canGoOn)
+                        }
+                    }
+                    .koanButtons(.text)
+                    .fixedSize()
+                }
+                .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
             }
             .fileImporter(
                 isPresented: $choosing,
@@ -140,7 +154,7 @@ struct MeasurementFlow: View {
     private var fileStep: some View {
         Group {
             Section {
-                TextField("Headphones", text: $squigQuery)
+                TextField("Search…", text: $squigQuery)
                     .task(id: squigQuery) { await search() }
                 if searching, hits.isEmpty {
                     HStack(spacing: 8) {
@@ -151,22 +165,44 @@ struct MeasurementFlow: View {
                     Text(searchNote).koanText(.meta, .muted)
                 }
                 ForEach(hits.prefix(20), id: \.self) { hit in
-                    Button { pick(hit) } label: {
-                        HStack {
+                    if hit.locked != nil, let site = URL(string: hit.site) {
+                        // Fetching would only fail: the site is offered instead.
+                        Link(destination: site) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(hit.name)
-                                Text([hit.siteLabel, hit.rig.map { "\($0) rig" }].compactMap { $0 }.joined(separator: " · "))
+                                Text(details(hit) + " · opens in a browser")
                                     .koanText(.fine, .muted)
                             }
-                            Spacer()
-                            if picking == hit {
-                                ProgressView().controlSize(.small)
-                            }
+                            .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                            .contentShape(Rectangle())
                         }
-                        .contentShape(Rectangle())
+                        .buttonStyle(.plain)
+                    } else {
+                        Button { pick(hit) } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(hit.name)
+                                    Text(details(hit)).koanText(.fine, .muted)
+                                    if let fetchProblem, fetchProblem.hit == hit {
+                                        Text(fetchProblem.message).koanText(.fine, .bad)
+                                    }
+                                }
+                                Spacer()
+                                if picking == hit {
+                                    ProgressView().controlSize(.small)
+                                } else if fetched == hit {
+                                    Image(systemName: "checkmark")
+                                        .foregroundStyle(KoanTheme.style(.accent, system: .tint))
+                                }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(picking != nil)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(picking != nil)
+                }
+                if let why = hits.prefix(20).first(where: { $0.locked != nil })?.locked {
+                    Text(why + ".").koanText(.fine, .muted)
                 }
             } header: {
                 Text("Find it on squig.link")
@@ -318,21 +354,29 @@ struct MeasurementFlow: View {
         searching = false
     }
 
+    /// A result's site, and its rig where the site says.
+    private func details(_ hit: SquigHit) -> String {
+        [hit.siteLabel, hit.rig.map { "\($0) rig" }].compactMap { $0 }.joined(separator: " · ")
+    }
+
     /// Fetch `hit`'s measurement as the file: its name, its site credited,
-    /// and in-ear or over-ear where the site keeps one kind.
+    /// and in-ear or over-ear where the site keeps one kind. A failure is
+    /// said under the result, where the person is looking.
     private func pick(_ hit: SquigHit) {
         picking = hit
+        fetchProblem = nil
         Task {
             defer { picking = nil }
             do {
                 text = try await dsp.squigFetch(hit)
+                fetched = hit
                 file = "\(hit.name), \(hit.siteLabel)"
                 source = hit.source
                 problem = nil
                 if name.isEmpty { name = "\(hit.brand) \(hit.model)" }
                 if let inEar = hit.inEar { self.inEar = inEar }
             } catch {
-                problem = SettingsModel.describe(error)
+                fetchProblem = (hit, SettingsModel.describe(error))
             }
         }
     }

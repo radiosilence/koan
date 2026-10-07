@@ -21,33 +21,36 @@ use crate::config;
 /// A squig.link site.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Site {
-    /// Where its `data/` folder is.
+    /// Where its `data/` folder is, and its catalogue in it.
     pub base: &'static str,
     /// The rig, where the site says which.
     pub rig: Option<&'static str>,
     /// In-ear or over-ear, where the site keeps one kind.
     pub ear: Option<Ear>,
+    /// The folder under `base` its measurements are in.
+    pub measurements: &'static str,
+    /// How many samples it keeps of each side, as `<file> L1.txt` onwards;
+    /// 0 where each side is one file, `<file> L.txt`.
+    pub samples: u8,
+    /// Why its measurements cannot be fetched, where they cannot: its
+    /// catalogue is still searched, so a person learns it was measured there.
+    pub locked: Option<&'static str>,
 }
 
 /// The sites searched: each answers with a catalogue in the shared layout.
 pub const SITES: &[Site] = &[
     at("https://squig.link", None, None),
-    at("https://squig.link/headphones", None, Some(Ear::Over)),
-    at(
-        "https://graph.hangout.audio/iem/711",
-        Some("711"),
-        Some(Ear::In),
-    ),
-    at(
+    Site {
+        samples: 3,
+        ..at("https://squig.link/headphones", None, Some(Ear::Over))
+    },
+    hangout("https://graph.hangout.audio/iem/711", Some("711"), Ear::In),
+    hangout(
         "https://graph.hangout.audio/iem/5128",
         Some("5128"),
-        Some(Ear::In),
+        Ear::In,
     ),
-    at(
-        "https://graph.hangout.audio/headphones",
-        None,
-        Some(Ear::Over),
-    ),
+    hangout("https://graph.hangout.audio/headphones", None, Ear::Over),
     at("https://precog.squig.link", None, None),
     at("https://timmyv.squig.link", None, None),
     at("https://hbb.squig.link", None, None),
@@ -55,15 +58,40 @@ pub const SITES: &[Site] = &[
     at("https://tgx78.squig.link", None, None),
     at("https://bakkwatan.squig.link", None, None),
     at("https://jaytiss.squig.link", None, None),
-    at("https://doltonius.squig.link", None, None),
-    at("https://listener.squig.link", None, None),
+    // modernGraphTool keeps measurements apart from targets.
+    Site {
+        measurements: "data/phones",
+        ..at("https://doltonius.squig.link", None, None)
+    },
+    Site {
+        samples: 5,
+        ..at("https://listener.squig.link", None, None)
+    },
     at("https://pw.squig.link", None, None),
     at("https://kazi.squig.link", None, None),
     at("https://achoreviews.squig.link", None, None),
 ];
 
 const fn at(base: &'static str, rig: Option<&'static str>, ear: Option<Ear>) -> Site {
-    Site { base, rig, ear }
+    Site {
+        base,
+        rig,
+        ear,
+        measurements: "data",
+        samples: 0,
+        locked: None,
+    }
+}
+
+/// Crinacle's sites refuse measurement files to anything but their own
+/// pages, which decrypt them in the browser.
+const fn hangout(base: &'static str, rig: Option<&'static str>, ear: Ear) -> Site {
+    Site {
+        locked: Some(
+            "graph.hangout.audio does not let apps download its measurements; open it in a browser to view them",
+        ),
+        ..at(base, rig, Some(ear))
+    }
 }
 
 /// The site at `base`, where it is one searched.
@@ -128,8 +156,9 @@ const MEASUREMENT_CAP: u64 = 512 << 10;
 static READ: BySite<(SystemTime, Arc<Vec<Entry>>)> = Mutex::new(None);
 
 /// Every site's measurements whose name has each word of `query`, best
-/// first: the model named exactly, then the shortest names. A site that
-/// cannot be read is left out; an error only where none can be.
+/// first: the model named exactly, then the shortest names, and those that
+/// cannot be fetched last. A site that cannot be read is left out; an error
+/// only where none can be.
 pub fn search(query: &str, limit: usize) -> Result<Vec<Hit>, String> {
     let words = words(query);
     if words.is_empty() {
@@ -157,7 +186,10 @@ pub fn search(query: &str, limit: usize) -> Result<Vec<Hit>, String> {
                 continue;
             }
             let exact = words_of(&format!("{brand} {model}")) == words || words_of(model) == words;
-            let rank = if exact { 0 } else { 1_000 } + text.len() * 10 + variant.len();
+            let rank = if site.locked.is_some() { 100_000 } else { 0 }
+                + if exact { 0 } else { 1_000 }
+                + text.len() * 10
+                + variant.len();
             hits.push((
                 rank,
                 Hit {
@@ -176,29 +208,50 @@ pub fn search(query: &str, limit: usize) -> Result<Vec<Hit>, String> {
 
 /// The measurement `hit` names, its two channels averaged, as frequency and
 /// level text: what `profiles::read_measurement` takes. One channel where
-/// the site has only one.
+/// the site has only one. An error names the site and what went wrong.
 pub fn fetch(hit: &Hit) -> Result<String, String> {
-    let channel = |side: &str| -> Result<super::targets::Curve, String> {
-        let url = data_url(hit.site, &format!("{} {side}.txt", hit.file))?;
-        let resp = http()?
-            .get(url)
-            .send()
-            .map_err(|e| e.without_url().to_string())?;
-        if !resp.status().is_success() {
-            return Err(format!("{} answered {}", hit.site.label(), resp.status()));
+    if let Some(why) = hit.site.locked {
+        return Err(why.to_owned());
+    }
+    let client = http()?;
+    let files = |side: &str| -> Vec<String> {
+        if hit.site.samples == 0 {
+            vec![format!("{} {side}.txt", hit.file)]
+        } else {
+            (1..=hit.site.samples)
+                .map(|n| format!("{} {side}{n}.txt", hit.file))
+                .collect()
         }
-        let curve = super::targets::points(&body(resp, MEASUREMENT_CAP)?);
-        if curve.len() < 20 {
-            return Err(format!(
-                "{} has no measurement for {}",
-                hit.site.label(),
-                hit.name()
-            ));
-        }
-        Ok(curve)
     };
-    let (left, right) = (channel("L"), channel("R"));
-    let curve = match (left, right) {
+    let names: Vec<String> = files("L").into_iter().chain(files("R")).collect();
+    let read: Vec<Result<super::targets::Curve, String>> = std::thread::scope(|s| {
+        let reads: Vec<_> = names
+            .iter()
+            .map(|name| s.spawn(|| curve(&client, hit, name)))
+            .collect();
+        reads
+            .into_iter()
+            .map(|r| r.join().unwrap_or_else(|_| Err("the read failed".into())))
+            .collect()
+    });
+    let (left, right) = read.split_at(names.len() / 2);
+    let side = |reads: &[Result<super::targets::Curve, String>]| {
+        let curves: Vec<_> = reads.iter().filter_map(|r| r.as_ref().ok()).collect();
+        match curves.split_first() {
+            Some((first, rest)) => Ok(rest
+                .iter()
+                .enumerate()
+                .fold((*first).clone(), |mean, (i, c)| {
+                    average_weighted(&mean, c, i + 1)
+                })),
+            None => Err(reads
+                .iter()
+                .find_map(|r| r.as_ref().err())
+                .cloned()
+                .unwrap_or_default()),
+        }
+    };
+    let curve = match (side(left), side(right)) {
         (Ok(l), Ok(r)) => average(&l, &r),
         (Ok(one), Err(e)) | (Err(e), Ok(one)) => {
             log::info!("squig: {} on one side only: {e}", hit.name());
@@ -213,16 +266,54 @@ pub fn fetch(hit: &Hit) -> Result<String, String> {
     Ok(text)
 }
 
+/// One measurement file of `hit`'s, read as a curve.
+fn curve(
+    client: &reqwest::blocking::Client,
+    hit: &Hit,
+    name: &str,
+) -> Result<super::targets::Curve, String> {
+    let site = hit.site.label();
+    let resp = client
+        .get(measurement_url(hit.site, name)?)
+        .send()
+        .map_err(|e| format!("{site} could not be reached: {}", e.without_url()))?;
+    match resp.status() {
+        s if s.is_success() => {}
+        reqwest::StatusCode::NOT_FOUND => {
+            return Err(format!("{site} has no measurement file for {}", hit.name()));
+        }
+        s => return Err(format!("{site} refused the measurement ({s})")),
+    }
+    let curve =
+        super::targets::points(&body(resp, MEASUREMENT_CAP).map_err(|e| format!("{site}: {e}"))?);
+    if curve.len() < 20 {
+        return Err(format!(
+            "{site} answered with something that is not a measurement of {}",
+            hit.name()
+        ));
+    }
+    Ok(curve)
+}
+
+/// The mean of `n` curves averaged so far and one more, by amplitude.
+fn average_weighted(mean: &[(f64, f64)], next: &[(f64, f64)], n: usize) -> super::targets::Curve {
+    let amplitude = |db: f64| 10f64.powf(db / 20.0);
+    let n = n as f64;
+    mean.iter()
+        .map(|&(hz, db)| {
+            let r = super::targets::at(next, hz);
+            (
+                hz,
+                20.0 * ((amplitude(db) * n + amplitude(r)) / (n + 1.0)).log10(),
+            )
+        })
+        .collect()
+}
+
 /// Two channels' levels as one, as squig.link's graphs average them: the
 /// mean of their amplitudes, in dB again.
 fn average(left: &[(f64, f64)], right: &[(f64, f64)]) -> super::targets::Curve {
-    let amplitude = |db: f64| 10f64.powf(db / 20.0);
-    left.iter()
-        .map(|&(hz, db)| {
-            let r = super::targets::at(right, hz);
-            (hz, 20.0 * ((amplitude(db) + amplitude(r)) / 2.0).log10())
-        })
-        .collect()
+    average_weighted(left, right, 1)
 }
 
 /// A file name that stays in a site's data folder.
@@ -233,10 +324,20 @@ fn stays_in(name: &str) -> bool {
 /// `name` in `site`'s data folder, as a URL. Refused for a name that would
 /// leave it.
 fn data_url(site: &Site, name: &str) -> Result<url::Url, String> {
+    file_url(site, "data", name)
+}
+
+/// The measurement file `name` on `site`.
+fn measurement_url(site: &Site, name: &str) -> Result<url::Url, String> {
+    file_url(site, site.measurements, name)
+}
+
+fn file_url(site: &Site, folder: &str, name: &str) -> Result<url::Url, String> {
     if !stays_in(name) {
         return Err(format!("{name} is not a file in a squig.link site's data"));
     }
-    let mut url = url::Url::parse(&format!("{}/data/", site.base)).map_err(|e| e.to_string())?;
+    let mut url =
+        url::Url::parse(&format!("{}/{folder}/", site.base)).map_err(|e| e.to_string())?;
     url.path_segments_mut()
         .map_err(|()| format!("{} is not a site", site.base))?
         .pop_if_empty()
@@ -531,14 +632,59 @@ mod tests {
     }
 
     /// A file's URL keeps its spaces and brackets as the site names them,
-    /// escaped, inside the data folder.
+    /// escaped, inside the site's measurements folder.
     #[test]
     fn a_measurement_is_found_in_the_data_folder() {
-        let url = data_url(&SITES[2], "Aful Performer 8S (deep) L.txt").unwrap();
+        let url = measurement_url(&SITES[0], "Aful Performer 8S (deep) L.txt").unwrap();
         assert_eq!(
             url.as_str(),
-            "https://graph.hangout.audio/iem/711/data/Aful%20Performer%208S%20(deep)%20L.txt"
+            "https://squig.link/data/Aful%20Performer%208S%20(deep)%20L.txt"
         );
+        let doltonius = site("https://doltonius.squig.link").unwrap();
+        assert_eq!(
+            measurement_url(doltonius, "Zero 2 (Stock M) L.txt")
+                .unwrap()
+                .as_str(),
+            "https://doltonius.squig.link/data/phones/Zero%202%20(Stock%20M)%20L.txt"
+        );
+        assert_eq!(
+            data_url(doltonius, "phone_book.json").unwrap().as_str(),
+            "https://doltonius.squig.link/data/phone_book.json"
+        );
+    }
+
+    /// graph.hangout.audio answers 403 to a measurement file, whatever asks:
+    /// its results come last and say why before anything is fetched.
+    #[test]
+    fn a_locked_site_is_listed_last_and_refused_up_front() {
+        let s5128 = site("https://graph.hangout.audio/iem/5128").unwrap();
+        let hit = Hit {
+            site: s5128,
+            brand: "AFUL".into(),
+            model: "Performer 8S".into(),
+            variant: String::new(),
+            file: "Performer 8S".into(),
+        };
+        let err = fetch(&hit).unwrap_err();
+        assert!(err.contains("graph.hangout.audio"), "{err}");
+        assert!(
+            SITES
+                .iter()
+                .filter(|s| s.locked.is_some())
+                .all(|s| s.base.contains("hangout"))
+        );
+    }
+
+    /// Samples of a side average by amplitude, each counted once.
+    #[test]
+    fn samples_average_evenly() {
+        let a = [(100.0, 0.0)];
+        let b = [(100.0, 0.0)];
+        let c = [(100.0, 20.0)];
+        let ab = average_weighted(&a, &b, 1);
+        let abc = average_weighted(&ab, &c, 2);
+        let expected = 20.0 * ((1.0 + 1.0 + 10.0) / 3.0f64).log10();
+        assert!((abc[0].1 - expected).abs() < 1e-9, "{}", abc[0].1);
     }
 
     /// Two sides averaged as squig.link's graphs average them: by
