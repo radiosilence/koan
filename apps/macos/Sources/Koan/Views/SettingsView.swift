@@ -309,7 +309,7 @@ private struct LibrarySettings: View {
                 Button("Clear Library Index…", role: .destructive) {
                     confirmingRebuild = true
                 }
-                .koanButton(.standard)
+                .koanButton(.compact)
                 .disabled(activity.conflicts(with: .wholeLibrary))
             } header: {
                 KoanSectionHeader("Rebuild")

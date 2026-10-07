@@ -140,6 +140,9 @@ struct TrackListView: View {
                         if headerScrolls {
                             header
                                 .padding(.vertical, KoanTheme.Space.s)
+                                // Each button its own tap target: a row of automatic-style
+                                // buttons is one target that fires them all.
+                                .buttonStyle(.borderless)
                                 .rowSeparator(.hidden)
                                 .selectionDisabled()
                                 .washedRow()

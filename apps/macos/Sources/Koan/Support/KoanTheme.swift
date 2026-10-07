@@ -64,14 +64,14 @@ enum KoanTheme {
         CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
     }
 
+    /// How strongly the rule between rows shows: `ink` at this opacity.
+    nonisolated static let rowRuleOpacity: CGFloat = 0.12
+
     /// A title the app writes, lowercased in the theme, for the few places
     /// that take a bare string — navigation titles, AppKit labels. Everywhere
     /// else the case changes only on screen (`.koanCase()`, and the theme's
     /// button and label styles), so accessibility labels, and the UI tests
     /// that find things by them, keep the words as written.
-    /// How strongly the rule between rows shows: `ink` at this opacity.
-    nonisolated static let rowRuleOpacity: CGFloat = 0.12
-
     nonisolated static func label(_ text: String) -> String {
         isOn ? text.lowercased() : text
     }
