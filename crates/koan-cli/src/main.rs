@@ -276,16 +276,16 @@ enum CacheCommands {
 
 #[derive(Subcommand)]
 enum DspCommands {
-    /// List profiles and which one the current output device plays through
+    /// List corrections, EQs and presets, and what the current output device plays
     List,
-    /// Make or update a profile from EQ and filter files: AutoEQ or Equalizer
+    /// Make or update an EQ or correction from files: AutoEQ or Equalizer
     /// APO text, impulse WAVs, Roon zips and Convolver .cfg, CamillaDSP YAML,
-    /// raw or text coefficients. Files, folders or zips; an existing profile of
+    /// raw or text coefficients. Files, folders or zips; an existing one of
     /// the same name keeps what this does not replace
     Import {
         #[arg(required = true)]
         paths: Vec<PathBuf>,
-        /// Profile name (defaults to the first file's name)
+        /// Its name (defaults to the first file's name)
         #[arg(long)]
         name: Option<String>,
         /// Sample rate of coefficients that do not say
@@ -295,7 +295,7 @@ enum DspCommands {
         #[arg(long)]
         device: Option<String>,
     },
-    /// Play an output device (the current one by default) through a profile
+    /// Play an output device (the current one by default) through a correction, or set it from a preset
     Use {
         name: String,
         #[arg(long)]
@@ -307,11 +307,11 @@ enum DspCommands {
         #[arg(long)]
         device: Option<String>,
     },
-    /// Delete a profile
+    /// Delete a correction, EQ or preset
     Remove { name: String },
     /// Move an AutoEQ correction to another target, or back to its own
     Target {
-        /// The profile
+        /// The correction
         name: String,
         /// The target to use: an id from the list this prints without it
         #[arg(long = "use")]
@@ -327,7 +327,7 @@ enum DspCommands {
     /// level, or a squig.link export) to a target
     Measure {
         path: PathBuf,
-        /// The headphone, as the profile's name
+        /// The headphone, as the correction's name
         #[arg(long)]
         name: String,
         #[arg(long, value_parser = ["in", "over"])]
@@ -336,8 +336,9 @@ enum DspCommands {
         #[arg(long)]
         target: String,
     },
-    /// Split a baked EQ into a correction from the headphones' measurement
-    /// and a tuning holding the rest; the outputs that played it play both
+    /// Split a correction that already includes a tuning into a correction
+    /// from the headphones' measurement and an EQ holding the rest; the
+    /// outputs that played it play both
     Split {
         name: String,
         /// The headphones' measurement, a squig.link or REW CSV
@@ -348,9 +349,9 @@ enum DspCommands {
         #[arg(long)]
         target: String,
     },
-    /// Say what a profile is for: a neutral headphone correction, a tuning
-    /// on top of one, or a correction with a tuning baked in. A stack holds
-    /// one correction, and a baked one counts
+    /// Say what an EQ is for: a neutral correction, a tuning on top of
+    /// one, or a correction that already includes a tuning (`baked`). A
+    /// device has one correction
     Role {
         name: String,
         #[arg(value_parser = ["correction", "tuning", "baked"])]
@@ -377,15 +378,16 @@ enum DspCommands {
     },
     /// Put an imported EQ back as it was imported
     Revert { name: String },
-    /// Copy a profile as it is now, used by no output
+    /// Copy a correction, EQ or preset as it is now, used by no output
     Copy { name: String, new: Option<String> },
     /// The target a tuning was made against, or `unknown`. On headphones
     /// corrected to another, the difference plays first
     TunedFor { name: String, target: String },
-    /// Make a profile a stack of others, played in the order given: a
-    /// headphone's correction, then taste on top. Creates it if need be
+    /// Make an EQ that plays others in the order given. For an output's
+    /// correction and tuning, `tuning` and `preset` are the way; this is for
+    /// building one EQ from several. Creates it if need be
     Stack { name: String, layers: Vec<String> },
-    /// Switch one of a stack's layers on or off
+    /// Switch one of the EQs it plays on or off
     Layer {
         stack: String,
         layer: String,
@@ -428,7 +430,7 @@ enum AutoeqCommands {
         #[arg(long)]
         refresh: bool,
     },
-    /// Install a result as a profile: its number from search, or its name
+    /// Install a result as a correction: its number from search, or its name
     Install {
         entry: String,
         /// Who measured it, where several sources have the same headphone

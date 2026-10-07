@@ -1829,7 +1829,7 @@ pub fn corrections_in(profile: &DspProfile, all: &[DspProfile]) -> Vec<String> {
 /// A correction by name and kind, as a warning names it: "Cantor (AutoEQ)".
 fn correction_label(p: &DspProfile) -> String {
     let kind = if role(p) == DspRole::Baked {
-        "baked"
+        "includes a tuning"
     } else if p.measurement.is_some() {
         "measured"
     } else if super::targets::autoeq_measurement(&dir(&p.name)).is_some() {
@@ -1861,7 +1861,7 @@ pub fn corrects_twice(profile: &DspProfile, all: &[DspProfile]) -> Option<String
         .collect();
     let (last, rest) = labels.split_last()?;
     Some(format!(
-        "This stack corrects twice: {} and {last}. Keep one.",
+        "This EQ corrects twice: {} and {last}. Keep one.",
         rest.join(", ")
     ))
 }
@@ -3140,7 +3140,7 @@ mod tests {
         set_role("Warm", DspRole::Correction).unwrap();
         assert_eq!(
             detail("Desk").unwrap().corrects_twice.as_deref(),
-            Some("This stack corrects twice: HD 650 (ready-made) and Warm (correction). Keep one.")
+            Some("This EQ corrects twice: HD 650 (ready-made) and Warm (correction). Keep one.")
         );
         set_role("Warm", DspRole::Tuning).unwrap();
         set_role("HD 600", DspRole::Tuning).unwrap();
@@ -4111,7 +4111,9 @@ mod tests {
         let d = detail("Old").unwrap();
         assert_eq!(
             d.corrects_twice.as_deref(),
-            Some("This stack corrects twice: Cantor (AutoEQ) and Performer 8S (baked). Keep one.")
+            Some(
+                "This EQ corrects twice: Cantor (AutoEQ) and Performer 8S (includes a tuning). Keep one."
+            )
         );
         assert_eq!(
             d.layer_roles,

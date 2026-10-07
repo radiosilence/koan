@@ -144,25 +144,25 @@ Prints which config files were read, the names of any active `KOAN_*` environmen
 
 ## `koan dsp`
 
-Equalisation and convolution profiles, per output device. See
+Equalisation and convolution, per output device. See
 [Equalisation and convolution](../guide/dsp.md).
 
 ```bash
-koan dsp                                        # list profiles; * marks the current output's
+koan dsp                                        # list corrections, EQs and presets; * marks the current output's
 koan dsp import "Harman 780.zip"                # Roon zip, .cfg, WAVs, CamillaDSP, APO, AutoEQ…
 koan dsp import L48.wav R48.wav --name Room --device "Topping E30"
 koan dsp import room.txt --rate 48000           # coefficients that do not say their rate
-koan dsp use "Living room" [--device NAME]      # play a device through a profile
+koan dsp use "Living room" [--device NAME]      # correct a device with it, or set it from a preset
 koan dsp clear [--device NAME]                  # make a device flat: no correction or tuning, played untouched
 koan dsp remove NAME
 koan dsp autoeq search QUERY [--limit N] [--refresh]   # AutoEQ results by headphone name, numbered
 koan dsp autoeq install NUMBER|NAME [--source SOURCE] [--device NAME]
 koan dsp target NAME [--use TARGET | --reset]               # move an AutoEQ correction to another target
 koan dsp add-target FILE                                    # a target from a CSV or squig.link export
-koan dsp stack NAME LAYER...                                # play other profiles first, in order
+koan dsp stack NAME LAYER...                                # an EQ that plays others first, in order
 koan dsp layer STACK LAYER on|off
 koan dsp measure FILE --name NAME --ear in|over --target TARGET  # correct a headphone from its measurement
-koan dsp role NAME correction|tuning|baked                  # a stack holds one correction; baked counts as one
+koan dsp role NAME correction|tuning|baked                  # baked: a correction that already includes a tuning
 koan dsp made-for NAME TARGET|unknown                       # the target a ready-made EQ was made for
 koan dsp tuning EQ... [--off EQ]... [--device NAME]         # the tuning on top of an output's correction: EQs in order, or none
 koan dsp preset save NAME [--device NAME]                   # an output's correction and tuning, saved together
@@ -170,7 +170,7 @@ koan dsp preset use NAME|flat [--device NAME]               # set an output from
 koan dsp revert NAME                                        # an imported EQ back as imported
 koan dsp copy NAME [NEW]                                    # a copy as it is now, used by no output
 koan dsp tuned-for NAME TARGET|unknown                      # the target a tuning was made against
-koan dsp split NAME FILE --ear in|over --target TARGET      # a baked EQ into correction + tuning, from a measurement
+koan dsp split NAME FILE --ear in|over --target TARGET      # a correction that includes a tuning, into correction + EQ
 ```
 
 `--device` defaults to the current output: `[playback] output_device`, or the
