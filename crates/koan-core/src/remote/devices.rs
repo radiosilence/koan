@@ -567,15 +567,17 @@ pub fn remembered_nearby() -> Vec<SeenNearby> {
 pub fn nearby_hello(hello: LinkHello, addr: &str) {
     let host = crate::remote::airplay::host_of(addr).to_string();
     let look = changed(|s| {
-        let tv = s
+        let kept = s
             .seen
             .iter()
             .find(|n| n.id == hello.id)
-            .and_then(|n| n.tv.clone())
-            .filter(|tv| crate::remote::airplay::current(Some(tv), &host));
+            .and_then(|n| n.tv.clone());
         let look = hello.platform == "tvos"
-            && tv.is_none()
+            && !crate::remote::airplay::current(kept.as_ref(), &host)
             && look_for_tv(&mut s.tv_looked, &hello.id, &host, Instant::now());
+        // A record the look replaces is dropped; with no look, the one kept
+        // stands, as one matched by name rather than host does.
+        let tv = if look { None } else { kept };
         s.seen.retain(|n| n.id != hello.id);
         s.seen.push(SeenNearby {
             id: hello.id.clone(),
@@ -1637,6 +1639,38 @@ pub fn this_id() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A TV dialled by address whose AirPlay record was matched by name, at
+    /// its `.local.` host: a second hello inside the window, which does not
+    /// look again, keeps the record to wake it by.
+    #[test]
+    fn a_hello_that_does_not_look_keeps_the_tv_record() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        let tv = crate::remote::airplay::Tv {
+            name: "Living Room".into(),
+            host: "Living-Room.local.".into(),
+            mac: Some("AA:BB:CC:DD:EE:FF".into()),
+            ip: Some("10.0.0.9".into()),
+        };
+        with(|s| {
+            s.seen.push(SeenNearby {
+                id: "tv".into(),
+                name: "Living Room".into(),
+                platform: "tvos".into(),
+                addr: "10.0.0.9:5626".into(),
+                at: 0,
+                tv: Some(tv.clone()),
+            });
+            s.tv_looked
+                .insert(("tv".into(), "10.0.0.9".into()), Instant::now());
+        });
+        let mut hello = hello("tv");
+        hello.platform = "tvos".into();
+        nearby_hello(hello, "10.0.0.9:5626");
+        assert_eq!(tv_of("tv").map(|t| t.host), Some(tv.host));
+    }
 
     #[test]
     fn an_apple_tv_is_looked_for_once_per_host_for_a_while() {
