@@ -303,11 +303,12 @@ jobs:
       - if: env.RUN == 'true'
         run: cargo build --release
       # On main the binary goes on to the release jobs, which package this
-      # build rather than compiling the same commit again. Tarred, because an
-      # artifact does not keep the executable bit.
-      - if: env.RUN == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      # build rather than compiling the same commit again. Manual runs upload
+      # it too, since they are how a failed release is retried. Tarred,
+      # because an artifact does not keep the executable bit.
+      - if: env.RUN == 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         run: tar czf koan-build.tar.gz -C target/release koan
-      - if: env.RUN == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - if: env.RUN == 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: build-koan-${{ matrix.target }}
@@ -346,10 +347,10 @@ jobs:
       # Rust surface and the Swift that calls it.
       - run: just macos-build
       # The release job signs and packages this binary rather than building
-      # the app again.
-      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      # the app again, on a push or on a manual retry.
+      - if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         run: tar czf koan-app-build.tar.gz -C apps/macos/.build/release Koan
-      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: build-koan-app
@@ -780,18 +781,29 @@ jobs:
         # The verification build is what catches an internal version pin that no
         # longer resolves, so it must not be skipped.
         #
-        # Publishing is not idempotent — it errors on a version that already
-        # exists — and this job gates the GitHub release. So a re-run after a
-        # *downstream* failure would fail here and take the release with it.
-        # koan-cli publishes last, so its presence means the whole set went out.
+        # Publishing is not idempotent: it errors on a version that already
+        # exists. A release retried after a partial publish, or after a
+        # downstream failure, would fail here and take the GitHub release with
+        # it, so each crate already in the index at this version is excluded
+        # and only the rest go out.
         run: |
-          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          if curl -sf https://index.crates.io/ko/an/koan-cli \
-             | grep -q "\"vers\":\"${VERSION}\""; then
-            echo "koan-cli ${VERSION} is already on crates.io — nothing to publish"
+          EXCLUDE=()
+          PENDING=0
+          for crate in $(cargo metadata --no-deps --format-version 1 \
+                         | jq -r '.packages[] | select(.publish != []) | .name'); do
+            if curl -sf "https://index.crates.io/${crate:0:2}/${crate:2:2}/${crate}" \
+               | grep -q "\"vers\":\"${VERSION}\""; then
+              echo "${crate} ${VERSION} is already on crates.io"
+              EXCLUDE+=(--exclude "$crate")
+            else
+              PENDING=$((PENDING + 1))
+            fi
+          done
+          if [ "$PENDING" -eq 0 ]; then
+            echo "nothing to publish"
             exit 0
           fi
-          cargo publish --workspace
+          cargo publish --workspace "${EXCLUDE[@]}"
       # `cargo publish` unpacks each crate under target/package, and the cache
       # step's clean-up of target trips over what it left there. The compiled
       # dependencies it caches live elsewhere in target.
