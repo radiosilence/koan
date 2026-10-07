@@ -467,15 +467,23 @@ struct TargetGroups {
 
     var isEmpty: Bool { over.isEmpty && inEar.isEmpty && added.isEmpty }
 
-    /// The targets as a picker's rows, each tagged with its id, under a
-    /// heading for each group.
-    @ViewBuilder var rows: some View {
-        ForEach([("Over-ear", over), ("In-ear", inEar), ("Added", added)].filter { !$0.1.isEmpty }, id: \.0) { title, targets in
-            Section(KoanTheme.label(title)) {
-                ForEach(targets, id: \.id) { t in
-                    TargetRow(target: t).tag(t.id)
-                }
-            }
+    /// The targets' ids under a heading for each group, Unknown first.
+    var sections: [(title: String?, values: [String])] {
+        [(nil, [""])] + [("Over-ear", over), ("In-ear", inEar), ("Added", added)]
+            .filter { !$0.1.isEmpty }
+            .map { ($0.0, $0.1.map(\.id)) }
+    }
+
+    func option(_ id: String) -> DspTargetOption? {
+        (over + inEar + added).first { $0.id == id }
+    }
+
+    /// A target's row, or Unknown for none.
+    @ViewBuilder func row(_ id: String) -> some View {
+        if let t = option(id) {
+            TargetRow(target: t)
+        } else {
+            Text("Unknown")
         }
     }
 }
@@ -548,15 +556,15 @@ private struct RoleSection: View {
                 set: { dsp.setRole(detail.name, $0) }
             ), options: [DspRole.correction, .baked, .tuning].map { (ProfileRole($0).label, $0) })
             if detail.role == .tuning, !madeForChoices.isEmpty {
-                Picker("Made against", selection: choice("made against", saved: detail.tunedFor ?? "") {
-                    dsp.setTunedFor(detail.name, $0.isEmpty ? nil : $0)
-                }) {
-                    Text("Unknown").tag("")
-                    madeForChoices.rows
-                }
-                #if os(iOS)
-                .pickerStyle(.navigationLink)
-                #endif
+                KoanListPicker(
+                    title: "Made against",
+                    selection: choice("made against", saved: detail.tunedFor ?? "") {
+                        dsp.setTunedFor(detail.name, $0.isEmpty ? nil : $0)
+                    },
+                    sections: madeForChoices.sections,
+                    name: { madeForChoices.option($0)?.name ?? "Unknown" },
+                    row: madeForChoices.row
+                )
             }
             #if !os(tvOS)
             if detail.role == .baked, detail.impulses.isEmpty, detail.layers.isEmpty {
@@ -565,16 +573,18 @@ private struct RoleSection: View {
             #endif
             if detail.role == .correction {
                 if let targets {
-                    Picker("Corrected to", selection: choice("corrected to", saved: current) { id in
-                        dsp.chooseTarget(detail.name, id == madeFor ? nil : id)
-                    }) {
-                        ForEach(targets.choices, id: \.id) { c in
-                            TargetRow(target: c).tag(c.id)
+                    KoanListPicker(
+                        title: "Corrected to",
+                        selection: choice("corrected to", saved: current) { id in
+                            dsp.chooseTarget(detail.name, id == madeFor ? nil : id)
+                        },
+                        sections: [(nil, targets.choices.map(\.id))],
+                        name: { id in targets.choices.first { $0.id == id }?.name ?? "" }
+                    ) { id in
+                        if let c = targets.choices.first(where: { $0.id == id }) {
+                            TargetRow(target: c)
                         }
                     }
-                    #if os(iOS)
-                    .pickerStyle(.navigationLink)
-                    #endif
                     if let c = targets.choices.first(where: { $0.id == (picked["corrected to"] ?? current) }), !c.character.isEmpty {
                         Text(c.character)
                             .font(.role(.control, system: .callout))
@@ -585,15 +595,15 @@ private struct RoleSection: View {
                     #endif
                 }
                 if targets == nil, !detail.measured, !madeForChoices.isEmpty {
-                    Picker("Made for", selection: choice("made for", saved: detail.madeFor ?? "") {
-                        dsp.setMadeFor(detail.name, $0.isEmpty ? nil : $0)
-                    }) {
-                        Text("Unknown").tag("")
-                        madeForChoices.rows
-                    }
-                    #if os(iOS)
-                    .pickerStyle(.navigationLink)
-                    #endif
+                    KoanListPicker(
+                        title: "Made for",
+                        selection: choice("made for", saved: detail.madeFor ?? "") {
+                            dsp.setMadeFor(detail.name, $0.isEmpty ? nil : $0)
+                        },
+                        sections: madeForChoices.sections,
+                        name: { madeForChoices.option($0)?.name ?? "Unknown" },
+                        row: madeForChoices.row
+                    )
                 }
             }
         } header: {

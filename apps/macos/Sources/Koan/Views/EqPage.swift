@@ -741,18 +741,20 @@ struct StagePicker: View {
     @ViewBuilder private func current(_ name: String) -> some View {
         Section {
             if let targets, correction?.role == .correction {
-                Picker("Target", selection: Binding(
-                    get: { targets.chosen ?? targets.madeFor?.id ?? "" },
-                    set: { id in dsp.chooseTarget(name, id == targets.madeFor?.id ? nil : id) }
-                )) {
-                    ForEach(targets.choices, id: \.id) { c in
-                        TargetRow(target: c, isDefault: c.id == targets.madeFor?.id).tag(c.id)
+                KoanListPicker(
+                    title: "Target",
+                    selection: Binding(
+                        get: { targets.chosen ?? targets.madeFor?.id ?? "" },
+                        set: { id in dsp.chooseTarget(name, id == targets.madeFor?.id ? nil : id) }
+                    ),
+                    sections: [(nil, targets.choices.map(\.id))],
+                    name: { id in targets.choices.first { $0.id == id }?.name ?? "" }
+                ) { id in
+                    if let c = targets.choices.first(where: { $0.id == id }) {
+                        TargetRow(target: c, isDefault: c.id == targets.madeFor?.id)
                     }
                 }
                 .koanControl()
-                #if os(iOS)
-                .pickerStyle(.navigationLink)
-                #endif
             }
             if let c = correction, !c.members.isEmpty {
                 KoanPicker(
