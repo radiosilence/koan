@@ -228,9 +228,17 @@ struct QueueView: View {
                     }
                     .insetList()
                     #if os(iOS)
-                    .environment(\.editMode, $editMode)
-                    .onChange(of: editMode) { _, mode in
-                        if !mode.isEditing { selection = [] }
+                    // Started from the header: the queue has no navigation bar.
+                    .listSelectMode($editMode, selection: $selection, toolbar: false) { ids in
+                        let items = Row.itemIds(in: Set(ids), of: rows)
+                        let wanted = Set(items)
+                        let tracks = mirror.queue.filter { wanted.contains($0.queueItemId) }.compactMap(\.trackId)
+                        return SelectionBar.Actions(
+                            favourites: tracks.map { Playable.Key(kind: .track, id: $0) },
+                            tracks: { tracks },
+                            queues: false,
+                            remove: .init(title: "Remove") { player.remove(itemIds: items) }
+                        )
                     }
                     #endif
                     .washedGround()
@@ -314,7 +322,7 @@ struct QueueView: View {
                         .font(.role(.body, system: .headline))
                         .lineLimit(1)
                     #endif
-                } else {
+                } else if !KoanTheme.tabRootTitle("Queue").isEmpty {
                     Text("Queue").koanCase()
                         .font(.role(.body, system: .headline))
                 }
@@ -328,13 +336,15 @@ struct QueueView: View {
 
             Spacer()
 
-            QueueSelectionHeader(selection: $selection, rows: rows) { removeSelected() }
-
             #if os(iOS)
-            if editMode.isEditing {
-                Button("Done") { editMode = .inactive }
+            // The bar at the foot says what is picked and what to do with it.
+            if !editMode.isEditing {
+                SelectButton { editMode = .active }
+                    .disabled(listed.isEmpty)
                     .fixedSize()
             }
+            #else
+            QueueSelectionHeader(selection: $selection, rows: rows) { removeSelected() }
             #endif
 
             JumpToPlayingButton()
@@ -371,12 +381,6 @@ struct QueueView: View {
             #endif
 
             Menu {
-                #if os(iOS)
-                Button { editMode = .active } label: {
-                    Label("Select", systemImage: Icon.selectAll)
-                }
-                .disabled(listed.isEmpty)
-                #endif
                 // Playlists are made elsewhere; a television plays them.
                 #if !os(tvOS)
                 Button {

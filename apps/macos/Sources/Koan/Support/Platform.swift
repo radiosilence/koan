@@ -167,10 +167,27 @@ extension View {
         Button(action: action) { contentShape(Rectangle()) }
             .buttonStyle(TelevisionRow())
         #else
-        contentShape(Rectangle()).onTapGesture(perform: action)
+        modifier(PhoneTap(action: action))
         #endif
     }
 }
+
+#if os(iOS)
+/// A row's tap, given up in select mode, where the tap is the List's and
+/// ticks the row.
+private struct PhoneTap: ViewModifier {
+    let action: () -> Void
+    @Environment(\.editMode) private var editMode
+
+    func body(content: Content) -> some View {
+        if editMode?.wrappedValue.isEditing == true {
+            content
+        } else {
+            content.contentShape(Rectangle()).onTapGesture(perform: action)
+        }
+    }
+}
+#endif
 
 extension View {
     /// `contextMenu(forSelectionType:menu:primaryAction:)`, which tvOS does not

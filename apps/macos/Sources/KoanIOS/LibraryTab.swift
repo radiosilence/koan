@@ -32,7 +32,7 @@ struct LibraryTab: View {
             row("Downloads", Icon.downloads, .page(.section(.downloads)))
         }
         .koanList()
-        .navigationTitle(KoanTheme.label("Library"))
+        .navigationTitle(KoanTheme.tabRootTitle("Library"))
     }
 
     private func row(_ title: String, _ symbol: String, _ route: Route) -> some View {

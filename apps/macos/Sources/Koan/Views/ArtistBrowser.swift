@@ -6,6 +6,9 @@ struct ArtistBrowser: View {
     @Environment(Navigator.self) private var nav
     /// Without a selection binding a List row has nothing to do with a click.
     @State private var selection: Set<Int64> = []
+    #if os(iOS)
+    @State private var editMode: EditMode = .inactive
+    #endif
     #if os(macOS)
     @Environment(PlayerModel.self) private var player
     @Environment(UIState.self) private var ui
@@ -109,6 +112,21 @@ struct ArtistBrowser: View {
             if let first = library.visibleArtists.first { proxy.scrollTo(first.id, anchor: .top) }
         }
         }
+        #if os(iOS)
+        .listSelectMode($editMode, selection: $selection) { ids in
+            let engine = library.engine
+            return SelectionBar.Actions(
+                favourites: ids.map { Playable.Key(kind: .artist, id: $0) },
+                tracks: {
+                    var tracks: [Int64] = []
+                    for id in ids {
+                        tracks += (try? await engine.trackIds(albumId: nil, artistId: id)) ?? []
+                    }
+                    return tracks
+                }
+            )
+        }
+        #endif
         .clearsSelection($selection)
         .washedGround()
         .selectionMenu(for: Int64.self) { ids in
@@ -346,6 +364,9 @@ struct ArtistDetailView: View {
         .onChange(of: onStage) { _, now in if !now { library.artistSelection.end() } }
         .onChange(of: artistId) { _, _ in library.artistSelection.end() }
         .onDisappear { library.artistSelection.end() }
+        #if os(iOS)
+        .playableSelectMode(library.artistSelection, engine: library.engine, available: !albums.isEmpty)
+        #endif
     }
 
     private func shufflePlay() {

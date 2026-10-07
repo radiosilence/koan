@@ -35,6 +35,9 @@ struct PlaylistView: View {
     /// unread here for the same reason too — see `QueueView.selection`.
     @State private var selection: Set<String> = []
     @State private var headerShown = true
+    #if os(iOS)
+    @State private var editMode: EditMode = .inactive
+    #endif
 
     /// Whether the header scrolls with the rows, as on a phone, where a fixed
     /// one would take a third of the screen from the list.
@@ -113,6 +116,7 @@ struct PlaylistView: View {
                 .insetList()
                 .washedGround()
                 #if os(iOS)
+                .listSelectMode($editMode, selection: $selection) { selectionActions($0, rows: rows) }
                 // The name moves into the bar once the header has scrolled away.
                 .toolbar {
                     if headerScrolls && !headerShown {
@@ -268,7 +272,10 @@ struct PlaylistView: View {
                     Spacer(minLength: 0)
                     layoutControls
                 }
+                // A phone's pick has the select bar at the foot of the page.
+                #if !os(iOS)
                 PlaylistSelectionHeader(selection: $selection, rows: rows) { removeSelected() }
+                #endif
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
@@ -288,7 +295,9 @@ struct PlaylistView: View {
                 Spacer(minLength: 0)
 
                 VStack(alignment: .trailing, spacing: 10) {
+                    #if !os(iOS)
                     PlaylistSelectionHeader(selection: $selection, rows: rows) { removeSelected() }
+                    #endif
                     layoutControls
                 }
             }
@@ -490,6 +499,30 @@ struct PlaylistView: View {
     private func trackIds(in rowIds: Set<String>) -> [Int64] {
         positions(in: rowIds).sorted().compactMap { entries[safe: $0]?.track.id }
     }
+
+    #if os(iOS)
+    /// What the select bar does with the rows ticked: each heading's run, then
+    /// each entry, in the order ticked.
+    private func selectionActions(_ ids: [String], rows: [Row]) -> SelectionBar.Actions {
+        var seen = Set<Int>()
+        let positions = ids.flatMap { Row.positions(in: [$0], of: rows) }
+            .filter { seen.insert($0).inserted }
+        let picked = positions.compactMap { entries[safe: $0] }
+        let tracks = picked.map(\.track.id)
+        var remove: SelectionBar.Removal?
+        if playlists.fillable(playlistId) {
+            let playlists = playlists, playlistId = playlistId
+            remove = .init(title: "Remove") {
+                playlists.remove(entryIds: picked.map(\.entryId), from: playlistId)
+            }
+        }
+        return SelectionBar.Actions(
+            favourites: tracks.map { Playable.Key(kind: .track, id: $0) },
+            tracks: { tracks },
+            remove: remove
+        )
+    }
+    #endif
 
     private func removeSelected() {
         playlists.remove(entryIds: entryIds(in: selection), from: playlistId)

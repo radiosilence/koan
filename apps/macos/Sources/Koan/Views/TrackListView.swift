@@ -23,6 +23,9 @@ struct TrackListView: View {
     @Environment(\.horizontalSizeClass) private var width
     @State private var selection: Set<Int64> = []
     @State private var headerShown = true
+    #if os(iOS)
+    @State private var editMode: EditMode = .inactive
+    #endif
     #if os(macOS)
     @Environment(EngineMirror.self) private var mirror
     @Environment(CoverArtCache.self) private var art
@@ -162,6 +165,9 @@ struct TrackListView: View {
                     .insetList()
                     .washedGround()
                     #if os(iOS)
+                    .listSelectMode($editMode, selection: $selection) { ids in
+                        Self.selectionActions(ids)
+                    }
                     // The title moves into the bar once the header has
                     // scrolled away.
                     .toolbar {
@@ -199,6 +205,16 @@ struct TrackListView: View {
                     }
                 }
     }
+
+    #if os(iOS)
+    /// A pick of tracks: every verb, on the tracks themselves.
+    static func selectionActions(_ ids: [Int64]) -> SelectionBar.Actions {
+        SelectionBar.Actions(
+            favourites: ids.map { Playable.Key(kind: .track, id: $0) },
+            tracks: { ids }
+        )
+    }
+    #endif
 
     /// Only a gathered list is narrowed by the filter; a record's tracklist
     /// with nothing in it is a record with nothing in it.

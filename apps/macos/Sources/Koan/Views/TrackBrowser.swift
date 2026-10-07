@@ -14,6 +14,9 @@ struct TrackBrowser: View {
     @Environment(Navigator.self) private var nav
     @Environment(EngineMirror.self) private var mirror
     @State private var selection: Set<Int64> = []
+    #if os(iOS)
+    @State private var editMode: EditMode = .inactive
+    #endif
     #if os(macOS)
     @Environment(CoverArtCache.self) private var art
     @Environment(PlayingLevels.self) private var levels
@@ -141,6 +144,9 @@ struct TrackBrowser: View {
         }
         .insetList()
         .washedGround()
+        #if os(iOS)
+        .listSelectMode($editMode, selection: $selection) { TrackListView.selectionActions($0) }
+        #endif
         .clearsSelection($selection)
         .selectionMenu(for: Int64.self) { ids in
             menu(for: ids)

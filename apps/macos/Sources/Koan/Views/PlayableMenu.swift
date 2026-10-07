@@ -535,23 +535,33 @@ struct AddToPlaylistMenu: View {
     /// Hands the chosen action the track ids, off the main actor.
     let resolve: (@escaping @MainActor ([Int64]) -> Void) -> Void
 
-    @Environment(PlaylistsModel.self) private var playlists
-
     var body: some View {
         // A television plays playlists; they are made and filled elsewhere.
         #if !os(tvOS)
         Menu("Add to Playlist") {
-            Button("New Playlist…") { resolve { playlists.naming = $0 } }
-            let fillable = playlists.playlists.filter { !$0.readonly }
-            if !fillable.isEmpty {
-                Divider()
-                ForEach(fillable, id: \.id) { playlist in
-                    Button(playlist.name) {
-                        resolve { playlists.add(trackIds: $0, to: playlist.id) }
-                    }
+            AddToPlaylistItems(resolve: resolve)
+        }
+        #endif
+    }
+}
+
+/// What "Add to Playlist" offers, for a menu of its own: every playlist that
+/// can take tracks, and a new one.
+struct AddToPlaylistItems: View {
+    let resolve: (@escaping @MainActor ([Int64]) -> Void) -> Void
+
+    @Environment(PlaylistsModel.self) private var playlists
+
+    var body: some View {
+        Button("New Playlist…") { resolve { playlists.naming = $0 } }
+        let fillable = playlists.playlists.filter { !$0.readonly }
+        if !fillable.isEmpty {
+            Divider()
+            ForEach(fillable, id: \.id) { playlist in
+                Button(playlist.name) {
+                    resolve { playlists.add(trackIds: $0, to: playlist.id) }
                 }
             }
         }
-        #endif
     }
 }

@@ -169,7 +169,7 @@ struct SettingsView: View {
                         .washedRow()
                 }
                 .koanList()
-                .navigationTitle(KoanTheme.label("Settings"))
+                .navigationTitle(KoanTheme.tabRootTitle("Settings"))
                 .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                 #endif
             } else {

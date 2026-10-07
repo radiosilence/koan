@@ -97,6 +97,18 @@ enum KoanTheme {
         isOn ? text.lowercased() : text
     }
 
+    /// The title of a tab's own page. On iOS in the theme, none: the tab bar,
+    /// or the iPad's sidebar, already shows the name lit, and the theme's way
+    /// back is a bare chevron that names nothing. A title that says more than
+    /// the tab (a search's query, what the queue follows) is the page's own.
+    nonisolated static func tabRootTitle(_ text: String) -> String {
+        #if os(iOS)
+        isOn ? "" : text
+        #else
+        label(text)
+        #endif
+    }
+
     /// How strongly the wash shows through where the design leaves the ground
     /// bare: the share of the toned sleeve mixed over `bg`.
     static var wash: Double {
