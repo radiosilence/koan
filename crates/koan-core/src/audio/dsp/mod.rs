@@ -521,19 +521,15 @@ fn resolve(
             None => step,
         }));
     }
-    // A correction built from a measurement, to its target. Bands fitted to
-    // it are the profile's own filters, played above.
-    if let Some(m) = profile
-        .measurement
-        .as_ref()
-        .filter(|m| m.fit == crate::config::DspFit::Graphic)
-    {
+    // A correction fitted to a measurement plays its own filters, above:
+    // the bands squig.link's auto-EQ fits. One saved before kōan fitted
+    // bands has them fitted here, from its measurement as kept; nothing is
+    // written back, so every device plays the same bands and no edit is
+    // made to sync.
+    if let Some(m) = &profile.measurement {
         let measured = targets::measurement(&dir)
             .ok_or_else(|| DspError::Measurement(profile.name.clone()))?;
-        out.push(DspFilter::Graphic(targets::correction(
-            &measured,
-            &curve(&m.target)?,
-        )));
+        out.extend(profiles::squig_fit(&measured, &curve(&m.target)?).0);
     }
     if out.len() > MAX_CHAIN_FILTERS && stack.len() > 1 {
         return Err(too_many(stack));

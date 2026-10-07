@@ -163,7 +163,7 @@ koan dsp autoeq search QUERY [--limit N] [--refresh]   # AutoEQ results by headp
 koan dsp autoeq install NUMBER|NAME [--source SOURCE] [--device NAME]
 koan dsp target NAME [--use TARGET | --reset]    # move an AutoEQ correction to another target
 koan dsp add-target FILE                         # a target from a CSV or squig.link export
-koan dsp measure FILE --name NAME --ear in|over --target TARGET [--fit graphic|squig]  # correct a headphone from its measurement; squig: squig.link's parametric Auto EQ
+koan dsp measure FILE --name NAME --ear in|over --target TARGET  # correct a headphone from its measurement
 koan dsp response [DEVICE] [--correction NAME] [--tuning EQ,...] [--rate HZ]  # what the chain plays, as CSV on AutoEQ's grid; nothing saved
 koan dsp role NAME correction|tuning|mixed       # mixed: a correction that already includes a tuning
 koan dsp made-for NAME TARGET|unknown            # the target a ready-made EQ was made for
@@ -172,7 +172,7 @@ koan dsp revert NAME                             # an imported EQ back as import
 koan dsp copy NAME [NEW]                         # a copy as it is now, used by no device
 koan dsp split NAME FILE --ear in|over --target TARGET  # a mixed correction into a correction and an EQ
 koan dsp squig QUERY [--limit N]                 # measurements on squig.link sites, numbered
-koan dsp squig QUERY --use-result N --target TARGET [--ear in|over] [--name NAME] [--fit graphic|squig]  # a correction from one
+koan dsp squig QUERY --use-result N --target TARGET [--ear in|over] [--name NAME]  # a correction from one
 koan dsp eq plays NAME EQ...                     # one EQ built from others, played in order
 koan dsp eq switch NAME EQ on|off                # switch one of the EQs it plays on or off
 ```

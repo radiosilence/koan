@@ -442,7 +442,7 @@ final class DspModel {
 
     /// What correcting a measurement to a target would do, before saving.
     func previewMeasurement(_ text: String, target: String) async throws -> DspResponse {
-        try await engine.dspPreviewMeasurement(text: text, target: target, squigFit: false)
+        try await engine.dspPreviewMeasurement(text: text, target: target)
     }
 
     /// Measurements on squig.link sites matching `query`, best first.
@@ -458,7 +458,7 @@ final class DspModel {
     /// Save a headphone's measurement corrected to a target, as a profile,
     /// crediting where the measurement came from.
     func saveMeasured(name: String, text: String, inEar: Bool, target: String, source: String? = nil) async throws -> String {
-        let saved = try await engine.dspSaveMeasured(name: name, text: text, inEar: inEar, target: target, source: source, squigFit: false)
+        let saved = try await engine.dspSaveMeasured(name: name, text: text, inEar: inEar, target: target, source: source)
         await changed()
         return saved
     }

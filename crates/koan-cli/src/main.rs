@@ -370,10 +370,6 @@ enum DspCommands {
         /// A target id, as `koan dsp target` lists them
         #[arg(long)]
         target: String,
-        /// `graphic`, a smoothed curve, or `squig`, the parametric bands
-        /// squig.link's auto-EQ fits
-        #[arg(long, value_parser = ["graphic", "squig"], default_value = "graphic")]
-        fit: String,
     },
     /// Split a correction that already includes a tuning into a correction
     /// from the headphones' measurement and an EQ holding the rest; the
@@ -432,10 +428,6 @@ enum DspCommands {
         /// A target id, as `koan dsp target` lists them
         #[arg(long)]
         target: Option<String>,
-        /// With `--use-result`: `graphic`, a smoothed curve, or `squig`, the
-        /// parametric bands squig.link's auto-EQ fits
-        #[arg(long, value_parser = ["graphic", "squig"], default_value = "graphic")]
-        fit: String,
     },
     /// The target a ready-made EQ was made for, or `unknown`, which leaves
     /// target switching off
@@ -901,8 +893,7 @@ fn dsp(command: Option<DspCommands>) {
             name,
             ear,
             target,
-            fit,
-        } => commands::cmd_dsp_measure(&path, &name, ear == "in", &target, fit == "squig"),
+        } => commands::cmd_dsp_measure(&path, &name, ear == "in", &target),
         DspCommands::Split {
             name,
             path,
@@ -923,7 +914,6 @@ fn dsp(command: Option<DspCommands>) {
             name,
             ear,
             target,
-            fit,
         } => commands::cmd_dsp_squig(
             &query,
             limit.unwrap_or(20),
@@ -931,7 +921,6 @@ fn dsp(command: Option<DspCommands>) {
             name.as_deref(),
             ear.as_deref().map(|e| e == "in"),
             target.as_deref(),
-            fit == "squig",
         ),
         DspCommands::MadeFor { name, target } => {
             commands::cmd_dsp_made_for(&name, Some(target.as_str()).filter(|t| *t != "unknown"))

@@ -377,33 +377,18 @@ pub fn cmd_dsp_add_target(path: &std::path::Path) {
 }
 
 /// Correct the headphone `name` from the measurement at `path` to `target`.
-pub fn cmd_dsp_measure(
-    path: &std::path::Path,
-    name: &str,
-    in_ear: bool,
-    target: &str,
-    squig_fit: bool,
-) {
+pub fn cmd_dsp_measure(path: &std::path::Path, name: &str, in_ear: bool, target: &str) {
     use koan_core::config::DspEar;
     let text =
         std::fs::read_to_string(path).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())));
     let ear = if in_ear { DspEar::In } else { DspEar::Over };
-    let saved = profiles::save_measured(name, &text, ear, target, fit_of(squig_fit))
-        .unwrap_or_else(|e| fail(e));
+    let saved = profiles::save_measured(name, &text, ear, target).unwrap_or_else(|e| fail(e));
     println!(
         "{} '{}', corrected to {}",
         "measured".green(),
         saved.bold(),
         profiles::target_name(target)
     );
-}
-
-fn fit_of(squig: bool) -> koan_core::config::DspFit {
-    if squig {
-        koan_core::config::DspFit::Squig
-    } else {
-        koan_core::config::DspFit::Graphic
-    }
 }
 
 /// squig.link sites' measurements matching `query`, numbered; or the one
@@ -415,7 +400,6 @@ pub fn cmd_dsp_squig(
     name: Option<&str>,
     in_ear: Option<bool>,
     target: Option<&str>,
-    squig_fit: bool,
 ) {
     use koan_core::audio::dsp::squig;
     use koan_core::config::DspEar;
@@ -456,15 +440,8 @@ pub fn cmd_dsp_squig(
         .map(str::to_owned)
         .unwrap_or_else(|| format!("{} {}", hit.brand, hit.model));
     let ear = if in_ear { DspEar::In } else { DspEar::Over };
-    let saved = profiles::save_measured_from(
-        &name,
-        &text,
-        ear,
-        target,
-        fit_of(squig_fit),
-        Some(&hit.source()),
-    )
-    .unwrap_or_else(|e| fail(e));
+    let saved = profiles::save_measured_from(&name, &text, ear, target, Some(&hit.source()))
+        .unwrap_or_else(|e| fail(e));
     println!(
         "{} '{}' from {}, corrected to {}",
         "measured".green(),

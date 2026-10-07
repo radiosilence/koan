@@ -19,7 +19,7 @@
 //!   loudness there. The level matters: the fit measures misses in decibels
 //!   against thresholds.
 //! - Up to `MAX_BANDS` peaking bands are fitted between 20 Hz and 6 kHz, Q
-//!   0.1 to 10, gain ±40 dB: the widest misses of more than 1 dB first,
+//!   0.1 to 10, gain within ±12 dB (the site's default is ±40): the widest misses of more than 1 dB first,
 //!   none above 7 kHz, then the misses of more than 0.5 dB left, each batch
 //!   refined by a coordinate search over frequency, Q and gain, and all of
 //!   them refined together at the end.
@@ -35,7 +35,10 @@ const RATE: f64 = 48_000.0;
 /// The band limits of the site's "Auto EQ" constraints.
 const FREQ_RANGE: (f64, f64) = (20.0, 6_000.0);
 const Q_RANGE: (f64, f64) = (0.1, 10.0);
-const GAIN_RANGE: (f64, f64) = (-40.0, 40.0);
+/// Gain is held to ±12 dB, a constraint the site offers, as kōan's graphic
+/// corrections were: a measurement with a poor seal, its bass 25 dB down,
+/// would otherwise become as much boost.
+const GAIN_RANGE: (f64, f64) = (-12.0, 12.0);
 /// The first batch leaves the treble alone.
 const TREBLE_START_FROM: f64 = 7_000.0;
 /// The site's band cap with none set: its `extraEQBandsMax`.
@@ -411,7 +414,7 @@ fn find_offset(fv: &[f64], fr: &[f64], target: f64) -> f64 {
             break;
         }
     }
-    x
+    if x.is_finite() { x } else { 0.0 }
 }
 
 // --- Bands -------------------------------------------------------------------
@@ -831,6 +834,24 @@ mod tests {
             response_parity(name, &fit(&averaged, &points(target)), preset);
             response_parity(name, &fit(&kept, &points(target)), preset);
         }
+    }
+
+    /// A measurement with a poor seal, its bass 25 dB down, is not met
+    /// with 25 dB of boost: no band past 12 dB.
+    #[test]
+    fn gain_is_held_to_12_db() {
+        let target: Fr = f_values().iter().map(|&f| (f, 0.0)).collect();
+        let sealed: Fr = target
+            .iter()
+            .map(|&(f, _)| (f, if f < 100.0 { -25.0 } else { 0.0 }))
+            .collect();
+        let fit = fit(&sealed, &target);
+        assert!(!fit.filters.is_empty());
+        assert!(
+            fit.filters.iter().all(|b| b.gain_db.abs() <= 12.0),
+            "{:?}",
+            fit.filters
+        );
     }
 
     /// The graph's points run from 20 Hz to the first at or past 20 kHz.

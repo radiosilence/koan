@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use super::import::Imported;
 use super::{Setup, convolver, raw};
-use crate::config::{self, Config, DspEar, DspFit, DspMeasurement, DspProfile, DspRole, DspScope};
+use crate::config::{self, Config, DspEar, DspMeasurement, DspProfile, DspRole, DspScope};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Summary {
@@ -572,7 +572,7 @@ pub fn overview_for(device: Option<String>) -> Overview {
                     rates,
                     problem,
                     role: shown_role(p, &cfg.dsp.profiles),
-                    measured: p.measurement.is_some(),
+                    measured: p.measured().is_some(),
                     members: if p.group {
                         p.layers.iter().map(|l| l.profile.clone()).collect()
                     } else {
@@ -888,7 +888,7 @@ pub fn detail(name: &str) -> Option<Detail> {
                     .map(role)
             })
             .collect(),
-        measured: profile.measurement.is_some(),
+        measured: profile.measured().is_some(),
         made_for: profile.target.as_ref().map(|t| t.made_for.clone()),
         tuned_for: profile.tuned_for.clone(),
         preset: profile.preset,
@@ -992,7 +992,7 @@ pub fn set_made_for(name: &str, made_for: Option<&str>) -> Result<(), String> {
         .iter()
         .find(|p| p.name == name)
         .ok_or_else(|| format!("No EQ called {name}"))?;
-    if p.measurement.is_some() {
+    if p.measured().is_some() {
         return Err(format!(
             "{name} is built from a measurement: choose the target it is corrected to instead"
         ));
@@ -1023,7 +1023,7 @@ pub fn set_made_for(name: &str, made_for: Option<&str>) -> Result<(), String> {
 fn headphone(p: &DspProfile) -> Option<(super::targets::Curve, super::targets::Curve)> {
     use super::targets;
     let folder = dir(&p.name);
-    if let Some(m) = &p.measurement {
+    if let Some(m) = p.measured() {
         let level = |c: targets::Curve| {
             let k = targets::at(&c, 1000.0);
             c.into_iter()
@@ -1082,7 +1082,7 @@ pub fn target_choices(name: &str) -> Option<TargetChoices> {
     use super::targets;
     let cfg = Config::cached();
     let p = cfg.dsp.profiles.iter().find(|p| p.name == name)?;
-    let (made_for, chosen, ear) = match (&p.measurement, &p.target) {
+    let (made_for, chosen, ear) = match (p.measured(), &p.target) {
         (Some(m), _) => (
             None,
             Some(m.target.clone()),
@@ -1130,24 +1130,19 @@ pub fn choose_target(name: &str, chosen: Option<&str>) -> Result<(), String> {
     {
         return Err(format!("No target {c} for {name}"));
     }
-    // Bands fitted to a measurement are fitted again to the target chosen.
-    let refit = match (
-        Config::cached()
-            .dsp
-            .profiles
-            .iter()
-            .find(|p| p.name == name),
-        chosen,
-    ) {
-        (Some(p), Some(c))
-            if p.measurement
-                .as_ref()
-                .is_some_and(|m| m.fit == DspFit::Squig) =>
-        {
-            let measured = super::targets::measurement(&dir(name))
+    // Built from a measurement: its bands are fitted again to the target
+    // chosen.
+    let measured = Config::cached()
+        .dsp
+        .profiles
+        .iter()
+        .any(|p| p.name == name && p.measured().is_some());
+    let refit = match chosen {
+        Some(c) if measured => {
+            let curve = super::targets::measurement(&dir(name))
                 .ok_or_else(|| format!("{name}'s measurement is missing"))?;
             let aim = super::targets::choice_curve(c).ok_or_else(|| format!("No target {c}"))?;
-            Some(squig_fit(&measured, &aim))
+            Some(squig_fit(&curve, &aim))
         }
         _ => None,
     };
@@ -1155,12 +1150,14 @@ pub fn choose_target(name: &str, chosen: Option<&str>) -> Result<(), String> {
         let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name) else {
             return;
         };
-        if let Some(m) = p.measurement.as_mut() {
-            // Built from a measurement: it is made for the target chosen.
+        if let Some(m) = p.fitted.as_mut().or(p.measurement.as_mut()) {
+            // Built from a measurement: it is made for the target chosen,
+            // and fitted to it, one saved before kōan fitted bands too.
             if let Some(c) = chosen {
                 m.target = c.to_owned();
             }
             if let Some((filters, preamp)) = refit {
+                p.fitted = p.fitted.take().or(p.measurement.take());
                 p.filters = filters;
                 p.preamp_db = Some(preamp);
             }
@@ -1591,7 +1588,7 @@ fn scope_in(profile: &DspProfile, all: &[DspProfile], seen: &mut Vec<String>) ->
     if !profile.impulses.is_empty() {
         return DspScope::Device;
     }
-    if profile.target.is_some() || profile.measurement.is_some() {
+    if profile.target.is_some() || profile.measured().is_some() {
         return DspScope::Everywhere;
     }
     if !profile.layers.is_empty() {
@@ -1703,7 +1700,7 @@ pub fn set_scope(name: &str, to: DspScope) -> Result<(), String> {
 pub fn role(profile: &DspProfile) -> DspRole {
     // Impulse responses correct a room or a device: never a tuning.
     profile.role.unwrap_or(
-        if profile.target.is_some() || profile.measurement.is_some() || !profile.impulses.is_empty()
+        if profile.target.is_some() || profile.measured().is_some() || !profile.impulses.is_empty()
         {
             DspRole::Correction
         } else {
@@ -1735,14 +1732,11 @@ pub fn aims_at(profile: &DspProfile, all: &[DspProfile]) -> Option<String> {
     if role(c) != DspRole::Correction {
         return None;
     }
-    c.measurement
-        .as_ref()
-        .map(|m| m.target.clone())
-        .or_else(|| {
-            c.target
-                .as_ref()
-                .map(|t| t.chosen.clone().unwrap_or_else(|| t.made_for.clone()))
-        })
+    c.measured().map(|m| m.target.clone()).or_else(|| {
+        c.target
+            .as_ref()
+            .map(|t| t.chosen.clone().unwrap_or_else(|| t.made_for.clone()))
+    })
 }
 
 /// The target difference a tuning made against `made` plays on the
@@ -1761,7 +1755,7 @@ pub fn target_step(
         .next()
         .and_then(|first| all.iter().find(|p| p.name == first))
         .is_some_and(|c| {
-            c.measurement.is_some()
+            c.measured().is_some()
                 || c.target
                     .as_ref()
                     .is_some_and(|t| t.chosen.as_ref().is_some_and(|to| *to != t.made_for))
@@ -2296,7 +2290,7 @@ fn migrate_presets() -> Result<(), String> {
                     && p.filters.is_empty()
                     && p.impulses.is_empty()
                     && p.target.is_none()
-                    && p.measurement.is_none()
+                    && p.measured().is_none()
                     && !used_as_layer(&p.name)
                     && p.layers.first().is_some_and(|l| corrects(&l.profile))
                     && p.layers.iter().skip(1).all(|l| is_eq(&l.profile)))
@@ -2438,7 +2432,7 @@ pub fn corrections_in(profile: &DspProfile, all: &[DspProfile]) -> Vec<String> {
 fn correction_label(p: &DspProfile) -> String {
     let kind = if role(p) == DspRole::Baked {
         "includes a tuning"
-    } else if p.measurement.is_some() {
+    } else if p.measured().is_some() {
         "measured"
     } else if super::targets::autoeq_measurement(&dir(&p.name)).is_some() {
         "AutoEQ"
@@ -2551,7 +2545,7 @@ pub fn summary(name: &str) -> Option<ChainSummary> {
             }
             DspRole::Correction => {}
         }
-        let line = if let Some(m) = &p.measurement {
+        let line = if let Some(m) = p.measured() {
             format!("{} → {} (from measurement)", p.name, target_name(&m.target))
         } else if let Some(t) = &p.target {
             let autoeq = targets::autoeq_measurement(&dir(&p.name)).is_some();
@@ -2585,25 +2579,12 @@ pub fn read_measurement(text: &str) -> Result<super::targets::Curve, String> {
 
 /// What a measurement corrected to a target would do, before anything is
 /// saved: the curves the Headphone view draws, and the EQ's own.
-pub fn preview_measurement(
-    text: &str,
-    target: &str,
-    fit: DspFit,
-    rate: u32,
-) -> Result<Response, String> {
+pub fn preview_measurement(text: &str, target: &str, rate: u32) -> Result<Response, String> {
     use super::targets;
     let measured = read_measurement(text)?;
     let aim = targets::choice_curve(target).ok_or_else(|| format!("No target {target}"))?;
     let freqs = targets::grid();
-    let (filters, preamp_db) = match fit {
-        DspFit::Graphic => (
-            vec![config::DspFilter::Graphic(targets::correction(
-                &measured, &aim,
-            ))],
-            0.0,
-        ),
-        DspFit::Squig => squig_fit(&measured, &aim),
-    };
+    let (filters, preamp_db) = squig_fit(&measured, &aim);
     let total = super::response(&filters, &freqs, rate);
     let level = |c: &targets::Curve| {
         let k = targets::at(c, 1000.0);
@@ -2677,11 +2658,7 @@ fn split(name: &str, text: &str, target: &str, rate: u32) -> Result<Split, Strin
     let freqs = targets::grid();
     let filters = super::chain(p, all, &mut Vec::new()).map_err(|e| e.to_string())?;
     let original = super::response(&filters, &freqs, rate);
-    let correction = super::response(
-        &[DspFilter::Graphic(targets::correction(&measured, &aim))],
-        &freqs,
-        rate,
-    );
+    let correction = super::response(&squig_fit(&measured, &aim).0, &freqs, rate);
     let curve =
         |db: &[f64]| -> targets::Curve { freqs.iter().copied().zip(db.iter().copied()).collect() };
     // The taste is what the EQ does beyond target minus measurement whole,
@@ -2749,13 +2726,8 @@ pub fn split_baked(
         .find(|p| p.name == name)
         .map(|p| p.devices.clone())
         .unwrap_or_default();
-    let mut correction = measured_profile(
-        &free_name(&format!("{name} correction")),
-        text,
-        ear,
-        target,
-        DspFit::Graphic,
-    )?;
+    let mut correction =
+        measured_profile(&free_name(&format!("{name} correction")), text, ear, target)?;
     let tuning = free_name(&format!("{name} tuning"));
     let made = (correction.name.clone(), tuning.clone());
     // One write: both profiles, and every output moved to them, or nothing.
@@ -2788,16 +2760,10 @@ pub fn split_baked(
 }
 
 /// Save a correction built from a measurement: the headphone `name`,
-/// measured as `text`, corrected to `target` as `fit` makes corrections. A
-/// correction, kept everywhere like any headphone's.
-pub fn save_measured(
-    name: &str,
-    text: &str,
-    ear: DspEar,
-    target: &str,
-    fit: DspFit,
-) -> Result<String, String> {
-    save_measured_from(name, text, ear, target, fit, None)
+/// measured as `text`, corrected to `target`. A correction, kept everywhere
+/// like any headphone's.
+pub fn save_measured(name: &str, text: &str, ear: DspEar, target: &str) -> Result<String, String> {
+    save_measured_from(name, text, ear, target, None)
 }
 
 /// [`save_measured`], saying where the measurement came from, as an import
@@ -2808,10 +2774,9 @@ pub fn save_measured_from(
     text: &str,
     ear: DspEar,
     target: &str,
-    fit: DspFit,
     source: Option<&str>,
 ) -> Result<String, String> {
-    let mut profile = measured_profile(name, text, ear, target, fit)?;
+    let mut profile = measured_profile(name, text, ear, target)?;
     profile.source = source.into_iter().map(str::to_owned).collect();
     let name = profile.name.clone();
     persist(|cfg| cfg.dsp.profiles.push(profile))?;
@@ -2825,7 +2790,6 @@ fn measured_profile(
     text: &str,
     ear: DspEar,
     target: &str,
-    fit: DspFit,
 ) -> Result<DspProfile, String> {
     use super::targets;
     let name = name.trim();
@@ -2837,48 +2801,66 @@ fn measured_profile(
     }
     let measured = read_measurement(text)?;
     let aim = targets::choice_curve(target).ok_or_else(|| format!("No target {target}"))?;
-    let (filters, preamp_db) = match fit {
-        DspFit::Graphic => (Vec::new(), None),
-        DspFit::Squig => {
-            let (filters, preamp) = squig_fit(&measured, &aim);
-            (filters, Some(preamp))
-        }
-    };
+    // Kept at its own points and in full, and fitted as kept: a new target
+    // fits again from the same curve, here or on another device.
+    let kept: String = std::iter::once("frequency,raw\n".to_owned())
+        .chain(measured.iter().map(|(hz, db)| format!("{hz},{db}\n")))
+        .collect();
+    let (filters, preamp_db) = squig_fit(&targets::parse(&kept), &aim);
     let folder = dir(name);
     if folder.exists() {
         return Err(format!("{} is in the way", folder.display()));
     }
     std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
-    std::fs::write(
-        targets::measurement_path(&folder),
-        targets::on_grid(&measured),
-    )
-    .map_err(|e| e.to_string())?;
+    std::fs::write(targets::measurement_path(&folder), &kept).map_err(|e| e.to_string())?;
     Ok(DspProfile {
         name: name.to_owned(),
         role: Some(DspRole::Correction),
-        measurement: Some(DspMeasurement {
+        fitted: Some(DspMeasurement {
             ear,
             target: target.to_owned(),
-            fit,
         }),
         filters,
-        preamp_db,
+        preamp_db: Some(preamp_db),
         ..Default::default()
     })
 }
 
 /// The bands squig.link's auto-EQ fits to bring `measured` to `target`, and
-/// its preamp, to the hundredth of a decibel.
-fn squig_fit(measured: &[(f64, f64)], target: &[(f64, f64)]) -> (Vec<config::DspFilter>, f64) {
+/// its preamp to the hundredth of a decibel. A fit takes a good part of a
+/// second, so the last few are kept, by measurement and target.
+pub(super) fn squig_fit(
+    measured: &[(f64, f64)],
+    target: &[(f64, f64)],
+) -> (Vec<config::DspFilter>, f64) {
+    use std::collections::HashMap;
+    use std::hash::{Hash, Hasher};
+    type Fitted = (Vec<config::DspFilter>, f64);
+    static FITS: parking_lot::Mutex<Option<HashMap<u64, Fitted>>> = parking_lot::Mutex::new(None);
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for (hz, db) in measured.iter().chain([(0.0, 0.0)].iter()).chain(target) {
+        hz.to_bits().hash(&mut h);
+        db.to_bits().hash(&mut h);
+    }
+    let key = h.finish();
+    if let Some(hit) = FITS.lock().as_ref().and_then(|m| m.get(&key)) {
+        return hit.clone();
+    }
     let fit = super::autoeq_squig::fit(measured, target);
-    (
+    let made = (
         fit.filters
             .into_iter()
             .map(config::DspFilter::Band)
-            .collect(),
+            .collect::<Vec<_>>(),
         (fit.preamp_db * 100.0).round() / 100.0,
-    )
+    );
+    let mut fits = FITS.lock();
+    let fits = fits.get_or_insert_with(HashMap::new);
+    if fits.len() >= 32 {
+        fits.clear();
+    }
+    fits.insert(key, made.clone());
+    made
 }
 
 /// Make `name` a stack of `layers`, in order, creating it if there is none.
@@ -3774,67 +3756,6 @@ mod tests {
         text
     }
 
-    /// Corrected with squig.link's fit, a measurement becomes the profile's
-    /// own peaking bands and preamp, with no graphic curve after them; a
-    /// new target fits them again.
-    #[test]
-    fn a_squig_fit_keeps_bands_and_refits_them() {
-        use crate::config::{DspFilter, EqFilterKind};
-        let _guard = crate::config::tests::PERSIST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = tempfile::tempdir().unwrap();
-        config::set_config_dir(dir.path());
-        let text = measured(6.0);
-        save_measured(
-            "Fitted",
-            &text,
-            DspEar::In,
-            "harman-in-ear-2019",
-            DspFit::Squig,
-        )
-        .unwrap();
-        let get = || {
-            Config::cached()
-                .dsp
-                .profiles
-                .iter()
-                .find(|p| p.name == "Fitted")
-                .unwrap()
-                .clone()
-        };
-        let p = get();
-        assert_eq!(p.measurement.as_ref().unwrap().fit, DspFit::Squig);
-        assert!(!p.filters.is_empty());
-        assert!(p.filters.iter().all(|f| matches!(
-            f,
-            DspFilter::Band(b) if b.kind == EqFilterKind::Peaking && b.freq <= 6000.0
-        )));
-        assert!(p.preamp_db.is_some_and(|db| db <= 0.0));
-        let all = Config::cached().dsp.profiles.clone();
-        let played = super::super::chain(&p, &all, &mut Vec::new()).unwrap();
-        assert_eq!(played, p.filters, "no graphic correction after the bands");
-        // It does at 3 kHz, against 1 kHz, what the graphic correction
-        // would, within a decibel and a half.
-        let r = response("Fitted", 48000).unwrap();
-        let at = |hz: f64| r.total[r.freqs.iter().position(|f| *f >= hz).unwrap()];
-        let graphic = super::super::targets::correction(
-            &read_measurement(&text).unwrap(),
-            &super::super::targets::choice_curve("harman-in-ear-2019").unwrap(),
-        );
-        let g = |hz| super::super::targets::at(&graphic.points, hz);
-        let (ours, wanted) = (at(3000.0) - at(1000.0), g(3000.0) - g(1000.0));
-        assert!((ours - wanted).abs() < 1.5, "{ours} against {wanted}");
-
-        choose_target("Fitted", Some("diffuse-field-iso-11904-1")).unwrap();
-        let moved = get();
-        assert_eq!(
-            moved.measurement.as_ref().unwrap().target,
-            "diffuse-field-iso-11904-1"
-        );
-        assert_ne!(moved.filters, p.filters, "fitted again to the new target");
-    }
-
     /// A headphone measured and corrected to a target: a correction, kept
     /// everywhere, playing target minus measurement, said in one line.
     #[test]
@@ -3850,27 +3771,12 @@ mod tests {
             read_measurement("1000,0\n").is_err(),
             "too little to correct from"
         );
-        let preview =
-            preview_measurement(&text, "harman-in-ear-2019", DspFit::Graphic, 48000).unwrap();
+        let preview = preview_measurement(&text, "harman-in-ear-2019", 48000).unwrap();
         assert!(preview.predicted.is_some() && preview.measurement.is_some());
 
-        save_measured(
-            "AFUL Performer 8S",
-            &text,
-            DspEar::In,
-            "harman-in-ear-2019",
-            DspFit::Graphic,
-        )
-        .unwrap();
+        save_measured("AFUL Performer 8S", &text, DspEar::In, "harman-in-ear-2019").unwrap();
         assert!(
-            save_measured(
-                "AFUL Performer 8S",
-                &text,
-                DspEar::In,
-                "harman-in-ear-2019",
-                DspFit::Graphic
-            )
-            .is_err()
+            save_measured("AFUL Performer 8S", &text, DspEar::In, "harman-in-ear-2019").is_err()
         );
         let cfg = Config::cached();
         let p = cfg
@@ -3887,27 +3793,29 @@ mod tests {
             Some("AFUL Performer 8S → Harman in-ear 2019 (from measurement)")
         );
 
-        // What plays is the correction from the measurement to the target.
+        // What plays is squig.link's bands, fitted to the measurement and
+        // the target, and nothing after them: no graphic curve, no taper.
+        use crate::config::{DspFilter, EqFilterKind};
+        assert!(!p.filters.is_empty());
+        assert!(p.filters.iter().all(|f| matches!(
+            f,
+            DspFilter::Band(b) if b.kind == EqFilterKind::Peaking && b.freq <= 6000.0
+        )));
+        assert!(p.preamp_db.is_some_and(|db| db <= 0.0));
+        assert!(p.measurement.is_none() && p.fitted.is_some());
+        let played = super::super::chain(&p, &cfg.dsp.profiles, &mut Vec::new()).unwrap();
+        assert_eq!(played, p.filters);
+        // At 3 kHz against 1 kHz it does what target minus measurement does,
+        // within a decibel and a half.
         let r = response("AFUL Performer 8S", 48000).unwrap();
-        let at = |curve: &[f64], hz: f64| curve[r.freqs.iter().position(|f| *f >= hz).unwrap()];
-        let wanted = targets::correction(
-            &targets::parse(&text),
+        let at = |hz: f64| r.total[r.freqs.iter().position(|f| *f >= hz).unwrap()];
+        let wanted = targets::difference(
+            &read_measurement(&text).unwrap(),
             &targets::choice_curve("harman-in-ear-2019").unwrap(),
         );
-        let expect = targets::at(&wanted.points, 3000.0);
-        assert!(
-            (at(&r.total, 3000.0) - expect).abs() < 1.0,
-            "{} vs {expect}",
-            at(&r.total, 3000.0)
-        );
-        // Held to ±3 dB in the treble, where rigs disagree.
-        assert!(
-            wanted
-                .points
-                .iter()
-                .filter(|(hz, _)| *hz >= 10_000.0)
-                .all(|(_, db)| db.abs() <= 3.0)
-        );
+        let g = |hz| targets::at(&wanted.points, hz);
+        let (ours, theirs) = (at(3000.0) - at(1000.0), g(3000.0) - g(1000.0));
+        assert!((ours - theirs).abs() < 1.5, "{ours} against {theirs}");
 
         // Another target: the same measurement, corrected to it.
         let choices = target_choices("AFUL Performer 8S").unwrap();
@@ -3917,6 +3825,94 @@ mod tests {
             summary("AFUL Performer 8S").unwrap().correction.as_deref(),
             Some("AFUL Performer 8S → Harman in-ear 2019, no bass shelf (from measurement)")
         );
+        let moved = Config::cached()
+            .dsp
+            .profiles
+            .iter()
+            .find(|p| p.name == "AFUL Performer 8S")
+            .unwrap()
+            .clone();
+        assert_ne!(moved.filters, p.filters, "fitted again to the new target");
+    }
+
+    /// A correction saved from a measurement before the bands were kept
+    /// holds the measurement alone: it plays the bands fitted to it now,
+    /// and its config is not touched.
+    #[test]
+    fn an_older_measured_correction_plays_the_fit() {
+        use super::super::targets;
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let text = measured(6.0);
+        let folder = super::dir("Older");
+        std::fs::create_dir_all(&folder).unwrap();
+        let curve = read_measurement(&text).unwrap();
+        std::fs::write(targets::measurement_path(&folder), targets::on_grid(&curve)).unwrap();
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Older".into(),
+                role: Some(DspRole::Correction),
+                measurement: Some(DspMeasurement {
+                    ear: DspEar::In,
+                    target: "harman-in-ear-2019".into(),
+                }),
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        let cfg = Config::cached();
+        let p = cfg.dsp.profiles.iter().find(|p| p.name == "Older").unwrap();
+        let played = super::super::chain(p, &cfg.dsp.profiles, &mut Vec::new()).unwrap();
+        let aim = targets::choice_curve("harman-in-ear-2019").unwrap();
+        let kept = targets::measurement(&folder).unwrap();
+        assert_eq!(played, squig_fit(&kept, &aim).0);
+        assert!(!played.is_empty());
+        let after = Config::cached();
+        let p = after
+            .dsp
+            .profiles
+            .iter()
+            .find(|p| p.name == "Older")
+            .unwrap();
+        assert!(p.measurement.is_some() && p.fitted.is_none() && p.filters.is_empty());
+
+        // A new target fits it, and keeps it as a fitted correction.
+        choose_target("Older", Some("diffuse-field-iso-11904-1")).unwrap();
+        let cfg = Config::cached();
+        let p = cfg.dsp.profiles.iter().find(|p| p.name == "Older").unwrap();
+        assert!(p.measurement.is_none());
+        assert_eq!(
+            p.fitted.as_ref().unwrap().target,
+            "diffuse-field-iso-11904-1"
+        );
+        let diffuse = targets::choice_curve("diffuse-field-iso-11904-1").unwrap();
+        assert_eq!(p.filters, squig_fit(&kept, &diffuse).0);
+    }
+
+    /// A tuning's target difference on a fitted correction is tapered above
+    /// 6 kHz, as on any correction built from a measurement: the bands stop
+    /// there.
+    #[test]
+    fn a_target_step_on_a_fitted_correction_is_tapered() {
+        use super::super::targets;
+        let neutral = targets::choice_curve("diffuse-field-iso-11904-1").unwrap();
+        let harman = targets::choice_curve("harman-in-ear-2019").unwrap();
+        let fitted = DspProfile {
+            name: "Fitted".into(),
+            role: Some(DspRole::Correction),
+            fitted: Some(DspMeasurement {
+                ear: DspEar::In,
+                target: "diffuse-field-iso-11904-1".into(),
+            }),
+            ..Default::default()
+        };
+        let all = vec![fitted.clone()];
+        let step = target_step(&fitted, &all, &neutral, &harman);
+        assert_eq!(step, targets::tapered_difference(&neutral, &harman));
+        assert_ne!(step, targets::difference(&neutral, &harman));
     }
 
     /// One correction to a chain: a second layer is refused, naming the one
@@ -4001,7 +3997,6 @@ mod tests {
                 measurement: Some(DspMeasurement {
                     ear: DspEar::In,
                     target: "harman-in-ear-2019".into(),
-                    fit: Default::default(),
                 }),
                 ..Default::default()
             });

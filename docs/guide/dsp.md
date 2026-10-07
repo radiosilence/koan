@@ -134,8 +134,8 @@ cancels; a result whose own target matches none of the set offers no others,
 since a difference across rigs would correct the rig rather than the sound.
 The difference is levelled at 1 kHz, smoothed over a twelfth of an octave and
 held within ±12 dB, and runs as a minimum-phase filter; the preamp lowers the
-level for any boost it adds. On a correction built from a measurement, the
-difference fades out between 6 and 12 kHz as the correction does (see
+level for any boost it adds. On a correction built from a measurement, whose
+bands stop at 6 kHz, the difference fades out between 6 and 12 kHz (see
 [Headphone EQ, explained](headphone-eq.md#the-treble-is-left-alone)). The
 targets are AutoEQ's, under its MIT licence, but for Harman in-ear 2019, which
 is squig.link's own file so that a correction here aims where that site's
