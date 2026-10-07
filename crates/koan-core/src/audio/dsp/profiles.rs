@@ -1492,6 +1492,10 @@ pub fn apply_preset(device: &str, name: Option<&str>) -> Result<(), String> {
 ///   before this could and a synced preset can, is set from it the same way;
 /// - an output whose correction is a group, of which one member plays, has
 ///   that member; a group in a tuning becomes its member playing.
+/// An output set from a preset by `migrate`: the device, its correction,
+/// its tuning and the preset.
+type Setting = (String, Option<String>, Vec<(String, bool)>, String);
+
 pub fn migrate() -> Result<(), String> {
     let cfg = Config::cached();
     let all = &cfg.dsp.profiles;
@@ -1533,7 +1537,7 @@ pub fn migrate() -> Result<(), String> {
         .collect();
     // Each output those set: its correction, and its tuning, the preset's
     // EQs then those it had on top.
-    let mut set: Vec<(String, Option<String>, Vec<(String, bool)>, String)> = Vec::new();
+    let mut set: Vec<Setting> = Vec::new();
     for (name, layers, devices) in &presets {
         let (correction, eqs) = preset_parts(layers, all);
         for device in devices {
