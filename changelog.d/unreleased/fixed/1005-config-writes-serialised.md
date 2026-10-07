@@ -1,0 +1,1 @@
+- **Settings saved at the same moment are both kept.** Two config writes at once, such as the player saving the volume while a setting changes, could lose one; a read during a write could briefly see defaults.
