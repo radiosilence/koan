@@ -1,0 +1,1 @@
+- **Play on wakes a sleeping Apple TV.** A phone or Mac records the TV's AirPlay announcement while it is awake, and opens a connection to it when kōan there is asleep, so the Bonjour Sleep Proxy wakes the box before the server's push wakes kōan.

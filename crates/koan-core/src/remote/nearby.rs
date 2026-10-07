@@ -1428,7 +1428,7 @@ fn lost(name: &str) {
 /// Bonjour through the system's own responder (`dns_sd`), which is what iOS
 /// allows an app without the multicast entitlement.
 #[cfg(target_vendor = "apple")]
-mod bonjour {
+pub(crate) mod bonjour {
     use std::ffi::{CStr, CString, c_char, c_void};
 
     use crate::remote::link::LinkIdentity;
@@ -1784,12 +1784,26 @@ mod bonjour {
         }
     }
 
-    type Resolved = Option<(String, u16, Option<String>, Option<String>, Option<String>)>;
+    /// A service instance resolved: where it is and what it says of itself.
+    pub struct Instance {
+        pub name: String,
+        /// The interface it was resolved on.
+        pub interface: u32,
+        pub host: String,
+        pub port: u16,
+        pub txt: Vec<u8>,
+    }
+
+    impl Instance {
+        pub fn txt(&self, key: &str) -> Option<String> {
+            txt_value(&self.txt, key)
+        }
+    }
 
     extern "C" fn on_resolve(
         _: Ref,
         _: u32,
-        _: u32,
+        interface: u32,
         err: i32,
         _: *const c_char,
         host: *const c_char,
@@ -1801,36 +1815,43 @@ mod bonjour {
         if err != 0 {
             return;
         }
-        // SAFETY: the context is `resolve`'s `out`, alive for the call that
-        // runs this; the host and TXT record are the responder's, valid here.
+        // SAFETY: the context is `resolve_raw`'s `out`, alive for the call
+        // that runs this; the host and TXT record are the responder's, valid
+        // here.
         unsafe {
-            let out = &mut *(context as *mut Resolved);
-            let txt = std::slice::from_raw_parts(txt, txt_len as usize);
+            let out = &mut *(context as *mut Option<(u32, String, u16, Vec<u8>)>);
             *out = Some((
+                interface,
                 CStr::from_ptr(host).to_string_lossy().into_owned(),
                 u16::from_be(port),
-                txt_value(txt, "id"),
-                txt_value(txt, "platform"),
-                txt_value(txt, "server"),
+                std::slice::from_raw_parts(txt, txt_len as usize).to_vec(),
             ));
         }
     }
 
-    fn resolve(s: &Seen) -> Resolved {
-        let mut out: Resolved = None;
+    /// Resolve the instance `name` of `regtype`, waiting up to `within`.
+    fn resolve_raw(
+        flags: u32,
+        interface: u32,
+        name: &CStr,
+        regtype: &CStr,
+        domain: &CStr,
+        within: std::time::Duration,
+    ) -> Option<Instance> {
+        let mut out: Option<(u32, String, u16, Vec<u8>)> = None;
         let mut sd: Ref = std::ptr::null_mut();
         // SAFETY: every pointer is live until the reference is deallocated
         // below, before `out` goes out of scope.
         unsafe {
             if DNSServiceResolve(
                 &mut sd,
-                0,
-                s.interface,
-                s.name.as_ptr(),
-                s.regtype.as_ptr(),
-                s.domain.as_ptr(),
+                flags,
+                interface,
+                name.as_ptr(),
+                regtype.as_ptr(),
+                domain.as_ptr(),
                 on_resolve,
-                (&mut out as *mut Resolved).cast(),
+                (&mut out as *mut Option<(u32, String, u16, Vec<u8>)>).cast(),
             ) != 0
             {
                 return None;
@@ -1840,12 +1861,143 @@ mod bonjour {
                 events: libc::POLLIN,
                 revents: 0,
             }];
-            if libc::poll(fds.as_mut_ptr(), 1, 5000) > 0 {
+            if libc::poll(fds.as_mut_ptr(), 1, within.as_millis() as i32) > 0 {
                 DNSServiceProcessResult(sd);
             }
             DNSServiceRefDeallocate(sd);
         }
-        out
+        let (interface, host, port, txt) = out?;
+        Some(Instance {
+            name: name.to_string_lossy().into_owned(),
+            interface,
+            host,
+            port,
+            txt,
+        })
+    }
+
+    type Resolved = Option<(String, u16, Option<String>, Option<String>, Option<String>)>;
+
+    fn resolve(s: &Seen) -> Resolved {
+        let i = resolve_raw(
+            0,
+            s.interface,
+            &s.name,
+            &s.regtype,
+            &s.domain,
+            std::time::Duration::from_secs(5),
+        )?;
+        Some((
+            i.host.clone(),
+            i.port,
+            i.txt("id"),
+            i.txt("platform"),
+            i.txt("server"),
+        ))
+    }
+
+    /// Asks the responder to send the sleeping host a magic packet through
+    /// whichever Bonjour Sleep Proxy is answering for it.
+    const FLAG_WAKE_ON_RESOLVE: u32 = 0x40000;
+
+    /// Every instance of `regtype` announced within `within`, resolved.
+    pub fn instances(regtype: &str, within: std::time::Duration) -> Vec<Instance> {
+        let Ok(regtype) = CString::new(regtype) else {
+            return Vec::new();
+        };
+        let mut seen: Vec<Seen> = Vec::new();
+        let mut sd: Ref = std::ptr::null_mut();
+        // SAFETY: `seen` outlives the reference, which is deallocated before
+        // this returns.
+        let err = unsafe {
+            DNSServiceBrowse(
+                &mut sd,
+                0,
+                0,
+                regtype.as_ptr(),
+                std::ptr::null(),
+                on_browse,
+                (&mut seen as *mut Vec<Seen>).cast(),
+            )
+        };
+        if err != 0 {
+            return Vec::new();
+        }
+        let until = std::time::Instant::now() + within;
+        // SAFETY: a live reference.
+        let fd = unsafe { DNSServiceRefSockFD(sd) };
+        loop {
+            let left = until.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            let mut fds = [libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            }];
+            // SAFETY: a live array of the length given.
+            if unsafe { libc::poll(fds.as_mut_ptr(), 1, left.as_millis() as i32) } <= 0 {
+                continue;
+            }
+            // SAFETY: a live reference with a reply waiting.
+            if unsafe { DNSServiceProcessResult(sd) } != 0 {
+                break;
+            }
+        }
+        // SAFETY: the reference DNSServiceBrowse returned, freed once.
+        unsafe { DNSServiceRefDeallocate(sd) };
+        // `on_browse` reports a browse error through the shared slot; this
+        // browse is not the one that watches it.
+        BROWSE_ERR.store(0, std::sync::atomic::Ordering::Relaxed);
+        let mut names = std::collections::HashSet::new();
+        seen.into_iter()
+            .filter(|s| s.add && names.insert(s.name.clone()))
+            .filter_map(|s| {
+                resolve_raw(
+                    0,
+                    s.interface,
+                    &s.name,
+                    &s.regtype,
+                    &s.domain,
+                    std::time::Duration::from_secs(2),
+                )
+            })
+            .collect()
+    }
+
+    /// Resolve the instance `name` of `regtype` in `local.`, on `interface`
+    /// (0 for any). A sleep proxy answers for a host asleep.
+    pub fn resolve_named(
+        name: &str,
+        regtype: &str,
+        interface: u32,
+        within: std::time::Duration,
+    ) -> Option<Instance> {
+        let name = CString::new(name).ok()?;
+        let regtype = CString::new(regtype).ok()?;
+        resolve_raw(0, interface, &name, &regtype, c"local.", within)
+    }
+
+    /// Have the responder send a magic packet to `mac` at `ip` on `interface`.
+    /// It reads the target from the instance name, `MAC@IP`, and only on a
+    /// named interface; nothing answers the resolve itself.
+    pub fn wake_on_resolve(mac: &str, ip: &str, regtype: &str, interface: u32) {
+        let (Ok(name), Ok(regtype)) = (CString::new(format!("{mac}@{ip}")), CString::new(regtype))
+        else {
+            return;
+        };
+        if interface == 0 {
+            return;
+        }
+        resolve_raw(
+            FLAG_WAKE_ON_RESOLVE,
+            interface,
+            &name,
+            &regtype,
+            c"local.",
+            std::time::Duration::from_millis(300),
+        );
     }
 
     #[cfg(test)]

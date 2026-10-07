@@ -5011,6 +5011,7 @@ impl KoanEngine {
                     wakeable: d.wakeable,
                     last_seen: d.last_seen,
                     waking: d.waking.as_ref().and_then(|w| match w {
+                        koan_core::remote::devices::Waking::Tv => Some("tv".into()),
                         koan_core::remote::devices::Waking::Network => Some("network".into()),
                         koan_core::remote::devices::Waking::Push => Some("push".into()),
                         koan_core::remote::devices::Waking::Notification => {

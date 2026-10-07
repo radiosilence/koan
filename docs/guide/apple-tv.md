@@ -73,6 +73,25 @@ record and finds it in your library by name, then plays it from the first
 track. "Play kōan" carries on with the queue and "Pause kōan" pauses it,
 with kōan in the background as well as on screen.
 
+## Playing to it while it sleeps
+
+Choosing an Apple TV that is asleep in Control wakes it before anything is
+sent. While the TV is awake, a phone or Mac that meets kōan on it on the local
+network notes the TV's AirPlay announcement, which the TV keeps up through a
+Bonjour Sleep Proxy while it sleeps. To wake it, the phone or Mac opens a
+connection to that announcement, which has the proxy wake the TV, and waits for
+the TV to answer. Then your server sends the usual wake push to kōan there, and
+the music follows once kōan links.
+
+The picker reads "Waking… waking the Apple TV" during the first step. If the
+TV does not answer within twenty seconds the push is still tried; if nothing
+reaches kōan either, the row says the TV could not be woken.
+
+The phone or Mac has to have met the TV on the same network at least once, and
+asks for the Local Network permission it already uses to find kōan apps. A TV
+reached only through your server, from another network, is woken by the push
+alone.
+
 ## Sample rates
 
 The Apple TV app asks tvOS for each track's sample rate and shows the rate the output then runs at; over HDMI that is the one the television or receiver negotiates, and a different one means tvOS resampled. See [Sample rates on iOS](../getting-started.md#sample-rates-on-ios).
