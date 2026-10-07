@@ -99,9 +99,7 @@ struct PeopleSettings: View {
                         TextField("Username", text: $newUsername, prompt: Text("Username"))
                             .verbatimEntry()
                             .koanField()
-                        Picker("Access", selection: $newRole) {
-                            ForEach(AccountRole.all, id: \.self) { Text($0.label).tag($0) }
-                        }.koanControl()
+                        KoanPicker("Access", selection: $newRole, options: AccountRole.all.map { ($0.label, $0) })
                         .labelsHidden()
                         .fixedSize()
                         Button("Add") {
@@ -182,12 +180,10 @@ struct PeopleSettings: View {
                 Text("you").koanText(.body, .muted)
             }
             Spacer()
-            Picker("Access", selection: Binding(
+            KoanPicker("Access", selection: Binding(
                 get: { account.role },
                 set: { role in Task { await model.setRole(account.username, role) } }
-            )) {
-                ForEach(AccountRole.all, id: \.self) { Text($0.label).tag($0) }
-            }.koanControl()
+            ), options: AccountRole.all.map { ($0.label, $0) })
             .labelsHidden()
             .fixedSize()
             Menu {

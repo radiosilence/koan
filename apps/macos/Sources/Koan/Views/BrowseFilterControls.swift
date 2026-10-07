@@ -74,18 +74,20 @@ private struct BrowseFilterForm: View {
                 }
             }
             Section {
-                Picker("Codec", selection: $library.browseFilter.codec) {
-                    Text("Any").tag(String?.none)
-                    ForEach(offered(library.browseChoices?.codecs, current: library.browseFilter.codec), id: \.self) {
-                        Text($0).tag(String?.some($0))
-                    }
-                }
-                Picker("Genre", selection: $library.browseFilter.genre) {
-                    Text("Any").tag(String?.none)
-                    ForEach(offered(library.browseChoices?.genres, current: library.browseFilter.genre), id: \.self) {
-                        Text($0).tag(String?.some($0))
-                    }
-                }
+                KoanPicker(
+                    "Codec",
+                    selection: $library.browseFilter.codec,
+                    options: [(KoanTheme.label("Any"), String?.none)]
+                        + offered(library.browseChoices?.codecs, current: library.browseFilter.codec).map { ($0, String?.some($0)) },
+                    keepsCase: true
+                )
+                KoanPicker(
+                    "Genre",
+                    selection: $library.browseFilter.genre,
+                    options: [(KoanTheme.label("Any"), String?.none)]
+                        + offered(library.browseChoices?.genres, current: library.browseFilter.genre).map { ($0, String?.some($0)) },
+                    keepsCase: true
+                )
                 LabeledContent("Years") {
                     HStack(spacing: 4) {
                         YearField(prompt: "From", value: $library.browseFilter.yearFrom)

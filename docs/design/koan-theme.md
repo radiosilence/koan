@@ -119,6 +119,10 @@ A square box, 14 × 14 within a 44-point hit area. Off: a 1-point `muted` outlin
 
 A row of text options, `control` type, 18 apart. Unselected: `muted`. Selected: `ink`, underlined with a 1-point `accent` line 5 points below the baseline. No track and no background.
 
+### Form row
+
+The label leads in `body`, `ink`, lowercase, whether the row is a toggle, a picker, a stepper or a field; a value it shows trails in `control`, `muted`. A label that is data rather than the app's words (an AutoEQ maker, a server extension) keeps its case. A pop-up picker's value is a menu: the chosen option in `control`, `ink`, with a chevron, and no bezel.
+
 ### Slider
 
 A 1-point `rule` track with a 3-point `accent` fill up to the value, and a square 8 × 8 `ink` thumb shown only on hover, focus or drag. The hit area is 44 points tall. Times or values sit at either end in `fine`, `muted`.
@@ -152,7 +156,7 @@ The Apple apps keep the SF Symbols they name today (`Icon.*`). On Android, Mater
   - motion: `KoanTheme.Motion` through `.koanAnimation(_:value:)`;
   - spacing: `KoanTheme.Space` and `KoanTheme.hairline`;
   - ground: `.koanSurface()`, `.koanRule()`, `.koanBar(radius:inset:)` for the transport, `.koanToolbar(glass:)`, `.koanSidebar()`, `.koanSheet()`;
-  - controls: `.koanButton(kind)`, or `.koanButton(kind, system:)` where the platform's look had a style of its own, and `.koanButtons(kind)` for a group, in the theme only; `.koanToggle()`, `KoanSegmentedPicker`, `.koanControl()` for pop-up pickers, menus and steppers, `.koanField()`, `.koanChip()`, `.koanBadge()`; toolbar items leave their glass panes through `KoanTheme.pane(_:)`;
+  - controls: `.koanButton(kind)`, or `.koanButton(kind, system:)` where the platform's look had a style of its own, and `.koanButtons(kind)` for a group, in the theme only; `.koanToggle()`, `KoanSegmentedPicker`, `KoanPicker` for pop-up pickers (a menu in the theme, since AppKit's pop-up button and UIKit's picker ignore the theme's type), `KoanSlider`, `KoanStepper`, `.koanControl()` for other menus, `.koanField()`, `.koanChip()`, `.koanBadge()`; toolbar items leave their glass panes through `KoanTheme.pane(_:)`;
   - lists and forms: `.koanList()` (every list in the wash takes it through `washedGround()`) and `washedRow()` on a list's content, since a row's background is set per row and a list does not pass one down, `.koanNavRow(selected:)`, `KoanForm` (a form; in the theme, square sections without cards: stacked on the Mac, a grouped list on iOS), `KoanSectionHeader`, `KoanDivider`; `.koanRow(selected:)` for a row drawn in SwiftUI, which the Mac's AppKit tables are not;
   - pieces: `KoanLabel(title, icon:)` for every label with an icon, `KoanTabItem` for the phone's tab bar, `KoanUnavailable` for an empty page;
   - shape: `KoanTheme.radius(_:)` and `KoanTheme.shadow(_:)`, which give square corners and no shadow in the theme;

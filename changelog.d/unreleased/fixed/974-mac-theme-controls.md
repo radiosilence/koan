@@ -1,0 +1,1 @@
+- **Mac controls in the kōan look.** Pop-up pickers are menus in the theme's type rather than AppKit's bezelled buttons, sliders (graphics level, output volume) are the theme's, and settings labels share one style, lowercase. The EQ chain names its tuning once, and the window no longer keeps Downloads' title after leaving it.

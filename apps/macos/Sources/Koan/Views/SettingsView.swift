@@ -494,10 +494,9 @@ private struct RemoteSettings: View {
                             .accessibilityIdentifier("username")
                             .koanField()
                     }
-                    Picker("Sign in with", selection: $model.withApiKey) {
-                        Text("Password").tag(false)
-                        Text("API key").tag(true)
-                    }.koanControl()
+                    KoanPicker("Sign in with", selection: $model.withApiKey, options: [
+                        ("Password", false), ("API key", true),
+                    ])
                     #if os(tvOS)
                     // Two choices side by side, rather than a page of their
                     // own to go into and come back from.
@@ -811,15 +810,15 @@ private struct PlaybackSettings: View {
     var body: some View {
         KoanForm {
             Section {
-                Picker("Output", selection: Binding(
-                    get: { player.currentDevice ?? "" },
-                    set: { player.setDevice($0.isEmpty ? nil : $0) }
-                )) {
-                    Text("System Default").tag("")
-                    ForEach(player.devices, id: \.name) { device in
-                        Text(device.name).tag(device.name)
-                    }
-                }.koanControl()
+                KoanPicker(
+                    "Output",
+                    selection: Binding(
+                        get: { player.currentDevice ?? "" },
+                        set: { player.setDevice($0.isEmpty ? nil : $0) }
+                    ),
+                    options: [(KoanTheme.label("System Default"), "")] + player.devices.map { ($0.name, $0.name) },
+                    keepsCase: true
+                )
             } header: {
                 KoanSectionHeader("Device")
             } footer: {
@@ -936,7 +935,11 @@ struct AutoEqSearch: View {
                         NavigationLink {
                             AutoEqModels(dsp: dsp, maker: maker.name) { dismiss() }
                         } label: {
-                            LabeledContent(maker.name, value: "\(maker.results)")
+                            LabeledContent {
+                                Text("\(maker.results)")
+                            } label: {
+                                Text(maker.name).textCase(nil)
+                            }
                         }
                     }
                     .task { await dsp.loadAutoEqMakers() }
@@ -1272,7 +1275,11 @@ private struct ServerOffers: View {
 
     private func extensionList(_ extensions: [ServerExtension]) -> some View {
         ForEach(extensions, id: \.name) { e in
-            LabeledContent(e.name, value: e.versions.map { "v\($0)" }.joined(separator: ", "))
+            LabeledContent {
+                Text(e.versions.map { "v\($0)" }.joined(separator: ", "))
+            } label: {
+                Text(e.name).textCase(nil)
+            }
                 .koanText(.meta)
         }
     }
@@ -1498,7 +1505,8 @@ private struct AppearanceSettings: View {
                     ForEach(Graphics.allCases, id: \.self) { Text($0.label).tag($0) }
                 }.koanControl()
                 #else
-                Slider(
+                KoanSlider(
+                    "Level",
                     value: Binding(
                         get: { Double(Graphics.allCases.firstIndex(of: graphics) ?? 0) },
                         set: { graphics = Graphics.allCases[Int($0.rounded())] }
@@ -1506,11 +1514,9 @@ private struct AppearanceSettings: View {
                     in: 0...Double(Graphics.allCases.count - 1),
                     step: 1
                 ) {
-                    Text("Level")
-                } minimumValueLabel: {
-                    Text(Graphics.allCases.first?.label ?? "").koanText(.fine, .muted)
-                } maximumValueLabel: {
-                    Text(Graphics.allCases.last?.label ?? "").koanText(.fine, .muted)
+                    Text(Graphics.allCases.first?.label ?? "").koanText(.fine, .muted).koanCase()
+                } high: {
+                    Text(Graphics.allCases.last?.label ?? "").koanText(.fine, .muted).koanCase()
                 }
                 #endif
                 Text("**\(graphics.label)** — \(graphics.detail)")
