@@ -39,13 +39,18 @@ struct AccentTests {
         }
     }
 
-    @Test func aGreySleeveGivesMint() {
-        let sleeve = Color.dominant(ofEncoded: image { context in
-            context.setFillColor(CGColor(gray: 0.5, alpha: 1))
-            context.fill(CGRect(x: 100, y: 100, width: 300, height: 300))
+    @Test(arguments: [
+        ("grey", CGColor(gray: 0.5, alpha: 1)),
+        ("white", CGColor(gray: 1, alpha: 1)),
+        ("near-black with a blue tint", CGColor(srgbRed: 0.02, green: 0.02, blue: 0.06, alpha: 1)),
+    ])
+    func aSleeveWithNoColourGivesMint(_ sleeve: (name: String, fill: CGColor)) {
+        let colour = Color.dominant(ofEncoded: image { context in
+            context.setFillColor(sleeve.fill)
+            context.fill(CGRect(x: 0, y: 0, width: 512, height: 512))
         })
-        #expect(sleeve == nil)
-        #expect(KoanAccent.of(sleeve) == .mint)
+        #expect(colour == nil, "\(sleeve.name)")
+        #expect(KoanAccent.of(colour) == .mint, "\(sleeve.name)")
     }
 
     /// A black 512-point sleeve with `draw` on it, as PNG bytes.

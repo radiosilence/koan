@@ -73,10 +73,12 @@ extension Color {
                 Double(pixels[i + 1]) / 255,
                 Double(pixels[i + 2]) / 255
             )
-            // Near-grey, black and blown-out samples say nothing about what
-            // colour the record is.
+            // Near-grey, near-black and blown-out samples say nothing about
+            // what colour the record is. The black floor sits under a thin
+            // stroke averaged into its sample, and over a dark sleeve's tint
+            // and its compression noise.
+            guard sat > 0.15, value > 0.1, value < 0.98 else { continue }
             let weight = sat * value
-            guard sat > 0.15, weight > 0.03, value < 0.98 else { continue }
             let angle = hue * 2 * .pi
             x += cos(angle) * weight
             y += sin(angle) * weight
