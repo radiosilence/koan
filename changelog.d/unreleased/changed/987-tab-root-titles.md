@@ -1,0 +1,1 @@
+- **No repeated titles on iOS tabs.** In the kōan look the queue, library, search and settings pages leave their name to the tab bar, which already shows it.

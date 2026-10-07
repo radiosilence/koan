@@ -1,0 +1,1 @@
+- **Select several on iPhone and iPad.** A "select" button on the queue, record, artist and playlist pages, history, search and the browsers ticks rows or records, and a bar at the foot of the page plays, queues, adds to a playlist, favourites or removes them together.
