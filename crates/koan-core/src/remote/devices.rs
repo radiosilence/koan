@@ -2151,6 +2151,8 @@ mod tests {
 
     #[test]
     fn an_apple_tv_met_on_the_network_keeps_its_airplay_record() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
         with(|s| *s = Store::default());
         // Named so that no TV on the network running the tests matches it.
         let tv = crate::remote::airplay::Tv {
@@ -2160,12 +2162,9 @@ mod tests {
             ip: Some("10.0.0.4".into()),
         };
         let hello = |id: &str| LinkHello {
-            id: id.into(),
             name: "koan test TV".into(),
             platform: "tvos".into(),
-            library: None,
-            acks: true,
-            nonce: None,
+            ..hello(id)
         };
         nearby_hello(hello("tv"), "koan-test-tv.local:50000");
         with(|s| s.seen[0].tv = Some(tv.clone()));
