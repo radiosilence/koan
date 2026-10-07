@@ -585,7 +585,7 @@ struct SleepButton: View {
 
     var body: some View {
         let sleep = player.sleep
-        Menu {
+        KoanMenu {
             ForEach([15, 30, 45, 60], id: \.self) { minutes in
                 Button("\(minutes) Minutes") { player.setSleepTimer(.after(minutes: UInt32(minutes))) }
             }

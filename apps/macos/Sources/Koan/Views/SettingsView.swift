@@ -577,7 +577,7 @@ private struct RemoteSettings: View {
                     #if os(tvOS)
                     // Two choices side by side, rather than a page of their
                     // own to go into and come back from.
-                    .pickerStyle(.segmented)
+                    .pickerStyle(.segmented) // theme: raw — a television's, which the theme replaces
                     #endif
                     LabeledContent(model.withApiKey ? "API key" : "Password") {
                         SecureField(
@@ -1053,7 +1053,7 @@ struct AutoEqSearch: View {
                     }
                 }
             }
-            .searchable(text: $query, prompt: "Headphone")
+            .koanSearchable(text: $query, prompt: "Headphone")
             .navigationTitle(KoanTheme.label("AutoEQ"))
             .formTray(isPresented: $measuring) {
                 MeasurementFlow(dsp: dsp, name: query) { _ in dismiss() }

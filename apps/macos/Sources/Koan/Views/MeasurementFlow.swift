@@ -173,6 +173,7 @@ struct MeasurementFlow: View {
         Group {
             Section {
                 TextField("Search…", text: $squigQuery)
+                    .koanField()
                     .task(id: squigQuery) { await search() }
                 if searching, hits.isEmpty {
                     HStack(spacing: 8) {
@@ -246,12 +247,9 @@ struct MeasurementFlow: View {
 
     private var ear: some View {
         Section {
-            Picker("Your headphones are", selection: $inEar) {
-                Text("In-ear").tag(true)
-                Text("Over-ear").tag(false)
+            KoanChoices(title: "Your headphones are", selection: $inEar, values: [true, false]) {
+                Text($0 ? "In-ear" : "Over-ear")
             }
-            .pickerStyle(.inline)
-            .labelsHidden()
         } footer: {
             Text(inEar
                  ? "In-ear: earphones and IEMs that sit in your ear canal."
@@ -272,8 +270,8 @@ struct MeasurementFlow: View {
 
     private var targetPicker: some View {
         Section {
-            Picker("Target", selection: $target) {
-                ForEach(targets, id: \.id) { t in
+            KoanChoices(title: "Target", selection: $target, values: targets.map { Optional($0.id) }) { id in
+                if let t = targets.first(where: { $0.id == id }) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(t.label)
                         if !t.character.isEmpty {
@@ -282,11 +280,8 @@ struct MeasurementFlow: View {
                                 .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                         }
                     }
-                    .tag(Optional(t.id))
                 }
             }
-            .pickerStyle(.inline)
-            .labelsHidden()
         } footer: {
             Text("Each target is a different idea of a good sound. You can change it later on the correction's page.")
                 .koanText(.fine, .muted)
@@ -304,7 +299,7 @@ struct MeasurementFlow: View {
                 }
             }
             Section {
-                TextField("Name", text: $name)
+                TextField("Name", text: $name).koanField()
             } footer: {
                 Text("Usually the \(speaker ? "speaker's" : "headphones'") name. It becomes a correction: add tunings, like more bass or a room tilt, on top of it.")
                     .koanText(.fine, .muted)

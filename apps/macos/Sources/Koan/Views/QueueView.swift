@@ -364,11 +364,11 @@ struct QueueView: View {
                     layoutOption(false, Icon.queueSection, "One row per track")
                 }
             } else {
-                Picker("Queue layout", selection: $grouped) {
+                Picker("Queue layout", selection: $grouped) { // theme: raw — the platform's look; the theme's is above
                     Image(systemName: Icon.album).tag(true)
                     Image(systemName: Icon.queueSection).tag(false)
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.segmented) // theme: raw
                 .labelsHidden()
                 .fixedSize()
                 .help("Group by album, or one row per track")
