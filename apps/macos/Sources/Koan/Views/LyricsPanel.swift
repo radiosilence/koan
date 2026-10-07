@@ -9,6 +9,7 @@ struct LyricsPanel: View {
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
     @Environment(UIState.self) private var ui
+    @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
 
     @State private var lyrics: Lyrics?
     @State private var loadedTrackId: Int64?
@@ -35,7 +36,12 @@ struct LyricsPanel: View {
 
             content
         }
-        .background { Rectangle().fill(KoanTheme.ground(.background.secondary)) }
+        .background {
+            // Clear over the wash when it runs under the whole window.
+            if !KoanTheme.washesWindow(appearance) {
+                Rectangle().fill(KoanTheme.ground(.background.secondary))
+            }
+        }
         .koanRule(.leading)
         .task(id: player.currentTrackId) { await load() }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { ui.lyricsWidth = $0 }

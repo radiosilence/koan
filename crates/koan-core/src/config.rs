@@ -55,6 +55,10 @@ pub struct AppearanceConfig {
     /// the accent. Off, there is no wash and the accent is koan's mint, in
     /// either theme.
     pub record_colours: bool,
+    /// On the Mac in the kōan theme, the wash runs under the whole window:
+    /// sidebar, toolbar, transport and lyrics drawn clear over it. Off, those
+    /// keep grounds of their own.
+    pub wash_window: bool,
 }
 
 impl Default for AppearanceConfig {
@@ -63,6 +67,7 @@ impl Default for AppearanceConfig {
             theme: "koan".into(),
             theme_icons: true,
             record_colours: true,
+            wash_window: true,
         }
     }
 }

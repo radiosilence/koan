@@ -62,6 +62,8 @@ struct RootView: View {
         NavigationSplitView(columnVisibility: $columns) {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 190, ideal: 215, max: 290)
+                // The theme draws its own, without the glass; see `PageToolbar`.
+                .toolbar(removing: KoanTheme.isOn ? .sidebarToggle : nil)
         } detail: {
             StageView()
                 .clearsTransport(transportHeight, glass: graphics.usesWindowGlass)
@@ -87,6 +89,7 @@ struct RootView: View {
                             Label("Lyrics", systemImage: Icon.lyrics)
                         }
                         .help("Lyrics panel (⌥⌘L)")
+                        .koanButton(.icon)
                     }
                     .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
                 }
@@ -654,17 +657,30 @@ private struct PageToolbar: ToolbarContent {
         // Back and forward walk the pages you visited, in order, wherever they
         // were.
         ToolbarItemGroup(placement: .navigation) {
+            // The theme's own sidebar toggle, the system's being a capsule of
+            // glass; see `RootView`, which takes the system's away.
+            if KoanTheme.isOn {
+                Button {
+                    NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
+                } label: {
+                    Label("Sidebar", systemImage: "sidebar.left")
+                }
+                .help("Show or hide the sidebar (⌃⌘S)")
+                .koanButton(.icon)
+            }
             Button { nav.goBack() } label: {
                 Label("Back", systemImage: Icon.back)
             }
             .disabled(!nav.canGoBack)
             .help("Back (⌘[)")
+            .koanButton(.icon)
 
             Button { nav.goForward() } label: {
                 Label("Forward", systemImage: Icon.forward)
             }
             .disabled(!nav.canGoForward)
             .help("Forward (⌘])")
+            .koanButton(.icon)
         }
         .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
 
@@ -700,6 +716,7 @@ private struct PageToolbar: ToolbarContent {
                         TrackSortControls()
                     }
                 }
+                .koanButtons(.icon)
             }
         }
         .sharedBackgroundVisibility(KoanTheme.pane(nav.section?.isBrowser == true ? .automatic : .hidden))

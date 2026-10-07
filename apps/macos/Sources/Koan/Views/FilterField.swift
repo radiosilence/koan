@@ -34,6 +34,16 @@ struct FilterField: NSViewRepresentable {
         field.sendsWholeSearchString = false
         field.controlSize = .regular
         field.focusRingType = .default
+        if KoanTheme.isOn {
+            // The theme's field: square, on `surface`, in its type. A bezel
+            // would round it.
+            field.isBezeled = false
+            field.isBordered = false
+            field.drawsBackground = true
+            field.backgroundColor = .koanSurface
+            field.font = .koan(.meta)
+            field.focusRingType = .none
+        }
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
         return field
     }

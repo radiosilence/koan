@@ -3273,6 +3273,14 @@ impl KoanEngine {
         }
     }
 
+    /// The wash under the whole window, or panels on grounds of their own.
+    /// Saved at once; the app redraws from its own copy.
+    pub fn set_wash_window(&self, on: bool) {
+        if let Err(e) = Config::persist(|cfg| cfg.appearance.wash_window = on) {
+            log::warn!("appearance: wash_window not saved: {e}");
+        }
+    }
+
     /// Show icons beside labels in the kōan theme, or not. Saved at once;
     /// the app redraws from its own copy.
     pub fn set_theme_icons(&self, on: bool) {
@@ -3289,6 +3297,7 @@ impl KoanEngine {
             koan: cfg.appearance.theme == "koan",
             icons: cfg.appearance.theme_icons,
             record_colours: cfg.appearance.record_colours,
+            wash_window: cfg.appearance.wash_window,
         }
     }
 

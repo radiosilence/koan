@@ -162,11 +162,19 @@ final class AppearanceModel {
         didSet { if recordColours != oldValue { engine.setRecordColours(on: recordColours) } }
     }
 
+    /// "Wash the whole window": on the Mac in the theme, sidebar, toolbar,
+    /// transport and lyrics are drawn clear over one wash. Off, they keep
+    /// their own grounds. Takes effect at once.
+    var washWindow: Bool {
+        didSet { if washWindow != oldValue { engine.setWashWindow(on: washWindow) } }
+    }
+
     init(engine: KoanEngine, appearance: Appearance) {
         self.engine = engine
         self.showIcons = appearance.icons
         self.koan = appearance.koan
         self.recordColours = appearance.recordColours
+        self.washWindow = appearance.washWindow
     }
 }
 
@@ -646,6 +654,16 @@ extension KoanTheme {
 
     /// The bare ground of a page or a sheet: `bg` in the theme, `system`
     /// otherwise.
+    /// Whether the wash runs under the whole window, every region clear over
+    /// it ("Wash the whole window"): the Mac, in the theme, unless turned off.
+    @MainActor static func washesWindow(_ appearance: AppearanceModel?) -> Bool {
+        #if os(macOS)
+        isOn && appearance?.washWindow != false
+        #else
+        false
+        #endif
+    }
+
     nonisolated static func ground(_ system: some ShapeStyle) -> AnyShapeStyle {
         isOn ? AnyShapeStyle(Color.koanBg) : AnyShapeStyle(system)
     }
@@ -1289,6 +1307,8 @@ private struct KoanRowRole: ViewModifier {
 }
 
 private struct KoanSidebarRole: ViewModifier {
+    @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
+
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
             #if os(tvOS)
@@ -1296,7 +1316,7 @@ private struct KoanSidebarRole: ViewModifier {
             #else
             content
                 .scrollContentBackground(.hidden)
-                .background(Color.koanBg)
+                .background(KoanTheme.washesWindow(appearance) ? Color.clear : Color.koanBg)
             #endif
         } else {
             content
@@ -1410,9 +1430,16 @@ private struct KoanChipRole: ViewModifier {
 private struct KoanBarRole: ViewModifier {
     let radius: CGFloat
     let inset: CGFloat
+    @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
 
     func body(content: Content) -> some View {
-        if KoanTheme.isOn {
+        if KoanTheme.washesWindow(appearance) {
+            // Clear over the wash, set off from the page by space and a faint
+            // hairline rather than a ground of its own.
+            content.overlay(alignment: .top) {
+                Rectangle().fill(Color.koanRowRule).frame(height: KoanTheme.hairline)
+            }
+        } else if KoanTheme.isOn {
             content
                 .background(Color.koanBg)
                 .koanRule(.top)
@@ -1522,6 +1549,7 @@ struct KoanDivider: View {
 #if !os(tvOS)
 private struct KoanToolbarRole: ViewModifier {
     let glass: Bool
+    @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
 
     func body(content: Content) -> some View {
         #if os(macOS)
@@ -1529,7 +1557,9 @@ private struct KoanToolbarRole: ViewModifier {
         #else
         let bar = ToolbarPlacement.navigationBar
         #endif
-        if KoanTheme.isOn {
+        if KoanTheme.washesWindow(appearance) {
+            content.toolbarBackgroundVisibility(.hidden, for: bar)
+        } else if KoanTheme.isOn {
             content
                 .toolbarBackground(Color.koanBg, for: bar)
                 .toolbarBackgroundVisibility(.visible, for: bar)

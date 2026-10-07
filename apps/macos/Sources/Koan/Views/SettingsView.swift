@@ -1701,10 +1701,15 @@ private struct AppearanceSettings: View {
             }
             Section {
                 Toggle("Colours from the record", isOn: $appearance.recordColours).koanToggle()
+                #if os(macOS)
+                if KoanTheme.isOn {
+                    Toggle("Wash the whole window", isOn: $appearance.washWindow).koanToggle()
+                }
+                #endif
             } header: {
                 KoanSectionHeader("Colour")
             } footer: {
-                Text("The record playing colours the window behind the page, and the accent on selection and progress. Off, there is no wash and the accent is kōan's mint, in either theme.")
+                Text("The record playing colours the window behind the page, and the accent on selection and progress. Off, there is no wash and the accent is kōan's mint, in either theme. Washing the whole window draws the sidebar, toolbar, transport and lyrics clear over it; off, they keep grounds of their own.")
                     .koanText(.fine, .muted)
             }
             Section {

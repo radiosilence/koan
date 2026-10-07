@@ -60,9 +60,9 @@ final class TextFocus {
         observers.append(
             centre.addObserver(
                 forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
-            ) { [weak self] note in
+            ) { [weak self] _ in
                 MainActor.assumeIsolated {
-                    guard let self, let window = note.object as? NSWindow else { return }
+                    guard let self, let window = NSApp.keyWindow else { return }
                     self.responder = window.observe(\.firstResponder) { [weak self] _, _ in
                         MainActor.assumeIsolated { self?.refresh() }
                     }
