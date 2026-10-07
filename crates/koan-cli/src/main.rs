@@ -356,7 +356,10 @@ enum DspCommands {
     /// squig.link export
     AddTarget { path: PathBuf },
     /// Correct a headphone from its measurement (a CSV of frequency and
-    /// level, or a squig.link export) to a target
+    /// level, or a squig.link export) to a target. The file is taken as it
+    /// is: a squig.link export already has both channels averaged and the
+    /// site's calibration applied, but a site's raw `L.txt` or `R.txt` has
+    /// neither. `koan dsp squig` fetches both and does both
     Measure {
         path: PathBuf,
         /// The headphone, as the correction's name

@@ -451,7 +451,7 @@ pub fn cmd_dsp_squig(
     );
 }
 
-/// Split the baked EQ `name` into a correction and a tuning.
+/// What `named`'s chain plays, as CSV on AutoEQ's grid; nothing is saved.
 pub fn cmd_dsp_response(
     named: Option<String>,
     correction: Option<&str>,
@@ -469,6 +469,7 @@ pub fn cmd_dsp_response(
     }
 }
 
+/// Split the baked EQ `name` into a correction and a tuning.
 pub fn cmd_dsp_split(name: &str, path: &std::path::Path, in_ear: bool, target: &str) {
     use koan_core::config::DspEar;
     let text =
