@@ -1,0 +1,1 @@
+- **EQ targets on iPhone.** Picking the target an EQ was made against, made for or corrected to ticks it and closes the list, instead of leaving "Unknown" ticked until you go back.

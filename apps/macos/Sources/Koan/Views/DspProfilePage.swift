@@ -523,9 +523,23 @@ private struct RoleSection: View {
     @Binding var adding: Bool
     /// Taking a baked EQ apart, presented by the page.
     @Binding var splitting: Bool
+    /// The targets just picked, by picker, until the reloaded detail says
+    /// them. Saving is asynchronous, and a phone's picker list whose
+    /// selection reads back unchanged stays open with the old row ticked.
+    @State private var picked: [String: String] = [:]
 
     private var madeFor: String? { targets?.madeFor?.id }
     private var current: String { targets?.chosen ?? madeFor ?? "" }
+
+    private func choice(_ picker: String, saved: String, save: @escaping (String) -> Void) -> Binding<String> {
+        Binding(
+            get: { picked[picker] ?? saved },
+            set: {
+                picked[picker] = $0
+                save($0)
+            }
+        )
+    }
 
     var body: some View {
         Section {
@@ -534,10 +548,9 @@ private struct RoleSection: View {
                 set: { dsp.setRole(detail.name, $0) }
             ), options: [DspRole.correction, .baked, .tuning].map { (ProfileRole($0).label, $0) })
             if detail.role == .tuning, !madeForChoices.isEmpty {
-                Picker("Made against", selection: Binding(
-                    get: { detail.tunedFor ?? "" },
-                    set: { dsp.setTunedFor(detail.name, $0.isEmpty ? nil : $0) }
-                )) {
+                Picker("Made against", selection: choice("made against", saved: detail.tunedFor ?? "") {
+                    dsp.setTunedFor(detail.name, $0.isEmpty ? nil : $0)
+                }) {
                     Text("Unknown").tag("")
                     madeForChoices.rows
                 }
@@ -552,10 +565,9 @@ private struct RoleSection: View {
             #endif
             if detail.role == .correction {
                 if let targets {
-                    Picker("Corrected to", selection: Binding(
-                        get: { current },
-                        set: { id in dsp.chooseTarget(detail.name, id == madeFor ? nil : id) }
-                    )) {
+                    Picker("Corrected to", selection: choice("corrected to", saved: current) { id in
+                        dsp.chooseTarget(detail.name, id == madeFor ? nil : id)
+                    }) {
                         ForEach(targets.choices, id: \.id) { c in
                             TargetRow(target: c).tag(c.id)
                         }
@@ -563,7 +575,7 @@ private struct RoleSection: View {
                     #if os(iOS)
                     .pickerStyle(.navigationLink)
                     #endif
-                    if let c = targets.choices.first(where: { $0.id == current }), !c.character.isEmpty {
+                    if let c = targets.choices.first(where: { $0.id == (picked["corrected to"] ?? current) }), !c.character.isEmpty {
                         Text(c.character)
                             .font(.role(.control, system: .callout))
                             .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
@@ -573,10 +585,9 @@ private struct RoleSection: View {
                     #endif
                 }
                 if targets == nil, !detail.measured, !madeForChoices.isEmpty {
-                    Picker("Made for", selection: Binding(
-                        get: { detail.madeFor ?? "" },
-                        set: { dsp.setMadeFor(detail.name, $0.isEmpty ? nil : $0) }
-                    )) {
+                    Picker("Made for", selection: choice("made for", saved: detail.madeFor ?? "") {
+                        dsp.setMadeFor(detail.name, $0.isEmpty ? nil : $0)
+                    }) {
                         Text("Unknown").tag("")
                         madeForChoices.rows
                     }
@@ -592,6 +603,7 @@ private struct RoleSection: View {
                 .font(.role(.fine, system: .caption))
                 .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
         }
+        .onChange(of: [detail.name, detail.tunedFor, detail.madeFor, targets?.chosen]) { picked = [:] }
     }
 
     private var footer: String {
