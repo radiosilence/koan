@@ -644,15 +644,22 @@ private struct PhoneTrayPanel<Tray: View>: View {
     private func panel(limit: CGFloat) -> some View {
         let compact = sizeClass != .regular
         return VStack(spacing: 0) {
+            // The grabber, in a strip across the panel that takes a drag
+            // whether or not the content scrolls.
             Rectangle()
                 .fill(Color.koanRule)
                 .frame(width: 36, height: 3)
                 .padding(.vertical, KoanTheme.Space.s)
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
                 .accessibilityHidden(true)
             ScrollView {
                 content().onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
             }
             .scrollBounceBehavior(.basedOnSize)
+            // Content that fits has nothing to scroll, and a scroll view that
+            // could would take the drag that closes the panel.
+            .scrollDisabled(height <= limit)
             .onScrollGeometryChange(for: Bool.self) {
                 $0.contentOffset.y <= -$0.contentInsets.top + 0.5
             } action: { _, top in
