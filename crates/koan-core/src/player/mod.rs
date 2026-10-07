@@ -6310,6 +6310,111 @@ mod tests {
         assert_eq!(lead_in_for(48000), 0, "no switch, nothing to wait for");
     }
 
+    /// iOS's rates on an engine that plays nothing.
+    #[cfg(target_os = "macos")]
+    struct IosRates {
+        lead_in: Arc<AtomicU64>,
+    }
+
+    #[cfg(target_os = "macos")]
+    impl AudioBackend for IosRates {
+        fn list_devices(&self) -> Result<Vec<backend::DeviceInfo>, BackendError> {
+            crate::audio::ios_backend::IosAudioBackend.list_devices()
+        }
+        fn default_device(&self) -> Result<backend::DeviceInfo, BackendError> {
+            crate::audio::ios_backend::IosAudioBackend.default_device()
+        }
+        fn supported_sample_rates(
+            &self,
+            device: &backend::DeviceInfo,
+        ) -> Result<Vec<f64>, BackendError> {
+            crate::audio::ios_backend::IosAudioBackend.supported_sample_rates(device)
+        }
+        fn get_device_sample_rate(
+            &self,
+            device: &backend::DeviceInfo,
+        ) -> Result<f64, BackendError> {
+            crate::audio::ios_backend::IosAudioBackend.get_device_sample_rate(device)
+        }
+        fn set_device_sample_rate(
+            &self,
+            device: &backend::DeviceInfo,
+            rate: f64,
+        ) -> Result<f64, BackendError> {
+            crate::audio::ios_backend::IosAudioBackend.set_device_sample_rate(device, rate)
+        }
+        fn create_engine(
+            &self,
+            _device: &backend::DeviceInfo,
+            _sample_rate: f64,
+            _channels: u32,
+            _consumer: rtrb::Consumer<f32>,
+            _samples_played: Arc<AtomicU64>,
+        ) -> Result<Box<dyn AudioEngineHandle>, BackendError> {
+            Ok(Box::new(NullEngine {
+                starts: Default::default(),
+                running: Default::default(),
+                lead_in: self.lead_in.clone(),
+            }))
+        }
+    }
+
+    /// A DAC that runs at whichever of 44.1 and 48 kHz it is asked for.
+    #[cfg(target_os = "macos")]
+    struct SwitchingDac;
+
+    #[cfg(target_os = "macos")]
+    impl crate::audio::ios_backend::AudioSession for SwitchingDac {
+        fn activate(&self, sample_rate: f64) -> Option<f64> {
+            Some(self.follow(sample_rate))
+        }
+        fn follow(&self, sample_rate: f64) -> f64 {
+            if sample_rate == 44100.0 {
+                44100.0
+            } else {
+                48000.0
+            }
+        }
+        fn release(&self) {}
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn a_session_let_go_is_no_rate_switch_to_wait_out() {
+        use crate::audio::ios_backend;
+        let _session = ios_backend::TEST_SESSION.lock();
+        ios_backend::set_session(Arc::new(SwitchingDac));
+        let lead_in_at = |sample_rate| {
+            let mut player = Player::new();
+            let lead_in = Arc::new(AtomicU64::new(0));
+            player.backend = Box::new(IosRates {
+                lead_in: lead_in.clone(),
+            });
+            let info = buffer::StreamInfo {
+                codec: "FLAC".into(),
+                sample_rate,
+                channels: 2,
+                bit_depth: Some(16),
+                bitrate_kbps: None,
+                duration_ms: 1000,
+            };
+            let (_producer, consumer) = rtrb::RingBuffer::new(16);
+            player.create_engine_for(&info, consumer).unwrap();
+            lead_in.load(Ordering::Relaxed)
+        };
+
+        // Held at 48 kHz, a 44.1 kHz track switches the DAC.
+        assert!(ios_backend::activate_session(48000.0));
+        assert!(lead_in_at(44100) > 0);
+
+        // Played at 48 kHz, then idle long enough to let the session go: the
+        // rate it last ran at is no longer the hardware's, and the next
+        // track, at 44.1 kHz, starts without a second of silence.
+        assert!(ios_backend::activate_session(48000.0));
+        ios_backend::release_session();
+        assert_eq!(lead_in_at(44100), 0);
+    }
+
     /// Backend that hands its rate-change callback back to the test.
     struct WatchedBackend {
         inner: StuckBackend,
