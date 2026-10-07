@@ -861,7 +861,6 @@ fn main() {
 }
 
 /// Launch the player/TUI. Shared by `koan play` and bare `koan` (no subcommand).
-#[allow(clippy::too_many_arguments)]
 fn dsp(command: Option<DspCommands>) {
     match command.unwrap_or(DspCommands::Show {
         device: None,
@@ -969,6 +968,7 @@ fn dsp(command: Option<DspCommands>) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn start_player(
     cli: &Cli,
     paths: &[PathBuf],
