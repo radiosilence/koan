@@ -88,8 +88,7 @@ struct SidebarGround: NSViewRepresentable {
 
         private func watch(_ glass: NSGlassEffectView) {
             if unhiding == nil {
-                unhiding = glass.observe(\.isHidden) { [weak self] glass, _ in
-                    guard !glass.isHidden else { return }
+                unhiding = glass.observe(\.isHidden) { [weak self] _, _ in
                     Task { @MainActor in self?.apply() }
                 }
             }
