@@ -134,9 +134,12 @@ struct SettingsView: View {
                             settingsPane(pane, model: model)
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                         }
-                        // The main window's titlebar: the theme's ground, no title.
+                        // No titlebar drawn: the ground runs up behind the
+                        // window's buttons, as it does over the wash in the
+                        // main window (see `SettingsFrameAutosave` too).
                         .toolbar(removing: .title)
-                        .koanToolbar(glass: false)
+                        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+                        .scrollEdgeEffectHidden(true, for: .top)
                         .containerBackground(Color.koanBg, for: .window)
                     } else {
                         TabView(selection: $pane) {
@@ -1630,9 +1633,12 @@ private struct SettingsFrameAutosave: NSViewRepresentable {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             guard let window else { return }
-            // In the theme the titlebar is the window's ground, as the main
-            // window's is, with no line under it.
-            if KoanTheme.isOn { window.titlebarSeparatorStyle = .none }
+            // In the theme the titlebar is not drawn: the window's ground,
+            // with no line under it.
+            if KoanTheme.isOn {
+                window.titlebarAppearsTransparent = true
+                window.titlebarSeparatorStyle = .none
+            }
             guard window.frameAutosaveName.isEmpty else { return }
             // SwiftUI's Settings window is made without a resizable frame,
             // whatever the scene's resizability says.
