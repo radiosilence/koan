@@ -146,9 +146,13 @@ struct EqEditor: View {
             return out
         case .narrow, .wide:
             let width = brush == .narrow ? 1.0 / 3 : 1.0
+            // Points the brush barely reaches keep what they had, and what it
+            // paints is kept to a hundredth of a dB.
             return points.map { p in
                 let d = octaves(p) / width
-                return DspPoint(hz: p.hz, db: p.db + exp(-d * d) * (db - p.db))
+                let reach = exp(-d * d)
+                guard reach > 0.01 else { return p }
+                return DspPoint(hz: p.hz, db: ((p.db + reach * (db - p.db)) * 100).rounded() / 100)
             }
         }
     }
