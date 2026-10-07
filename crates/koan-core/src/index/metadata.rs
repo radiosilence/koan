@@ -339,7 +339,7 @@ fn probe_symphonia(path: &Path) -> SymphoniaProps {
         None => return empty,
     };
     let sample_rate = params.sample_rate.map(|r| r as i32);
-    let bit_depth = params.bits_per_sample.map(|b| b as i32);
+    let bit_depth = crate::audio::buffer::source_bit_depth(params).map(i32::from);
     let channels = params.channels.as_ref().map(|c| c.count() as i32);
 
     let duration_ms = params.sample_rate.and_then(|sr| {
