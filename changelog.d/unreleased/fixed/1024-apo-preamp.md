@@ -1,0 +1,1 @@
+- **An Equalizer APO file's preamp stays a preamp.** The same `Preamp:` on each channel, as squig.link's two-channel export writes it, is imported as the EQ's preamp rather than a gain band on each channel, so the graph no longer draws it inside the curve. An EQ imported before keeps its gain bands until its file is imported again.

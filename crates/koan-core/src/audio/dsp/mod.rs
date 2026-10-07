@@ -299,6 +299,13 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
         let profile = match correction {
             Some(c) => {
                 let mut c = c.clone();
+                // The correction's preamp pays for its own boosts. With a
+                // tuning on top, the headroom comes from what the chain
+                // plays in sum, so a layered chain is as loud as one EQ
+                // with the same response.
+                if !names.is_empty() {
+                    c.preamp_db = None;
+                }
                 c.layers.extend(
                     names
                         .into_iter()

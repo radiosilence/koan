@@ -292,10 +292,10 @@ enum DspCommands {
     #[command(group(clap::ArgGroup::new("chain").required(true).multiple(true).args(["correction", "tuning"])))]
     Set {
         device: String,
-        /// A correction's name, or `none`
+        /// A correction's name, or `none` (or empty)
         #[arg(long)]
         correction: Option<String>,
-        /// EQs in the order they play, separated by commas, or `none`
+        /// EQs in the order they play, separated by commas, or `none` (or empty)
         #[arg(long, value_delimiter = ',')]
         tuning: Option<Vec<String>>,
     },
@@ -393,7 +393,7 @@ enum DspCommands {
         #[arg(long)]
         correction: Option<String>,
         /// EQs in the order they play, separated by commas, in place of the
-        /// device's tuning
+        /// device's tuning; `none` or empty for no tuning
         #[arg(long, value_delimiter = ',')]
         tuning: Option<Vec<String>>,
         #[arg(long, default_value_t = 48_000)]

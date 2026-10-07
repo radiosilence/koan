@@ -1,0 +1,1 @@
+- **A correction with a tuning on top is not quieter than it needs to be.** The chain's preamp is worked out from what the correction and tuning play together, rather than kept at the correction's own, so a layered chain plays at the level of a single EQ with the same curve.

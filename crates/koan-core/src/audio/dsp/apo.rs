@@ -43,6 +43,7 @@ pub fn read(path: &Path) -> Result<Parsed, String> {
     let mut convolutions = Convolutions::default();
     read_into(path, &mut parsed, &mut convolutions, 0)?;
     parsed.impulses = convolutions.build();
+    common_preamp(&mut parsed);
     Ok(parsed)
 }
 
@@ -53,7 +54,48 @@ pub fn parse(text: &str) -> Result<Parsed, String> {
     let mut convolutions = Convolutions::default();
     parse_into(text, None, &mut parsed, &mut convolutions, 0)?;
     parsed.impulses = convolutions.build();
+    common_preamp(&mut parsed);
     Ok(parsed)
+}
+
+/// A preamp given per channel that comes to the same on both sides of a
+/// stereo pair and on every other channel the file names, as squig.link's
+/// two-channel export writes it, is the profile's preamp rather than a band
+/// on each channel. Preamps that differ stay as gain bands on their channels,
+/// as they do in a file with a `Copy`, whose mix a gain ahead of it changes.
+fn common_preamp(parsed: &mut Parsed) {
+    if parsed
+        .filters
+        .iter()
+        .any(|f| matches!(f, DspFilter::Mix(_)))
+    {
+        return;
+    }
+    let preamp = |f: &DspFilter| matches!(f, DspFilter::Band(b) if b.kind == EqFilterKind::Gain);
+    let mut named: BTreeMap<u16, f64> = BTreeMap::new();
+    for f in &parsed.filters {
+        for &c in f.channels() {
+            named.entry(c).or_insert(0.0);
+        }
+    }
+    for f in &parsed.filters {
+        if let DspFilter::Band(b) = f
+            && preamp(f)
+        {
+            for c in &b.channels {
+                *named.entry(*c).or_insert(0.0) += b.gain_db;
+            }
+        }
+    }
+    let Some(&first) = named.values().next() else {
+        return;
+    };
+    let stereo = named.contains_key(&0) && named.contains_key(&1);
+    if first == 0.0 || !stereo || named.values().any(|db| (db - first).abs() > 1e-9) {
+        return;
+    }
+    parsed.filters.retain(|f| !preamp(f));
+    *parsed.preamp_db.get_or_insert(0.0) += first;
 }
 
 /// Whether `text` reads as Equalizer APO configuration.
@@ -577,6 +619,28 @@ mod tests {
             (2, 2),
             "a gain band and a peak on each side"
         );
+
+        // The same preamp on both sides is the profile's preamp.
+        let p = parse(include_str!("testdata/aful-8s-squig-harman-2019.txt")).unwrap();
+        assert_eq!(p.preamp_db, Some(-5.0));
+        assert!(
+            p.filters
+                .iter()
+                .all(|f| matches!(f, DspFilter::Band(b) if b.kind == EqFilterKind::Peaking)),
+            "no gain bands left"
+        );
+        assert_eq!(p.filters.len(), 16, "eight peaks a side");
+
+        // A `Copy` mixes after the preamps: they stay gain bands.
+        let mixed = "Channel: L R\nPreamp: -5 dB\nCopy: L=L+C R=R+C\n";
+        let p = parse(mixed).unwrap();
+        assert_eq!(p.preamp_db, None);
+        let gains = p
+            .filters
+            .iter()
+            .filter(|f| matches!(f, DspFilter::Band(b) if b.kind == EqFilterKind::Gain))
+            .count();
+        assert_eq!(gains, 1);
     }
 
     /// A Qudelix 5K preset export: a type line, `//` comments, a preamp and
