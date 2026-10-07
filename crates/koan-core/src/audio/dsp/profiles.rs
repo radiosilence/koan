@@ -4162,11 +4162,27 @@ mod tests {
         assert_eq!(made.tuned_for.as_deref(), Some(target));
         assert_eq!(role(made), DspRole::Tuning);
         assert!(cfg.dsp.profiles.iter().any(|p| p.name == "Lush"), "kept");
-        // On its own target, no difference to play: the tuning's curve and
-        // the correction's.
+        // On its own target, no difference to play: the correction's bands
+        // and the tuning's curve.
         let chain = super::super::output_chain(&cfg.dsp, "Desk DAC").unwrap();
         let played = super::super::chain(&chain.profile, &chain.all, &mut Vec::new()).unwrap();
-        assert_eq!(played.len(), 2);
+        let bands = &cfg
+            .dsp
+            .profiles
+            .iter()
+            .find(|p| p.name == c)
+            .unwrap()
+            .filters;
+        assert!(!bands.is_empty());
+        assert_eq!(played.len(), bands.len() + 1);
+        assert!(played.windows(bands.len()).any(|w| w == &bands[..]));
+        assert_eq!(
+            played
+                .iter()
+                .filter(|f| matches!(f, DspFilter::Graphic(_)))
+                .count(),
+            1
+        );
         assert!(split_baked("Lush", &text, DspEar::In, "made-up").is_err());
 
         // One EQ the same on every channel splits; nothing else does.
