@@ -489,13 +489,13 @@ private struct RemoteSettings: View {
                         TextField("Server URL", text: $url, prompt: Text("Server URL"))
                             .verbatimEntry(.url)
                             .accessibilityIdentifier("server-url")
-                            .koanField()
+                            .koanField(url, prompt: "Server URL")
                     }
                     LabeledContent("Username") {
                         TextField("Username", text: $username, prompt: Text("Username"))
                             .verbatimEntry()
                             .accessibilityIdentifier("username")
-                            .koanField()
+                            .koanField(username, prompt: "Username")
                     }
                     KoanPicker("Sign in with", selection: $model.withApiKey, options: [
                         ("Password", false), ("API key", true),
@@ -513,7 +513,7 @@ private struct RemoteSettings: View {
                         )
                         .verbatimEntry()
                         .accessibilityIdentifier("secret")
-                        .koanField()
+                        .koanField(model.password, prompt: model.withApiKey ? "API key" : "Password", secure: true)
                     }
                     HStack {
                         Button("Sign In") { model.signIn(url: url, username: username) }
@@ -610,7 +610,7 @@ private struct RemoteSettings: View {
                     .onChange(of: cacheLimitFocused) { _, focused in
                         if !focused { commitCacheLimit() }
                     }
-                    .koanField()
+                    .koanField(cacheLimit ?? model.settings.cacheLimit, prompt: "e.g. 50GB — blank for no limit")
                 }
                 LabeledContent("Using") {
                     HStack(spacing: KoanTheme.Space.l) {
@@ -1095,7 +1095,7 @@ private struct PairDevice: View {
                     TextField("Code", text: $code, prompt: Text("XXXX-XXXX"))
                         .verbatimEntry()
                         .onSubmit(approve)
-                        .koanField()
+                        .koanField(code, prompt: "XXXX-XXXX")
                     Button("Approve", action: approve)
                         .koanButton(.prominent)
                         .disabled(code.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -1361,7 +1361,7 @@ private struct DevicesSettings: View {
                     TextField("Address", text: $address, prompt: Text("host or host:port"))
                         .verbatimEntry(.url)
                         .onSubmit(add)
-                        .koanField()
+                        .koanField(address, prompt: "host or host:port")
                     Button("Add", action: add)
                         .koanButton(.bordered)
                         .disabled(address.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -1394,7 +1394,7 @@ private struct DevicesSettings: View {
                             }
                             #endif
                             .onSubmit { share(grantee, allow: true) }
-                            .koanField()
+                            .koanField(grantee, prompt: "Their username on this server")
                         Button("Share") { share(grantee, allow: true) }
                             .koanButton(.bordered)
                             .disabled(grantee.trimmingCharacters(in: .whitespaces).isEmpty)

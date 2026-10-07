@@ -64,7 +64,7 @@ struct ApiKeysSettings: View {
                 HStack {
                     TextField("Name", text: $name, prompt: Text("The app it is for"))
                         .verbatimEntry()
-                        .koanField()
+                        .koanField(name, prompt: "The app it is for")
                     Button("New Key") {
                         Task {
                             if await model.create(name: name.trimmingCharacters(in: .whitespaces)) {

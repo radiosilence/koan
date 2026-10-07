@@ -888,7 +888,15 @@ extension View {
     /// A text field: the theme's type on a `surface` field, square, no bezel.
     /// The platform's field otherwise.
     func koanField() -> some View {
-        modifier(KoanFieldRole())
+        modifier(KoanFieldRole(shown: nil))
+    }
+
+    /// `koanField()` for a field a television shows, given what it holds and
+    /// says when empty. tvOS draws its text fields as rounded platters that
+    /// no style removes, so there the theme draws the box and its text itself
+    /// over the field, which stays to take focus and open the keyboard.
+    func koanField(_ value: String, prompt: String, secure: Bool = false) -> some View {
+        modifier(KoanFieldRole(shown: KoanFieldShown(value: value, prompt: prompt, secure: secure)))
     }
 
     /// A pop-up picker, menu or stepper: the system control, in `ink` and the
@@ -2062,7 +2070,14 @@ private struct KoanListRole: ViewModifier {
     }
 }
 
+struct KoanFieldShown {
+    let value: String
+    let prompt: String
+    let secure: Bool
+}
+
 private struct KoanFieldRole: ViewModifier {
+    let shown: KoanFieldShown?
     #if os(tvOS)
     /// A plain field draws no focus of its own on a television; the ring is
     /// all that says which field the remote is on.
@@ -2071,70 +2086,44 @@ private struct KoanFieldRole: ViewModifier {
 
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
-            content
-                .textFieldStyle(.plain)
-                .font(.koan(.control))
-                .foregroundStyle(Color.koanInk)
-                .padding(.horizontal, KoanTheme.Space.m)
-                .padding(.vertical, KoanTheme.Space.s)
-                .background(Color.koanSurface)
-                #if os(tvOS)
-                .background(SquareFieldBorder())
-                .focused($focused)
-                .koanFocusRing(focused)
-                #endif
+            #if os(tvOS)
+            if let shown {
+                // Faint rather than hidden: UIKit's focus passes over a view
+                // all but transparent.
+                box(content.focused($focused).opacity(0.02).overlay(alignment: .leading) {
+                    Text(Self.text(shown))
+                        .foregroundStyle(shown.value.isEmpty ? Color.koanMuted : Color.koanInk)
+                        .lineLimit(1)
+                        .allowsHitTesting(false)
+                })
+            } else {
+                box(content.textFieldStyle(.plain).focused($focused))
+            }
+            #else
+            box(content.textFieldStyle(.plain))
+            #endif
         } else {
             content
         }
     }
-}
 
-#if os(tvOS)
-/// A tvOS text field draws a rounded platter, a blur inside the field,
-/// whatever its style or border says. Laid behind the field, this clears the
-/// blur of the field it sits under, leaving the theme's square box; the
-/// text, drawn inside the same view, stays.
-private struct SquareFieldBorder: UIViewRepresentable {
-    func makeUIView(context: Context) -> Probe { Probe() }
-    func updateUIView(_ view: Probe, context: Context) { view.setNeedsLayout() }
+    private func box(_ field: some View) -> some View {
+        field
+            .font(.koan(.control))
+            .foregroundStyle(Color.koanInk)
+            .padding(.horizontal, KoanTheme.Space.m)
+            .padding(.vertical, KoanTheme.Space.s)
+            .background(Color.koanSurface)
+            #if os(tvOS)
+            .koanFocusRing(focused)
+            #endif
+    }
 
-    final class Probe: UIView {
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            guard window != nil else { return }
-            let centre = convert(CGPoint(x: bounds.midX, y: bounds.midY), to: nil)
-            var node = superview
-            for _ in 0..<6 {
-                guard let current = node else { return }
-                if let field = Self.field(in: current, at: centre) {
-                    Self.clearPlatter(in: field)
-                    return
-                }
-                node = current.superview
-            }
-        }
-
-        private static func clearPlatter(in view: UIView) {
-            if let blur = view as? UIVisualEffectView {
-                blur.effect = nil
-            }
-            view.subviews.forEach(clearPlatter)
-        }
-
-        /// The text field under `point`, in window coordinates: a form holds
-        /// several, and only this one is ours.
-        private static func field(in view: UIView, at point: CGPoint) -> UITextField? {
-            if let field = view as? UITextField {
-                return field.convert(field.bounds, to: nil).contains(point) ? field : nil
-            }
-            for sub in view.subviews {
-                if let found = field(in: sub, at: point) { return found }
-            }
-            return nil
-        }
+    private static func text(_ shown: KoanFieldShown) -> String {
+        if shown.value.isEmpty { return shown.prompt }
+        return shown.secure ? String(repeating: "•", count: shown.value.count) : shown.value
     }
 }
-#endif
 
 private struct KoanControlRole: ViewModifier {
     func body(content: Content) -> some View {

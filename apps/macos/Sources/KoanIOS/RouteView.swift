@@ -255,7 +255,7 @@ struct NameFilter: View {
             .autocorrectionDisabled()
             .textInputAutocapitalization(.never)
             .frame(width: 640)
-            .koanField()
+            .koanField(text, prompt: KoanTheme.label(prompt))
             .accessibilityIdentifier("name-filter")
     }
 }
