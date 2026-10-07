@@ -758,7 +758,7 @@ struct TelevisionRow: ButtonStyle {
                     .padding(.horizontal, 20)
                     .padding(.vertical, 6)
                     .background(
-                        RoundedRectangle(cornerRadius: 14)
+                        RoundedRectangle(cornerRadius: KoanTheme.radius(14))
                             .fill(.white.opacity(focused ? 1 : resting))
                             .shadow(color: .black.opacity(focused ? 0.35 : 0), radius: 18, y: 8)
                     )
