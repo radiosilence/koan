@@ -2760,6 +2760,11 @@ impl Player {
         Arc<VizSnapshot>,
         crossbeam_channel::Sender<PlayerCommand>,
     ) {
+        // EQ from before presets and tunings of several EQs, brought up to
+        // them before anything plays through it.
+        if let Err(e) = crate::audio::dsp::profiles::migrate() {
+            log::warn!("dsp: not brought up to date: {e}");
+        }
         let mut player = Self::new();
         player.history = PlayRecorder::spawn();
         let state = player.shared_state();

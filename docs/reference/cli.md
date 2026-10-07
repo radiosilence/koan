@@ -164,7 +164,11 @@ koan dsp layer STACK LAYER on|off
 koan dsp measure FILE --name NAME --ear in|over --target TARGET  # correct a headphone from its measurement
 koan dsp role NAME correction|tuning|baked                  # a stack holds one correction; baked counts as one
 koan dsp made-for NAME TARGET|unknown                       # the target a ready-made EQ was made for
-koan dsp tuning NAME|none [--device NAME]                   # a tuning on top of an output's correction
+koan dsp tuning EQ... [--off EQ]... [--device NAME]         # the tuning on top of an output's correction: EQs in order, or none
+koan dsp preset save NAME [--device NAME]                   # an output's correction and tuning, saved together
+koan dsp preset use NAME|flat [--device NAME]               # set an output from a preset, or flat: untouched
+koan dsp revert NAME                                        # an imported EQ back as imported
+koan dsp copy NAME [NEW]                                    # a copy as it is now, used by no output
 koan dsp tuned-for NAME TARGET|unknown                      # the target a tuning was made against
 koan dsp split NAME FILE --ear in|over --target TARGET      # a baked EQ into correction + tuning, from a measurement
 koan dsp off | on                               # bypass every profile, or stop bypassing

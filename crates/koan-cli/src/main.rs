@@ -358,13 +358,26 @@ enum DspCommands {
     /// The target a ready-made EQ was made for, or `unknown`, which leaves
     /// target switching off
     MadeFor { name: String, target: String },
-    /// Play a tuning on top of an output's correction (the current output by
-    /// default), or `none`
+    /// The tuning on top of an output's correction (the current output by
+    /// default): EQs in the order they play, or `none`
     Tuning {
-        name: String,
+        #[arg(required = true)]
+        names: Vec<String>,
+        /// EQs kept in the tuning but switched off
+        #[arg(long = "off")]
+        off: Vec<String>,
         #[arg(long)]
         device: Option<String>,
     },
+    /// Presets: an output's correction and tuning saved together
+    Preset {
+        #[command(subcommand)]
+        command: PresetCommands,
+    },
+    /// Put an imported EQ back as it was imported
+    Revert { name: String },
+    /// Copy a profile as it is now, used by no output
+    Copy { name: String, new: Option<String> },
     /// The target a tuning was made against, or `unknown`. On headphones
     /// corrected to another, the difference plays first
     TunedFor { name: String, target: String },
@@ -387,6 +400,23 @@ enum DspCommands {
     Off,
     /// Stop bypassing
     On,
+}
+
+#[derive(Subcommand)]
+enum PresetCommands {
+    /// Save an output's correction and tuning (the current output by
+    /// default) as a preset
+    Save {
+        name: String,
+        #[arg(long)]
+        device: Option<String>,
+    },
+    /// Set an output from a preset, or `flat`: no correction and no tuning
+    Use {
+        name: String,
+        #[arg(long)]
+        device: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -676,9 +706,20 @@ fn main() {
             DspCommands::MadeFor { name, target } => {
                 commands::cmd_dsp_made_for(&name, Some(target.as_str()).filter(|t| *t != "unknown"))
             }
-            DspCommands::Tuning { name, device } => {
-                commands::cmd_dsp_tuning(Some(name.as_str()).filter(|n| *n != "none"), device)
+            DspCommands::Tuning { names, off, device } => {
+                commands::cmd_dsp_tuning(&names, &off, device)
             }
+            DspCommands::Preset { command } => match command {
+                PresetCommands::Save { name, device } => {
+                    commands::cmd_dsp_preset_save(&name, device)
+                }
+                PresetCommands::Use { name, device } => commands::cmd_dsp_preset_use(
+                    Some(name.as_str()).filter(|n| *n != "flat"),
+                    device,
+                ),
+            },
+            DspCommands::Revert { name } => commands::cmd_dsp_revert(&name),
+            DspCommands::Copy { name, new } => commands::cmd_dsp_copy(&name, new.as_deref()),
             DspCommands::TunedFor { name, target } => commands::cmd_dsp_tuned_for(
                 &name,
                 Some(target.as_str()).filter(|t| *t != "unknown"),

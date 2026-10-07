@@ -1287,16 +1287,18 @@ mod tests {
         );
         assert!(b.profile("Desk speakers").is_none());
 
-        // Edited on A, then renamed on B, offline: B's later edit wins.
+        // Edited on A (by hand: the apps leave a correction as made), then
+        // renamed on B, offline: B's later edit wins.
         a.on();
-        crate::audio::dsp::profiles::set_band(
-            "HD 650 (AutoEQ, oratory1990)",
-            0,
-            "peaking",
-            1000.0,
-            5.0,
-            1.0,
-        )
+        Config::persist(|c| {
+            let hd = c
+                .dsp
+                .profiles
+                .iter_mut()
+                .find(|p| p.name == "HD 650 (AutoEQ, oratory1990)")
+                .unwrap();
+            hd.filters[0] = band(5.0);
+        })
         .unwrap();
         a.sync(&server);
         std::thread::sleep(std::time::Duration::from_millis(3));

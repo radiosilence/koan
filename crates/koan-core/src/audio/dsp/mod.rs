@@ -122,45 +122,56 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
     let all = &dsp.profiles;
     let chosen = dsp.profile_for(device);
     let correction = chosen.map(|c| member_playing(c, all));
-    let tuning = chosen
-        .is_none_or(|c| profiles::shown_role(c, all) != DspRole::Baked)
-        .then(|| dsp.tunings.iter().find(|t| t.device == device))
-        .flatten()
-        .filter(|_| dsp.enabled)
-        .and_then(|t| all.iter().find(|p| p.name == t.tuning))
-        .filter(|t| profiles::shown_role(t, all) == DspRole::Tuning && responses(t, all).is_empty())
-        // A group without a member to play has nothing to put a layer on.
-        .filter(|_| correction.is_none_or(|c| !c.group));
-    let name = chosen.or(tuning)?.name.clone();
-    let alone = |c: &DspProfile, left_out: Option<String>| OutputChain {
-        profile: c.clone(),
-        all: all.clone(),
-        name: name.clone(),
-        left_out,
-        tuning_plays: false,
-    };
-    let Some(tuning) = tuning else {
-        return correction.map(|c| alone(c, None));
-    };
-    // Without a correction to fall back on, the output plays untouched, and
-    // still says why.
-    let left_off = |why: &str| {
-        let why = format!("{} is left out: {why}", tuning.name);
-        log::warn!("dsp: {device}: {why}");
+    let baked = chosen.is_some_and(|c| profiles::shown_role(c, all) == DspRole::Baked);
+    let mut notes: Vec<String> = Vec::new();
+    // The tunings switched on, in order. A group without a member to play
+    // has nothing to put a layer on.
+    let mut tunings: Vec<&DspProfile> = Vec::new();
+    if dsp.enabled && correction.is_none_or(|c| !c.group) {
+        for entry in dsp.tunings.iter().filter(|t| t.device == device && t.on) {
+            let Some(t) = all.iter().find(|p| p.name == entry.tuning) else {
+                continue;
+            };
+            if profiles::shown_role(t, all) != DspRole::Tuning || !responses(t, all).is_empty() {
+                continue;
+            }
+            if baked {
+                continue;
+            }
+            tunings.push(t);
+        }
+    }
+    let name = chosen.or(tunings.first().copied())?.name.clone();
+    let alone = |notes: &[String]| -> Option<OutputChain> {
+        let left_out = (!notes.is_empty()).then(|| notes.join(" "));
         Some(match correction {
-            Some(c) => alone(c, Some(why)),
-            None => OutputChain {
+            Some(c) => OutputChain {
+                profile: c.clone(),
+                all: all.clone(),
+                name: name.clone(),
+                left_out,
+                tuning_plays: false,
+            },
+            // Without a correction to fall back on, the output plays
+            // untouched, and still says why.
+            None if left_out.is_some() => OutputChain {
                 profile: DspProfile {
                     name: name.clone(),
                     ..Default::default()
                 },
                 all: all.clone(),
                 name: name.clone(),
-                left_out: Some(why),
+                left_out,
                 tuning_plays: false,
             },
+            None => return None,
         })
     };
+    if tunings.is_empty() {
+        return alone(&notes);
+    }
+    // The correction's graphic curves come first in the chain's budget, then
+    // each tuning's in order while they fit.
     let curves = |p: &DspProfile| {
         chain(p, all, &mut Vec::new()).map_or(0, |f| {
             f.iter()
@@ -168,82 +179,113 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
                 .count()
         })
     };
-    let held = correction.map_or(0, curves) + curves(tuning);
-    if held > dsp_bounds::CHAIN_GRAPHICS {
-        return left_off(
-            "with the correction, it would play more graphic curves than a chain holds.",
-        );
+    let mut held = correction.map_or(0, curves);
+    let mut kept = Vec::new();
+    for t in tunings {
+        let c = curves(t);
+        if held + c > dsp_bounds::CHAIN_GRAPHICS {
+            notes.push(format!(
+                "{} is left out: with what plays before it, it would play more graphic curves than a chain holds.",
+                t.name
+            ));
+            continue;
+        }
+        held += c;
+        kept.push(t);
     }
-    let mut on_top = tuning.clone();
-    // Control characters are taken out of every name, so none is this.
-    on_top.name = format!("\u{1}{}", tuning.name);
-    on_top.devices.clear();
+    // Each tuning's target difference, where it was made against another
+    // target than the correction's, while curves are left: a layer of its
+    // own ahead of the tuning, and of a group's member.
     let aim = correction.and_then(|c| profiles::aims_at(c, all));
-    let wanted = aim
-        .zip(made_against(tuning, all, 0))
-        .filter(|(aim, made)| aim != made && targets::same_ear(aim, made));
-    let mut left_out = None;
-    if wanted.is_some() && held >= dsp_bounds::CHAIN_GRAPHICS {
-        left_out = Some(format!(
-            "{} plays without the target difference: the chain's graphic curves are full, so it may not sound as made.",
-            tuning.name
-        ));
+    let mut layers: Vec<(Option<DspProfile>, DspProfile, String)> = Vec::new();
+    for (i, t) in kept.into_iter().enumerate() {
+        let mut on_top = t.clone();
+        // Control characters are taken out of every name, so none is this.
+        on_top.name = format!("\u{1}{i}\u{1}{}", t.name);
+        on_top.devices.clear();
+        let wanted = aim
+            .clone()
+            .zip(made_against(t, all, 0))
+            .filter(|(aim, made)| aim != made && targets::same_ear(aim, made));
+        let step = match wanted {
+            Some(_) if held >= dsp_bounds::CHAIN_GRAPHICS => {
+                notes.push(format!(
+                    "{} plays without the target difference: the chain's graphic curves are full, so it may not sound as made.",
+                    t.name
+                ));
+                None
+            }
+            Some((aim, made)) => {
+                let step = targets::choice_curve(&aim)
+                    .zip(targets::choice_curve(&made))
+                    .map(|(from, to)| DspProfile {
+                        name: format!("\u{1}{i}\u{1}Target difference"),
+                        filters: vec![DspFilter::Graphic(targets::difference(&from, &to))],
+                        ..Default::default()
+                    });
+                held += usize::from(step.is_some());
+                step
+            }
+            None => None,
+        };
+        layers.push((step, on_top, t.name.clone()));
     }
-    // Ahead of the tuning, and of a group's member, as a layer of its own.
-    let step = wanted
-        .filter(|_| left_out.is_none())
-        .and_then(|(aim, made)| Some((targets::choice_curve(&aim)?, targets::choice_curve(&made)?)))
-        .map(|(from, to)| DspProfile {
-            name: "\u{1}Target difference".into(),
-            filters: vec![DspFilter::Graphic(targets::difference(&from, &to))],
-            ..Default::default()
-        });
-    let build = |step: Option<DspProfile>| {
+    let build = |layers: &[(Option<DspProfile>, DspProfile, String)]| {
         let mut among = all.clone();
+        let mut names = Vec::new();
+        for (step, on_top, _) in layers {
+            for p in step.iter().chain([on_top]) {
+                names.push(p.name.clone());
+                among.push(p.clone());
+            }
+        }
         let profile = match correction {
             Some(c) => {
                 let mut c = c.clone();
-                for p in step.into_iter().chain([on_top.clone()]) {
-                    c.layers.push(DspLayer {
-                        profile: p.name.clone(),
-                        on: true,
-                    });
-                    among.push(p);
-                }
+                c.layers.extend(
+                    names
+                        .into_iter()
+                        .map(|profile| DspLayer { profile, on: true }),
+                );
                 c
             }
-            None => {
-                among.push(on_top.clone());
-                on_top.clone()
-            }
+            // No correction: the tunings are the chain.
+            None => DspProfile {
+                name: format!("\u{1}{name}"),
+                layers: names
+                    .into_iter()
+                    .map(|profile| DspLayer { profile, on: true })
+                    .collect(),
+                ..Default::default()
+            },
         };
         chain(&profile, &among, &mut Vec::new()).map(|_| (profile, among))
     };
-    // A chain past what one may hold loses the target difference first,
-    // then the tuning, never the correction.
-    let had_step = step.is_some();
-    let (profile, among) = match build(step) {
-        Ok(built) => built,
-        Err(e) if !had_step => {
-            return left_off(&format!(
-                "with the correction, the chain is more than one can hold ({e})."
-            ));
-        }
-        Err(_) => match build(None) {
-            Ok(built) => {
-                left_out = Some(format!(
-                    "{} plays without the target difference: with it, the chain is more than one can hold, so it may not sound as made.",
-                    tuning.name
-                ));
-                built
-            }
+    // A chain past what one may hold loses target differences first, from
+    // the last, then tunings from the last, never the correction.
+    let (profile, among) = loop {
+        match build(&layers) {
+            Ok(built) => break built,
             Err(e) => {
-                return left_off(&format!(
-                    "with the correction, the chain is more than one can hold ({e})."
-                ));
+                if let Some((step, _, tuning)) = layers.iter_mut().rev().find(|l| l.0.is_some()) {
+                    *step = None;
+                    notes.push(format!(
+                        "{tuning} plays without the target difference: with it, the chain is more than one can hold, so it may not sound as made."
+                    ));
+                } else if let Some((_, _, tuning)) = layers.pop() {
+                    notes.push(format!(
+                        "{tuning} is left out: with what plays before it, the chain is more than one can hold ({e})."
+                    ));
+                    if layers.is_empty() {
+                        return alone(&notes);
+                    }
+                } else {
+                    return alone(&notes);
+                }
             }
-        },
+        }
     };
+    let left_out = (!notes.is_empty()).then(|| notes.join(" "));
     Some(OutputChain {
         profile,
         all: among,
