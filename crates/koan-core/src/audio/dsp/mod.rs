@@ -97,6 +97,9 @@ pub struct OutputChain {
     /// What of the output's choices does not play, and why, to show where
     /// the EQ is: a tuning or a target difference left out.
     pub left_out: Option<String>,
+    /// The tuning's EQs left out entirely, by name, for a front end to say
+    /// what plays without reading `left_out`.
+    pub left_out_eqs: Vec<String>,
     /// The output's tuning plays.
     pub tuning_plays: bool,
 }
@@ -124,6 +127,7 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
     let correction = chosen.map(|c| member_playing(c, all));
     let baked = chosen.is_some_and(|c| profiles::shown_role(c, all) == DspRole::Baked);
     let mut notes: Vec<String> = Vec::new();
+    let mut dropped: Vec<String> = Vec::new();
     // The tunings switched on, in order, each one that cannot play said.
     let mut tunings: Vec<&DspProfile> = Vec::new();
     if dsp.enabled {
@@ -147,7 +151,10 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
                 },
             };
             match why {
-                Some(why) => notes.push(format!("{} is left out: {why}.", entry.tuning)),
+                Some(why) => {
+                    notes.push(format!("{} is left out: {why}.", entry.tuning));
+                    dropped.push(entry.tuning.clone());
+                }
                 None => tunings.extend(all.iter().find(|p| p.name == entry.tuning)),
             }
         }
@@ -162,7 +169,7 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
             .tuning
             .clone(),
     };
-    let alone = |notes: &[String]| -> Option<OutputChain> {
+    let alone = |notes: &[String], dropped: &[String]| -> Option<OutputChain> {
         let left_out = (!notes.is_empty()).then(|| notes.join(" "));
         Some(match correction {
             Some(c) => OutputChain {
@@ -170,6 +177,7 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
                 all: all.clone(),
                 name: name.clone(),
                 left_out,
+                left_out_eqs: dropped.to_vec(),
                 tuning_plays: false,
             },
             // Without a correction to fall back on, the output plays
@@ -182,13 +190,14 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
                 all: all.clone(),
                 name: name.clone(),
                 left_out,
+                left_out_eqs: dropped.to_vec(),
                 tuning_plays: false,
             },
             None => return None,
         })
     };
     if tunings.is_empty() {
-        return alone(&notes);
+        return alone(&notes, &dropped);
     }
     // The correction's graphic curves come first in the chain's budget, then
     // each tuning's in order while they fit.
@@ -208,6 +217,7 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
                 "{} is left out: with what plays before it, it would play more graphic curves than a chain holds.",
                 t.name
             ));
+            dropped.push(t.name.clone());
             continue;
         }
         held += c;
@@ -296,11 +306,12 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
                     notes.push(format!(
                         "{tuning} is left out: with what plays before it, the chain is more than one can hold ({e})."
                     ));
+                    dropped.push(tuning);
                     if layers.is_empty() {
-                        return alone(&notes);
+                        return alone(&notes, &dropped);
                     }
                 } else {
-                    return alone(&notes);
+                    return alone(&notes, &dropped);
                 }
             }
         }
@@ -311,6 +322,7 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
         all: among,
         name,
         left_out,
+        left_out_eqs: dropped,
         tuning_plays: true,
     })
 }

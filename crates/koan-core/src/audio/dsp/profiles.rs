@@ -32,6 +32,21 @@ pub struct Summary {
     pub preset: bool,
     /// Changed since it was imported, so it can go back.
     pub edited: bool,
+    /// The devices it is chosen for: as their correction, in their tuning,
+    /// or as the preset they were set from.
+    pub used_on: Vec<String>,
+    /// Kept on every device of the account.
+    pub everywhere: bool,
+}
+
+/// What a device is set to, for a menu of presets.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutputState {
+    pub device: String,
+    /// The preset it was set from, and whether it was changed since.
+    pub preset: Option<(String, bool)>,
+    /// No correction and no tuning: it plays untouched.
+    pub flat: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -48,6 +63,8 @@ pub struct Overview {
     pub tuning_plays: bool,
     /// What of that device's choices does not play, and why.
     pub left_out: Option<String>,
+    /// The EQs of its tuning left out entirely.
+    pub left_out_eqs: Vec<String>,
     /// Every output's tuning, by device: its first EQ.
     pub tunings: Vec<(String, String)>,
     /// That device's tuning: its EQs in order, each on or off.
@@ -56,6 +73,8 @@ pub struct Overview {
     /// since.
     pub preset: Option<(String, bool)>,
     pub profiles: Vec<Summary>,
+    /// Every device the EQ names, and what each is set to.
+    pub outputs: Vec<OutputState>,
 }
 
 /// The device the player resolves to: the configured one if it is there, or
@@ -90,7 +109,12 @@ pub fn overview_for(device: Option<String>) -> Overview {
             .and_then(|d| cfg.dsp.profile_for(d))
             .map(|p| p.name.clone()),
         tuning_plays: chain.as_ref().is_some_and(|c| c.tuning_plays),
+        left_out_eqs: chain
+            .as_ref()
+            .map(|c| c.left_out_eqs.clone())
+            .unwrap_or_default(),
         left_out: chain.and_then(|c| c.left_out),
+        outputs: outputs(&cfg.dsp),
         tunings: cfg.dsp.tunings.iter().fold(Vec::new(), |mut first, t| {
             if !first.iter().any(|(d, _): &(String, String)| d == &t.device) {
                 first.push((t.device.clone(), t.tuning.clone()));
@@ -130,10 +154,65 @@ pub fn overview_for(device: Option<String>) -> Overview {
                         .flatten(),
                     preset: p.preset,
                     edited: edited(p),
+                    used_on: used_on(&cfg.dsp, &p.name),
+                    everywhere: scope(p, &cfg.dsp.profiles) == DspScope::Everywhere,
                 }
             })
             .collect(),
     }
+}
+
+/// Every device the EQ names, in the order first named, and what each is
+/// set to.
+fn outputs(dsp: &crate::config::DspConfig) -> Vec<OutputState> {
+    let mut devices: Vec<&str> = Vec::new();
+    for d in dsp
+        .profiles
+        .iter()
+        .filter(|p| !p.preset)
+        .flat_map(|p| p.devices.iter())
+        .chain(dsp.tunings.iter().map(|t| &t.device))
+        .chain(dsp.presets.iter().map(|p| &p.device))
+    {
+        if !devices.contains(&d.as_str()) {
+            devices.push(d);
+        }
+    }
+    devices
+        .into_iter()
+        .map(|d| OutputState {
+            device: d.to_owned(),
+            preset: preset_for(d),
+            flat: dsp.profile_for(d).is_none() && !dsp.tunings.iter().any(|t| t.device == d),
+        })
+        .collect()
+}
+
+/// The devices `name` is chosen for: as their correction, in their tuning,
+/// or as the preset they were set from.
+fn used_on(dsp: &crate::config::DspConfig, name: &str) -> Vec<String> {
+    let mut on: Vec<String> = Vec::new();
+    let correcting = dsp
+        .profiles
+        .iter()
+        .filter(|p| p.name == name && !p.preset)
+        .flat_map(|p| p.devices.iter());
+    let tuning = dsp
+        .tunings
+        .iter()
+        .filter(|t| t.tuning == name)
+        .map(|t| &t.device);
+    let preset = dsp
+        .presets
+        .iter()
+        .filter(|p| p.preset == name)
+        .map(|p| &p.device);
+    for d in correcting.chain(tuning).chain(preset) {
+        if !on.contains(d) {
+            on.push(d.clone());
+        }
+    }
+    on
 }
 
 /// Save an import as the profile `name`, or the name it came with. An existing

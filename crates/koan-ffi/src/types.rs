@@ -1220,6 +1220,10 @@ pub struct DspOverview {
     pub tuning_plays: bool,
     /// What of the output's choices does not play, and why.
     pub left_out: Option<String>,
+    /// The EQs of its tuning left out entirely, by name.
+    pub left_out_eqs: Vec<String>,
+    /// Every device the EQ names, and what each is set to.
+    pub outputs: Vec<DspOutputState>,
     /// Every output's tuning, by device: its first EQ.
     pub tunings: std::collections::HashMap<String, String>,
     /// The output's tuning: its EQs in the order they play.
@@ -1230,6 +1234,18 @@ pub struct DspOverview {
     pub profiles: Vec<DspProfileSummary>,
     /// What to call the devices named by a UDN, where the renderer is known.
     pub names: std::collections::HashMap<String, String>,
+}
+
+/// What a device is set to, for a menu of presets.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspOutputState {
+    pub device: String,
+    /// The preset it was set from.
+    pub preset: Option<String>,
+    /// Changed since it was set from that preset.
+    pub preset_edited: bool,
+    /// No correction and no tuning: it plays untouched.
+    pub flat: bool,
 }
 
 /// One EQ of an output's tuning.
@@ -1261,6 +1277,11 @@ pub struct DspProfileSummary {
     pub preset: bool,
     /// Changed since it was imported.
     pub edited: bool,
+    /// The devices it is chosen for: as their correction, in their tuning,
+    /// or as the preset they were set from.
+    pub used_on: Vec<String>,
+    /// Kept on every device of the account.
+    pub everywhere: bool,
 }
 
 /// What a profile is for. A chain corrects a headphone once.
@@ -1600,6 +1621,17 @@ impl From<koan_core::audio::dsp::profiles::Overview> for DspOverview {
             tuning: o.tuning,
             tuning_plays: o.tuning_plays,
             left_out: o.left_out,
+            left_out_eqs: o.left_out_eqs,
+            outputs: o
+                .outputs
+                .into_iter()
+                .map(|s| DspOutputState {
+                    device: s.device,
+                    preset_edited: s.preset.as_ref().is_some_and(|(_, e)| *e),
+                    preset: s.preset.map(|(name, _)| name),
+                    flat: s.flat,
+                })
+                .collect(),
             tunings: o.tunings.into_iter().collect(),
             chain: o
                 .chain
@@ -1624,6 +1656,8 @@ impl From<koan_core::audio::dsp::profiles::Overview> for DspOverview {
                     playing: p.playing,
                     preset: p.preset,
                     edited: p.edited,
+                    used_on: p.used_on,
+                    everywhere: p.everywhere,
                 })
                 .collect(),
         }
