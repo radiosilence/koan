@@ -308,6 +308,7 @@ struct NowPlayingPresentation: ViewModifier {
     @Environment(\.horizontalSizeClass) private var width
 
     func body(content: Content) -> some View {
+        #if os(iOS)
         if KoanTheme.isOn && width == .regular {
             content.fullScreenCover(isPresented: $isPresented) {
                 NowPlayingSheet()
@@ -330,10 +331,17 @@ struct NowPlayingPresentation: ViewModifier {
                     )
             }
         } else {
-            content.sheet(isPresented: $isPresented) {
-                NowPlayingSheet()
-                    .presentationDetents([.large])
-            }
+            sheet(content)
+        }
+        #else
+        sheet(content)
+        #endif
+    }
+
+    private func sheet(_ content: Content) -> some View {
+        content.sheet(isPresented: $isPresented) {
+            NowPlayingSheet()
+                .presentationDetents([.large])
         }
     }
 }
