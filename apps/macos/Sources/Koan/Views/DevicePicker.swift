@@ -248,16 +248,16 @@ struct OutputPicker: View {
         let platform = outputs.owner == nil ? DevicePicker.platform : player.controlled?.platform
         if platform == "ios" || platform == "tvos" {
             ForEach(outputs.devices, id: \.id) { device in
-                OutputChoiceRow(output: device, outputs: outputs, choice: .default, icon: DevicePicker.icon(for: platform ?? "ios"), none: "Off")
+                OutputChoiceRow(output: device, outputs: outputs, choice: .default, icon: DevicePicker.icon(for: platform ?? "ios"))
             }
         } else {
-            OutputChoiceRow(output: nil, outputs: outputs, choice: .default, icon: "speaker.wave.2", none: "Off")
+            OutputChoiceRow(output: nil, outputs: outputs, choice: .default, icon: "speaker.wave.2")
             ForEach(outputs.devices, id: \.id) { device in
-                OutputChoiceRow(output: device, outputs: outputs, choice: .device(name: device.id), icon: DevicePicker.icon(forOutput: device.kind), none: "Off")
+                OutputChoiceRow(output: device, outputs: outputs, choice: .device(name: device.id), icon: DevicePicker.icon(forOutput: device.kind))
             }
         }
         ForEach(outputs.renderers, id: \.id) { renderer in
-            OutputChoiceRow(output: renderer, outputs: outputs, choice: .renderer(udn: renderer.id), icon: "hifispeaker", none: "Original file")
+            OutputChoiceRow(output: renderer, outputs: outputs, choice: .renderer(udn: renderer.id), icon: "hifispeaker")
         }
         if case .renderer(let udn) = outputs.current,
            let renderer = outputs.renderers.first(where: { $0.id == udn }) {
@@ -276,12 +276,11 @@ private struct OutputChoiceRow: View {
     let outputs: OutputsInfo
     let choice: OutputChoice
     let icon: String
-    let none: String
 
     var body: some View {
         let selected = outputs.current == choice
         let presets = output.flatMap {
-            Presets(output: $0, of: outputs, none: none, player: player, dsp: app.dsp)
+            Presets(output: $0, of: outputs, player: player)
         }
         DeviceChoiceRow(
             icon: icon,
@@ -518,7 +517,7 @@ private struct DeviceChoiceRow: View {
                 PresetMenu(presets: presets) {
                     Image(systemName: "slider.horizontal.3")
                         .font(.role(.fine, system: .caption))
-                        .foregroundStyle(presets.current == nil ? KoanTheme.style(.muted, system: .tertiary) : KoanTheme.style(.muted, system: .secondary))
+                        .foregroundStyle(presets.flat ? KoanTheme.style(.muted, system: .tertiary) : KoanTheme.style(.muted, system: .secondary))
                 }
                 #if os(macOS)
                 .menuStyle(.borderlessButton)

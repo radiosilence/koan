@@ -9,6 +9,13 @@ struct EqSettings: View {
     @Environment(AppState.self) private var app
     /// The device shown: the output in use until another is picked.
     @State private var picked: String?
+    /// Manage EQ is open over the page.
+    @State private var managing = false
+
+    /// Open on `device`, or on the output in use.
+    init(device: String? = nil) {
+        _picked = State(initialValue: device)
+    }
     @State private var overview: DspOverview?
     @State private var response: DspResponse?
     /// The curve each stage draws alone, by profile name.
@@ -38,6 +45,16 @@ struct EqSettings: View {
     }
 
     var body: some View {
+        #if os(macOS)
+        // A pane of the Settings window, which has no stack of its own for
+        // Manage EQ to go into.
+        NavigationStack { page }
+        #else
+        page
+        #endif
+    }
+
+    private var page: some View {
         KoanForm {
             if let o = overview, let device {
                 head(o, device)
@@ -64,12 +81,35 @@ struct EqSettings: View {
                         .koanText(.fine, .muted)
                 }
             }
-            DspSettings(importing: $importing, finding: $finding, measuring: $measuring, showing: Binding(
-                get: { showing?.name },
-                set: { showing = $0.map(ShownProfile.init) }
-            ))
+            Section {
+                #if !os(tvOS)
+                if let offer = app.dsp.suggestion, device == app.dsp.overview?.device {
+                    AutoEqSuggestion(offer: offer, dsp: app.dsp) { query in
+                        finding = AutoEqFind(query: query)
+                    }
+                }
+                #endif
+                if let summary = app.dsp.importSummary {
+                    Text(summary).koanText(.fine, .muted)
+                }
+                if let error = app.dsp.lastError {
+                    Text(error).koanText(.fine, .bad)
+                }
+                Button("Manage EQ") { managing = true }
+                    .koanButton(.text)
+            }
         }
         .koanSheet()
+        .navigationDestination(isPresented: $managing) {
+            ManageEq(device: device, active: overview?.active, chain: overview?.chain ?? [])
+        }
+        #if os(macOS)
+        .onChange(of: app.dsp.editing, initial: true) { _, asked in
+            guard let asked else { return }
+            picked = asked == app.dsp.overview?.device ? nil : asked
+            app.dsp.editing = nil
+        }
+        #endif
         .task(id: "\(picked ?? "")\u{0}\(app.dsp.stamp)") { await load() }
         .task(id: app.dsp.stamp) { app.dsp.reload() }
         #if !os(tvOS)
@@ -112,7 +152,8 @@ struct EqSettings: View {
         // tuning already in it, or taste to add on top? kōan cannot tell,
         // and a chain corrects once.
         .sheet(item: Binding(
-            get: { app.dsp.askRole.map(RoleAsk.init) },
+            // Manage EQ asks for its own imports while it is open.
+            get: { managing ? nil : app.dsp.askRole.map(RoleAsk.init) },
             set: { if $0 == nil { app.dsp.askRole = nil } }
         )) { ask in
             RoleQuestion(dsp: app.dsp, names: ask.names).koanSheet()
@@ -479,7 +520,7 @@ struct EqChain: View {
     static func sentence(_ o: DspOverview, device: String, aim: String?) -> String {
         let includes = o.profiles.first { $0.name == o.active }?.role == .baked
         let eqs = includes ? [] : o.chain.filter { entry in
-            entry.on && !(o.leftOut ?? "").contains("\(entry.name) is left out")
+            entry.on && !o.leftOutEqs.contains(entry.name)
         }.map(\.name)
         guard o.active != nil || !eqs.isEmpty else {
             return "\(device) is flat: the music plays untouched."
