@@ -42,12 +42,8 @@ enum KoanTheme {
             look.subtitleTextAttributes = [.font: UIFont.koan(.fine), .foregroundColor: UIColor.koanMuted]
             return look
         }
-        // Scrolled, the bar is flat `bg` over a rule, as the transport is: the
-        // default is a blur with the page showing through it.
         let rest = UINavigationBarAppearance()
-        rest.configureWithOpaqueBackground()
-        rest.backgroundColor = .koanBg
-        rest.shadowColor = .koanRule
+        rest.configureWithDefaultBackground()
         let edge = UINavigationBarAppearance()
         edge.configureWithTransparentBackground()
         let bar = UINavigationBar.appearance()
@@ -335,7 +331,6 @@ extension UIColor {
     }
 
     /// The tokens layer-drawn views read, as on the Mac.
-    static let koanBg = koan(dark: 0x1E1E1E, light: 0xFFFFFF)
     static let koanInk = koan(dark: 0xCCCCCC, light: 0x333333)
     static let koanStrong = koan(dark: 0xFFFFFF, light: 0x111111)
     static let koanRule = koan(dark: 0x383838, light: 0xE0E0E0)
@@ -2089,9 +2084,10 @@ private struct KoanHidesSystemTabBar: ViewModifier {
         #if os(iOS)
         if KoanTheme.isOn {
             content
-                // Scrolled, the navigation bar is flat `bg`, rather than the
-                // platform's blur with the page showing through it.
-                .toolbarBackground(Color.koanBg, for: .navigationBar)
+                // The page passes under the navigation bar behind a hard edge,
+                // rather than the platform's blur with it showing through. A
+                // bar background set here would replace the bar's appearance,
+                // and its Geist Mono titles with it.
                 .scrollEdgeEffectStyle(.hard, for: .top)
                 .toolbar(.hidden, for: .tabBar)
                 .safeAreaInset(edge: .bottom, spacing: 0) {

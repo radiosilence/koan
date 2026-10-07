@@ -647,6 +647,7 @@ private struct PadSidebar: View {
                 ForEach(sections, id: \.section) { item in
                     row(.section(item.section), item.title, item.icon)
                         .badge(item.section == .downloads ? mirror.activeTransfers : 0)
+                        .listRowSeparator(.hidden)
                 }
             } header: {
                 KoanSectionHeader("Library")
@@ -658,6 +659,7 @@ private struct PadSidebar: View {
                             Button("Play", systemImage: Icon.play) { play(playlist, false) }
                             Button("Shuffle", systemImage: Icon.shuffle) { play(playlist, true) }
                         }
+                        .listRowSeparator(.hidden)
                 }
                 Button { playlists.naming = [] } label: {
                     KoanLabel("New Playlist", icon: Icon.add)
@@ -666,6 +668,7 @@ private struct PadSidebar: View {
                 }
                 .buttonStyle(.plain)
                 .koanNavRow(selected: false)
+                .listRowSeparator(.hidden)
             } header: {
                 KoanSectionHeader("Playlists")
             }

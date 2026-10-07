@@ -155,7 +155,11 @@ final class WalkTests: XCTestCase {
     }
 
     private func back() {
-        let button = app.navigationBars.buttons.element(boundBy: 0)
+        // The kōan look draws its own back button, which is not always the
+        // bar's first.
+        let drawn = app.navigationBars.buttons
+            .matching(NSPredicate(format: "label IN %@", ["Back", "chevron.left"])).firstMatch
+        let button = drawn.exists ? drawn : app.navigationBars.buttons.element(boundBy: 0)
         if button.exists { button.tap() }
         pause(1)
     }
