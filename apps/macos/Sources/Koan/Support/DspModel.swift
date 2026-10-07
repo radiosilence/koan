@@ -499,7 +499,6 @@ final class DspModel {
         act { try await $0.dspRemoveFilter(name: name, index: UInt32(index)) }
     }
 
-    /// What `name` does to the sound, at 48 kHz, for the graph.
     /// What the tuning `name` looks made against on the output in use, where
     /// it does not say.
     func suggestMadeAgainst(_ name: String) async -> DspTargetName? {
@@ -513,6 +512,7 @@ final class DspModel {
         return Dictionary(previews.map { ($0.target ?? "", $0.db) }, uniquingKeysWith: { a, _ in a })
     }
 
+    /// What `name` does to the sound, at 48 kHz, for the graph.
     func response(_ name: String) async -> DspResponse? {
         await engine.dspResponse(name: name, rate: 48000)
     }

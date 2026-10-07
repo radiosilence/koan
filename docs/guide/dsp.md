@@ -262,7 +262,9 @@ Harman's, so a tuning made against neutral carries Harman's bass shelf and
 one made against Harman does not. Of neutral, Harman and the correction's own
 target, kōan offers the one whose difference from Harman the tuning matches,
 when it matches by at least 1.5 dB RMS (20 Hz to 10 kHz) better than the
-next; otherwise it offers nothing. The EQ's graph also draws what it adds on
+next. It offers nothing otherwise, nor for a tuning within 1.5 dB RMS of
+flat, which has nothing to judge by, nor for a group, whose Made against
+covers every member that does not say its own. The EQ's graph also draws what it adds on
 the correction in use with the target chosen, and on a phone each **Made
 against** choice shows that curve, so a wrong choice shows as a bass shelf
 doubled or taken out. **Made against** lists the targets for the kind of

@@ -241,7 +241,13 @@ pub fn chain_view(device: &str) -> ChainView {
 /// a correction aiming at `aim`: see [`targets::guess_made_against`].
 fn guess(name: &str, all: &[DspProfile], aim: &str) -> Option<(String, String)> {
     let ear = super::targets::shipped(aim)?.ear;
-    let eq = response_of(all.iter().find(|p| p.name == name)?, all, 48_000)?.total;
+    let p = all.iter().find(|p| p.name == name)?;
+    // A group's Made against is every member's that does not say, and a
+    // guess from the member playing is no guess at the others.
+    if p.group {
+        return None;
+    }
+    let eq = response_of(p, all, 48_000)?.total;
     super::targets::guess_made_against(&eq, ear, aim).map(|t| (t.id.to_owned(), t.name.to_owned()))
 }
 
@@ -4392,10 +4398,6 @@ mod tests {
         }
     }
 
-    /// An output plays its tuning on top of its correction, with the
-    /// difference between the correction's target and the one the tuning was
-    /// made against: dynamic baking. Never on a correction with a tuning
-    /// baked in, and never across kinds of headphone.
     /// A tuning that does not say what it was made against is offered the
     /// target its curve fits: the same preset split against Harman and
     /// against neutral, as a person brought them in.
@@ -4446,6 +4448,41 @@ mod tests {
         assert_eq!(suggested("Lush N").as_deref(), Some(neutral));
         choose_target("Performer 8S", None).unwrap();
 
+        // Nothing to judge by: a flat tuning, or one small band, is offered
+        // nothing, rather than Harman for the shelf it lacks.
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Flat".into(),
+                filters: vec![crate::config::DspFilter::Band(crate::config::EqFilter {
+                    kind: crate::config::EqFilterKind::Peaking,
+                    freq: 1000.0,
+                    gain_db: 0.0,
+                    q: 1.0,
+                    channels: vec![],
+                })],
+                role: Some(DspRole::Tuning),
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Air".into(),
+                filters: vec![crate::config::DspFilter::Band(crate::config::EqFilter {
+                    kind: crate::config::EqFilterKind::Peaking,
+                    freq: 8000.0,
+                    gain_db: 2.0,
+                    q: 1.0,
+                    channels: vec![],
+                })],
+                role: Some(DspRole::Tuning),
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        assert_eq!(suggested("Flat"), None);
+        assert_eq!(suggested("Air"), None);
+        // Nor a group, whose Made against would be every member's.
+        make_group("Both", &["Lush".into(), "Lush N".into()]).unwrap();
+        assert_eq!(suggested("Both"), None);
+
         // At the join, while it is unknown.
         set_tunings(dac, &[("Lush N".into(), true)]).unwrap();
         let join = || overview_for(Some(dac.into())).joins[0].clone();
@@ -4487,6 +4524,10 @@ mod tests {
         assert_eq!(j.suggestion, None);
     }
 
+    /// An output plays its tuning on top of its correction, with the
+    /// difference between the correction's target and the one the tuning was
+    /// made against: dynamic baking. Never on a correction with a tuning
+    /// baked in, and never across kinds of headphone.
     #[test]
     fn an_output_plays_its_tuning_on_its_correction() {
         use crate::config::{DspFilter, DspTarget};

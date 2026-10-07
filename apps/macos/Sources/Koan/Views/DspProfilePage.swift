@@ -584,6 +584,11 @@ private struct RoleSection: View {
         )
     }
 
+    /// One scale for every choice's curve, so a doubled shelf stands taller.
+    private var previewRange: Double {
+        max(6, previews.values.flatMap { $0 }.map(abs).max() ?? 0)
+    }
+
     /// A Made against choice, and on a phone, what the tuning adds on the
     /// correction in use with it.
     private func madeAgainstRow(_ id: String) -> some View {
@@ -592,7 +597,7 @@ private struct RoleSection: View {
             #if os(iOS)
             Spacer(minLength: 0)
             if let db = previews[id] {
-                CurveThumb(db: db, stroke: .eq(1))
+                CurveThumb(db: db, stroke: .eq(1), range: previewRange)
             }
             #endif
         }
@@ -615,7 +620,7 @@ private struct RoleSection: View {
                     row: madeAgainstRow
                 )
                 if detail.tunedFor == nil, let suggestion {
-                    Button("Looks made for \(suggestion.name). Use That?") {
+                    Button("Looks made for \(suggestion.name). Use that?") {
                         dsp.setTunedFor(detail.name, suggestion.id)
                     }
                     .koanButton(.text)

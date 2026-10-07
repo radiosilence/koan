@@ -36,7 +36,7 @@ Every EQ is one of three, shown as a badge wherever EQs are listed:
 
 kōan can't tell from the file which an imported EQ is, so it asks.
 
-The target belongs to the correction, and each says what it does against neutral. **Neutral, in-ear (diffuse field)** and **Neutral, over-ear (diffuse field)**, offered first for each, has no bass or treble preference; Harman's targets are neutral plus the bass and treble most listeners preferred. Moving an AutoEQ correction from Harman to neutral takes Harman's preference out, which leaves room for a tuning of your own on top.
+The target belongs to the correction, and each says what it does against neutral. **Neutral, in-ear (diffuse field)** and **Neutral, over-ear (diffuse field)**, offered first for each, have no bass or treble preference; Harman's targets are neutral plus the bass and treble most listeners preferred. Moving an AutoEQ correction from Harman to neutral takes Harman's preference out, which leaves room for a tuning of your own on top.
 
 ## One correction at a time
 

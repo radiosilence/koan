@@ -416,11 +416,14 @@ struct StageStroke {
 struct CurveThumb: View {
     let db: [Double]
     let stroke: StageStroke
+    /// The dB at the top edge, shared where thumbnails are compared; the
+    /// curve's own peak, at least 6 dB, otherwise.
+    var range: Double?
 
     var body: some View {
         Canvas { context, size in
             guard db.count > 1 else { return }
-            let range = max(6, db.map(abs).max() ?? 0)
+            let range = self.range ?? max(6, db.map(abs).max() ?? 0)
             var path = Path()
             for (i, v) in db.enumerated() {
                 let point = CGPoint(
@@ -582,7 +585,7 @@ struct EqChain: View {
                 }
                 .buttonStyle(.plain)
                 if let suggestion = meets?.suggestion {
-                    Button("Looks made for \(suggestion.name). Use That?") { madeFor(eq, suggestion.id) }
+                    Button("Looks made for \(suggestion.name). Use that?") { madeFor(eq, suggestion.id) }
                         .koanButton(.text)
                 }
                 #endif

@@ -287,7 +287,9 @@ fn usual(ear: Ear) -> [&'static str; 2] {
 /// made against neutral carries Harman's bass shelf, one made against
 /// Harman does not. The target whose difference from Harman the tuning
 /// is nearest is taken, when it is nearer than the next by
-/// `GUESS_MARGIN_DB`.
+/// `GUESS_MARGIN_DB`. A tuning that does little, within `GUESS_MARGIN_DB`
+/// RMS of flat, gets no guess: lacking Harman's shelf would otherwise count
+/// as evidence of Harman.
 pub fn guess_made_against(eq: &[f64], ear: Ear, aim: &str) -> Option<&'static Target> {
     let grid = grid();
     if eq.len() != grid.len() || eq.iter().any(|d| !d.is_finite()) {
@@ -295,6 +297,16 @@ pub fn guess_made_against(eq: &[f64], ear: Ear, aim: &str) -> Option<&'static Ta
     }
     let ours: Curve = grid.iter().copied().zip(eq.iter().copied()).collect();
     let eq = levelled(&ours, &grid);
+    let judged: Vec<f64> = grid
+        .iter()
+        .zip(&eq)
+        .filter(|(hz, _)| **hz <= 10_000.0)
+        .map(|(_, e)| *e)
+        .collect();
+    let own = (judged.iter().map(|e| e * e).sum::<f64>() / judged.len().max(1) as f64).sqrt();
+    if own < GUESS_MARGIN_DB {
+        return None;
+    }
     let harman = levelled(&shipped(usual(ear)[1])?.curve(), &grid);
     let fit = |t: &Target| {
         let t = levelled(&t.curve(), &grid);

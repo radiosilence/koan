@@ -3275,8 +3275,6 @@ impl KoanEngine {
         .await
     }
 
-    /// What `name` does to the sound at `rate`, for drawing. `None` for a
-    /// profile that is not there or would not play.
     /// What the tuning `name` looks made against on `device` (the output in
     /// use with `None`), where it does not say.
     pub async fn dsp_suggest_made_against(
@@ -3311,6 +3309,8 @@ impl KoanEngine {
         .await
     }
 
+    /// What `name` does to the sound at `rate`, for drawing. `None` for a
+    /// profile that is not there or would not play.
     pub async fn dsp_response(self: Arc<Self>, name: String, rate: u32) -> Option<DspResponse> {
         offload::offload(move || {
             koan_core::audio::dsp::profiles::response(&name, rate).map(Into::into)
