@@ -79,8 +79,8 @@ final class WashView: LayerView {
     /// started and never reads as a loop.
     private static let periods = (scale: 13.0, rotation: 19.0, position: 23.0)
 
-    private let current = CALayer()
-    private let previous = CALayer()
+    let current = CALayer()
+    let previous = CALayer()
     private var shown: PlatformImage?
     private var shownTone: WashTone?
     private var drifting = false
@@ -149,20 +149,36 @@ final class WashView: LayerView {
     /// The *new* layer fades in, on top of the old one holding station
     /// underneath. Fading the old one out instead does nothing visible: the new
     /// one is above it and already opaque, so the change lands as a cut.
-    private func install(_ baked: CGImage?) {
+    ///
+    /// A record with no art has nothing to fade in, so the old one fades out
+    /// instead, leaving the bare ground. Left at full opacity underneath, it
+    /// would stay on until the next record with a sleeve.
+    func install(_ baked: CGImage?) {
+        let outgoing = current.contents != nil
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        previous.contents = current.contents
-        previous.opacity = current.contents == nil ? 0 : 1
+        // With nothing on, `previous` may still be fading out a record before
+        // that; it carries on underneath.
+        if outgoing {
+            previous.removeAnimation(forKey: "dissolve")
+            previous.contents = current.contents
+            previous.opacity = baked != nil ? 1 : 0
+        }
         current.contents = baked
         CATransaction.commit()
 
         let dissolve = CABasicAnimation(keyPath: "opacity")
-        dissolve.fromValue = 0
-        dissolve.toValue = 1
         dissolve.duration = 2
         dissolve.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        current.add(dissolve, forKey: "dissolve")
+        if baked != nil {
+            dissolve.fromValue = 0
+            dissolve.toValue = 1
+            current.add(dissolve, forKey: "dissolve")
+        } else if outgoing {
+            dissolve.fromValue = 1
+            dissolve.toValue = 0
+            previous.add(dissolve, forKey: "dissolve")
+        }
     }
 
     /// Blur and saturate, once, into a bitmap the compositor only has to move.

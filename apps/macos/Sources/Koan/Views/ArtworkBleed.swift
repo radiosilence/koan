@@ -45,7 +45,7 @@ struct ArtworkBleed: View {
     /// apart, a record whose art is still being fetched does not wipe the wash
     /// grey and then fade the new one in over two seconds.
     private var answered: PlatformImage?? {
-        guard let source else { return .some(nil) }
+        guard let source, !cache.isAbsent(source) else { return .some(nil) }
         if let held = cache.cached(source, size: .tile) { return .some(held) }
         guard let fetched, fetched.source == source else { return nil }
         return .some(fetched.image)
