@@ -15,7 +15,7 @@ final class ArtistTableRow: NSTableCellView, TableRow {
     }
 
     static let identifier = NSUserInterfaceItemIdentifier("ArtistTableRow")
-    static let height = RowMetrics.line + 2 * RowMetrics.padding
+    static var height: CGFloat { RowMetrics.line + 2 * RowMetrics.padding }
 
     private static let nameFont = NSFont.role(.body, system: NSFont.preferredFont(forTextStyle: .body))
     private static let countFont = NSFont.role(.meta, system: NSFont.monospacedDigitSystemFont(

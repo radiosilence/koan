@@ -78,8 +78,8 @@ final class TrackTableRow: NSTableCellView, TableRow {
     }
 
     static let identifier = NSUserInterfaceItemIdentifier("TrackTableRow")
-    static let height = RowMetrics.text + 2 * RowMetrics.padding
-    static let artHeight = RowMetrics.art + 2 * RowMetrics.padding
+    static var height: CGFloat { RowMetrics.text + 2 * RowMetrics.padding }
+    static var artHeight: CGFloat { RowMetrics.art + 2 * RowMetrics.padding }
     static let headingHeight: CGFloat = 28
 
     private static let titleFont = NSFont.role(.body, system: NSFont.preferredFont(forTextStyle: .body))
