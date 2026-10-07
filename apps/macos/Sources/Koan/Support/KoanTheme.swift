@@ -68,11 +68,6 @@ enum KoanTheme {
         UINavigationBar.appearance().titleTextAttributes = [
             .font: UIFont.koan(.title), .foregroundColor: UIColor.koanStrong,
         ]
-        // A field is the theme's square box (`koanField`), which a plain style
-        // does not reach: the rounded platter is the text field's own border.
-        // An alert's field keeps it, having no box around it.
-        UITextField.appearance().borderStyle = .none
-        UITextField.appearance(whenContainedInInstancesOf: [UIAlertController.self]).borderStyle = .roundedRect
         // The search page's field, typed into from the keyboard across the top.
         UITextField.appearance(whenContainedInInstancesOf: [UISearchBar.self]).defaultTextAttributes = [
             .font: UIFont.koan(.title), .foregroundColor: UIColor.koanInk,
@@ -2084,6 +2079,7 @@ private struct KoanFieldRole: ViewModifier {
                 .padding(.vertical, KoanTheme.Space.s)
                 .background(Color.koanSurface)
                 #if os(tvOS)
+                .background(SquareFieldBorder())
                 .focused($focused)
                 .koanFocusRing(focused)
                 #endif
@@ -2092,6 +2088,46 @@ private struct KoanFieldRole: ViewModifier {
         }
     }
 }
+
+#if os(tvOS)
+/// A tvOS text field draws a rounded platter from its border style, which
+/// SwiftUI sets on the field itself, so neither a plain style nor UIKit's
+/// appearance reaches it. Laid behind the field, this turns the border off
+/// for the field it sits under, leaving the theme's square box.
+private struct SquareFieldBorder: UIViewRepresentable {
+    func makeUIView(context: Context) -> Probe { Probe() }
+    func updateUIView(_ view: Probe, context: Context) { view.setNeedsLayout() }
+
+    final class Probe: UIView {
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            guard window != nil else { return }
+            let centre = convert(CGPoint(x: bounds.midX, y: bounds.midY), to: nil)
+            var node = superview
+            for _ in 0..<6 {
+                guard let current = node else { return }
+                if let field = Self.field(in: current, at: centre) {
+                    field.borderStyle = .none
+                    return
+                }
+                node = current.superview
+            }
+        }
+
+        /// The text field under `point`, in window coordinates: a form holds
+        /// several, and only this one is ours.
+        private static func field(in view: UIView, at point: CGPoint) -> UITextField? {
+            if let field = view as? UITextField {
+                return field.convert(field.bounds, to: nil).contains(point) ? field : nil
+            }
+            for sub in view.subviews {
+                if let found = field(in: sub, at: point) { return found }
+            }
+            return nil
+        }
+    }
+}
+#endif
 
 private struct KoanControlRole: ViewModifier {
     func body(content: Content) -> some View {

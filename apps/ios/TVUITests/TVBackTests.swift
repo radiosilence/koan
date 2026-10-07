@@ -136,14 +136,15 @@ final class TVBackTests: XCTestCase {
         field.typeText("Artist 1")
         pause(4)
         XCTAssertTrue(app.buttons[any: "Artist 1"].waitForExistence(timeout: 5), "the artists' pills are buttons")
-        // Down from the keyboard lands on whichever pill is under the key.
+        // Down from the keyboard lands on the section's heading, then on
+        // whichever pill is under it.
         // Any type: the keyboard's keys are not buttons.
         let focused = app.descendants(matching: .any).matching(NSPredicate(format: "hasFocus == true")).firstMatch
-        for _ in 0..<3 where !focused.label.hasPrefix("Artist") {
+        for _ in 0..<3 where !focused.label.hasPrefix("Artist ") {
             press(.down)
         }
         snap("8-pill-focused")
-        XCTAssertTrue(focused.label.hasPrefix("Artist"), "an artist's pill has focus, not \(focused.label)")
+        XCTAssertTrue(focused.label.hasPrefix("Artist "), "an artist's pill has focus, not \(focused.label)")
         let name = focused.label
         press(.select)
         pause(3)
@@ -159,7 +160,7 @@ final class TVBackTests: XCTestCase {
         reach(app.buttons[any: "Albums"], by: .down)
         press(.select)
         pause(3)
-        XCTAssertTrue(app.buttons[any: "Album 1"].waitForExistence(timeout: 5), "the grid, unfiltered")
+        XCTAssertTrue(record("Album 1").waitForExistence(timeout: 5), "the grid, unfiltered")
         let field = app.textFields["name-filter"]
         reach(field, by: .up)
         snap("10-filter-focused")
@@ -171,8 +172,16 @@ final class TVBackTests: XCTestCase {
         pause(3)
         XCTAssertEqual(app.state, .runningForeground, "Menu leaves the keyboard, not the app")
         snap("11-filtered")
-        XCTAssertTrue(app.buttons[any: "Album 3"].exists, "the record named stays")
-        XCTAssertFalse(app.buttons[any: "Album 1"].exists, "records not named go")
+        XCTAssertTrue(record("Album 3").exists, "the record named stays")
+        XCTAssertFalse(record("Album 1").exists, "records not named go")
+    }
+
+    /// A record's tile by its title, however its label runs on: "Album 1"
+    /// and not "Album 10".
+    private func record(_ title: String) -> XCUIElement {
+        app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label MATCHES[c] %@", "\(title)(,.*)?"))
+            .firstMatch
     }
 
     /// Along the tab bar to `tab`.
