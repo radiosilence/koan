@@ -140,6 +140,12 @@ final class EqGraphTests: XCTestCase {
         shot.name = name
         shot.lifetime = .keepAlways
         add(shot)
+        if let text = try? saved() {
+            let saved = XCTAttachment(string: text)
+            saved.name = "\(name) config"
+            saved.lifetime = .keepAlways
+            add(saved)
+        }
     }
 
     /// Scrolls until `element` is clear of the mini player and tab bar,
