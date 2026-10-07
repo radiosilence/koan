@@ -2011,6 +2011,52 @@ mod tests {
         );
     }
 
+    /// The same for case, on a volume that does not tell `The Beatles` from
+    /// `The beatles`.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn an_organized_file_is_stored_in_the_folders_own_case() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let library = tmp.path().join("Music");
+        std::fs::create_dir_all(library.join("The beatles")).unwrap();
+        if !library.join("THE BEATLES").exists() {
+            return;
+        }
+
+        let source = tmp.path().join("in/track.wav");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        crate::test_utils::generate_wav(&source, 44100, 1, 0.2, 16);
+        let imported = crate::index::scanner::import_paths(&db, std::slice::from_ref(&source));
+        assert_eq!(imported.track_ids.len(), 1, "errors: {:?}", imported.errors);
+
+        let result = execute_for_tracks(
+            &db,
+            &imported.track_ids,
+            "The Beatles/%title%",
+            Some(&library),
+        )
+        .unwrap();
+        assert_eq!(result.moved_count(), 1);
+
+        crate::index::scanner::scan_folder(
+            &db,
+            &library,
+            crate::index::scanner::ScanOptions::default(),
+            None,
+        );
+        let paths: Vec<String> = db
+            .conn
+            .prepare("SELECT path FROM local_files")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(paths.len(), 1, "one file, one row: {paths:?}");
+        assert!(paths[0].contains("/The beatles/"), "{paths:?}");
+    }
+
     /// Generation is pure. It is what reruns on every keystroke, so if it ever
     /// starts touching the filesystem this is what says so: the destination is
     /// occupied and the source directory is full of cover art, and neither
