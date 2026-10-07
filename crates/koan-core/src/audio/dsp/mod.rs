@@ -124,24 +124,44 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
     let correction = chosen.map(|c| member_playing(c, all));
     let baked = chosen.is_some_and(|c| profiles::shown_role(c, all) == DspRole::Baked);
     let mut notes: Vec<String> = Vec::new();
-    // The tunings switched on, in order. A group without a member to play
-    // has nothing to put a layer on.
+    // The tunings switched on, in order, each one that cannot play said.
     let mut tunings: Vec<&DspProfile> = Vec::new();
-    if dsp.enabled && correction.is_none_or(|c| !c.group) {
+    if dsp.enabled {
         for entry in dsp.tunings.iter().filter(|t| t.device == device && t.on) {
-            let Some(t) = all.iter().find(|p| p.name == entry.tuning) else {
-                continue;
+            let why = match all.iter().find(|p| p.name == entry.tuning) {
+                None => Some("there is no EQ by that name".to_owned()),
+                Some(t) if !responses(t, all).is_empty() => {
+                    Some("an EQ with impulse responses is never a tuning".to_owned())
+                }
+                Some(t) if profiles::shown_role(t, all) != DspRole::Tuning => {
+                    Some("it is no longer a tuning".to_owned())
+                }
+                Some(_) => match (chosen, correction) {
+                    (Some(c), _) if baked => Some(format!("{} has a tuning baked in", c.name)),
+                    // A group without a member to play has nothing to put a
+                    // layer on.
+                    (Some(c), Some(m)) if m.group => {
+                        Some(format!("{} has no member playing", c.name))
+                    }
+                    _ => None,
+                },
             };
-            if profiles::shown_role(t, all) != DspRole::Tuning || !responses(t, all).is_empty() {
-                continue;
+            match why {
+                Some(why) => notes.push(format!("{} is left out: {why}.", entry.tuning)),
+                None => tunings.extend(all.iter().find(|p| p.name == entry.tuning)),
             }
-            if baked {
-                continue;
-            }
-            tunings.push(t);
         }
     }
-    let name = chosen.or(tunings.first().copied())?.name.clone();
+    let name = match chosen.or(tunings.first().copied()) {
+        Some(p) => p.name.clone(),
+        // Nothing plays, but a tuning chosen and left out is still said.
+        None => dsp
+            .tunings
+            .iter()
+            .find(|t| t.device == device && t.on && !notes.is_empty())?
+            .tuning
+            .clone(),
+    };
     let alone = |notes: &[String]| -> Option<OutputChain> {
         let left_out = (!notes.is_empty()).then(|| notes.join(" "));
         Some(match correction {

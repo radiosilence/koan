@@ -625,10 +625,15 @@ pub fn choose_target(name: &str, chosen: Option<&str>) -> Result<(), String> {
 
 /// Play `device` through `name`, or untouched with `None`.
 pub fn assign(name: Option<&str>, device: &str) -> Result<(), String> {
-    if let Some(name) = name
-        && !Config::cached().dsp.profiles.iter().any(|p| p.name == name)
-    {
-        return Err(format!("No profile called {name}"));
+    if let Some(name) = name {
+        let cfg = Config::cached();
+        let Some(p) = cfg.dsp.profiles.iter().find(|p| p.name == name) else {
+            return Err(format!("No profile called {name}"));
+        };
+        // A preset is never an output's correction: it sets one.
+        if p.preset {
+            return apply_preset(device, Some(name));
+        }
     }
     persist(|cfg| {
         for p in &mut cfg.dsp.profiles {
@@ -1401,64 +1406,90 @@ pub fn save_preset(device: &str, name: &str) -> Result<String, String> {
     Ok(name.to_owned())
 }
 
+/// What a preset's layers set an output to: its correction, where the first
+/// layer is one and on, and its tuning's EQs in order. A correction switched
+/// off is no correction, as it played in a stack.
+fn preset_parts(
+    layers: &[crate::config::DspLayer],
+    all: &[DspProfile],
+) -> (Option<String>, Vec<(String, bool)>) {
+    let mut layers = layers.iter().peekable();
+    let correction = layers
+        .next_if(|l| {
+            all.iter()
+                .any(|q| q.name == l.profile && shown_role(q, all).corrects())
+        })
+        .filter(|l| l.on)
+        .map(|l| l.profile.clone());
+    (
+        correction,
+        layers.map(|l| (l.profile.clone(), l.on)).collect(),
+    )
+}
+
+/// Set `device` to play `correction` and `tunings`, set from `preset`.
+fn set_output(
+    cfg: &mut Config,
+    device: &str,
+    correction: Option<&str>,
+    tunings: &[(String, bool)],
+    preset: Option<&str>,
+) {
+    for p in &mut cfg.dsp.profiles {
+        p.devices.retain(|d| d != device);
+        if Some(p.name.as_str()) == correction {
+            p.devices.push(device.to_owned());
+        }
+    }
+    cfg.dsp.tunings.retain(|t| t.device != device);
+    cfg.dsp.tunings.extend(
+        tunings
+            .iter()
+            .map(|(t, on)| crate::config::DspOutputTuning {
+                device: device.to_owned(),
+                tuning: t.clone(),
+                on: *on,
+            }),
+    );
+    cfg.dsp.presets.retain(|p| p.device != device);
+    if let Some(preset) = preset {
+        cfg.dsp.presets.push(crate::config::DspOutputPreset {
+            device: device.to_owned(),
+            preset: preset.to_owned(),
+        });
+    }
+}
+
 /// Set `device` from the preset `name`: its correction, and its tuning's
 /// EQs in order, on and off as saved. With `None`, flat: no correction and
 /// no tuning, which plays untouched.
 pub fn apply_preset(device: &str, name: Option<&str>) -> Result<(), String> {
     let cfg = Config::cached();
     let all = &cfg.dsp.profiles;
-    let (correction, tunings): (Option<String>, Vec<(String, bool)>) = match name {
+    let (correction, tunings) = match name {
         None => (None, Vec::new()),
         Some(name) => {
             let p = all
                 .iter()
                 .find(|p| p.name == name && p.preset)
                 .ok_or_else(|| format!("No preset called {name}"))?;
-            let mut layers = p.layers.iter().peekable();
-            let correction = layers
-                .next_if(|l| {
-                    all.iter()
-                        .any(|q| q.name == l.profile && shown_role(q, all).corrects())
-                })
-                .map(|l| l.profile.clone());
-            let tunings: Vec<(String, bool)> = layers.map(|l| (l.profile.clone(), l.on)).collect();
-            for (t, _) in &tunings {
+            let parts = preset_parts(&p.layers, all);
+            for (t, _) in &parts.1 {
                 check_tuning(t, all)?;
             }
-            (correction, tunings)
+            parts
         }
     };
-    persist(|cfg| {
-        for p in &mut cfg.dsp.profiles {
-            p.devices.retain(|d| d != device);
-            if Some(&p.name) == correction.as_ref() {
-                p.devices.push(device.to_owned());
-            }
-        }
-        cfg.dsp.tunings.retain(|t| t.device != device);
-        cfg.dsp.tunings.extend(
-            tunings
-                .iter()
-                .map(|(t, on)| crate::config::DspOutputTuning {
-                    device: device.to_owned(),
-                    tuning: t.clone(),
-                    on: *on,
-                }),
-        );
-        cfg.dsp.presets.retain(|p| p.device != device);
-        if let Some(name) = name {
-            cfg.dsp.presets.push(crate::config::DspOutputPreset {
-                device: device.to_owned(),
-                preset: name.to_owned(),
-            });
-        }
-    })
+    persist(|cfg| set_output(cfg, device, correction.as_deref(), &tunings, name))
 }
 
 /// Bring configs from before presets and tunings of several EQs up to
 /// them, once at start, and again harmlessly after:
 /// - a stack that is a correction with EQs on top is a preset, and an output
-///   that played it plays its correction and EQs, set from it;
+///   that played it plays its correction and EQs, set from it, then the
+///   tuning it had on top; a correction switched off in the stack is none;
+/// - an output a preset is assigned to as its correction, as the apps
+///   before this could and a synced preset can, is set from it the same way;
 /// - an output whose correction is a group, of which one member plays, has
 ///   that member; a group in a tuning becomes its member playing.
 pub fn migrate() -> Result<(), String> {
@@ -1473,20 +1504,48 @@ pub fn migrate() -> Result<(), String> {
             .any(|q| q.name == name && shown_role(q, all).corrects())
     };
     let is_eq = |name: &str| check_tuning(name, all).is_ok();
-    let presets: Vec<&DspProfile> = all
+    // Each stack becoming a preset, or preset assigned to an output: its
+    // name, the layers it keeps as a preset, and the outputs it set.
+    let presets: Vec<(String, Vec<crate::config::DspLayer>, Vec<String>)> = all
         .iter()
         .filter(|p| {
-            !p.preset
-                && !p.group
-                && p.filters.is_empty()
-                && p.impulses.is_empty()
-                && p.target.is_none()
-                && p.measurement.is_none()
-                && !used_as_layer(&p.name)
-                && p.layers.first().is_some_and(|l| corrects(&l.profile))
-                && p.layers.iter().skip(1).all(|l| is_eq(&l.profile))
+            (p.preset && !p.devices.is_empty())
+                || (!p.preset
+                    && !p.group
+                    && p.filters.is_empty()
+                    && p.impulses.is_empty()
+                    && p.target.is_none()
+                    && p.measurement.is_none()
+                    && !used_as_layer(&p.name)
+                    && p.layers.first().is_some_and(|l| corrects(&l.profile))
+                    && p.layers.iter().skip(1).all(|l| is_eq(&l.profile)))
+        })
+        .map(|p| {
+            let mut layers = p.layers.clone();
+            if layers
+                .first()
+                .is_some_and(|l| !l.on && corrects(&l.profile))
+            {
+                layers.remove(0);
+            }
+            (p.name.clone(), layers, p.devices.clone())
         })
         .collect();
+    // Each output those set: its correction, and its tuning, the preset's
+    // EQs then those it had on top.
+    let mut set: Vec<(String, Option<String>, Vec<(String, bool)>, String)> = Vec::new();
+    for (name, layers, devices) in &presets {
+        let (correction, eqs) = preset_parts(layers, all);
+        for device in devices {
+            let mut tunings = eqs.clone();
+            for t in cfg.dsp.tunings.iter().filter(|t| &t.device == device) {
+                if !tunings.iter().any(|(n, _)| n == &t.tuning) {
+                    tunings.push((t.tuning.clone(), t.on));
+                }
+            }
+            set.push((device.clone(), correction.clone(), tunings, name.clone()));
+        }
+    }
     let playing = |p: &DspProfile| super::playing(p, all).map(|m| m.name.clone());
     let groups: Vec<(String, String)> = all
         .iter()
@@ -1500,34 +1559,14 @@ pub fn migrate() -> Result<(), String> {
     if presets.is_empty() && !groups_in_use {
         return Ok(());
     }
-    let presets: Vec<DspProfile> = presets.into_iter().cloned().collect();
     persist(|cfg| {
-        for preset in &presets {
-            for device in &preset.devices {
-                let mut layers = preset.layers.iter();
-                let correction = layers.next().map(|l| l.profile.clone());
-                for p in &mut cfg.dsp.profiles {
-                    p.devices.retain(|d| d != device);
-                    if Some(&p.name) == correction.as_ref() {
-                        p.devices.push(device.clone());
-                    }
-                }
-                cfg.dsp.tunings.retain(|t| &t.device != device);
-                cfg.dsp
-                    .tunings
-                    .extend(layers.map(|l| crate::config::DspOutputTuning {
-                        device: device.clone(),
-                        tuning: l.profile.clone(),
-                        on: l.on,
-                    }));
-                cfg.dsp.presets.retain(|p| &p.device != device);
-                cfg.dsp.presets.push(crate::config::DspOutputPreset {
-                    device: device.clone(),
-                    preset: preset.name.clone(),
-                });
-            }
-            if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == preset.name) {
+        for (device, correction, tunings, preset) in &set {
+            set_output(cfg, device, correction.as_deref(), tunings, Some(preset));
+        }
+        for (name, layers, _) in &presets {
+            if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| &p.name == name) {
                 p.preset = true;
+                p.layers = layers.clone();
                 p.devices.clear();
             }
         }
@@ -3357,8 +3396,10 @@ mod tests {
     }
 
     /// Configs from before: a stack of a correction and EQs becomes a
-    /// preset, its outputs set from it; an output whose correction was a
-    /// group plays the member that played.
+    /// preset, its outputs set from it with the tuning they had on top and
+    /// without a correction switched off; an output a preset was assigned to
+    /// is set from it; an output whose correction was a group plays the
+    /// member that played.
     #[test]
     fn old_stacks_become_presets() {
         use crate::config::{DspLayer, DspTarget};
@@ -3383,9 +3424,29 @@ mod tests {
                     ..Default::default()
                 });
             }
+            for (name, hz) in [("Warm", 60.0), ("Bright", 8000.0)] {
+                c.dsp.profiles.push(DspProfile {
+                    name: name.into(),
+                    filters: vec![band(hz)],
+                    ..Default::default()
+                });
+            }
+            c.dsp.tunings.push(crate::config::DspOutputTuning {
+                device: "DAC".into(),
+                tuning: "Bright".into(),
+                on: true,
+            });
             c.dsp.profiles.push(DspProfile {
-                name: "Warm".into(),
-                filters: vec![band(60.0)],
+                name: "Quiet".into(),
+                devices: vec!["Amp".into()],
+                layers: vec![layer("HD 650", false), layer("Warm", true)],
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Saved".into(),
+                devices: vec!["Speaker".into()],
+                preset: true,
+                layers: vec![layer("HD 650", true), layer("Bright", true)],
                 ..Default::default()
             });
             c.dsp.profiles.push(DspProfile {
@@ -3408,9 +3469,29 @@ mod tests {
         let desk = cfg.dsp.profiles.iter().find(|p| p.name == "Desk").unwrap();
         assert!(desk.preset && desk.devices.is_empty());
         assert_eq!(cfg.dsp.profile_for("DAC").unwrap().name, "HD 600");
-        assert_eq!(tunings_for("DAC"), vec![("Warm".to_string(), false)]);
-        assert_eq!(preset_for("DAC"), Some(("Desk".into(), false)));
+        assert_eq!(
+            tunings_for("DAC"),
+            vec![("Warm".to_string(), false), ("Bright".to_string(), true)],
+            "the stack's EQs, then the tuning it had on top"
+        );
+        assert_eq!(preset_for("DAC"), Some(("Desk".into(), true)));
+        assert!(cfg.dsp.profile_for("Amp").is_none(), "switched off");
+        assert_eq!(tunings_for("Amp"), vec![("Warm".to_string(), true)]);
+        assert_eq!(preset_for("Amp"), Some(("Quiet".into(), false)));
+        assert_eq!(cfg.dsp.profile_for("Speaker").unwrap().name, "HD 650");
+        assert_eq!(tunings_for("Speaker"), vec![("Bright".to_string(), true)]);
+        assert_eq!(preset_for("Speaker"), Some(("Saved".into(), false)));
         assert_eq!(cfg.dsp.profile_for("Phone").unwrap().name, "HD 650");
+        assign(Some("Saved"), "Laptop").unwrap();
+        assert_eq!(preset_for("Laptop"), Some(("Saved".into(), false)));
+        assert!(
+            Config::cached()
+                .dsp
+                .profiles
+                .iter()
+                .all(|p| !p.preset || p.devices.is_empty()),
+            "a preset sets an output, never is its correction"
+        );
         migrate().unwrap();
         assert_eq!(
             Config::cached().dsp.profile_for("DAC").unwrap().name,
@@ -3540,6 +3621,11 @@ mod tests {
         assert!(refused.contains("corrects headphones"), "{refused}");
         assign(Some("Lush"), dac).unwrap();
         assert_eq!(plays(), ["200"], "the tuning waits");
+        assert_eq!(
+            overview_for(Some(dac.into())).left_out.as_deref(),
+            Some("Warm is left out: Lush has a tuning baked in."),
+            "and says why"
+        );
         assert_eq!(
             set_tuning(dac, Some("Warm")).unwrap_err(),
             "Lush already has a tuning baked in. Split it to swap tunings."
