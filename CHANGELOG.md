@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.60.10
+
+### Added
+
+- **Speaker measurements from Audio Science Review.** The measurement importer reads Klippel Near-Field Scanner exports (`SPL Horizontal.txt`, `SPL Vertical.txt`), whose frequencies carry thousands separators. With both planes the correction is made from CTA-2034's listening window, with one from the on-axis response, and the importer says which. A speaker is corrected to the new Flat target, offered with any targets added by hand but none of the headphone ones; Flat is not offered for headphones.
+
+### Changed
+
+- **No glass, no rounded controls in the kōan theme.** With the theme on, popovers on the Mac (Control, Output, Filters) are square panels on the theme's ground with a hairline edge and no arrow; the sleep timer, EQ preset and sort menus open the same panel; dropdowns are square bordered buttons, choices in forms are ticked rows rather than radio buttons, and toolbar items, search fields and sheets lose their glass on every platform. The system theme keeps the platform's look.
+
+### Fixed
+
+- **A measurement the importer cannot read says so.** Next on the measurement step refused such a file with a message below the fold, so it looked as if nothing happened. The refusal now scrolls into view and names what was expected (a two-column frequency and level CSV, a squig.link export, or a Klippel export) and what the file holds instead, including when a file's path was pasted in place of its contents.
+- **The Mac's Settings window is drawn in the kōan look.** Its tabs were the system's glass toolbar buttons, with the chosen one dimmed almost out of sight. In the theme they are the theme's own tab row on the window's ground, lowercase, the chosen tab in the accent and underlined, with no glass anywhere in the window. The platform's look is unchanged.
+- **Mac search and shelf tracks line up with the page.** Track rows under the albums on search results, Favourites and Recently played start on the same margin as the headings and tiles, with the play mark and the playing bars in a badge on the sleeve rather than in an empty column.
+- **Mac search and shelf track rows answer where they are drawn.** The artist, the record and the sleeve took clicks and showed the pointing hand 8 pt to the left of where they sit.
+- **The Settings window has one ground in dark mode, title bar included.** The kōan look paints the window's ground behind the title bar as well as through the window's container, so no lighter band shows over the title bar and tabs where that container is not applied.
+
 ## 0.60.9
 
 ### Added
