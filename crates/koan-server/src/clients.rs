@@ -174,8 +174,11 @@ pub struct Registry {
     /// Where each device last linked from, by device id: its account and
     /// address. Kept in `link_devices` too, so a restart keeps it.
     addresses: Mutex<std::collections::HashMap<String, (String, std::net::IpAddr)>>,
-    /// Answers awaited, by the device asked and the command's id.
-    answers: Mutex<std::collections::HashMap<(String, u64), Waiting>>,
+    /// Answers awaited, by the account and device asked and the command's
+    /// id. A device id is the client's own choice, so another account's
+    /// device can claim one of this account's: only a link of the account the
+    /// command went to can answer it.
+    answers: Mutex<std::collections::HashMap<(String, String, u64), Waiting>>,
 }
 
 /// `watcher`, a device of `watcher_user`, has `target`'s playing bars on
@@ -999,14 +1002,14 @@ impl Registry {
             .iter()
             .find(|e| e.info.id == target.id)
             .ok_or("that client has just gone")?;
-        let device = entry.device.clone();
+        let (account, device) = (entry.info.username.clone(), entry.device.clone());
         // Listened for before it is sent, so a quick answer is not missed.
         // Nothing is answered while the entries are held: an answer may relay
         // to another link.
         let (ack, unanswered) = match acking {
             Some(acking) if entry.info.acks => {
                 self.answers.lock().insert(
-                    (device.clone(), acking.id),
+                    (account.clone(), device.clone(), acking.id),
                     Waiting {
                         reply: acking.reply,
                         received: false,
@@ -1023,7 +1026,8 @@ impl Registry {
         });
         drop(entries);
         if sent.is_err() {
-            if let Some(w) = ack.and_then(|ack| self.answers.lock().remove(&(device, ack))) {
+            if let Some(w) = ack.and_then(|ack| self.answers.lock().remove(&(account, device, ack)))
+            {
                 w.answer(Some(AckOutcome::Failed {
                     error: "its link has just gone".into(),
                 }));
@@ -1034,7 +1038,7 @@ impl Registry {
             (acking.reply)(None);
         }
         if let Some(ack) = ack {
-            self.watch(target.username.clone(), device, ack, cmd);
+            self.watch(account, device, ack, cmd);
         }
         Ok(target)
     }
@@ -1047,18 +1051,18 @@ impl Registry {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
-        let key = (device.clone(), ack);
+        let key = (username.clone(), device.clone(), ack);
         let timer = runtime.spawn(async move {
             tokio::time::sleep(FIRST_LOOK).await;
-            let looking = device.clone();
+            let (looking, looking_in) = (device.clone(), username.clone());
             let taken = tokio::task::spawn_blocking(move || {
-                registry().look(&username, &looking, ack, &cmd)
+                registry().look(&looking_in, &looking, ack, &cmd)
             })
             .await
             .unwrap_or(false);
             if taken {
                 tokio::time::sleep(LONGEST_ANSWER.saturating_sub(FIRST_LOOK)).await;
-                registry().give_up(&device, ack);
+                registry().give_up(&username, &device, ack);
             }
         });
         match self.answers.lock().get_mut(&key) {
@@ -1068,17 +1072,21 @@ impl Registry {
         }
     }
 
-    /// `device` answered the command it was sent under `ack`.
-    pub fn answered(&self, device: &str, ack: u64, outcome: AckOutcome) {
-        let waiting = self.answers.lock().remove(&(device.to_string(), ack));
+    /// `device`, linked as `username`, answered the command it was sent
+    /// under `ack`.
+    pub fn answered(&self, username: &str, device: &str, ack: u64, outcome: AckOutcome) {
+        let key = (username.to_string(), device.to_string(), ack);
+        let waiting = self.answers.lock().remove(&key);
         if let Some(w) = waiting {
             w.answer(Some(outcome));
         }
     }
 
-    /// `device` says the command sent under `ack` came off its link.
-    pub fn received(&self, device: &str, ack: u64) {
-        if let Some(w) = self.answers.lock().get_mut(&(device.to_string(), ack)) {
+    /// `device`, linked as `username`, says the command sent under `ack` came
+    /// off its link.
+    pub fn received(&self, username: &str, device: &str, ack: u64) {
+        let key = (username.to_string(), device.to_string(), ack);
+        if let Some(w) = self.answers.lock().get_mut(&key) {
             w.received = true;
         }
     }
@@ -1091,7 +1099,7 @@ impl Registry {
     /// id so the device acts on it once whichever copy arrives first. The link
     /// is left to end of its own accord.
     fn look(&self, username: &str, device: &str, ack: u64, cmd: &LinkCommand) -> bool {
-        let key = (device.to_string(), ack);
+        let key = (username.to_string(), device.to_string(), ack);
         let mut answers = self.answers.lock();
         match answers.get(&key) {
             None => return false,
@@ -1113,8 +1121,9 @@ impl Registry {
 
     /// Stop waiting for the answer to a command `device` took long ago; the
     /// asker learns only that it arrived.
-    fn give_up(&self, device: &str, ack: u64) {
-        let waiting = self.answers.lock().remove(&(device.to_string(), ack));
+    fn give_up(&self, username: &str, device: &str, ack: u64) {
+        let key = (username.to_string(), device.to_string(), ack);
+        let waiting = self.answers.lock().remove(&key);
         if let Some(w) = waiting {
             w.answer(None);
         }
@@ -2112,10 +2121,10 @@ mod tests {
         // Taken off its link, then busy (a sync) and silent: kept, waited for.
         reg.relay_acked("q", None, "dev-quiet", LinkCommand::Pause, Some(acking(1)))
             .unwrap();
-        reg.received("dev-quiet", 1);
+        reg.received("q", "dev-quiet", 1);
         assert!(reg.look("q", "dev-quiet", 1, &LinkCommand::Pause));
         assert!(answers.lock().unwrap().is_empty(), "still waiting");
-        reg.answered("dev-quiet", 1, AckOutcome::Done);
+        reg.answered("q", "dev-quiet", 1, AckOutcome::Done);
         assert_eq!(
             answers.lock().unwrap().last(),
             Some(&(1, Some(AckOutcome::Done)))
@@ -2176,8 +2185,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(rx.try_recv().unwrap().ack, Some(7));
-        reg.answered("dev-answers", 7, AckOutcome::Done);
-        reg.answered("dev-answers", 7, AckOutcome::Done);
+        // Another account's device claiming the same id is not heard.
+        let (b_tx, _b_rx) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("b", "phone", "ios", "dev-answers", b_tx, false, true);
+        reg.received("b", "dev-answers", 7);
+        reg.answered("b", "dev-answers", 7, AckOutcome::Done);
+        assert!(
+            answers.lock().unwrap().is_empty(),
+            "b cannot answer a's command"
+        );
+        reg.answered("a", "dev-answers", 7, AckOutcome::Done);
+        reg.answered("a", "dev-answers", 7, AckOutcome::Done);
 
         // One that predates answers gets the command plain, and the asker
         // learns at once that no answer is coming.

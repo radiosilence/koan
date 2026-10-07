@@ -4,6 +4,16 @@ The look koan.rocks and the web UI have, set down so a native app can be drawn i
 
 Two variants differ only in icons. **Plain** has labels alone. **With icons**, the default, has the app's icons beside them, drawn as described under [Icons](#icons). "Show icons" in Settings → Appearance (`appearance.theme_icons`) chooses between them.
 
+## Rules
+
+New screens follow these by default; a screen that breaks one says why in its PR.
+
+- **One prominent action per screen.** Controls carry one of three weights: *prominent* (the accent outline, `body` type), *standard* (the label in `ink`, no outline, `control` type) and *compact* (`meta` type, tight padding). The prominent one is what the screen is for: Play on a record, play/pause in Now Playing, Sign In, the confirm on a sheet that makes or changes something. Everything else is standard, and repeated or secondary controls (favourite, ⋯, share, cancel, every control in a table) are compact. Destructive actions are compact and in `bad`. A browsing screen (search, the library root, the queue, the device tray) has no prominent action. *Why:* when every button shouts, none of them tells the eye where to go, and a row of outlined buttons reads as a form to fill in rather than a choice to make.
+- **Shared edges.** A header's text starts on the same vertical edge as the content below it: the cover is the width of the album grid's first column, and the text column starts on its second. Headers are top-aligned, so the cover's top meets the title's first line, and the primary action aligns to that line too. Album, artist and playlist pages share one header layout. *Why:* aligned edges let the eye run down the page without re-finding where things begin; a centred cover beside a top-aligned title leaves a ragged gap that reads as a mistake.
+- **One spacing scale.** Every gap comes from `KoanTheme.Space` (4, 8, 12, 16, 22, 32), and every rule is `KoanTheme.hairline`. Lists have no rules between rows; regions are separated by space, with at most a faint hairline. *Why:* arbitrary values drift screen by screen until nothing lines up, and a reviewer cannot tell a deliberate gap from an accident.
+- **No system chrome in the kōan look.** No glass, materials, rounded inset cards or system fonts. Lists and forms sit on the theme's ground with their rows' own backgrounds given up (`washedRow()` on the list's content, which the shared containers apply). Sheets and trays take `.koanSheet()`: the ground, one header style, rows on `RowMetrics`. Navigation titles and subtitles are in Geist Mono, through the bar's appearance. Section headers are lowercase. The platform's look keeps all of the system's chrome. *Why:* one stray card, glass circle or proportional label is enough to make the theme look applied rather than designed, and every one found so far came from a platform default nobody asked for.
+- **Dense views for technical data.** Tables of numbers (EQ filters, formats, transfer stats) use `meta` and `fine` type, compact rows, short labels with the full name in the menu or on hover, and right-aligned figures. *Why:* the people who open those views are reading values across rows, and the generous row height that suits a track list spreads a ten-band EQ over three screens.
+
 ## Tokens
 
 ### Colour
@@ -90,8 +100,12 @@ Each is described by its parts and states, so it can be built on any platform.
 
 ### Button
 
-- **Primary:** the label in `accent`, a 1-point `accent` outline, `control` type, padding 10 × 16. Pressed: `hover` fill.
-- **Secondary:** the label in `ink`, a 1-point `muted` outline. Never a `rule` outline, which is under 3:1.
+Three weights, assigned by the [rules](#rules); labels are lowercase and stay on one line.
+
+- **Prominent:** the label in `accent`, a 1-point `accent` outline, `body` type, padding 12 × 20. Pressed: `hover` fill. At most one per screen.
+- **Standard:** the label (and glyph) in `ink`, no outline, `control` type, padding 8 × 4.
+- **Compact:** as standard in `meta` type, padding 4 × 2.
+- **Destructive:** compact, in `bad`.
 - **Text button:** the label in `muted`, no outline, used in bars ("clear", "sleep"). Hover: `ink`.
 - **Icon button** (transport): the glyph in `ink`, at least 44 × 44 pt to hit, with no outline, except play/pause, which has a square 1-point `ink` outline.
 - **Disabled:** label and outline at 40 % opacity.
@@ -99,7 +113,7 @@ Each is described by its parts and states, so it can be built on any platform.
 
 ### Toggle
 
-A square box, 14 × 14 within a 44-point hit area. Off: a 1-point `muted` outline. On: filled `accent` with a `bg`-coloured check. The label sits to its trailing side in `body`.
+A square box, 14 × 14 within a 44-point hit area. Off: a 1-point `muted` outline. On: filled `accent` with a `bg`-coloured check. The label leads, in `body`, and the box sits at the row's trailing edge, where a switch would.
 
 ### Segmented control
 
@@ -111,7 +125,7 @@ A 1-point `rule` track with a 3-point `accent` fill up to the value, and a squar
 
 ### List row
 
-The title in `body`, `ink`; secondary text in `meta`, `muted`; numbers right-aligned in `meta`, `muted`. A 1-point `rule` below each row, inset to the content's leading edge. Hover: `hover` at 30 % behind the row. The playing row's title and number are `accent`. A selected row has a `surface` fill.
+The title in `body`, `ink`; secondary text in `meta`, `muted`; numbers right-aligned in `meta`, `muted`. No rule between rows in the native apps: rows are told apart by their rhythm and alignment, which a grey grid over the wash only obscures. Where a region would otherwise run into the next, a faint hairline of `ink` at 12 % opacity (`koanRowRule`) may mark it. Outlines stay on prominent buttons and in the web UI. Hover: `hover` at 30 % behind the row. The playing row's title and number are `accent`. A selected row has a `surface` fill.
 
 ### Navigation row (sidebar)
 
@@ -139,7 +153,7 @@ The Apple apps keep the SF Symbols they name today (`Icon.*`). On Android, Mater
   - spacing: `KoanTheme.Space` and `KoanTheme.hairline`;
   - ground: `.koanSurface()`, `.koanRule()`, `.koanBar(radius:inset:)` for the transport, `.koanToolbar(glass:)`, `.koanSidebar()`, `.koanSheet()`;
   - controls: `.koanButton(kind)`, or `.koanButton(kind, system:)` where the platform's look had a style of its own, and `.koanButtons(kind)` for a group, in the theme only; `.koanToggle()`, `KoanSegmentedPicker`, `.koanControl()` for pop-up pickers, menus and steppers, `.koanField()`, `.koanChip()`, `.koanBadge()`; toolbar items leave their glass panes through `KoanTheme.pane(_:)`;
-  - lists and forms: `.koanList()` (every list in the wash takes it through `washedGround()`), `.koanNavRow(selected:)`, `KoanForm` (a form; on the Mac in the theme, sections stacked without AppKit's cards), `KoanSectionHeader`, `KoanDivider`; `.koanRow(selected:)` for a row drawn in SwiftUI, which the Mac's AppKit tables are not;
+  - lists and forms: `.koanList()` (every list in the wash takes it through `washedGround()`) and `washedRow()` on a list's content, since a row's background is set per row and a list does not pass one down, `.koanNavRow(selected:)`, `KoanForm` (a form; in the theme, square sections without cards: stacked on the Mac, a grouped list on iOS), `KoanSectionHeader`, `KoanDivider`; `.koanRow(selected:)` for a row drawn in SwiftUI, which the Mac's AppKit tables are not;
   - pieces: `KoanLabel(title, icon:)` for every label with an icon, `KoanTabItem` for the phone's tab bar, `KoanUnavailable` for an empty page;
   - shape: `KoanTheme.radius(_:)` and `KoanTheme.shadow(_:)`, which give square corners and no shadow in the theme;
   - focus on tvOS: `.koanFocus()`.

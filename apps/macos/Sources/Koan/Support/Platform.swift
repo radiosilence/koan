@@ -135,12 +135,12 @@ extension View {
 
     /// A `NavigationLink` in a list. On tvOS it is drawn as a full-width row:
     /// the shell's button style would otherwise make it a capsule the size of
-    /// its label.
+    /// its label. Elsewhere it is a row on the wash.
     func listLink() -> some View {
         #if os(tvOS)
         buttonStyle(TelevisionRow(resting: 0.08))
         #else
-        self
+        washedRow()
         #endif
     }
 }
@@ -377,12 +377,25 @@ extension View {
     ///
     /// An AppKit row is already clear. A UIKit one paints the system background
     /// behind every row, which on a phone puts a black band across the record's
-    /// colour wherever there is a list.
+    /// colour wherever there is a list. Row backgrounds are set per row and a
+    /// `List` does not pass one down, so this goes on a list's content (a
+    /// `Group`, `Section` or `ForEach` reaches every row inside it), not on the
+    /// list. In the theme rows have no rules: rhythm and alignment tell them
+    /// apart.
+    @ViewBuilder
     func washedRow() -> some View {
         #if os(macOS)
         self
-        #else
+        #elseif os(tvOS)
+        // A television's list draws no rules.
         listRowBackground(Color.clear)
+        #else
+        if KoanTheme.isOn {
+            listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+        } else {
+            listRowBackground(Color.clear)
+        }
         #endif
     }
 }

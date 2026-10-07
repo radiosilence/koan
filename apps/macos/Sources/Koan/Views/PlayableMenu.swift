@@ -388,6 +388,7 @@ struct ShareButton: View {
             Label(Share.label, systemImage: Icon.share)
         }
         .help("Create a public link on your server and copy it")
+        .koanButtons(.compact)
     }
 }
 
@@ -406,6 +407,7 @@ struct FavouriteHeaderButton: View {
                 .foregroundStyle(isOn ? KoanTheme.style(.bad, system: .red) : KoanTheme.style(.ink, system: .primary))
         }
         .help(isOn ? "Remove from favourites" : "Add to favourites")
+        .koanButtons(.compact)
     }
 }
 
@@ -499,6 +501,7 @@ struct QueueButtons: View {
             }
         }
         .disabled(playable == nil || working)
+        .koanButtons(.compact)
     }
 
     /// An artist is thousands of tracks and resolving them is a database read,

@@ -63,7 +63,7 @@ A correction that already includes a tuning needs none on top; the EQ page says 
 ## Which way for your headphones
 
 1. **Search for your headphones** in **Find in AutoEQ…** under EQ in Settings. If they are there, install them. You have a correction, and you can switch its target on the correction's page.
-2. **If they are not in AutoEQ**, choose **Use a measurement instead**. Find your headphones on squig.link, export the measurement as a CSV file, and import it. Then pick in-ear or over-ear, and a target.
+2. **If they are not in AutoEQ**, choose **Use a measurement instead** and search for them under **Find it on squig.link**. kōan searches the catalogues of the reviewers' squig.link sites, each kept for a day, and lists every measurement of that model with its site, its rig where the site says, and its variant: tips, inserts, a port. Pick one measured on the rig your target assumes. kōan fetches its left and right channels, averages them, and credits the site on the correction. A measurement exported from squig.link or REW as a CSV file works too. Then pick in-ear or over-ear, and a target.
 3. **If you already have an EQ** made for your headphones or speakers, import it and answer "What is this EQ?". Choose *A neutral correction* if it only corrects them, *A correction with a sound in it* if it's named for a sound or adds bass of its own, or *A tuning* if it's taste for on top. *Decide Later* leaves it a tuning, changed on its page. For a neutral correction, say which target it was made for if you know; if you don't, choose Unknown, and target switching stays off.
 
 Then add any tunings you like on top. See [Equalisation and convolution](dsp.md) for everything else EQs can do.

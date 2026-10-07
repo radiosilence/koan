@@ -1,0 +1,1 @@
+- **Sign in on iPhone with the keyboard up.** In the kōan theme, a blank strip above the keyboard covered the controls at the foot of a page, Settings' Sign In button among them, so a tap there did nothing. The room a page keeps for the theme's bar now gives way to the keyboard.

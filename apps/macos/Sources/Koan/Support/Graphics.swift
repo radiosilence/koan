@@ -29,12 +29,13 @@ enum Graphics: Int, CaseIterable, Identifiable {
     /// the raw values are what is on disk and cannot move, the order is what
     /// the slider shows.
     case bare = 3
-    /// No wash, still indicators, flat chrome.
+    /// No wash, flat chrome. The playing indicators dance at every step: they
+    /// cost next to nothing, and only Reduce Motion holds them still.
     case plain = 0
     /// The record's colour behind the window, held still. Everything else as it
     /// is.
     case reduced = 1
-    /// The wash drifts, the bars dance, the chrome is glass.
+    /// The wash drifts, the chrome is glass.
     case full = 2
 
     var id: Self { self }
@@ -54,7 +55,7 @@ enum Graphics: Int, CaseIterable, Identifiable {
         case .bare:
             "Everything Plain stands down, and the window's own glass with it: an opaque toolbar and no soft edge where content passes under the transport. Those are the platform's, not kōan's, and they are redrawn whenever anything behind them moves."
         case .plain:
-            "No colour behind the window, indicators held still, flat chrome instead of glass."
+            "No colour behind the window, and flat chrome instead of glass."
         case .reduced:
             "The record's colour behind the window, held still — which measures the same as no colour at all. Only the drift is expensive."
         case .full:
@@ -67,10 +68,6 @@ enum Graphics: Int, CaseIterable, Identifiable {
 
     /// Whether the wash drifts while something is playing.
     var drifts: Bool { self == .full }
-
-    /// Whether the playing indicators dance. Off, they keep their shape and
-    /// stop asking the analyser for levels.
-    var animatesIndicators: Bool { self != .plain && self != .bare }
 
     /// Whether the chrome is glass rather than a flat material.
     var usesGlass: Bool { self != .plain && self != .bare }

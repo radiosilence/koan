@@ -203,10 +203,17 @@ struct NowPlayingSheet: View {
             if natural { Spacer(minLength: 0) }
             if player.hasOtherDevices || player.isControllingAnother {
                 Button { showingControl = true } label: {
-                    Pill(systemImage: Action.control.glyph, text: device, tinted: player.isControllingAnother)
+                    // This phone in control is the usual case, and its glyph
+                    // says enough; the room goes to the preset's name.
+                    Pill(
+                        systemImage: Action.control.glyph,
+                        text: player.isControllingAnother ? device : nil,
+                        tinted: player.isControllingAnother
+                    )
                 }
-                .accessibilityLabel(player.isControllingAnother ? "Controlling \(device)" : "Control another kōan")
-                .pillWidth(natural, name: device)
+                .accessibilityLabel(player.isControllingAnother ? "Controlling \(device)" : device)
+                .accessibilityHint(player.isControllingAnother ? "" : "Control another kōan")
+                .pillWidth(natural, name: player.isControllingAnother ? device : "")
                 if natural { Spacer(minLength: 8) }
             }
             if player.canChooseOutput {
@@ -251,16 +258,18 @@ struct NowPlayingSheet: View {
 /// is not this phone's own way of playing.
 private struct Pill: View {
     let systemImage: String
-    let text: String
+    let text: String?
     let tinted: Bool
 
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: systemImage)
                 .foregroundStyle(KoanTheme.style(tinted ? .accent : .muted, system: tinted ? AnyShapeStyle(.tint) : KoanTheme.style(.muted, system: .secondary)))
-            Text(text)
-                .lineLimit(1)
-                .foregroundStyle(KoanTheme.style(.ink, system: .primary))
+            if let text {
+                Text(text)
+                    .lineLimit(1)
+                    .foregroundStyle(KoanTheme.style(.ink, system: .primary))
+            }
         }
         .font(.role(.meta, system: .subheadline))
         .koanChip()

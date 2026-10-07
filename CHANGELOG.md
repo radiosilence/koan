@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.60.2
+
+### Added
+
+- **Find a headphone's measurement on squig.link.** Use a Measurement… searches the reviewers' squig.link sites by headphone name and lists each measurement with its site, rig where the site says, and variant; picking one fetches it, averages its two sides and credits the site on the profile. Each site's catalogue is fetched at most once a day. `koan dsp squig` searches from the terminal and makes a correction from a result.
+
+### Security
+
+- **Answers to commands come only from the device they were sent to.** A command's id could be read off the network, and a device nearby, a listener claiming another's id, or another account on the server could report the command done, which stopped it being retried, or refused. A sender now believes an answer only from its target: on the network, one that proved it is that device; through the server, a link of the target's own account.
+- **Commands for your devices go over the network only to the device itself.** A device on the network could claim the id of one of your devices and receive commands meant for it, with the tracks they name. Commands for your own devices, and for devices shared with you, now go over the network only to a device that has proved it is that one; otherwise they go through the server.
+
+### Changed
+
+- **The Mac window in the kōan look.** The wash runs under the whole window, with the sidebar, toolbar, transport and lyrics drawn clear over it; turning off "Wash the whole window" in Settings → Appearance gives them back their own grounds. The toolbar's icons and filter field drop their glass, rows have more room between them, and the playing bars move at every graphics level. A text field keeps ⌥←, ⌘Z and the other editing keys from the moment it takes focus, and Settings can be resized.
+
+### Fixed
+
+- **Sign in on iPhone with the keyboard up.** In the kōan theme, a blank strip above the keyboard covered the controls at the foot of a page, Settings' Sign In button among them, so a tap there did nothing. The room a page keeps for the theme's bar now gives way to the keyboard.
+
 ## 0.60.1
 
 ### Added
@@ -10,10 +29,10 @@
 ### Changed
 
 - **Settings for the server come in sections.** The Server page had grown with every feature. It now holds the address, sign-in, sync, downloads and what the server offers; Account holds the password and API keys; People holds accounts, for admins; Devices gains pairing and the server play queue; Integrations holds ListenBrainz and assistants. On the Mac each is a tab, and on iPhone and iPad a page under Settings. Each shows only where the server has what it holds. The Apple TV keeps one page for the server.
-- **A release no longer waits on Apple's notary.** 0.59.0 never published because notarisation sat "In Progress" past the release's timeout. Releases now publish once everything is built and signed; a separate job notarises the macOS binaries and the app, staples the DMG into the release, and moves the Homebrew cask to it, re-runnable on its own without releasing again.
 - **Releases no longer queue behind stale runs.** A newer push cancels an older run of the same pull request, or an older run on main that releases nothing; release runs and manual runs are never cancelled. On main, the macOS and tvOS app builds run only when releasing, since the pull request built them already.
 - **API key and account errors read as errors in the system look too.** Settings showed them in the label colour there, and in the theme's red only under the kōan theme.
 - **EQ for headphones or speakers, and a steadier EQ page.** EQ copy speaks of any device rather than headphones alone. An imported EQ's role is asked in a sheet with an example for each answer and a Decide Later that says what it leaves. The EQ page draws what the output plays at a fixed height, easing between presets, and edits happen on the profile's own page.
+- **The kōan look, refined after 0.60.0.** Buttons come in three weights with at most one prominent action per screen, each on one line; lists, settings and the EQ pages sit on the theme's ground in square sections instead of black or carded rows; the EQ filter table is dense, with short type codes; checkboxes trail their labels; on iPhone, album and playlist headers scroll away and leave the title in the bar. The design rules are in `docs/design/koan-theme.md`.
 
 ### Fixed
 
@@ -24,6 +43,7 @@
 - **Play on a record starts at its first track.** With the first track still on the server and later ones cached, playback could begin at the first cached track: a stream opened ahead of the download that gave out with nothing heard was taken for a track that had played. It is now waited for and played from disk when it lands; only a track that has failed is passed over.
 - **Search counts match the results shown, closest matches first.** Each section of the search page is now the head of the listing its "See all" opens, ordered by how closely names match: the whole name, then its start, then a later word, then anywhere. Weak fuzzy matches (letters scattered across a name) are no longer listed; fuzzy matching is used only when nothing holds the query as typed, so typos still find what was meant. The album and track browsers gain a Best Match sort while searching.
 - **A queue of tens of thousands of tracks stays responsive.** The engine sent the whole queue to the app on every track change and download, which on a phone meant decoding and regrouping every row each time until the app lagged and was killed. The queue is now sent whole only when it is edited, with the rows whose status moved sent on their own in between, and the iOS queue draws only the rows on screen.
+- **EQ fixes.** An EQ's page on iPhone no longer shows the tab bar over its foot, and changing the target a tuning was made against now syncs to your other devices.
 
 ## 0.60.0
 
@@ -42,6 +62,7 @@
 - **A larger Settings window on the Mac.** It opens at 820×780, can be resized, and keeps its size between launches, so the longer panes, EQ among them, no longer scroll on a laptop screen.
 - **A DSP change while playing no longer clicks.** Editing a band or switching a profile used to cut the output mid-waveform and restart it. The old processing now fades out over 15 ms and the new one fades in over the same, a short dip in place of a step. Pausing keeps its own, longer fade.
 - **Each EQ profile says what it is for.** A profile is a correction, a tuning, or baked (a correction with a tuning already in it, as most named presets are), shown as a badge wherever profiles are listed; imports ask which. A stack holds one correction: a second layer is refused, and a stack made before that rule still plays and says which two it holds. A correction's target is chosen inside it, and its bands and sync settings sit under "Bands, sync and more". "Kept: On every device" is now "Sync: Everywhere".
+- **A release no longer waits on Apple's notary.** 0.59.0 never published because notarisation sat "In Progress" past the release's timeout. Releases now publish once everything is built and signed; a separate job notarises the macOS binaries and the app, staples the DMG into the release, and moves the Homebrew cask to it, re-runnable on its own without releasing again.
 
 ### Fixed
 

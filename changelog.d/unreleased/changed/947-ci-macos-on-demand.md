@@ -1,0 +1,1 @@
+- **Pull requests hold a macOS runner only when they need one.** The macOS test, lint and build jobs and the app builds run when a pull request touches the apps, the FFI, dependencies, toolchains, workflows or Rust compiled for Apple targets. Release pull requests run everything.

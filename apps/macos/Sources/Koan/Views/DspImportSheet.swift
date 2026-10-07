@@ -37,7 +37,7 @@ private struct DspImportSheet: View {
                     TextField("Name", text: $name)
                 }
             }
-            .navigationTitle("Import")
+            .navigationTitle(KoanTheme.label("Import"))
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {

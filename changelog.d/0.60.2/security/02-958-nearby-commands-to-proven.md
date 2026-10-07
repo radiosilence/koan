@@ -1,0 +1,1 @@
+- **Commands for your devices go over the network only to the device itself.** A device on the network could claim the id of one of your devices and receive commands meant for it, with the tracks they name. Commands for your own devices, and for devices shared with you, now go over the network only to a device that has proved it is that one; otherwise they go through the server.

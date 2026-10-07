@@ -170,6 +170,8 @@ koan dsp tuned-for NAME TARGET|unknown           # the target a tuning was made 
 koan dsp revert NAME                             # an imported EQ back as imported
 koan dsp copy NAME [NEW]                         # a copy as it is now, used by no device
 koan dsp split NAME FILE --ear in|over --target TARGET  # a mixed correction into a correction and an EQ
+koan dsp squig QUERY [--limit N]                 # measurements on squig.link sites, numbered
+koan dsp squig QUERY --use-result N --target TARGET [--ear in|over] [--name NAME]  # a correction from one
 koan dsp eq plays NAME EQ...                     # one EQ built from others, played in order
 koan dsp eq switch NAME EQ on|off                # switch one of the EQs it plays on or off
 ```

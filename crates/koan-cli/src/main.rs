@@ -393,6 +393,24 @@ enum DspCommands {
         ]))]
         role: String,
     },
+    /// Search squig.link sites for a headphone's measurement, or with
+    /// `--name`, correct it from the result numbered NUMBER
+    Squig {
+        query: String,
+        #[arg(long)]
+        limit: Option<usize>,
+        /// A result's number, to make a correction from
+        #[arg(long)]
+        use_result: Option<usize>,
+        /// The correction's name, with `--use-result`
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long, value_parser = ["in", "over"])]
+        ear: Option<String>,
+        /// A target id, as `koan dsp target` lists them
+        #[arg(long)]
+        target: Option<String>,
+    },
     /// The target a ready-made EQ was made for, or `unknown`, which leaves
     /// target switching off
     MadeFor { name: String, target: String },
@@ -783,6 +801,21 @@ fn main() {
                 target,
             } => commands::cmd_dsp_split(&name, &path, ear == "in", &target),
             DspCommands::Role { name, role } => commands::cmd_dsp_role(&name, &role),
+            DspCommands::Squig {
+                query,
+                limit,
+                use_result,
+                name,
+                ear,
+                target,
+            } => commands::cmd_dsp_squig(
+                &query,
+                limit.unwrap_or(20),
+                use_result,
+                name.as_deref(),
+                ear.as_deref().map(|e| e == "in"),
+                target.as_deref(),
+            ),
             DspCommands::MadeFor { name, target } => {
                 commands::cmd_dsp_made_for(&name, Some(target.as_str()).filter(|t| *t != "unknown"))
             }
