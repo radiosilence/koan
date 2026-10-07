@@ -148,6 +148,10 @@ The label in `body`, `muted`, lowercase; with icons, the glyph before it in the 
 
 Flat and full-width, with a 1-point `rule` along its top and `bg` beneath, 64 points tall. Labels in `fine`, lowercase; with icons, a glyph above each. Unselected: `muted`. Selected: `accent`, the label underlined. The mini player sits directly above it as a row with its own top rule, whose first part is the playhead in a 2-point `accent` line.
 
+### Tabs (television)
+
+A row across the top of the screen on no ground, centred: each tab its glyph beside its label in `body`, lowercase; unselected `muted`, selected `accent` and underlined, focus the 2-point `accent` ring. They behave as the platform's do: moving onto a tab chooses it, coming up from a page lands on the tab showing, Menu at a tab's root goes up to them and Menu on them leaves the app. The platform's tab bar is a glass capsule with a white platter for focus, and no appearance reaches either, so the theme hides it; the platform's look keeps it.
+
 ### Settings tabs (Mac)
 
 The Settings window's panes are chosen from the tab bar's items, drawn by the theme in a row along the top of the window, with no rule beneath: labels in `fine`, lowercase, with their glyphs above; unselected `muted`, selected `accent` and underlined. The window is on `bg`, its titlebar transparent, with no title and no separator, so only the window's buttons sit above the row. The row follows Show icons. The system's toolbar tabs are glass buttons no role reaches, so the theme does not use them; the platform's look keeps them.
@@ -176,7 +180,7 @@ The Apple apps keep the SF Symbols they name today (`Icon.*`). On Android, Mater
   - controls: `.koanButton(kind)`, or `.koanButton(kind, system:)` where the platform's look had a style of its own, and `.koanButtons(kind)` for a group, in the theme only; `.koanToggle()`, `KoanSegmentedPicker`, `KoanPicker` for pop-up pickers (a menu in the theme, since AppKit's pop-up button and UIKit's picker ignore the theme's type), `KoanSlider`, `KoanStepper`, `.koanControl()` for other menus, `.koanField()` (`.koanField(value, prompt:)` for a field the Apple TV shows, where the theme draws the box and text over the system's rounded platter), `.koanChip()`, `.koanBadge()`; toolbar items leave their glass panes through `KoanTheme.pane(_:)`;
   - lists and forms: `.koanList()` (every list in the wash takes it through `washedGround()`) and `washedRow()` on a list's content, since a row's background is set per row and a list does not pass one down, `.koanNavRow(selected:)`, `KoanForm` (a form; in the theme, square sections without cards: stacked on the Mac and tvOS, a grouped list on iOS; on tvOS each row is one of the theme's controls), `KoanSectionHeader`, `KoanDivider`; `.koanRow(selected:)` for a row drawn in SwiftUI, which the Mac's AppKit tables are not;
   - pages: `.koanPushedPage()` on every page a stack pushes, `.koanSheetStack()` on a stack presented as a sheet;
-  - pieces: `KoanLabel(title, icon:)` for every label with an icon, `KoanTabItem` for the phone's tab bar, `KoanUnavailable` for an empty page;
+  - pieces: `KoanLabel(title, icon:)` for every label with an icon, `KoanTabItem` for the phone's tab bar and the television's tabs, `KoanUnavailable` for an empty page;
   - shape: `KoanTheme.radius(_:)` and `KoanTheme.shadow(_:)`, which give square corners and no shadow in the theme;
   - focus on tvOS: `.koanFocus()`, which the television's own button and row styles (`TelevisionButton`, `TelevisionRow`) draw in the theme in place of the system's platter.
 

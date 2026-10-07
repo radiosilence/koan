@@ -52,17 +52,9 @@ enum KoanTheme {
         bar.scrollEdgeAppearance = themed(edge)
         bar.compactScrollEdgeAppearance = themed(edge.copy())
         #elseif os(tvOS)
-        // The tabs across the top and each page's title are UIKit's: the
-        // theme's type, the tabs on no ground. The tab titles are lowercased
-        // where the tabs are made (`label`).
-        let tabs = UITabBarAppearance()
-        tabs.configureWithTransparentBackground()
-        for item in [tabs.stackedLayoutAppearance, tabs.inlineLayoutAppearance, tabs.compactInlineLayoutAppearance] {
-            item.normal.titleTextAttributes = [.font: UIFont.koan(.body), .foregroundColor: UIColor.koanMuted]
-            item.selected.titleTextAttributes = [.font: UIFont.koan(.body), .foregroundColor: UIColor.koanInk]
-            item.focused.titleTextAttributes = [.font: UIFont.koan(.body)]
-        }
-        UITabBar.appearance().standardAppearance = tabs
+        // Each page's title is UIKit's, in the theme's type. The tabs are the
+        // theme's own (`TelevisionTabs`): no appearance reaches the glass
+        // capsule or the white platter of the platform's.
         // A television's navigation bar takes no appearance: setting one is
         // an assertion in UIKit.
         UINavigationBar.appearance().titleTextAttributes = [
@@ -2251,7 +2243,10 @@ private struct KoanFieldRole: ViewModifier {
             .foregroundStyle(Color.koanInk)
             .padding(.horizontal, KoanTheme.Space.m)
             .padding(.vertical, KoanTheme.Space.s)
-            .background(Color.koanSurface)
+            // Inside the field's own frame. A style's background reaches
+            // through every safe-area edge it touches, and a field at the top
+            // of a television's page touches the one under the tab bar.
+            .background(Color.koanSurface, ignoresSafeAreaEdges: [])
             #if os(tvOS)
             .koanFocusRing(focused)
             #endif
@@ -2410,36 +2405,59 @@ struct KoanTabItem: View {
     @Environment(\.koanRainbow) private var rainbow
 
     var body: some View {
+        item
+            .foregroundStyle(KoanTheme.style(selected ? .accent : .muted))
+            .contentShape(Rectangle())
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(title)
+            .accessibilityShowsLargeContentViewer {
+                KoanIcon(icon)
+                Text(title)
+            }
+            .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+            .accessibilityValue(position.map { "Tab \($0.index + 1) of \($0.count)" } ?? "")
+    }
+
+    /// A television's tabs run across the top, each the glyph beside its
+    /// name at the size of the page's text; a phone's share the bar's width,
+    /// the glyph above.
+    @ViewBuilder
+    private var item: some View {
+        #if os(tvOS)
+        HStack(spacing: KoanTheme.Space.m) {
+            if icons {
+                KoanIcon(icon)
+            }
+            name
+        }
+        .font(.koan(.body))
+        .padding(.horizontal, KoanTheme.Space.l)
+        .padding(.vertical, KoanTheme.Space.s)
+        #else
         VStack(spacing: 4) {
             if icons {
                 KoanIcon(icon).font(.system(size: 19))
             }
-            Text(title)
-                .font(.koan(.fine))
-                .textCase(.lowercase)
-                .padding(.bottom, 3)
-                .overlay(alignment: .bottom) {
-                    if selected {
-                        let line = Rectangle().fill(KoanTheme.marker(rainbow: rainbow)).frame(height: KoanTheme.hairline)
-                        if let underline {
-                            line.matchedGeometryEffect(id: "underline", in: underline)
-                        } else {
-                            line
-                        }
+            name.font(.koan(.fine))
+        }
+        .frame(maxWidth: .infinity, minHeight: 44)
+        #endif
+    }
+
+    private var name: some View {
+        Text(title)
+            .textCase(.lowercase)
+            .padding(.bottom, 3)
+            .overlay(alignment: .bottom) {
+                if selected {
+                    let line = Rectangle().fill(KoanTheme.marker(rainbow: rainbow)).frame(height: KoanTheme.hairline)
+                    if let underline {
+                        line.matchedGeometryEffect(id: "underline", in: underline)
+                    } else {
+                        line
                     }
                 }
-        }
-        .foregroundStyle(KoanTheme.style(selected ? .accent : .muted))
-        .frame(maxWidth: .infinity, minHeight: 44)
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(title)
-        .accessibilityShowsLargeContentViewer {
-            KoanIcon(icon)
-            Text(title)
-        }
-        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityValue(position.map { "Tab \($0.index + 1) of \($0.count)" } ?? "")
+            }
     }
 }
 
@@ -2775,6 +2793,14 @@ private struct KoanHidesSystemTabBar: ViewModifier {
                 // would otherwise paint the inset as a grey band over the
                 // page's last rows, where content should pass under the bar.
                 .scrollEdgeEffectHidden(true, for: .bottom)
+        } else {
+            content
+        }
+        #elseif os(tvOS)
+        // The theme's tabs are drawn by the shell, above the pages; the
+        // platform's are a glass capsule with a white platter for focus.
+        if KoanTheme.isOn {
+            content.toolbar(.hidden, for: .tabBar)
         } else {
             content
         }
