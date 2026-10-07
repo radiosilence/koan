@@ -30,10 +30,9 @@ struct BrowseFilterButton: View {
         .help(count > 0 ? "Filters — \(count) on" : "Filters")
         #if os(macOS)
         .tint(.primary)
-        .popover(isPresented: $open, arrowEdge: .bottom) {
+        .koanPopover(isPresented: $open, arrowEdge: .bottom) {
             BrowseFilterForm()
                 .frame(width: 300)
-                .koanPopover()
         }
         #elseif os(tvOS)
         .modifier(FilterSheet(open: $open))
@@ -71,7 +70,7 @@ private struct FilterSheet: ViewModifier {
                     BrowseFilterForm()
                         .navigationTitle(KoanTheme.label("Filter"))
                         .toolbar {
-                            ToolbarItem(placement: .confirmationAction) {
+                            ToolbarItem(placement: .confirmationAction) { // theme: raw — a television's bar has no glass
                                 Button("Done") { open = false }
                                     .toolbarButton()
                             }

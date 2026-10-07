@@ -554,7 +554,7 @@ struct AddToPlaylistMenu: View {
     var body: some View {
         // A television plays playlists; they are made and filled elsewhere.
         #if !os(tvOS)
-        Menu("Add to Playlist") {
+        Menu("Add to Playlist") { // theme: raw — a submenu
             AddToPlaylistItems(resolve: resolve)
         }
         #endif

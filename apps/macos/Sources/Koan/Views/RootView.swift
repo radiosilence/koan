@@ -657,7 +657,7 @@ private struct ClearsTransport: ViewModifier {
             // the hard edge instead.
             content
                 .safeAreaPadding(.bottom, height)
-                .scrollEdgeEffectStyle(glass ? .soft : .hard, for: .bottom)
+                .scrollEdgeEffectStyle(glass && !KoanTheme.isOn ? .soft : .hard, for: .bottom)
         }
     }
 }
@@ -846,20 +846,15 @@ private struct AlbumSortControls: View {
             // A pull-down with the current choice ticked, the way Finder's
             // arrange control works — rather than a picker forced to a fixed
             // width, which reads as a control that did not fit.
-            Menu {
-                Picker("Sort", selection: Binding(
-                    get: { library.albumSort },
-                    set: { library.albumSort = $0 }
-                )) {
-                    ForEach(AlbumSort.offered(
-                    recent: library.browseFilter.recent, downloaded: library.browseFilter.downloaded,
-                    searching: !library.filter.isEmpty
-                ), id: \.self) { sort in
-                        Text(sort.label).tag(sort)
-                    }
-                }
-                .pickerStyle(.inline)
-                .labelsHidden()
+            KoanMenu {
+                KoanMenuChoices(
+                    title: "Sort",
+                    selection: Binding(get: { library.albumSort }, set: { library.albumSort = $0 }),
+                    options: AlbumSort.offered(
+                        recent: library.browseFilter.recent, downloaded: library.browseFilter.downloaded,
+                        searching: !library.filter.isEmpty
+                    ).map { ($0.label, $0) }
+                )
             } label: {
                 Label("Sort", systemImage: "arrow.up.arrow.down")
             }
@@ -889,17 +884,13 @@ private struct TrackSortControls: View {
     @Environment(LibraryModel.self) private var library
 
     var body: some View {
-        Menu {
-            Picker("Sort", selection: Binding(
-                get: { library.trackSort },
-                set: { library.trackSort = $0 }
-            )) {
-                ForEach(TrackBrowseSort.offered(recent: library.browseFilter.recent, searching: !library.filter.isEmpty), id: \.self) { sort in
-                    Text(sort.label).tag(sort)
-                }
-            }
-            .pickerStyle(.inline)
-            .labelsHidden()
+        KoanMenu {
+            KoanMenuChoices(
+                title: "Sort",
+                selection: Binding(get: { library.trackSort }, set: { library.trackSort = $0 }),
+                options: TrackBrowseSort.offered(recent: library.browseFilter.recent, searching: !library.filter.isEmpty)
+                    .map { ($0.label, $0) }
+            )
         } label: {
             Label("Sort", systemImage: "arrow.up.arrow.down")
         }

@@ -117,7 +117,7 @@ struct OrganizeSheet: View {
             HStack(spacing: 6) {
                 Toggle("Move cover art and cue sheets", isOn: $organize.moveAncillary).koanToggle()
                     #if os(macOS)
-                    .toggleStyle(.checkbox)
+                    .toggleStyle(.checkbox) // theme: raw — the platform's look; `koanToggle` wins in the theme
                     #endif
                     .koanText(.fine, .muted)
                     .help("Artwork, .cue and .log files in the same folder travel with the music")

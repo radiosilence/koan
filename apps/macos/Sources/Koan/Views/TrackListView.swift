@@ -177,6 +177,7 @@ struct TrackListView: View {
                                     .font(.role(.control, system: .headline))
                                     .lineLimit(1)
                             }
+                            .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
                         }
                     }
                     #endif

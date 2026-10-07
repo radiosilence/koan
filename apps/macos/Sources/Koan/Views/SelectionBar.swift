@@ -60,7 +60,7 @@ struct SelectionBar: View {
                     item("Play Next", short: "Next", icon: Icon.playNext) { player.playNext(trackIds: $0) }
                     item("Add to Queue", short: "Queue", icon: Icon.queue) { player.enqueue(trackIds: $0) }
                 }
-                Menu {
+                Menu { // theme: raw — its label is the bar's own item, with no bezel
                     AddToPlaylistItems { body in run(body) }
                 } label: {
                     BarItem(title: "Add to Playlist", short: "Playlist", icon: Icon.playlist)
@@ -96,7 +96,7 @@ struct SelectionBar: View {
         .background {
             // The platform's look draws its bars over the page; this one sits
             // on a ground of its own as they do.
-            if !KoanTheme.isOn { Rectangle().fill(.bar).ignoresSafeArea(edges: .bottom) }
+            if !KoanTheme.isOn { Color.clear.koanMaterial(.bar).ignoresSafeArea(edges: .bottom) }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Selection")

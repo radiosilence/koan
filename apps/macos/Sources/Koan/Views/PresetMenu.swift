@@ -64,11 +64,11 @@ struct PresetMenu<Label: View>: View {
     #endif
 
     var body: some View {
-        Menu {
+        KoanMenu {
             if let title {
-                Section(title) { picker }
+                Section(title) { choices }
             } else {
-                picker
+                choices
             }
             #if !os(tvOS)
             if let device = presets.device {
@@ -109,17 +109,51 @@ struct PresetMenu<Label: View>: View {
     private static var unsaved: String { "\u{0}unsaved" }
     private static var edited: String { "\u{0}edited" }
 
-    private var picker: some View {
-        Picker("Preset", selection: Binding(
-            get: {
-                guard let current = presets.current else { return presets.flat ? "" : Self.unsaved }
-                return presets.edited ? Self.edited : current
-            },
-            set: { tag in
-                guard tag != Self.unsaved, tag != Self.edited else { return }
-                presets.choose(tag.isEmpty ? nil : tag)
+    private var selected: String {
+        guard let current = presets.current else { return presets.flat ? "" : Self.unsaved }
+        return presets.edited ? Self.edited : current
+    }
+
+    private func select(_ tag: String) {
+        guard tag != Self.unsaved, tag != Self.edited else { return }
+        presets.choose(tag.isEmpty ? nil : tag)
+    }
+
+    /// Flat, Unsaved when it applies, then each preset, an edited one listed
+    /// twice: as edited, and as saved.
+    private var options: [(label: String, tag: String)] {
+        var options = [(label: "Flat", tag: "")]
+        if presets.current == nil, !presets.flat {
+            options.append((label: "Unsaved", tag: Self.unsaved))
+        }
+        for name in presets.presets {
+            if name == presets.current, presets.edited {
+                options.append((label: "\(name) (\(KoanTheme.label("edited")))", tag: Self.edited))
             }
-        )) {
+            options.append((label: name, tag: name))
+        }
+        return options
+    }
+
+    /// In the theme on the Mac, the options as the theme menu's rows with a
+    /// tick on the chosen one; the system's inline picker otherwise.
+    @ViewBuilder
+    private var choices: some View {
+        #if os(macOS)
+        if KoanTheme.isOn {
+            ForEach(options, id: \.tag) { option in
+                KoanMenuChoice(option.label, chosen: option.tag == selected) { select(option.tag) }
+            }
+        } else {
+            picker
+        }
+        #else
+        picker
+        #endif
+    }
+
+    private var picker: some View {
+        Picker("Preset", selection: Binding(get: { selected }, set: select)) {
             Text("Flat").tag("")
             if presets.current == nil, !presets.flat {
                 Text("Unsaved").tag(Self.unsaved)
