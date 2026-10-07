@@ -536,9 +536,15 @@ fn cache_grew(bytes: u64) {
 }
 
 pub(crate) fn cache_shrank(bytes: u64) {
-    let _ = CACHE_BYTES.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
-        Some(n.saturating_sub(bytes))
-    });
+    let mut now = CACHE_BYTES.load(Ordering::Relaxed);
+    while let Err(moved) = CACHE_BYTES.compare_exchange_weak(
+        now,
+        now.saturating_sub(bytes),
+        Ordering::Relaxed,
+        Ordering::Relaxed,
+    ) {
+        now = moved;
+    }
     crate::signal::engine_changed().bump();
 }
 
