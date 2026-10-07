@@ -162,6 +162,9 @@ enum KoanTheme {
     /// One rule's width: a point, not a pixel, which at `rule`'s contrast is too
     /// faint on a 2× display.
     static let hairline: CGFloat = 1
+    /// A toolbar button's cell on the Mac, as the platform draws one: the
+    /// whole of it takes the click.
+    static let toolbarButton = CGSize(width: 36, height: 36)
 }
 
 // MARK: - Icons
@@ -1088,6 +1091,10 @@ enum KoanButtonKind {
     case text
     /// A glyph alone, with a 44-point hit area.
     case icon
+    /// A glyph in the window's toolbar: a cell the size of the platform's
+    /// toolbar button, all of it clickable, `surface` under the pointer and
+    /// `hover` while pressed.
+    case toolbar
     /// Play and pause: a glyph in a square `ink` outline.
     case iconOutlined
     /// A button that is a thing from the library — a record, a track, a
@@ -1100,7 +1107,7 @@ enum KoanButtonKind {
     fileprivate var setsType: Bool {
         switch self {
         case .prominent, .standard, .compact, .bordered, .link, .text: true
-        case .icon, .iconOutlined, .card: false
+        case .icon, .toolbar, .iconOutlined, .card: false
         }
     }
 
@@ -1231,12 +1238,20 @@ private struct KoanButtonBody: View {
     #if os(tvOS)
     @Environment(\.isFocused) private var focused
     #endif
+    @State private var hovering = false
 
     var body: some View {
         typed(configuration)
             .padding(padding)
             .frame(minWidth: hit, minHeight: hit)
-            .background(configuration.isPressed ? Color.koanHover : .clear)
+            #if os(macOS)
+            .frame(
+                minWidth: kind == .toolbar ? KoanTheme.toolbarButton.width : nil,
+                minHeight: kind == .toolbar ? KoanTheme.toolbarButton.height : nil
+            )
+            .onHover { if kind == .toolbar { hovering = $0 } }
+            #endif
+            .background(ground(configuration))
             .koanAnimation(KoanTheme.Motion.fast, value: configuration.isPressed)
             .overlay {
                 if let outline {
@@ -1272,6 +1287,11 @@ private struct KoanButtonBody: View {
         }
     }
 
+    private func ground(_ configuration: ButtonStyleConfiguration) -> Color {
+        if configuration.isPressed { return .koanHover }
+        return kind == .toolbar && hovering && enabled ? .koanSurface : .clear
+    }
+
     private var focusedNow: Bool {
         #if os(tvOS)
         focused
@@ -1286,7 +1306,7 @@ private struct KoanButtonBody: View {
         return switch kind {
         case .prominent:
             accent.shade(scheme).readsAsText ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.koanInk)
-        case .standard, .compact, .bordered, .icon, .iconOutlined, .card: AnyShapeStyle(Color.koanInk)
+        case .standard, .compact, .bordered, .icon, .toolbar, .iconOutlined, .card: AnyShapeStyle(Color.koanInk)
         case .text, .link: AnyShapeStyle(configuration.isPressed ? Color.koanInk : Color.koanMuted)
         }
     }
@@ -1296,7 +1316,7 @@ private struct KoanButtonBody: View {
         case .prominent: KoanTheme.marker(rainbow: rainbow)
         case .iconOutlined: AnyShapeStyle(Color.koanInk)
         case .bordered: AnyShapeStyle(Color.koanMuted)
-        case .standard, .compact, .link, .text, .icon, .card: nil
+        case .standard, .compact, .link, .text, .icon, .toolbar, .card: nil
         }
     }
 
@@ -1307,7 +1327,7 @@ private struct KoanButtonBody: View {
         case .compact: EdgeInsets(top: 4, leading: 2, bottom: 4, trailing: 2)
         case .bordered: EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
         case .text, .link: EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0)
-        case .icon, .card: EdgeInsets()
+        case .icon, .toolbar, .card: EdgeInsets()
         case .iconOutlined: EdgeInsets(top: 7, leading: 7, bottom: 7, trailing: 7)
         }
     }
@@ -1319,7 +1339,7 @@ private struct KoanButtonBody: View {
         // the height of the seek bar and the controls together.
         case .icon, .iconOutlined: nil
         #else
-        case .icon, .iconOutlined: 44
+        case .icon, .iconOutlined, .toolbar: 44
         #endif
         // The small actions beside a title or a row, which a finger still
         // has to land on.
@@ -2132,11 +2152,15 @@ private struct KoanChipRole: ViewModifier {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .overlay { Rectangle().strokeBorder(Color.koanMuted, lineWidth: KoanTheme.hairline) }
+                // An outline is hollow: without a shape, a plain button inside
+                // takes clicks on the label and the stroke alone.
+                .contentShape(Rectangle())
         } else {
             content
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(.quaternary, in: Capsule())
+                .contentShape(Capsule())
         }
     }
 }

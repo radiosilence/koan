@@ -98,7 +98,7 @@ struct RootView: View {
                             Label("Lyrics", systemImage: Icon.lyrics)
                         }
                         .help("Lyrics panel (⌥⌘L)")
-                        .koanButton(.icon)
+                        .koanButton(.toolbar)
                     }
                     .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
                 }
@@ -496,6 +496,7 @@ private struct SelectionControls: View {
                 Label("Select", systemImage: Icon.selectAll)
             }
             .help("Pick several to play or queue (⌘-click one, or ⌘A)")
+            .koanButton(.toolbar)
         }
     }
 }
@@ -793,7 +794,7 @@ private struct PageToolbar: ToolbarContent {
                     Label("Sidebar", systemImage: "sidebar.left")
                 }
                 .help("Show or hide the sidebar (⌃⌘S)")
-                .koanButton(.icon)
+                .koanButton(.toolbar)
             }
             #endif
             Button { nav.goBack() } label: {
@@ -801,14 +802,14 @@ private struct PageToolbar: ToolbarContent {
             }
             .disabled(!nav.canGoBack)
             .help("Back (⌘[)")
-            .koanButton(.icon)
+            .koanButton(.toolbar)
 
             Button { nav.goForward() } label: {
                 Label("Forward", systemImage: Icon.forward)
             }
             .disabled(!nav.canGoForward)
             .help("Forward (⌘])")
-            .koanButton(.icon)
+            .koanButton(.toolbar)
         }
         .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
 
@@ -844,7 +845,7 @@ private struct PageToolbar: ToolbarContent {
                         TrackSortControls()
                     }
                 }
-                .koanButtons(.icon)
+                .koanButtons(.toolbar)
             }
         }
         .sharedBackgroundVisibility(KoanTheme.pane(nav.section?.isBrowser == true ? .automatic : .hidden))

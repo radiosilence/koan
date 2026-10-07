@@ -12,6 +12,9 @@ struct FavouriteButton: View {
     var size: Font = .body
     /// A shortcut to mention in the tooltip, where one reaches this heart.
     var hint: String?
+    /// Room around the glyph that is part of the button, for a host that
+    /// draws a ground behind it.
+    var inset: CGFloat = 0
     let action: () -> Void
 
     /// Gay mode: a favourite's heart is the palette, top to bottom.
@@ -30,7 +33,10 @@ struct FavouriteButton: View {
                 // A little jump on every change, and on a phone a tap in the
                 // hand when something becomes a favourite.
                 .symbolEffect(.bounce.up.byLayer, options: .speed(1.4), value: isOn)
+                .padding(inset)
                 .touchTarget()
+                // The glyph's outline is hollow; the whole cell takes the click.
+                .contentShape(Rectangle())
         }
         .controlButton()
         #if os(iOS)
@@ -75,11 +81,12 @@ struct AlbumHeart: View {
     let albumId: Int64
     var showing = true
     var size: Font = .body
+    var inset: CGFloat = 0
 
     @Environment(LibraryModel.self) private var library
 
     var body: some View {
-        FavouriteButton(isOn: library.isFavourite(album: albumId), showing: showing, size: size) {
+        FavouriteButton(isOn: library.isFavourite(album: albumId), showing: showing, size: size, inset: inset) {
             library.toggleFavourite(album: albumId)
         }
     }

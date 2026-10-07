@@ -115,8 +115,11 @@ Three weights, assigned by the [rules](#rules); labels are lowercase and stay on
 - **Destructive:** compact or bordered, in `bad`.
 - **Text button:** the label in `muted`, no outline, used in bars ("clear", "sleep"). Hover: `ink`.
 - **Icon button** (transport): the glyph in `ink`, at least 44 × 44 pt to hit, with no outline, except play/pause, which has a square 1-point `ink` outline.
+- **Toolbar button** (Mac): the glyph in `ink` centred in a 36 × 36 pt cell, the size of the platform’s toolbar button. `surface` under the pointer, `hover` pressed. Back, forward, the sidebar and lyrics toggles, filter, sort and select.
 - **Disabled:** label and outline at 40 % opacity.
 - **Focus** (keyboard, and tvOS): a 2-point `accent` ring outside the control. On a television, no lift, shadow or glass.
+
+Whatever a button draws takes the click: its outline, its padding and the cell around its glyph, not only the glyph's own strokes. A label drawn by hand in a plain button sets a content shape over all of it.
 
 A text action that is not standard or prominent and not in a bar is bordered or underlined: bordered is a button, underlined is a link. *Why:* bare text in a form row reads as a value rather than something to press, and an underline is the long-standing sign that text goes somewhere.
 
