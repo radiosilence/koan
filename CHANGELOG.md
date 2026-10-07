@@ -9,6 +9,7 @@
 ### Fixed
 
 - **Lyrics no longer show another song's words.** The lyrics panel shows only lyrics fetched for the track that is playing, so a quick track change can no longer leave the previous song's lyrics on screen. When LRCLIB has no exact match, a search result is used only if its title (ignoring featured artists) and length (within two seconds) match the track; otherwise the panel shows no lyrics.
+- **Play on no longer waits on an Apple TV that is out of reach.** When nothing on the network answers for a TV on record (the phone is away from home, or the TV is unplugged), the push goes out at once instead of after twenty seconds of knocking.
 
 ## 0.60.8
 
