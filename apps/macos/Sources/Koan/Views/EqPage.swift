@@ -563,12 +563,17 @@ struct EqChain: View {
                 Text("Target difference: \(from) → \(to)")
                     .koanText(.fine, .muted)
             case .unknown:
+                #if os(tvOS)
+                Label("Made against: unknown. This may apply a target twice", systemImage: "exclamationmark.triangle")
+                    .koanText(.fine, .bad)
+                #else
                 Button { open(eq) } label: {
                     Label("Made against: unknown. This may apply a target twice; set it", systemImage: "exclamationmark.triangle")
                         .koanText(.fine, .bad)
                         .multilineTextAlignment(.leading)
                 }
                 .buttonStyle(.plain)
+                #endif
             case nil:
                 EmptyView()
             }
