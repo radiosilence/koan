@@ -451,10 +451,6 @@ final class DspModel {
         await engine.dspResponse(name: name, rate: 48000)
     }
 
-    /// What the output in use plays: its correction and the tuning on top.
-    func outputResponse() async -> DspResponse? {
-        await engine.dspOutputResponse(rate: 48000)
-    }
 
     func detail(_ name: String) async -> DspProfileDetail? {
         await engine.dspDetail(name: name)

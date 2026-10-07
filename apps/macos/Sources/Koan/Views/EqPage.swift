@@ -24,7 +24,10 @@ struct EqSettings: View {
     @State private var choosing: Stage?
     @State private var explaining = false
     @State private var naming = false
+    @State private var namingTitle = "Save as Preset"
     @State private var presetName = ""
+    /// Why the name given for a new preset was not taken.
+    @State private var refusal: String?
 
     private var device: String? { picked ?? overview?.device }
 
@@ -46,6 +49,7 @@ struct EqSettings: View {
                     EqChain(
                         overview: o,
                         device: app.dsp.label(device),
+                        aim: aim,
                         curves: curves,
                         choose: { choosing = $0 },
                         open: { showing = ShownProfile(name: $0) },
@@ -55,8 +59,6 @@ struct EqSettings: View {
                         Label(leftOut, systemImage: "exclamationmark.triangle")
                             .koanText(.meta, .bad)
                     }
-                } header: {
-                    KoanSectionHeader("Chain")
                 } footer: {
                     Text(EqChain.sentence(o, device: app.dsp.label(device), aim: aim))
                         .koanText(.fine, .muted)
@@ -115,9 +117,9 @@ struct EqSettings: View {
         )) { ask in
             RoleQuestion(dsp: app.dsp, names: ask.names).koanSheet()
         }
-        .alert("Save as Preset", isPresented: $naming) {
+        .alert(namingTitle, isPresented: $naming) {
             TextField("Name", text: $presetName)
-            Button("Save") { save(as: presetName) }
+            Button("Save") { save(as: presetName, over: false) }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("The correction and tuning, to switch \(device.map(app.dsp.label) ?? "a device") back to, or another device to.")
@@ -175,15 +177,18 @@ struct EqSettings: View {
             if let preset = o.preset, o.presetEdited {
                 LabeledContent("Changed since \(preset)") {
                     HStack {
-                        Button("Save") { save(as: preset) }
+                        Button("Save") { save(as: preset, over: true) }
                             .koanButton(.secondary)
-                        Button("Save as New…") { ask() }
+                        Button("Save as New…") { ask("Save as New Preset") }
                             .koanButton(.text)
                     }
                 }
             } else if o.preset == nil, !flat {
-                Button("Save as Preset…") { ask() }
+                Button("Save as Preset…") { ask("Save as Preset") }
                     .koanButton(.secondary)
+            }
+            if let refusal {
+                Text(refusal).koanText(.fine, .bad)
             }
             #endif
         } header: {
@@ -224,26 +229,50 @@ struct EqSettings: View {
         o.profiles.filter(\.preset).map(\.name)
     }
 
-    private func ask() {
+    private func ask(_ title: String) {
+        namingTitle = title
         presetName = ""
+        refusal = nil
         naming = true
     }
 
-    private func save(as name: String) {
-        guard let device, !name.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+    /// Save the chain as the preset `name`. A new name never writes over
+    /// another preset: only Save, `over`, changes one.
+    private func save(as name: String, over: Bool) {
+        let name = name.trimmingCharacters(in: .whitespaces)
+        guard let device, let o = overview, !name.isEmpty else { return }
+        if !over, presets(o).contains(name) {
+            refusal = "There is already a preset called \(name). Choose another name, or change it with Save."
+            return
+        }
+        refusal = nil
         Task { _ = await app.dsp.savePreset(name, from: device) }
     }
 
+    /// A flat chain, drawn: no change anywhere.
+    private static let flatResponse: DspResponse = {
+        let freqs = (0 ..< 120).map { 20 * pow(1000, Double($0) / 119) }
+        return DspResponse(
+            freqs: freqs, total: freqs.map { _ in 0 }, bands: [], layers: [],
+            measurement: nil, target: nil, predicted: nil, preampDb: 0,
+            correction: nil, tuning: nil, original: nil
+        )
+    }()
+
     // MARK: - The curve
 
+    /// Always drawn: a flat device is a line at 0 dB, and says so.
     @ViewBuilder private var graph: some View {
         if let response, !flat {
             EqGraph(response: response, parts: parts(response))
                 .koanAnimation(KoanTheme.Motion.normal, value: response.total)
         } else {
-            Text("Flat: plays untouched")
-                .koanText(.meta, .muted)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            EqGraph(response: Self.flatResponse)
+                .overlay(alignment: .top) {
+                    Text("Flat: plays untouched")
+                        .koanText(.meta, .muted)
+                        .padding(.top, KoanTheme.Space.xl)
+                }
         }
     }
 
@@ -343,6 +372,7 @@ struct CurveThumb: View {
 struct EqChain: View {
     let overview: DspOverview
     let device: String
+    let aim: String?
     let curves: [String: [Double]]
     let choose: (Stage) -> Void
     let open: (String) -> Void
@@ -360,7 +390,7 @@ struct EqChain: View {
                 StageBlock(
                     title: "Correction",
                     name: correction.name,
-                    detail: correction.role == .baked ? "With a tuning baked in" : DspModel.describe(correction),
+                    detail: correction.role == .baked ? "Already includes a tuning" : DspModel.describe(correction),
                     db: curves[correction.name],
                     stroke: .correction,
                     action: { choose(.correction) }
@@ -420,7 +450,7 @@ struct EqChain: View {
             end("\(device) out", systemImage: "hifispeaker")
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(Self.sentence(overview, device: device, aim: nil))
+        .accessibilityLabel(Self.sentence(overview, device: device, aim: aim))
     }
 
     private func move(_ i: Int, by step: Int) {
@@ -444,8 +474,13 @@ struct EqChain: View {
     }
 
     /// The chain in words, for the page's footer and for VoiceOver.
+    /// What plays: the EQs switched on and not left out, and none on a
+    /// correction that already includes a tuning.
     static func sentence(_ o: DspOverview, device: String, aim: String?) -> String {
-        let eqs = o.chain.filter(\.on).map(\.name)
+        let includes = o.profiles.first { $0.name == o.active }?.role == .baked
+        let eqs = includes ? [] : o.chain.filter { entry in
+            entry.on && !(o.leftOut ?? "").contains("\(entry.name) is left out")
+        }.map(\.name)
         guard o.active != nil || !eqs.isEmpty else {
             return "\(device) is flat: the music plays untouched."
         }
@@ -644,7 +679,7 @@ struct StagePicker: View {
                 .koanControl()
             }
             if let c = correction, c.role == .baked {
-                Label("\(name) has a tuning baked in, so no tuning plays on it. Split it to tune it.", systemImage: "info.circle")
+                Label("\(name) already includes a tuning, so no other tuning plays on it. Split it into a correction and a tuning to change that.", systemImage: "info.circle")
                     .koanText(.meta, .muted)
                 if c.rates.isEmpty, c.layers == 0 {
                     Button("Split into Correction + Tuning…") { add(.splitting(name)) }

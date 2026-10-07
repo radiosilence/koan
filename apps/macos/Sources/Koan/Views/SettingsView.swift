@@ -917,7 +917,7 @@ struct DspSettings: View {
         } header: {
             KoanSectionHeader("All EQ")
         } footer: {
-            Text("AutoEQ and Equalizer APO text, impulse WAVs, Roon zips, Convolver .cfg and CamillaDSP configs, or a headphone found in AutoEQ by name. Importing into a profile of the same name adds to it.")
+            Text("AutoEQ and Equalizer APO text, impulse WAVs, Roon zips, Convolver .cfg and CamillaDSP configs, or a headphone found in AutoEQ by name. Importing under a name already used adds to that EQ.")
                 .koanText(.fine, .muted)
         }
     }

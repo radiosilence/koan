@@ -1114,8 +1114,10 @@ pub fn set_scope(name: &str, to: DspScope) -> Result<(), String> {
 /// from AutoEQ, built from a measurement or said to be made for a target,
 /// and a tuning otherwise.
 pub fn role(profile: &DspProfile) -> DspRole {
+    // Impulse responses correct a room or a device: never a tuning.
     profile.role.unwrap_or(
-        if profile.target.is_some() || profile.measurement.is_some() {
+        if profile.target.is_some() || profile.measurement.is_some() || !profile.impulses.is_empty()
+        {
             DspRole::Correction
         } else {
             DspRole::Tuning
@@ -1216,14 +1218,14 @@ fn check_tuning(name: &str, all: &[DspProfile]) -> Result<(), String> {
         .iter()
         .find(|p| p.name == name)
         .ok_or_else(|| format!("No profile called {name}"))?;
-    if shown_role(t, all) != DspRole::Tuning {
-        return Err(format!(
-            "{name} corrects headphones: choose it as the correction instead"
-        ));
-    }
     if !super::responses(t, all).is_empty() {
         return Err(format!(
             "{name} has impulse responses, which correct a room or speakers: choose it as the correction instead"
+        ));
+    }
+    if shown_role(t, all) != DspRole::Tuning {
+        return Err(format!(
+            "{name} corrects headphones: choose it as the correction instead"
         ));
     }
     Ok(())
@@ -1387,7 +1389,9 @@ pub fn save_preset(device: &str, name: &str) -> Result<String, String> {
         return Err(format!("There is already a profile called {name}"));
     }
     let layers = chain_of(&cfg.dsp, device);
+    let unsaid = unsaid_correction(&cfg.dsp, device);
     persist(|cfg| {
+        say_corrects(cfg, unsaid.as_deref());
         match cfg.dsp.profiles.iter_mut().find(|p| p.name == name) {
             Some(p) => p.layers = layers,
             None => cfg.dsp.profiles.push(DspProfile {
@@ -1404,6 +1408,29 @@ pub fn save_preset(device: &str, name: &str) -> Result<String, String> {
         });
     })?;
     Ok(name.to_owned())
+}
+
+/// `device`'s correction where nothing says it is one: a profile with no
+/// role that would read as a tuning, chosen as a correction before roles
+/// were asked. A preset saved from it must still put it back as one.
+fn unsaid_correction(dsp: &crate::config::DspConfig, device: &str) -> Option<String> {
+    dsp.profiles
+        .iter()
+        .find(|p| !p.preset && p.devices.iter().any(|d| d == device))
+        .filter(|p| p.role.is_none() && !shown_role(p, &dsp.profiles).corrects())
+        .map(|p| p.name.clone())
+}
+
+/// Say that `name` corrects, as the output it is chosen for uses it.
+fn say_corrects(cfg: &mut Config, name: Option<&str>) {
+    if let Some(p) = cfg
+        .dsp
+        .profiles
+        .iter_mut()
+        .find(|p| Some(p.name.as_str()) == name)
+    {
+        p.role = Some(DspRole::Correction);
+    }
 }
 
 /// What a preset's layers set an output to: its correction, where the first
@@ -1522,6 +1549,7 @@ fn flatten_off() -> Result<(), String> {
     }
     let mut taken: Vec<String> = cfg.dsp.profiles.iter().map(|p| p.name.clone()).collect();
     let mut kept: Vec<(String, Vec<crate::config::DspLayer>)> = Vec::new();
+    let mut unsaid: Vec<String> = Vec::new();
     for device in &devices {
         if preset_for(device).is_some_and(|(_, edited)| !edited) {
             continue;
@@ -1530,6 +1558,7 @@ fn flatten_off() -> Result<(), String> {
         if layers.is_empty() {
             continue;
         }
+        unsaid.extend(unsaid_correction(&cfg.dsp, device));
         let name = (1..)
             .map(|n| match n {
                 1 => (*device).to_owned(),
@@ -1541,6 +1570,9 @@ fn flatten_off() -> Result<(), String> {
         kept.push((name, layers));
     }
     persist(|cfg| {
+        for name in &unsaid {
+            say_corrects(cfg, Some(name));
+        }
         for (name, layers) in &kept {
             cfg.dsp.profiles.push(DspProfile {
                 name: name.clone(),
@@ -3586,6 +3618,20 @@ mod tests {
                 filters: vec![band(60.0)],
                 ..Default::default()
             });
+            // Chosen as corrections before roles were asked: a room's
+            // impulse response, and bands with no role.
+            c.dsp.profiles.push(DspProfile {
+                name: "Room".into(),
+                impulses: vec!["room.wav".into()],
+                devices: vec!["Monitors".into()],
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Plain".into(),
+                filters: vec![band(300.0)],
+                devices: vec!["Phones".into()],
+                ..Default::default()
+            });
             // Taken: the preset is named apart from it.
             c.dsp.profiles.push(DspProfile {
                 name: "DAC".into(),
@@ -3622,6 +3668,16 @@ mod tests {
                 .any(|p| p.name == "Amp"),
             "Amp was set from Speakers, unchanged"
         );
+        for (device, correction) in [("Monitors", "Room"), ("Phones", "Plain")] {
+            assert!(Config::cached().dsp.profile_for(device).is_none());
+            apply_preset(device, Some(device)).unwrap();
+            assert_eq!(
+                Config::cached().dsp.profile_for(device).unwrap().name,
+                correction,
+                "back as {device}'s correction"
+            );
+            assert!(tunings_for(device).is_empty(), "{device}");
+        }
     }
 
     /// An output plays its tuning on top of its correction, with the

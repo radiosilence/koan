@@ -240,7 +240,7 @@ another, its target and a group's member, with **Add…** at the foot to import
 one, find one in AutoEQ or build one from a measurement or squig.link. Each EQ
 of the tuning has **On**, and **Options** to edit it, move it or take it out;
 tapping it opens its page. **Add EQ** adds another. An empty stage is a dashed
-place to add one. Each profile's page draws its own curve. The curve is computed by
+place to add one. Each EQ's page draws its own curve. The curve is computed by
 the core from the same filters and impulse responses the DSP runs, at 48 kHz,
 so it shows what plays rather than what the filters were meant to do, layers
 and a moved target included. The preamp is shown beside the curve rather than

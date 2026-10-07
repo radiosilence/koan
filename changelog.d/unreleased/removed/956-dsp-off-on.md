@@ -1,0 +1,1 @@
+- **`koan dsp off` and `koan dsp on`.** Processing is no longer switched off as a whole. `koan dsp clear` makes a device flat (it now clears the tuning as well as the correction), and `koan dsp preset use NAME` brings a saved setup back; `koan dsp preset use flat` does the same as `clear`. Scripts that call `off` or `on` fail with an unknown command.
