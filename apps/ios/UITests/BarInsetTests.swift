@@ -285,12 +285,17 @@ final class BarInsetTests: XCTestCase {
         XCTAssertTrue(app.buttons[any: "Pause"].firstMatch.waitForExistence(timeout: 30), "the record did not play")
     }
 
-    /// On through the queue, so each track is a play in history.
+    /// On through the queue, so each track is a play in history, then paused:
+    /// plays still arriving push a list's foot down while it is measured, and
+    /// an app playing is never idle for the test driver to wait on.
     private func skip(_ tracks: Int) {
         for _ in 0..<tracks {
             app.buttons[any: "Next"].firstMatch.tap()
             settle(2)
         }
+        let pause = app.buttons[any: "Pause"].firstMatch
+        if pause.exists { pause.tap() }
+        settle(1)
     }
 
     private func search(_ text: String) {

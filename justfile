@@ -739,7 +739,12 @@ ios-bars phone="koan-dev" pad="koan-ipad": (ios-ffi "iphonesimulator") ios-proje
         TEST_RUNNER_KOAN_REMOTE__USERNAME=owner TEST_RUNNER_KOAN_REMOTE__API_KEY=$key
     status=0
     for device in "{{phone}}" "{{pad}}"; do
-        udid=$(xcrun simctl list devices available | grep -F "$device (" | head -1 | grep -oE '[0-9A-F-]{36}')
+        udid=$(xcrun simctl list devices available | grep -F "$device (" | head -1 | grep -oE '[0-9A-F-]{36}' || true)
+        if [ -z "$udid" ]; then
+            echo "no simulator called $device; skipped" >&2
+            status=1
+            continue
+        fi
         xcrun simctl boot "$udid" 2>/dev/null || true
         xcrun simctl bootstatus "$udid" -b >/dev/null
         was=$(xcrun simctl ui "$udid" appearance)
