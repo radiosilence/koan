@@ -2799,9 +2799,35 @@ pub fn summary(name: &str) -> Option<ChainSummary> {
 }
 
 /// A measurement, checked: frequency and level pairs covering the audible
-/// band, as squig.link and REW export them.
+/// band, as squig.link and REW export them, or a speaker's Klippel export.
 pub fn read_measurement(text: &str) -> Result<super::targets::Curve, String> {
-    super::targets::covering(text, "A measurement")
+    reading(text).map(|(curve, _)| curve)
+}
+
+/// What a measurement is read as, said to the person before they go on:
+/// for a speaker's Klippel export, which of its curves.
+pub fn describe_measurement(text: &str) -> Result<String, String> {
+    let (curve, used) = reading(text)?;
+    Ok(match used {
+        Some(used) => used.describe(),
+        None => format!(
+            "{} points, from {:.0} Hz to {:.1} kHz.",
+            curve.len(),
+            curve.first().map_or(0.0, |p| p.0),
+            curve.last().map_or(0.0, |p| p.0) / 1000.0
+        ),
+    })
+}
+
+fn reading(text: &str) -> Result<(super::targets::Curve, Option<super::klippel::Used>), String> {
+    use super::{klippel, targets};
+    if !klippel::is_export(text) {
+        return targets::covering(text, "A measurement").map(|c| (c, None));
+    }
+    let (curve, used) = klippel::read(text)?;
+    let curve = targets::covers(curve, "A measurement")
+        .map_err(|why| format!("{why}, in its Klippel export"))?;
+    Ok((curve, Some(used)))
 }
 
 /// What a measurement corrected to a target would do, before anything is

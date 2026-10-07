@@ -3058,6 +3058,19 @@ impl KoanEngine {
         .await
     }
 
+    /// What `text` is read as, as a measurement — for a speaker's Klippel
+    /// export, which of its curves — or why it cannot be read.
+    pub async fn dsp_describe_measurement(
+        self: Arc<Self>,
+        text: String,
+    ) -> Result<String, KoanError> {
+        offload::offload(move || {
+            koan_core::audio::dsp::profiles::describe_measurement(&text)
+                .map_err(|message| KoanError::BadArgument { message })
+        })
+        .await
+    }
+
     /// Measurements on squig.link sites whose name has each word of `query`,
     /// best first.
     pub async fn dsp_squig_search(

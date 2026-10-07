@@ -384,11 +384,19 @@ pub fn cmd_dsp_add_target(path: &std::path::Path) {
     );
 }
 
-/// Correct the headphone `name` from the measurement at `path` to `target`.
-pub fn cmd_dsp_measure(path: &std::path::Path, name: &str, in_ear: bool, target: &str) {
+/// Correct `name` from the measurement in `paths` to `target`: one file, or
+/// a speaker's two Klippel planes, read together.
+pub fn cmd_dsp_measure(paths: &[std::path::PathBuf], name: &str, in_ear: bool, target: &str) {
     use koan_core::config::DspEar;
-    let text =
-        std::fs::read_to_string(path).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())));
+    let text = paths
+        .iter()
+        .map(|path| {
+            std::fs::read_to_string(path)
+                .unwrap_or_else(|e| fail(format!("{}: {e}", path.display())))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let reading = profiles::describe_measurement(&text).unwrap_or_else(|e| fail(e));
     let ear = if in_ear { DspEar::In } else { DspEar::Over };
     let saved = profiles::save_measured(name, &text, ear, target).unwrap_or_else(|e| fail(e));
     println!(
@@ -397,6 +405,7 @@ pub fn cmd_dsp_measure(path: &std::path::Path, name: &str, in_ear: bool, target:
         saved.bold(),
         profiles::target_name(target)
     );
+    println!("{}", reading.dimmed());
 }
 
 /// squig.link sites' measurements matching `query`, numbered; or the one

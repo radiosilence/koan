@@ -1,0 +1,1 @@
+- **Speaker measurements from Audio Science Review.** The measurement importer reads Klippel Near-Field Scanner exports (`SPL Horizontal.txt`, `SPL Vertical.txt`), whose frequencies carry thousands separators. With both planes the correction is made from CTA-2034's listening window, with one from the on-axis response, and the importer says which.

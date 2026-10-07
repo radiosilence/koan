@@ -445,6 +445,11 @@ final class DspModel {
         try await engine.dspPreviewMeasurement(text: text, target: target)
     }
 
+    /// What `text` is read as, as a measurement, or why it cannot be.
+    func describeMeasurement(_ text: String) async throws -> String {
+        try await engine.dspDescribeMeasurement(text: text)
+    }
+
     /// Measurements on squig.link sites matching `query`, best first.
     func squigSearch(_ query: String) async throws -> [SquigHit] {
         try await engine.dspSquigSearch(query: query)

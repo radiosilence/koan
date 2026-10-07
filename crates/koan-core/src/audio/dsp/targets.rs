@@ -470,23 +470,64 @@ pub fn covering(text: &str, what: &str) -> Result<Curve, String> {
             "{what} is a few kilobytes; this is over a megabyte"
         ));
     }
+    covers(points(text), what).map_err(|why| format!("{why}. {}", found(text)))
+}
+
+/// `curve`, levelled at 1 kHz, if it covers the audible band: or why not.
+pub(crate) fn covers(mut curve: Curve, what: &str) -> Result<Curve, String> {
     // Levelled at 1 kHz before anything is checked: REW and squig.link
     // export absolute levels, which only the shape of matters here.
-    let mut curve = points(text);
     let k = at(&curve, 1000.0);
     for (_, db) in &mut curve {
         *db -= k;
     }
     curve.retain(|(_, db)| db.abs() <= LEVEL_LIMIT_DB);
     let (Some(first), Some(last)) = (curve.first(), curve.last()) else {
-        return Err("No frequency and level pairs in it".into());
+        return Err(format!(
+            "{what} is lines of a frequency in hertz and a level in decibels, as a two-column \
+             CSV or a squig.link export has them"
+        ));
     };
     if curve.len() < 20 || first.0 > 100.0 || last.0 < 10_000.0 {
         return Err(format!(
-            "{what} needs points from below 100 Hz to above 10 kHz, at least twenty of them"
+            "{what} needs points from below 100 Hz to above 10 kHz, at least twenty of them; \
+             this has {} from {} to {}",
+            curve.len(),
+            hertz(first.0),
+            hertz(last.0)
         ));
     }
     Ok(curve)
+}
+
+fn hertz(hz: f64) -> String {
+    if hz >= 1000.0 {
+        format!("{:.1} kHz", hz / 1000.0)
+    } else {
+        format!("{hz:.0} Hz")
+    }
+}
+
+/// What `text` looks like, for a refusal: said so the person can tell a
+/// wrong file from a wrong format.
+pub(crate) fn found(text: &str) -> String {
+    let text = text.trim();
+    let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
+    let Some(first) = lines.next() else {
+        return "It is empty.".into();
+    };
+    let one_line = lines.next().is_none();
+    if one_line && (first.starts_with('/') || first.starts_with('~') || first.starts_with("file:"))
+    {
+        return "This is a file's path, not what is in it: choose the file instead.".into();
+    }
+    let shown: String = first.chars().take(60).collect();
+    let more = if first.chars().count() > 60 {
+        "…"
+    } else {
+        ""
+    };
+    format!("Its first line reads “{shown}{more}”.")
 }
 
 /// `curve` on AutoEQ's grid, as a CSV of frequency and level.
