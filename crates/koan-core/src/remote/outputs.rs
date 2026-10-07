@@ -10,7 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{Config, DspProfile};
+use crate::config::Config;
 use crate::player::commands::PlayerCommand;
 use crate::player::state::SharedPlayerState;
 
@@ -280,6 +280,7 @@ pub fn set_preset(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::DspProfile;
     use crate::remote::link::{LinkCommand, LinkState};
 
     /// A device's outputs survive the trip through the link, and a device

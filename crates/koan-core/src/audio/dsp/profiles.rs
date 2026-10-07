@@ -4239,7 +4239,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            refused.starts_with("This stack already corrects"),
+            refused.starts_with("This EQ already plays the correction"),
             "{refused}"
         );
 
