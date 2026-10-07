@@ -1,3 +1,4 @@
+import KoanFFI
 import SwiftUI
 
 /// The playlists, as a page rather than a sidebar section.
