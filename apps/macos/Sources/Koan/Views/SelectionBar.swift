@@ -23,14 +23,22 @@ struct SelectionBar: View {
         var remove: Removal?
     }
 
+    /// Asked about first: a phone has no undo, and a bulk removal is a lot
+    /// to lose to a stray tap.
     struct Removal {
         let title: String
+        /// What one of the pick is, for the question: "track", "play".
+        let noun: String
+        /// How many go: an album heading in the queue is its whole run.
+        let count: Int
         let action: @MainActor () -> Void
     }
 
     let count: Int
     let actions: Actions
     let done: () -> Void
+
+    @State private var confirming = false
 
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
@@ -60,13 +68,21 @@ struct SelectionBar: View {
                 .disabled(count == 0)
                 favourite
                 if let remove = actions.remove {
-                    Button {
-                        remove.action()
-                        done()
-                    } label: {
+                    Button { confirming = true } label: {
                         BarItem(title: remove.title, short: remove.title, icon: Icon.remove, destructive: true)
                     }
                     .disabled(count == 0)
+                    .confirmationDialog(
+                        "\(remove.title) \(Format.count(Int64(remove.count), remove.noun))?",
+                        isPresented: $confirming,
+                        titleVisibility: .visible
+                    ) {
+                        Button(remove.title, role: .destructive) {
+                            remove.action()
+                            done()
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    }
                 }
             }
             .buttonStyle(.plain)

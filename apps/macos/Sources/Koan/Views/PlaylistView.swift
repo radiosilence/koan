@@ -515,7 +515,7 @@ struct PlaylistView: View {
         var remove: SelectionBar.Removal?
         if playlists.fillable(playlistId) {
             let playlists = playlists, playlistId = playlistId
-            remove = .init(title: "Remove") {
+            remove = .init(title: "Remove", noun: "track", count: picked.count) {
                 playlists.remove(entryIds: picked.map(\.entryId), from: playlistId)
             }
         }

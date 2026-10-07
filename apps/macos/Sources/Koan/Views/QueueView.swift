@@ -237,7 +237,7 @@ struct QueueView: View {
                             favourites: tracks.map { Playable.Key(kind: .track, id: $0) },
                             tracks: { tracks },
                             queues: false,
-                            remove: .init(title: "Remove") { player.remove(itemIds: items) }
+                            remove: .init(title: "Remove", noun: "track", count: items.count) { player.remove(itemIds: items) }
                         )
                     }
                     #endif

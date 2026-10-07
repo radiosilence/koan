@@ -143,7 +143,7 @@ struct HistoryView: View {
                     return SelectionBar.Actions(
                         favourites: tracks.map { Playable.Key(kind: .track, id: $0) },
                         tracks: { tracks },
-                        remove: .init(title: "Forget") { library.forgetPlays(ids: Set(ids)) }
+                        remove: .init(title: "Forget", noun: "play", count: ids.count) { library.forgetPlays(ids: Set(ids)) }
                     )
                 }
                 #endif
