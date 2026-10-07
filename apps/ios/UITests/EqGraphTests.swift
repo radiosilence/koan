@@ -81,7 +81,7 @@ final class EqGraphTests: XCTestCase {
         try waitForSave(from: before, "a stroke across the graph")
         attach("after paint")
         let painted = try saved()
-        XCTAssert(painted.contains("gain_db = 0.0"), "the stroke moved the band")
+        XCTAssertEqual(band("gain_db", in: painted), 0, "the stroke moved the band")
 
         // The band's handle, at 1 kHz and 0 dB, dragged up.
         let handle = handlePoint(graph)
@@ -89,13 +89,24 @@ final class EqGraphTests: XCTestCase {
         try waitForSave(from: painted, "dragging the handle")
         attach("after handle drag")
         let dragged = try saved()
-        XCTAssertFalse(dragged.contains("gain_db = 0.0"), "the handle did not move the band")
+        XCTAssertGreaterThan(band("gain_db", in: dragged) ?? 0, 0.5, "the handle did not raise the band")
 
         // A pinch on the graph widens the band last held: a lower Q.
         graph.pinch(withScale: 2, velocity: 1)
         try waitForSave(from: dragged, "the pinch")
         attach("after pinch")
-        XCTAssertFalse(try saved().contains("q = 1.0"), "the pinch did not change Q")
+        XCTAssertLessThan(band("q", in: try saved()) ?? 1, 0.9, "the pinch did not lower Q")
+    }
+
+    /// A figure of the peaking band as saved, or nil where it is left out.
+    private func band(_ key: String, in config: String) -> Double? {
+        guard let start = config.range(of: "\"peaking\"") else { return nil }
+        let rest = config[start.upperBound...]
+        let end = rest.range(of: "type")?.lowerBound ?? rest.endIndex
+        let pattern = "\\b\(key)\\s*=\\s*(-?[0-9.]+)"
+        guard let match = rest[..<end].firstMatch(of: try! Regex(pattern)),
+              let value = match.output[1].substring else { return key == "gain_db" ? 0 : nil }
+        return Double(value)
     }
 
     private func saved() throws -> String {
