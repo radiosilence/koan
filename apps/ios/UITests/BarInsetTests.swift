@@ -184,9 +184,7 @@ final class BarInsetTests: XCTestCase {
             reach(link)
             if open(link) {
                 settle(1)
-                XCTExpectFailure("The pushed picker lists take the bar's room in a fix of their own", options: .nonStrict()) {
-                    assertClears("EQ: \(picker)")
-                }
+                assertClears("EQ: \(picker)")
                 back()
             } else {
                 XCTFail("no \(picker) on \(profile)")
