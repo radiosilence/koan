@@ -595,3 +595,17 @@ pub fn cmd_dsp_remove(name: &str) {
     profiles::remove(name).unwrap_or_else(|e| fail(e));
     println!("{} '{}'", "removed".green(), name.bold());
 }
+
+/// Send what this command changed to the server signed in to, before the
+/// process exits. A failure leaves the edit here, for the next sync.
+pub fn cmd_dsp_flush() {
+    let Some(result) = koan_core::remote::dsp_sync::flush(&super::open_db()) else {
+        return;
+    };
+    if let Err(e) = result {
+        eprintln!(
+            "{} could not sync EQ with the server: {e}",
+            "warning:".yellow().bold()
+        );
+    }
+}
