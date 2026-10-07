@@ -32,7 +32,6 @@ struct TrackListView: View {
     @Environment(\.roomTint) private var tint
     @Environment(\.onStage) private var onStage
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage("graphics") private var graphics = Graphics.full
     #endif
 
     /// Whether the header scrolls with the tracks, as on a phone, where a

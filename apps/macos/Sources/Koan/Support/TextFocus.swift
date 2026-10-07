@@ -61,15 +61,20 @@ final class TextFocus {
             centre.addObserver(
                 forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
             ) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    guard let self, let window = NSApp.keyWindow else { return }
-                    self.responder = window.observe(\.firstResponder) { [weak self] _, _ in
-                        MainActor.assumeIsolated { self?.refresh() }
-                    }
-                    self.refresh()
-                }
+                MainActor.assumeIsolated { self?.watchKeyWindow() }
             }
         )
+        // Made after launch, when the main window is usually key already and
+        // will not become key again until someone switches away and back.
+        watchKeyWindow()
+    }
+
+    /// Follows the key window's first responder, and reads it now.
+    private func watchKeyWindow() {
+        responder = NSApp.keyWindow?.observe(\.firstResponder) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.refresh() }
+        }
+        refresh()
     }
 
     /// Ask the responder chain directly. The notifications say when editing

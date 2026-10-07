@@ -652,8 +652,6 @@ extension KoanTheme {
         isOn ? theme : system
     }
 
-    /// The bare ground of a page or a sheet: `bg` in the theme, `system`
-    /// otherwise.
     /// Whether the wash runs under the whole window, every region clear over
     /// it ("Wash the whole window"): the Mac, in the theme, unless turned off.
     @MainActor static func washesWindow(_ appearance: AppearanceModel?) -> Bool {
@@ -664,6 +662,8 @@ extension KoanTheme {
         #endif
     }
 
+    /// The bare ground of a page or a sheet: `bg` in the theme, `system`
+    /// otherwise.
     nonisolated static func ground(_ system: some ShapeStyle) -> AnyShapeStyle {
         isOn ? AnyShapeStyle(Color.koanBg) : AnyShapeStyle(system)
     }
@@ -830,8 +830,8 @@ extension View {
     /// A bar along the window's foot, such as the transport: flat `bg` with a
     /// rule along its top, full width. In the platform's look, a floating slab
     /// of glass with the given corner radius, inset from the window's edges.
-    func koanBar(radius: CGFloat, inset: CGFloat) -> some View {
-        modifier(KoanBarRole(radius: radius, inset: inset))
+    func koanBar(radius: CGFloat, inset: CGFloat, overWash: Bool = false) -> some View {
+        modifier(KoanBarRole(radius: radius, inset: inset, overWash: overWash))
     }
 
     /// A form as the theme lays one out: no cards, rows on the ground with
@@ -1430,15 +1430,31 @@ private struct KoanChipRole: ViewModifier {
 private struct KoanBarRole: ViewModifier {
     let radius: CGFloat
     let inset: CGFloat
+    /// The window's transport, which the wash runs under. A bar in a sheet
+    /// keeps its ground: nothing is washed behind it.
+    let overWash: Bool
     @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
 
     func body(content: Content) -> some View {
-        if KoanTheme.washesWindow(appearance) {
-            // Clear over the wash, set off from the page by space and a faint
-            // hairline rather than a ground of its own.
-            content.overlay(alignment: .top) {
-                Rectangle().fill(Color.koanRowRule).frame(height: KoanTheme.hairline)
-            }
+        if overWash && KoanTheme.washesWindow(appearance) {
+            // Over the wash, set off by a faint hairline and a scrim rather
+            // than a slab: rows scrolling under it fade out above its text,
+            // and the wash shows through what is left.
+            content
+                .background {
+                    LinearGradient(
+                        stops: [
+                            .init(color: Color.koanBg.opacity(0), location: 0),
+                            .init(color: Color.koanBg.opacity(0.85), location: 0.3),
+                            .init(color: Color.koanBg.opacity(0.92), location: 1),
+                        ],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                    .ignoresSafeArea(edges: .bottom)
+                }
+                .overlay(alignment: .top) {
+                    Rectangle().fill(Color.koanRowRule).frame(height: KoanTheme.hairline)
+                }
         } else if KoanTheme.isOn {
             content
                 .background(Color.koanBg)
@@ -1557,9 +1573,10 @@ private struct KoanToolbarRole: ViewModifier {
         #else
         let bar = ToolbarPlacement.navigationBar
         #endif
-        if KoanTheme.washesWindow(appearance) {
+        if glass && KoanTheme.washesWindow(appearance) {
             // No ground, and the soft edge rather than the hard one, whose
-            // grey band would stand in for the ground taken away.
+            // grey band would stand in for the ground taken away. At `bare`
+            // the toolbar keeps its opaque ground: the soft edge is live blur.
             content
                 .toolbarBackgroundVisibility(.hidden, for: bar)
                 .scrollEdgeEffectStyle(.soft, for: .top)

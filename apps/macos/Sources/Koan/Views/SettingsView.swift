@@ -1709,7 +1709,7 @@ private struct AppearanceSettings: View {
             } header: {
                 KoanSectionHeader("Colour")
             } footer: {
-                Text("The record playing colours the window behind the page, and the accent on selection and progress. Off, there is no wash and the accent is kōan's mint, in either theme. Washing the whole window draws the sidebar, toolbar, transport and lyrics clear over it; off, they keep grounds of their own.")
+                Text("The record playing colours the window behind the page, and the accent on selection and progress. Off, there is no wash and the accent is kōan's mint, in either theme. Washing the whole window draws the sidebar, toolbar, transport and lyrics clear over it; off, they keep grounds of their own. That choice is provisional, while the look is decided.")
                     .koanText(.fine, .muted)
             }
             Section {

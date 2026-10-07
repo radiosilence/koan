@@ -196,14 +196,15 @@ once.
 theme = "koan"     # "koan": the site's look throughout (the default); "system": the platform's own
 theme_icons = true # in the kōan theme, icons beside labels; false for labels alone
 record_colours = true # the record playing colours the wash and the accent; false for neither
-wash_window = true    # Mac, kōan theme: the wash under the whole window; false gives panels their own grounds
+wash_window = true    # provisional. Mac, kōan theme: the wash under the whole window; false gives panels their own grounds
 ```
 
 Settings → Appearance → **Theme** chooses between them on every app, and
 **Show icons**, shown while the kōan theme is chosen, sets `theme_icons`. The
 system look always draws its icons. **Colours from the record** sets
 `record_colours`: off, there is no wash behind the window and the accent is
-koan's mint, in either theme. `wash_window` (the Mac, kōan theme only): on, the
+koan's mint, in either theme. `wash_window` (the Mac, kōan theme only) is provisional,
+there to live with both looks while one is chosen, and likely to go: on, the
 sidebar, toolbar, transport and lyrics are drawn clear over one wash; off, they
 keep grounds of their own. The graphics level is separate, and governs what the
 wash costs rather than whether it takes colour; the playing bars move at every

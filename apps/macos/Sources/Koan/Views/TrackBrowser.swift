@@ -22,7 +22,6 @@ struct TrackBrowser: View {
     @Environment(\.roomTint) private var tint
     @Environment(\.onStage) private var onStage
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage("graphics") private var graphics = Graphics.full
     #endif
 
     private var tracks: [Track] { library.visibleTracks }

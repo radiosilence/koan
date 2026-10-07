@@ -47,7 +47,6 @@ struct QueueView: View {
     @Environment(TransferMeter.self) private var meter
     @Environment(\.roomTint) private var tint
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage("graphics") private var graphics = Graphics.full
     #endif
 
     /// Grouped or one row per track. Persisted because it is a preference about

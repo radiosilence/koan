@@ -57,7 +57,8 @@ pub struct AppearanceConfig {
     pub record_colours: bool,
     /// On the Mac in the kōan theme, the wash runs under the whole window:
     /// sidebar, toolbar, transport and lyrics drawn clear over it. Off, those
-    /// keep grounds of their own.
+    /// keep grounds of their own. Provisional: a way to live with both while
+    /// the look is decided, and expected to go once it is.
     pub wash_window: bool,
 }
 
