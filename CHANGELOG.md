@@ -6,10 +6,15 @@
 
 - **Play on wakes a sleeping Apple TV.** A phone or Mac records the TV's AirPlay announcement while it is awake, and opens a connection to it when kōan there is asleep, so the Bonjour Sleep Proxy wakes the box before the server's push wakes kōan.
 
+### Changed
+
+- **Select is a checkbox on iPhone and iPad.** The word "Select" was cut short in crowded bars. An empty box starts select mode on every page that has one, shows ticked while the mode is on, and ends it when tapped again.
+
 ### Fixed
 
 - **Lyrics no longer show another song's words.** The lyrics panel shows only lyrics fetched for the track that is playing, so a quick track change can no longer leave the previous song's lyrics on screen. When LRCLIB has no exact match, a search result is used only if its title (ignoring featured artists) and length (within two seconds) match the track; otherwise the panel shows no lyrics.
 - **Play on no longer waits on an Apple TV that is out of reach.** When nothing on the network answers for a TV on record (the phone is away from home, or the TV is unplugged), the push goes out at once instead of after twenty seconds of knocking.
+- **Apple TV: Menu goes back a page instead of leaving the app.** Playing from an artist page, a shelf or a browser used to jump to the Queue tab with focus on the tab bar, so the next press of Menu left kōan. The queue now opens over the page you were on, and Menu returns to it. The EQ page's "Add a correction" and "Add EQ" choose from the corrections and EQs already on the TV, and search's artist pills and track rows can be selected with the remote.
 
 ## 0.60.8
 

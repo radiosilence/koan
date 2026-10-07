@@ -52,6 +52,9 @@ enum Icon {
     static let copy = "doc.on.doc"
     static let paste = "doc.on.clipboard"
     static let selectAll = "checkmark.circle"
+    /// Select mode, off and on.
+    static let select = "square"
+    static let selecting = "checkmark.square.fill"
 
     static let save = "square.and.arrow.down"
     static let rescan = "arrow.clockwise"

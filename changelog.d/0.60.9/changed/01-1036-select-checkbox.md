@@ -1,0 +1,1 @@
+- **Select is a checkbox on iPhone and iPad.** The word "Select" was cut short in crowded bars. An empty box starts select mode on every page that has one, shows ticked while the mode is on, and ends it when tapped again.

@@ -316,12 +316,18 @@ private struct SearchTrackRow: View {
         // tick, and a double tap does what a tap does.
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
-        .onTapGesture {
-            if selection.take(.track(track)) { return }
-            guard let albumId = track.albumId else { return }
-            nav.open(album: albumId, highlighting: track.id)
-        }
+        #if os(tvOS)
+        .primaryTap(open) { PlayableMenu(playable: .track(track)) }
+        #else
+        .onTapGesture(perform: open)
         .contextMenu { PlayableMenu(playable: .track(track)) }
+        #endif
         .pointerHover { hovering = $0 }
+    }
+
+    private func open() {
+        if selection.take(.track(track)) { return }
+        guard let albumId = track.albumId else { return }
+        nav.open(album: albumId, highlighting: track.id)
     }
 }

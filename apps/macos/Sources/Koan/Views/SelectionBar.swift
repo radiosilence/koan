@@ -179,20 +179,20 @@ private struct BarItem: View {
     }
 }
 
-/// "select", where a page's pick begins.
+/// Select mode's switch: an empty box, ticked while the mode is on. A glyph
+/// rather than the word, which a crowded bar cuts short.
 struct SelectButton: View {
-    let begin: () -> Void
+    let isOn: Bool
+    let toggle: () -> Void
 
     var body: some View {
-        Button(action: begin) {
-            if KoanTheme.isOn {
-                Text("Select").koanCase()
-            } else {
-                Text("Select")
-            }
+        Button(action: toggle) {
+            KoanIcon(isOn ? Icon.selecting : Icon.select)
         }
-        .koanButton(.text)
-        .accessibilityHint("Pick several to play, queue or add to a playlist")
+        .koanButton(.icon)
+        .accessibilityLabel("Select")
+        .accessibilityValue(isOn ? "On" : "Off")
+        .accessibilityHint(isOn ? "Stops selecting" : "Pick several to play, queue or add to a playlist")
     }
 }
 
@@ -236,9 +236,11 @@ private struct ListSelectMode<ID: Hashable>: ViewModifier {
                 }
             }
             .toolbar {
-                if toolbar && !editMode.isEditing {
+                if toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
-                        SelectButton { editMode = .active }
+                        SelectButton(isOn: editMode.isEditing) {
+                            editMode = editMode.isEditing ? .inactive : .active
+                        }
                     }
                     .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
                 }
@@ -276,9 +278,11 @@ private struct PlayableSelectMode: ViewModifier {
                 }
             }
             .toolbar {
-                if available && !selection.isActive {
+                if available || selection.isActive {
                     ToolbarItem(placement: .topBarTrailing) {
-                        SelectButton { selection.begin() }
+                        SelectButton(isOn: selection.isActive) {
+                            if selection.isActive { selection.end() } else { selection.begin() }
+                        }
                     }
                     .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
                 }

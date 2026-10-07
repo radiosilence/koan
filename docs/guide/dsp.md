@@ -247,6 +247,12 @@ it left to take it out of the tuning and right to move it up or down, or touch
 and hold it for the same; on the Mac, its **Options** menu does these. **Add EQ** adds another. An empty stage is a dashed
 place to add one.
 
+On Apple TV the correction and **Add EQ** choose from the corrections and EQs
+already on the TV, which include those the account's other devices sync
+**Everywhere**. A television has no files to import and no microphone to
+measure with, so there is no **Add…**; with nothing to choose, the list says
+to add them on a phone or Mac.
+
 **Add EQ** lists each EQ with the target it was made against. Those made
 against the correction's target come first, under **Matches your correction**
 and in the accent, since they play as made; the rest follow under **Other**.

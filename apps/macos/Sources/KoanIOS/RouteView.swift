@@ -98,7 +98,8 @@ private struct SectionPage: View {
 
     private var title: String {
         switch section {
-        case .queue: "Queue"
+        // A television's queue heads itself, beside its controls.
+        case .queue: Self.television ? "" : "Queue"
         case .searchResults: "Search"
         case .albums: "Albums"
         case .artists: "Artists"
@@ -111,6 +112,12 @@ private struct SectionPage: View {
         case .playlist: ""
         }
     }
+
+    #if os(tvOS)
+    private static let television = true
+    #else
+    private static let television = false
+    #endif
 }
 
 /// The Mac's toolbar filter, as the search field iOS puts under a page's title.

@@ -141,7 +141,11 @@ struct EqSettings: View {
         .formTray(item: $splitting) { baked in
             SplitFlow(dsp: app.dsp, name: baked.name)
         }
+        #endif
+        // On a television, the account's own profiles only: no file reaches
+        // one, and it has no microphone to measure with.
         .formTray(item: $choosing, onDismiss: {
+            #if !os(tvOS)
             guard let (stage, add) = adding else { return }
             adding = nil
             switch add {
@@ -152,6 +156,7 @@ struct EqSettings: View {
             case .measuring: measuring = true
             case let .splitting(name): splitting = ShownProfile(name: name)
             }
+            #endif
         }) { stage in
             if let o = overview, let device {
                 StagePicker(dsp: app.dsp, stage: stage, overview: o, device: device) { add in
@@ -160,6 +165,7 @@ struct EqSettings: View {
                 }
             }
         }
+        #if !os(tvOS)
         .formTray(isPresented: $explaining) {
             EqExplainer()
         }
@@ -182,7 +188,7 @@ struct EqSettings: View {
             Text("The correction and tuning, to switch \(device.map(app.dsp.label) ?? "a device") back to, or another device to.")
         }
         #endif
-        #if os(iOS)
+        #if os(iOS) || os(tvOS)
         .navigationDestination(item: $showing) { shown in
             DspProfilePage(dsp: app.dsp, name: shown.name, device: device)
                 .koanPushedPage()
@@ -776,9 +782,6 @@ private struct Placeholder: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        #if os(tvOS)
-        .disabled(true)
-        #endif
     }
 }
 
@@ -840,6 +843,19 @@ struct StagePicker: View {
         return [(title: "Matches your correction", eqs: matching)] + (other.isEmpty ? [] : [(title: "Other", eqs: other)])
     }
 
+    /// Nothing left to add to the tuning. A television takes profiles from
+    /// the account's other devices.
+    private var emptyEqs: String {
+        let none = overview.profiles.allSatisfy { $0.preset || $0.role != .tuning || !$0.rates.isEmpty }
+        #if os(tvOS)
+        return none
+            ? "No EQs yet. Add them on your phone or Mac, and they appear here."
+            : "Every EQ is in the tuning already. Add more on your phone or Mac."
+        #else
+        return "Every EQ is in the tuning already. Add another below."
+        #endif
+    }
+
     var body: some View {
         NavigationStack {
             KoanForm {
@@ -856,11 +872,18 @@ struct StagePicker: View {
                         }
                     } header: {
                         KoanSectionHeader("Corrections")
+                    } footer: {
+                        #if os(tvOS)
+                        if choices.isEmpty {
+                            Text("No corrections yet. Add them on your phone or Mac, and they appear here.")
+                                .koanText(.meta, .muted)
+                        }
+                        #endif
                     }
                 case .eq:
                     if choices.isEmpty {
                         Section {
-                            Text("Every EQ is in the tuning already. Add another below.")
+                            Text(emptyEqs)
                                 .koanText(.meta, .muted)
                         } header: {
                             KoanSectionHeader("EQs")
@@ -881,6 +904,7 @@ struct StagePicker: View {
                 if stage == .correction, let name = overview.active {
                     current(name)
                 }
+                #if !os(tvOS)
                 Section {
                     Button("Import a File…") { add(.importing) }
                         .koanButton(.bordered)
@@ -891,6 +915,7 @@ struct StagePicker: View {
                 } header: {
                     KoanSectionHeader("Add…")
                 }
+                #endif
             }
             .navigationTitle(KoanTheme.label(stage == .correction ? "Correction" : "Add EQ"))
             .toolbar {
@@ -944,10 +969,12 @@ struct StagePicker: View {
             if let c = correction, c.role == .baked {
                 Label("\(name) already includes a tuning, so no other tuning plays on it. Split it into a correction and a tuning to change that.", systemImage: "info.circle")
                     .koanText(.meta, .muted)
+                #if !os(tvOS)
                 if c.rates.isEmpty, c.layers == 0 {
                     Button("Split into Correction + Tuning…") { add(.splitting(name)) }
                         .koanButton(.compact)
                 }
+                #endif
             }
         } header: {
             KoanSectionHeader(name)
