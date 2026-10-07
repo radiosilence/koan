@@ -62,6 +62,7 @@ struct RootView: View {
 
         NavigationSplitView(columnVisibility: $columns) {
             SidebarView()
+                .modifier(SidebarOverWash())
                 // The column's minimum alone is not held when the window
                 // first lays out: the sidebar opened at its content's width
                 // and truncated its labels. The content's own minimum is.
@@ -628,20 +629,82 @@ private struct TransportHeightKey: PreferenceKey {
     }
 }
 
+/// Room for the transport, which floats over every screen in the stack.
+///
+/// Measured rather than a constant. The bar's height is a stack of paddings
+/// and a control size, so any number written here would be right until one
+/// of them changed and then be a gap, or a row clipped by a bar with
+/// nothing to say why.
+private struct ClearsTransport: ViewModifier {
+    let height: CGFloat
+    let glass: Bool
+    @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
+
+    func body(content: Content) -> some View {
+        if KoanTheme.washesWindow(appearance) {
+            content.modifier(StopsAtBars(bottom: height))
+        } else {
+            // Content passing under the glass is what makes it glass. The soft
+            // edge fades a row out as it goes, so one half under the bar reads
+            // as behind it rather than cut off — and it is a live blur of a
+            // window-wide strip, which is why `bare` does without it and takes
+            // the hard edge instead.
+            content
+                .safeAreaPadding(.bottom, height)
+                .scrollEdgeEffectStyle(glass ? .soft : .hard, for: .bottom)
+        }
+    }
+}
+
+/// In the washed theme the toolbar and transport sit on the wash with nothing
+/// under them and a hairline at the edge they share with the page, so a page
+/// stops at those edges: a row passing beneath would
+/// need a scrim or a fade to be told from their text. The toolbar's safe area
+/// becomes real space, so the AppKit lists that scroll into a safe area find
+/// none at the top, and everything past the edges is clipped.
+private struct StopsAtBars: ViewModifier {
+    let bottom: CGFloat
+    @State private var top: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.top, top)
+            .padding(.bottom, bottom)
+            .clipped()
+            // The toolbar's lower edge, as the transport's upper one is drawn.
+            .overlay(alignment: .top) {
+                Rectangle().fill(Color.koanRowRule).frame(height: KoanTheme.hairline).padding(.top, top)
+            }
+            .ignoresSafeArea(.container, edges: .top)
+            .background {
+                Color.clear.onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { top = $0 }
+            }
+    }
+}
+
+/// The sidebar column on the wash, in the theme with the wash under the whole
+/// window: no glass of the platform's, and a hairline where it meets the page.
+private struct SidebarOverWash: ViewModifier {
+    @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
+
+    func body(content: Content) -> some View {
+        let washed = KoanTheme.washesWindow(appearance)
+        content
+            #if os(macOS)
+            .background(SidebarGround(clear: washed))
+            #endif
+            .overlay(alignment: .trailing) {
+                if washed {
+                    Rectangle().fill(Color.koanRowRule).frame(width: KoanTheme.hairline)
+                        .ignoresSafeArea()
+                }
+            }
+    }
+}
+
 private extension View {
-    /// Room for the transport, which floats over every screen in the stack.
-    ///
-    /// Measured rather than a constant. The bar's height is a stack of paddings
-    /// and a control size, so any number written here would be right until one
-    /// of them changed and then be a gap, or a row clipped by a bar with
-    /// nothing to say why.
     func clearsTransport(_ height: CGFloat, glass: Bool) -> some View {
-        // Content passing under the glass is what makes it glass. The soft edge
-        // fades a row out as it goes, so one half under the bar reads as behind
-        // it rather than cut off — and it is a live blur of a window-wide strip,
-        // which is why `bare` does without it and takes the hard edge instead.
-        safeAreaPadding(.bottom, height)
-            .scrollEdgeEffectStyle(glass ? .soft : .hard, for: .bottom)
+        modifier(ClearsTransport(height: height, glass: glass))
     }
 }
 

@@ -102,6 +102,10 @@ struct SidebarView: View {
         // applies only under a bar (`safeAreaBar` below); a plain
         // `safeAreaInset` takes no edge effect, and the rows showed through.
         .scrollEdgeEffectStyle(.hard, for: .bottom)
+        // Rows passing under the search field get the same hard edge in the
+        // theme, where the toolbar hides its fade for every other page.
+        .scrollEdgeEffectStyle(KoanTheme.isOn ? .hard : .automatic, for: .top)
+        .scrollEdgeEffectHidden(false, for: .top)
         // The field belongs to the sidebar, not the window: in the toolbar it
         // would sit on top of the lyrics inspector.
         .searchable(text: $search.query, placement: .sidebar, prompt: "Search")

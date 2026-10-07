@@ -67,16 +67,11 @@ struct SignInPage: View {
         .padding(80)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
-            ZStack {
-                Rectangle().fill(.black)
-                RadialGradient(
-                    colors: [tint.opacity(0.18), .clear],
-                    center: UnitPoint(x: 0.2, y: 0.1),
-                    startRadius: 0,
-                    endRadius: 1200
-                )
+            if KoanTheme.isOn {
+                Color.koanBg.ignoresSafeArea()
+            } else {
+                glow
             }
-            .ignoresSafeArea()
         }
         .task {
             let settings = await state.engine.settings()
@@ -93,6 +88,20 @@ struct SignInPage: View {
         // The form's sign-in runs as an activity, and can finish after the
         // cover has been closed.
         .onChange(of: activity.tasks.count) { recheck() }
+    }
+
+    /// The platform's look: the room's colour as a glow from the top left.
+    private var glow: some View {
+        ZStack {
+            Rectangle().fill(.black)
+            RadialGradient( // theme: raw — the platform's look only
+                colors: [tint.opacity(0.18), .clear],
+                center: UnitPoint(x: 0.2, y: 0.1),
+                startRadius: 0,
+                endRadius: 1200
+            )
+        }
+        .ignoresSafeArea()
     }
 
     /// The servers found so far, each a press away from a code, and the search
