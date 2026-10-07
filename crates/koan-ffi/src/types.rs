@@ -1955,6 +1955,8 @@ pub struct Appearance {
     pub record_colours: bool,
     /// On the Mac in the kōan theme, the wash under the whole window.
     pub wash_window: bool,
+    /// The accent, wash and indicators in the pride flag's hues, on this device.
+    pub rainbow: bool,
 }
 
 /// Everything the settings window reads and writes.

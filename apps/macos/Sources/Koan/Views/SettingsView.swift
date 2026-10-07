@@ -28,6 +28,13 @@ struct SettingsView: View {
     #else
     @Environment(\.scenePhase) private var scenePhase
     #endif
+    #if os(iOS)
+    /// Taps on the version line, toward the seven that switch gay mode.
+    @State private var versionTaps: (count: Int, last: Date) = (0, .distantPast)
+    #elseif os(tvOS)
+    /// ↑↑↓↓←→←→ on the remote, which switches gay mode.
+    @State private var konami = SecretCode<MoveCommandDirection>([.up, .up, .down, .down, .left, .right, .left, .right])
+    #endif
 
     #if !os(macOS)
     /// A settings section: a row that goes into the pane it names.
@@ -162,9 +169,23 @@ struct SettingsView: View {
                     Text(AppVersion.text)
                         .koanText(.fine, .muted)
                         .frame(maxWidth: .infinity)
+                        #if os(iOS)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            let now = Date()
+                            let count = now.timeIntervalSince(versionTaps.last) < 1 ? versionTaps.count + 1 : 1
+                            versionTaps = (count == 7 ? 0 : count, now)
+                            if count == 7 { app.appearance.toggleRainbow() }
+                        }
+                        #endif
                         .washedRow()
                 }
                 .koanList()
+                #if os(tvOS)
+                .onMoveCommand { direction in
+                    if konami.press(direction) { app.appearance.toggleRainbow() }
+                }
+                #endif
                 .navigationTitle(KoanTheme.tabRootTitle("Settings"))
                 .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                 #endif

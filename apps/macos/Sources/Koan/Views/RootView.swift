@@ -249,6 +249,8 @@ struct RecordRoom: ViewModifier {
     /// out. Falling back to the accent instead flashes every tinted control to
     /// it and back again on the way to a record whose colour is not in yet.
     @State private var worn: Color?
+    /// Where the rainbow's accent is around the flag (see `Rainbow`).
+    @State private var rainbowStep = 0
 
     /// Only for a colour that had to be worked out, which arrives after the page
     /// and would otherwise cut. A colour already in hand needs no ease: it lands
@@ -294,7 +296,14 @@ struct RecordRoom: ViewModifier {
     }
 
     /// The accent for that record, tone-mapped to its bands — in either look.
-    private var accent: KoanAccent { KoanAccent.of(record) }
+    /// With the rainbow drawn, the flag's, wherever its cycle has reached.
+    private var accent: KoanAccent {
+        appearance.rainbowDrawn ? .rainbow(rainbowStep) : KoanAccent.of(record)
+    }
+
+    /// Whether the rainbow's accent moves round the flag: only while it is
+    /// drawn and motion is allowed. Still, it holds one hue.
+    private var cycles: Bool { appearance.rainbowDrawn && !reduceMotion }
 
     /// The colour to put on.
     private var tint: Color { accent.color }
@@ -383,6 +392,21 @@ struct RecordRoom: ViewModifier {
             #endif
             .environment(\.roomTint, tint)
             .environment(\.koanAccent, accent)
+            .environment(\.koanRainbow, appearance.rainbowDrawn)
+            // Each step is a new tint, and a tint is read by every control:
+            // a whole-window pass every `Rainbow.period`, while the rainbow is
+            // drawn. With it off this task is never started.
+            .task(id: cycles) {
+                guard cycles else { return }
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: Rainbow.period)
+                    guard !Task.isCancelled else { return }
+                    Rainbow.step = rainbowStep + 1
+                    withAnimation(KoanTheme.Motion.settle) { rainbowStep += 1 }
+                }
+            }
+            .background { RainbowForTrack() }
+            .overlay(alignment: .bottom) { RainbowToast() }
             // The theme's text button for every button that names no style.
             // Not on a television, whose shell gives them `TelevisionButton`:
             // a bare text button there shows no focus.
