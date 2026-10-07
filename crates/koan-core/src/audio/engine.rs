@@ -52,10 +52,6 @@ struct CallbackData {
     fader: Fader,
     /// Frames of silence still to play before the ring is read.
     lead_in: Arc<AtomicU64>,
-    /// The rate the unit was built for, which the audio session is asked for
-    /// on iOS and tvOS.
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
-    sample_rate: f64,
 }
 
 // SAFETY: `rtrb::Consumer` is `!Send` due to internal raw pointers, but our usage is
@@ -82,6 +78,10 @@ pub struct AudioEngine {
     in_callback: Arc<AtomicBool>,
     fade: Arc<FadeControl>,
     lead_in: Arc<AtomicU64>,
+    /// The rate the unit was built for, which the audio session is asked for
+    /// on iOS and tvOS.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    sample_rate: f64,
 }
 
 // SAFETY: AudioEngine contains an AudioUnit (opaque C pointer) and a *mut CallbackData.
