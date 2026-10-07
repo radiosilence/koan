@@ -241,6 +241,7 @@ struct RecordRoom: ViewModifier {
     @Environment(\.drawnOffscreen) private var offscreen
     @Environment(AppearanceModel.self) private var appearance
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(PlayingLevels.self) private var levels: PlayingLevels?
 
     /// The colour of a record the cache could not already answer for, and which
     /// record it was worked out for. Only consulted when the cache cannot.
@@ -334,6 +335,7 @@ struct RecordRoom: ViewModifier {
         let player = player
         let artCache = art
         let appearanceModel = appearance
+        let playingLevels = levels
         // Over an opaque ground, because this *replaces* the window's own
         // background rather than sitting on it — a half-transparent wash on its
         // own leaves you looking through the app at the desktop.
@@ -342,6 +344,7 @@ struct RecordRoom: ViewModifier {
             WindowWash(source: wash, player: player)
                 .environment(artCache)
                 .environment(appearanceModel)
+                .environment(playingLevels)
         }
 
         content
@@ -397,6 +400,7 @@ struct RecordRoom: ViewModifier {
             .environment(\.roomTint, tint)
             .environment(\.koanAccent, accent)
             .environment(\.koanRainbow, appearance.rainbowDrawn)
+            .environment(\.koanRainbowStep, rainbowStep)
             // Each step is a new tint, and a tint is read by every control:
             // a whole-window pass every `Rainbow.period`, while the rainbow is
             // drawn. With it off this task is never started.
@@ -412,6 +416,8 @@ struct RecordRoom: ViewModifier {
             .onReceive(NotificationCenter.default.publisher(for: .appResignsActive)) { _ in active = false }
             .onReceive(NotificationCenter.default.publisher(for: .appBecomesActive)) { _ in active = true }
             .background { RainbowForTrack() }
+            .overlay { MirrorBall().ignoresSafeArea() }
+            .overlay { RainbowBurst().ignoresSafeArea() }
             .overlay(alignment: .bottom) { RainbowToast() }
             // The theme's text button for every button that names no style.
             // Not on a television, whose shell gives them `TelevisionButton`:

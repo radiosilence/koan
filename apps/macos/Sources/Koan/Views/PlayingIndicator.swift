@@ -66,7 +66,7 @@ private struct PlayingBars: PlatformViewRepresentable {
 /// Three capsules, moved by their bounds. Nothing else about them ever
 /// changes, and a bounds change with actions disabled is the cheapest thing a
 /// layer can be asked to do.
-final class PlayingBarsView: LayerView {
+final class PlayingBarsView: LayerView, LevelsListener {
     /// The shape a still indicator holds — staggered, so it reads as bars
     /// rather than as a broken one. Nothing moving needs an analyser.
     private static let resting = [0.75, 0.35, 0.6]
@@ -122,11 +122,49 @@ final class PlayingBarsView: LayerView {
     func apply(_ bands: [Double]) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        for (bar, band) in zip(bars, bands) {
+        for (index, (bar, band)) in zip(bars, bands).enumerated() {
             let height = Self.minHeight + band.clamped() * (Self.maxHeight - Self.minHeight)
             bar.bounds = CGRect(x: 0, y: 0, width: Self.barWidth, height: height)
+            if Rainbow.drawn, tint != .white, band > 0.85, heard[index] < 0.6 { glitter(index, at: height) }
+            heard[index] = band
         }
         CATransaction.commit()
+    }
+
+    /// The last frame's levels, to tell a beat from a held note.
+    private var heard = resting.map { _ in 0.0 }
+    private var sparked = resting.map { _ in 0.0 }
+
+    /// Gay mode: a spark off a bar's top as it jumps on a beat, at most a few
+    /// a second per bar. A layer that rises, shrinks and fades in the render
+    /// server, and is gone when it has.
+    private func glitter(_ index: Int, at height: Double) {
+        let now = CACurrentMediaTime()
+        guard now - sparked[index] > 0.3 else { return }
+        sparked[index] = now
+        // Its own transaction, so its completion is its own.
+        CATransaction.begin()
+        defer { CATransaction.commit() }
+        let spark = CALayer()
+        spark.bounds = CGRect(x: 0, y: 0, width: 3, height: 3)
+        spark.position = CGPoint(x: bars[index].position.x, y: height + 2)
+        spark.transform = CATransform3DMakeRotation(.pi / 4, 0, 0, 1)
+        spark.backgroundColor = resolved(PlatformColor(KoanAccent.rainbow(Rainbow.step + index * 4 + 2).color))
+        spark.opacity = 0
+        hostLayer.addSublayer(spark)
+        let rise = CABasicAnimation(keyPath: "position.y")
+        rise.byValue = 9
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 1
+        fade.toValue = 0
+        let shrink = CABasicAnimation(keyPath: "transform.scale")
+        shrink.fromValue = 1.3
+        shrink.toValue = 0.2
+        let group = CAAnimationGroup()
+        group.animations = [rise, fade, shrink]
+        group.duration = 0.6
+        CATransaction.setCompletionBlock { spark.removeFromSuperlayer() }
+        spark.add(group, forKey: "spark")
     }
 
     /// Hold still.

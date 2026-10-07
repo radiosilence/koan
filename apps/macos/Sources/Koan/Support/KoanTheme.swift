@@ -205,6 +205,7 @@ final class AppearanceModel {
     /// Gay mode as it was left on this device (see `Rainbow`). Saved to
     /// config.local.toml; never synced, never offered in Settings.
     var rainbow: Bool {
+        willSet { Rainbow.brat = rainbowForTrack && !newValue }
         didSet {
             Rainbow.drawn = rainbowDrawn
             if rainbow != oldValue { engine.setRainbow(on: rainbow) }
@@ -212,7 +213,9 @@ final class AppearanceModel {
     }
 
     /// Gay mode for the track playing alone, rolled when it started. Never saved.
+    /// It brings brat's lime with it.
     private(set) var rainbowForTrack = false {
+        willSet { Rainbow.brat = newValue && !rainbow }
         didSet { Rainbow.drawn = rainbowDrawn }
     }
 
@@ -221,6 +224,8 @@ final class AppearanceModel {
 
     /// What the last switch said, for `RainbowToast`.
     var rainbowToast: String?
+    /// Counts the rainbow's arrivals, each one a burst of confetti (`RainbowBurst`).
+    private(set) var rainbowBurst = 0
 
     init(engine: KoanEngine, appearance: Appearance) {
         self.engine = engine
@@ -238,7 +243,8 @@ final class AppearanceModel {
         let on = !rainbowDrawn
         rainbowForTrack = false
         rainbow = on
-        rainbowToast = on ? "gay mode 🏳️‍🌈" : "gay mode off"
+        rainbowToast = on ? Rainbow.sass.randomElement() : "gay mode off"
+        if on { rainbowBurst += 1 }
     }
 
     /// A track has started. A Charli XCX track brings the rainbow out for
@@ -247,6 +253,10 @@ final class AppearanceModel {
     func trackStarted(_ entry: QueueItem?) {
         let borrowed = !rainbow && entry.map(Rainbow.isCharli) == true && Int.random(in: 0..<4) == 0
         if borrowed != rainbowForTrack { rainbowForTrack = borrowed }
+        if borrowed {
+            rainbowBurst += 1
+            rainbowToast = "brat mode 💚"
+        }
     }
 }
 
@@ -1168,6 +1178,7 @@ private struct KoanButtonBody: View {
     let configuration: ButtonStyleConfiguration
     @Environment(\.isEnabled) private var enabled
     @Environment(\.koanAccent) private var accent
+    @Environment(\.koanRainbow) private var rainbow
     @Environment(\.colorScheme) private var scheme
     #if os(tvOS)
     @Environment(\.isFocused) private var focused
@@ -1234,7 +1245,7 @@ private struct KoanButtonBody: View {
 
     private var outline: AnyShapeStyle? {
         switch kind {
-        case .prominent: AnyShapeStyle(.tint)
+        case .prominent: KoanTheme.marker(rainbow: rainbow)
         case .iconOutlined: AnyShapeStyle(Color.koanInk)
         case .bordered: AnyShapeStyle(Color.koanMuted)
         case .standard, .compact, .link, .text, .icon, .card: nil
