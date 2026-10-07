@@ -418,12 +418,14 @@ final class ConfettiView: LayerView {
 /// its string and throws flecks of coloured light across the window. Both are
 /// Core Animation's, committed once; nothing here wakes the main thread.
 struct MirrorBall: View {
+    /// Whether the app is in front. Behind, the flecks stop.
+    let active: Bool
     @Environment(\.koanRainbow) private var rainbow
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         if rainbow && !reduceMotion {
-            MirrorBallLayers()
+            MirrorBallLayers(active: active)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
                 .transition(.opacity)
@@ -432,14 +434,18 @@ struct MirrorBall: View {
 }
 
 private struct MirrorBallLayers: PlatformViewRepresentable {
+    let active: Bool
     typealias PlatformViewType = MirrorBallView
     func makeView(context: Context) -> MirrorBallView { MirrorBallView(frame: .zero) }
-    func updateView(_ view: MirrorBallView, context: Context) {}
+    func updateView(_ view: MirrorBallView, context: Context) {
+        view.flecks.birthRate = active ? 1 : 0
+    }
 }
 
 final class MirrorBallView: LayerView {
     private let ball = CALayer()
-    private let flecks = CAEmitterLayer()
+    /// Emitting only while the app is in front (`MirrorBallLayers`).
+    let flecks = CAEmitterLayer()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
