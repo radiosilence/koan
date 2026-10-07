@@ -1914,6 +1914,20 @@ fn is_cached_audio(path: &std::path::Path) -> bool {
     }
 }
 
+/// Record a file found already in the cache as the track's download, unless
+/// it already is. A file can outlive its record — a row re-derived or merged
+/// without it, a crash between the rename and the write — and an unrecorded
+/// one reads as not on this machine and is never evicted.
+fn adopt_cached(conn: &rusqlite::Connection, track: &queries::TrackRow, dest: &Path) {
+    let dest = dest.to_string_lossy();
+    if track.cached_path.as_deref() == Some(&*dest) {
+        return;
+    }
+    if let Err(e) = queries::set_cached_path(conn, track.id, &dest) {
+        log::warn!("found {dest} in the cache but failed to record it ({e})");
+    }
+}
+
 /// Resolve a track to a playable file, downloading from remote if needed.
 ///
 /// Resolution order:
@@ -1984,6 +1998,7 @@ pub(crate) fn download_track(
         let _ = std::fs::remove_file(&dest);
     }
     if dest.exists() {
+        adopt_cached(&db.conn, &track, &dest);
         return Some(Ok(dest));
     }
 
@@ -2172,6 +2187,33 @@ mod rebuild_tests {
             relocate_cached_paths(&db, new.path()).unwrap(),
             0,
             "idempotent"
+        );
+    }
+
+    #[test]
+    fn a_file_found_in_the_cache_is_recorded_as_the_download() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = test_db();
+        let mut meta = sample_meta("Raised by Evil", "Technical Itch", "Therapy Session");
+        meta.source = "remote".into();
+        meta.path = None;
+        meta.remote_id = Some("raised".into());
+        let id = queries::upsert_track(&db.conn, &meta).unwrap();
+        let file = dir.path().join("02. Technical Itch - Raised by Evil.opus");
+        std::fs::write(&file, vec![0u8; 4096]).unwrap();
+
+        let on_disk = || queries::sources_for_tracks(&db.conn, &[id]).unwrap()[&id].1;
+        assert!(!on_disk(), "unrecorded, the file reads as absent");
+
+        let track = queries::get_track_row(&db.conn, id).unwrap().unwrap();
+        adopt_cached(&db.conn, &track, &file);
+        assert!(on_disk());
+        let track = queries::get_track_row(&db.conn, id).unwrap().unwrap();
+        assert_eq!(track.cached_path.as_deref(), Some(&*file.to_string_lossy()));
+        assert_eq!(
+            queries::cached_paths_for(&db.conn, &[id]).unwrap(),
+            vec![file.to_string_lossy().into_owned()],
+            "visible to eviction"
         );
     }
 
