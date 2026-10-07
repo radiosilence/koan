@@ -1,10 +1,11 @@
 //! Index maintenance: rebuilding, counting and forgetting what a folder or the server put in the library.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::config::Config;
 use crate::db::connection::Database;
 use crate::db::queries;
+use crate::player::state::ItemState;
 
 use super::*;
 
@@ -226,6 +227,116 @@ mod rebuild_tests {
             0,
             "idempotent"
         );
+    }
+
+    #[test]
+    fn queueing_a_track_whose_file_is_in_the_cache_records_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = test_db();
+        let mut cfg = Config::default();
+        cfg.remote.cache_dir = Some(dir.path().to_path_buf());
+        let id = remote_track(&db, "Raised by Evil", "Therapy Session");
+        db.conn
+            .execute(
+                "UPDATE tracks SET remote_url = 'https://music.example/stream' WHERE id = ?1",
+                [id],
+            )
+            .unwrap();
+        let file = cache_file(&db, dir.path(), id, 4096);
+
+        let on_disk = || queries::sources_for_tracks(&db.conn, &[id]).unwrap()[&id].1;
+        assert!(!on_disk(), "unrecorded, the file reads as absent");
+
+        let track = queries::get_track_row(&db.conn, id).unwrap().unwrap();
+        let items = playlist_items_with(&db, &cfg, &[track]);
+        assert_eq!(items[0].path, file);
+        assert_eq!(items[0].state, ItemState::Ready);
+        assert!(on_disk());
+        assert_eq!(
+            queries::cached_paths_for(&db.conn, &[id]).unwrap(),
+            vec![file.to_string_lossy().into_owned()],
+            "visible to eviction"
+        );
+    }
+
+    fn remote_track(db: &Database, title: &str, album: &str) -> i64 {
+        let mut meta = sample_meta(title, "Technical Itch", album);
+        meta.source = "remote".into();
+        meta.path = None;
+        meta.remote_id = Some(format!("{album}/{title}"));
+        queries::upsert_track(&db.conn, &meta).unwrap()
+    }
+
+    fn cache_file(db: &Database, dir: &Path, id: i64, bytes: usize) -> PathBuf {
+        let track = queries::get_track_row(&db.conn, id).unwrap().unwrap();
+        let date = queries::queue_item_extras(&db.conn, &[id]).unwrap()[&id]
+            .album_date
+            .clone();
+        let file = cache_path_for_track(dir, &track, date.as_deref());
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, vec![0u8; bytes]).unwrap();
+        file
+    }
+
+    #[test]
+    fn unrecorded_cache_files_are_matched_to_their_tracks() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = test_db();
+        let lost = remote_track(&db, "Raised by Evil", "Therapy Session");
+        let kept = remote_track(&db, "Death Jazz", "Therapy Session");
+        let lost_file = cache_file(&db, dir.path(), lost, 4096);
+        let kept_file = cache_file(&db, dir.path(), kept, 4096);
+        queries::set_cached_path(&db.conn, kept, &kept_file.to_string_lossy()).unwrap();
+        let stray = dir.path().join("Nobody/Nothing/01. Nobody - Nothing.opus");
+        std::fs::create_dir_all(stray.parent().unwrap()).unwrap();
+        std::fs::write(&stray, vec![0u8; 4096]).unwrap();
+
+        assert_eq!(adopt_cached_files(&db, dir.path()).unwrap(), 1);
+        assert_eq!(
+            queries::cached_paths_for(&db.conn, &[lost]).unwrap(),
+            vec![lost_file.to_string_lossy().into_owned()]
+        );
+        assert!(stray.exists(), "a file no track lays out to is left alone");
+        assert_eq!(
+            adopt_cached_files(&db, dir.path()).unwrap(),
+            0,
+            "idempotent"
+        );
+    }
+
+    #[test]
+    fn a_file_two_tracks_record_is_counted_and_evicted_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = test_db();
+        let a = remote_track(&db, "Raised by Evil", "Therapy Session");
+        let b = remote_track(&db, "Death Jazz", "Therapy Session");
+        let shared = cache_file(&db, dir.path(), a, 6000);
+        let other = cache_file(&db, dir.path(), b, 6000);
+        let edition = remote_track(&db, "Raised by Evil (edition)", "Therapy Session");
+        for (id, file) in [(a, &shared), (edition, &shared), (b, &other)] {
+            queries::set_cached_path(&db.conn, id, &file.to_string_lossy()).unwrap();
+        }
+        assert_eq!(queries::total_cache_size(&db.conn).unwrap(), 12_000);
+
+        // The edition sharing the kept file keeps it too.
+        let mut cfg = Config::default();
+        cfg.remote.cache_dir = Some(dir.path().to_path_buf());
+        cfg.remote.cache_limit = Some("1".into());
+        let freed = evict_cache(&db, &cfg, &[a].into_iter().collect(), false);
+        assert_eq!(freed, 6000);
+        assert!(shared.exists());
+        assert!(!other.exists());
+
+        // Without the keep, the shared file goes once and both rows forget it.
+        let freed = evict_cache(&db, &cfg, &Default::default(), false);
+        assert_eq!(freed, 6000);
+        assert!(!shared.exists());
+        assert!(
+            queries::cached_paths_for(&db.conn, &[a, edition])
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(queries::total_cache_size(&db.conn).unwrap(), 0);
     }
 
     #[test]

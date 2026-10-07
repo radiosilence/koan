@@ -104,6 +104,7 @@ pub(crate) fn download_track(
         let _ = std::fs::remove_file(&dest);
     }
     if dest.exists() {
+        adopt_cached(&db.conn, &track, &dest);
         return Some(Ok(dest));
     }
 

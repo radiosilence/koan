@@ -154,8 +154,9 @@ private struct AlbumTileHeart: View {
 
     var body: some View {
         if hovering || library.isFavourite(album: albumId) {
-            AlbumHeart(albumId: albumId, size: .callout)
-                .padding(7)
+            // Padded inside the button, so the disc drawn behind it is what
+            // takes the click rather than the tile beneath.
+            AlbumHeart(albumId: albumId, size: .callout, inset: 7)
                 .glass(.clear.interactive(), fallback: .ultraThinMaterial, in: .circle)
                 .glassEffectTransition(.materialize)
                 .padding(7)

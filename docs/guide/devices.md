@@ -95,9 +95,12 @@ signed the device in and sends the account's devices each other's, so the
 proof holds while the server is out of reach. A list not refreshed from the
 server for thirty days is no longer trusted. The two ends sign each other's
 fresh nonces when they connect, and every command after is signed for that
-connection: the network is not encrypted, so a recorded proof, a replayed
-command, or one slipped into the connection is refused. What is playing can
-still be seen by anyone on the network, as before. A device that proves
+connection, as is everything the controlled device reports back: what it is
+playing and whether a command arrived. The network is not encrypted, so a
+recorded proof, a replayed command or report, or one slipped into the
+connection is refused. Reports are signed only between devices that both
+know to; an older device's are read unsigned, as before. What is playing can
+still be seen by anyone on the network. A device that proves
 nothing, because it is older, signed in with a password, or on another
 server, is trusted by the setting above.
 
@@ -105,6 +108,26 @@ A device that is found but cannot be reached is not listed: there is nothing
 to do with it. On iOS, finding anything on the network needs **Local Network**
 allowed for kōan (Settings → Privacy & Security); the picker says so when it
 is not.
+
+### Who is connected
+
+Settings → Devices → **Connected now** lists who is connected to this device
+and whom it is connected to: its link to your server and since when, your
+account's other devices signed in there, each of which can control this one
+through it, and every connection on the local network in either direction. A
+device that drives this one keeps it busy, so when kōan uses more battery than
+its time on screen explains, this is where to look.
+
+A device on the network that is controlling this one can be disconnected.
+Every connection from it ends, and it is listed as disconnected: until you
+press **Allow** there, play on it, pick it in Play on, or kōan restarts, it is
+not let back in and this device does not connect to it either. A device that
+has not proved it is yours, or shared with you, is listed by its address
+rather than by the name it gives, and can be refused for good: its address is
+kept in `devices.refused` and its connections are hung up as they arrive,
+until **Allow** takes it off the list. An address is all there is to know of a
+stranger, so one that moves to another address is not refused there. Your
+account's own devices are ended by revoking their keys under Server.
 
 ### Devices that stop answering
 

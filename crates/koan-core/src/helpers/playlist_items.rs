@@ -1,6 +1,6 @@
 //! Library tracks as queue items.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::config::Config;
 use crate::db::connection::Database;
@@ -12,7 +12,10 @@ use super::*;
 /// Resolve a track to its path + load state (without downloading).
 /// Returns (path, `ItemState::Ready`) for local/cached, (cache path, `ItemState::Pending`)
 /// for remote — a track with no copy here yet has to be fetched before it plays.
+/// A copy found in the cache that the row does not name is added to `found`,
+/// for the caller to record.
 fn resolve_item_path(
+    found: &mut Vec<(i64, PathBuf)>,
     cfg: &Config,
     track: &queries::TrackRow,
     remote_url: Option<&str>,
@@ -39,6 +42,9 @@ fn resolve_item_path(
         Some(queries::PlaybackSource::Remote(_)) => {
             let dest = cache_path_for_track(&cfg.cache_dir(), track, album_date);
             if dest.exists() && is_cached_audio(&dest) {
+                if track.cached_path.as_deref() != Some(&*dest.to_string_lossy()) {
+                    found.push((track.id, dest.clone()));
+                }
                 (dest, ItemState::Ready)
             } else {
                 (dest, ItemState::Pending)
@@ -86,18 +92,59 @@ pub fn playlist_item_from_track(
 /// leave out — the stream URL and the album's date — is read for all of them
 /// together.
 pub fn playlist_items_for_tracks(db: &Database, tracks: &[queries::TrackRow]) -> Vec<PlaylistItem> {
-    let cfg = Config::load().unwrap_or_default();
+    playlist_items_with(db, &Config::load().unwrap_or_default(), tracks)
+}
+
+pub(super) fn playlist_items_with(
+    db: &Database,
+    cfg: &Config,
+    tracks: &[queries::TrackRow],
+) -> Vec<PlaylistItem> {
     let ids: Vec<i64> = tracks.iter().map(|t| t.id).collect();
     let extras = queries::queue_item_extras(&db.conn, &ids).unwrap_or_default();
 
-    tracks
+    let mut found = Vec::new();
+    let items = tracks
         .iter()
         .map(|track| {
             let extra = extras.get(&track.id);
             let remote_url = extra.and_then(|e| e.remote_url.as_deref());
             let album_date = extra.and_then(|e| e.album_date.as_deref());
-            let (path, state) = resolve_item_path(&cfg, track, remote_url, album_date);
+            let (path, state) = resolve_item_path(&mut found, cfg, track, remote_url, album_date);
             playlist_item_from_track(track, album_date, path, state)
         })
-        .collect()
+        .collect();
+    // Bookkeeping an enqueue should not wait behind a scan for: skipped while
+    // a writer holds the lock, and found again the next time the track is
+    // queued, or at launch (`adopt_cached_files`).
+    if !found.is_empty() {
+        let recorded = crate::db::connection::without_waiting(&db.conn, |conn| {
+            queries::atomically(conn, || {
+                found.iter().try_for_each(|(id, path)| {
+                    queries::set_cached_path(conn, *id, &path.to_string_lossy())
+                })
+            })
+        });
+        if let Err(e) = recorded {
+            log::debug!(
+                "left {} cached file(s) unrecorded for now: {e}",
+                found.len()
+            );
+        }
+    }
+    items
+}
+
+/// Record a file found already in the cache as the track's download, unless
+/// it already is. A file can outlive its record — a row re-derived or merged
+/// without it, a crash between the rename and the write — and an unrecorded
+/// one reads as not on this machine and is never evicted.
+pub(super) fn adopt_cached(conn: &rusqlite::Connection, track: &queries::TrackRow, dest: &Path) {
+    let dest = dest.to_string_lossy();
+    if track.cached_path.as_deref() == Some(&*dest) {
+        return;
+    }
+    if let Err(e) = queries::set_cached_path(conn, track.id, &dest) {
+        log::warn!("found {dest} in the cache but failed to record it ({e})");
+    }
 }

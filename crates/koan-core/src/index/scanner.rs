@@ -1031,7 +1031,9 @@ mod tests {
     /// before any is pruned, so the old path is not missed first.
     /// A library that already holds one file twice, under the spelling
     /// organize once stored and the directory's own, comes back to one track:
-    /// the older, with its history.
+    /// the older, with its history. Only where the filesystem opens both
+    /// spellings, which is the only place organize could have left them.
+    #[cfg(target_os = "macos")]
     #[test]
     fn a_file_stored_under_two_spellings_is_folded_into_one_track() {
         use unicode_normalization::UnicodeNormalization;
@@ -1055,14 +1057,17 @@ mod tests {
         scan_folder(&db, &music, ScanOptions::default(), None);
         let original = tracks_with_uids(&db)[0].0;
         queries::record_play(&db.conn, queries::LOCAL_USER, original, Some(1000)).unwrap();
-        // What organize stored before it took the directory's spelling.
+        // What organize stored before it took the directory's spelling: every
+        // path-keyed row, as `rewrite_path_references` writes them.
         queries::sources::rename_file(&db.conn, &on_disk, &organized).unwrap();
-        db.conn
-            .execute(
-                "UPDATE scan_cache SET path = ?1 WHERE path = ?2",
-                [&organized, &on_disk],
-            )
-            .unwrap();
+        for table in ["tracks", "scan_cache"] {
+            db.conn
+                .execute(
+                    &format!("UPDATE {table} SET path = ?1 WHERE path = ?2"),
+                    [&organized, &on_disk],
+                )
+                .unwrap();
+        }
         // The scan that made the second row.
         scan_folder(&db, &music, ScanOptions::default(), None);
         scan_folder(&db, &music, ScanOptions::default(), None);

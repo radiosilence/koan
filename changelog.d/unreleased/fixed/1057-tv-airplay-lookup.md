@@ -1,0 +1,1 @@
+- **Apple TV discovery no longer repeats the AirPlay lookup on every reconnect.** An Apple TV with no matching AirPlay announcement is looked for once per address every ten minutes instead of at each hello. An error from that lookup can no longer hide, or stand in for, a local network permission error from the standing browse.

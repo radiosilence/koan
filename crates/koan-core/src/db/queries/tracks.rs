@@ -823,15 +823,17 @@ pub fn cached_paths_for(conn: &Connection, track_ids: &[i64]) -> Result<Vec<Stri
         return Ok(Vec::new());
     }
     let mut stmt = conn.prepare_cached(
-        "SELECT cached_path FROM tracks
+        "SELECT DISTINCT cached_path FROM tracks
          WHERE id IN (SELECT value FROM json_each(?1)) AND cached_path IS NOT NULL",
     )?;
     let rows = stmt.query_map([super::json_list(track_ids)], |row| row.get(0))?;
     Ok(rows.filter_map(Result::ok).collect())
 }
 
-/// Forget where the named tracks were downloaded to. The rows stay: a remote
-/// track is still in the library, it just has to be fetched again to play.
+/// Forget where the named tracks were downloaded to, and every other track
+/// recorded against the same file: two editions laid out alike share one. The
+/// rows stay: a remote track is still in the library, it just has to be
+/// fetched again to play.
 pub fn clear_cached_paths_for(conn: &Connection, track_ids: &[i64]) -> Result<(), DbError> {
     if track_ids.is_empty() {
         return Ok(());
@@ -839,7 +841,9 @@ pub fn clear_cached_paths_for(conn: &Connection, track_ids: &[i64]) -> Result<()
     conn.execute(
         "UPDATE tracks SET cached_path = NULL, cache_size_bytes = NULL, cache_download_date = NULL,
                 cache_pinned = 0
-         WHERE id IN (SELECT value FROM json_each(?1))",
+         WHERE cached_path IN (SELECT cached_path FROM tracks
+                               WHERE id IN (SELECT value FROM json_each(?1)))
+            OR id IN (SELECT value FROM json_each(?1))",
         [super::json_list(track_ids)],
     )?;
     Ok(())
@@ -885,7 +889,9 @@ pub struct CachedFile {
 
 /// Downloaded files in the order eviction takes them: everything fetched to
 /// play before anything downloaded on request, least recently used first
-/// within each. A file whose album has a favourite in it is never listed.
+/// within each. A file whose album has a favourite in it is never listed, nor
+/// is one shared with such a file's track. A file recorded by several tracks
+/// is listed once per track, and the caller removes it once.
 ///
 /// A download counts as a use: a record fetched for offline listening has
 /// never been played, and ranking it by plays alone would make it the first to go.
@@ -899,8 +905,11 @@ pub fn cached_files_lru(conn: &Connection) -> Result<Vec<CachedFile>, DbError> {
                     FROM play_history GROUP BY track_id) ph_max
                 ON ph_max.track_id = t.id
          WHERE t.cached_path IS NOT NULL
-           AND NOT EXISTS (SELECT 1 FROM favourites f JOIN tracks ft ON ft.id = f.track_id
-                           WHERE ft.id = t.id OR ft.album_id = t.album_id)
+           AND NOT EXISTS (SELECT 1 FROM tracks s
+                             JOIN favourites f
+                             JOIN tracks ft ON ft.id = f.track_id
+                                           AND (ft.id = s.id OR ft.album_id = s.album_id)
+                           WHERE s.cached_path = t.cached_path)
          ORDER BY t.cache_pinned != 0,
                   NULLIF(MAX(COALESCE(ph_max.last_play, 0), COALESCE(t.cache_download_date, 0)), 0),
                   t.album_id, t.disc, t.track_number",
@@ -944,10 +953,13 @@ pub fn download_estimates(
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
-/// Get total cache size from DB tracking (sum of cache_size_bytes for all cached tracks).
+/// The recorded downloads' total size, each file once however many tracks
+/// record it.
 pub fn total_cache_size(conn: &Connection) -> Result<i64, DbError> {
     let size: i64 = conn.query_row(
-        "SELECT COALESCE(SUM(cache_size_bytes), 0) FROM tracks WHERE cached_path IS NOT NULL",
+        "SELECT COALESCE(SUM(size), 0) FROM
+           (SELECT MAX(cache_size_bytes) AS size FROM tracks
+            WHERE cached_path IS NOT NULL GROUP BY cached_path)",
         [],
         |row| row.get(0),
     )?;

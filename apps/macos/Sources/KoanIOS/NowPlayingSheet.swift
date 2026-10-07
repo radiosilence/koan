@@ -160,6 +160,7 @@ struct NowPlayingSheet: View {
                     }
                 }
                 .frame(width: 56, height: 56)
+                .contentShape(Rectangle())
             }
             .koanButtons(.iconOutlined)
             .accessibilityLabel(player.isWaitingForTrack ? "Loading" : player.isPlaying ? "Pause" : "Play")

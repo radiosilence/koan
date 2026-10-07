@@ -35,12 +35,11 @@ struct MeasurementFlow: View {
     @State private var searchNote: String?
     /// The result being fetched.
     @State private var picking: SquigHit?
-    /// The result the measurement came from.
+    /// The result the measurement came from; `nil` for a file chosen from
+    /// disk. The checkmark and the credit both follow it.
     @State private var fetched: SquigHit?
     /// Why the last result tapped could not be fetched, shown under it.
     @State private var fetchProblem: (hit: SquigHit, message: String)?
-    /// Where the measurement came from, credited on the correction.
-    @State private var source: String?
 
     init(dsp: DspModel, name: String = "", saved: @escaping (String) -> Void = { _ in }) {
         self.dsp = dsp
@@ -405,7 +404,6 @@ struct MeasurementFlow: View {
                 text = try await dsp.squigFetch(hit)
                 fetched = hit
                 file = "\(hit.name), \(hit.siteLabel)"
-                source = hit.source
                 problem = nil
                 if name.isEmpty { name = "\(hit.brand) \(hit.model)" }
                 if let inEar = hit.inEar { self.inEar = inEar }
@@ -444,7 +442,7 @@ struct MeasurementFlow: View {
         problem = nil
         text = texts.joined(separator: "\n")
         file = names.joined(separator: ", ")
-        source = nil
+        fetched = nil
         if name.isEmpty {
             // Audio Science Review names the files by plane, and their
             // folder by the speaker.
@@ -471,7 +469,7 @@ struct MeasurementFlow: View {
         Task {
             do {
                 let ear: DspEarKind = speaker ? .speaker : inEar ? .inEar : .overEar
-                let saved = try await dsp.saveMeasured(name: name, text: text, ear: ear, target: target, source: source)
+                let saved = try await dsp.saveMeasured(name: name, text: text, ear: ear, target: target, source: fetched?.source)
                 self.saved(saved)
                 dismiss()
             } catch {

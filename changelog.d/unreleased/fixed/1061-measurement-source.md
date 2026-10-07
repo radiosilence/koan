@@ -1,0 +1,1 @@
+- **Measurement source follows the last pick.** In the measurement flow, choosing a file after fetching a squig.link measurement left the checkmark on the squig.link result. It now clears, as the site credit already did.

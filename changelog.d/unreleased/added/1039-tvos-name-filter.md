@@ -1,0 +1,1 @@
+- **Apple TV: a name filter on listings.** Albums, Artists, History and Playlists have a field above the listing that narrows it by name.

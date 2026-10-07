@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::config::Config;
-use crate::db::connection::Database;
+use crate::db::connection::{Database, DbError};
 use crate::db::queries;
 use crate::player::state::SharedPlayerState;
 
@@ -45,11 +45,21 @@ pub fn evict_cache(
             return 0;
         }
     };
+    // A file two tracks record is kept if either is, and removed once.
+    let kept: std::collections::HashSet<&str> = files
+        .iter()
+        .filter(|f| keep.contains(&f.track_id))
+        .map(|f| f.path.as_str())
+        .collect();
+    let mut removed = std::collections::HashSet::new();
     let mut gone = Vec::new();
     let mut freed: i64 = 0;
-    for file in files.iter().filter(|f| !keep.contains(&f.track_id)) {
+    for file in files.iter().filter(|f| !kept.contains(f.path.as_str())) {
         if current <= limit {
             break;
+        }
+        if !removed.insert(file.path.as_str()) {
+            continue;
         }
         match std::fs::remove_file(&file.path) {
             Ok(()) => {}
@@ -93,18 +103,29 @@ pub fn playback_window(
     upcoming: &[i64],
 ) -> Result<usize, crate::db::connection::DbError> {
     let total = queries::total_cache_size(&db.conn)?;
-    let evictable: std::collections::HashMap<i64, i64> = queries::cached_files_lru(&db.conn)?
+    let files: Vec<_> = queries::cached_files_lru(&db.conn)?
         .into_iter()
         .filter(|f| !f.pinned)
-        .map(|f| (f.track_id, f.size))
+        .collect();
+    // By file, not by track: two tracks recording one file cost it once.
+    let evictable: std::collections::HashMap<&str, i64> =
+        files.iter().map(|f| (f.path.as_str(), f.size)).collect();
+    let file_of: std::collections::HashMap<i64, &str> = files
+        .iter()
+        .map(|f| (f.track_id, f.path.as_str()))
         .collect();
     let estimates = queries::download_estimates(&db.conn, upcoming)?;
 
     let mut used = (total - evictable.values().sum::<i64>()).max(0) as u64;
     let mut counted = std::collections::HashSet::new();
+    let mut counted_files = std::collections::HashSet::new();
     for (n, id) in upcoming.iter().enumerate() {
         if counted.insert(*id) {
-            let cost = evictable.get(id).or_else(|| estimates.get(id));
+            let cost = match file_of.get(id) {
+                Some(path) if !counted_files.insert(*path) => None,
+                Some(path) => evictable.get(path),
+                None => estimates.get(id),
+            };
             used += cost.copied().unwrap_or(0).max(0) as u64;
         }
         if n >= 2 && used > limit {
@@ -338,6 +359,59 @@ pub fn relocate_cached_paths(db: &Database, cache_dir: &Path) -> rusqlite::Resul
         );
     }
     Ok(moved)
+}
+
+/// Record the downloads the cache holds that no track names.
+///
+/// A file can outlive its record: a track re-derived or merged without it, an
+/// older build, a crash between the rename and the write. Unrecorded, it reads
+/// as not on this machine and eviction cannot see it. Each is matched to the
+/// remote track whose download would land at that path
+/// (`cache_path_for_track`), the same match a play makes. A file no track
+/// lays out to is left alone: nothing would ever play it, and nothing here
+/// knows enough to say it is safe to delete.
+///
+/// Returns the number of tracks recorded.
+pub fn adopt_cached_files(db: &Database, cache_dir: &Path) -> Result<usize, DbError> {
+    let recorded: std::collections::HashSet<String> = db
+        .conn
+        .prepare("SELECT DISTINCT cached_path FROM tracks WHERE cached_path IS NOT NULL")?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let orphans: std::collections::HashSet<PathBuf> = walkdir::WalkDir::new(cache_dir)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext != "part"))
+        .map(walkdir::DirEntry::into_path)
+        .filter(|p| !recorded.contains(&*p.to_string_lossy()))
+        .collect();
+    if orphans.is_empty() {
+        return Ok(0);
+    }
+
+    let ids: Vec<i64> = db
+        .conn
+        .prepare("SELECT id FROM tracks WHERE cached_path IS NULL AND remote_id IS NOT NULL")?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let extras = queries::queue_item_extras(&db.conn, &ids)?;
+    let tracks = queries::tracks_by_ids(&db.conn, &ids)?;
+    let tx = queries::write_transaction(&db.conn)?;
+    let mut adopted = 0;
+    for track in &tracks {
+        let date = extras.get(&track.id).and_then(|e| e.album_date.as_deref());
+        let dest = cache_path_for_track(cache_dir, track, date);
+        if orphans.contains(&dest) && is_cached_audio(&dest) {
+            queries::set_cached_path(&tx, track.id, &dest.to_string_lossy())?;
+            adopted += 1;
+        }
+    }
+    tx.commit()?;
+    if adopted > 0 {
+        log::info!("recorded {adopted} download(s) the cache held unrecorded");
+    }
+    Ok(adopted)
 }
 
 /// Fetch again anything in the queue whose downloaded copy has just been

@@ -210,7 +210,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install system deps (Linux)
         if: env.RUN == 'true' && runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev
+        uses: ./.github/actions/linux-deps
       - if: env.RUN == 'true'
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
         with:
@@ -247,7 +247,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install system deps (Linux)
         if: env.RUN == 'true' && runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev
+        uses: ./.github/actions/linux-deps
       - if: env.RUN == 'true'
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
         with:
@@ -291,7 +291,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install system deps (Linux)
         if: env.RUN == 'true' && runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev
+        uses: ./.github/actions/linux-deps
       - if: env.RUN == 'true'
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
         with:
@@ -408,7 +408,7 @@ jobs:
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev
+      - uses: ./.github/actions/linux-deps
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
         with:
           toolchain: "1.89"
@@ -615,7 +615,7 @@ jobs:
           tar xzf koan-build.tar.gz -C target/${{ matrix.target }}/release
       - name: Install system deps (Linux)
         if: ${{ !matrix.prebuilt && runner.os == 'Linux' }}
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev
+        uses: ./.github/actions/linux-deps
       - if: ${{ !matrix.prebuilt }}
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
         with:
@@ -779,7 +779,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install system deps
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev
+        uses: ./.github/actions/linux-deps
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
         with:
           toolchain: stable

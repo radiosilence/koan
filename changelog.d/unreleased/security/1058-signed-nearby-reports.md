@@ -1,0 +1,1 @@
+- **Reports on nearby connections are signed.** Between two signed-in kōan devices on the same network, what the controlled device reports back (what it is playing, and whether a command arrived) is signed for the connection, as commands already were, so it cannot be forged by someone able to inject into that connection. Older devices are read unsigned, as before.

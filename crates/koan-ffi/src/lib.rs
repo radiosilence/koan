@@ -2393,6 +2393,19 @@ impl KoanEngine {
         .await
     }
 
+    /// Hang up the connection to this device that `key` names
+    /// (`ConnectedInfo::key`). To keep a stranger from dialling again, add its
+    /// address to `devices_refused` too.
+    pub fn end_connection(&self, key: u64) {
+        koan_core::remote::nearby::end(key);
+    }
+
+    /// Let a device disconnected with `end_connection` back in, by the
+    /// address `HeldInfo` gives.
+    pub fn allow_held(&self, addr: String) {
+        koan_core::remote::nearby::release_addr(&addr);
+    }
+
     /// Control the device `id`, or this one with `None`. Picking a device is
     /// picking where music plays: this one pauses, and the transport, the
     /// queue and what is playing all show that device until another is
@@ -3741,6 +3754,7 @@ impl KoanEngine {
                 fade_on_pause: cfg.playback.fade_on_pause,
                 devices_discoverable: cfg.devices.discoverable,
                 devices_addresses: cfg.devices.addresses.clone(),
+                devices_refused: cfg.devices.refused.clone(),
                 devices_nearby_control: match cfg.devices.nearby_control {
                     config::NearbyControl::Full => "full".into(),
                     config::NearbyControl::Playback => "playback".into(),
@@ -3789,6 +3803,7 @@ impl KoanEngine {
                     _ => config::NearbyControl::Full,
                 };
                 cfg.devices.keep_running = s.devices_keep_running;
+                cfg.devices.refused = s.devices_refused.clone();
                 cfg.devices.addresses = s
                     .devices_addresses
                     .iter()
@@ -5345,17 +5360,31 @@ impl KoanEngine {
         // sees files left by a previous run.
         let cfg = Config::load().unwrap_or_default();
         koan_core::helpers::sweep_partial_downloads(&cfg);
-        // Once, off the launch path; the count is kept from here on.
+        // Before the session is restored, so the queue finds its downloads.
+        if let Err(e) = koan_core::helpers::relocate_cached_paths(&db, &cfg.cache_dir()) {
+            log::warn!("could not re-root cached paths: {e}");
+        }
+        // Once, off the launch path; the count is kept from here on. Files
+        // the cache holds unrecorded are matched to their tracks after the
+        // re-rooting, which they would otherwise be mistaken for.
         {
             let cfg = cfg.clone();
             std::thread::Builder::new()
                 .name("koan-cache-measure".into())
-                .spawn(move || koan_core::helpers::measure_cache(&cfg))
+                .spawn(move || {
+                    koan_core::helpers::measure_cache(&cfg);
+                    let adopted = koan_core::db::pool::shared()
+                        .get()
+                        .map_err(|e| e.to_string())
+                        .and_then(|db| {
+                            koan_core::helpers::adopt_cached_files(&db, &cfg.cache_dir())
+                                .map_err(|e| e.to_string())
+                        });
+                    if let Err(e) = adopted {
+                        log::warn!("could not record unrecorded downloads: {e}");
+                    }
+                })
                 .ok();
-        }
-        // Before the session is restored, so the queue finds its downloads.
-        if let Err(e) = koan_core::helpers::relocate_cached_paths(&db, &cfg.cache_dir()) {
-            log::warn!("could not re-root cached paths: {e}");
         }
         drop(db);
         let t_sweep = t0.elapsed();
@@ -6531,6 +6560,32 @@ fn connection_info() -> ConnectionInfo {
                 },
             }
         }),
+        connections: koan_core::remote::connections::list()
+            .into_iter()
+            .map(|c| {
+                use koan_core::remote::proof::Peer;
+                ConnectedInfo {
+                    key: c.key,
+                    via_server: c.via == koan_core::remote::connections::Via::Server,
+                    inbound: c.inbound,
+                    name: c.name,
+                    addr: c.addr,
+                    own: c.peer == Some(Peer::Own),
+                    owner: match c.peer {
+                        Some(Peer::Shared(owner)) => Some(owner),
+                        _ => None,
+                    },
+                    since: c.since,
+                }
+            })
+            .collect(),
+        held: koan_core::remote::connections::held()
+            .into_iter()
+            .map(|h| HeldInfo {
+                addr: h.addr,
+                name: h.name,
+            })
+            .collect(),
     }
 }
 

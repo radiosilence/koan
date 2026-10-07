@@ -1,0 +1,1 @@
+- **Downloaded tracks marked as downloaded.** A remote track whose file was already in the cache but not recorded played from the cache while showing as on the server only, and was never evicted. Resolving it now records the file.

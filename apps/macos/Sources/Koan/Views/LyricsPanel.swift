@@ -129,6 +129,8 @@ private struct SyncedLyrics: View {
                                 ? KoanTheme.style(.strong, system: .primary)
                                 : KoanTheme.style(.muted, system: .secondary))
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            // The whole line's width, not just its letters.
+                            .contentShape(Rectangle())
                             .id(index)
                             .onTapGesture { player.seek(fraction: fraction(of: line)) }
                     }

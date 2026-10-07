@@ -1,0 +1,1 @@
+- **Apple TV: square text fields.** In the kōan look, text fields on the TV are square boxes like the rest of the theme instead of rounded pills.
