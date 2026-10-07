@@ -3130,6 +3130,7 @@ impl Lru {
     }
 
     fn put(&mut self, key: u64, fit: Fitted) {
+        self.take(key);
         if self.entries.len() >= self.cap {
             self.entries.remove(0);
         }
@@ -3167,10 +3168,14 @@ thread_local! {
 /// Runs `f` as the player loading its chain: the fits it makes or uses are
 /// kept apart from the ones previews make.
 pub fn for_playing<T>(f: impl FnOnce() -> T) -> T {
-    let was = PLAYING_SCOPE.replace(true);
-    let out = f();
-    PLAYING_SCOPE.set(was);
-    out
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            PLAYING_SCOPE.set(self.0);
+        }
+    }
+    let _restore = Restore(PLAYING_SCOPE.replace(true));
+    f()
 }
 
 /// Make `name` a stack of `layers`, in order, creating it if there is none.
