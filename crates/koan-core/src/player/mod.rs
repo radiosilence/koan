@@ -2854,7 +2854,11 @@ mod tests {
     /// not go looking for the app's amplifier.
     #[test]
     fn a_headless_player_does_not_go_back_to_a_renderer() {
-        crate::config::isolate_config_for_tests();
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        crate::config::set_config_dir(dir.path());
         crate::config::Config::persist(|cfg| {
             cfg.playback.renderer = Some("uuid:headless-test".into());
         })
