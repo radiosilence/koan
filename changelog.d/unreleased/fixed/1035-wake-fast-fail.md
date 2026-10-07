@@ -1,0 +1,1 @@
+- **Play on no longer waits on an Apple TV that is out of reach.** When nothing on the network answers for a TV on record (the phone is away from home, or the TV is unplugged), the push goes out at once instead of after twenty seconds of knocking.
