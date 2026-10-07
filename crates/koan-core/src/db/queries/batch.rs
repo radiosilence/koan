@@ -511,8 +511,24 @@ fn track_body(
     }
 
     if let Some(query) = &filter.search {
-        clauses.push("t.id IN (SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH ?)".to_string());
-        binds.push(Box::new(super::search::sanitize_fts_query(query)));
+        if query.chars().any(char::is_alphanumeric) {
+            clauses.push(
+                "t.id IN (SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH ?)".to_string(),
+            );
+            binds.push(Box::new(super::search::sanitize_fts_query(query)));
+        } else {
+            // The index tokenizes words and drops punctuation, so a query of
+            // punctuation alone ("!!!", a band) would match nothing there.
+            clauses.push(
+                "(t.title LIKE ? ESCAPE '\\' OR a.name LIKE ? ESCAPE '\\'
+                  OR aa.name LIKE ? ESCAPE '\\' OR al.title LIKE ? ESCAPE '\\')"
+                    .to_string(),
+            );
+            let pattern = like_contains(query.trim());
+            for _ in 0..4 {
+                binds.push(Box::new(pattern.clone()));
+            }
+        }
     }
 
     if filter.on_device {

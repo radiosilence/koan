@@ -535,10 +535,34 @@ mod tests {
     fn a_search_reads_nucleos_operators_as_characters() {
         let db = db();
         krew_library(&db);
-        for q in ["!!!", "^x"] {
-            let s = assert_agrees(&db, q);
-            assert!(s.is_empty(), "{q}: nothing holds these characters");
+        let s = assert_agrees(&db, "^x");
+        assert!(s.is_empty(), "nothing holds these characters");
+    }
+
+    #[test]
+    fn a_search_of_punctuation_finds_what_is_named_it() {
+        let db = db();
+        krew_library(&db);
+        for (title, artist, album_artist, album) in [
+            ("Sick!!!", "Machine Girl", "Machine Girl", "Gemini"),
+            ("Am/Fm", "!!!", "Various Artists", "Mix"),
+            ("Hello? Is This Thing On?", "!!!", "!!!", "Myth Takes"),
+            ("Must Be the Moon", "!!!", "!!!", "Myth Takes"),
+        ] {
+            let mut m = sample_meta(title, artist, album);
+            m.album_artist = Some(album_artist.into());
+            upsert_track(&db.conn, &m).unwrap();
         }
+        let s = assert_agrees(&db, "!!!");
+        let artists: Vec<_> = s.artists.preview.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(artists, ["!!!"]);
+        assert_eq!(s.albums.preview[0].title, "Myth Takes");
+        let tracks: Vec<_> = s.tracks.preview.iter().map(|t| t.title.as_str()).collect();
+        assert_eq!(tracks.last(), Some(&"Sick!!!"), "{tracks:?}");
+        assert!(
+            s.tracks.preview[..3].iter().all(|t| t.artist_name == "!!!"),
+            "{tracks:?}"
+        );
     }
 
     #[test]
