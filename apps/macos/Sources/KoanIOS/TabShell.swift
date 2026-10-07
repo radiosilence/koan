@@ -332,10 +332,11 @@ private struct Transport: ViewModifier {
     @Environment(\.horizontalSizeClass) private var width
     /// The bar's height as laid out, which Dynamic Type moves.
     @State private var barHeight: CGFloat = 0
-    /// How tall the keyboard stands, zero while none is up. The bar is behind
-    /// it then, and the room a page keeps for the bar would sit above the
-    /// keyboard as a blank strip over the page's own controls.
-    @State private var keyboardHeight: CGFloat = 0
+    /// How far the keyboard reaches up from the foot of the screen: zero while
+    /// none is up, and for one floating clear of the foot. The bar is behind a
+    /// docked one, and the room a page keeps for the bar would sit above it as
+    /// a blank strip over the page's own controls.
+    @State private var keyboardOverlap: CGFloat = 0
     @Namespace private var underline
 
     func body(content: Content) -> some View {
@@ -352,12 +353,13 @@ private struct Transport: ViewModifier {
             // from its height (`koanHidesSystemTabBar`), less what the keyboard
             // already covers.
             content
-                .environment(\.koanBarHeight, max(0, barHeight - keyboardHeight))
-                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) {
-                    keyboardHeight = ($0.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect)?.height ?? 0
-                }
-                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-                    keyboardHeight = 0
+                .environment(\.koanBarHeight, max(0, barHeight - keyboardOverlap))
+                // Posted on showing, hiding and every change of size between,
+                // in the coordinates of the screen it is the object of.
+                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) {
+                    guard let frame = $0.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+                    let foot = ($0.object as? UIScreen)?.bounds.maxY ?? frame.maxY
+                    keyboardOverlap = max(0, foot - frame.minY)
                 }
                 .overlay(alignment: .bottom) {
                     VStack(spacing: 0) {

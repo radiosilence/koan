@@ -40,13 +40,13 @@ final class SignInTests: XCTestCase {
     /// A phone's tabs are the theme's bar, or the platform's tab bar in its
     /// own look; an iPad's are buttons in a bar across the top. The platform's
     /// tab bar shows for a moment at launch before the theme hides it, so it
-    /// is asked for only once the theme's bar has had its chance.
+    /// is asked for only once the theme's bar has had a few seconds to appear.
     private func tab(_ app: XCUIApplication, _ name: String) {
         let theme = app.otherElements["koan-bar"].buttons[any: name]
         let bar = app.tabBars.buttons[any: name]
-        if theme.waitForExistence(timeout: 10) {
+        if theme.waitForExistence(timeout: 3) {
             theme.tap()
-        } else if bar.exists {
+        } else if bar.waitForExistence(timeout: 7) {
             bar.tap()
         } else {
             app.buttons[any: name].firstMatch.tap()
