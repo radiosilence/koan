@@ -26,9 +26,79 @@ struct SidebarView: View {
     @State private var renaming: Playlist?
     @State private var renameTo = ""
 
-    var body: some View {
-        @Bindable var search = search
+    /// How far down the rows start under the theme's search field.
+    @State private var searchHeight: CGFloat = 0
 
+    var body: some View {
+        chrome
+            .alert("Rename Playlist", isPresented: Binding(
+                get: { renaming != nil },
+                set: { if !$0 { renaming = nil } }
+            )) {
+                TextField("Name", text: $renameTo)
+                Button("Cancel", role: .cancel) { renaming = nil }
+                Button("Rename") {
+                    if let renaming { playlists.rename(id: renaming.id, to: renameTo) }
+                    renaming = nil
+                }
+            }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { ui.sidebarWidth = $0 }
+    }
+
+    @ViewBuilder
+    private var chrome: some View {
+        #if os(macOS)
+        if KoanTheme.isOn { themed } else { system }
+        #else
+        system
+        #endif
+    }
+
+    #if os(macOS)
+    /// The theme's sidebar: its own search field over the rows, and the footer
+    /// below a hairline. Stacked rather than laid over the list as bars, so
+    /// rows stop at each edge instead of passing beneath on a ground of the
+    /// platform's.
+    private var themed: some View {
+        ZStack(alignment: .top) {
+            VStack(spacing: 0) {
+                Color.clear.frame(height: searchHeight)
+                list.scrollEdgeEffectHidden(true, for: .all)
+                Rectangle().fill(Color.koanRowRule).frame(height: KoanTheme.hairline)
+                SidebarFooter()
+            }
+            SidebarSearch(fieldHeight: $searchHeight)
+        }
+        // Under the field and the footer as well as the rows.
+        .koanSidebar()
+    }
+    #endif
+
+    /// The platform's sidebar: the system's search field, and the footer as a
+    /// bar over the rows.
+    private var system: some View {
+        @Bindable var search = search
+        return list
+            // The footer is text over text, so the rows passing beneath it get
+            // the hard edge: the sidebar behind the footer and a line between
+            // them. It applies only under a bar (`safeAreaBar` below); a plain
+            // `safeAreaInset` takes no edge effect, and the rows showed through.
+            .scrollEdgeEffectStyle(.hard, for: .bottom)
+            .scrollEdgeEffectHidden(false, for: .top)
+            // The field belongs to the sidebar, not the window: in the toolbar
+            // it would sit on top of the lyrics inspector.
+            .searchable(text: $search.query, placement: .sidebar, prompt: "Search") // theme: raw — the platform's look; the theme's is `SidebarSearch`
+            .searchSuggestions { SearchSuggestions() }
+            .searchFocused($searchFocused)
+            // `/`, the way it works in the TUI. The field is somewhere else on
+            // screen, so the key can only ask for it by token.
+            .onChange(of: ui.searchFocusToken) { _, _ in
+                searchFocused = true
+            }
+            .safeAreaBar(edge: .bottom) { SidebarFooter() }
+    }
+
+    private var list: some View {
         // A row is lit when the page on screen is that row. The navigator
         // owns both halves of the binding — see `sidebarSelection`.
         List(selection: nav.sidebarSelection) {
@@ -97,39 +167,6 @@ struct SidebarView: View {
                 play(playlist)
             }
         }
-        // The footer is text over text, so the rows passing beneath it get the
-        // hard edge: the sidebar behind the footer and a line between them. It
-        // applies only under a bar (`safeAreaBar` below); a plain
-        // `safeAreaInset` takes no edge effect, and the rows showed through.
-        .scrollEdgeEffectStyle(.hard, for: .bottom)
-        // Rows passing under the search field get the same hard edge in the
-        // theme, where the toolbar hides its fade for every other page.
-        .scrollEdgeEffectStyle(KoanTheme.isOn ? .hard : .automatic, for: .top)
-        .scrollEdgeEffectHidden(false, for: .top)
-        // The field belongs to the sidebar, not the window: in the toolbar it
-        // would sit on top of the lyrics inspector.
-        .searchable(text: $search.query, placement: .sidebar, prompt: "Search") // theme: raw — in the sidebar, not on glass
-        .searchSuggestions { SearchSuggestions() }
-        .searchFocused($searchFocused)
-        // `/`, the way it works in the TUI. The field is somewhere else on
-        // screen, so the key can only ask for it by token.
-        .onChange(of: ui.searchFocusToken) { _, _ in
-            searchFocused = true
-        }
-        .safeAreaBar(edge: .bottom) { SidebarFooter() }
-        .alert("Rename Playlist", isPresented: Binding(
-            get: { renaming != nil },
-            set: { if !$0 { renaming = nil } }
-        )) {
-            TextField("Name", text: $renameTo)
-            Button("Cancel", role: .cancel) { renaming = nil }
-            Button("Rename") {
-                if let renaming { playlists.rename(id: renaming.id, to: renameTo) }
-                renaming = nil
-            }
-        }
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { ui.sidebarWidth = $0 }
-        .onDisappear { ui.sidebarWidth = 0 }
     }
 
 

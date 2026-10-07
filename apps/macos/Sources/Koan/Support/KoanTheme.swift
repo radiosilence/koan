@@ -2443,10 +2443,12 @@ extension View {
 
 #if !os(tvOS)
 /// The theme's search field: a glyph, the field and, once there is something
-/// to clear, a bare clear button, on `surface`.
-private struct KoanSearchField: View {
+/// to clear, a bare clear button, on `surface`. Given a focus binding, the
+/// field takes it, for callers that move the keyboard to it.
+struct KoanSearchField: View {
     @Binding var text: String
     let prompt: String
+    var focus: FocusState<Bool>.Binding?
     let onSubmit: () -> Void
 
     var body: some View {
@@ -2454,7 +2456,7 @@ private struct KoanSearchField: View {
             KoanIcon(Icon.search)
                 .foregroundStyle(Color.koanMuted)
                 .accessibilityHidden(true)
-            TextField(KoanTheme.label(prompt), text: $text)
+            field
                 .onSubmit(onSubmit)
                 .autocorrectionDisabled()
                 #if os(iOS)
@@ -2474,6 +2476,15 @@ private struct KoanSearchField: View {
             }
         }
         .koanField()
+    }
+
+    @ViewBuilder
+    private var field: some View {
+        if let focus {
+            TextField(KoanTheme.label(prompt), text: $text).focused(focus)
+        } else {
+            TextField(KoanTheme.label(prompt), text: $text)
+        }
     }
 }
 #endif

@@ -4,17 +4,18 @@ import SwiftUI
 
 /// The sidebar column's AppKit chrome, put on the theme's terms.
 ///
-/// macOS 26 wraps the sidebar column in an `NSGlassEffectView` whose glass
-/// draws the column's content through itself, so it cannot be hidden. SwiftUI
-/// offers no way to turn it off, nor the source list's rounded selection, nor
-/// the search field's capsule, so this finds them from inside the column.
+/// macOS 26 wraps the sidebar column in an `NSGlassEffectView`. Even set to
+/// clear, the glass lightens what it holds, so over the page's ground the
+/// sidebar read as a lighter panel. SwiftUI offers no way to turn it off, nor
+/// the source list's rounded selection, so this finds both from inside the
+/// column.
 ///
-/// In the theme, the glass is clear and draws nothing of its own, so the
-/// sidebar shows the ground behind it: the wash, or the column's flat `bg`.
-/// The outline view keeps its selection — what VoiceOver announces and the
-/// arrow keys move — but does not draw it; the row draws the theme's mark.
-/// The search field is the theme's square field. The platform's look is left
-/// as it was.
+/// In the theme, the column's content is lifted out of the glass into the
+/// same place beside it, and the glass is hidden: the sidebar shows the
+/// ground behind it, the wash or the column's flat `bg`, exactly as the page
+/// does. The outline view keeps its selection — what VoiceOver announces and
+/// the arrow keys move — but does not draw it; the row draws the theme's mark.
+/// The theme is read at launch, so the platform's look is never touched.
 struct SidebarGround: NSViewRepresentable {
     let themed: Bool
 
@@ -27,7 +28,8 @@ struct SidebarGround: NSViewRepresentable {
 
     final class Finder: NSView {
         var themed = false
-        private var original: NSGlassEffectView.Style?
+        private weak var glass: NSGlassEffectView?
+        private var lifting = false
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -37,42 +39,43 @@ struct SidebarGround: NSViewRepresentable {
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
         func apply() {
-            var view = superview
-            while let candidate = view, !(candidate is NSGlassEffectView) { view = candidate.superview }
-            guard let glass = view as? NSGlassEffectView else { return }
-            if original == nil { original = glass.style }
-            glass.style = themed ? .clear : (original ?? .regular)
-            let env = ProcessInfo.processInfo.environment
-            if env["KOAN_EXP_GLASS"] == "hide" {
-                let content = glass.subviews.first?.layer
-                glass.layer?.sublayers?.forEach { if $0 !== content { $0.isHidden = themed } }
-            }
-            if env["KOAN_EXP_GLASS"] == "filters" {
-                glass.layer?.filters = themed ? [] : nil
-                glass.layer?.backgroundFilters = themed ? [] : nil
-            }
-            guard themed else { return }
-            Self.walk(glass) { view in
-                if let outline = view as? NSOutlineView {
+            guard themed, !lifting, window != nil else { return }
+            if glass == nil { lift() }
+            guard let glass else { return }
+            // AppKit shows the glass again when the column is collapsed and
+            // brought back.
+            glass.isHidden = true
+            guard let column = glass.superview else { return }
+            Self.walk(column) { view in
+                if let outline = view as? NSOutlineView, outline.selectionHighlightStyle != .none {
                     outline.selectionHighlightStyle = .none
-                } else if let field = view as? NSSearchField {
-                    Self.square(field)
                 }
             }
+        }
+
+        private func lift() {
+            var view = superview
+            while let candidate = view, !(candidate is NSGlassEffectView) { view = candidate.superview }
+            guard let glass = view as? NSGlassEffectView,
+                  let content = glass.contentView,
+                  let column = glass.superview else { return }
+            lifting = true
+            defer { lifting = false }
+            glass.contentView = nil
+            column.addSubview(content, positioned: .above, relativeTo: glass)
+            content.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                content.leadingAnchor.constraint(equalTo: glass.leadingAnchor),
+                content.trailingAnchor.constraint(equalTo: glass.trailingAnchor),
+                content.topAnchor.constraint(equalTo: glass.topAnchor),
+                content.bottomAnchor.constraint(equalTo: glass.bottomAnchor),
+            ])
+            self.glass = glass
         }
 
         private static func walk(_ view: NSView, _ visit: (NSView) -> Void) {
             visit(view)
             view.subviews.forEach { walk($0, visit) }
-        }
-
-        private static func square(_ field: NSSearchField) {
-            field.isBezeled = false
-            field.isBordered = false
-            field.drawsBackground = true
-            field.backgroundColor = NSColor.koanSurface
-            field.focusRingType = .none
-            field.font = NSFont.koan(.control)
         }
     }
 }
