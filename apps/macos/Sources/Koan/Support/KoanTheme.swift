@@ -1437,16 +1437,17 @@ private struct KoanBarRole: ViewModifier {
 
     func body(content: Content) -> some View {
         if overWash && KoanTheme.washesWindow(appearance) {
-            // Over the wash, set off by a faint hairline and a scrim rather
-            // than a slab: rows scrolling under it fade out above its text,
-            // and the wash shows through what is left.
+            // Over the wash, set off by a faint hairline and a scrim that fades
+            // in over its top quarter: rows scrolling under it fade out there
+            // and are gone behind its text. Lighter, and a row's text showed
+            // through the transport's.
             content
                 .background {
                     LinearGradient(
                         stops: [
                             .init(color: Color.koanBg.opacity(0), location: 0),
-                            .init(color: Color.koanBg.opacity(0.85), location: 0.3),
-                            .init(color: Color.koanBg.opacity(0.92), location: 1),
+                            .init(color: Color.koanBg.opacity(0.97), location: 0.25),
+                            .init(color: Color.koanBg, location: 1),
                         ],
                         startPoint: .top, endPoint: .bottom
                     )
