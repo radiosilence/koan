@@ -659,6 +659,7 @@ private struct PageToolbar: ToolbarContent {
         ToolbarItemGroup(placement: .navigation) {
             // The theme's own sidebar toggle, the system's being a capsule of
             // glass; see `RootView`, which takes the system's away.
+            #if os(macOS)
             if KoanTheme.isOn {
                 Button {
                     NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
@@ -668,6 +669,7 @@ private struct PageToolbar: ToolbarContent {
                 .help("Show or hide the sidebar (⌃⌘S)")
                 .koanButton(.icon)
             }
+            #endif
             Button { nav.goBack() } label: {
                 Label("Back", systemImage: Icon.back)
             }
