@@ -690,7 +690,7 @@ struct EqChain: View {
             guard eqs.contains(entry.name), let aim else { return nil }
             switch meets.join {
             case .matched: return "\(entry.name) was made for \(aim): matched."
-            case let .converted(_, to): return "\(entry.name) was made for \(to), so the difference from \(aim) plays first."
+            case let .converted(from, to): return "\(entry.name) was made for \(to), so the difference from \(from) to \(to) plays first."
             case let .refitted(_, to): return "\(entry.name) was made for \(to), so the correction is fitted to \(to) for it."
             case .unknown: return "What \(entry.name) was made against is not set, so it may apply a target twice."
             case nil: return nil

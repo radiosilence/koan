@@ -340,12 +340,17 @@ pub fn made_against_previews(name: &str, device: &str) -> Vec<(Option<String>, V
         .iter()
         .map(|t| t.id.to_owned())
         .chain(targets::added().into_iter().map(|a| a.id));
-    // A correction fitted to a measurement is fitted again to the target
-    // chosen, which moves it by the difference of the two fits.
+    // A correction built from a measurement is fitted again to the target
+    // chosen, which moves it from the bands it plays, its own and for one
+    // saved before kōan fitted bands the fit made as it plays, to the refit.
     let member = super::member_playing(correction, all);
-    let fits = super::chain(member, all, &mut Vec::new())
-        .ok()
-        .filter(|_| member.fitted.is_some());
+    let fits = member.measured().map(|m| {
+        let mut own = member.sanitized().filters;
+        if member.fitted.is_none() {
+            own.extend(fitted_to(member, &m.target).unwrap_or_default());
+        }
+        own
+    });
     let grid = targets::grid();
     std::iter::once((None, eq.clone()))
         .chain(ids.filter_map(|id| {
@@ -383,8 +388,8 @@ pub fn made_against_previews(name: &str, device: &str) -> Vec<(Option<String>, V
 pub fn joined(eq: &str, join: &Join, aim: &str) -> String {
     match join {
         Join::Matched => format!("{eq} was made for {aim}: matched."),
-        Join::Converted { to, .. } => {
-            format!("{eq} was made for {to}, so the difference from {aim} plays first.")
+        Join::Converted { from, to } => {
+            format!("{eq} was made for {to}, so the difference from {from} to {to} plays first.")
         }
         Join::Refitted { to, .. } => {
             format!("{eq} was made for {to}, so the correction is fitted to {to} for it.")
@@ -579,7 +584,7 @@ pub fn overview_for(device: Option<String>) -> Overview {
                 d,
                 &c.eq_notes,
                 &c.left_out_eqs,
-                c.refit.as_deref(),
+                c.refit.as_ref().map(|(to, _)| to.as_str()),
             ),
             (Some(d), None) => joins(&cfg.dsp, d, &[], &[], None),
             (None, _) => Vec::new(),
@@ -4420,6 +4425,144 @@ mod tests {
         for (p, m) in harman.iter().zip(&moved) {
             assert!((p - m).abs() < 0.01, "{p} against {m}");
         }
+        // A third target compares with the refit's: the difference runs from
+        // Harman to it.
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Other".into(),
+                role: Some(DspRole::Tuning),
+                tuned_for: Some("diffuse-field-iso-11904-1".into()),
+                filters: vec![band(200.0)],
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        let both = ["Lush".to_string(), "Other".to_string()];
+        set_chain("Via ISO", None, Some(&both)).unwrap();
+        let iso_name = target_name("diffuse-field-iso-11904-1");
+        let view = chain_view("Via ISO");
+        assert!(matches!(
+            &view.tuning[1].join,
+            Some(Join::Converted { from, to }) if from == "Harman in-ear 2019" && *to == iso_name
+        ));
+        assert!(
+            view.sentence.ends_with(&format!(
+                "Other was made for {iso_name}, so the difference from Harman in-ear 2019 to {iso_name} plays first."
+            )),
+            "{}",
+            view.sentence
+        );
+    }
+
+    /// A correction saved before kōan fitted bands, holding the measurement
+    /// alone, is fitted again for its tuning as a fitted one is, and its
+    /// previews move from the fit it plays.
+    #[test]
+    fn an_older_measured_correction_is_fitted_again_for_its_tuning() {
+        use super::super::targets;
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let text = measured(6.0);
+        let folder = super::dir("Older");
+        std::fs::create_dir_all(&folder).unwrap();
+        let curve = read_measurement(&text).unwrap();
+        std::fs::write(targets::measurement_path(&folder), targets::on_grid(&curve)).unwrap();
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Older".into(),
+                role: Some(DspRole::Correction),
+                measurement: Some(DspMeasurement {
+                    ear: DspEar::In,
+                    target: "diffuse-field-iso-11904-1".into(),
+                }),
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Lush".into(),
+                role: Some(DspRole::Tuning),
+                tuned_for: Some("harman-in-ear-2019".into()),
+                filters: vec![band(9000.0)],
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        let lush = ["Lush".to_string()];
+        set_chain("Older DAC", Some(Some("Older")), Some(&lush)).unwrap();
+        let kept = targets::measurement(&folder).unwrap();
+        let harman = squig_fit(&kept, &targets::choice_curve("harman-in-ear-2019").unwrap()).0;
+        let mut wanted = harman.clone();
+        wanted.push(band(9000.0));
+        let freqs = targets::grid();
+        let want = super::super::response(&wanted, &freqs, 48_000);
+        let played = chain_response("Older DAC", None, None, 48_000).unwrap();
+        for ((hz, a), b) in played.iter().zip(&want) {
+            assert!((a - b).abs() < 0.01, "{hz} Hz: {a} against {b}");
+        }
+        let previews = made_against_previews("Lush", "Older DAC");
+        let moved = &previews
+            .iter()
+            .find(|(t, _)| t.as_deref() == Some("harman-in-ear-2019"))
+            .unwrap()
+            .1;
+        let own = chain_response("Older DAC", None, Some(&[]), 48_000).unwrap();
+        for ((p, w), (_, o)) in moved.iter().zip(&want).zip(&own) {
+            assert!((p - (w - o)).abs() < 0.01, "{p} against {}", w - o);
+        }
+    }
+
+    /// The refit follows the tuning that asks for it: where the chain cannot
+    /// hold that tuning and leaves it out, the correction plays its own fit.
+    #[test]
+    fn a_refit_goes_with_the_tuning_that_asked() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        save_measured(
+            "To ISO",
+            &measured(6.0),
+            DspEar::In,
+            "diffuse-field-iso-11904-1",
+        )
+        .unwrap();
+        persist(|c| {
+            for i in 0..4 {
+                c.dsp.profiles.push(DspProfile {
+                    name: format!("Big {i}"),
+                    role: Some(DspRole::Tuning),
+                    filters: vec![band(1000.0 + i as f64); 64],
+                    ..Default::default()
+                });
+            }
+            c.dsp.profiles.push(DspProfile {
+                name: "Lush".into(),
+                role: Some(DspRole::Tuning),
+                tuned_for: Some("harman-in-ear-2019".into()),
+                layers: (0..4).map(|i| layer(&format!("Big {i}"), true)).collect(),
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Plain".into(),
+                role: Some(DspRole::Tuning),
+                tuned_for: Some("diffuse-field-iso-11904-1".into()),
+                filters: vec![band(200.0)],
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        let eqs = ["Plain".to_string(), "Lush".to_string()];
+        set_chain("DAC", Some(Some("To ISO")), Some(&eqs)).unwrap();
+        let chain = super::super::output_chain(&Config::cached().dsp, "DAC").unwrap();
+        assert_eq!(chain.left_out_eqs, ["Lush"]);
+        assert_eq!(chain.refit, None);
+        assert!(matches!(
+            chain_view("DAC").tuning[0].join,
+            Some(Join::Matched)
+        ));
     }
 
     /// One correction to a chain: a second layer is refused, naming the one
