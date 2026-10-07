@@ -62,6 +62,9 @@ pub fn cmd_dsp_show(named: Option<String>, json: bool) {
             match &eq.join {
                 Some(profiles::Join::Matched) => " (matched)".to_owned(),
                 Some(profiles::Join::Converted { from, to }) => format!(" ({from} → {to})"),
+                Some(profiles::Join::Refitted { to, .. }) => {
+                    format!(" (correction fitted to {to} for it)")
+                }
                 Some(profiles::Join::Unknown) => " (made against: unknown)".to_owned(),
                 None => String::new(),
             }

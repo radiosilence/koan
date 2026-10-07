@@ -631,6 +631,9 @@ struct EqChain: View {
                         CurveThumb(db: step, stroke: StageStroke(style: KoanTheme.style(.muted, system: Color.secondary), dash: [])) // theme: raw — the system look's own
                     }
                 }
+            case let .refitted(_, to):
+                Text("Correction fitted to \(to) for it")
+                    .koanText(.fine, .muted)
             case .unknown:
                 #if os(tvOS)
                 Label("Made against: unknown. This may apply a target twice", systemImage: "exclamationmark.triangle")
@@ -688,6 +691,7 @@ struct EqChain: View {
             switch meets.join {
             case .matched: return "\(entry.name) was made for \(aim): matched."
             case let .converted(_, to): return "\(entry.name) was made for \(to), so the difference from \(aim) plays first."
+            case let .refitted(_, to): return "\(entry.name) was made for \(to), so the correction is fitted to \(to) for it."
             case .unknown: return "What \(entry.name) was made against is not set, so it may apply a target twice."
             case nil: return nil
             }
