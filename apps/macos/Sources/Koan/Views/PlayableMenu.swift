@@ -485,7 +485,7 @@ struct PlayableHeaderButton: View {
             }
             // The whole square or disc takes the click, not just the stroke
             // and the glyph a plain button would hit-test.
-            .contentShape(Rectangle())
+            .contentShape(KoanTheme.isOn ? AnyShape(Rectangle()) : AnyShape(Circle()))
             #endif
         }
         #if !os(tvOS)
