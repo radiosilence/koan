@@ -118,7 +118,6 @@ struct ManageEq: View {
             DspProfilePage(dsp: dsp, name: shown.name)
                 .koanBackButton()
                 .koanHidesSystemTabBar()
-                .roomBackground()
         }
         #elseif os(macOS)
         .sheet(item: $showing) { shown in

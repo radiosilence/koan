@@ -110,7 +110,6 @@ struct EqSettings: View {
             ManageEq(device: device, active: overview?.active, chain: overview?.chain ?? [])
                 .koanBackButton()
                 .koanHidesSystemTabBar()
-                .roomBackground()
         }
         #endif
         #if os(macOS)
@@ -190,7 +189,6 @@ struct EqSettings: View {
             DspProfilePage(dsp: app.dsp, name: shown.name)
                 .koanBackButton()
                 .koanHidesSystemTabBar()
-                .roomBackground()
         }
         #elseif os(macOS)
         .sheet(item: $showing) { shown in

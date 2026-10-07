@@ -266,7 +266,6 @@ struct CurvePage: View {
         #if os(iOS)
         .koanBackButton()
         .koanHidesSystemTabBar()
-        .roomBackground()
         #endif
         .confirmationDialog("Reset \(profile) to its file?", isPresented: $confirmingReset, titleVisibility: .visible) {
             Button("Reset", role: .destructive) { dsp.revert(profile) }
