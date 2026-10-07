@@ -895,7 +895,16 @@ fn push(
         }
         remote.delete(uid, now_ms())?;
         rows::forget_synced(&db.conn, url, uid)?;
+        rows::forget_local(&db.conn, uid)?;
         out.sent += 1;
+    }
+    // What was kept everywhere and no longer is, and was never sent or has
+    // now been deleted: nothing is left to track.
+    for uid in edits
+        .keys()
+        .filter(|u| !locals.contains_key(*u) && !synced.contains_key(*u))
+    {
+        rows::forget_local(&db.conn, uid)?;
     }
     let mut kept_later = false;
     let mut uids: Vec<&String> = locals.keys().collect();
@@ -1456,6 +1465,9 @@ mod tests {
         b.sync(&server);
         assert!(b.profile("Room").is_none());
         assert!(a.profile("Room").is_some());
+        // Neither device tracks it as kept everywhere any more.
+        assert!(rows::local_edits(&a.db.conn).unwrap().is_empty());
+        assert!(rows::local_edits(&b.db.conn).unwrap().is_empty());
     }
 
     /// A correction built from a measurement arrives as made: its role, its
