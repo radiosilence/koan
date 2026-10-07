@@ -30,10 +30,7 @@ struct SplitFlow: View {
                 }
                 Section {
                     Button(file ?? "Choose a Measurement File…") { choosing = true }
-                    Picker("Headphones", selection: $inEar) {
-                        Text("In-ear").tag(true)
-                        Text("Over-ear").tag(false)
-                    }
+                    KoanPicker("Headphones", selection: $inEar, options: [("In-ear", true), ("Over-ear", false)])
                 } header: {
                     Text("Measurement")
                 } footer: {

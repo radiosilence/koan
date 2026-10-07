@@ -485,14 +485,14 @@ private struct RoleSection: View {
 
     var body: some View {
         Section {
-            Picker("This is", selection: Binding(
+            KoanPicker("This is", selection: Binding(
                 get: { detail.role },
                 set: { dsp.setRole(detail.name, $0) }
-            )) {
-                Text("A neutral correction").tag(DspRole.correction)
-                Text("A correction with a sound already in it").tag(DspRole.baked)
-                Text("A tuning to add on top").tag(DspRole.tuning)
-            }
+            ), options: [
+                ("A neutral correction", DspRole.correction),
+                ("A correction with a sound already in it", DspRole.baked),
+                ("A tuning to add on top", DspRole.tuning),
+            ])
             if detail.role == .tuning, !madeForChoices.isEmpty {
                 Picker("Made against", selection: Binding(
                     get: { detail.tunedFor ?? "" },
@@ -626,13 +626,10 @@ private struct ScopeSection: View {
 
     var body: some View {
         Section {
-            Picker("Sync", selection: Binding(
+            KoanPicker("Sync", selection: Binding(
                 get: { detail.everywhere },
                 set: { dsp.setScope(detail.name, everywhere: $0) }
-            )) {
-                Text("Everywhere").tag(true)
-                Text("This device").tag(false)
-            }
+            ), options: [("Everywhere", true), ("This device", false)])
             if let problem = detail.syncProblem {
                 Label(problem, systemImage: "exclamationmark.icloud")
                     .foregroundStyle(KoanTheme.style(.bad, system: .orange))

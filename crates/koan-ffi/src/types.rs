@@ -1327,6 +1327,8 @@ pub struct DspProfileSummary {
     pub everywhere: bool,
     /// The presets and groups that hold it.
     pub held_by: Vec<String>,
+    /// Why it cannot move to the other scope, while it cannot.
+    pub scope_locked: Option<String>,
 }
 
 /// What a profile is for. A chain corrects a headphone once.
@@ -1704,6 +1706,7 @@ impl From<koan_core::audio::dsp::profiles::Overview> for DspOverview {
                     used_on: p.used_on,
                     everywhere: p.everywhere,
                     held_by: p.held_by,
+                    scope_locked: p.scope_locked,
                 })
                 .collect(),
         }

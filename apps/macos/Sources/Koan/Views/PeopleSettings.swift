@@ -76,7 +76,6 @@ extension AccountRole {
     }
 
     static let all: [AccountRole] = [.readonly, .user, .admin]
-    static var options: [(label: String, value: AccountRole)] { all.map { ($0.label, $0) } }
 }
 
 struct PeopleSettings: View {
@@ -100,7 +99,7 @@ struct PeopleSettings: View {
                         TextField("Username", text: $newUsername, prompt: Text("Username"))
                             .verbatimEntry()
                             .koanField()
-                        KoanPicker("Access", selection: $newRole, options: AccountRole.options)
+                        KoanPicker("Access", selection: $newRole, options: AccountRole.all.map { ($0.label, $0) })
                         .labelsHidden()
                         .fixedSize()
                         Button("Add") {
@@ -181,10 +180,10 @@ struct PeopleSettings: View {
                 Text("you").koanText(.body, .muted)
             }
             Spacer()
-            KoanPicker("Access", selection: Binding(
+            KoanPicker("Access", selection: Binding<AccountRole>(
                 get: { account.role },
                 set: { role in Task { await model.setRole(account.username, role) } }
-            ), options: AccountRole.options)
+            ), options: AccountRole.all.map { ($0.label, $0) })
             .labelsHidden()
             .fixedSize()
             Menu {
@@ -198,7 +197,7 @@ struct PeopleSettings: View {
                     Button("Delete", role: .destructive) { deleting = account.username }
                 }
             } label: {
-                Image(systemName: KoanTheme.isOn ? "ellipsis" : "ellipsis.circle")
+                Image(systemName: "ellipsis.circle")
             }.koanControl()
             .menuStyle(.borderlessButton)
             .fixedSize()

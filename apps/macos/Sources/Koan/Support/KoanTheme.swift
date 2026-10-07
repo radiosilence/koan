@@ -1170,14 +1170,21 @@ private struct KoanToggleRole: ViewModifier {
 #if !os(tvOS)
 #if os(macOS)
 /// A form row's label in a column of its own, so the fields beside a run of
-/// labels start at one edge.
+/// labels start at one edge. The label is a toggle's: `body`, `ink`,
+/// lowercase; a label that is data rather than the app's words sets
+/// `.textCase(nil)` on its text. A value trails in `control`, `muted`; a field
+/// or control in it keeps its own type.
 struct KoanLabeledContentStyle: LabeledContentStyle {
     func makeBody(configuration: Configuration) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: KoanTheme.Space.m) {
             configuration.label
-                .foregroundStyle(Color.koanMuted)
-                .frame(width: 150, alignment: .leading)
+                .font(.koan(.body))
+                .foregroundStyle(Color.koanInk)
+                .textCase(.lowercase)
+                .frame(width: 200, alignment: .leading)
             configuration.content
+                .font(.koan(.control))
+                .foregroundStyle(Color.koanMuted)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -1227,6 +1234,7 @@ struct KoanToggleStyle: ToggleStyle {
                 configuration.label
                     .font(.koan(.body))
                     .foregroundStyle(Color.koanInk)
+                    .textCase(.lowercase)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 ZStack {
                     if configuration.isOn {
@@ -1296,38 +1304,51 @@ struct KoanSegmentedPicker<Value: Hashable>: View {
     }
 }
 
-/// A pop-up picker. On a phone in the theme, a menu whose label is the chosen
-/// option in `control` type: UIKit draws a picker's own value in the system
-/// font whatever the environment says. The system picker, through
-/// `.koanControl()`, everywhere else.
+/// A pop-up picker. In the theme on the Mac and a phone, a menu whose label
+/// is the chosen option in `control` type and `ink`: AppKit's pop-up button and
+/// UIKit's picker draw their own value in the system face, on the Mac in a
+/// rounded bezel, whatever the environment says. Options the app writes are
+/// lowercased; `keepsCase` keeps options that are data, such as device and
+/// preset names. The system picker, through `.koanControl()`, everywhere else.
 struct KoanPicker<Value: Hashable>: View {
     let title: String
     @Binding var selection: Value
     let options: [(label: String, value: Value)]
+    let keepsCase: Bool
 
-    init(_ title: String, selection: Binding<Value>, options: [(label: String, value: Value)]) {
+    init(_ title: String, selection: Binding<Value>, options: [(label: String, value: Value)], keepsCase: Bool = false) {
         self.title = title
         _selection = selection
         self.options = options
+        self.keepsCase = keepsCase
     }
 
     var body: some View {
-        #if os(iOS)
+        #if os(tvOS)
+        picker
+        #else
         if KoanTheme.isOn {
             LabeledContent {
                 Menu {
                     Picker(title, selection: $selection) {
-                        ForEach(options, id: \.value) { Text(KoanTheme.label($0.label)).tag($0.value) }
+                        ForEach(options, id: \.value) { Text(shown($0.label)).tag($0.value) }
                     }
                     .pickerStyle(.inline)
                 } label: {
                     HStack(spacing: KoanTheme.Space.xs) {
-                        Text(KoanTheme.label(options.first { $0.value == selection }?.label ?? ""))
+                        Text(shown(options.first { $0.value == selection }?.label ?? ""))
+                            .lineLimit(1)
                         KoanIcon("chevron.up.chevron.down").font(.koan(.fine))
                     }
                     .font(.koan(.control))
                     .foregroundStyle(Color.koanInk)
                 }
+                #if os(macOS)
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                #endif
                 .tint(Color.koanInk)
             } label: {
                 Text(title)
@@ -1335,9 +1356,11 @@ struct KoanPicker<Value: Hashable>: View {
         } else {
             picker
         }
-        #else
-        picker
         #endif
+    }
+
+    private func shown(_ label: String) -> String {
+        keepsCase ? label : KoanTheme.label(label)
     }
 
     private var picker: some View {
@@ -1347,6 +1370,154 @@ struct KoanPicker<Value: Hashable>: View {
         .koanControl()
     }
 }
+
+#if !os(tvOS)
+/// A slider as the theme draws it: a 1-point `rule` track, a 3-point accent
+/// fill up to the value, and a square 8 × 8 `ink` thumb shown only on hover,
+/// focus or drag, in a 44-point hit area. The system's slider in the
+/// platform's look, and to assistive technologies in both.
+struct KoanSlider<End: View>: View {
+    let title: String
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let step: Double?
+    let editing: (Bool) -> Void
+    @ViewBuilder let low: () -> End
+    @ViewBuilder let high: () -> End
+    @State private var hovering = false
+    @State private var dragging = false
+    @FocusState private var focused: Bool
+    @Environment(\.isEnabled) private var enabled
+
+    init(
+        _ title: String,
+        value: Binding<Double>,
+        in range: ClosedRange<Double>,
+        step: Double? = nil,
+        onEditingChanged editing: @escaping (Bool) -> Void = { _ in },
+        @ViewBuilder low: @escaping () -> End,
+        @ViewBuilder high: @escaping () -> End
+    ) {
+        self.title = title
+        _value = value
+        self.range = range
+        self.step = step
+        self.editing = editing
+        self.low = low
+        self.high = high
+    }
+
+    var body: some View {
+        if KoanTheme.isOn {
+            HStack(spacing: KoanTheme.Space.s) {
+                low()
+                track
+                high()
+            }
+            .opacity(enabled ? 1 : 0.4)
+            .accessibilityRepresentation { system }
+        } else {
+            system
+        }
+    }
+
+    private var system: some View {
+        Group {
+            if let step {
+                Slider(
+                    value: $value, in: range, step: step,
+                    label: { Text(title) }, minimumValueLabel: { low() }, maximumValueLabel: { high() },
+                    onEditingChanged: editing
+                )
+            } else {
+                Slider(
+                    value: $value, in: range,
+                    label: { Text(title) }, minimumValueLabel: { low() }, maximumValueLabel: { high() },
+                    onEditingChanged: editing
+                )
+            }
+        }
+    }
+
+    private var fraction: Double {
+        guard range.upperBound > range.lowerBound else { return 0 }
+        return ((value - range.lowerBound) / (range.upperBound - range.lowerBound)).clamped()
+    }
+
+    private var track: some View {
+        GeometryReader { geo in
+            let x = geo.size.width * fraction
+            ZStack(alignment: .leading) {
+                Rectangle().fill(Color.koanRule).frame(height: KoanTheme.hairline)
+                Rectangle().fill(.tint).frame(width: x, height: 3)
+                if hovering || dragging || focused {
+                    Rectangle()
+                        .fill(Color.koanInk)
+                        .frame(width: 8, height: 8)
+                        .offset(x: min(max(x - 4, 0), geo.size.width - 8))
+                }
+            }
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { drag in
+                        if !dragging {
+                            dragging = true
+                            editing(true)
+                        }
+                        set(drag.location.x / max(geo.size.width, 1))
+                    }
+                    .onEnded { drag in
+                        set(drag.location.x / max(geo.size.width, 1))
+                        dragging = false
+                        editing(false)
+                    }
+            )
+        }
+        .frame(height: 44)
+        .onHover { hovering = $0 }
+        .focusable()
+        .focused($focused)
+        .focusEffectDisabled()
+        #if os(macOS)
+        .onMoveCommand { direction in
+            let by = step ?? (range.upperBound - range.lowerBound) / 20
+            switch direction {
+            case .left, .down: move(to: value - by)
+            case .right, .up: move(to: value + by)
+            default: break
+            }
+        }
+        #endif
+        .koanAnimation(KoanTheme.Motion.fast, value: hovering || dragging || focused)
+    }
+
+    private func set(_ share: Double) {
+        move(to: range.lowerBound + share.clamped() * (range.upperBound - range.lowerBound))
+    }
+
+    private func move(to raw: Double) {
+        var next = min(max(raw, range.lowerBound), range.upperBound)
+        if let step, step > 0 {
+            next = range.lowerBound + ((next - range.lowerBound) / step).rounded() * step
+        }
+        if next != value { value = next }
+    }
+}
+
+extension KoanSlider where End == EmptyView {
+    init(
+        _ title: String,
+        value: Binding<Double>,
+        in range: ClosedRange<Double>,
+        step: Double? = nil,
+        onEditingChanged editing: @escaping (Bool) -> Void = { _ in }
+    ) {
+        self.init(title, value: value, in: range, step: step, onEditingChanged: editing, low: { EmptyView() }, high: { EmptyView() })
+    }
+}
+#endif
 
 #if !os(tvOS)
 /// A stepper as the theme draws it: the label leading in `body`, then − and +
@@ -1378,6 +1549,7 @@ struct KoanStepper<Value: Strideable>: View {
                 Text(title)
                     .font(.koan(.body))
                     .foregroundStyle(Color.koanInk)
+                    .textCase(.lowercase)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 button("minus", by: -step, allowed: value > range.lowerBound)
                 button("plus", by: step, allowed: value < range.upperBound)
