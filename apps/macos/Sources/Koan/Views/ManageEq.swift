@@ -76,10 +76,11 @@ struct ManageEq: View {
             MeasurementFlow(dsp: dsp).koanSheet()
         }
         .sheet(item: Binding(
-            get: { dsp.askRole.map(RoleAsk.init) },
-            set: { if $0 == nil { dsp.askRole = nil } }
+            get: { dsp.askRole },
+            // Swiped away, as Decide Later.
+            set: { if $0 == nil, let ask = dsp.askRole { dsp.answer(ask, nil) } }
         )) { ask in
-            RoleQuestion(dsp: dsp, names: ask.names).koanSheet()
+            RoleQuestion(dsp: dsp, ask: ask).koanSheet()
         }
         .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $newName)

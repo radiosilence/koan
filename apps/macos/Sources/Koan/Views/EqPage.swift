@@ -23,7 +23,11 @@ struct EqSettings: View {
     // What the page presents is held here and presented from the form: a
     // modifier on a section of a list is applied to each of its rows, and
     // the presentation ends when that row is made again.
-    @State private var importing = false
+    /// The stage whose Import… the file picker is open for.
+    @State private var importing: Stage?
+    /// What a stage's picker asked for, presented once the picker has gone:
+    /// a sheet asked for while another is leaving is never shown.
+    @State private var adding: (Stage, StageAdd)?
     @State private var finding: AutoEqFind?
     @State private var measuring = false
     @State private var splitting: ShownProfile?
@@ -122,12 +126,12 @@ struct EqSettings: View {
         .task(id: app.dsp.stamp) { app.dsp.reload() }
         #if !os(tvOS)
         .filePicker(
-            isPresented: $importing,
+            isPresented: Binding(get: { importing != nil }, set: { if !$0 { importing = nil } }),
             allowedContentTypes: [.item, .folder],
             allowsMultipleSelection: true
         ) { result in
-            if case let .success(urls) = result, !urls.isEmpty {
-                app.dsp.importFiles(urls)
+            if case let .success(urls) = result, !urls.isEmpty, let stage = importing, let device {
+                app.dsp.importFiles(urls, into: DspPlacement(device: device, stage: stage))
             }
         }
         .sheet(item: $finding) { find in
@@ -139,16 +143,20 @@ struct EqSettings: View {
         .sheet(item: $splitting) { baked in
             SplitFlow(dsp: app.dsp, name: baked.name).koanSheet()
         }
-        .sheet(item: $choosing) { stage in
+        .sheet(item: $choosing, onDismiss: {
+            guard let (stage, add) = adding else { return }
+            adding = nil
+            switch add {
+            case .importing: importing = stage
+            case .autoEq: finding = AutoEqFind(query: "")
+            case .measuring: measuring = true
+            case let .splitting(name): splitting = ShownProfile(name: name)
+            }
+        }) { stage in
             if let o = overview, let device {
                 StagePicker(dsp: app.dsp, stage: stage, overview: o, device: device) { add in
+                    adding = (stage, add)
                     choosing = nil
-                    switch add {
-                    case .importing: importing = true
-                    case .autoEq: finding = AutoEqFind(query: "")
-                    case .measuring: measuring = true
-                    case let .splitting(name): splitting = ShownProfile(name: name)
-                    }
                 }
                 .koanSheet()
             }
@@ -161,10 +169,11 @@ struct EqSettings: View {
         // and a chain corrects once.
         .sheet(item: Binding(
             // Manage EQ asks for its own imports while it is open.
-            get: { managing ? nil : app.dsp.askRole.map(RoleAsk.init) },
-            set: { if $0 == nil { app.dsp.askRole = nil } }
+            get: { managing ? nil : app.dsp.askRole },
+            // Swiped away, as Decide Later.
+            set: { if $0 == nil, let ask = app.dsp.askRole { app.dsp.answer(ask, nil) } }
         )) { ask in
-            RoleQuestion(dsp: app.dsp, names: ask.names).koanSheet()
+            RoleQuestion(dsp: app.dsp, ask: ask).koanSheet()
         }
         .alert(namingTitle, isPresented: $naming) {
             TextField("Name", text: $presetName)
