@@ -124,6 +124,10 @@ ffi-bindings lib:
 # Compile the SwiftUI app. With KOAN_APP_BINARY naming an app binary built
 # already, that is used and nothing is compiled: the release packages the one
 # CI's macOS App job built from the same commit rather than building it again.
+# The Mac package's unit tests: the record accent and the sleeve analysis.
+macos-test: macos-ffi
+    cd {{app_dir}} && swift test
+
 macos-build:
     #!/usr/bin/env bash
     set -euo pipefail
