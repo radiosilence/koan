@@ -95,9 +95,12 @@ signed the device in and sends the account's devices each other's, so the
 proof holds while the server is out of reach. A list not refreshed from the
 server for thirty days is no longer trusted. The two ends sign each other's
 fresh nonces when they connect, and every command after is signed for that
-connection: the network is not encrypted, so a recorded proof, a replayed
-command, or one slipped into the connection is refused. What is playing can
-still be seen by anyone on the network, as before. A device that proves
+connection, as is everything the controlled device reports back: what it is
+playing and whether a command arrived. The network is not encrypted, so a
+recorded proof, a replayed command or report, or one slipped into the
+connection is refused. Reports are signed only between devices that both
+know to; an older device's are read unsigned, as before. What is playing can
+still be seen by anyone on the network. A device that proves
 nothing, because it is older, signed in with a password, or on another
 server, is trusted by the setting above.
 

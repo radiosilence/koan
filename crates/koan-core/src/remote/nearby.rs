@@ -13,8 +13,9 @@
 //! A peer that proves it is one of this account's devices, or one shared with
 //! it, is trusted as that rather than by the connection it came over: the
 //! listener's `Hello` carries a nonce, and the two ends sign each other's
-//! (`remote::proof`). After that every command is signed. A peer that proves
-//! nothing is a stranger or, under Full control, a nearby device, as before.
+//! (`remote::proof`). After that every command is signed, and every report
+//! back when both ends know to. A peer that proves nothing is a stranger or,
+//! under Full control, a nearby device, as before.
 
 use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
@@ -62,6 +63,14 @@ enum ProofFrame {
         seq: u64,
         sig: String,
         command: String,
+    },
+    /// A report from a listener that signs them, as JSON, signed for this
+    /// session.
+    #[serde(rename = "nearbySignedReport")]
+    SignedReport {
+        seq: u64,
+        sig: String,
+        report: String,
     },
 }
 
@@ -710,6 +719,7 @@ fn serve(stream: TcpStream, local: &Local, stop: &Arc<Stop>) -> Result<(), Strin
         nonce: proof::nonce(),
         answered: false,
         proven: None,
+        reports: None,
         pending: Vec::new(),
     };
     wire::drive(&mut socket, fd, &waker, &mut session)
@@ -734,6 +744,9 @@ struct Serving<'a> {
     answered: bool,
     /// The dialler, once proven, and the session its commands are signed for.
     proven: Option<(Proven, proof::Session)>,
+    /// The session this end's reports are signed for, once the handshake
+    /// says both ends sign them.
+    reports: Option<proof::Session>,
     /// Proof frames to send.
     pending: Vec<String>,
 }
@@ -758,6 +771,12 @@ impl Serving<'_> {
                 self.proven =
                     proven.map(|p| (p, proof::Session::new(me, &id, &listen_nonce, &nonce)));
                 let sig = proof::sign_listen(&id, me, &nonce, &listen_nonce, verified);
+                if sig.is_some() && proof::signs_reports(&listen_nonce, &nonce) {
+                    self.reports = Some(proof::Session::reports(me, &id, &listen_nonce, &nonce));
+                    // Sent again, signed: a state slipped in ahead of the
+                    // handshake would otherwise stand until the next change.
+                    self.sent = None;
+                }
                 self.pending
                     .extend(frame(&ProofFrame::Proof { verified, sig }));
             }
@@ -777,7 +796,7 @@ impl Serving<'_> {
                 let peer = by.peer.clone();
                 self.run(envelope, &peer);
             }
-            ProofFrame::Proof { .. } => {}
+            ProofFrame::Proof { .. } | ProofFrame::SignedReport { .. } => {}
         }
     }
 
@@ -849,12 +868,26 @@ impl wire::Session for Serving<'_> {
         if let Some(f) = self.levels.as_mut().and_then(|w| w.take()) {
             out.push(LinkReport::Levels { f });
         }
-        let mut out: Vec<String> = out
-            .iter()
-            .filter_map(|r| serde_json::to_string(r).ok())
-            .collect();
-        out.append(&mut self.pending);
-        out
+        // The proof goes first: the dialler checks what follows against it.
+        let mut texts = std::mem::take(&mut self.pending);
+        for report in out {
+            let Ok(json) = serde_json::to_string(&report) else {
+                continue;
+            };
+            match &mut self.reports {
+                Some(session) => match session.sign(&json) {
+                    Some((seq, sig)) => texts.extend(frame(&ProofFrame::SignedReport {
+                        seq,
+                        sig,
+                        report: json,
+                    })),
+                    // Signed out since: the dialler refuses anything unsigned.
+                    None => log::warn!("nearby: no key to sign a report with; dropped"),
+                },
+                None => texts.push(json),
+            }
+        }
+        texts
     }
 
     fn incoming(&mut self, text: &str) {
@@ -1021,6 +1054,7 @@ fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>, redial: Arc<Atomic
                     duplicate: false,
                     handshake: Handshake::Plain,
                     proven: None,
+                    reports: None,
                     pending: Vec::new(),
                 };
                 let result = wire::drive(&mut socket, fd, &waker, &mut session);
@@ -1131,6 +1165,10 @@ struct Controlling<'a> {
     handshake: Handshake,
     /// Who the listener proved to be, if it proved anything.
     proven: Option<proof::Peer>,
+    /// The listener, and the session its reports are signed for, once it has
+    /// proved itself and the handshake says it signs them: from then on an
+    /// unsigned report is one slipped into the stream.
+    reports: Option<(Proven, proof::Session)>,
     /// Proof frames to send.
     pending: Vec<String>,
 }
@@ -1194,6 +1232,13 @@ impl Controlling<'_> {
             if verified { "took" } else { "did not take" },
             listener_is.as_ref().map(|p| &p.peer)
         );
+        self.reports = listener_is
+            .clone()
+            .filter(|_| proof::signs_reports(listen_nonce, dial_nonce))
+            .map(|p| {
+                let session = proof::Session::reports(listener, me, listen_nonce, dial_nonce);
+                (p, session)
+            });
         self.proven = listener_is.map(|p| p.peer);
         if let Some(id) = &self.id
             && let Some(conn) = CONNS.lock().as_mut().and_then(|c| c.get_mut(id))
@@ -1249,6 +1294,39 @@ impl wire::Session for Controlling<'_> {
         if let Ok(ProofFrame::Proof { verified, sig }) = serde_json::from_str(text) {
             return self.answered(verified, sig);
         }
+        if let Some(report) = self.checked(text) {
+            self.report(&report);
+        }
+    }
+
+    fn done(&self) -> bool {
+        self.this_device || self.duplicate || self.stop.stopped()
+    }
+}
+
+impl Controlling<'_> {
+    /// The report `text` is or carries, if it is one to read. Once the
+    /// listener signs its reports, only those it signed for this connection,
+    /// in order. Before then, or from a listener this end cannot check, a
+    /// report signed or not is trusted as the network is.
+    fn checked<'t>(&mut self, text: &'t str) -> Option<std::borrow::Cow<'t, str>> {
+        if let Ok(ProofFrame::SignedReport { seq, sig, report }) = serde_json::from_str(text) {
+            if let Some((by, session)) = self.reports.as_mut()
+                && !session.accept(by, seq, &sig, &report)
+            {
+                log::warn!("nearby: a report not signed for this connection; refused");
+                return None;
+            }
+            return Some(report.into());
+        }
+        if self.reports.is_some() {
+            log::warn!("nearby: an unsigned report on a connection that signs them; refused");
+            return None;
+        }
+        Some(text.into())
+    }
+
+    fn report(&mut self, text: &str) {
         match serde_json::from_str::<LinkReport>(text) {
             Ok(LinkReport::Hello(mut hello)) => {
                 if devices::this_id().as_deref() == Some(hello.id.as_str()) {
@@ -1311,10 +1389,6 @@ impl wire::Session for Controlling<'_> {
             Ok(_) => {}
             Err(e) => log::debug!("nearby: not a report ({e})"),
         }
-    }
-
-    fn done(&self) -> bool {
-        self.this_device || self.duplicate || self.stop.stopped()
     }
 }
 
@@ -2186,6 +2260,7 @@ mod tests {
             nonce: proof::nonce(),
             answered: false,
             proven: None,
+            reports: None,
             pending: Vec::new(),
         }
     }
@@ -2196,7 +2271,11 @@ mod tests {
 
     /// The dialler `dialer`'s half of the handshake, from this process's key.
     fn auth(s: &mut Serving, dialer: &str) -> (String, proof::Session) {
-        let dial_nonce = proof::nonce().unwrap();
+        auth_with(s, dialer, proof::nonce().unwrap())
+    }
+
+    /// The same, over the nonce `dial_nonce`.
+    fn auth_with(s: &mut Serving, dialer: &str, dial_nonce: String) -> (String, proof::Session) {
         let listen_nonce = s.nonce.clone().unwrap();
         let sig = proof::sign_dial("mac", dialer, &listen_nonce, &dial_nonce).unwrap();
         let session = proof::Session::new("mac", dialer, &listen_nonce, &dial_nonce);
@@ -2274,6 +2353,154 @@ mod tests {
                 (LinkCommand::Next, CommandSource::Account),
             ]
         );
+    }
+
+    #[test]
+    fn a_listener_signs_its_reports_when_both_ends_do() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let r = rig(&[("phone", None), ("mac", None)]);
+        let mut s = serving(&r);
+        wire::Session::outgoing(&mut s);
+        let listen_nonce = s.nonce.clone().unwrap();
+        let (dial_nonce, _) = auth(&mut s, "phone");
+        let out = wire::Session::outgoing(&mut s);
+        let Ok(ProofFrame::Proof { sig, .. }) = serde_json::from_str(&out[0]) else {
+            panic!("the proof goes first: {out:?}");
+        };
+        let mac = proof::verify_listen(
+            "phone",
+            "mac",
+            &dial_nonce,
+            &listen_nonce,
+            true,
+            &sig.unwrap(),
+        )
+        .unwrap();
+        let mut session = proof::Session::reports("mac", "phone", &listen_nonce, &dial_nonce);
+        let reports: Vec<String> = out[1..]
+            .iter()
+            .map(|t| match serde_json::from_str(t) {
+                Ok(ProofFrame::SignedReport { seq, sig, report }) => {
+                    assert!(session.accept(&mac, seq, &sig, &report));
+                    report
+                }
+                _ => panic!("unsigned: {t}"),
+            })
+            .collect();
+        assert!(
+            reports.iter().any(|r| r.contains(r#""type":"state""#)),
+            "the state is sent again, signed: {reports:?}"
+        );
+    }
+
+    #[test]
+    fn a_listener_reports_unsigned_to_an_older_dialler() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let r = rig(&[("phone", None), ("mac", None)]);
+        let mut s = serving(&r);
+        wire::Session::outgoing(&mut s);
+        // An older dialler's nonce carries no mark.
+        auth_with(&mut s, "phone", "b2xkZXI=".into());
+        assert!(answer(&mut s).0);
+        s.sent = None;
+        let out = wire::Session::outgoing(&mut s);
+        assert!(!out.is_empty());
+        assert!(
+            out.iter()
+                .all(|t| serde_json::from_str::<LinkReport>(t).is_ok()),
+            "{out:?}"
+        );
+    }
+
+    fn controlling<'a>(stop: &'a Arc<Stop>) -> Controlling<'a> {
+        Controlling {
+            stop,
+            waker: Waker::new().unwrap(),
+            key: "id:mac",
+            addr: "10.0.0.2:7979",
+            id: None,
+            this_device: false,
+            duplicate: false,
+            handshake: Handshake::Plain,
+            proven: None,
+            reports: None,
+            pending: Vec::new(),
+        }
+    }
+
+    /// The dialler's side: the listener "mac" answers its proof, signed.
+    fn answered(c: &mut Controlling, listen_nonce: &str, dial_nonce: &str) {
+        c.handshake = Handshake::Awaiting {
+            listener: "mac".into(),
+            me: "phone".into(),
+            listen_nonce: listen_nonce.into(),
+            dial_nonce: dial_nonce.into(),
+        };
+        let sig = proof::sign_listen("phone", "mac", dial_nonce, listen_nonce, true);
+        c.answered(true, sig);
+    }
+
+    #[test]
+    fn a_dialler_reads_only_reports_signed_for_its_connection() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _r = rig(&[("phone", None), ("mac", None)]);
+        let stop = Stop::new().unwrap();
+        let mut c = controlling(&stop);
+        let (listen_nonce, dial_nonce) = (proof::nonce().unwrap(), proof::nonce().unwrap());
+        answered(&mut c, &listen_nonce, &dial_nonce);
+        assert_eq!(c.proven, Some(Peer::Own));
+
+        let state = serde_json::to_string(&LinkReport::State(LinkState::default())).unwrap();
+        assert!(c.checked(&state).is_none(), "unsigned");
+        let mut session = proof::Session::reports("mac", "phone", &listen_nonce, &dial_nonce);
+        let (seq, sig) = session.sign(&state).unwrap();
+        let signed = json(&ProofFrame::SignedReport {
+            seq,
+            sig: sig.clone(),
+            report: state.clone(),
+        });
+        assert_eq!(c.checked(&signed).as_deref(), Some(state.as_str()));
+        assert!(c.checked(&signed).is_none(), "replayed");
+        let forged = serde_json::to_string(&LinkReport::Ack {
+            ack: 1,
+            outcome: AckOutcome::Done,
+        })
+        .unwrap();
+        let altered = json(&ProofFrame::SignedReport {
+            seq: seq + 1,
+            sig,
+            report: forged,
+        });
+        assert!(c.checked(&altered).is_none(), "altered");
+        // Signed for another connection.
+        let mut other = proof::Session::reports("mac", "phone", &dial_nonce, &listen_nonce);
+        let (seq, sig) = other.sign(&state).unwrap();
+        let elsewhere = json(&ProofFrame::SignedReport {
+            seq: seq + 5,
+            sig,
+            report: state.clone(),
+        });
+        assert!(c.checked(&elsewhere).is_none(), "another session");
+    }
+
+    #[test]
+    fn a_dialler_reads_an_older_listeners_reports_unsigned() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _r = rig(&[("phone", None), ("mac", None)]);
+        let stop = Stop::new().unwrap();
+        let mut c = controlling(&stop);
+        answered(&mut c, "b2xkZXI=", &proof::nonce().unwrap());
+        assert_eq!(c.proven, Some(Peer::Own));
+        let state = serde_json::to_string(&LinkReport::State(LinkState::default())).unwrap();
+        assert_eq!(c.checked(&state).as_deref(), Some(state.as_str()));
     }
 
     /// A connection is proven once. A second `nearbyAuth`, from a device
