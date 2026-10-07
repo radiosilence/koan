@@ -1447,6 +1447,102 @@ struct KoanPicker<Value: Hashable>: View {
     }
 }
 
+/// A choice from a list long enough to want a page of its own, each option
+/// drawn by `row`, in sections. On iOS in the theme, a row that pushes the
+/// options as a page that keeps clear of the theme's tab bar: the page
+/// SwiftUI pushes for a `.navigationLink` picker is its own, and nothing can
+/// give it the bar's inset, so its last rows sat under the mini player. The
+/// platform's picker otherwise, pushed on iOS as before.
+struct KoanListPicker<Value: Hashable, Row: View>: View {
+    let title: String
+    @Binding var selection: Value
+    let sections: [(title: String?, values: [Value])]
+    /// What the chosen value is called, beside the title.
+    let name: (Value) -> String
+    @ViewBuilder let row: (Value) -> Row
+
+    var body: some View {
+        #if os(iOS)
+        if KoanTheme.isOn {
+            NavigationLink {
+                KoanListPickerPage(title: title, selection: $selection, sections: sections, row: row)
+            } label: {
+                LabeledContent(title) {
+                    Text(name(selection))
+                        .koanText(.control, .muted)
+                        .lineLimit(1)
+                }
+            }
+        } else {
+            picker.pickerStyle(.navigationLink)
+        }
+        #else
+        picker
+        #endif
+    }
+
+    private var picker: some View {
+        Picker(title, selection: $selection) {
+            ForEach(sections.indices, id: \.self) { i in
+                if let heading = sections[i].title {
+                    Section(KoanTheme.label(heading)) { options(sections[i].values) }
+                } else {
+                    options(sections[i].values)
+                }
+            }
+        }
+    }
+
+    private func options(_ values: [Value]) -> some View {
+        ForEach(values, id: \.self) { row($0).tag($0) }
+    }
+}
+
+#if os(iOS)
+/// The options of a `KoanListPicker`, as a page: the chosen one ticked, and
+/// back to the page before on a choice, as the platform's picker goes.
+private struct KoanListPickerPage<Value: Hashable, Row: View>: View {
+    let title: String
+    @Binding var selection: Value
+    let sections: [(title: String?, values: [Value])]
+    @ViewBuilder let row: (Value) -> Row
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        KoanForm {
+            ForEach(sections.indices, id: \.self) { i in
+                Section {
+                    ForEach(sections[i].values, id: \.self) { value in
+                        Button {
+                            selection = value
+                            dismiss()
+                        } label: {
+                            HStack(spacing: KoanTheme.Space.m) {
+                                row(value)
+                                Spacer(minLength: 0)
+                                if value == selection {
+                                    KoanIcon("checkmark")
+                                }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(value == selection ? .isSelected : [])
+                    }
+                } header: {
+                    if let heading = sections[i].title {
+                        KoanSectionHeader(KoanTheme.label(heading))
+                    }
+                }
+            }
+        }
+        .navigationTitle(KoanTheme.label(title))
+        .koanBackButton()
+        .koanHidesSystemTabBar()
+    }
+}
+#endif
+
 #if os(tvOS)
 private struct TelevisionPicker<Value: Hashable>: View {
     let title: String

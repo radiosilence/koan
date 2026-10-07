@@ -705,6 +705,18 @@ private struct Placeholder: View {
     }
 }
 
+/// A target among a correction's choices, its default marked.
+private struct TargetChoiceRow: View {
+    let targets: DspTargets
+    let id: String
+
+    var body: some View {
+        if let c = targets.choices.first(where: { $0.id == id }) {
+            TargetRow(target: c, isDefault: c.id == targets.madeFor?.id)
+        }
+    }
+}
+
 /// Where an Add… in a stage's picker leads, presented by the page.
 enum StageAdd {
     case importing, autoEq, measuring
@@ -791,23 +803,28 @@ struct StagePicker: View {
         #endif
     }
 
+    private func targetPicker(_ name: String, _ targets: DspTargets) -> some View {
+        let selection = Binding(
+            get: { targets.chosen ?? targets.madeFor?.id ?? "" },
+            set: { (id: String) in dsp.chooseTarget(name, id == targets.madeFor?.id ? nil : id) }
+        )
+        let ids: [String] = targets.choices.map(\.id)
+        return KoanListPicker(
+            title: "Target",
+            selection: selection,
+            sections: [(title: nil, values: ids)],
+            name: { (id: String) -> String in targets.choices.first { $0.id == id }?.name ?? "" },
+            row: { (id: String) in TargetChoiceRow(targets: targets, id: id) }
+        )
+    }
+
     /// The correction chosen: the target it aims at, a group's member, or
     /// for one with a tuning baked in, the way to take it apart.
     @ViewBuilder private func current(_ name: String) -> some View {
         Section {
             if let targets, correction?.role == .correction {
-                Picker("Target", selection: Binding(
-                    get: { targets.chosen ?? targets.madeFor?.id ?? "" },
-                    set: { id in dsp.chooseTarget(name, id == targets.madeFor?.id ? nil : id) }
-                )) {
-                    ForEach(targets.choices, id: \.id) { c in
-                        TargetRow(target: c, isDefault: c.id == targets.madeFor?.id).tag(c.id)
-                    }
-                }
-                .koanControl()
-                #if os(iOS)
-                .pickerStyle(.navigationLink)
-                #endif
+                targetPicker(name, targets)
+                    .koanControl()
             }
             if let c = correction, !c.members.isEmpty {
                 KoanPicker(
