@@ -33,6 +33,9 @@ struct KoanPanelAnchor<Panel: View>: NSViewRepresentable {
         let root = panel()
             .koanPopover()
             .overlay { Rectangle().strokeBorder(Color.koanRule, lineWidth: KoanTheme.hairline) }
+            // Drawn at its own size, whatever the window's, which follows it.
+            .fixedSize()
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { coordinator.fit($0) }
             .environment(\.koanClosePanel, KoanClosePanel(close))
             .transformEnvironment(\.self) { $0 = environment }
         // Shown after this update: the anchor has no window until it is in one,
@@ -89,7 +92,12 @@ final class KoanPanelCoordinator: NSObject, NSWindowDelegate {
             return
         }
         let host = NSHostingController(rootView: root)
-        host.sizingOptions = .preferredContentSize
+        // The window is sized here, never by SwiftUI. A hosting view that fits
+        // its window to its content does so from inside the window's layout,
+        // and content that changes size while it is shown, as the devices'
+        // rows do, had it resize the window over and over until the stack ran
+        // out.
+        host.sizingOptions = []
         let window = KoanPanelWindow(
             contentRect: .zero,
             styleMask: [.borderless],
@@ -102,6 +110,7 @@ final class KoanPanelCoordinator: NSObject, NSWindowDelegate {
         window.hasShadow = false
         window.appearance = parent.effectiveAppearance
         window.contentViewController = host
+        window.setContentSize(Self.rounded(host.sizeThatFits(in: CGSize(width: CGFloat.infinity, height: .infinity))))
         window.delegate = self
         window.setAccessibilityRole(.popover)
         self.host = host
@@ -136,6 +145,20 @@ final class KoanPanelCoordinator: NSObject, NSWindowDelegate {
             parent.makeKey()
             if let anchor { NSAccessibility.post(element: anchor, notification: .focusedUIElementChanged) }
         }
+    }
+
+    /// The window at the content's size, once the layout that measured it is
+    /// done; placing it again follows, as on any resize.
+    func fit(_ size: CGSize) {
+        DispatchQueue.main.async { [weak self] in
+            guard let window = self?.window else { return }
+            let content = Self.rounded(size)
+            if window.contentLayoutRect.size != content { window.setContentSize(content) }
+        }
+    }
+
+    private static func rounded(_ size: CGSize) -> NSSize {
+        NSSize(width: size.width.rounded(.up), height: size.height.rounded(.up))
     }
 
     nonisolated func windowDidResize(_ notification: Notification) {

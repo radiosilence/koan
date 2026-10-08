@@ -59,23 +59,32 @@ struct HeaderActions: View {
     }
 }
 
+extension VerticalAlignment {
+    private enum HeaderCentre: AlignmentID {
+        static func defaultValue(in d: ViewDimensions) -> CGFloat { d[VerticalAlignment.center] }
+    }
+
+    /// The middle of a header's play button (the default), and of its title's first line.
+    static let headerCentre = VerticalAlignment(HeaderCentre.self)
+}
+
 extension View {
-    /// A page's title beside its play button: the first line's capitals level
-    /// with the button's top edge, and any further line wrapping below. Used
-    /// in an `HStack(alignment: .top)`, whose plain `.top` would put the line
-    /// box there, a font's ascent above the capitals.
-    func headerTitleTop(_ role: KoanType, systemSize: CGFloat) -> some View {
-        modifier(HeaderTitleTop(role: role, systemSize: systemSize))
+    /// A page's title beside its play button: the middle of the first line's
+    /// capitals level with the button's middle, and any further line wrapping
+    /// below. The line box's own middle sits below the capitals' middle by the
+    /// font's descent, which is what a plain `.center` would get wrong.
+    func headerTitleCentre(_ role: KoanType, systemSize: CGFloat) -> some View {
+        modifier(HeaderTitleCentre(role: role, systemSize: systemSize))
     }
 }
 
-private struct HeaderTitleTop: ViewModifier {
+private struct HeaderTitleCentre: ViewModifier {
     let role: KoanType
     let systemSize: CGFloat
 
     func body(content: Content) -> some View {
-        let cap = capHeight
-        return content.alignmentGuide(.top) { $0[.firstTextBaseline] - cap }
+        let half = capHeight / 2
+        return content.alignmentGuide(.headerCentre) { $0[.firstTextBaseline] - half }
     }
 
     private var capHeight: CGFloat {

@@ -1,0 +1,1 @@
+- **Mac: choosing an IEM correction's target no longer crashes.** The Correction sheet fitted itself to its content, which changed with the chosen target and re-wrapped at each new width, so the sheet resized itself until the app ran out of stack. It now opens at a fixed size, can be resized by dragging, and remembers its size like the other EQ sheets.

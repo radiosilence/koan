@@ -1,0 +1,1 @@
+- **Recently deleted EQs are always listed.** Manage EQ shows the section whenever the server keeps deleted EQs, saying so when it holds none, so the feature can be found before it is needed.

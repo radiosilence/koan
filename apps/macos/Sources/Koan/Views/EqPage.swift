@@ -1013,7 +1013,10 @@ struct StagePicker: View {
             }
         }
         #if os(macOS)
-        .frame(minWidth: 420, minHeight: 460)
+        // A size of its own: fitted to its content, the sheet followed the
+        // chosen target's line, the rows wrapped to each width it took, and it
+        // resized itself without end.
+        .resizableWindow("StagePicker", min: CGSize(width: 420, height: 460), ideal: CGSize(width: 560, height: 640))
         #endif
     }
 

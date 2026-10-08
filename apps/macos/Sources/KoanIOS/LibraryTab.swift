@@ -40,9 +40,11 @@ struct LibraryTab: View {
             KoanLabel(title, icon: symbol, style: .row)
         }
         .listLink()
-        // Navigation is words alone in the theme, as the tabs are; the
-        // platform's look keeps its symbols.
+        // A television's lists are words alone, as its tabs are; elsewhere
+        // the glyph follows "Show icons".
+        #if os(tvOS)
         .environment(\.koanIcons, false)
+        #endif
     }
 }
 

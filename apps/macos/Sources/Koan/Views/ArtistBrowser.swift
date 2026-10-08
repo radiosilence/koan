@@ -297,7 +297,7 @@ struct ArtistDetailView: View {
                             .transition(.opacity)
                     }
                     VStack(alignment: .leading, spacing: 6) {
-                        HStack(alignment: .top, spacing: 14) {
+                        HStack(alignment: .headerCentre, spacing: 14) {
                             #if !os(tvOS)
                             if let artist {
                                 PlayableHeaderButton(
@@ -309,10 +309,10 @@ struct ArtistDetailView: View {
                                 // The album page's title size, on each platform.
                                 #if os(tvOS)
                                 .font(.role(.display, system: .system(size: 48, weight: .semibold)))
-                                .headerTitleTop(.display, systemSize: 48)
+                                .headerTitleCentre(.display, systemSize: 48)
                                 #else
                                 .font(.role(.title, system: .system(size: 26, weight: .semibold)))
-                                .headerTitleTop(.title, systemSize: 26)
+                                .headerTitleCentre(.title, systemSize: 26)
                                 #endif
                                 .fixedSize(horizontal: false, vertical: true)
                         }

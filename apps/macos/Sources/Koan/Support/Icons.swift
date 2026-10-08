@@ -131,7 +131,6 @@ enum Icon {
     static let display = "display"
     static let phone = "iphone"
     static let television = "appletv"
-    static let remote = "av.remote"
     static let cable = "cable.connector"
     static let headphones = "headphones"
     static let airplay = "airplayaudio"
