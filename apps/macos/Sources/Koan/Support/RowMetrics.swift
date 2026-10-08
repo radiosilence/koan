@@ -36,6 +36,9 @@ enum RowMetrics {
     static let art: CGFloat = 42
     static let sleeve: CGFloat = 32
     static let artPadding: CGFloat = 4
+    /// A phone's rows: on the page's 16pt edge, with little above and below.
+    /// The list's own insets leave a tracklist a few titles to a screen.
+    static let compactInsets = EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16)
     #endif
 }
 
