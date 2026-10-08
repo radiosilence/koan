@@ -676,9 +676,12 @@ impl Playlist {
     }
 
     /// Start a new pass when every row has played: a queue played out, then
-    /// played again from a row, or shuffled once it has. Without this, a
-    /// shuffled queue with nothing left unplayed would play the one row and
-    /// stop. Says whether it did.
+    /// played again from a row someone picked, or shuffled once it has.
+    /// Without this, a shuffled queue with nothing left unplayed would play
+    /// the one row and stop. Says whether it did.
+    ///
+    /// Only for what the listener asks for. A restore, a hand-off or a
+    /// track repeating sets the cursor too, and must leave the pass as it is.
     fn start_over_if_spent(&mut self) -> bool {
         let mut playable = self.items.iter().filter(|item| item.playable()).peekable();
         if playable.peek().is_none() || !playable.all(|item| item.played) {
@@ -1416,6 +1419,15 @@ impl SharedPlayerState {
     pub fn set_cursor(&self, id: Option<QueueItemId>) {
         let mut pl = self.playlist.write();
         pl.place_cursor(id);
+        drop(pl);
+        self.bump_version();
+    }
+
+    /// The listener picked `id` to play: the cursor goes there, and if every
+    /// row has played, a new pass starts from it.
+    pub fn pick(&self, id: QueueItemId) {
+        let mut pl = self.playlist.write();
+        pl.place_cursor(Some(id));
         let replayed = pl.start_over_if_spent();
         drop(pl);
         if replayed {
@@ -2553,7 +2565,7 @@ mod tests {
         state.advance_cursor_loadable();
         while play_on(&state).is_some() {}
 
-        state.set_cursor(Some(ids[2]));
+        state.pick(ids[2]);
         let mut heard = vec![ids[2]];
         while let Some(id) = play_on(&state) {
             heard.push(id);

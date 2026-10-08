@@ -1974,14 +1974,7 @@ impl Player {
         let Transport::Loaded(session) = &mut self.transport else {
             return;
         };
-        // The pass the decoder's step put this track in: by id alone, a row
-        // in this pass and the next is ambiguous.
-        let pass = session
-            .lookahead
-            .lock()
-            .iter()
-            .find(|step| step.boundary == playhead.boundary)
-            .map(|step| step.pass);
+        let pass = step_pass(&session.lookahead.lock(), playhead.boundary);
         if session.track.id == id {
             return;
         }
@@ -2284,7 +2277,10 @@ impl Player {
 
     fn apply_command(&mut self, cmd: PlayerCommand) {
         match cmd {
-            PlayerCommand::Play(id) => self.play(id),
+            PlayerCommand::Play(id) => {
+                self.shared_state.pick(id);
+                self.play(id);
+            }
             PlayerCommand::Cue {
                 id,
                 position_ms,
@@ -2848,6 +2844,17 @@ impl Player {
 
         (state, timeline, viz_snapshot, tx)
     }
+}
+
+/// The pass the decoder's step put the track at `boundary` in: by id alone, a
+/// row in this pass and the next is ambiguous. The last step at the boundary,
+/// since one whose file failed to open is followed by another taken for the
+/// same boundary.
+fn step_pass(steps: &[state::Lookahead], boundary: usize) -> Option<u64> {
+    steps
+        .iter()
+        .rfind(|step| step.boundary == boundary)
+        .map(|step| step.pass)
 }
 
 #[cfg(test)]
@@ -4105,6 +4112,85 @@ mod tests {
         assert_ne!(heard, given);
         heard.sort_by_key(|id| given.iter().position(|i| i == id));
         assert_eq!(heard, given, "each once");
+    }
+
+    #[test]
+    fn the_pass_of_a_track_is_the_step_that_opened_it() {
+        let step = |boundary, pass| state::Lookahead {
+            after: QueueItemId::new(),
+            next: None,
+            chosen: None,
+            wrapped: false,
+            boundary,
+            after_pass: 0,
+            pass,
+        };
+        // The first pick at boundary 1 failed to open; the decoder stepped
+        // again for the same boundary, into the next pass.
+        let steps = [step(0, 0), step(1, 0), step(1, 1), step(2, 1)];
+        assert_eq!(step_pass(&steps, 1), Some(1));
+        assert_eq!(step_pass(&steps, 3), None);
+    }
+
+    /// Every row of a shuffled queue played, the last under the cursor, as a
+    /// session saved at the end of a pass is.
+    fn played_out(player: &mut Player) -> Vec<QueueItemId> {
+        let ids = seed(player, 4);
+        player.process_command(PlayerCommand::SetShuffle(true));
+        let state = &player.shared_state;
+        state.advance_cursor_loadable();
+        loop {
+            state.mark_played(state.cursor().unwrap());
+            if state.advance_cursor_loadable().is_none() {
+                break;
+            }
+        }
+        ids
+    }
+
+    fn played_count(player: &Player) -> usize {
+        player.shared_state.derive_visible_queue().finished_count
+    }
+
+    #[test]
+    fn a_session_restored_at_the_end_of_a_pass_does_not_start_another() {
+        let mut player = Player::new();
+        let ids = played_out(&mut player);
+        let last = player.shared_state.cursor().unwrap();
+
+        player.process_command(PlayerCommand::Cue {
+            id: last,
+            position_ms: 0,
+            play: false,
+        });
+        assert_eq!(played_count(&player), ids.len() - 1, "the marks kept");
+        assert_eq!(
+            player.shared_state.advance_cursor_loadable(),
+            None,
+            "repeat off: the queue ends"
+        );
+    }
+
+    #[test]
+    fn a_track_repeating_keeps_the_marks() {
+        let mut player = Player::new();
+        let ids = played_out(&mut player);
+        player.process_command(PlayerCommand::SetRepeat(Repeat::One));
+        let last = player.shared_state.cursor().unwrap();
+        // Repeat one without gapless: the track is opened again by a cue.
+        player.cue(last, 0, Run::Paused);
+        assert_eq!(played_count(&player), ids.len() - 1);
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
+    fn picking_a_row_of_a_played_out_queue_starts_a_new_pass() {
+        let mut player = Player::new();
+        let ids = played_out(&mut player);
+        player.process_command(PlayerCommand::Play(ids[1]));
+        assert_eq!(played_count(&player), 0);
+        assert_eq!(player.shared_state.upcoming().len(), ids.len() - 1);
+        player.process_command(PlayerCommand::Stop);
     }
 
     fn replace(player: &mut Player, n: usize, mode: QueueMode) -> Vec<QueueItemId> {
