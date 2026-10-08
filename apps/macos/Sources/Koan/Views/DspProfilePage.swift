@@ -40,6 +40,10 @@ struct DspProfilePage: View {
     @State private var editsAtBefore: Int?
     /// What became of the last Save as Copy, where it needs saying.
     @State private var notice: String?
+    /// For an EQ with bands for each channel, the one being edited.
+    @State private var channel: UInt16 = 0
+    /// Going to one list from two that differ: which to keep is asked.
+    @State private var askingKeep = false
 
     var body: some View {
         KoanForm {
@@ -65,9 +69,15 @@ struct DspProfilePage: View {
             }
 
             if let d = detail {
+                if let layout = d.channels, !d.readOnly {
+                    channels(layout)
+                }
                 if let r = response {
                     Section {
-                        EqEditor(dsp: dsp, name: name, detail: d, response: r, parts: onCorrection(d, r))
+                        EqEditor(
+                            dsp: dsp, name: name, detail: d, response: r, parts: onCorrection(d, r),
+                            channel: d.channels?.stereo == true ? channel : nil
+                        )
                     }
                 }
                 #if !os(tvOS)
@@ -173,7 +183,7 @@ struct DspProfilePage: View {
         } message: {
             Text(copyTaken
                  ? "There is already an EQ called \(copyName.trimmingCharacters(in: .whitespaces))."
-                 : "The copy takes this EQ's place in the tuning, and this one goes back to how it was.")
+                 : "The copy takes this EQ's place in the filters, and this one goes back to how it was.")
         }
         .confirmationDialog("Reset \(name) to its file?", isPresented: $confirmingReset, titleVisibility: .visible) {
             Button("Reset", role: .destructive) {
@@ -182,6 +192,23 @@ struct DspProfilePage: View {
             }
         }
         #endif
+        .confirmationDialog(
+            "Keep which channel?",
+            isPresented: $askingKeep,
+            titleVisibility: .visible
+        ) {
+            Button("Keep Left") {
+                dsp.setStereo(name, false, keep: 0)
+                channel = 0
+            }
+            Button("Keep Right") {
+                dsp.setStereo(name, false, keep: 1)
+                channel = 0
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The two channels have different bands. One list plays on both, and the other channel's bands are dropped.")
+        }
         .confirmationDialog(
             "Delete \(name)?",
             isPresented: $confirmingDelete,
@@ -211,8 +238,8 @@ struct DspProfilePage: View {
             }
         } footer: {
             Text(d.canRevert
-                 ? "Save as Copy keeps this edit as an EQ of its own, in this one's place in the tuning, and puts this one back. Reset to File puts it back as \(d.source.first ?? "its file") had it."
-                 : "Save as Copy keeps this edit as an EQ of its own, in this one's place in the tuning, and puts this one back as it was when you opened it.")
+                 ? "Save as Copy keeps this edit as an EQ of its own, in this one's place in the filters, and puts this one back. Reset to File puts it back as \(d.source.first ?? "its file") had it."
+                 : "Save as Copy keeps this edit as an EQ of its own, in this one's place in the filters, and puts this one back as it was when you opened it.")
                 .koanText(.fine, .muted)
         }
     }
@@ -229,9 +256,44 @@ struct DspProfilePage: View {
             guard let copy = await dsp.saveAsCopy(from, as: new.isEmpty ? nil : new, before: kept, device: on) else { return }
             notice = copy.placed
                 ? nil
-                : "\(copy.name) is saved, but \(from) is not in \(on.map(dsp.label) ?? "the output")'s tuning, so the copy is not either. Add it on the EQ page."
+                : "\(copy.name) is saved, but \(from) is not in \(on.map(dsp.label) ?? "the output")'s filters, so the copy is not either. Add it on the EQ page."
             before = nil
             name = copy.name
+        }
+    }
+
+    /// One list of bands for both channels, or one each, and which is being
+    /// edited.
+    private func channels(_ layout: DspChannelLayout) -> some View {
+        Section {
+            KoanSegmentedPicker(
+                options: [("Mono", false), ("Stereo", true)],
+                selection: Binding(
+                    get: { layout.stereo },
+                    set: { stereo in
+                        guard stereo != layout.stereo else { return }
+                        if !stereo, layout.differ {
+                            askingKeep = true
+                        } else {
+                            dsp.setStereo(name, stereo)
+                            channel = 0
+                        }
+                    }
+                ),
+                title: "Channels"
+            )
+            if layout.stereo {
+                KoanSegmentedPicker(
+                    options: [("Left", UInt16(0)), ("Right", UInt16(1))],
+                    selection: $channel,
+                    title: "Editing"
+                )
+            }
+        } footer: {
+            Text(layout.stereo
+                 ? "Each channel has bands of its own. A mono recording plays the left channel's; an output with more than two channels has them on its front left and right alone."
+                 : "One list of bands for both channels. Stereo starts each channel with a copy of it.")
+                .koanText(.fine, .muted)
         }
     }
 
@@ -252,7 +314,10 @@ struct DspProfilePage: View {
             }
         }
 
-        BandTable(dsp: dsp, profile: name, bands: d.bands, readOnly: d.readOnly)
+        BandTable(
+            dsp: dsp, profile: name, bands: d.bands, readOnly: d.readOnly,
+            channel: d.channels?.stereo == true ? channel : nil
+        )
 
         Section {
             LabeledContent("Preamp", value: "\(String(format: "%.1f", d.preampDb)) dB")

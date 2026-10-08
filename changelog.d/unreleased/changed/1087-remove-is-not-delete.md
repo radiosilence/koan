@@ -1,0 +1,1 @@
+- **Removing an EQ never deletes it.** Taking an EQ out of a device's filters or a preset's layers says Remove everywhere, by swipe on iPhone and iPad, and on the Mac by right-click or ⌫; it leaves the EQ itself alone. Only Delete… in Manage EQ deletes one, after asking. What was called a device's tuning is now its filters.

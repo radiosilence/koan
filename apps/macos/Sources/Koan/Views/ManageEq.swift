@@ -173,7 +173,7 @@ struct ManageEq: View {
                 Spacer()
                 #if !os(tvOS)
                 if let device, group.role == .tuning {
-                    Button("Add All to Tuning") { addToTuning(group.members, device) }
+                    Button("Add All to Filters") { addToTuning(group.members, device) }
                         .koanButton(.link)
                 }
                 Menu("Options") { actions(group, o) }
@@ -236,7 +236,7 @@ struct ManageEq: View {
             if p.preset {
                 Button("Use on \(dsp.label(device))") { dsp.applyPreset(p.name, to: device) }
             } else if p.role == .tuning, p.rates.isEmpty, !chain.contains(where: { $0.name == p.name }) {
-                Button("Add to Tuning") { addToTuning([p.name], device) }
+                Button("Add to Filters") { addToTuning([p.name], device) }
             } else if p.role != .tuning, active != p.name {
                 Button("Use as Correction") { dsp.assign(p.name, to: device) }
             }
