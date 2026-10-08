@@ -730,8 +730,9 @@ private struct RemoteSettings: View {
 
 // MARK: - Account
 
-/// The signed-in account's own keys to the server: its password, and the API
-/// keys apps sign in with. Each where the server has it.
+/// The signed-in account's own keys to the server: its password, the API
+/// keys apps sign in with, and app passwords for apps that cannot use a key.
+/// Each where the server has it.
 private struct AccountSettings: View {
     @Bindable var model: SettingsModel
     @Environment(EngineMirror.self) private var mirror
@@ -777,21 +778,12 @@ private struct AccountSettings: View {
             }
             if mirror.offers(ApiKeysSettings.extensionName) {
                 ApiKeysSettings()
-                // Made only on the web UI, which every koan server serves.
-                #if !os(tvOS)
-                if let account = URL(string: model.settings.remoteUrl)?.appending(path: "account") {
-                    Section {
-                        Link("Make an App Password…", destination: account)
-                            .koanButton(.link)
-                    } header: {
-                        KoanSectionHeader("App passwords")
-                    } footer: {
-                        Text("For Subsonic apps that sign in only with a token and salt, and so cannot use an API key. Made and revoked on the server's Account page.")
-                            .koanText(.fine, .muted)
-                    }
-                }
-                #endif
             }
+            #if !os(tvOS)
+            if AppPasswordsSettings.shown(mirror) {
+                AppPasswordsSettings()
+            }
+            #endif
         }
         .koanSheet()
     }

@@ -316,7 +316,7 @@ A socket is authenticated once, when it opens, so `/graphql/ws` and an app's lin
 
 - **API key** (`apiKey=`) — preferred. A key acts as the account that made it, at that account's current role, until revoked; it is sent without `u`, and sending it with `u` or any other credential is error 43. Keys are 32 random bytes and only `sha256(key)` is stored, so a key is shown once, when it is made.
 - **Account password** (`p=`, plain or `enc:` hex) — checked against the account's argon2 hash; a successful check is remembered for ten minutes. argon2 is expensive by design, so at most one check per core (2 to 8) runs at once and a request arriving when all are busy gets error 0, "server busy", rather than waiting. The protocol sends the password with every request, so use it only over HTTPS.
-- **App password** (`u` + `t` + `s`, or `p=`) — for clients that only sign in with Subsonic token auth. Made per app on the web UI's Account page, which the apps open from Settings → Account → **Make an App Password…**; shown once, and usable until revoked; changing the account's password revokes them all.
+- **App password** (`u` + `t` + `s`, or `p=`) — for clients that only sign in with Subsonic token auth. Made per app on the web UI's Account page or in the apps under Settings → Account → App passwords, shown once, and usable until revoked; changing the account's password revokes them all.
 - **Shared secret** (`u` + `t` + `s`, or `p=`) — the optional `[subsonic]` secret and its username, acting as `user`, for clients that have no account.
 
 Which credential a client should use:
@@ -352,6 +352,15 @@ when it was last used, never the key itself. A new key is shown once. Each
 device signed in to kōan has a key of its own, so revoking one is how a lost
 phone is cut off; the apps mark their own key and leave revoking it to
 **Sign Out**.
+
+App passwords are managed the same way, where the server lists the
+`koanAppPasswords` extension: `/rest/koanAppPasswords` lists the account's own,
+and `koanCreateAppPassword` (with `name`) and `koanRevokeAppPassword` (with
+`id`) make and revoke one by POST. They take the same sign-ins as API keys, so
+an app password cannot list, make or revoke app passwords, its own included.
+An account sees and revokes only its own. The server lists the extension only
+when it has the signing key app passwords are sealed under; the apps show the
+section only on a server that lists it, and not while offline.
 
 A koan app that joined by invite keeps its key as `remote.api_key` in `config.local.toml`, and signs in with it ahead of any password, `KOAN_REMOTE__PASSWORD` included. Sign out to go back to a password. `readonly` accounts, and their keys, get error 50 from every endpoint that writes.
 

@@ -876,6 +876,29 @@ impl SubsonicClient {
         Ok(())
     }
 
+    // -- App passwords: koan servers offering `koanAppPasswords`, the account's own --
+
+    pub fn koan_app_passwords(&self) -> Result<Vec<KoanAppPassword>, SubsonicError> {
+        Ok(self
+            .get("koanAppPasswords")?
+            .app_passwords
+            .map(|p| p.app_password)
+            .unwrap_or_default())
+    }
+
+    /// A new app password named `name`, with the password itself, which is
+    /// never shown again.
+    pub fn koan_create_app_password(&self, name: &str) -> Result<KoanAppPassword, SubsonicError> {
+        self.post_with_params("koanCreateAppPassword", &[("name", name)])?
+            .app_password
+            .ok_or(SubsonicError::BadResponse)
+    }
+
+    pub fn koan_revoke_app_password(&self, id: i64) -> Result<(), SubsonicError> {
+        self.post_with_params("koanRevokeAppPassword", &[("id", &id.to_string())])?;
+        Ok(())
+    }
+
     pub fn koan_set_user_role(&self, username: &str, role: &str) -> Result<(), SubsonicError> {
         self.get_with_params("koanSetUserRole", &[("username", username), ("role", role)])?;
         Ok(())
@@ -1163,6 +1186,8 @@ struct SubsonicResponse {
     users: Option<KoanUsers>,
     api_keys: Option<KoanApiKeys>,
     api_key: Option<KoanApiKey>,
+    app_passwords: Option<KoanAppPasswords>,
+    app_password: Option<KoanAppPassword>,
     mcp: Option<KoanMcp>,
     invite: Option<KoanInvite>,
     join: Option<KoanJoined>,
@@ -1348,6 +1373,26 @@ pub struct KoanApiKey {
     #[serde(default)]
     pub current: bool,
     pub key: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct KoanAppPasswords {
+    #[serde(default)]
+    app_password: Vec<KoanAppPassword>,
+}
+
+/// One of the account's app passwords, as `koanAppPasswords` lists it;
+/// `password` is there only in the answer to making one.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KoanAppPassword {
+    pub id: i64,
+    pub name: String,
+    /// ISO 8601.
+    pub created: Option<String>,
+    pub last_used: Option<String>,
+    pub password: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2138,6 +2183,31 @@ mod tests {
         let album: SubsonicAlbumFull = serde_json::from_str(json).unwrap();
         assert_eq!(album.music_brainz_id.as_deref(), Some("mb-1"));
         assert_eq!(album.sort_name, None);
+    }
+
+    #[test]
+    fn app_passwords_read_listed_and_made() {
+        let listed = response(
+            r#"{"subsonic-response": {"status": "ok", "appPasswords": {"appPassword": [
+                {"id": 3, "name": "Arpeggi", "created": "2026-10-08T09:00:00Z"},
+                {"id": 4, "name": "Tempo", "created": "2026-10-08T10:00:00Z", "lastUsed": "2026-10-08T11:00:00Z"}
+            ]}}}"#,
+        );
+        let listed = listed.app_passwords.unwrap().app_password;
+        assert_eq!(listed.len(), 2);
+        assert_eq!((listed[0].id, listed[0].name.as_str()), (3, "Arpeggi"));
+        assert_eq!(listed[0].last_used, None);
+        assert_eq!(listed[1].last_used.as_deref(), Some("2026-10-08T11:00:00Z"));
+        assert!(listed.iter().all(|p| p.password.is_none()));
+
+        let none = response(r#"{"subsonic-response": {"status": "ok", "appPasswords": {}}}"#);
+        assert!(none.app_passwords.unwrap().app_password.is_empty());
+
+        let made = response(
+            r#"{"subsonic-response": {"status": "ok", "appPassword": {"id": 5, "name": "Feishin", "password": "s3cret"}}}"#,
+        );
+        let made = made.app_password.unwrap();
+        assert_eq!((made.id, made.password.as_deref()), (5, Some("s3cret")));
     }
 
     #[test]

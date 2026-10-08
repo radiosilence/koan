@@ -4194,6 +4194,11 @@ async fn get_open_subsonic_extensions(
     } else {
         &[]
     };
+    let app_passwords: &[(&str, &[i64])] = if state.app_key.is_some() {
+        &[(koan_core::remote::profile::APP_PASSWORDS, &[1])]
+    } else {
+        &[]
+    };
     SubsonicResponse::ok(params.wants_json())
         .list(
             "openSubsonicExtensions",
@@ -4201,6 +4206,7 @@ async fn get_open_subsonic_extensions(
                 .iter()
                 .chain(transcode)
                 .chain(mcp)
+                .chain(app_passwords)
                 .map(|(name, versions)| {
                     XmlNode::new("openSubsonicExtensions")
                         .attr("name", name)
@@ -5154,6 +5160,106 @@ async fn koan_revoke_api_key(
     .await
 }
 
+/// The longest name an app password may have, as the web UI's Account page
+/// allows.
+const MAX_APP_PASSWORD_NAME: usize = 100;
+
+/// The key app passwords are sealed under, which a server without a signing
+/// key does not have; it then offers none.
+fn app_password_key(state: &AppState) -> Result<&[u8; 32], SubsonicError> {
+    state
+        .app_key
+        .as_ref()
+        .ok_or_else(|| SubsonicError::not_found("App passwords"))
+}
+
+/// The caller's app passwords. Never the passwords themselves.
+async fn koan_app_passwords(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        respond_db_caller(&state, &params.auth(), Role::Readonly, |db, caller, b| {
+            caller.may_manage_credentials()?;
+            app_password_key(&state)?;
+            let passwords = queries::app_passwords::list_app_passwords(&db.conn, caller.user_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b.child(
+                XmlNode::new("appPasswords")
+                    .list("appPassword", passwords.iter().map(app_password_node)),
+            ))
+        })
+    })
+    .await
+}
+
+fn app_password_node(row: &queries::app_passwords::AppPasswordRow) -> XmlNode {
+    XmlNode::new("appPassword")
+        .attr_int("id", row.id)
+        .attr("name", &row.name)
+        .attr("created", &iso(row.created_at))
+        .attr_opt("lastUsed", row.last_used_at.map(iso).as_deref())
+}
+
+/// Make an app password named `name` for the caller, as the web UI's Account
+/// page does. The answer carries the password, once.
+async fn koan_create_app_password(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        respond_db_caller(&state, &params.auth(), Role::Readonly, |db, caller, b| {
+            caller.may_manage_credentials()?;
+            let key = app_password_key(&state)?;
+            let name = params
+                .get("name")
+                .map(str::trim)
+                .ok_or_else(|| SubsonicError::missing_param("name"))?;
+            if name.is_empty() || name.chars().count() > MAX_APP_PASSWORD_NAME {
+                return Err(SubsonicError::bad_param("name"));
+            }
+            let (id, password) =
+                queries::app_passwords::create_app_password(&db.conn, key, caller.user_id, name)
+                    .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b.child(
+                XmlNode::new("appPassword")
+                    .attr_int("id", id)
+                    .attr("name", name)
+                    .attr("password", &password),
+            ))
+        })
+    })
+    .await
+}
+
+/// Revoke one of the caller's app passwords, by `id`.
+async fn koan_revoke_app_password(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        respond_db_caller(&state, &params.auth(), Role::Readonly, |db, caller, b| {
+            caller.may_manage_credentials()?;
+            app_password_key(&state)?;
+            let id: i64 = params
+                .get("id")
+                .ok_or_else(|| SubsonicError::missing_param("id"))?
+                .parse()
+                .map_err(|_| SubsonicError::bad_param("id"))?;
+            if !queries::app_passwords::revoke_app_password(&db.conn, id, caller.user_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+            {
+                return Err(SubsonicError::not_found("App password"));
+            }
+            Ok(b)
+        })
+    })
+    .await
+}
+
 /// Revoke the API key the request is signed in with: for an app giving up a
 /// key it no longer holds, such as the one a join replaced.
 async fn koan_revoke_key(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
@@ -5869,6 +5975,18 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         .route("/rest/koanMcp", get(koan_mcp).post(koan_mcp))
         .route("/rest/koanCreateApiKey", post(koan_create_api_key))
         .route("/rest/koanRevokeApiKey", post(koan_revoke_api_key))
+        .route(
+            "/rest/koanAppPasswords",
+            get(koan_app_passwords).post(koan_app_passwords),
+        )
+        .route(
+            "/rest/koanCreateAppPassword",
+            post(koan_create_app_password),
+        )
+        .route(
+            "/rest/koanRevokeAppPassword",
+            post(koan_revoke_app_password),
+        )
         .route("/rest/koanSetUserPassword", post(koan_set_user_password))
         .route("/rest/koanJoin", get(koan_join).post(koan_join))
         .route("/rest/koanSignIn", get(koan_sign_in).post(koan_sign_in))
@@ -7683,6 +7801,141 @@ mod tests {
             list().await["apiKeys"]["apiKey"].as_array().unwrap().len(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn an_account_lists_makes_and_revokes_its_own_app_passwords() {
+        let (state, _dir) = test_state();
+        let phone = api_key(&state, "mate");
+        let auth = format!("apiKey={phone}&v=1.16.1&c=test&f=json");
+        let json = |body: String| -> serde_json::Value {
+            serde_json::from_str::<serde_json::Value>(&body).unwrap()["subsonic-response"].clone()
+        };
+        let post = |path: &str, form: String| {
+            let state = state.clone();
+            let path = path.to_owned();
+            async move { json(post_form(build_test_router(state), &path, &form).await) }
+        };
+        let ping = |query: String| {
+            let state = state.clone();
+            async move {
+                get_response(
+                    build_test_router(state),
+                    &format!("/rest/ping?{query}&v=1.16.1&c=test"),
+                )
+                .await
+                .1
+            }
+        };
+
+        let extensions = get_response(
+            build_test_router(state.clone()),
+            "/rest/getOpenSubsonicExtensions?f=json",
+        )
+        .await
+        .1;
+        assert!(extensions.contains("koanAppPasswords"), "{extensions}");
+
+        let made = post(
+            "/rest/koanCreateAppPassword",
+            format!("name=Arpeggi&{auth}"),
+        )
+        .await;
+        let password = made["appPassword"]["password"].as_str().unwrap().to_owned();
+        let id = made["appPassword"]["id"].as_i64().unwrap();
+        assert_eq!(made["appPassword"]["name"], "Arpeggi", "{made}");
+        let salt = "c0ffee";
+        let token = format!("{:x}", md5::compute(format!("{password}{salt}")));
+        assert!(
+            ping(format!("u=mate&t={token}&s={salt}"))
+                .await
+                .contains("status=\"ok\"")
+        );
+
+        // Listed without the password; a name is required.
+        let v = post("/rest/koanAppPasswords", auth.clone()).await;
+        let listed = v["appPasswords"]["appPassword"].as_array().unwrap();
+        assert_eq!(listed.len(), 1, "{v}");
+        assert_eq!(listed[0]["id"], id);
+        assert!(listed[0]["created"].as_str().unwrap().ends_with('Z'), "{v}");
+        assert!(!v.to_string().contains(&password), "{v}");
+        let v = post("/rest/koanCreateAppPassword", format!("name=%20&{auth}")).await;
+        assert_eq!(v["error"]["code"], 0, "{v}");
+
+        // Another account's is neither listed nor revocable.
+        let db = state.open_db().unwrap();
+        let owner = queries::auth::get_user_by_username(&db.conn, "owner")
+            .unwrap()
+            .unwrap();
+        let (theirs, _) = queries::app_passwords::create_app_password(
+            &db.conn,
+            state.app_key.as_ref().unwrap(),
+            owner.id,
+            "theirs",
+        )
+        .unwrap();
+        let v = post("/rest/koanAppPasswords", auth.clone()).await;
+        assert_eq!(
+            v["appPasswords"]["appPassword"].as_array().unwrap().len(),
+            1,
+            "{v}"
+        );
+        let v = post("/rest/koanRevokeAppPassword", format!("id={theirs}&{auth}")).await;
+        assert_eq!(v["error"]["code"], 70, "{v}");
+        assert_eq!(
+            queries::app_passwords::list_app_passwords(&db.conn, owner.id)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // An app password manages none, its own included.
+        let as_app_password = format!("u=mate&p={password}&v=1.16.1&c=test&f=json");
+        for (path, form) in [
+            ("/rest/koanAppPasswords", as_app_password.clone()),
+            (
+                "/rest/koanCreateAppPassword",
+                format!("name=x&{as_app_password}"),
+            ),
+            (
+                "/rest/koanRevokeAppPassword",
+                format!("id={id}&{as_app_password}"),
+            ),
+        ] {
+            let v = post(path, form).await;
+            assert_eq!(v["error"]["code"], 50, "{path}: {v}");
+        }
+
+        let v = post("/rest/koanRevokeAppPassword", format!("id={id}&{auth}")).await;
+        assert_eq!(v["status"], "ok", "{v}");
+        assert!(
+            !ping(format!("u=mate&t={token}&s={salt}"))
+                .await
+                .contains("status=\"ok\"")
+        );
+    }
+
+    /// A server that cannot seal app passwords does not offer them.
+    #[tokio::test]
+    async fn app_passwords_are_offered_only_with_a_sealing_key() {
+        let (state, _dir) = test_state();
+        let mut inner = Arc::try_unwrap(state).ok().unwrap();
+        inner.app_key = None;
+        let state = Arc::new(inner);
+        let body = get_response(
+            build_test_router(state.clone()),
+            "/rest/getOpenSubsonicExtensions?f=json",
+        )
+        .await
+        .1;
+        assert!(!body.contains("koanAppPasswords"), "{body}");
+        let body = post_form(
+            build_test_router(state),
+            "/rest/koanAppPasswords",
+            "u=mate&p=hunter22&v=1.16.1&c=test&f=json",
+        )
+        .await;
+        assert!(body.contains("\"code\":70"), "{body}");
     }
 
     /// Assistants are offered only where the server knows the address it is

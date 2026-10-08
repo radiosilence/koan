@@ -2192,6 +2192,24 @@ pub struct NewApiKey {
     pub key: String,
 }
 
+/// One of the signed-in account's app passwords, for Subsonic apps that sign
+/// in only with a token. Never the password.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct AppPasswordInfo {
+    pub id: i64,
+    pub name: String,
+    /// Unix seconds.
+    pub created: Option<i64>,
+    pub last_used: Option<i64>,
+}
+
+/// An app password just made: the one time it is seen.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct NewAppPassword {
+    pub name: String,
+    pub password: String,
+}
+
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct ServerAccount {
     pub username: String,

@@ -1,1 +1,0 @@
-- **App passwords from the apps.** Settings → Account on the Mac and iPhone opens the server's Account page, where app passwords for token-only Subsonic clients are made; before, nothing in the apps led there.
