@@ -116,8 +116,14 @@ impl Database {
     }
 
     /// Open the default database at the standard data directory.
+    ///
+    /// What every front end opens at startup, so it is also where a library
+    /// indexed from `~/Music` while that was the default folder gets the
+    /// folder written into its config, before anything reads the folders.
     pub fn open_default() -> Result<Self, DbError> {
-        Self::open(&config::db_path())
+        let db = Self::open(&config::db_path())?;
+        crate::helpers::keep_former_default_folder(&db);
+        Ok(db)
     }
 
     /// Refresh the planner's statistics.

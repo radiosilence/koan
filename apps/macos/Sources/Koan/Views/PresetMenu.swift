@@ -55,6 +55,10 @@ struct Presets {
 /// The label is the caller's, frame and all: a chip, a glyph or a label. The
 /// menu adds no button of its own around it (`koanMenuButton`), since a chip
 /// inside a bordered button draws two outlines.
+///
+/// On a phone in the theme the choices rise in the theme's tray, as the
+/// output and control choices beside it do: a `UIMenu` is rounded glass in
+/// the system's type, which no app can draw.
 struct PresetMenu<Label: View>: View {
     @Environment(AppState.self) private var app
     let presets: Presets
@@ -65,9 +69,33 @@ struct PresetMenu<Label: View>: View {
     @Environment(\.openSettings) private var openSettings
     #elseif os(iOS)
     @State private var editing = false
+    @State private var choosing = false
+    /// Edit… was chosen in the tray: the EQ opens once the tray is gone.
+    @State private var editAfter = false
     #endif
 
     var body: some View {
+        #if os(iOS)
+        if KoanTheme.isOn {
+            Button { choosing = true } label: { label() }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Preset: \(presets.summary)")
+                .tray(isPresented: $choosing, onDismiss: {
+                    if editAfter {
+                        editAfter = false
+                        editing = true
+                    }
+                }) { tray }
+                .sheet(isPresented: $editing) { editor }
+        } else {
+            menu
+        }
+        #else
+        menu
+        #endif
+    }
+
+    private var menu: some View {
         KoanMenu {
             if let title {
                 Section(title) { choices }
@@ -85,20 +113,84 @@ struct PresetMenu<Label: View>: View {
         }
         .accessibilityLabel("Preset: \(presets.summary)")
         #if os(iOS)
-        .sheet(isPresented: $editing) {
-            NavigationStack {
-                EqSettings(device: presets.device)
-                    .navigationTitle(KoanTheme.label("EQ"))
-                    .toolbar {
-                        KoanSheetAction(placement: .confirmationAction) {
-                            Button("Done") { editing = false }
-                        }
-                    }
-            }
-            .koanSheet()
-        }
+        .sheet(isPresented: $editing) { editor }
         #endif
     }
+
+    #if os(iOS)
+    private var editor: some View {
+        NavigationStack {
+            EqSettings(device: presets.device)
+                .navigationTitle(KoanTheme.label("EQ"))
+                .toolbar {
+                    KoanSheetAction(placement: .confirmationAction) {
+                        Button("Done") { editing = false }
+                    }
+                }
+        }
+        .koanSheet()
+    }
+
+    /// The theme's tray of choices: what it is for, the options with the
+    /// chosen one in the accent and ticked, and Edit… under a rule.
+    private var tray: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Preset").koanCase()
+                    .font(.role(.body, system: .headline))
+                if let title {
+                    Text(title)
+                        .koanText(.fine, .muted)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+            .padding(.bottom, 4)
+            ForEach(options, id: \.tag) { option in
+                let chosen = option.tag == selected
+                Button {
+                    select(option.tag)
+                    choosing = false
+                } label: {
+                    HStack(spacing: KoanTheme.Space.m) {
+                        Text(option.label)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        if chosen {
+                            KoanIcon(Icon.check)
+                        }
+                    }
+                    .foregroundStyle(chosen ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.koanInk))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(chosen ? .isSelected : [])
+            }
+            if presets.device != nil {
+                Button {
+                    editAfter = true
+                    choosing = false
+                } label: {
+                    HStack(spacing: KoanTheme.Space.m) {
+                        KoanIcon(Icon.filters)
+                            .foregroundStyle(Color.koanMuted)
+                        Text("Edit…")
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .koanRule(.top)
+                .padding(.top, KoanTheme.Space.s)
+            }
+        }
+        .padding(.bottom, 6)
+    }
+    #endif
 
     private func edit(_ device: String) {
         #if os(macOS)

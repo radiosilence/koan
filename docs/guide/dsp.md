@@ -319,7 +319,9 @@ at: the curve is moved by the preamp, and a dashed line at that level is
 labelled with it ("preamp −5.0 dB"). A profile whose file states its gain as a
 filter, such as a CamillaDSP `Gain`, draws the same as one that states it as a
 preamp, so the two read alike. On the Mac and iPhone the graph stays at the top
-of the page while the bands scroll under it. The curve is the left
+of the page while the bands scroll under it. On iPhone it goes short while a
+band's figure is typed, so the row stays in view above the keyboard, whose bar
+steps to the previous or next figure and has Done to keep the value. The curve is the left
 channel's; where the right channel plays something else, it is drawn beside
 it. Each parametric band is drawn faintly behind the total. For a
 correction from AutoEQ, the Measured view draws the device as measured, the
@@ -427,9 +429,9 @@ keeps a copy of a deleted EQ, its files included, for thirty days after it
 records the deletion. An EQ elsewhere that played a deleted one reports it
 missing. Manage EQ on the Mac, iPhone and iPad lists deleted EQs under
 **Recently deleted**, with the days each has left, and **Restore** brings
-one back on every device as a new edit. The section is there only when
-something has been deleted and the server offers it (`koanDspDeleted`: older
-servers and Navidrome do not), and not while offline. An EQ whose files
+one back on every device as a new edit. The section is there whenever the
+server offers it (`koanDspDeleted`: older servers and Navidrome do not),
+saying so when nothing has been deleted, and not while offline. An EQ whose files
 never reached the server before it was deleted cannot be restored. The same
 EQ made on two devices before either synced, such as one headphone
 installed from AutoEQ on both, becomes one EQ. "The same" is what they

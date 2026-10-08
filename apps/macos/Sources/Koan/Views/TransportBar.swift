@@ -259,6 +259,7 @@ struct TransportBar: View {
             if !player.isControllingAnother && player.renderer == nil {
                 AirPlayButton()
                     .frame(width: 22, height: 22)
+                    .koanRoutePicker(Icon.airplay)
                     .help("AirPlay")
             }
             #endif
@@ -642,6 +643,18 @@ struct SleepButton: View {
 
 extension Double {
     func clamped() -> Double { min(1, max(0, self)) }
+}
+
+extension View {
+    /// Draws the kōan glyph over the system route picker, which stays in place
+    /// beneath it, almost clear, to take the click and show its own popover.
+    @ViewBuilder func koanRoutePicker(_ symbol: String) -> some View {
+        if KoanTheme.isOn, KoanGlyph.forSymbol(symbol) != nil {
+            opacity(0.02).overlay { KoanIcon(symbol).allowsHitTesting(false) }
+        } else {
+            self
+        }
+    }
 }
 
 #if os(macOS)

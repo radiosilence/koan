@@ -36,15 +36,14 @@ struct SourceBadges: View {
                 // Visible enough to be read at a glance down a list.
                 KoanIcon(onDisk ? Icon.cloudKept : Icon.cloud)
                     .foregroundStyle(onDisk ? KoanTheme.style(.muted, system: .secondary) : KoanTheme.style(.muted, system: .tertiary))
-                    .help(onDisk ? "On your server, downloaded" : "On your server — downloads on play")
+                    .help(onDisk ? "On your server, downloaded" : "On your server, downloads on play")
             } else if onDisk {
                 KoanIcon(Icon.onDevice)
                     .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     .help("Local file")
             }
         }
-        .font(.role(.fine, system: .caption2))
-        .imageScale(.small)
+        .font(.system(size: 11))
         // Fixed, so a row does not shift as the mark changes under it — every
         // state has to occupy the same space as every other.
         .frame(width: 14, height: 14)

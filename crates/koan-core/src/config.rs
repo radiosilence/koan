@@ -135,10 +135,24 @@ impl Default for PushConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// The folders koan indexes. None until someone chooses one: looking in
+/// `~/Music` unasked reads the Apple Music library inside it, and macOS asks
+/// the person whether koan may.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LibraryConfig {
     pub folders: Vec<PathBuf>,
+}
+
+/// The folder koan used to index when none was chosen, `~/Music`. Kept so a
+/// library built from it can be written into the config before the default
+/// it came from goes (`helpers::keep_former_default_folder`).
+pub fn former_default_folder() -> PathBuf {
+    dirs::audio_dir().unwrap_or_else(|| {
+        dirs::home_dir()
+            .map(|h| h.join("Music"))
+            .unwrap_or_else(|| PathBuf::from("/Music"))
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -232,19 +246,6 @@ pub struct RemoteConfig {
     /// default: between kōan devices the queue already moves live over the
     /// link. Per device.
     pub play_queue: bool,
-}
-
-impl Default for LibraryConfig {
-    fn default() -> Self {
-        let music_dir = dirs::audio_dir().unwrap_or_else(|| {
-            dirs::home_dir()
-                .map(|h| h.join("Music"))
-                .unwrap_or_else(|| PathBuf::from("/Music"))
-        });
-        Self {
-            folders: vec![music_dir],
-        }
-    }
 }
 
 impl Default for PlaybackConfig {
@@ -1542,6 +1543,27 @@ impl Config {
             .merge(Toml::file(config_local_file_path()))
             .extract()
             .map_err(|e| ConfigError::Figment(Box::new(e)))
+    }
+
+    /// Whether either config file sets the setting at a dotted path, as
+    /// opposed to it taking its default.
+    pub fn set_in_files(path: &str) -> bool {
+        [config_file_path(), config_local_file_path()]
+            .iter()
+            .any(|file| {
+                let Ok(doc) = read_document(file) else {
+                    // Unreadable is not unset: assume it says something.
+                    return true;
+                };
+                let mut item = doc.as_item();
+                for key in path.split('.') {
+                    match item.get(key) {
+                        Some(next) => item = next,
+                        None => return false,
+                    }
+                }
+                true
+            })
     }
 
     /// Apply a mutation and write each changed setting to the file that owns it.

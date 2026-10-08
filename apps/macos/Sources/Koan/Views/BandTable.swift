@@ -13,6 +13,9 @@ struct BandTable: View {
     /// For an EQ with bands for each channel, the channel shown: its bands
     /// alone, and a band added goes on it.
     var channel: UInt16?
+    /// The figure being typed, kept by the page: it shortens the graph and
+    /// steps between fields from the keyboard.
+    var focus: FocusState<BandField?>.Binding
 
     /// The band types that can be chosen, by the name the config uses: the
     /// short form the row shows and the name the menu gives.
@@ -46,9 +49,21 @@ struct BandTable: View {
 
     /// The rows shown, each with its index among all the filters.
     private var shown: [(index: Int, band: DspBand)] {
+        Self.shown(bands, channel: channel)
+    }
+
+    private static func shown(_ bands: [DspBand], channel: UInt16?) -> [(index: Int, band: DspBand)] {
         bands.enumerated()
             .filter { _, b in channel.map { b.channels.isEmpty || b.channels.contains($0) } ?? true }
             .map { (index: $0.offset, band: $0.element) }
+    }
+
+    /// Every figure that can be typed into, in the order the rows show them.
+    static func fields(_ bands: [DspBand], channel: UInt16?, readOnly: Bool) -> [BandField] {
+        guard !readOnly else { return [] }
+        return shown(bands, channel: channel)
+            .filter { editable($0.band.kind) }
+            .flatMap { row in BandField.Part.allCases.map { BandField(index: row.index, part: $0) } }
     }
 
     var body: some View {
@@ -68,7 +83,8 @@ struct BandTable: View {
                 let (index, band) = row
                 Group {
                     if Self.editable(band.kind), !readOnly {
-                        BandEditor(dsp: dsp, profile: profile, index: index, number: position + 1, band: band)
+                        BandEditor(dsp: dsp, profile: profile, index: index, number: position + 1, band: band, focus: focus)
+                            .id(BandField.row(index))
                     } else if band.kind == "graphic", !readOnly {
                         #if os(tvOS)
                         BandRow(band: band)
@@ -118,6 +134,18 @@ struct BandTable: View {
     }
 }
 
+/// A figure of a band's row: the band's index among all the filters, and
+/// which of its three.
+struct BandField: Hashable {
+    let index: Int
+    let part: Part
+
+    enum Part: CaseIterable { case freq, gain, q }
+
+    /// What a band's row is known by, to scroll it into view.
+    static func row(_ index: Int) -> String { "band-\(index)" }
+}
+
 /// One band's row, each field committed when it is left or returned.
 private struct BandEditor: View {
     let dsp: DspModel
@@ -126,14 +154,12 @@ private struct BandEditor: View {
     /// Its place in the list shown.
     let number: Int
     let band: DspBand
+    var focus: FocusState<BandField?>.Binding
 
     @State private var kind = ""
     @State private var freq = 0.0
     @State private var gain = 0.0
     @State private var q = 0.0
-    @FocusState private var focused: Field?
-
-    enum Field { case freq, gain, q }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -155,12 +181,11 @@ private struct BandEditor: View {
             .tint(KoanTheme.style(.ink, system: .tint))
             .accessibilityLabel(BandTable.kinds.first { $0.id == kind }?.name ?? kind)
             .frame(maxWidth: .infinity, alignment: .leading)
-            NumberField(value: $freq, focus: $focused, name: .freq, width: 72, digits: 0, commit: commit)
-            NumberField(value: $gain, focus: $focused, name: .gain, width: 56, digits: 1, commit: commit)
-            NumberField(value: $q, focus: $focused, name: .q, width: 50, digits: 2, commit: commit)
+            NumberField(value: $freq, focus: focus, name: BandField(index: index, part: .freq), width: 72, digits: 0, label: "Band \(number) frequency", commit: commit)
+            NumberField(value: $gain, focus: focus, name: BandField(index: index, part: .gain), width: 56, digits: 1, label: "Band \(number) gain", commit: commit)
+            NumberField(value: $q, focus: focus, name: BandField(index: index, part: .q), width: 50, digits: 2, label: "Band \(number) Q", commit: commit)
         }
-        .onChange(of: focused) { was, _ in if was != nil { commit() } }
-        .decimalPadDone($focused)
+        .onChange(of: focus.wrappedValue) { was, _ in if was?.index == index { commit() } }
         .onAppear(perform: read)
         .onChange(of: band.freq) { _, _ in read() }
         .onChange(of: band.gainDb) { _, _ in read() }
@@ -186,11 +211,14 @@ private struct NumberField<Field: Hashable>: View {
     let name: Field
     let width: CGFloat
     let digits: Int
+    /// What VoiceOver reads it as: the field has no title of its own.
+    let label: String
     let commit: () -> Void
 
     var body: some View {
         TextField("", value: $value, format: .number.precision(.fractionLength(0 ... digits)))
             .focused(focus, equals: name)
+            .accessibilityLabel(label)
             .multilineTextAlignment(.trailing)
             .monospacedDigit()
             .frame(width: width)
@@ -207,24 +235,36 @@ private struct NumberField<Field: Hashable>: View {
     }
 }
 
-private extension View {
-    /// The decimal pad has no return key: a Done above it while a field of
-    /// the row is focused.
-    func decimalPadDone<Field: Hashable>(_ focus: FocusState<Field?>.Binding) -> some View {
+extension View {
+    /// The decimal pad has no return key: above it, the field before and
+    /// after in `order`, and Done, which commits the figure and puts the
+    /// keyboard away. Declared once for the page, never per row: a toolbar
+    /// in a list's row is laid out as the page's bottom bar.
+    func decimalPadDone<Field: Hashable>(_ focus: FocusState<Field?>.Binding, order: [Field]) -> some View {
         #if os(iOS)
         toolbar {
-            if focus.wrappedValue != nil {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") { focus.wrappedValue = nil }
-                }
-                .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
+            // The bar is the keyboard's accessory, which UIKit keeps as first
+            // built: each button reads where focus is when it is tapped.
+            ToolbarItemGroup(placement: .keyboard) {
+                Button("Previous", koan: Icon.previousField) { step(-1, focus, order) }
+                Button("Next", koan: Icon.nextField) { step(1, focus, order) }
+                Spacer()
+                Button("Done") { focus.wrappedValue = nil }
             }
+            .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
         }
         #else
         self
         #endif
     }
+
+    #if os(iOS)
+    /// Focus moved `by` fields through `order`, staying put at either end.
+    private func step<Field: Hashable>(_ by: Int, _ focus: FocusState<Field?>.Binding, _ order: [Field]) {
+        guard let at = focus.wrappedValue.flatMap({ order.firstIndex(of: $0) }), order.indices.contains(at + by) else { return }
+        focus.wrappedValue = order[at + by]
+    }
+    #endif
 }
 
 #if !os(tvOS)
@@ -237,6 +277,7 @@ struct CurvePage: View {
 
     @State private var detail: DspProfileDetail?
     @State private var confirmingReset = false
+    @FocusState private var focused: PointField?
 
     private var points: [DspPoint] {
         guard let d = detail, d.bands.indices.contains(index) else { return [] }
@@ -255,7 +296,7 @@ struct CurvePage: View {
                 .koanText(.fine, .muted)
                 .listRowInsets(BandTable.rowInsets)
                 ForEach(Array(points.enumerated()), id: \.offset) { i, point in
-                    PointEditor(index: i, point: point) { edited in
+                    PointEditor(index: i, point: point, focus: $focused) { edited in
                         var changed = points
                         changed[i] = edited
                         dsp.setCurve(profile, index, changed)
@@ -279,6 +320,7 @@ struct CurvePage: View {
                 }
             }
         }
+        .decimalPadDone($focused, order: points.indices.flatMap { i in PointField.Part.allCases.map { PointField(index: i, part: $0) } })
         .navigationTitle(KoanTheme.label("Graphic EQ"))
         .task(id: dsp.stamp) { detail = await dsp.detail(profile) }
         .confirmationDialog("Reset \(profile) to its file?", isPresented: $confirmingReset, titleVisibility: .visible) {
@@ -287,17 +329,23 @@ struct CurvePage: View {
     }
 }
 
+/// A figure of a curve's point.
+private struct PointField: Hashable {
+    let index: Int
+    let part: Part
+
+    enum Part: CaseIterable { case hz, db }
+}
+
 /// One point of a curve, each figure committed when it is left or returned.
 private struct PointEditor: View {
     let index: Int
     let point: DspPoint
+    var focus: FocusState<PointField?>.Binding
     let commit: (DspPoint) -> Void
 
     @State private var hz = 0.0
     @State private var db = 0.0
-    @FocusState private var focused: Field?
-
-    enum Field { case hz, db }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -306,11 +354,10 @@ private struct PointEditor: View {
                 .monospacedDigit()
                 .frame(width: 32, alignment: .leading)
             Spacer()
-            NumberField(value: $hz, focus: $focused, name: .hz, width: 80, digits: 1, commit: save)
-            NumberField(value: $db, focus: $focused, name: .db, width: 64, digits: 1, commit: save)
+            NumberField(value: $hz, focus: focus, name: PointField(index: index, part: .hz), width: 80, digits: 1, label: "Point \(index + 1) frequency", commit: save)
+            NumberField(value: $db, focus: focus, name: PointField(index: index, part: .db), width: 64, digits: 1, label: "Point \(index + 1) gain", commit: save)
         }
-        .onChange(of: focused) { was, _ in if was != nil { save() } }
-        .decimalPadDone($focused)
+        .onChange(of: focus.wrappedValue) { was, _ in if was?.index == index { save() } }
         .onAppear(perform: read)
         .onChange(of: point.hz) { _, _ in read() }
         .onChange(of: point.db) { _, _ in read() }

@@ -1,0 +1,1 @@
+- **Mac rows keep their marks in line.** The codec takes one width in the queue and playlists, and the format column keeps its place on a track without one, so the heart and availability mark line up down the list.

@@ -1,0 +1,1 @@
+- **No library folder until you choose one.** kōan no longer indexes `~/Music` when no folder is set, which on macOS asked for access to the Apple Music library. A library already indexed from `~/Music` keeps it: the folder is written into `config.local.toml` the first time this version opens it.

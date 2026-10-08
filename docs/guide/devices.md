@@ -15,7 +15,10 @@ Playing, make the two choices:
   one keeps the queue and transport where they are and moves only the sound.
   AirPlay has its own button beside it: the system's picker, since no app may
   pick a speaker itself. Playing to the system default, the music moves to the
-  speaker chosen there, from where it was.
+  speaker chosen there, from where it was. On a phone or an Apple TV the route
+  is the only audio device, so Output appears only once an amplifier answers
+  (Now Playing looks for them on opening) or while another device is
+  controlled.
 
 While another device is controlled, Output lists that device's outputs: its
 audio devices, the amplifiers it can see, which one it plays through and the

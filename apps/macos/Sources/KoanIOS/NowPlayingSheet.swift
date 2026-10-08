@@ -58,6 +58,9 @@ struct NowPlayingSheet: View {
         .onChange(of: nav.current) { dismiss() }
         .outputSheet(isPresented: $showingDevices)
         .controlSheet(isPresented: $showingControl)
+        // One search for renderers on opening: those that answer are what
+        // makes Output worth showing.
+        .onAppear { player.searchRenderers() }
         .tray(isPresented: $showingInfo) {
             if let info { TrackInfoView(info: info) }
         }
@@ -232,6 +235,7 @@ struct NowPlayingSheet: View {
                 Spacer(minLength: 12)
                 RoutePicker()
                     .frame(width: 28, height: 28)
+                    .koanRoutePicker(Icon.airplay)
             }
         }
         .font(.role(.titleSmall, system: .title3))

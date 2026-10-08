@@ -57,6 +57,9 @@ struct NowPlayingPage: View {
         .focusScope(page)
         .outputSheet(isPresented: $showingDevices)
         .controlSheet(isPresented: $showingControl)
+        // One search for renderers on opening: those that answer are what
+        // makes Output worth showing.
+        .onAppear { player.searchRenderers() }
     }
 
     private var idle: some View {

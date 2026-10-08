@@ -297,7 +297,7 @@ struct TrackListView: View {
 
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .top, spacing: Columns.headerGap) {
+                HStack(alignment: .headerCentre, spacing: Columns.headerGap) {
                     #if !os(tvOS)
                     if let playable {
                         PlayableHeaderButton(playable: playable)
@@ -305,7 +305,7 @@ struct TrackListView: View {
                     #endif
                     Text(Format.title(title))
                         .font(.role(.title, system: .system(size: Columns.title, weight: .semibold)))
-                        .headerTitleTop(.title, systemSize: Columns.title)
+                        .headerTitleCentre(.title, systemSize: Columns.title)
                         .foregroundStyle(KoanTheme.style(.strong, system: .primary))
                         .lineLimit(2)
                         // Beside the play button the row offers one line's
