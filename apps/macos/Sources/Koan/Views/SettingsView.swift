@@ -777,6 +777,20 @@ private struct AccountSettings: View {
             }
             if mirror.offers(ApiKeysSettings.extensionName) {
                 ApiKeysSettings()
+                // Made only on the web UI, which every koan server serves.
+                #if !os(tvOS)
+                if let account = URL(string: model.settings.remoteUrl)?.appending(path: "account") {
+                    Section {
+                        Link("Make an App Password…", destination: account)
+                            .koanButton(.link)
+                    } header: {
+                        KoanSectionHeader("App passwords")
+                    } footer: {
+                        Text("For Subsonic apps that sign in only with a token and salt, and so cannot use an API key. Made and revoked on the server's Account page.")
+                            .koanText(.fine, .muted)
+                    }
+                }
+                #endif
             }
         }
         .koanSheet()

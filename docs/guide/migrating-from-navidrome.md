@@ -105,7 +105,7 @@ Change the server URL and sign in with the kōan account. kōan accepts every wa
 - **Token and salt**, which most clients use by default, with an app password in place of the account's password.
 - **API key** (OpenSubsonic `apiKeyAuthentication`).
 
-Make API keys and app passwords on the web UI's Account page, one per client; kōan's Mac and iOS apps make and revoke API keys under Settings → Account too. A client that reports error 41 is using token auth with the account's own password, which kōan cannot check because it keeps only a hash: give it an app password instead. See [Authentication](authentication.md#subsonic-api).
+Make API keys and app passwords on the web UI's Account page, one per client; kōan's Mac and iOS apps make and revoke API keys under Settings → Account too, and open the web UI's Account page from there for app passwords. A client that reports error 41 is using token auth with the account's own password, which kōan cannot check because it keeps only a hash: give it an app password instead. See [Authentication](authentication.md#subsonic-api).
 
 ### Favourites, play counts and playlists
 

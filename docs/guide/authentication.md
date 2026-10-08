@@ -316,7 +316,7 @@ A socket is authenticated once, when it opens, so `/graphql/ws` and an app's lin
 
 - **API key** (`apiKey=`) — preferred. A key acts as the account that made it, at that account's current role, until revoked; it is sent without `u`, and sending it with `u` or any other credential is error 43. Keys are 32 random bytes and only `sha256(key)` is stored, so a key is shown once, when it is made.
 - **Account password** (`p=`, plain or `enc:` hex) — checked against the account's argon2 hash; a successful check is remembered for ten minutes. argon2 is expensive by design, so at most one check per core (2 to 8) runs at once and a request arriving when all are busy gets error 0, "server busy", rather than waiting. The protocol sends the password with every request, so use it only over HTTPS.
-- **App password** (`u` + `t` + `s`, or `p=`) — for clients that only sign in with Subsonic token auth. Made per app on the web UI's Account page, shown once, and usable until revoked; changing the account's password revokes them all.
+- **App password** (`u` + `t` + `s`, or `p=`) — for clients that only sign in with Subsonic token auth. Made per app on the web UI's Account page, which the apps open from Settings → Account → **Make an App Password…**; shown once, and usable until revoked; changing the account's password revokes them all.
 - **Shared secret** (`u` + `t` + `s`, or `p=`) — the optional `[subsonic]` secret and its username, acting as `user`, for clients that have no account.
 
 Which credential a client should use:
