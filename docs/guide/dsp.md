@@ -401,6 +401,10 @@ impulse responses, a room or speaker correction, stays on its device, as does
 one assigned to a built-in output or a network amplifier. The first time a
 device syncs, the EQs it already had stay on it unless they came from
 AutoEQ, so nothing leaves a device that was not made to travel or chosen to.
+Once an EQ has synced, it stays everywhere until **This device** is chosen
+for it: assigning it to a built-in output, giving it an impulse response or
+adding an EQ kept on one device to it does not take it off the other
+devices.
 
 An EQ kept everywhere cannot play one kept on one device, since the other
 devices would not have it: adding one is refused, as is moving an EQ such an
@@ -409,9 +413,19 @@ everywhere, such as a speaker correction with a shared bass shelf on top.
 
 Each EQ carries an id of its own, so a rename reaches every device. When
 two devices change one EQ, the later change wins, counted from when it
-was made, so a change made offline keeps its time. A deletion reaches every
-device; so does moving an EQ to one device, which removes it from the
-others. An EQ elsewhere that played it reports it missing. The same
+was made, so a change made offline keeps its time. Deleting an EQ reaches
+every device; so does moving an EQ to one device, which removes it from the
+others. Nothing else does: an EQ missing from a device without having been
+deleted there, after a config file that did not load or was edited by hand,
+is taken from the server again rather than deleted everywhere. The server
+keeps a copy of a deleted EQ, its files included, for thirty days after it
+records the deletion. An EQ elsewhere that played a deleted one reports it
+missing. Manage EQ on the Mac, iPhone and iPad lists deleted EQs under
+**Recently deleted**, with the days each has left, and **Restore** brings
+one back on every device as a new edit. The section is there only when
+something has been deleted and the server offers it (`koanDspDeleted`: older
+servers and Navidrome do not), and not while offline. An EQ whose files
+never reached the server before it was deleted cannot be restored. The same
 EQ made on two devices before either synced, such as one headphone
 installed from AutoEQ on both, becomes one EQ. "The same" is what they
 play, not how they are written: bands in another order, or a gain a few

@@ -1027,6 +1027,23 @@ impl SubsonicClient {
         .ok_or(SubsonicError::BadResponse)
     }
 
+    /// The account's profiles deleted in the last thirty days: servers
+    /// offering `koanDspDeleted`.
+    pub fn koan_dsp_deleted(&self) -> Result<Vec<KoanDspDeletedProfile>, SubsonicError> {
+        Ok(self
+            .get("koanDspDeleted")?
+            .koan_dsp_deleted
+            .map(|d| d.profile)
+            .unwrap_or_default())
+    }
+
+    /// Save deleted profile `uid` again from the server's copy, as a new edit.
+    pub fn koan_dsp_restore(&self, uid: &str) -> Result<KoanDspSaved, SubsonicError> {
+        self.post_with_params("koanDspRestore", &[("uid", uid)])?
+            .koan_dsp_saved
+            .ok_or(SubsonicError::BadResponse)
+    }
+
     /// Turn the AutoEQ suggestion for `output` down on every device.
     pub fn koan_dsp_dismiss(&self, output: &str) -> Result<(), SubsonicError> {
         self.post_with_params("koanDspDismiss", &[("output", output)])?;
@@ -1199,6 +1216,7 @@ struct SubsonicResponse {
     koan_scrobbling: Option<KoanScrobbling>,
     koan_dsp_profiles: Option<KoanDspProfiles>,
     koan_dsp_saved: Option<KoanDspSaved>,
+    koan_dsp_deleted: Option<KoanDspDeleted>,
 }
 
 /// The play queue the account saved on the server: `getPlayQueue` names the
@@ -1259,6 +1277,23 @@ pub struct KoanDspProfile {
 #[derive(Debug, Clone, Deserialize)]
 pub struct KoanDspDismissed {
     pub output: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct KoanDspDeleted {
+    #[serde(default)]
+    profile: Vec<KoanDspDeletedProfile>,
+}
+
+/// A profile deleted in the last thirty days, which the server keeps a copy
+/// of (`koanDspDeleted`). Times are ms by the server's clock.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KoanDspDeletedProfile {
+    pub uid: String,
+    pub name: String,
+    pub deleted_at: i64,
+    pub expires_at: i64,
 }
 
 /// What a save or deletion did (`koanDspSaved`).
@@ -2183,6 +2218,27 @@ mod tests {
         let album: SubsonicAlbumFull = serde_json::from_str(json).unwrap();
         assert_eq!(album.music_brainz_id.as_deref(), Some("mb-1"));
         assert_eq!(album.sort_name, None);
+    }
+
+    #[test]
+    fn deleted_dsp_profiles_read_with_their_times() {
+        let listed = response(
+            r#"{"subsonic-response": {"status": "ok", "koanDspDeleted": {"profile": [
+                {"uid": "u1", "name": "Room", "deletedAt": 1000, "expiresAt": 2592001000}
+            ]}}}"#,
+        );
+        let listed = listed.koan_dsp_deleted.unwrap().profile;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            (listed[0].uid.as_str(), listed[0].name.as_str()),
+            ("u1", "Room")
+        );
+        assert_eq!(
+            (listed[0].deleted_at, listed[0].expires_at),
+            (1000, 2_592_001_000)
+        );
+        let none = response(r#"{"subsonic-response": {"status": "ok", "koanDspDeleted": {}}}"#);
+        assert!(none.koan_dsp_deleted.unwrap().profile.is_empty());
     }
 
     #[test]

@@ -2242,6 +2242,15 @@ pub struct NewApiKey {
     pub key: String,
 }
 
+/// An EQ deleted in the last thirty days, which the server keeps a copy of.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct DeletedDsp {
+    pub uid: String,
+    pub name: String,
+    /// Whole days until the server forgets it, at least 1 while it is listed.
+    pub days_left: u32,
+}
+
 /// One of the signed-in account's app passwords, for Subsonic apps that sign
 /// in only with a token. Never the password.
 #[derive(uniffi::Record, Debug, Clone)]

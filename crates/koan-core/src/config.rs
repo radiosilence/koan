@@ -623,6 +623,12 @@ pub struct DspConfig {
     /// nothing matched to a target. Speakers, mostly.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub filters_only: Vec<String>,
+    /// The uids of profiles deleted here and not yet deleted on the account's
+    /// server. Sync deletes a profile everywhere only when it is listed here
+    /// or kept on this device by choice; one that is merely missing, after a
+    /// config that failed to load or an edit by hand, is not deleted.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub removed: Vec<String>,
 }
 
 /// One EQ of an output's tuning.
@@ -659,6 +665,7 @@ impl Default for DspConfig {
             tunings: Vec::new(),
             presets: Vec::new(),
             filters_only: Vec::new(),
+            removed: Vec::new(),
         }
     }
 }
