@@ -2244,8 +2244,8 @@ private struct KoanFieldRole: ViewModifier {
             .padding(.horizontal, KoanTheme.Space.m)
             .padding(.vertical, KoanTheme.Space.s)
             // Inside the field's own frame. A style's background reaches
-            // through every safe-area edge it touches, and a field at the top
-            // of a television's page touches the one under the tab bar.
+            // through every safe-area edge the field touches, and paints
+            // whatever bar or inset lies beyond it.
             .background(Color.koanSurface, ignoresSafeAreaEdges: [])
             #if os(tvOS)
             .koanFocusRing(focused)
