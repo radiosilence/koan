@@ -1,0 +1,1 @@
+- Share link text has correct spelling
