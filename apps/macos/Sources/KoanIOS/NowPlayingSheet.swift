@@ -265,6 +265,8 @@ struct NowPlayingSheet: View {
                         tinted: player.currentFormat?.dsp != nil
                     )
                 }
+                // The pill is the outline; the menu's button draws none.
+                .koanMenuButton(.card)
                 .accessibilityLabel("Preset: \(preset)")
                 .pillWidth(natural, name: preset)
             }

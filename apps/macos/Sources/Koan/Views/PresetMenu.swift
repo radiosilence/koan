@@ -51,6 +51,10 @@ struct Presets {
 /// A device's presets as a menu: Flat and each preset, a tick on the one it
 /// was set from, and Edit… for the whole EQ page. A preset changed since is
 /// listed twice: as edited, ticked, and as saved, which goes back to it.
+///
+/// The label is the caller's, frame and all: a chip, a glyph or a label. The
+/// menu adds no button of its own around it (`koanMenuButton`), since a chip
+/// inside a bordered button draws two outlines.
 struct PresetMenu<Label: View>: View {
     @Environment(AppState.self) private var app
     let presets: Presets
@@ -79,7 +83,6 @@ struct PresetMenu<Label: View>: View {
         } label: {
             label()
         }
-        .koanControl()
         .accessibilityLabel("Preset: \(presets.summary)")
         #if os(iOS)
         .sheet(isPresented: $editing) {
