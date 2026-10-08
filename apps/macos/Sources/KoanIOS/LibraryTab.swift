@@ -37,20 +37,7 @@ struct LibraryTab: View {
 
     private func row(_ title: String, _ symbol: String, _ route: Route) -> some View {
         NavigationLink(value: route) {
-            #if os(tvOS)
-            if KoanTheme.isOn {
-                KoanLabel(title, icon: symbol)
-            } else {
-                // The symbols are of different widths; at television size a
-                // label's own spacing lets the wide ones touch their titles.
-                HStack(spacing: 24) {
-                    KoanIcon(symbol).frame(width: 56)
-                    Text(title)
-                }
-            }
-            #else
-            KoanLabel(title, icon: symbol)
-            #endif
+            KoanLabel(title, icon: symbol, style: .row)
         }
         .listLink()
         // Navigation is words alone in the theme, as the tabs are; the

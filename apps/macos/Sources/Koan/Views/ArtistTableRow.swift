@@ -5,7 +5,7 @@ import KoanFFI
 /// One artist in the Mac's artist list, as `ArtistRow` draws it in SwiftUI:
 /// the mic, or a play mark under the pointer; the name, which opens the
 /// artist; the heart; how many records and tracks.
-final class ArtistTableRow: NSTableCellView, TableRow {
+final class ArtistTableRow: TableCell, TableRow {
     struct Context {
         let favourites: Set<Int64>
         let tint: NSColor

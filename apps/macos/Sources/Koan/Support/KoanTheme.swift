@@ -324,6 +324,11 @@ struct KoanLabel: View {
         /// the title still names it to VoiceOver, and stands in for it when
         /// icons are off.
         case compact
+        /// A navigation row: the full label, and on a television in either
+        /// look, the icon in a column of its own. The symbols are of
+        /// different widths, and at television size a label's own spacing
+        /// lets the wide ones touch their titles.
+        case row
     }
 
     let title: String
@@ -350,7 +355,15 @@ struct KoanLabel: View {
         } else if style == .compact {
             Label(title, systemImage: icon).labelStyle(.iconOnly) // theme: raw
         } else {
+            #if os(tvOS)
+            if style == .row {
+                Label(title, systemImage: icon).labelStyle(TelevisionRowLabelStyle()) // theme: raw
+            } else {
+                Label(title, systemImage: icon) // theme: raw
+            }
+            #else
             Label(title, systemImage: icon) // theme: raw
+            #endif
         }
     }
 }
@@ -365,19 +378,25 @@ private struct KoanLabelStyle: LabelStyle {
         case (false, _): Label(configuration).labelStyle(.titleOnly)
         case (true, .compact): Label(configuration).labelStyle(.iconOnly)
         #if os(tvOS)
-        // The symbols are of different widths; at television size a label's
-        // own spacing lets the wide ones touch their titles.
-        case (true, .full):
-            HStack(spacing: 24) {
-                configuration.icon.frame(width: 56)
-                configuration.title
-            }
+        case (true, .full), (true, .row): Label(configuration).labelStyle(TelevisionRowLabelStyle())
         #else
-        case (true, .full): Label(configuration).labelStyle(.titleAndIcon)
+        case (true, .full), (true, .row): Label(configuration).labelStyle(.titleAndIcon)
         #endif
         }
     }
 }
+
+#if os(tvOS)
+/// The icon in a column of its own: see `KoanLabel.Style.row`.
+private struct TelevisionRowLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 24) {
+            configuration.icon.frame(width: 56)
+            configuration.title
+        }
+    }
+}
+#endif
 
 // MARK: - Colour
 
@@ -1024,6 +1043,13 @@ extension View {
         #else
         modifier(KoanToolbarRole(glass: glass))
         #endif
+    }
+
+    /// Where content scrolling under a bar at the foot meets it: the hard
+    /// edge in the theme, which has no glass to fade into; elsewhere the
+    /// platform's soft, blurred one where `soft` allows it.
+    func koanBottomEdge(soft: Bool = true) -> some View {
+        scrollEdgeEffectStyle(soft && !KoanTheme.isOn ? .soft : .hard, for: .bottom)
     }
 
     /// A material behind a region, out to the edges past the safe area as

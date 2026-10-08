@@ -331,7 +331,16 @@ private struct SidebarFooter: View {
             if let stats = library.stats {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(Format.count(stats.totalTracks, "track"))
-                    Text("\(Format.count(stats.totalAlbums, "album")) · \(Format.count(stats.totalArtists, "artist"))")
+                    // On one line where it fits, else a line each: wrapped,
+                    // the separator ended the first line.
+                    ViewThatFits(in: .horizontal) {
+                        Text("\(Format.count(stats.totalAlbums, "album")) · \(Format.count(stats.totalArtists, "artist"))")
+                            .fixedSize()
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(Format.count(stats.totalAlbums, "album"))
+                            Text(Format.count(stats.totalArtists, "artist"))
+                        }
+                    }
                     if stats.remoteTracks > 0 {
                         Text("\(stats.cachedTracks.formatted(.number)) of \(stats.remoteTracks.formatted(.number)) remote cached")
                     }

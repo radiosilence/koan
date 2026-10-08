@@ -6,7 +6,8 @@ import KoanFFI
 struct TrackLine: Equatable {
     enum Kind: Equatable {
         case track(Track)
-        /// A day in history. Not selectable; stays put while its run scrolls.
+        /// A day in history. Not selectable; in the platform's look, stays
+        /// put while its run scrolls.
         case heading(String)
     }
 
@@ -53,7 +54,7 @@ struct TrackColumns: OptionSet {
 /// the sleeve when the list is gathered from many records; the title over the
 /// artist and record, which link out; where the file is; the heart; the
 /// format; the length.
-final class TrackTableRow: NSTableCellView, TableRow {
+final class TrackTableRow: TableCell, TableRow {
     struct Context {
         let showsAlbum: Bool
         var columns = TrackColumns.all

@@ -16,6 +16,17 @@ enum RowHit {
     case link(() -> Void)
 }
 
+/// A row of a `KoanTable`, which lays out its own columns from its width.
+/// Resized by its table, prepared rows off screen included, it lays out again
+/// at the new width rather than waiting to be asked.
+class TableCell: NSTableCellView {
+    override func setFrameSize(_ newSize: NSSize) {
+        let resized = newSize.width != frame.width
+        super.setFrameSize(newSize)
+        if resized { needsLayout = true }
+    }
+}
+
 /// A row of a `KoanTable`, made of layers and labels.
 ///
 /// Not of AppKit controls: on macOS 26 each is a SwiftUI view graph of its
@@ -117,6 +128,10 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         // theme, whose rows are told apart by rhythm and alignment.
         table.gridStyleMask = KoanTheme.isOn ? [] : .solidHorizontalGridLineMask
         table.gridColor = .koanSeparator
+        // A floating group row is drawn on AppKit's own grey band with a rule
+        // under it, which no list in the theme has; its headings scroll with
+        // their rows instead.
+        table.floatsGroupRows = !KoanTheme.isOn
         table.allowsMultipleSelection = true
         table.allowsTypeSelect = true
         table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
@@ -139,12 +154,17 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
-        let content = NSEdgeInsets(top: insets.top, left: insets.leading, bottom: insets.bottom, right: 0)
+        // The trailing inset is the lyrics, which float over the page as the
+        // sidebar does: without it each row's format and length sat under
+        // them.
+        let content = NSEdgeInsets(top: insets.top, left: insets.leading, bottom: insets.bottom, right: insets.trailing)
         let current = scroll.contentInsets
-        if current.top != content.top || current.left != content.left || current.bottom != content.bottom {
+        if current.top != content.top || current.left != content.left || current.bottom != content.bottom
+            || current.right != content.right {
             scroll.contentInsets = content
             // Up under the toolbar, as a SwiftUI scroll view's scroller runs,
-            // and clear of the transport.
+            // and clear of the transport. The content's trailing inset already
+            // brings it in from under the lyrics.
             scroll.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: insets.bottom, right: 0)
         }
         context.coordinator.update(self, environment: context.environment)
