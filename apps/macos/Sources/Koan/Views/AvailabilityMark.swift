@@ -67,7 +67,7 @@ final class AvailabilityMark: CALayer {
         case .failed:
             badgeImage = Symbol.image(Icon.warningFilled, size: 11, colours: [NSColor.koanBad(.systemOrange)], appearance: appearance)
         case .notHere:
-            badgeImage = Symbol.image(Icon.cloudMissing, size: 10, colours: [quiet], appearance: appearance)
+            badgeImage = Symbol.image(Icon.cloudMissing, size: 11, colours: [quiet], appearance: appearance)
         case .transferring(let fraction):
             badge.isHidden = true
             ring.isHidden = false
@@ -85,9 +85,9 @@ final class AvailabilityMark: CALayer {
             }
         case .stored(let onServer, let onDisk):
             if onServer {
-                badgeImage = Symbol.image(onDisk ? Icon.cloudKept : Icon.cloud, size: 9, colours: [onDisk ? plain : quiet], appearance: appearance)
+                badgeImage = Symbol.image(onDisk ? Icon.cloudKept : Icon.cloud, size: 11, colours: [onDisk ? plain : quiet], appearance: appearance)
             } else if onDisk {
-                badgeImage = Symbol.image(Icon.onDevice, size: 9, colours: [plain], appearance: appearance)
+                badgeImage = Symbol.image(Icon.onDevice, size: 11, colours: [plain], appearance: appearance)
             } else {
                 badgeImage = nil
             }
@@ -127,6 +127,13 @@ final class AvailabilityMark: CALayer {
         case .pending: "Queued for download"
         case .failed: failure ?? "Couldn't be fetched"
         case .notHere: "Not on this device"
+        case .stored(let onServer, let onDisk):
+            switch (onServer, onDisk) {
+            case (true, true): "On your server, downloaded"
+            case (true, false): "On your server, downloads on play"
+            case (false, true): "Local file"
+            case (false, false): nil
+            }
         default: nil
         }
     }

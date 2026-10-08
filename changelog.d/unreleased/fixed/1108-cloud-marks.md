@@ -1,0 +1,1 @@
+- **Availability marks.** The cloud and on-device marks in track rows are larger, and a track kept on this device shows as a solid cloud.
