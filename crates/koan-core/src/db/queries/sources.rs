@@ -1149,6 +1149,84 @@ pub(crate) fn fold_twin(conn: &Connection, twin: &str, walked: &str) -> Result<b
     Ok(true)
 }
 
+/// Move the rows stored under `given`, a library folder as it was configured,
+/// to `on_disk`, the same folder as the disk spells it.
+///
+/// Earlier builds resolved only the accented components of a library folder,
+/// so a folder configured as `~/music` on a volume holding `~/Music`
+/// stored every path under `~/music`. Scans now walk the disk's spelling;
+/// without this, each file would be indexed a second time under it and the
+/// old rows would sit outside every range stale removal looks at. A file
+/// already indexed under both is folded into one track (`fold_twin`), or,
+/// where both tracks are on the server, left to the one under the disk's
+/// spelling.
+/// Returns the number of files moved or folded.
+pub(crate) fn respell_folder(
+    conn: &Connection,
+    given: &std::path::Path,
+    on_disk: &std::path::Path,
+) -> Result<usize, DbError> {
+    let (lower, upper) = super::folder_prefix_range(given);
+    let (to_prefix, _) = super::folder_prefix_range(on_disk);
+    if lower == to_prefix {
+        return Ok(0);
+    }
+    let respelled = |path: &str| format!("{to_prefix}{}", &path[lower.len()..]);
+    let files: Vec<String> = conn
+        .prepare_cached("SELECT path FROM local_files WHERE path >= ?1 AND path < ?2")?
+        .query_map(params![lower, upper], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut moved = 0;
+    for path in &files {
+        let to = respelled(path);
+        if load(conn, Kind::Local, &to)?.is_some() {
+            // Two tracks the server has both stay; the file goes to the one
+            // indexed under the disk's spelling, and the other plays from
+            // the server.
+            if !fold_twin(conn, path, &to)?
+                && let Some((track, _)) = load(conn, Kind::Local, path)?
+            {
+                forget_tracks(conn, &[track], Forget::Demote)?;
+            }
+        } else {
+            rename_file(conn, path, &to)?;
+        }
+        moved += 1;
+    }
+    let chars = lower.chars().count() as i64;
+    // A playlist file read under both spellings keeps the playlist made
+    // first, which is the one clients know.
+    conn.prepare_cached(
+        "DELETE FROM playlists WHERE id IN (
+             SELECT later.id FROM playlists earlier JOIN playlists later
+               ON later.source_path = ?3 || substr(earlier.source_path, ?4 + 1)
+             WHERE earlier.source_path >= ?1 AND earlier.source_path < ?2)",
+    )?
+    .execute(params![lower, upper, to_prefix, chars])?;
+    // The paths that go with the files, and those of tracks a rebuilt index
+    // has not re-read. A row whose new path is taken keeps the old one, and
+    // goes as stale once its file is found under the new.
+    for (table, column) in [
+        ("tracks", "path"),
+        ("scan_cache", "path"),
+        ("playlists", "source_path"),
+    ] {
+        conn.prepare_cached(&format!(
+            "UPDATE OR IGNORE {table} SET {column} = ?3 || substr({column}, ?4 + 1)
+             WHERE {column} >= ?1 AND {column} < ?2"
+        ))?
+        .execute(params![lower, upper, to_prefix, chars])?;
+    }
+    if moved > 0 {
+        log::info!(
+            "{} is {} spelled another way; moved {moved} file(s) to it",
+            given.display(),
+            on_disk.display()
+        );
+    }
+    Ok(moved)
+}
+
 /// Record what a source says, linking and deriving as needed. Returns the
 /// track and whether this source made a new one.
 ///
