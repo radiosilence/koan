@@ -1,1 +1,2 @@
 - **Apple TV: the kōan look's own tabs, and no grey slab above a text field.** In the kōan look the tabs across the top are flat and lowercase in the theme's type, with the accent ring for focus, in place of the system's glass capsule and white platter; the remote moves through them and Menu reaches them as before. A filter field at the top of a page no longer paints a grey band up to the top of the screen.
+- **iPad: the sidebar's library rows on the page's ground.** In the kōan look in dark mode they sat on a black block, and the selected one lacked its accent rule.
