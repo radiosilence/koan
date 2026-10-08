@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.60.11
+
+0.60.10 was never published: its macOS and tvOS release builds failed in the Swift compiler, so its GitHub release, server image and TestFlight builds did not go out. 0.60.11 is the first release to carry its changes, below under 0.60.10. This release moves the database from schema 22 to 23, rebuilding the scan and lyrics caches (#1059), and builds older than 0.60.11 refuse a database that has been migrated. Snapshot the server's database before deploying.
+
+### Added
+
+- **Apple TV: a name filter on listings.** Albums, Artists, History and Playlists have a field above the listing that narrows it by name.
+- **See and end the connections to a device.** Settings → Devices → Connected now lists the link to the server, the account's devices that can control this one through it, and every connection on the local network in either direction, with when each began. A device on the network controlling this one can be disconnected, which keeps it out until it is played on or picked again, and one that has not proved it belongs to the account can be refused by address (`devices.refused`), so unexplained battery use from another device driving this one can be seen and stopped.
+
+### Security
+
+- **Reports on nearby connections are signed.** Between two signed-in kōan devices on the same network, what the controlled device reports back (what it is playing, and whether a command arrived) is signed for the connection, as commands already were, so it cannot be forged by someone able to inject into that connection. Older devices are read unsigned, as before.
+
+### Changed
+
+- **Apple TV: square text fields.** In the kōan look, text fields on the TV are square boxes like the rest of the theme instead of rounded pills.
+- **The Mac sidebar is the page's ground in the kōan look.** It no longer draws as a lighter grey panel, with the wash under the whole window or not. Its search field is the theme's square field, with suggestions in a square panel beneath it and `/` to focus it; the selected row is marked by the accent and its leading rule rather than a rounded fill; and the library counts sit below a hairline. The system theme keeps the platform's sidebar.
+
+### Fixed
+
+- **Downloaded tracks marked as downloaded.** A remote track whose file was in the cache but not recorded played from the cache while showing as on the server only, and was never evicted. Such files are now recorded when the track is queued, and at launch for the rest. A download two editions of an album share is counted against the cache limit once.
+- **Now Playing shows the bit depth of 24-bit ALAC files.** It read 16 bits, because the depth of ALAC in MP4 is stored only in the codec configuration, which is now consulted. Lossy streams that state no depth show none instead of 16.
+- **Apple TV discovery no longer repeats the AirPlay lookup on every reconnect.** An Apple TV with no matching AirPlay announcement is looked for once per address every ten minutes instead of at each hello. An error from that lookup can no longer hide, or stand in for, a local network permission error from the standing browse.
+- **Organizing into a folder with accents no longer duplicates the file.** Organize stores the path as the folder spells it on disk, so the next scan finds the row it already has instead of adding a second. Scanning one directory reads the scan cache for that directory only, rather than the whole library's, and a track's scan cache entry and lyrics are now deleted with it by the database. The database moves to schema 23, which builds older than 0.60.11 refuse.
+- **Measurement source follows the last pick.** In the measurement flow, choosing a file after fetching a squig.link measurement left the checkmark on the squig.link result. It now clears, as the site credit already did.
+- **Buttons take the click across everything they draw.** On the Mac, the toolbar's back, forward, sidebar, lyrics, filter, sort and select buttons are now full-size cells, rather than only their glyphs, with a hover and pressed ground in the kōan look. The album page's play square, hearts, chips, the play/pause buttons, Control and Output, lyric lines and picker rows also take clicks across their outline and padding, not just the glyph.
+
 ## 0.60.10
 
 ### Added
