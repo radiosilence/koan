@@ -1,0 +1,1 @@
+- **Downloaded tracks marked as downloaded.** A remote track whose file was in the cache but not recorded played from the cache while showing as on the server only, and was never evicted. Such files are now recorded when the track is queued, and at launch for the rest. A download two editions of an album share is counted against the cache limit once.
