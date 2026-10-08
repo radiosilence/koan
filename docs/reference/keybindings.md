@@ -11,7 +11,7 @@ Every key in every mode. The hint bar at the bottom of the TUI shows available k
 | `space` | Pause / resume |
 | `<` | Previous track |
 | `>` | Next track |
-| `s` | Shuffle on / off (reorders the rest of the queue; off puts it back) |
+| `s` | Shuffle on / off ([plays the tracks not yet played in a random order](../guide/shuffle-and-repeat.md); the queue keeps its order) |
 | `R` | Repeat: off, the queue, one track |
 | `T` | [Sleep timer](../guide/sleep-timer.md): 15, 30, 45, 60 minutes, end of track, end of record, off |
 | `,` or `<-` | Seek -10 seconds |
@@ -194,6 +194,7 @@ Single keys never fire while a text field has focus, so typing an `f` into the s
 | `⌥←` / `⌥→` | Seek ∓10 seconds |
 | `⌘D` | Favourite the current track |
 | `⌥⌘L` | Lyrics panel |
+| `⌘+` (or `⌘=`) / `⌘−` / `⌘0` | Bigger / smaller / actual text size (kōan theme) |
 | `⌘Z` / `⇧⌘Z` | Undo / redo a queue change |
 | `⌘X` `⌘C` `⌘V` `⌫` `⌘A` | Queue editing, or the ordinary thing while typing |
 | `⇧⌘R` | Rescan local folders |

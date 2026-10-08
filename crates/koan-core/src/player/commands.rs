@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crossbeam_channel::{Receiver, SendTimeoutError, Sender, bounded};
 
-use super::state::{PlayMode, PlaylistItem, QueueItemId, Repeat, SleepTimer};
+use super::state::{PlayMode, PlaylistItem, QueueItemId, QueueMode, Repeat, SleepTimer};
 
 /// Commands from the UI layer to the audio engine.
 #[derive(Debug)]
@@ -79,11 +79,16 @@ pub enum PlayerCommand {
     /// `start` past the end starts at the beginning. It opens at
     /// `position_ms`, playing or paused, as `Cue` does: a hand-off picks up
     /// where the source stopped without the top of the track being heard.
+    ///
+    /// `mode` says whether the play mode is reset, as a play from a play
+    /// button resets it. Shuffled, the track opened is the play order's
+    /// first, not `start`.
     ReplacePlaylist {
         items: Vec<PlaylistItem>,
         start: usize,
         position_ms: u64,
         play: bool,
+        mode: QueueMode,
     },
     /// Download complete — check if cursor is waiting on this item.
     TrackReady(QueueItemId),
@@ -161,16 +166,16 @@ pub enum PlayerCommand {
     ReleaseRenderer(crossbeam_channel::Sender<()>),
     /// Set the volume of the renderer being played to, 0–100.
     SetRendererVolume(u8),
-    /// Turn shuffle on or off: the items after the cursor reordered at
-    /// random, or put back as they were. One undo step.
+    /// Turn shuffle on or off. The queue never moves: shuffle chooses which
+    /// of the items yet to play this pass plays next.
     SetShuffle(bool),
     /// What follows a track at its end: the queue's next, the first again
     /// after the last, or the same item.
     SetRepeat(Repeat),
     /// Set the sleep timer, or with `None` cancel it.
     SetSleepTimer(Option<SleepTimer>),
-    /// Take the mode a saved session had, its queue already restored in the
-    /// order it was saved. Shuffle reorders nothing here.
+    /// Take the mode a saved session had. Sent before its queue, so a
+    /// shuffled one is played in a play order drawn as the queue arrives.
     RestorePlayMode(PlayMode),
     /// What the renderer was heard to do, during the session numbered
     /// `session`. Dropped once that session is over, like `DecodeFinished`.

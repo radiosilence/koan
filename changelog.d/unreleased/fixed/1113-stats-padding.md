@@ -1,0 +1,1 @@
+- **Library figures.** The sidebar footer pads its top, bottom and sides equally instead of leaving extra space below the last line.

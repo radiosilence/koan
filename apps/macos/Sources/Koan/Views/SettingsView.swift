@@ -1609,6 +1609,52 @@ private struct DevicesSettings: View {
 /// Not part of `config.toml`. How much the app draws is this machine's
 /// business, and the TUI has none of it to draw, so it sits in defaults beside
 /// the other view state rather than in the file the CLI shares.
+#if os(macOS)
+/// The theme's text size, in steps of `KoanTheme.textSizes`. Applied when the
+/// drag ends rather than at each step: a new size draws the windows again,
+/// this one included, which would end the drag.
+private struct TextSizeSlider: View {
+    @Environment(AppearanceModel.self) private var appearance
+    @State private var draft: Double?
+    @State private var dragging = false
+
+    var body: some View {
+        let sizes = KoanTheme.textSizes
+        let shown = Int(draft ?? Double(appearance.textSize))
+        LabeledContent {
+            KoanSlider(
+                "Text size",
+                value: Binding(
+                    get: { draft ?? Double(appearance.textSize) },
+                    set: { new in
+                        draft = new
+                        if !dragging { commit() }
+                    }
+                ),
+                in: Double(sizes.first!)...Double(sizes.last!),
+                step: 5,
+                onEditingChanged: { editing in
+                    dragging = editing
+                    if !editing { commit() }
+                },
+                low: { Text("\(sizes.first!)%").koanText(.fine, .muted) },
+                high: { Text("\(sizes.last!)%").koanText(.fine, .muted) }
+            )
+        } label: {
+            Text("Text size \(shown)%")
+        }
+        Text("Scales the theme's type, and its spacing by half as much. ⌘+ and ⌘− step it; ⌘0 sets it back to 100%.")
+            .koanText(.fine, .muted)
+    }
+
+    private func commit() {
+        guard let draft else { return }
+        self.draft = nil
+        appearance.textSize = Int(draft.rounded())
+    }
+}
+#endif
+
 private struct AppearanceSettings: View {
     @AppStorage("graphics") private var graphics = Graphics.full
     @Environment(AppearanceModel.self) private var appearance
@@ -1627,6 +1673,11 @@ private struct AppearanceSettings: View {
                 if appearance.koan {
                     Toggle("Show icons", isOn: $appearance.showIcons).koanToggle()
                 }
+                #if os(macOS)
+                if KoanTheme.isOn {
+                    TextSizeSlider()
+                }
+                #endif
             } header: {
                 KoanSectionHeader("Theme")
             } footer: {

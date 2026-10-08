@@ -22,8 +22,8 @@ use buffer::PlaybackTimeline;
 use commands::{CommandChannel, PlayerCommand};
 use history::{InFlight, PlayEvent, PlayRecorder, PlaybackReport};
 use state::{
-    ItemState, PlayMode, PlaybackSource, PlaybackState, QueueItemId, Repeat, SharedPlayerState,
-    Sleep, SleepTimer, TrackInfo,
+    ItemState, PlayMode, PlaybackSource, PlaybackState, QueueItemId, QueueMode, Repeat,
+    SharedPlayerState, Sleep, SleepTimer, TrackInfo,
 };
 use undo::{UndoEntry, UndoStack};
 
@@ -1164,11 +1164,10 @@ impl Player {
         let timeline = self.timeline.clone();
         move || {
             let mut steps = steps.lock();
-            let current = match steps.last() {
-                None => id,
-                Some(step) => step.chosen.as_ref()?.0,
+            let mut step = match steps.last() {
+                None => state.lookahead_after(id)?,
+                Some(step) => state.lookahead_from(step)?,
             };
-            let mut step = state.lookahead_after(current)?;
             step.boundary = timeline.boundary_count();
             let next = step.chosen.clone();
             steps.push(step);
@@ -1657,9 +1656,19 @@ impl Player {
             .flatten();
         self.shared_state.remove_item(id);
         if was_cursor {
-            self.shared_state.set_cursor(resume_after);
+            self.resume_from(resume_after);
             let next = self.shared_state.advance_cursor_loadable();
             self.carry_on(next, self.intent());
+        }
+    }
+
+    /// Where an advance goes on from once the cursor's item is removed: the
+    /// item before it in the queue, or the top. Shuffled, from the play order
+    /// with no cursor at all — putting it on the item before would count that
+    /// one as played again.
+    fn resume_from(&self, before: Option<QueueItemId>) {
+        if !self.shared_state.is_shuffled() {
+            self.shared_state.set_cursor(before);
         }
     }
 
@@ -1806,6 +1815,7 @@ impl Player {
     /// is skipped a moment later.
     fn begin_play(&mut self, id: QueueItemId, position_ms: u64, boundary: usize) {
         self.finish_play();
+        self.shared_state.mark_played(id);
         let track_id = self.shared_state.item_db_id(id);
         let mut flight = InFlight::new(id, track_id, position_ms);
         flight.boundary = boundary;
@@ -1964,6 +1974,14 @@ impl Player {
         let Transport::Loaded(session) = &mut self.transport else {
             return;
         };
+        // The pass the decoder's step put this track in: by id alone, a row
+        // in this pass and the next is ambiguous.
+        let pass = session
+            .lookahead
+            .lock()
+            .iter()
+            .find(|step| step.boundary == playhead.boundary)
+            .map(|step| step.pass);
         if session.track.id == id {
             return;
         }
@@ -1981,7 +1999,7 @@ impl Player {
             channels: info.channels,
             duration_ms: info.duration_ms,
         };
-        self.shared_state.set_cursor(Some(id));
+        self.shared_state.move_on_to(id, pass);
     }
 
     /// Whether a sleep timer set for the end of the track or record ends
@@ -2302,15 +2320,7 @@ impl Player {
             PlayerCommand::PrevTrack => self.prev_track(),
             PlayerCommand::AddToPlaylist(items) => {
                 let ids: Vec<QueueItemId> = items.iter().map(|i| i.id).collect();
-                let whole = self.shared_state.is_empty();
                 self.shared_state.add_items(items);
-                // Into an empty queue, an add is a queue arriving whole.
-                if whole
-                    && self.mode.shuffle
-                    && let Some(&first) = ids.first()
-                {
-                    self.shared_state.shuffle_from(first);
-                }
                 self.push_undo(UndoEntry::Added { ids });
             }
             PlayerCommand::UpdatePaths(updates) => {
@@ -2333,6 +2343,7 @@ impl Player {
                 start,
                 position_ms,
                 play,
+                mode,
             } => {
                 if items.is_empty() {
                     self.clear_playlist();
@@ -2342,10 +2353,18 @@ impl Player {
                 // Stopped before the swap, as `clear_playlist` does, and the
                 // swap one change: see `SharedPlayerState::replace_playlist`.
                 self.stop_playback_and_clear_state();
-                let (old_items, cursor) = self.shared_state.replace_playlist(items);
-                if self.mode.shuffle {
-                    self.shared_state.shuffle_from(start_id);
+                if let Some(mode) = mode.play_mode() {
+                    self.mode = mode;
+                    self.shared_state.set_shuffled(mode.shuffle);
                 }
+                let (old_items, cursor) = self.shared_state.replace_playlist(items);
+                let start_id = match mode {
+                    QueueMode::Shuffled => self
+                        .shared_state
+                        .advance_cursor_loadable()
+                        .unwrap_or(start_id),
+                    _ => start_id,
+                };
                 self.push_undo(UndoEntry::Replaced {
                     items: old_items,
                     cursor,
@@ -2382,7 +2401,7 @@ impl Player {
                 self.shared_state.remove_items(&ids);
 
                 if let Some(resume_after) = resume_after {
-                    self.shared_state.set_cursor(resume_after);
+                    self.resume_from(resume_after);
                     let next = self.shared_state.advance_cursor_loadable();
                     self.carry_on(next, intent);
                 }
@@ -2487,33 +2506,21 @@ impl Player {
             PlayerCommand::Renderer { session, event } => self.on_renderer_event(session, event),
             PlayerCommand::SetShuffle(on) => self.set_shuffle(on),
             PlayerCommand::SetRepeat(repeat) => self.mode.repeat = repeat,
-            PlayerCommand::RestorePlayMode(mode) => self.mode = mode,
+            PlayerCommand::RestorePlayMode(mode) => {
+                self.mode = mode;
+                self.shared_state.set_shuffled(mode.shuffle);
+            }
             PlayerCommand::SetSleepTimer(timer) => self.set_sleep_timer(timer),
         }
     }
 
-    /// Turn shuffle on or off, as one undoable step.
-    ///
-    /// On, the items after the cursor go in a random order, each keeping a
-    /// note of where it stood. Off, they go back where they stood, in the
-    /// places such items occupy now, so an item added meanwhile stays put.
-    /// The queue is the order things play in either way: the lookahead, the
-    /// downloads and every remote queue simply follow it.
+    /// Turn shuffle on or off. Nothing in the queue moves, so it is not an
+    /// edit to undo: on, the items yet to play this pass play in a random
+    /// order kept beside the queue; off, the queue plays on in its own order
+    /// from the cursor.
     fn set_shuffle(&mut self, on: bool) {
-        if self.mode.shuffle == on {
-            return;
-        }
-        let order = self.shared_state.shuffle_order();
-        if on {
-            self.shared_state.shuffle_after_cursor();
-        } else {
-            self.shared_state.unshuffle();
-        }
-        self.push_undo(UndoEntry::Shuffled {
-            shuffle: self.mode.shuffle,
-            order,
-        });
         self.mode.shuffle = on;
+        self.shared_state.set_shuffled(on);
     }
 
     /// Stop, then clear the playlist as one undoable step. Playback and display
@@ -2569,15 +2576,6 @@ impl Player {
                     items: current_items,
                     cursor: current_cursor,
                 }
-            }
-            UndoEntry::Shuffled { shuffle, order } => {
-                let inverse = UndoEntry::Shuffled {
-                    shuffle: self.mode.shuffle,
-                    order: self.shared_state.shuffle_order(),
-                };
-                self.shared_state.restore_shuffle_order(&order);
-                self.mode.shuffle = shuffle;
-                inverse
             }
             UndoEntry::Batch(entries) => {
                 // Apply entries in reverse order, collect inverses.
@@ -2917,7 +2915,7 @@ mod tests {
             disc: None,
             duration_ms: None,
             state: ItemState::Ready,
-            pre_shuffle: None,
+            played: false,
         }
     }
 
@@ -3500,6 +3498,7 @@ mod tests {
             start: 0,
             position_ms: 0,
             play: false,
+            mode: QueueMode::Keep,
         });
         assert_eq!(
             player.shared_state.pending_version(),
@@ -3536,6 +3535,7 @@ mod tests {
             start: 1,
             position_ms: 4_000,
             play: false,
+            mode: QueueMode::Keep,
         });
         assert_eq!(
             playlist_titles(&player),
@@ -4068,49 +4068,20 @@ mod tests {
     }
 
     #[test]
-    fn shuffle_on_and_off_again_puts_the_queue_back() {
+    fn shuffle_is_not_an_undo_step() {
         let mut player = Player::new();
-        let ids = seed(&mut player, 20);
-        pretend_playing(&mut player, ids[3]);
-
+        let ids = seed(&mut player, 10);
+        player.process_command(PlayerCommand::RemoveFromPlaylist(ids[4]));
         player.process_command(PlayerCommand::SetShuffle(true));
-        let shuffled = playlist_ids(&player);
-        assert!(player.shared_state.play_mode().shuffle);
-        assert_eq!(
-            shuffled[..4],
-            ids[..4],
-            "nothing up to the playing track moves"
-        );
-        assert_ne!(shuffled, ids);
-        let mut sorted = shuffled.clone();
-        sorted.sort_by_key(|id| ids.iter().position(|i| i == id));
-        assert_eq!(sorted, ids, "the same items");
+        assert_eq!(playlist_ids(&player).len(), 9, "the queue is as it was");
 
-        let extra = make_item("extra");
-        let extra_id = extra.id;
-        player.process_command(PlayerCommand::InsertInPlaylist {
-            items: vec![extra],
-            after: ids[3],
-        });
-        player.process_command(PlayerCommand::RemoveFromPlaylist(ids[10]));
-        player.process_command(PlayerCommand::SetShuffle(false));
-
-        let mut expected = ids.clone();
-        expected.remove(10);
-        expected.insert(4, extra_id);
-        assert_eq!(playlist_ids(&player), expected, "added since stays put");
-        assert!(!player.shared_state.play_mode().shuffle);
-        assert!(
-            player
-                .shared_state
-                .shuffle_order()
-                .iter()
-                .all(|(_, pre)| pre.is_none())
-        );
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_ids(&player), ids, "the removal undone");
+        assert!(player.shared_state.play_mode().shuffle, "shuffle left on");
     }
 
     #[test]
-    fn a_queue_replaced_while_shuffled_plays_shuffled_from_its_start() {
+    fn a_queue_replaced_while_shuffled_starts_where_asked_and_shuffles_the_rest() {
         let mut player = Player::new();
         seed(&mut player, 3);
         player.process_command(PlayerCommand::SetShuffle(true));
@@ -4122,53 +4093,122 @@ mod tests {
             start: 5,
             position_ms: 0,
             play: false,
+            mode: QueueMode::Keep,
         });
-        let shuffled = playlist_ids(&player);
-        assert_eq!(shuffled[0], given[5], "the start first");
+        assert_eq!(playlist_ids(&player), given, "in the order given");
         assert_eq!(player.shared_state.cursor(), Some(given[5]));
-        assert_ne!(shuffled, given);
 
-        player.process_command(PlayerCommand::SetShuffle(false));
-        assert_eq!(
-            playlist_ids(&player),
-            given,
-            "off gives the queue as it came"
-        );
+        let mut heard = vec![given[5]];
+        while let Some(id) = player.shared_state.advance_cursor_loadable() {
+            heard.push(id);
+        }
+        assert_ne!(heard, given);
+        heard.sort_by_key(|id| given.iter().position(|i| i == id));
+        assert_eq!(heard, given, "each once");
+    }
+
+    fn replace(player: &mut Player, n: usize, mode: QueueMode) -> Vec<QueueItemId> {
+        let items: Vec<_> = (0..n).map(|i| make_item(&format!("r{i}"))).collect();
+        let ids = items.iter().map(|i| i.id).collect();
+        player.process_command(PlayerCommand::ReplacePlaylist {
+            items,
+            start: 0,
+            position_ms: 0,
+            play: false,
+            mode,
+        });
+        ids
+    }
+
+    fn shuffled_and_repeating() -> Player {
+        let mut player = Player::new();
+        seed(&mut player, 3);
+        player.process_command(PlayerCommand::SetShuffle(true));
+        player.process_command(PlayerCommand::SetRepeat(Repeat::Queue));
+        player
     }
 
     #[test]
-    fn a_queue_added_to_an_empty_one_while_shuffled_plays_shuffled() {
-        let mut player = Player::new();
-        player.process_command(PlayerCommand::SetShuffle(true));
-        let given = seed(&mut player, 20);
-        assert_eq!(playlist_ids(&player)[0], given[0]);
-        assert_ne!(playlist_ids(&player), given);
-
-        player.process_command(PlayerCommand::SetShuffle(false));
-        assert_eq!(playlist_ids(&player), given);
+    fn playing_from_a_play_button_turns_shuffle_and_repeat_off() {
+        let mut player = shuffled_and_repeating();
+        let ids = replace(&mut player, 8, QueueMode::InOrder);
+        assert_eq!(player.shared_state.play_mode(), PlayMode::default());
+        assert!(!player.shared_state.is_shuffled());
+        assert_eq!(player.shared_state.cursor(), Some(ids[0]));
     }
 
     #[test]
-    fn shuffle_is_one_undo_step() {
+    fn shuffling_from_a_play_button_turns_shuffle_on_and_repeat_off() {
         let mut player = Player::new();
-        let ids = seed(&mut player, 10);
-        pretend_playing(&mut player, ids[0]);
+        player.process_command(PlayerCommand::SetRepeat(Repeat::One));
+        let ids = replace(&mut player, 12, QueueMode::Shuffled);
+        assert_eq!(
+            player.shared_state.play_mode(),
+            PlayMode {
+                shuffle: true,
+                repeat: Repeat::Off
+            }
+        );
+        assert_eq!(playlist_ids(&player), ids, "the queue in the order given");
+
+        let mut heard = vec![player.shared_state.cursor().unwrap()];
+        while let Some(id) = player.shared_state.advance_cursor_loadable() {
+            heard.push(id);
+        }
+        assert_ne!(heard, ids, "started and played in a shuffled order");
+        heard.sort_by_key(|id| ids.iter().position(|i| i == id));
+        assert_eq!(heard, ids);
+    }
+
+    #[test]
+    fn a_queue_restored_or_handed_over_keeps_the_modes() {
+        let mut player = shuffled_and_repeating();
+        let mode = player.shared_state.play_mode();
+        replace(&mut player, 5, QueueMode::Keep);
+        assert_eq!(player.shared_state.play_mode(), mode);
+        assert!(player.shared_state.is_shuffled());
+    }
+
+    #[test]
+    fn adding_to_the_queue_keeps_the_modes() {
+        let mut player = shuffled_and_repeating();
+        let mode = player.shared_state.play_mode();
+        seed(&mut player, 4);
+        let ids = playlist_ids(&player);
+        player.process_command(PlayerCommand::InsertInPlaylist {
+            items: vec![make_item("next")],
+            after: ids[0],
+        });
+        assert_eq!(player.shared_state.play_mode(), mode);
+    }
+
+    #[test]
+    fn removing_the_playing_track_while_shuffled_moves_on_in_the_play_order() {
+        let mut player = Player::new();
+        seed(&mut player, 10);
+        player.process_command(PlayerCommand::SetShuffle(true));
+        let playing = player.shared_state.advance_cursor_loadable().unwrap();
+        pretend_playing(&mut player, playing);
+        let next = player.shared_state.lookahead_after(playing).unwrap().next;
+
+        player.process_command(PlayerCommand::RemoveFromPlaylist(playing));
+        assert_eq!(player.shared_state.cursor(), next);
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
+    fn shuffled_the_decoder_queues_the_play_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let names = ["a", "b", "c", "d", "e", "f"];
+        let (mut player, ids) = wavs_playing(dir.path(), &names, 1.0);
+        queued_at_least(&player, names.len() - 1);
 
         player.process_command(PlayerCommand::SetShuffle(true));
-        let shuffled = playlist_ids(&player);
-        player.process_command(PlayerCommand::Undo);
-        assert_eq!(playlist_ids(&player), ids);
-        assert!(!player.shared_state.play_mode().shuffle);
-
-        player.process_command(PlayerCommand::Redo);
-        assert_eq!(playlist_ids(&player), shuffled);
-        assert!(player.shared_state.play_mode().shuffle);
-        player.process_command(PlayerCommand::SetShuffle(false));
-        assert_eq!(
-            playlist_ids(&player),
-            ids,
-            "the redone shuffle still unwinds"
-        );
+        let order = player.shared_state.upcoming();
+        assert_eq!(order.len(), names.len() - 1);
+        assert_eq!(queued_at_least(&player, order.len()), order);
+        assert_eq!(playlist_ids(&player), ids, "the queue never moved");
+        player.process_command(PlayerCommand::Stop);
     }
 
     #[test]
@@ -4496,8 +4536,8 @@ mod tests {
         if state.play_mode() != player.mode {
             return Err("the published mode disagrees with the player".into());
         }
-        if !player.mode.shuffle && state.shuffle_order().iter().any(|(_, pre)| pre.is_some()) {
-            return Err("shuffle is off, but an item remembers a place to go back to".into());
+        if state.is_shuffled() != player.mode.shuffle {
+            return Err("a play order kept, or not, against the mode".into());
         }
         if player.mode.repeat == Repeat::Off
             && let Some(session) = player.session()
@@ -4610,13 +4650,13 @@ mod tests {
                         start: rng.below(4),
                         position_ms: if rng.coin() { 0 } else { 200 },
                         play: rng.coin(),
+                        mode: [QueueMode::Keep, QueueMode::InOrder, QueueMode::Shuffled]
+                            [rng.below(3)],
                     }),
                 };
                 let Some(cmd) = cmd else { continue };
                 let label = format!("{cmd:?}");
                 let asked = asks_to_play(&cmd);
-                let replaced_shuffled = player.mode.shuffle
-                    && matches!(&cmd, PlayerCommand::ReplacePlaylist { items, .. } if items.len() > 1);
                 let wanted_before = player.shared_state.wants_to_play();
                 player.process_command(cmd);
                 // What the decode threads sent meanwhile, as the loop would
@@ -4627,18 +4667,7 @@ mod tests {
                 }
                 player.update_playback_state();
                 history.push(label);
-                let broken = check_invariants(&player, wanted_before, asked)
-                    .err()
-                    .or_else(|| {
-                        (replaced_shuffled
-                            && player
-                                .shared_state
-                                .shuffle_order()
-                                .iter()
-                                .all(|(_, pre)| pre.is_none()))
-                        .then(|| "a queue replaced while shuffled plays in order".to_string())
-                    });
-                if let Some(broken) = broken {
+                if let Err(broken) = check_invariants(&player, wanted_before, asked) {
                     let tail = history[history.len().saturating_sub(8)..].join("\n  ");
                     panic!("seed {seed}, step {step}: {broken}\nlast commands:\n  {tail}");
                 }
@@ -4998,6 +5027,7 @@ mod tests {
             start: 0,
             position_ms: 0,
             play: true,
+            mode: QueueMode::Keep,
         });
 
         assert_eq!(player.shared_state.cursor(), Some(first));
@@ -5404,6 +5434,7 @@ mod tests {
             start: 0,
             position_ms: 0,
             play: true,
+            mode: QueueMode::Keep,
         });
         // What `play()` would have left behind if the file existed.
         pretend_playing(&mut player, orphan);
@@ -5975,6 +6006,7 @@ mod tests {
             start: 0,
             position_ms: 0,
             play: true,
+            mode: QueueMode::Keep,
         });
         player.publish();
         let state = player.shared_state.clone();

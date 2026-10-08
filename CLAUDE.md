@@ -60,7 +60,8 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 ### Key design decisions
 
 - **QueueItemId (UUIDv7)** — all queue ops use IDs, not indices. Survives reordering, handles duplicate tracks.
-- **Status is derived** — `QueueEntryStatus` computed from cursor + load state, never stored.
+- **Status is derived** — `QueueEntryStatus` computed from the cursor, the row's `played` mark and its load state. Played is recorded when a track plays, never inferred from position.
+- **Shuffle never moves the queue** — it is a play order beside it (`PlayOrder` in `player/state.rs`) that the advance and the decoder's lookahead both read.
 - **Decode cursor ≠ UI cursor** — decode thread peeks ahead for gapless without moving the playlist cursor.
 - **One `derive_visible_queue()` per frame** — cached snapshot, all render/mouse ops see consistent state.
 - **Tracks are derived from sources** — each file is a `local_files` row and each server entry a `remote_entries` row, holding its own tags. A track holds at most one of each; its columns are derived, the file's first. `sources::link` alone decides which track a source is (MusicBrainz recording + release, or album/album artist/disc/number/title with the artist as tie-break; ambiguous → declined). Never write track identity columns outside `db/queries/sources.rs`. Albums are title + album artist + release (editions are separate albums); artists are their folded name; favourites reference rows by id.

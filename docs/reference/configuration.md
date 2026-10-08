@@ -204,10 +204,14 @@ theme = "koan"     # "koan": the site's look throughout (the default); "system":
 theme_icons = true # in the kōan theme, icons beside labels; false for labels alone
 record_colours = true # the record playing colours the wash and the accent; false for neither
 wash_window = true    # provisional. Mac, kōan theme: the wash under the whole window; false gives panels their own grounds
+text_size = 100       # Mac, kōan theme: text size in percent, 80–130 in steps of 5; spacing follows at half the rate. In config.local.toml
 ```
 
 Settings → Appearance → **Theme** chooses between them on every app, and
-**Show icons**, shown while the kōan theme is chosen, sets `theme_icons`. The
+**Show icons**, shown while the kōan theme is chosen, sets `theme_icons`. On
+the Mac in the kōan theme, **Text size** (and View → Bigger, Smaller and Actual
+Size, ⌘+, ⌘− and ⌘0) sets `text_size`, applied at once; 100 % draws the theme's
+type as large as the system's. The
 kōan theme draws its own icon set, thin square-ended lines; the system look
 always draws its icons, which are Apple's SF Symbols. **Colours from the record** sets
 `record_colours`: off, there is no wash behind the window and the accent is

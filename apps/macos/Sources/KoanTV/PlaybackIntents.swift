@@ -58,7 +58,7 @@ struct PlayRecordIntent: AudioPlaybackIntent {
         guard !ids.isEmpty else {
             throw offline ? IntentError.notDownloaded(album.title) : IntentError.nothingToPlay(album.title)
         }
-        try await IntentError.saying { _ = try await app.engine.replaceQueue(trackIds: ids, startAt: 0) }
+        try await IntentError.saying { _ = try await app.engine.replaceQueue(trackIds: ids, startAt: 0, shuffled: false) }
         return .result(dialog: "Playing \(album.title) by \(album.artistName).")
     }
 }

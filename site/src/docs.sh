@@ -20,6 +20,7 @@ pages=(
   "Library|docs/recipes/cache-management.md"
   "Playback|docs/guide/devices.md"
   "Playback|docs/guide/apple-tv.md"
+  "Playback|docs/guide/shuffle-and-repeat.md"
   "Playback|docs/guide/sleep-timer.md"
   "Playback|docs/guide/dsp.md"
   "Playback|docs/guide/headphone-eq.md"

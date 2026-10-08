@@ -355,9 +355,12 @@ final class PlayerModel {
     /// jumped, which showed as track one flashing as playing.
     /// Replace the queue with what `resolve` finds, named `name` until it
     /// lands: a record, an artist or a playlist, whose tracks are a database
-    /// read away.
+    /// read away. `shuffled` plays it with shuffle on rather than off; the
+    /// engine turns repeat off either way.
     @discardableResult
-    func playNow(resolving name: String, _ resolve: @escaping () async -> [Int64]) -> Task<Void, Never> {
+    func playNow(
+        resolving name: String, shuffled: Bool = false, _ resolve: @escaping () async -> [Int64]
+    ) -> Task<Void, Never> {
         resolving = name
         let engine = self.engine
         pendingMutations += 1
@@ -365,7 +368,7 @@ final class PlayerModel {
             let ids = await resolve()
             if !ids.isEmpty {
                 do {
-                    _ = try await engine.replaceQueue(trackIds: ids, startAt: 0)
+                    _ = try await engine.replaceQueue(trackIds: ids, startAt: 0, shuffled: shuffled)
                 } catch {
                     self.lastError = String(describing: error)
                 }
@@ -387,7 +390,7 @@ final class PlayerModel {
     func playNow(trackIds: [Int64], startingAt index: Int? = nil) {
         guard !trackIds.isEmpty else { return }
         let (queued, start) = Self.listing(trackIds, from: index)
-        mutate { _ = try await $0.replaceQueue(trackIds: queued, startAt: UInt32(start)) }
+        mutate { _ = try await $0.replaceQueue(trackIds: queued, startAt: UInt32(start), shuffled: false) }
     }
 
     /// What `playNow` queues, and where it starts.

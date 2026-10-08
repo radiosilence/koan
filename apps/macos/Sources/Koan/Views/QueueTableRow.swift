@@ -64,26 +64,28 @@ final class QueueTableRow: TableCell, TableRow {
         }
     }
 
-    private static let titleFont = NSFont.role(.body, system: NSFont.preferredFont(forTextStyle: .body))
-    private static let captionFont = NSFont.role(.meta, system: NSFont.preferredFont(forTextStyle: .caption1))
-    private static let numberFont = NSFont.role(.meta, system: NSFont.monospacedDigitSystemFont(ofSize: captionFont.pointSize, weight: .regular))
-    private static let codecFont = NSFont.role(.fine, system: NSFont.monospacedSystemFont(
+    private static var titleFont: NSFont { NSFont.role(.body, system: NSFont.preferredFont(forTextStyle: .body)) }
+    private static var captionFont: NSFont { NSFont.role(.meta, system: NSFont.preferredFont(forTextStyle: .caption1)) }
+    private static var numberFont: NSFont { NSFont.role(.meta, system: NSFont.monospacedDigitSystemFont(ofSize: captionFont.pointSize, weight: .regular)) }
+    private static var codecFont: NSFont { NSFont.role(.fine, system: NSFont.monospacedSystemFont(
         ofSize: NSFont.preferredFont(forTextStyle: .caption2).pointSize, weight: .regular
-    ))
+    )) }
     /// One width for every codec, the widest the library writes, so the heart
     /// and the availability mark beside it line up down the list.
-    private static let codecWidth = ["VORBIS", "FLAC", "ALAC", "OPUS", "AIFF", "MP3", "AAC", "WAV"]
-        .map { ceil(($0 as NSString).size(withAttributes: [.font: codecFont]).width) + 5 }
-        .max() ?? 0
+    private static var codecWidth: CGFloat {
+        ["VORBIS", "FLAC", "ALAC", "OPUS", "AIFF", "MP3", "AAC", "WAV"]
+            .map { ceil(($0 as NSString).size(withAttributes: [.font: codecFont]).width) + 5 }
+            .max() ?? 0
+    }
     /// Wide enough for an hour or more ("1:02:34") in whichever face the rows
     /// are drawn in; never narrower than the column was.
-    private static let durationWidth = max(
-        44, ceil(("0:00:00" as NSString).size(withAttributes: [.font: numberFont]).width) + 2
-    )
-    private static let headingFont = NSFont.role(.body, system: NSFont.systemFont(ofSize: 14, weight: .semibold))
-    private static let detailFont = NSFont.role(.fine, system: NSFont.monospacedDigitSystemFont(
+    private static var durationWidth: CGFloat {
+        max(44, ceil(("0:00:00" as NSString).size(withAttributes: [.font: numberFont]).width) + 2)
+    }
+    private static var headingFont: NSFont { NSFont.role(.body, system: NSFont.systemFont(ofSize: 14, weight: .semibold)) }
+    private static var detailFont: NSFont { NSFont.role(.fine, system: NSFont.monospacedDigitSystemFont(
         ofSize: NSFont.preferredFont(forTextStyle: .caption2).pointSize, weight: .regular
-    ))
+    )) }
 
     private let status = CALayer()
     private var bars: PlayingBarsView?

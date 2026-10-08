@@ -110,43 +110,54 @@ struct NowPlayingSheet: View {
         }
     }
 
+    /// The title runs the full width. The heart and the menu sit at the
+    /// trailing edge of the artist line, drawn over it so their 44 pt targets
+    /// do not make the line taller; the lines below keep clear of them.
     private var titles: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(player.resolving ?? player.currentEntry?.title ?? KoanTheme.label("Nothing playing"))
-                    .font(.role(.titleSmall, system: .title3.weight(.semibold)))
-                    .foregroundStyle(KoanTheme.style(.strong, system: .primary))
-                    .lineLimit(1)
-                    .rainbowShimmer()
-                if player.resolving != nil {
-                    Text("Loading…").koanCase()
-                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                } else if let entry = player.currentEntry {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(player.resolving ?? player.currentEntry?.title ?? KoanTheme.label("Nothing playing"))
+                .font(.role(.titleSmall, system: .title3.weight(.semibold)))
+                .foregroundStyle(KoanTheme.style(.strong, system: .primary))
+                .lineLimit(1)
+                .rainbowShimmer()
+            if player.resolving != nil {
+                Text("Loading…").koanCase()
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+            } else if let entry = player.currentEntry {
+                LinkText(
+                    text: entry.artist,
+                    target: player.currentArtistId.map { .artist($0) },
+                    font: .role(.body, system: .body)
+                )
+                .lineLimit(1)
+                .padding(.trailing, Self.actionsWidth)
+                .overlay(alignment: .trailing) { actions }
+                if !entry.album.isEmpty {
                     LinkText(
-                        text: entry.artist,
-                        target: player.currentArtistId.map { .artist($0) },
-                        font: .role(.body, system: .body)
+                        text: entry.album,
+                        target: player.currentAlbumId.map { .album($0) },
+                        font: .role(.meta, system: .subheadline)
                     )
                     .lineLimit(1)
-                    if !entry.album.isEmpty {
-                        LinkText(
-                            text: entry.album,
-                            target: player.currentAlbumId.map { .album($0) },
-                            font: .role(.meta, system: .subheadline)
-                        )
-                        .lineLimit(1)
-                    }
+                    .padding(.trailing, Self.actionsWidth)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentTransition(.opacity)
-            .animation(.easeInOut(duration: 0.2), value: player.currentEntry?.queueItemId)
-            // The artist and the record are links of their own; the rest of
-            // the block opens what the library knows about the track.
-            .contentShape(Rectangle())
-            .onTapGesture { if info != nil { showingInfo = true } }
-            .accessibilityAction(named: "Track Info") { if info != nil { showingInfo = true } }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentTransition(.opacity)
+        .animation(.easeInOut(duration: 0.2), value: player.currentEntry?.queueItemId)
+        // The artist and the record are links of their own; the rest of
+        // the block opens what the library knows about the track.
+        .contentShape(Rectangle())
+        .onTapGesture { if info != nil { showingInfo = true } }
+        .accessibilityAction(named: "Track Info") { if info != nil { showingInfo = true } }
+    }
 
+    /// The heart and the menu, a touch target each.
+    private static let actionsWidth: CGFloat = 88
+
+    private var actions: some View {
+        HStack(spacing: 0) {
             if let trackId = player.currentTrackId {
                 TrackHeart(trackId: trackId, size: .title3)
             }
