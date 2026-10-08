@@ -79,6 +79,8 @@ final class EqKeyboardTests: XCTestCase {
         app.buttons[any: "Previous"].tap()
         XCTAssert(hasFocus(app.textFields[any: "Band 10 frequency"]), "Previous did not reach the frequency")
         app.buttons[any: "Next"].tap()
+        XCTAssert(hasFocus(app.textFields[any: "Band 10 gain"]), "Next did not reach the gain")
+        attach("next")
         app.buttons[any: "Next"].tap()
         XCTAssert(hasFocus(app.textFields[any: "Band 10 Q"]), "Next did not reach Q")
         XCTAssertFalse(app.buttons[any: "Next"].isEnabled, "Next past the last figure")
@@ -91,8 +93,13 @@ final class EqKeyboardTests: XCTestCase {
         try waitForSaved("gain_db = 3")
     }
 
+    /// Whether `field` takes the keyboard within a couple of seconds: moving
+    /// focus commits the figure left, and the rows are redrawn from it.
     private func hasFocus(_ field: XCUIElement) -> Bool {
-        (field.value(forKey: "hasKeyboardFocus") as? Bool) ?? false
+        let focused = NSPredicate { element, _ in
+            ((element as? XCUIElement)?.value(forKey: "hasKeyboardFocus") as? Bool) ?? false
+        }
+        return XCTWaiter().wait(for: [expectation(for: focused, evaluatedWith: field)], timeout: 3) == .completed
     }
 
     /// Both layers: the first save moves the tuning to `config.local.toml`.
