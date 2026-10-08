@@ -1476,7 +1476,8 @@ pub struct Response {
     /// included, on the first channel. The preamp is left out, so the
     /// curve lines up with the bands' own gains; it is `preamp_db`.
     pub total: Vec<f64>,
-    /// Each of its own parametric bands alone, in order.
+    /// Each of its own parametric bands alone, in order; a flat gain is
+    /// `gain_db`.
     pub bands: Vec<Vec<f64>>,
     /// Each layer as it plays alone, for a stack.
     pub layers: Vec<LayerResponse>,
@@ -1488,6 +1489,10 @@ pub struct Response {
     pub predicted: Option<Vec<f64>>,
     /// The gain ahead of it all at `rate`.
     pub preamp_db: f64,
+    /// The flat gain among its filters on the first channel, which `total`
+    /// includes. With `preamp_db`, the level the curve sits at, however the
+    /// profile states its gain.
+    pub gain_db: f64,
     /// For a chain with both a correction and tuning: what the correction
     /// does, and what the tuning on top does, so each can be drawn as its
     /// own. `total` is the two together.
@@ -1531,7 +1536,7 @@ fn response_of(profile: &DspProfile, all: &[DspProfile], rate: u32) -> Option<Re
     let bands = profile
         .filters
         .iter()
-        .filter(|f| matches!(f, crate::config::DspFilter::Band(_)))
+        .filter(|f| matches!(f, crate::config::DspFilter::Band(b) if b.kind != crate::config::EqFilterKind::Gain))
         .map(|f| curve(std::slice::from_ref(f)))
         .collect();
     // The correction alone, where the chain has tuning besides.
@@ -1603,7 +1608,10 @@ fn response_of(profile: &DspProfile, all: &[DspProfile], rate: u32) -> Option<Re
         }
         None => (None, None, None),
     };
-    let preamp_db = setup.map_or(0.0, |s| s.preamp_db(s.output_rate(rate), 2));
+    let preamp_db = setup
+        .as_ref()
+        .map_or(0.0, |s| s.preamp_db(s.output_rate(rate), 2));
+    let gain_db = setup.as_ref().map_or(0.0, |s| s.gain_db());
     Some(Response {
         freqs,
         total,
@@ -1613,6 +1621,7 @@ fn response_of(profile: &DspProfile, all: &[DspProfile], rate: u32) -> Option<Re
         target,
         predicted,
         preamp_db,
+        gain_db,
         correction,
         tuning,
         original: None,
@@ -2895,6 +2904,7 @@ pub fn preview_measurement(text: &str, target: &str, rate: u32) -> Result<Respon
         target: Some(level(&aim)),
         predicted: Some(predicted),
         preamp_db,
+        gain_db: 0.0,
         correction: None,
         tuning: None,
         original: None,
@@ -2992,6 +3002,7 @@ pub fn preview_split(name: &str, text: &str, target: &str, rate: u32) -> Result<
         target: None,
         predicted: None,
         preamp_db: 0.0,
+        gain_db: 0.0,
         correction: Some(s.correction),
         tuning: Some(s.tuning),
         original: Some(s.original),
@@ -4594,6 +4605,54 @@ mod tests {
         let both = output_response("DAC", 48_000).unwrap();
         assert!(both.total.iter().all(|db| db.abs() < 0.01));
         assert!(both.preamp_db.abs() < 0.01, "{}", both.preamp_db);
+    }
+
+    /// A gain the file states as a filter and one stated as the preamp put
+    /// the curve, and the level it sits at, in the same place: the graph
+    /// does not move between them.
+    #[test]
+    fn a_gain_filter_and_a_preamp_draw_alike() {
+        use crate::config::{DspFilter, EqFilter, EqFilterKind};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let band = |kind, gain_db| {
+            DspFilter::Band(EqFilter {
+                kind,
+                freq: 1000.0,
+                gain_db,
+                q: 1.0,
+                channels: Vec::new(),
+            })
+        };
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "As a filter".into(),
+                filters: vec![
+                    band(EqFilterKind::Gain, -5.0),
+                    band(EqFilterKind::Peaking, 3.0),
+                ],
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "As the preamp".into(),
+                filters: vec![band(EqFilterKind::Peaking, 3.0)],
+                preamp_db: Some(-5.0),
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        let filter = response("As a filter", 48_000).unwrap();
+        let preamp = response("As the preamp", 48_000).unwrap();
+        let level = |r: &Response| r.preamp_db + r.gain_db;
+        assert!((level(&filter) + 5.0).abs() < 0.01, "{}", level(&filter));
+        assert!((level(&preamp) + 5.0).abs() < 0.01, "{}", level(&preamp));
+        for (a, b) in filter.total.iter().zip(&preamp.total) {
+            assert!((a + filter.preamp_db - b - preamp.preamp_db).abs() < 0.01);
+        }
+        assert_eq!(filter.bands.len(), 1, "the gain is not drawn as a band");
     }
 
     /// A correction fitted to one target under a tuning made against another

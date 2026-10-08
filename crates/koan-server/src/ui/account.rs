@@ -277,7 +277,9 @@ pub(super) async fn create_app_password(
     if !s.auth_enabled {
         return refused("app-password-result", NO_ACCOUNTS);
     }
-    let Some(name) = posted_name(&body, "appname") else {
+    let Some(name) =
+        posted_name(&body, "appname").and_then(|n| app_passwords::app_password_name(&n))
+    else {
         return refused(
             "app-password-result",
             "Give the app password a name of up to 100 characters.",
@@ -286,14 +288,21 @@ pub(super) async fn create_app_password(
     let key = koan_core::auth::app_password_key(&s.auth.private_pem);
     let created = blocking(move || {
         let db = open(&s.pool)?;
-        let (_, password) =
-            app_passwords::create_app_password(&db.conn, &key, user.user_id, &name).ok()?;
+        let password = match app_passwords::create_app_password(&db.conn, &key, user.user_id, &name)
+        {
+            Ok((_, password)) => password,
+            Err(e @ app_passwords::CreateAppPasswordError::TooMany) => {
+                return Some(Err(e.to_string()));
+            }
+            Err(_) => return None,
+        };
         let passwords = app_passwords::list_app_passwords(&db.conn, user.user_id).ok()?;
-        Some((password, passwords))
+        Some(Ok((password, passwords)))
     })
     .await;
     match created {
-        Some((password, passwords)) => made(
+        Some(Err(reason)) => refused("app-password-result", &reason),
+        Some(Ok((password, passwords))) => made(
             "app-password-result",
             "app password",
             &password,

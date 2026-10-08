@@ -688,6 +688,23 @@ impl Setup {
         }))
     }
 
+    /// The flat gain among the filters on the first channel: a gain the
+    /// profile's file states as a filter rather than as its preamp.
+    pub fn gain_db(&self) -> f64 {
+        self.filters
+            .iter()
+            .filter_map(|f| match f {
+                DspFilter::Band(b)
+                    if b.kind == crate::config::EqFilterKind::Gain
+                        && (b.channels.is_empty() || b.channels.contains(&0)) =>
+                {
+                    Some(b.gain_db)
+                }
+                _ => None,
+            })
+            .sum()
+    }
+
     /// The preamp at `rate` for `channels`: the profile's own, or the one
     /// derived from the peak gain of its bands and response there.
     pub fn preamp_db(&self, rate: u32, channels: usize) -> f64 {

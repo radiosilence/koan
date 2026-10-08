@@ -33,6 +33,11 @@ struct TabShell: View {
     @State private var signedIn = true
     /// The tab of the theme's bar the remote is on, if it is on the bar.
     @FocusState private var barFocus: TabID?
+    /// The pushed pages on screen. The theme's bar shows only while there are
+    /// none, at a tab's root; Menu pops back to it.
+    @State private var pushedShowing: Set<UUID> = []
+    /// The bar's height as laid out, kept for the room it leaves.
+    @State private var barHeight: CGFloat = 0
     #endif
     @Environment(\.horizontalSizeClass) private var width
     @State private var showingNowPlaying = false
@@ -170,9 +175,22 @@ struct TabShell: View {
         // style folds them behind a pill a remote has to find first.
         .tabViewStyle(.tabBarOnly)
         .safeAreaInset(edge: .top, spacing: 0) {
+            // Gone from a pushed page, so nothing there can focus it, but its
+            // room is kept: no page moves when it goes or comes back.
             if KoanTheme.isOn {
-                TelevisionTabs(selection: tab, focus: $barFocus)
+                VStack(spacing: 0) {
+                    if pushedShowing.isEmpty {
+                        TelevisionTabs(selection: tab, focus: $barFocus)
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { barHeight = $0 }
+                            .transition(.opacity)
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: barHeight)
+                .koanAnimation(KoanTheme.Motion.normal, value: pushedShowing.isEmpty)
             }
+        }
+        .environment(\.koanPushedPageShown) { id, shown in
+            if shown { pushedShowing.insert(id) } else { pushedShowing.remove(id) }
         }
         .defaultFocus($barFocus, selection)
         #else
@@ -639,8 +657,9 @@ private struct Transport: ViewModifier {
 
 #if os(tvOS)
 /// The theme's tabs on a television, across the top in place of the
-/// platform's glass capsule. They behave as its do: moving onto a tab chooses
-/// it, and coming up from a page lands on the tab showing.
+/// platform's glass capsule. They behave as its do: shown at a tab's root and
+/// gone from a page pushed over it, moving onto a tab chooses it, and coming
+/// up from a page lands on the tab showing.
 private struct TelevisionTabs: View {
     @Binding var selection: TabShell.TabID
     var focus: FocusState<TabShell.TabID?>.Binding

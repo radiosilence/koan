@@ -2714,6 +2714,25 @@ extension View {
 
 enum KoanPageGround { case wash, sheet }
 
+#if os(tvOS)
+extension EnvironmentValues {
+    /// Told as a page pushed onto a tab comes on screen and goes: the theme's
+    /// tabs show at a tab's root only, as the platform's bar does.
+    @Entry var koanPushedPageShown: (UUID, Bool) -> Void = { _, _ in }
+}
+
+private struct TelevisionPushedPage: ViewModifier {
+    @Environment(\.koanPushedPageShown) private var shown
+    @State private var id = UUID()
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { shown(id, true) }
+            .onDisappear { shown(id, false) }
+    }
+}
+#endif
+
 extension EnvironmentValues {
     @Entry var koanPageGround = KoanPageGround.wash
 }
@@ -2731,7 +2750,11 @@ private struct KoanPushedPage: ViewModifier {
             .koanHidesSystemTabBar()
         switch ground {
         case .wash:
+            #if os(tvOS)
+            page.roomBackground().modifier(TelevisionPushedPage())
+            #else
             page.roomBackground()
+            #endif
         case .sheet:
             #if os(iOS)
             if KoanTheme.isOn {

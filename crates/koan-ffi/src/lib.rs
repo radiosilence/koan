@@ -4195,6 +4195,58 @@ impl KoanEngine {
         .await
     }
 
+    /// The signed-in account's app passwords.
+    pub async fn app_passwords(self: Arc<Self>) -> Result<Vec<AppPasswordInfo>, KoanError> {
+        offload::offload(move || {
+            let seconds = |iso: Option<String>| {
+                iso.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                    .map(|t| t.timestamp())
+            };
+            Ok(app_passwords_client()?
+                .koan_app_passwords()
+                .map_err(remote_error)?
+                .into_iter()
+                .map(|p| AppPasswordInfo {
+                    id: p.id,
+                    name: p.name,
+                    created: seconds(p.created),
+                    last_used: seconds(p.last_used),
+                })
+                .collect())
+        })
+        .await
+    }
+
+    /// Make an app password for a Subsonic app that signs in only with a
+    /// token. The password is in the answer and nowhere else, ever.
+    pub async fn create_app_password(
+        self: Arc<Self>,
+        name: String,
+    ) -> Result<NewAppPassword, KoanError> {
+        offload::offload(move || {
+            let made = app_passwords_client()?
+                .koan_create_app_password(&name)
+                .map_err(remote_error)?;
+            Ok(NewAppPassword {
+                name: made.name,
+                password: made.password.ok_or(KoanError::BadArgument {
+                    message: "the server made the app password but did not send it".into(),
+                })?,
+            })
+        })
+        .await
+    }
+
+    /// Revoke one of the account's app passwords.
+    pub async fn revoke_app_password(self: Arc<Self>, id: i64) -> Result<(), KoanError> {
+        offload::offload(move || {
+            app_passwords_client()?
+                .koan_revoke_app_password(id)
+                .map_err(remote_error)
+        })
+        .await
+    }
+
     /// Give another account a password. Its devices sign out.
     pub async fn set_server_account_password(
         self: Arc<Self>,
@@ -6709,6 +6761,20 @@ fn dsp_deleted_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>
     if !offers {
         return Err(KoanError::BadArgument {
             message: "this server is older than this app: update it to restore EQs".into(),
+        });
+    }
+    Ok(client)
+}
+
+/// The signed-in server's client, when it lists and makes app passwords.
+fn app_passwords_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {
+    let client = account_client()?;
+    let offers = koan_core::remote::profile::for_auth(client.auth())
+        .is_some_and(|p| p.offers(koan_core::remote::profile::APP_PASSWORDS));
+    if !offers {
+        return Err(KoanError::BadArgument {
+            message: "this server is older than this app: update it to manage app passwords here"
+                .into(),
         });
     }
     Ok(client)

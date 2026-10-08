@@ -35,7 +35,11 @@ struct PickerSheet: View {
                 // you can see what is still under the bar as you scroll.
                 .safeAreaInset(edge: .bottom, spacing: 0) { commitBar }
         }
+        #if os(macOS)
+        .resizableWindow("Picker", min: CGSize(width: 520, height: 360), ideal: CGSize(width: 760, height: 640))
+        #else
         .frame(width: 660, height: 500)
+        #endif
         .koanSheet()
         .onAppear { fieldFocused = true }
         .onChange(of: query) { _, new in schedule(new) }

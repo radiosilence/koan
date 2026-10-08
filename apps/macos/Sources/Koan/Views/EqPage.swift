@@ -103,7 +103,7 @@ struct EqSettings: View {
                         }
                     }
             }
-            .frame(minWidth: 480, minHeight: 520)
+            .resizableWindow("ManageEq", min: CGSize(width: 480, height: 520), ideal: CGSize(width: 640, height: 860))
             .koanSheet()
         }
         #else
@@ -205,7 +205,7 @@ struct EqSettings: View {
                     }
             }
             .koanSheetStack()
-            .frame(minWidth: 480, minHeight: 440)
+            .resizableWindow("EqProfile", min: CGSize(width: 480, height: 440), ideal: CGSize(width: 640, height: 860))
         }
         #endif
     }
@@ -336,7 +336,7 @@ struct EqSettings: View {
         let freqs = (0 ..< 120).map { 20 * pow(1000, Double($0) / 119) }
         return DspResponse(
             freqs: freqs, total: freqs.map { _ in 0 }, bands: [], layers: [],
-            measurement: nil, target: nil, predicted: nil, preampDb: 0,
+            measurement: nil, target: nil, predicted: nil, preampDb: 0, gainDb: 0,
             correction: nil, tuning: nil, original: nil
         )
     }()

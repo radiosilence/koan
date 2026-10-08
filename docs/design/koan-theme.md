@@ -157,7 +157,7 @@ Flat and full-width, with a 1-point `rule` along its top and `bg` beneath, 64 po
 
 ### Tabs (television)
 
-A row across the top of the screen on no ground, centred: each tab its label in `body`, lowercase, with no glyph; unselected `muted`, selected `accent` and underlined, focus the 2-point `accent` ring. They behave as the platform's do: moving onto a tab chooses it, coming up from a page lands on the tab showing, Menu at a tab's root goes up to them and Menu on them leaves the app. The platform's tab bar is a glass capsule with a white platter for focus, and no appearance reaches either, so the theme hides it; the platform's look keeps it.
+A row across the top of the screen on no ground, centred: each tab its label in `body`, lowercase, with no glyph; unselected `muted`, selected `accent` and underlined, focus the 2-point `accent` ring. They behave as the platform's do: shown at a tab's root and faded out on a page pushed over it, whose layout keeps their room so nothing moves, moving onto a tab chooses it, coming up from a page lands on the tab showing, Menu at a tab's root goes up to them and Menu on them leaves the app. The platform's tab bar is a glass capsule with a white platter for focus, and no appearance reaches either, so the theme hides it; the platform's look keeps it.
 
 ### Settings tabs (Mac)
 

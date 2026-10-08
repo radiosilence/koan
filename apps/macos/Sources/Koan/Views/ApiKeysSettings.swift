@@ -89,7 +89,7 @@ struct ApiKeysSettings: View {
             get: { model?.made.map(MadeKey.init) },
             set: { if $0 == nil { model?.made = nil } }
         )) { item in
-            NewKeySheet(key: item.key)
+            NewSecretSheet(kind: "Key", name: item.key.name, secret: item.key.key)
         }
         .confirmationDialog(
             "Revoke \u{201C}\(revoking?.name ?? "")\u{201D}?",
@@ -143,9 +143,13 @@ private struct MadeKey: Identifiable {
     var id: String { key.key }
 }
 
-/// A key just made: shown this once, since the server keeps only its hash.
-private struct NewKeySheet: View {
-    let key: NewApiKey
+/// A key or app password just made: shown this once, since the server keeps
+/// only its hash or a sealed copy.
+struct NewSecretSheet: View {
+    /// "Key" or "App Password".
+    let kind: String
+    let name: String
+    let secret: String
     @Environment(\.dismiss) private var dismiss
     @State private var copied = false
 
@@ -153,26 +157,26 @@ private struct NewKeySheet: View {
         NavigationStack {
             KoanForm {
                 Section {
-                    LabeledContent("Key", value: key.key)
+                    LabeledContent(kind, value: secret)
                         .selectableText()
                     #if !os(tvOS)
                     Button {
-                        Pasteboard.write(text: key.key)
+                        Pasteboard.write(text: secret)
                         copied = true
                     } label: {
-                        KoanLabel(copied ? "Copied" : "Copy Key", icon: Icon.copy)
+                        KoanLabel(copied ? "Copied" : "Copy \(kind)", icon: Icon.copy)
                     }
                     .koanButton(.bordered)
                     #endif
                 } header: {
-                    KoanSectionHeader("Key for \(key.name)")
+                    KoanSectionHeader("\(kind) for \(name)")
                 } footer: {
-                    Text("This is the only time the key is shown. Copy it into the app now; if it is lost, revoke it and make another.")
+                    Text("This is the only time it is shown. Copy it into the app now; if it is lost, revoke it and make another.")
                         .koanText(.fine, .muted)
                 }
             }
             .koanSheet()
-            .navigationTitle(KoanTheme.label("New Key"))
+            .navigationTitle(KoanTheme.label("New \(kind)"))
             .toolbar {
                 KoanSheetAction(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
