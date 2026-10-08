@@ -673,14 +673,19 @@ impl DspProfile {
 
 impl DspConfig {
     /// The profile for the output device called `device`, if DSP is on and
-    /// one names it.
+    /// one names it. None that corrects a headphone for an output playing
+    /// filters alone, however it came to name it.
     pub fn profile_for(&self, device: &str) -> Option<&DspProfile> {
         if !self.enabled {
             return None;
         }
+        let only = self.filters_only.iter().any(|d| d == device);
         self.profiles
             .iter()
             .find(|p| p.devices.iter().any(|d| d == device))
+            .filter(|p| {
+                !only || !crate::audio::dsp::profiles::shown_role(p, &self.profiles).corrects()
+            })
     }
 }
 

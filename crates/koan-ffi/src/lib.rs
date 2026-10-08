@@ -3663,9 +3663,11 @@ impl KoanEngine {
         offload::sequenced(move || self.assign_dsp(profile, &device)).await
     }
 
-    pub async fn dsp_remove(self: Arc<Self>, name: String) -> Result<(), KoanError> {
+    /// Delete the profile `name` and its files. Taking an EQ out of a chain
+    /// or a stack is `dsp_set_tunings` or `dsp_set_layers`, never this.
+    pub async fn dsp_delete(self: Arc<Self>, name: String) -> Result<(), KoanError> {
         offload::sequenced(move || {
-            koan_core::audio::dsp::profiles::remove(&name)
+            koan_core::audio::dsp::profiles::delete(&name)
                 .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)
         })

@@ -1441,7 +1441,7 @@ mod tests {
 
         // Deleted on B: gone from A.
         b.on();
-        crate::audio::dsp::profiles::remove("HD 650").unwrap();
+        crate::audio::dsp::profiles::delete("HD 650").unwrap();
         b.sync(&server);
         a.sync(&server);
         assert!(a.profile("HD 650").is_none());
@@ -1655,8 +1655,8 @@ mod tests {
         a.sync(&server);
         b.sync(&server);
         a.on();
-        profiles::remove("Lush").unwrap();
-        profiles::remove("HD 650 (AutoEQ, oratory1990)").unwrap();
+        profiles::delete("Lush").unwrap();
+        profiles::delete("HD 650 (AutoEQ, oratory1990)").unwrap();
         let mut hp = headphone();
         hp.filters = vec![band(4.0)];
         Config::persist(|c| {

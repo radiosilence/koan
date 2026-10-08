@@ -188,7 +188,7 @@ struct DspProfilePage: View {
             titleVisibility: .visible
         ) {
             Button("Delete", role: .destructive) {
-                dsp.remove(name)
+                dsp.delete(name)
                 dismiss()
             }
         } message: {
@@ -378,7 +378,7 @@ private struct LayersSection: View {
 
     /// Tunings first, since adding one is what most people come here for.
     private var addMenu: some View {
-        Menu(layers.isEmpty ? "Add a Tuning…" : "Add an EQ") {
+        Menu(layers.isEmpty ? "Add Filters…" : "Add an EQ") {
             ForEach(addable.filter { $0.role == .tuning }, id: \.name) { p in
                 Button(p.name) { add(p) }
             }
@@ -424,24 +424,28 @@ private struct LayersSection: View {
                     }
                 }
                 #if !os(tvOS)
+                // Remove, never Delete: the layer leaves this stack, and the
+                // EQ itself stays.
                 .contextMenu {
                     Button("Move Up") { move(index, by: -1) }
                         .disabled(index == 0)
                     Button("Move Down") { move(index, by: 1) }
                         .disabled(index == layers.count - 1)
+                    Button("Remove") { remove(index) }
+                }
+                #endif
+                #if os(iOS)
+                .swipeActions(edge: .trailing) {
                     Button("Remove", role: .destructive) { remove(index) }
                 }
+                #elseif os(macOS)
+                .onDeleteCommand { remove(index) }
                 #endif
             }
             #if os(iOS)
             .onMove { from, to in
                 var changed = layers
                 changed.move(fromOffsets: from, toOffset: to)
-                dsp.setLayers(detail.name, changed)
-            }
-            .onDelete { offsets in
-                var changed = layers
-                changed.remove(atOffsets: offsets)
                 dsp.setLayers(detail.name, changed)
             }
             #endif
@@ -454,7 +458,7 @@ private struct LayersSection: View {
         } header: {
             KoanSectionHeader("Plays first")
         } footer: {
-            Text("Played in order, before this EQ's own bands. One switched off plays nothing.")
+            Text("Played in order, before this EQ's own bands. One switched off plays nothing. Removing one takes it out of this list and keeps the EQ.")
                 .font(.role(.fine, system: .caption))
                 .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
         }

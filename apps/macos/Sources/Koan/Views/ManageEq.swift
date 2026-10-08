@@ -107,7 +107,7 @@ struct ManageEq: View {
             titleVisibility: .visible
         ) {
             Button("Delete", role: .destructive) {
-                if let name = deleting?.name { dsp.remove(name) }
+                if let name = deleting?.name { dsp.delete(name) }
             }
         } message: {
             Text(deleteMessage)

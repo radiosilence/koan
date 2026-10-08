@@ -1266,7 +1266,11 @@ pub fn assign(name: Option<&str>, device: &str) -> Result<(), String> {
             }
         }
         // A correction chosen is the output correcting again.
-        if name.is_some() {
+        let all = cfg.dsp.profiles.clone();
+        if all
+            .iter()
+            .any(|p| Some(p.name.as_str()) == name && shown_role(p, &all).corrects())
+        {
             cfg.dsp.filters_only.retain(|d| d != device);
         }
     })
@@ -1496,12 +1500,22 @@ pub fn starter_bands(starter: Starter) -> Vec<crate::config::DspFilter> {
             channels: vec![],
         })
     };
-    let mut bands = vec![band(EqFilterKind::LowShelf, 100.0, low, std::f64::consts::FRAC_1_SQRT_2)];
+    let mut bands = vec![band(
+        EqFilterKind::LowShelf,
+        100.0,
+        low,
+        std::f64::consts::FRAC_1_SQRT_2,
+    )];
     for freq in [200.0, 400.0, 800.0, 1600.0, 3200.0, 6400.0] {
         let gain = if freq == 3200.0 { presence } else { 0.0 };
         bands.push(band(EqFilterKind::Peaking, freq, gain, 1.0));
     }
-    bands.push(band(EqFilterKind::HighShelf, 10_000.0, high, std::f64::consts::FRAC_1_SQRT_2));
+    bands.push(band(
+        EqFilterKind::HighShelf,
+        10_000.0,
+        high,
+        std::f64::consts::FRAC_1_SQRT_2,
+    ));
     bands
 }
 
@@ -1570,6 +1584,9 @@ pub fn channel_layout(filters: &[crate::config::DspFilter]) -> Option<ChannelLay
 pub fn set_stereo(name: &str, stereo: bool, keep: u16) -> Result<(), String> {
     use crate::config::DspFilter;
     may_edit(name)?;
+    if keep > 1 {
+        return Err("Keep the left channel (0) or the right (1)".into());
+    }
     let cfg = Config::cached();
     let p = cfg
         .dsp
@@ -1577,8 +1594,10 @@ pub fn set_stereo(name: &str, stereo: bool, keep: u16) -> Result<(), String> {
         .iter()
         .find(|p| p.name == name)
         .ok_or_else(|| format!("No EQ called {name}"))?;
-    if channel_layout(&p.filters).is_none() {
-        return Err(format!("{name} is not bands alone, so it has no channels to set"));
+    if !p.layers.is_empty() || !p.impulses.is_empty() || channel_layout(&p.filters).is_none() {
+        return Err(format!(
+            "{name} is not bands alone, so it has no channels to set"
+        ));
     }
     let on = |c: u16| -> Vec<DspFilter> {
         p.filters
@@ -1763,6 +1782,7 @@ fn response_of(profile: &DspProfile, all: &[DspProfile], rate: u32) -> Option<Re
         None => (None, None, None),
     };
     let preamp_db = setup.map_or(0.0, |s| s.preamp_db(s.output_rate(rate), 2));
+    let right = right_channel(profile, all, &freqs, rate);
     Some(Response {
         freqs,
         total,
@@ -1775,11 +1795,32 @@ fn response_of(profile: &DspProfile, all: &[DspProfile], rate: u32) -> Option<Re
         correction,
         tuning,
         original: None,
-        right: (profile.layers.is_empty()
-            && profile.impulses.is_empty()
-            && channel_layout(&profile.filters).is_some_and(|l| l.stereo))
-        .then(|| super::response_on(&profile.filters, &freqs, rate, 1)),
+        right,
     })
+}
+
+/// The right channel of what `profile` plays, where it differs from the
+/// left: one or more of its EQs has a list of bands for each channel. Not
+/// drawn for impulse responses, whose channels are their own.
+fn right_channel(
+    profile: &DspProfile,
+    all: &[DspProfile],
+    freqs: &[f64],
+    rate: u32,
+) -> Option<Vec<f64>> {
+    if !super::responses(profile, all).is_empty() {
+        return None;
+    }
+    let filters = super::chain(profile, all, &mut Vec::new()).ok()?;
+    if filters.iter().all(|f| f.channels().is_empty()) {
+        return None;
+    }
+    let left = super::response_on(&filters, freqs, rate, 0);
+    let right = super::response_on(&filters, freqs, rate, 1);
+    left.iter()
+        .zip(&right)
+        .any(|(l, r)| (l - r).abs() > 0.01)
+        .then_some(right)
 }
 
 /// Play `member` of the group `group`, and none of the others.
@@ -2411,18 +2452,30 @@ pub fn preset_for(device: &str) -> Option<(String, bool)> {
 
 /// Whether `device` plays filters alone, with no correction.
 pub fn filters_only(device: &str) -> bool {
-    Config::cached().dsp.filters_only.iter().any(|d| d == device)
+    Config::cached()
+        .dsp
+        .filters_only
+        .iter()
+        .any(|d| d == device)
 }
 
 /// Have `device` play filters alone, or correct for a headphone again. Alone,
-/// its correction is taken off it; the correction itself is kept.
+/// a correction it had is taken off it, and kept; an EQ chosen for it that
+/// does not correct stays.
 pub fn set_filters_only(device: &str, only: bool) -> Result<(), String> {
     persist(|cfg| {
         cfg.dsp.filters_only.retain(|d| d != device);
         if only {
             cfg.dsp.filters_only.push(device.to_owned());
-            for p in cfg.dsp.profiles.iter_mut().filter(|p| !p.preset) {
-                p.devices.retain(|d| d != device);
+            let all = cfg.dsp.profiles.clone();
+            for p in cfg.dsp.profiles.iter_mut() {
+                let corrects = all
+                    .iter()
+                    .find(|q| q.name == p.name)
+                    .is_some_and(|q| !q.preset && shown_role(q, &all).corrects());
+                if corrects {
+                    p.devices.retain(|d| d != device);
+                }
             }
         }
     })
@@ -2602,7 +2655,13 @@ pub fn apply_preset(device: &str, name: Option<&str>) -> Result<(), String> {
                 check_tuning(t, all)?;
             }
             only = Some(p.filters_only);
-            parts
+            // Filters alone: a correction the preset somehow holds is not
+            // set.
+            if p.filters_only {
+                (None, parts.1)
+            } else {
+                parts
+            }
         }
     };
     persist(|cfg| {
@@ -3537,7 +3596,7 @@ pub fn set_layers(name: &str, layers: Vec<crate::config::DspLayer>) -> Result<()
 
 /// Delete `name`, and the responses kōan keeps for it. The presets and groups that hold it go on without it; an
 /// EQ that plays it refuses, since what it plays is that EQ's to say.
-pub fn remove(name: &str) -> Result<(), String> {
+pub fn delete(name: &str) -> Result<(), String> {
     let cfg = Config::cached();
     let playing: Vec<String> = cfg
         .dsp
@@ -3697,7 +3756,7 @@ mod tests {
         assert_eq!(d.impulses.len(), 2);
         assert!(rename("Desk", "").is_err());
 
-        remove("Desk").unwrap();
+        delete("Desk").unwrap();
         assert!(!dir.path().join("dsp/desk").exists());
         assert!(overview().profiles.is_empty());
     }
@@ -3785,7 +3844,7 @@ mod tests {
         rename("Bass +3", "Bass").unwrap();
         assert_eq!(detail("Desk").unwrap().layers[0].profile, "Bass");
         assert_eq!(played(), vec![band(60.0), band(100.0), band(8000.0)]);
-        let refused = remove("Bass").unwrap_err();
+        let refused = delete("Bass").unwrap_err();
         assert!(refused.contains("Desk"), "{refused}");
     }
 
@@ -3994,7 +4053,10 @@ mod tests {
         assert_eq!(kinds[7], EqFilterKind::HighShelf);
         assert!(kinds[1..7].iter().all(|k| *k == EqFilterKind::Peaking));
         let r = response("Desk", 48000).unwrap();
-        assert!(r.total.iter().all(|db| db.abs() < 1e-9), "flat plays untouched");
+        assert!(
+            r.total.iter().all(|db| db.abs() < 1e-9),
+            "flat plays untouched"
+        );
 
         create_eq("Thump", Starter::BassBoost).unwrap();
         let r = response("Thump", 48000).unwrap();
@@ -4011,16 +4073,34 @@ mod tests {
         let (_guard, _dir) = fresh_config();
         create_eq("Desk", Starter::Flat).unwrap();
         let layout = || detail("Desk").unwrap().channels.unwrap();
-        assert_eq!(layout(), ChannelLayout { stereo: false, differ: false });
+        assert_eq!(
+            layout(),
+            ChannelLayout {
+                stereo: false,
+                differ: false
+            }
+        );
         assert!(response("Desk", 48000).unwrap().right.is_none());
 
         set_stereo("Desk", true, 0).unwrap();
-        assert_eq!(layout(), ChannelLayout { stereo: true, differ: false });
+        assert_eq!(
+            layout(),
+            ChannelLayout {
+                stereo: true,
+                differ: false
+            }
+        );
         assert_eq!(detail("Desk").unwrap().filters.len(), 16);
 
         // The right channel's bass shelf up.
         set_band("Desk", 8, "low_shelf", 100.0, 6.0, 0.7).unwrap();
-        assert_eq!(layout(), ChannelLayout { stereo: true, differ: true });
+        assert_eq!(
+            layout(),
+            ChannelLayout {
+                stereo: true,
+                differ: true
+            }
+        );
         let r = response("Desk", 48000).unwrap();
         assert!(r.total[0].abs() < 1e-9, "left untouched");
         assert!(r.right.unwrap()[0] > 5.0, "right drawn of its own");
@@ -4029,11 +4109,20 @@ mod tests {
         remove_filter("Desk", i).unwrap();
 
         set_stereo("Desk", false, 1).unwrap();
-        assert_eq!(layout(), ChannelLayout { stereo: false, differ: false });
+        assert_eq!(
+            layout(),
+            ChannelLayout {
+                stereo: false,
+                differ: false
+            }
+        );
         let filters = detail("Desk").unwrap().filters;
         assert_eq!(filters.len(), 8);
         assert!(filters.iter().all(|f| f.channels().is_empty()));
-        assert!(matches!(&filters[0], DspFilter::Band(b) if b.gain_db == 6.0), "kept the right");
+        assert!(
+            matches!(&filters[0], DspFilter::Band(b) if b.gain_db == 6.0),
+            "kept the right"
+        );
     }
 
     /// An output playing filters alone has no correction; a preset saved
@@ -4055,17 +4144,95 @@ mod tests {
 
         set_filters_only("Desk", true).unwrap();
         assert!(filters_only("Desk"));
-        assert!(Config::cached().dsp.profile_for("Desk").is_none(), "no correction");
+        assert!(
+            Config::cached().dsp.profile_for("Desk").is_none(),
+            "no correction"
+        );
         save_preset("Desk", "Speakers").unwrap();
         assert_eq!(preset_for("Desk"), Some(("Speakers".into(), false)));
 
         set_filters_only("Desk", false).unwrap();
-        assert_eq!(preset_for("Desk"), Some(("Speakers".into(), true)), "changed since");
+        assert_eq!(
+            preset_for("Desk"),
+            Some(("Speakers".into(), true)),
+            "changed since"
+        );
         apply_preset("Desk", Some("Speakers")).unwrap();
         assert!(filters_only("Desk"));
 
         assign(Some("HD 650"), "Desk").unwrap();
         assert!(!filters_only("Desk"));
+
+        // A preset for filters alone that holds a correction anyway, as a
+        // hand edit or another device can leave one, sets none; nor does
+        // one the output came to name some other way play.
+        persist(|c| {
+            let p = c
+                .dsp
+                .profiles
+                .iter_mut()
+                .find(|p| p.name == "Speakers")
+                .unwrap();
+            p.layers.insert(
+                0,
+                crate::config::DspLayer {
+                    profile: "HD 650".into(),
+                    on: true,
+                },
+            );
+        })
+        .unwrap();
+        apply_preset("Desk", Some("Speakers")).unwrap();
+        assert!(filters_only("Desk"));
+        assert!(Config::cached().dsp.profile_for("Desk").is_none());
+        persist(|c| {
+            let p = c
+                .dsp
+                .profiles
+                .iter_mut()
+                .find(|p| p.name == "HD 650")
+                .unwrap();
+            p.devices.push("Desk".into());
+        })
+        .unwrap();
+        assert!(
+            Config::cached().dsp.profile_for("Desk").is_none(),
+            "never plays"
+        );
+
+        // An EQ that does not correct, chosen for the output, neither ends
+        // filters alone nor is taken off by it.
+        assign(Some("Room"), "Desk").unwrap();
+        assert!(filters_only("Desk"));
+        set_filters_only("Desk", true).unwrap();
+        assert_eq!(
+            Config::cached()
+                .dsp
+                .profile_for("Desk")
+                .map(|p| p.name.clone()),
+            Some("Room".into())
+        );
+    }
+
+    /// Only the left or right channel can be kept, and only an EQ of bands
+    /// alone has channels to set.
+    #[test]
+    fn stereo_is_set_only_on_bands_alone() {
+        let (_guard, _dir) = fresh_config();
+        create_eq("Desk", Starter::Flat).unwrap();
+        assert!(set_stereo("Desk", false, 2).is_err());
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Stack".into(),
+                layers: vec![crate::config::DspLayer {
+                    profile: "Desk".into(),
+                    on: true,
+                }],
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        assert!(set_stereo("Stack", true, 0).is_err());
     }
 
     /// A band edited by hand is held to its ranges, keeps its channels, and
@@ -5863,10 +6030,10 @@ mod tests {
             .held_by;
         assert_eq!(held, ["Evening", "Tastes"]);
         assert_eq!(
-            remove("Air").unwrap_err(),
+            delete("Air").unwrap_err(),
             "Both plays Air: take it out of it first"
         );
-        remove("Warm").unwrap();
+        delete("Warm").unwrap();
         let cfg = Config::cached();
         let of = |n: &str| {
             cfg.dsp
@@ -6290,7 +6457,7 @@ mod tests {
         select("Tastes", "Bright").unwrap();
         assert_eq!(plays(), ["8000", "110"], "made against Harman, on Harman");
         set_tuning(dac, Some("Warm")).unwrap();
-        remove("Tastes").unwrap();
+        delete("Tastes").unwrap();
 
         // Impulse responses correct a room: never a tuning.
         let refused = set_tuning(dac, Some("Room")).unwrap_err();
@@ -6412,7 +6579,7 @@ mod tests {
         // It follows the profile's name, and goes with it.
         rename("Warm", "Warm bass").unwrap();
         assert_eq!(tuning_for(dac).as_deref(), Some("Warm bass"));
-        remove("Warm bass").unwrap();
+        delete("Warm bass").unwrap();
         assert_eq!(tuning_for(dac), None);
         assert!(plays().is_empty());
     }
