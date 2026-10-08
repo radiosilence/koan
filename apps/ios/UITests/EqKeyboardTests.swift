@@ -67,7 +67,7 @@ final class EqKeyboardTests: XCTestCase {
         attach("typing")
 
         XCTAssertLessThan(graph.frame.height, tall - 50, "the graph kept its height")
-        let done = app.buttons[any: "Done"]
+        let done = barButton("Done")
         XCTAssert(done.exists, "no Done above the keyboard")
         XCTAssertGreaterThanOrEqual(gain.frame.minY, graph.frame.maxY, "the row is under the graph")
         XCTAssertLessThanOrEqual(gain.frame.maxY, done.frame.minY, "the row is under the keyboard's bar")
@@ -76,14 +76,14 @@ final class EqKeyboardTests: XCTestCase {
 
         gain.typeText(XCUIKeyboardKey.delete.rawValue + XCUIKeyboardKey.delete.rawValue + "3")
 
-        app.buttons[any: "Previous"].tap()
+        barButton("Previous").tap()
         XCTAssert(hasFocus(app.textFields[any: "Band 10 frequency"]), "Previous did not reach the frequency")
-        app.buttons[any: "Next"].tap()
+        barButton("Next").tap()
         XCTAssert(hasFocus(app.textFields[any: "Band 10 gain"]), "Next did not reach the gain")
         attach("next")
-        app.buttons[any: "Next"].tap()
+        barButton("Next").tap()
         XCTAssert(hasFocus(app.textFields[any: "Band 10 Q"]), "Next did not reach Q")
-        app.buttons[any: "Next"].tap()
+        barButton("Next").tap()
         XCTAssert(hasFocus(app.textFields[any: "Band 10 Q"]), "Next past the last figure")
 
         done.tap()
@@ -92,6 +92,14 @@ final class EqKeyboardTests: XCTestCase {
         attach("done")
         XCTAssertEqual(graph.frame.height, tall, accuracy: 1, "the graph did not come back")
         try waitForSaved("gain_db = 3")
+    }
+
+    /// A button of the bar above the keyboard: the mini player behind the
+    /// keyboard has a Next of its own.
+    private func barButton(_ name: String) -> XCUIElement {
+        let top = app.keyboards.firstMatch.frame.minY
+        let all = app.buttons.matching(NSPredicate(format: "label ==[c] %@", name)).allElementsBoundByIndex
+        return all.first { $0.frame.maxY <= top + 1 && $0.frame.minY > top - 80 } ?? all[0]
     }
 
     /// Whether `field` takes the keyboard within a couple of seconds: moving
