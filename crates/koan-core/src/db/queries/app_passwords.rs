@@ -26,6 +26,28 @@ pub struct AppPasswordRow {
     pub last_used_at: Option<i64>,
 }
 
+/// How many app passwords one account may have. Each sign-in by token tries
+/// every one of the account's, so their number is the cost of a forged one.
+pub const MAX_APP_PASSWORDS: i64 = 50;
+
+/// The longest name an app password may have.
+pub const MAX_NAME: usize = 100;
+
+#[derive(Debug, thiserror::Error)]
+pub enum CreateAppPasswordError {
+    #[error("an account may have at most {MAX_APP_PASSWORDS} app passwords; revoke one first")]
+    TooMany,
+    #[error(transparent)]
+    Db(#[from] rusqlite::Error),
+}
+
+/// `name` as an app password's name: trimmed, control characters dropped,
+/// and refused when that leaves nothing or more than `MAX_NAME` characters.
+pub fn app_password_name(name: &str) -> Option<String> {
+    let name: String = name.trim().chars().filter(|c| !c.is_control()).collect();
+    (!name.is_empty() && name.chars().count() <= MAX_NAME).then_some(name)
+}
+
 /// Make an app password for `user_id`. Returns its row id and the password,
 /// which is not shown again.
 pub fn create_app_password(
@@ -33,14 +55,27 @@ pub fn create_app_password(
     key: &[u8; 32],
     user_id: i64,
     name: &str,
-) -> Result<(i64, String), rusqlite::Error> {
+) -> Result<(i64, String), CreateAppPasswordError> {
     let fail = |e: auth::AuthError| rusqlite::Error::ToSqlConversionFailure(e.into());
     let password = auth::random_app_password().map_err(fail)?;
     let sealed = auth::seal_app_password(key, user_id, &password).map_err(fail)?;
-    conn.execute(
-        "INSERT INTO app_passwords (user_id, name, sealed, created_at) VALUES (?1, ?2, ?3, ?4)",
-        params![user_id, name, sealed, auth::now_unix() as i64],
+    // Counted in the statement that inserts, so creates racing each other
+    // cannot pass the cap together.
+    let inserted = conn.execute(
+        "INSERT INTO app_passwords (user_id, name, sealed, created_at)
+         SELECT ?1, ?2, ?3, ?4
+         WHERE (SELECT COUNT(*) FROM app_passwords WHERE user_id = ?1) < ?5",
+        params![
+            user_id,
+            name,
+            sealed,
+            auth::now_unix() as i64,
+            MAX_APP_PASSWORDS
+        ],
     )?;
+    if inserted == 0 {
+        return Err(CreateAppPasswordError::TooMany);
+    }
     Ok((conn.last_insert_rowid(), password))
 }
 
@@ -176,6 +211,79 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let db = Database::open(&tmp.path().join("test.db")).unwrap();
         (db, tmp)
+    }
+
+    #[test]
+    fn an_account_has_at_most_so_many_app_passwords() {
+        let (db, _tmp) = test_db();
+        let conn = &db.conn;
+        let key = auth::app_password_key(b"a signing key");
+        let alice = create_user(conn, "alice", "a password", Role::User).unwrap();
+        let bob = create_user(conn, "bob", "b password", Role::User).unwrap();
+        let mut ids = Vec::new();
+        for n in 0..MAX_APP_PASSWORDS {
+            ids.push(
+                create_app_password(conn, &key, alice, &format!("app {n}"))
+                    .unwrap()
+                    .0,
+            );
+        }
+        assert!(matches!(
+            create_app_password(conn, &key, alice, "one more"),
+            Err(CreateAppPasswordError::TooMany)
+        ));
+        // Another account's are its own count; revoking one makes room.
+        create_app_password(conn, &key, bob, "bob's").unwrap();
+        revoke_app_password(conn, ids[0], alice).unwrap();
+        create_app_password(conn, &key, alice, "one more").unwrap();
+    }
+
+    #[test]
+    fn creates_racing_at_the_cap_make_exactly_one() {
+        let (db, tmp) = test_db();
+        let key = auth::app_password_key(b"a signing key");
+        let alice = create_user(&db.conn, "alice", "a password", Role::User).unwrap();
+        for n in 0..MAX_APP_PASSWORDS - 1 {
+            create_app_password(&db.conn, &key, alice, &format!("app {n}")).unwrap();
+        }
+        let path = tmp.path().join("test.db");
+        let start = std::sync::Barrier::new(8);
+        let made = std::thread::scope(|scope| {
+            let threads: Vec<_> = (0..8)
+                .map(|n| {
+                    let (path, start) = (&path, &start);
+                    scope.spawn(move || {
+                        let db = Database::open(path).unwrap();
+                        start.wait();
+                        create_app_password(&db.conn, &key, alice, &format!("racer {n}"))
+                    })
+                })
+                .collect();
+            threads
+                .into_iter()
+                .map(|t| t.join().unwrap())
+                .filter(|r| match r {
+                    Ok(_) => true,
+                    Err(CreateAppPasswordError::TooMany) => false,
+                    Err(e) => panic!("{e}"),
+                })
+                .count()
+        });
+        assert_eq!(made, 1);
+        assert_eq!(
+            list_app_passwords(&db.conn, alice).unwrap().len() as i64,
+            MAX_APP_PASSWORDS
+        );
+    }
+
+    #[test]
+    fn an_app_password_name_drops_control_characters() {
+        assert_eq!(
+            app_password_name("  Arpeggi\u{1}\n "),
+            Some("Arpeggi".into())
+        );
+        assert_eq!(app_password_name(" \u{1} "), None);
+        assert_eq!(app_password_name(&"x".repeat(MAX_NAME + 1)), None);
     }
 
     #[test]

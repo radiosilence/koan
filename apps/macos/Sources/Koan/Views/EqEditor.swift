@@ -50,7 +50,10 @@ struct EqEditor: View {
         var parts = self.parts
         if let right = shown.right {
             let left = shown.total
-            if channel == 1 { shown.total = right }
+            if channel == 1 {
+                shown.total = right
+                shown.gainDb = shown.rightGainDb
+            }
             parts.append(EqGraph.Part(
                 name: channel == 1 ? "Left" : "Right",
                 db: channel == 1 ? left : right,

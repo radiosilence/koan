@@ -1077,3 +1077,70 @@ extension View {
         #endif
     }
 }
+
+#if os(macOS)
+extension View {
+    /// A sheet, or the settings window, that can be resized, opening at the
+    /// ideal size the first time and at the size it was last given after.
+    /// AppKit makes a sheet at its content's size and leaves it so, and a
+    /// root with no ideal of its own is laid out at whatever its content
+    /// asks, wider than the sheet when that grows after it opens.
+    func resizableWindow(_ name: String, min: CGSize, ideal: CGSize) -> some View {
+        frame(
+            minWidth: min.width, idealWidth: ideal.width, maxWidth: .infinity,
+            minHeight: min.height, idealHeight: ideal.height, maxHeight: .infinity
+        )
+        .background(RememberedSize(name: name))
+    }
+}
+
+/// Makes the window it is in resizable, and keeps its size under `name`.
+private struct RememberedSize: NSViewRepresentable {
+    let name: String
+
+    func makeNSView(context: Context) -> Probe { Probe(key: "KoanWindowSize.\(name)") }
+    func updateNSView(_ view: Probe, context: Context) {}
+
+    final class Probe: NSView {
+        let key: String
+
+        init(key: String) {
+            self.key = key
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window else { return }
+            window.styleMask.insert(.resizable)
+            // SwiftUI caps a sheet's and the Settings window's content at
+            // the size it fitted them to.
+            window.contentMaxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+            // The size last given, or the ideal it opened at, kept on the
+            // screen it is on: one saved on a larger display, or an ideal
+            // taller than a laptop's, would reach past the edge.
+            let wanted = UserDefaults.standard.string(forKey: key).map(NSSizeFromString)
+                ?? window.contentLayoutRect.size
+            var size = wanted
+            if let visible = window.screen?.visibleFrame {
+                let room = window.contentRect(forFrameRect: visible).size
+                size = NSSize(width: min(size.width, room.width), height: min(size.height, room.height))
+            }
+            size = NSSize(
+                width: max(size.width, window.contentMinSize.width),
+                height: max(size.height, window.contentMinSize.height)
+            )
+            if size != window.contentLayoutRect.size { window.setContentSize(size) }
+        }
+
+        /// Every view in a window is told when a drag of its edge ends.
+        override func viewDidEndLiveResize() {
+            super.viewDidEndLiveResize()
+            guard let content = window?.contentView else { return }
+            UserDefaults.standard.set(NSStringFromSize(content.frame.size), forKey: key)
+        }
+    }
+}
+#endif

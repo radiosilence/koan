@@ -129,7 +129,7 @@ struct ManageEq: View {
                     }
             }
             .koanSheetStack()
-            .frame(minWidth: 480, minHeight: 440)
+            .resizableWindow("EqProfile", min: CGSize(width: 480, height: 440), ideal: CGSize(width: 640, height: 860))
         }
         #endif
     }

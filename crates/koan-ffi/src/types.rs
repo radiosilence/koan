@@ -1598,6 +1598,9 @@ pub struct DspResponse {
     pub target: Option<Vec<f64>>,
     pub predicted: Option<Vec<f64>>,
     pub preamp_db: f64,
+    /// The flat gain among its filters, which `total` includes; with
+    /// `preamp_db`, the level the curve sits at.
+    pub gain_db: f64,
     /// For a chain with both: the correction alone, and the tuning on top.
     pub correction: Option<Vec<f64>>,
     pub tuning: Option<Vec<f64>>,
@@ -1606,6 +1609,8 @@ pub struct DspResponse {
     /// For an EQ with bands for each channel: the right, where `total` is
     /// the left.
     pub right: Option<Vec<f64>>,
+    /// `gain_db` on the right channel.
+    pub right_gain_db: f64,
 }
 
 impl From<koan_core::audio::dsp::profiles::Response> for DspResponse {
@@ -1627,10 +1632,12 @@ impl From<koan_core::audio::dsp::profiles::Response> for DspResponse {
             target: r.target,
             predicted: r.predicted,
             preamp_db: r.preamp_db,
+            gain_db: r.gain_db,
             correction: r.correction,
             tuning: r.tuning,
             original: r.original,
             right: r.right,
+            right_gain_db: r.right_gain_db,
         }
     }
 }
@@ -2233,6 +2240,24 @@ pub struct ApiKeyInfo {
 pub struct NewApiKey {
     pub name: String,
     pub key: String,
+}
+
+/// One of the signed-in account's app passwords, for Subsonic apps that sign
+/// in only with a token. Never the password.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct AppPasswordInfo {
+    pub id: i64,
+    pub name: String,
+    /// Unix seconds.
+    pub created: Option<i64>,
+    pub last_used: Option<i64>,
+}
+
+/// An app password just made: the one time it is seen.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct NewAppPassword {
+    pub name: String,
+    pub password: String,
 }
 
 #[derive(uniffi::Record, Debug, Clone)]
