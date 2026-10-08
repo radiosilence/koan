@@ -66,7 +66,7 @@ struct MixedCollection: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    func makeNSView(context: Context) -> NSScrollView {
+    func makeNSView(context: Context) -> PageScrollView {
         let collection = MixedCollectionView()
         collection.collectionViewLayout = MixedLayout()
         collection.isSelectable = true
@@ -86,7 +86,7 @@ struct MixedCollection: NSViewRepresentable {
         collection.setDraggingSourceOperationMask(.copy, forLocal: true)
         collection.setDraggingSourceOperationMask(.copy, forLocal: false)
 
-        let scroll = NSScrollView()
+        let scroll = PageScrollView()
         scroll.documentView = collection
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
@@ -96,13 +96,8 @@ struct MixedCollection: NSViewRepresentable {
         return scroll
     }
 
-    func updateNSView(_ scroll: NSScrollView, context: Context) {
-        let content = NSEdgeInsets(top: insets.top, left: 0, bottom: insets.bottom, right: 0)
-        let current = scroll.contentInsets
-        if current.top != content.top || current.bottom != content.bottom {
-            scroll.setContentInsets(content)
-            scroll.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: insets.bottom, right: 0)
-        }
+    func updateNSView(_ scroll: PageScrollView, context: Context) {
+        scroll.pageInsets = NSEdgeInsets(top: 0, left: 0, bottom: insets.bottom, right: 0)
         if let layout = (scroll.documentView as? NSCollectionView)?.collectionViewLayout as? MixedLayout,
            layout.leading != insets.leading {
             layout.leading = insets.leading
@@ -110,7 +105,7 @@ struct MixedCollection: NSViewRepresentable {
         context.coordinator.update(self, environment: context.environment)
     }
 
-    static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
+    static func dismantleNSView(_ scroll: PageScrollView, coordinator: Coordinator) {
         coordinator.detach()
     }
 

@@ -724,8 +724,38 @@ private struct StopsAtBars: ViewModifier {
             }
             .ignoresSafeArea(.container, edges: .top)
             .background {
-                Color.clear.onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { top = $0 }
+                ToolbarHeight { top = $0 }
             }
+    }
+}
+
+/// The toolbar's height, from the window: how far its content reaches above
+/// `contentLayoutRect`. SwiftUI's safe area passes through zero on layout
+/// passes during and after a resize, and a page that took its top from it
+/// could keep that zero.
+private struct ToolbarHeight: NSViewRepresentable {
+    let changed: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> Probe { Probe() }
+
+    func updateNSView(_ probe: Probe, context: Context) {
+        probe.changed = changed
+    }
+
+    final class Probe: NSView {
+        var changed: ((CGFloat) -> Void)?
+        private var watching: NSKeyValueObservation?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            // Told after the update that placed the probe, not during it.
+            watching = window?.observe(\.contentLayoutRect, options: .initial) { [weak self] window, _ in
+                DispatchQueue.main.async {
+                    guard let content = window.contentView else { return }
+                    self?.changed?(max(content.frame.maxY - window.contentLayoutRect.maxY, 0))
+                }
+            }
+        }
     }
 }
 
