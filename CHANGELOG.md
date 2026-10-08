@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.61.2
+
+### Added
+
+- **`just release` prepares a release PR.** Given a version or `patch`, `minor` or `major`, it branches from main, bumps the version everywhere CI compares it, writes the changelog, commits and opens the PR.
+
+### Changed
+
+- **Shuffle no longer rearranges the queue.** It picks the next track at random from those not yet played, each once per pass, while the queue keeps the order you gave it. A track is marked played when it plays, so turning shuffle off leaves exactly the tracks you heard marked, and Previous goes back through what actually played. Playing something from its play button now turns shuffle and repeat off, and its Shuffle action turns shuffle on and repeat off; adding to the queue leaves both alone.
+- **Mac text size.** The kōan theme draws its type as large as the system's rather than about 15% larger, with spacing a little tighter, and Settings → Appearance → Text size and View → Bigger, Smaller and Actual Size (⌘+, ⌘−, ⌘0) scale it from 80% to 130%.
+- **Now Playing title.** On iPhone the track title takes the full width of the sheet, with the heart and more button moved to the artist line.
+- **A closed pull request's CI runs are cancelled.** Merged and abandoned pull requests no longer hold the macOS runners that main and releases wait for.
+
+### Fixed
+
+- **Library figures.** The sidebar footer pads its top, bottom and sides equally instead of leaving extra space below the last line.
+- **Shuffle: a restored session or a repeated track no longer starts the queue over.** Reopening koan at the end of a shuffled pass, with repeat off, carried on into a new pass instead of stopping, and repeating one track could clear the played marks. A new pass now starts only when you pick a track of a queue that has played out, or turn shuffle on over one. At the turn of a repeating shuffled pass, a track that failed to open no longer makes the next pass's first track play twice.
+
 ## 0.61.1
 
 ### Changed
