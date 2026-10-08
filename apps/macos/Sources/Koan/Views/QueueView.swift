@@ -186,7 +186,7 @@ struct QueueView: View {
                 jump: (ui.queueJumpToken, jumpTarget, jumpPlace),
                 follow: ui.followingQueue ? player.currentItemId : nil,
                 userScrolled: { if ui.followingQueue { ui.followingQueue = false } },
-                insets: EdgeInsets(top: 0, leading: insets.leading, bottom: insets.bottom, trailing: 0)
+                insets: EdgeInsets(top: 0, leading: insets.leading, bottom: insets.bottom, trailing: insets.trailing)
             )
         }
         .clearsSelection($selection)

@@ -242,7 +242,7 @@ struct PlaylistView: View {
                 delete: { _ in removeSelected() },
                 selectAllToken: ui.selectAllToken,
                 accept: { dropped, index in accept(dropped, before: position(index)) },
-                insets: EdgeInsets(top: 0, leading: insets.leading, bottom: insets.bottom, trailing: 0)
+                insets: EdgeInsets(top: 0, leading: insets.leading, bottom: insets.bottom, trailing: insets.trailing)
             )
         }
         .clearsSelection($selection)
