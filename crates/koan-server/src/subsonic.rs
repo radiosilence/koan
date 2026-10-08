@@ -10698,8 +10698,9 @@ mod tests {
         assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
     }
 
-    /// A file is taken only as the bytes a profile of the account names, is
-    /// read back only by that account, and goes when no profile names it.
+    /// A file is taken only as the bytes a profile of the account names, and
+    /// is read back only by that account. A deleted profile's files stay with
+    /// the copy the server keeps of it (`queries::dsp::DELETED_KEPT_MS`).
     #[tokio::test]
     async fn a_dsp_file_is_kept_only_while_a_profile_names_it() {
         let (state, _dir) = test_state();
@@ -10750,7 +10751,7 @@ mod tests {
             "another account's: {theirs}"
         );
 
-        // An older edit is not kept; a later deletion is, and takes the file.
+        // An older edit is not kept; a later deletion is, and keeps the file.
         let body = post_form(
             app.clone(),
             &format!("/rest/koanDspProfileDelete?{MATE}"),
@@ -10768,12 +10769,12 @@ mod tests {
             &format!("uid={UID}&editedAt=2000"),
         )
         .await;
-        let (_, gone) = get_response(
+        let (_, kept) = get_response(
             app.clone(),
             &format!("/rest/koanDspFile?{MATE}&sha256={sha}"),
         )
         .await;
-        assert!(gone.contains("\"code\":70"), "{gone}");
+        assert_eq!(kept.as_bytes(), &wav[..], "kept with the deleted copy");
         let (_, body) = get_response(app, &format!("/rest/koanDspProfiles?{MATE}")).await;
         let v = json(&body);
         let profile = &v["subsonic-response"]["koanDspProfiles"]["profile"][0];
