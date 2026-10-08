@@ -40,6 +40,7 @@ final class TVBackTests: XCTestCase {
         press(.select)
         pause(3)
         snap("1-album")
+        XCTAssertFalse(app.buttons[any: "Settings"].exists, "no tabs over a pushed page")
 
         press(.menu)
         pause(2)
@@ -50,6 +51,11 @@ final class TVBackTests: XCTestCase {
         pause(2)
         XCTAssertEqual(app.state, .runningForeground, "Menu on the grid goes back, not out")
         XCTAssertTrue(index.waitForExistence(timeout: 3), "two pages back is the library's index")
+        XCTAssertTrue(app.buttons[any: "Settings"].waitForExistence(timeout: 3), "the tabs are back at the root")
+        XCTAssertFalse(app.buttons[any: "Library"].hasFocus, "the tabs coming back leave focus on the page")
+        reach(app.buttons[any: "Library"], by: .up)
+        press(.down)
+        XCTAssertFalse(app.buttons[any: "Library"].hasFocus, "down from the tabs goes back into the page")
 
         press(.menu)
         pause(2)
@@ -80,7 +86,7 @@ final class TVBackTests: XCTestCase {
         press(.select)
         pause(4)
         snap("3-played")
-        XCTAssertFalse(app.buttons[any: "Queue"].hasFocus || app.buttons[any: "Library"].hasFocus, "focus stays on the page")
+        XCTAssertFalse(app.buttons[any: "Settings"].exists, "focus stays on the page, with no tabs over it")
 
         press(.menu)
         pause(2)
@@ -105,6 +111,34 @@ final class TVBackTests: XCTestCase {
         pause(2)
         XCTAssertEqual(app.state, .runningForeground, "Menu at Settings goes to the tab bar")
         XCTAssertTrue(app.buttons[any: "Settings"].hasFocus, "the tab bar has focus")
+    }
+
+    /// A share code opened from an artist's menu closes back onto that artist,
+    /// not onto the filter field at the top of the page.
+    func testShareCodeReturnsFocusToTheRow() {
+        open(.library)
+        reach(app.buttons[any: "Artists"], by: .down)
+        press(.select)
+        pause(3)
+        // A row's focus is on its container, which carries no label: the
+        // first artist is focused once Down leaves the filter field.
+        let field = app.textFields["name-filter"]
+        press(.down)
+        XCTAssertFalse(field.hasFocus, "an artist's row has focus")
+        remote.press(.select, forDuration: 1.5)
+        pause(2)
+        reach(app.buttons[any: "Share…"], by: .down)
+        press(.select)
+        XCTAssertTrue(app.staticTexts[any: "Scan to open"].waitForExistence(timeout: 10), "the share code")
+        snap("12-share-code")
+        press(.menu)
+        pause(2)
+        XCTAssertEqual(app.state, .runningForeground, "Menu closes the code, not the app")
+        snap("13-after-share")
+        XCTAssertFalse(field.hasFocus, "focus is not on the filter field")
+        press(.select)
+        pause(3)
+        XCTAssertTrue(app.buttons[any: "Play"].waitForExistence(timeout: 5), "Select opens the artist the code was for")
     }
 
     /// EQ's empty stages take focus and open the account's own profiles.

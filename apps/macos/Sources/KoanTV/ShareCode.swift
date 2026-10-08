@@ -36,7 +36,6 @@ struct ShareCode: View {
             .frame(maxWidth: 640, alignment: .leading)
         }
         .padding(80)
-        .koanSheet()
     }
 
 }
@@ -52,14 +51,30 @@ func qrImage(_ text: String) -> CGImage? {
 }
 
 extension View {
-    /// Shows a share link made on this television as a code to scan.
+    /// Shows a share link made on this television as a code to scan. In the
+    /// theme, its square panel over the page dimmed, as `televisionPanel`: a
+    /// sheet is a rounded card whatever its background is told.
+    @ViewBuilder
     func shareCodes(_ player: PlayerModel) -> some View {
-        sheet(isPresented: Binding(
+        let showing = Binding(
             get: { player.sharedLink != nil },
             set: { if !$0 { player.sharedLink = nil } }
-        )) {
-            if let link = player.sharedLink {
-                ShareCode(link: link)
+        )
+        if KoanTheme.isOn {
+            fullScreenCover(isPresented: showing) {
+                if let link = player.sharedLink {
+                    ShareCode(link: link)
+                        .background(Color.koanBg)
+                        .overlay { Rectangle().strokeBorder(Color.koanRule, lineWidth: KoanTheme.hairline) }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .presentationBackground(Color.black.opacity(0.6))
+                }
+            }
+        } else {
+            sheet(isPresented: showing) {
+                if let link = player.sharedLink {
+                    ShareCode(link: link).koanSheet()
+                }
             }
         }
     }
