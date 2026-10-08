@@ -229,6 +229,8 @@ folders = ["/Volumes/Music/library", "/Users/me/Music"]
 
 One or more directories to scan for music. Subdirectories are scanned recursively.
 
+None by default: kōan reads no folder you have not named. Looking in `~/Music` unasked meant reading the Apple Music library inside it, and macOS asking whether kōan may. Versions before 0.61.1 used `~/Music` when no folder was set; if your library was indexed from there, the first newer kōan to open it writes `~/Music` into `config.local.toml`, so nothing is lost. A `folders` key in either file, an empty list included, is left as it is.
+
 ---
 
 ## `[remote]`
