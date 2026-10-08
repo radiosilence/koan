@@ -1,0 +1,1 @@
+- **Mac AirPlay button.** The transport bar no longer has an AirPlay button, which did not work on the Mac. Choose an AirPlay speaker in System Settings or Control Centre; koan follows the system output as before. iOS keeps the button.

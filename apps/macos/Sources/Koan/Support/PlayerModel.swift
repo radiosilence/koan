@@ -472,8 +472,8 @@ final class PlayerModel {
             MainActor.assumeIsolated { self?.refreshDevices() }
         }
 
-        // The system's output moved: an AirPlay speaker picked from the
-        // AirPlay button, headphones plugged in. Playing to the system
+        // The system's output moved: an AirPlay speaker picked in System
+        // Settings, headphones plugged in. Playing to the system
         // default, the music follows it, where it was. A device picked by
         // name, a renderer, or another kōan being controlled keep theirs.
         var defaultOutput = AudioObjectPropertyAddress(
