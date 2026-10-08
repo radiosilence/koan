@@ -55,7 +55,7 @@ struct SettingsView: View {
                 // The symbols are of different widths; at television size a
                 // label's own spacing lets the wide ones touch their titles.
                 HStack(spacing: 24) {
-                    Image(systemName: symbol).frame(width: 56)
+                    KoanIcon(symbol).frame(width: 56)
                     Text(title)
                 }
             }
@@ -64,6 +64,9 @@ struct SettingsView: View {
             #endif
         }
         .listLink()
+        // Navigation is words alone in the theme, as the tabs are; the
+        // platform's look keeps its symbols.
+        .environment(\.koanIcons, false)
     }
     #endif
 
@@ -76,24 +79,24 @@ struct SettingsView: View {
 
     private func tabs(_ model: SettingsModel) -> [Tab] {
         var tabs = [
-            Tab(id: "library", title: "Library", icon: "music.note.house"),
-            Tab(id: "server", title: "Server", icon: "server.rack"),
+            Tab(id: "library", title: "Library", icon: Icon.library),
+            Tab(id: "server", title: "Server", icon: Icon.server),
         ]
         if AccountSettings.shown(model, mirror) {
-            tabs.append(Tab(id: "account", title: "Account", icon: "person.crop.circle"))
+            tabs.append(Tab(id: "account", title: "Account", icon: Icon.account))
         }
         if PeoplePane.shown(model, people), people != nil {
-            tabs.append(Tab(id: "people", title: "People", icon: "person.2"))
+            tabs.append(Tab(id: "people", title: "People", icon: Icon.people))
         }
         tabs += [
-            Tab(id: "playback", title: "Playback", icon: "hifispeaker"),
-            Tab(id: "eq", title: "EQ", icon: "slider.vertical.3"),
-            Tab(id: "devices", title: "Devices", icon: "laptopcomputer.and.iphone"),
+            Tab(id: "playback", title: "Playback", icon: Icon.speaker),
+            Tab(id: "eq", title: "EQ", icon: Icon.tuning),
+            Tab(id: "devices", title: "Devices", icon: Icon.devices),
         ]
         if ServerCapabilitySections.shown(model, mirror) {
-            tabs.append(Tab(id: "server-capabilities", title: "Server Capabilities", icon: "puzzlepiece.extension"))
+            tabs.append(Tab(id: "server-capabilities", title: "Server Capabilities", icon: Icon.extensions))
         }
-        tabs.append(Tab(id: "appearance", title: "Appearance", icon: "paintpalette"))
+        tabs.append(Tab(id: "appearance", title: "Appearance", icon: Icon.appearance))
         return tabs
     }
 
@@ -129,7 +132,7 @@ struct SettingsView: View {
                                 ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
                                     Button { pane = tab.id } label: {
                                         KoanTabItem(
-                                            title: tab.title, icon: tab.icon, selected: pane == tab.id,
+                                            title: tab.title, selected: pane == tab.id,
                                             position: (index, tabs.count)
                                         )
                                     }
@@ -155,7 +158,7 @@ struct SettingsView: View {
                         TabView(selection: $pane) {
                             ForEach(tabs) { tab in
                                 settingsPane(tab.id, model: model)
-                                    .tabItem { Label(tab.title, systemImage: tab.icon) }
+                                    .tabItem { Label(tab.title, systemImage: tab.icon) } // theme: raw
                                     .tag(tab.id)
                             }
                         }
@@ -177,46 +180,46 @@ struct SettingsView: View {
                     // Each pane carries the status line too: a pane pushed
                     // over the list hides the list's, and with it the reason a
                     // sign-in failed.
-                    pane("Server", "server.rack") {
+                    pane("Server", Icon.server) {
                         RemoteSettings(model: model)
                             .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                     }
                     // A television keeps all of the server on its one page.
                     #if !os(tvOS)
                     if AccountSettings.shown(model, mirror) {
-                        pane("Account", "person.crop.circle") {
+                        pane("Account", Icon.account) {
                             AccountSettings(model: model)
                                 .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                         }
                     }
                     if PeoplePane.shown(model, people), let people {
-                        pane("People", "person.2") {
+                        pane("People", Icon.people) {
                             PeoplePane(model: model, people: people)
                                 .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                         }
                     }
                     #endif
-                    pane("Playback", "hifispeaker") {
+                    pane("Playback", Icon.speaker) {
                         PlaybackSettings(model: model)
                             .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                     }
-                    pane("EQ", "slider.vertical.3") {
+                    pane("EQ", Icon.tuning) {
                         EqSettings()
                             .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                     }
-                    pane("Devices", "laptopcomputer.and.iphone") {
+                    pane("Devices", Icon.devices) {
                         DevicesSettings(model: model)
                             .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                     }
                     #if !os(tvOS)
                     if ServerCapabilitySections.shown(model, mirror) {
-                        pane("Server Capabilities", "puzzlepiece.extension") {
+                        pane("Server Capabilities", Icon.extensions) {
                             ServerCapabilitiesSettings()
                                 .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                         }
                     }
                     #endif
-                    pane("Appearance", "paintpalette") {
+                    pane("Appearance", Icon.appearance) {
                         AppearanceSettings()
                     }
                     Text(AppVersion.text)
@@ -318,10 +321,10 @@ private struct StatusLine: View {
     private var line: some View {
         Group {
             if let error = model.lastError {
-                KoanLabel(error, icon: "exclamationmark.triangle.fill")
+                KoanLabel(error, icon: Icon.warningFilled)
                     .koanText(.fine, .bad)
             } else if let result = model.lastResult {
-                KoanLabel(result, icon: "checkmark.circle")
+                KoanLabel(result, icon: Icon.success)
             } else {
                 Text(" ")
             }
@@ -375,7 +378,7 @@ private struct LibrarySettings: View {
                         Button {
                             removing = folder
                         } label: {
-                            Image(systemName: "minus.circle")
+                            KoanIcon(Icon.remove)
                         }
                         .koanButton(.icon, system: .borderless)
                         .help("Stop scanning this folder")
@@ -527,7 +530,7 @@ private struct RemoteSettings: View {
                         value: model.settings.remoteTracks.formatted(.number)
                     )
                     if mirror.signInRefused {
-                        KoanLabel(EngineMirror.signInRefusedDetail, icon: "exclamationmark.triangle")
+                        KoanLabel(EngineMirror.signInRefusedDetail, icon: Icon.warning)
                             .koanText(.meta, .bad)
                     }
                     HStack {
@@ -1043,7 +1046,7 @@ struct AutoEqSearch: View {
                     .overlay {
                         if dsp.autoEqResults.isEmpty {
                             ContentUnavailableView {
-                                Label("Not in AutoEQ", systemImage: "magnifyingglass")
+                                Label("Not in AutoEQ", koan: Icon.search)
                             } description: {
                                 Text("AutoEQ has nothing for “\(query)”. A measurement of your headphones works too: kōan builds the correction from it.")
                             } actions: {
@@ -1214,7 +1217,7 @@ private struct ScrobblingSettings: View {
                     Text("Scrobbling to ListenBrainz as \(c.account)")
                         .koanText(.body)
                     if let refused = c.error {
-                        KoanLabel(refused, icon: "exclamationmark.triangle")
+                        KoanLabel(refused, icon: Icon.warning)
                             .koanText(.meta, .bad)
                         Text("Disconnect, then connect again with a current token. Plays recorded meanwhile are kept and sent.")
                             .koanText(.meta, .muted)
@@ -1255,7 +1258,7 @@ private struct ScrobblingSettings: View {
                     #endif
                 }
                 if let error {
-                    KoanLabel(error, icon: "exclamationmark.triangle")
+                    KoanLabel(error, icon: Icon.warning)
                         .koanText(.meta, .bad)
                 }
             } header: {
@@ -1406,7 +1409,7 @@ private struct DevicesSettings: View {
                     LabeledContent("Listening on port", value: String(port))
                 }
                 if mirror.connection?.localNetworkBlocked == true {
-                    KoanLabel(LocalNetwork.blocked, icon: "wifi.exclamationmark")
+                    KoanLabel(LocalNetwork.blocked, icon: Icon.networkBlocked)
                     .koanText(.meta, .bad)
                 }
             } header: {

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" data-sf="circle.dotted" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter">
+  <path d="M5.88 5 h1.75"/>
+  <path d="M5.88 19 h1.75"/>
+  <path d="M5 5.88 v1.75"/>
+  <path d="M19 5.88 v1.75"/>
+  <path d="M9.38 5 h1.75"/>
+  <path d="M9.38 19 h1.75"/>
+  <path d="M5 9.38 v1.75"/>
+  <path d="M19 9.38 v1.75"/>
+  <path d="M12.88 5 h1.75"/>
+  <path d="M12.88 19 h1.75"/>
+  <path d="M5 12.88 v1.75"/>
+  <path d="M19 12.88 v1.75"/>
+  <path d="M16.38 5 h1.75"/>
+  <path d="M16.38 19 h1.75"/>
+  <path d="M5 16.38 v1.75"/>
+  <path d="M19 16.38 v1.75"/>
+</svg>

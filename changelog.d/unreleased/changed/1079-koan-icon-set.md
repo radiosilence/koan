@@ -1,0 +1,1 @@
+- **The kōan theme draws its own icons.** A set of thin, square-ended line glyphs replaces SF Symbols throughout the Mac, iPhone, iPad and Apple TV apps when the kōan theme is on, so the icons match its monospaced type and square, hairline controls. The system look keeps SF Symbols.

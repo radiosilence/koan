@@ -686,8 +686,7 @@ private final class SectionHeader: NSView, NSCollectionViewElement {
         count.textColor = .koanTertiaryLabel
         addSubview(title)
         addSubview(count)
-        chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
+        chevron.image = Symbol.nsImage(Icon.disclosure, size: 9, weight: .semibold)
         chevron.contentTintColor = .koanSecondaryLabel
         chevron.isHidden = true
         addSubview(chevron)
@@ -832,12 +831,12 @@ private final class ArtistPillItem: NSCollectionViewItem {
     private var micImage: CGImage? {
         let appearance = view.effectiveAppearance
         guard let coordinator, coordinator.picking, let artist else {
-            return Symbol.image("music.mic", size: 9, colours: [.koanTertiaryLabel], appearance: appearance)
+            return Symbol.image(Icon.artist, size: 9, colours: [.koanTertiaryLabel], appearance: appearance)
         }
         let tint = coordinator.parent?.tileContext.tint ?? NSColor(KoanAccent.mint.color)
         return coordinator.isPicked(Playable.artist(id: artist.id, name: artist.name).key)
-            ? Symbol.image("checkmark.circle.fill", size: 10, colours: [.white, tint], appearance: appearance)
-            : Symbol.image("circle", size: 10, colours: [.koanTertiaryLabel], appearance: appearance)
+            ? Symbol.image(Icon.picked, size: 10, colours: [.white, tint], appearance: appearance)
+            : Symbol.image(Icon.unpicked, size: 10, colours: [.koanTertiaryLabel], appearance: appearance)
     }
 
     private func restyle() {

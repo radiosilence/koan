@@ -21,12 +21,12 @@ enum DevicePicker {
     /// An output's icon by how it is connected.
     static func icon(forOutput kind: String) -> String {
         switch kind {
-        case "builtin": "laptopcomputer"
-        case "usb": "cable.connector"
-        case "bluetooth": "headphones"
-        case "airplay": "airplayaudio"
-        case "display": "display"
-        default: "hifispeaker"
+        case "builtin": Icon.laptop
+        case "usb": Icon.cable
+        case "bluetooth": Icon.headphones
+        case "airplay": Icon.airplay
+        case "display": Icon.display
+        default: Icon.speaker
         }
     }
 
@@ -52,10 +52,10 @@ enum DevicePicker {
 
     static func icon(for platform: String) -> String {
         switch platform {
-        case "ios": "iphone"
-        case "tvos": "appletv"
-        case "macos": "laptopcomputer"
-        default: "desktopcomputer"
+        case "ios": Icon.phone
+        case "tvos": Icon.television
+        case "macos": Icon.laptop
+        default: Icon.desktop
         }
     }
 }
@@ -69,7 +69,7 @@ private struct DeviceRow: View {
             icon: DevicePicker.icon(for: device.platform),
             name: device.name,
             detail: device.owner.map { "Shared by \($0) · \(detail)" } ?? detail,
-            reach: device.nearby ? "wifi" : "cloud",
+            reach: device.nearby ? Icon.wifi : Icon.cloud,
             reachHelp: device.nearby ? "On this network" : "Through your server",
             selected: player.controlled?.id == device.id,
             action: .control,
@@ -84,7 +84,7 @@ private struct DeviceRow: View {
         // for what can be done to a row beyond choosing it.
         .contextMenu {
             if !device.awake {
-                Button("Forget", systemImage: "trash", role: .destructive) {
+                Button("Forget", koan: Icon.clear, role: .destructive) {
                     player.forget(device.id)
                 }
             }
@@ -252,13 +252,13 @@ struct OutputPicker: View {
                 OutputChoiceRow(output: device, outputs: outputs, choice: .default, icon: DevicePicker.icon(for: platform ?? "ios"))
             }
         } else {
-            OutputChoiceRow(output: nil, outputs: outputs, choice: .default, icon: "speaker.wave.2")
+            OutputChoiceRow(output: nil, outputs: outputs, choice: .default, icon: Icon.output)
             ForEach(outputs.devices, id: \.id) { device in
                 OutputChoiceRow(output: device, outputs: outputs, choice: .device(name: device.id), icon: DevicePicker.icon(forOutput: device.kind))
             }
         }
         ForEach(outputs.renderers, id: \.id) { renderer in
-            OutputChoiceRow(output: renderer, outputs: outputs, choice: .renderer(udn: renderer.id), icon: "hifispeaker")
+            OutputChoiceRow(output: renderer, outputs: outputs, choice: .renderer(udn: renderer.id), icon: Icon.speaker)
         }
         if case .renderer(let udn) = outputs.current,
            let renderer = outputs.renderers.first(where: { $0.id == udn }) {
@@ -287,7 +287,7 @@ private struct OutputChoiceRow: View {
             icon: icon,
             name: output?.name ?? "System Default",
             detail: detail(selected: selected, presets: presets),
-            reach: output?.kind == "upnp" ? "wifi" : nil,
+            reach: output?.kind == "upnp" ? Icon.wifi : nil,
             reachHelp: output?.kind == "upnp" ? "UPnP, on this network" : nil,
             selected: selected,
             action: .output,
@@ -330,17 +330,17 @@ private struct RendererVolume: View {
                     #if os(tvOS)
                     // No slider on tvOS: a step either way, as a remote's own
                     // volume buttons do.
-                    Button("Quieter", systemImage: "speaker.fill") {
+                    Button("Quieter", koan: Icon.volumeDown) {
                         player.setOutputVolume(UInt8(max(0, Int(volume) - 5)))
                     }
                     Text("\(volume)")
                         .monospacedDigit()
                         .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                    Button("Louder", systemImage: "speaker.wave.3.fill") {
+                    Button("Louder", koan: Icon.volumeUp) {
                         player.setOutputVolume(UInt8(min(100, Int(volume) + 5)))
                     }
                     #else
-                    Image(systemName: "speaker.fill")
+                    KoanIcon(Icon.volumeDown)
                         .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     KoanSlider(
                         "Volume on \(name)",
@@ -357,7 +357,7 @@ private struct RendererVolume: View {
                         }
                     )
                     .labelsHidden()
-                    Image(systemName: "speaker.wave.3.fill")
+                    KoanIcon(Icon.volumeUp)
                         .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     #endif
                 }
@@ -388,8 +388,8 @@ enum Action {
 
     var glyph: String {
         switch self {
-        case .output: "speaker.wave.2"
-        case .control: "av.remote"
+        case .output: Icon.output
+        case .control: Icon.remote
         }
     }
 
@@ -418,7 +418,7 @@ private struct SectionHeading: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Image(systemName: glyph)
+            KoanIcon(glyph)
                 .font(.role(.fine, system: .caption))
                 .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             VStack(alignment: .leading, spacing: 1) {
@@ -469,7 +469,7 @@ private struct DeviceChoiceRow: View {
         HStack(spacing: 12) {
             Button(action: onSelect) {
                 HStack(spacing: 12) {
-                    Image(systemName: icon)
+                    KoanIcon(icon)
                         .font(.role(.titleSmall, system: .title3))
                         .frame(width: 28)
                         .foregroundStyle(selected ? AnyShapeStyle(.tint) : KoanTheme.style(.muted, system: .secondary))
@@ -479,7 +479,7 @@ private struct DeviceChoiceRow: View {
                                 .font(.role(.body, system: .body.weight(selected ? .semibold : .regular)))
                                 .lineLimit(1)
                             if let reach {
-                                Image(systemName: reach)
+                                KoanIcon(reach)
                                     .font(.role(.fine, system: .caption2))
                                     .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                                     .help(reachHelp ?? "")
@@ -498,12 +498,12 @@ private struct DeviceChoiceRow: View {
                     }
                     Spacer(minLength: 0)
                     if selected {
-                        Image(systemName: "checkmark")
+                        KoanIcon(Icon.check)
                             .font(.role(.body, system: .body.weight(.semibold)))
                             .foregroundStyle(.tint)
                             .accessibilityLabel(action.selectedLabel)
                     } else if !canMove {
-                        Image(systemName: action.glyph)
+                        KoanIcon(action.glyph)
                             .font(.role(.fine, system: .caption))
                             .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                             .help(action.help)
@@ -517,7 +517,7 @@ private struct DeviceChoiceRow: View {
 
             if let presets {
                 PresetMenu(presets: presets) {
-                    Image(systemName: "slider.horizontal.3")
+                    KoanIcon(Icon.filters)
                         .font(.role(.fine, system: .caption))
                         .foregroundStyle(presets.flat ? KoanTheme.style(.muted, system: .tertiary) : KoanTheme.style(.muted, system: .secondary))
                 }
@@ -566,7 +566,7 @@ enum LocalNetwork {
 private struct LocalNetworkBlocked: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label("kōan can't see this network", systemImage: "wifi.exclamationmark")
+            Label("kōan can't see this network", koan: Icon.networkBlocked)
                 .font(.role(.control, system: .callout.weight(.medium)))
             Text("Allow Local Network for kōan in \(LocalNetwork.settings) → Privacy & Security to find devices here.")
                 .font(.role(.fine, system: .caption))
@@ -610,7 +610,7 @@ struct ControlButton: View {
             open = true
         } label: {
             HStack(spacing: 5) {
-                Image(systemName: Action.control.glyph)
+                KoanIcon(Action.control.glyph)
                     .font(iconSize.map { .system(size: $0) })
                     .foregroundStyle(player.isControllingAnother ? AnyShapeStyle(.tint) : KoanTheme.style(.ink, system: .primary))
                 if labelled, let name = controlled {
@@ -654,7 +654,7 @@ struct OutputButton: View {
             // The icon says where the music is going and takes the tint; the
             // name stays primary, since a dark sleeve's tint vanishes as text.
             HStack(spacing: 5) {
-                Image(systemName: "hifispeaker")
+                KoanIcon(Icon.speaker)
                     .font(iconSize.map { .system(size: $0) })
                     .foregroundStyle(elsewhere != nil ? AnyShapeStyle(.tint) : KoanTheme.style(.ink, system: .primary))
                     .overlay(alignment: .topTrailing) {

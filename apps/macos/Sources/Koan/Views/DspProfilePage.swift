@@ -47,7 +47,7 @@ struct DspProfilePage: View {
                 Section {
                     ChainSummaryCard(corrects: d.corrects, baked: d.correctsBaked, tunings: d.tunings)
                     if let twice = d.correctsTwice {
-                        Label(twice, systemImage: "exclamationmark.triangle.fill")
+                        Label(twice, koan: Icon.warningFilled)
                             .foregroundStyle(KoanTheme.style(.bad, system: .orange))
                     }
                 }
@@ -59,7 +59,7 @@ struct DspProfilePage: View {
             }
             if let message = notice ?? dsp.lastError {
                 Section {
-                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                    Label(message, koan: Icon.warningFilled)
                         .foregroundStyle(KoanTheme.style(.bad, system: .orange))
                 }
             }
@@ -77,7 +77,7 @@ struct DspProfilePage: View {
                 #endif
                 if let problem = d.problem {
                     Section {
-                        Label(problem, systemImage: "exclamationmark.triangle.fill")
+                        Label(problem, koan: Icon.warningFilled)
                             .foregroundStyle(KoanTheme.style(.bad, system: .orange))
                     }
                 }
@@ -128,7 +128,7 @@ struct DspProfilePage: View {
                             HStack {
                                 Text(showingMore ? "Less" : "Bands, sync and more")
                                 Spacer()
-                                Image(systemName: "chevron.right")
+                                KoanIcon(Icon.disclosure)
                                     .rotationEffect(.degrees(showingMore ? 90 : 0))
                                     .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                             }
@@ -840,11 +840,11 @@ private struct ScopeSection: View {
                 set: { dsp.setScope(detail.name, everywhere: $0) }
             ), options: [("Everywhere", true), ("This device", false)])
             if let problem = detail.syncProblem {
-                Label(problem, systemImage: "exclamationmark.icloud")
+                Label(problem, koan: Icon.cloudProblem)
                     .foregroundStyle(KoanTheme.style(.bad, system: .orange))
             }
             if let note = detail.syncNote {
-                Label(note, systemImage: "arrow.triangle.2.circlepath")
+                Label(note, koan: Icon.sync)
                     .font(.role(.control, system: .callout))
                     .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             }

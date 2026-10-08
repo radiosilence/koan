@@ -87,7 +87,7 @@ struct NowPlayingPage: View {
         } else {
             RoundedRectangle(cornerRadius: KoanTheme.radius(16))
                 .fill(.quaternary)
-                .overlay { Image(systemName: "music.note").font(.system(size: 120)) }
+                .overlay { KoanIcon(Icon.track).font(.system(size: 120)) }
         }
     }
 
@@ -127,22 +127,26 @@ struct NowPlayingPage: View {
     /// focusable button: a remote moves between them and clicks.
     private var controls: some View {
         HStack(spacing: 24) {
-            Button { player.previous() } label: { Image(systemName: Icon.previous) }
+            Button { player.previous() } label: { KoanIcon(Icon.previous) }
                 .koanButton(.icon)
             Button { player.togglePlayPause() } label: {
-                Image(systemName: player.isPlaying ? "pause.fill" : Icon.play)
+                KoanIcon(player.isPlaying ? Icon.pause : Icon.play)
                     .contentTransition(.symbolEffect(.replace))
             }
             .koanButton(.iconOutlined)
             .focused($focus, equals: .playPause)
             .prefersDefaultFocus(in: page)
-            Button { player.next() } label: { Image(systemName: Icon.next) }
+            Button { player.next() } label: { KoanIcon(Icon.next) }
                 .koanButton(.icon)
             if let trackId = player.currentTrackId {
                 TrackHeart(trackId: trackId, size: .title3)
             }
             Button { ui.toggleLyrics() } label: {
-                Image(systemName: Icon.lyrics).symbolVariant(ui.showLyrics ? .fill : .none)
+                KoanIcon(Icon.lyrics)
+                    .symbolVariant(ui.showLyrics ? .fill : .none)
+                    // The theme's glyph has no filled form: on is the accent, as
+                    // shuffle and repeat show it.
+                    .foregroundStyle(KoanTheme.isOn && ui.showLyrics ? KoanTheme.style(.accent) : AnyShapeStyle(.foreground))
             }
             .koanButton(.icon)
             .accessibilityLabel(ui.showLyrics ? "Show artwork" : "Show lyrics")
@@ -164,7 +168,7 @@ struct NowPlayingPage: View {
                 if let route = app.dsp.route,
                    let presets = Presets(dsp: app.dsp, device: route) {
                     PresetMenu(presets: presets, title: route) {
-                        KoanLabel(presets.summary, icon: "slider.horizontal.3")
+                        KoanLabel(presets.summary, icon: Icon.filters)
                     }
                 }
             }

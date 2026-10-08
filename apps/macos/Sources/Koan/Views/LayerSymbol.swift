@@ -1,8 +1,8 @@
 #if os(macOS)
 import AppKit
 
-/// SF Symbols drawn once into bitmaps for layers, which take no part in
-/// layout or hit-testing.
+/// Icons drawn once into bitmaps for layers, which take no part in layout or
+/// hit-testing: the kōan glyph in the theme, the SF Symbol otherwise.
 @MainActor
 enum Symbol {
     private static var cache: [String: CGImage] = [:]
@@ -15,6 +15,11 @@ enum Symbol {
     ) -> CGImage? {
         let key = "\(name) \(size) \(weight.rawValue) \(colours.map(\.description)) \(appearance.name.rawValue)"
         if let held = cache[key] { return held }
+        if KoanTheme.isOn, let glyph = KoanGlyph.forSymbol(name) {
+            let image = glyphImage(glyph, size: size, colours: colours, appearance: appearance)
+            cache[key] = image
+            return image
+        }
         // One colour is the symbol in that colour, as SwiftUI's foreground
         // style draws it: what is cut out of it stays cut out. A palette of
         // one paints every layer, filling the play mark's triangle in.
@@ -46,6 +51,36 @@ enum Symbol {
         NSGraphicsContext.restoreGraphicsState()
         cache[key] = bitmap.cgImage
         return bitmap.cgImage
+    }
+
+    /// The kōan glyph standing in for a symbol: the first colour for its
+    /// strokes, a second for its fill layer.
+    private static func glyphImage(
+        _ glyph: KoanGlyph, size: CGFloat, colours: [NSColor], appearance: NSAppearance
+    ) -> CGImage? {
+        let side = KoanGlyph.side(for: size)
+        guard let context = CGContext(
+            data: nil, width: Int(side * 2), height: Int(side * 2), bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.translateBy(x: 0, y: side * 2)
+        context.scaleBy(x: 2, y: -2)
+        var colour = NSColor.black.cgColor
+        var fill: CGColor?
+        appearance.performAsCurrentDrawingAppearance {
+            colour = (colours.first ?? .labelColor).cgColor // theme: raw
+            fill = colours.count > 1 ? colours[1].cgColor : nil
+        }
+        glyph.draw(in: context, rect: CGRect(x: 0, y: 0, width: side, height: side), pointSize: size, colour: colour, fill: fill)
+        return context.makeImage()
+    }
+
+    /// A symbol for an image view: the kōan glyph as a template in the
+    /// theme, the configured SF Symbol otherwise. Tinted by the view.
+    static func nsImage(_ name: String, size: CGFloat, weight: NSFont.Weight = .regular) -> NSImage? {
+        if KoanTheme.isOn, let glyph = KoanGlyph.forSymbol(name) { return glyph.image(pointSize: size) }
+        return NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: size, weight: weight))
     }
 
     /// Where a symbol drawn by `image` sits at its natural size: it is drawn

@@ -278,7 +278,7 @@ struct EqSettings: View {
                 Spacer()
                 #if !os(tvOS)
                 Button { explaining = true } label: {
-                    Label("How EQ works", systemImage: "info.circle")
+                    Label("How EQ works", koan: Icon.info)
                 }
                 .koanButton(.link)
                 #endif
@@ -485,12 +485,12 @@ struct EqChain: View {
                     }
                     .contextMenu {
                         if i > 0 {
-                            Button("Move Up", systemImage: "arrow.up") { move(i, by: -1) }
+                            Button("Move Up", koan: Icon.moveUp) { move(i, by: -1) }
                         }
                         if i < overview.chain.count - 1 {
-                            Button("Move Down", systemImage: "arrow.down") { move(i, by: 1) }
+                            Button("Move Down", koan: Icon.moveDown) { move(i, by: 1) }
                         }
-                        Button("Remove from Tuning", systemImage: "trash", role: .destructive) { remove(i) }
+                        Button("Remove from Tuning", koan: Icon.clear, role: .destructive) { remove(i) }
                     }
             }
             tail
@@ -512,7 +512,7 @@ struct EqChain: View {
     /// Music in, the correction, and the tuning's heading.
     private var head: some View {
         VStack(alignment: .leading, spacing: 0) {
-            end(KoanTheme.label("Music in"), systemImage: "music.note")
+            end(KoanTheme.label("Music in"), icon: Icon.track)
             link
             if let correction {
                 StageBlock(
@@ -598,7 +598,7 @@ struct EqChain: View {
                 link
             }
             #endif
-            end("\(device) out", systemImage: "hifispeaker")
+            end("\(device) out", icon: Icon.speaker)
         }
     }
 
@@ -627,7 +627,7 @@ struct EqChain: View {
         return VStack(alignment: .leading, spacing: 2) {
             switch meets?.join {
             case .matched:
-                Label("Matched", systemImage: "checkmark")
+                Label("Matched", koan: Icon.check)
                     .koanText(.fine, .accent)
                     .koanCase()
             case let .converted(from, to):
@@ -643,11 +643,11 @@ struct EqChain: View {
                     .koanText(.fine, .muted)
             case .unknown:
                 #if os(tvOS)
-                Label("Made against: unknown. This may apply a target twice", systemImage: "exclamationmark.triangle")
+                Label("Made against: unknown. This may apply a target twice", koan: Icon.warning)
                     .koanText(.fine, .bad)
                 #else
                 Button { open(eq) } label: {
-                    Label("Made against: unknown. This may apply a target twice; set it", systemImage: "exclamationmark.triangle")
+                    Label("Made against: unknown. This may apply a target twice; set it", koan: Icon.warning)
                         .koanText(.fine, .bad)
                         .multilineTextAlignment(.leading)
                 }
@@ -661,7 +661,7 @@ struct EqChain: View {
                 EmptyView()
             }
             if let note = meets?.note {
-                Label(note, systemImage: "exclamationmark.triangle")
+                Label(note, koan: Icon.warning)
                     .koanText(.fine, .bad)
             }
         }
@@ -677,8 +677,8 @@ struct EqChain: View {
         }
     }
 
-    private func end(_ title: String, systemImage: String) -> some View {
-        Label(title, systemImage: systemImage)
+    private func end(_ title: String, icon: String) -> some View {
+        Label(title, koan: icon)
             .koanText(.meta, .muted)
             .padding(.leading, 8)
     }
@@ -773,7 +773,7 @@ private struct Placeholder: View {
                 if let title {
                     Text(title).koanText(.fine, .muted).koanCase()
                 }
-                Label(prompt, systemImage: "plus")
+                Label(prompt, koan: Icon.add)
                     .koanText(.body, .accent)
                     .koanCase()
             }
@@ -968,7 +968,7 @@ struct StagePicker: View {
                 )
             }
             if let c = correction, c.role == .baked {
-                Label("\(name) already includes a tuning, so no other tuning plays on it. Split it into a correction and a tuning to change that.", systemImage: "info.circle")
+                Label("\(name) already includes a tuning, so no other tuning plays on it. Split it into a correction and a tuning to change that.", koan: Icon.info)
                     .koanText(.meta, .muted)
                 #if !os(tvOS)
                 if c.rates.isEmpty, c.layers == 0 {
@@ -1012,7 +1012,7 @@ struct StagePicker: View {
                 }
                 Spacer()
                 if chosen {
-                    Image(systemName: "checkmark")
+                    KoanIcon(Icon.check)
                         .koanText(.body, .accent)
                         .accessibilityLabel("Chosen")
                 }

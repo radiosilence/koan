@@ -296,7 +296,7 @@ struct KoanMenuChoice<Label: View>: View {
             HStack(spacing: KoanTheme.Space.m) {
                 label()
                 Spacer(minLength: 0)
-                KoanIcon("checkmark").opacity(chosen ? 1 : 0)
+                KoanIcon(Icon.check).opacity(chosen ? 1 : 0)
             }
         }
         .accessibilityAddTraits(chosen ? .isSelected : [])

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" data-sf="antenna.radiowaves.left.and.right" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter">
+  <path d="M12 12.5 V21"/>
+  <path d="M11.75 9.5 h.5"/>
+  <path d="M8.94 12.07 A4 4 0 0 1 8.94 6.93"/>
+  <path d="M5.87 14.64 A8 8 0 0 1 5.87 4.36"/>
+  <path d="M15.06 6.93 A4 4 0 0 1 15.06 12.07"/>
+  <path d="M18.13 4.36 A8 8 0 0 1 18.13 14.64"/>
+</svg>

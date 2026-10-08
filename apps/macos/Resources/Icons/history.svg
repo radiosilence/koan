@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" data-sf="clock.arrow.circlepath" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter">
+  <path d="M12 5 A7.5 7.5 0 1 1 4.5 12.5"/>
+  <path d="M14.5 2.5 L12 5 L14.5 7.5"/>
+  <path d="M12 9 L12 12.5 L15 14.5"/>
+</svg>

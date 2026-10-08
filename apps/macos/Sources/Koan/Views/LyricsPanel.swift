@@ -78,7 +78,7 @@ struct LyricsPanel: View {
             Color.clear
         } else {
             EmptyState(
-                icon: "text.quote",
+                icon: Icon.lyricsText,
                 title: player.currentTrackId == nil ? "Nothing playing" : "No lyrics found"
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
