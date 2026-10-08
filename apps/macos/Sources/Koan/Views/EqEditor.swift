@@ -16,6 +16,8 @@ struct EqEditor: View {
     /// For an EQ with bands for each channel, the one being edited: its
     /// curve and handles drawn, the other channel's curve beside it.
     var channel: UInt16?
+    /// The graph alone and short, while a band's figures are being typed.
+    var compact = false
 
     /// The edit under way, drawn in place of `response` until a saved one is.
     @State private var live: DspResponse?
@@ -65,7 +67,8 @@ struct EqEditor: View {
             parts: parts,
             handles: editable ? BandTable.handles(detail.bands, channel: channel ?? 0) : [],
             paints: editable && curveIndex != nil,
-            onEdit: onEdit
+            onEdit: onEdit,
+            compact: compact
         )
     }
 
@@ -73,7 +76,7 @@ struct EqEditor: View {
         VStack(alignment: .leading, spacing: KoanTheme.Space.m) {
             graph
             #if !os(tvOS)
-            if editable, curveIndex != nil {
+            if editable, curveIndex != nil, !compact {
                 KoanSegmentedPicker(options: Self.brushes, selection: $brush, title: "Brush")
             }
             #endif

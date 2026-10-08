@@ -29,6 +29,9 @@ struct EqGraph: View {
     var onEdit: ((Edit) -> Void)?
     /// The view to open on, where there is a measurement to show.
     var startOn: Shown = .eq
+    /// The chart alone, short: room for the row being typed into while the
+    /// keyboard is up.
+    var compact = false
 
     /// A stage of a chain: its name, its curve, and how its block draws it.
     struct Part {
@@ -93,7 +96,7 @@ struct EqGraph: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if measured {
+            if measured, !compact {
                 KoanSegmentedPicker(
                     options: Shown.allCases.map { ($0.rawValue, $0) },
                     selection: $view,
@@ -101,8 +104,10 @@ struct EqGraph: View {
                 )
             }
             chart
-                .frame(height: 220)
-            legend
+                .frame(height: compact ? 96 : 220)
+            if !compact {
+                legend
+            }
         }
     }
 
