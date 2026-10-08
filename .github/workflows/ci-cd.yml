@@ -477,21 +477,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       # Anything but main builds the image to prove it builds. Main publishes it under
-      # the commit and `main`, since a deploy pins the commit; a release also
-      # tags it with its version and `latest`.
+      # the commit and `main`, since a deploy pins the commit. A release's version
+      # and `latest` are added by `container-release`, once the rest of the
+      # release has passed.
       - id: tags
-        env:
-          SHOULD_RELEASE: ${{ needs.check-version.outputs.should_release }}
-          VERSION: ${{ needs.check-version.outputs.version }}
         run: |
           {
             echo "tags<<EOF"
             echo "$IMAGE:$GITHUB_SHA"
             echo "$IMAGE:main"
-            if [ "$SHOULD_RELEASE" = "true" ]; then
-              echo "$IMAGE:v$VERSION"
-              echo "$IMAGE:latest"
-            fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -507,6 +501,30 @@ jobs:
           tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  container-release:
+    name: Container image (release tags)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The image this commit already pushed, tagged with the release's version
+    # and `latest` only after every other job has passed: a failed release
+    # must not move `latest`. Retagging needs no rebuild, and repeats safely.
+    needs: [fmt, css, clippy, test, build, msrv, audit, macos-app, create-release, create-macos-app, testflight, container, check-version]
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.container.result == 'success' && needs.check-version.outputs.should_release == 'true' }}
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/radiosilence/koan
+      VERSION: ${{ needs.check-version.outputs.version }}
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: docker buildx imagetools create -t "$IMAGE:v$VERSION" -t "$IMAGE:latest" "$IMAGE:$GITHUB_SHA"
 
   pulumi-package:
     name: Pulumi package
@@ -723,8 +741,10 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [fmt, clippy, test, build, macos-app, create-release, create-macos-app, check-version, publish-crate, publish-package]
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.create-release.result == 'success' && needs.check-version.outputs.should_release == 'true' }}
+    needs: [fmt, css, clippy, test, build, msrv, audit, macos-app, create-release, create-macos-app, testflight, container-release, check-version, publish-crate, publish-package]
+    # The publishes having run, not merely not failed: they are skipped when
+    # anything before them failed, and a skipped job is not a failure.
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.create-release.result == 'success' && needs.publish-crate.result == 'success' && needs.publish-package.result == 'success' && needs.check-version.outputs.should_release == 'true' }}
     permissions:
       contents: write
     steps:
@@ -775,12 +795,12 @@ jobs:
     name: Publish to crates.io
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    # After every release build, the Mac app's included: a version on
-    # crates.io cannot be taken back, so it goes out only once the rest of the
-    # release can follow it. Notarisation comes after the GitHub release and is
+    # After every other job in the run has passed, the Mac app and TestFlight
+    # included: a version on crates.io cannot be taken back, so it goes out
+    # only once the rest of the release can follow it. Notarisation comes after the GitHub release and is
     # not waited for. Publishing is skipped when the version is already out
     # (below), so a re-run after a later failure passes straight through.
-    needs: [fmt, clippy, test, build, macos-app, create-release, create-macos-app, check-version]
+    needs: [fmt, css, clippy, test, build, msrv, audit, macos-app, create-release, create-macos-app, testflight, check-version]
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.check-version.outputs.should_release == 'true' }}
     env:
       VERSION: ${{ needs.check-version.outputs.version }}
@@ -1018,10 +1038,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Before the release: the updater that deploys koan follows releases, and
-    # a release it finds must already have its package. After every release
-    # build, as the crates are: a published package version cannot be reused.
-    needs: [fmt, clippy, test, build, macos-app, create-release, create-macos-app, container, check-version]
-    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.check-version.outputs.should_release == 'true' }}
+    # a release it finds must already have its package. After every other job
+    # has passed, as the crates are: a published package version cannot be
+    # reused.
+    needs: [fmt, css, clippy, test, build, msrv, audit, macos-app, create-release, create-macos-app, testflight, container-release, check-version]
+    # The package pins the image by version, so the version tag must exist.
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.container-release.result == 'success' && needs.check-version.outputs.should_release == 'true' }}
     permissions:
       packages: write
       contents: read
