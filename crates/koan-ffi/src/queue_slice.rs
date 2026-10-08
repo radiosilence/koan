@@ -235,7 +235,7 @@ mod tests {
             disc: Some(1),
             duration_ms: Some(240_000),
             state,
-            pre_shuffle: None,
+            played: false,
         }
     }
 
@@ -406,11 +406,12 @@ mod tests {
 
     #[test]
     fn a_patch_past_its_bound_sends_the_queue_whole() {
-        // Ready, so every row the cursor passes reads as played.
         let (state, ids) = queue_of(PATCH_MAX * 3, ItemState::Ready);
         let mut sender = QueueSender::default();
         sender.update(&state, false, joins);
-        state.set_cursor(Some(ids[PATCH_MAX * 2]));
+        for &id in &ids[..PATCH_MAX * 2] {
+            state.mark_played(id);
+        }
         let slices = sender.update(&state, false, joins);
         assert!(matches!(slices[0], StateSlice::Queue { .. }));
     }

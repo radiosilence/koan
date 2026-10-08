@@ -390,8 +390,8 @@ pub struct NowPlaying {
     pub format: Option<StreamFormat>,
     /// Bumped on every queue mutation — cheap change detection for the UI.
     pub playlist_version: u64,
-    /// Shuffle is on: the queue after the current track was reordered at
-    /// random, and turning it off puts it back.
+    /// Shuffle is on: the next track is picked at random from those yet to
+    /// play this pass. The queue keeps its order.
     pub shuffle: bool,
     pub repeat_mode: RepeatMode,
     /// The sleep timer, while one is set.

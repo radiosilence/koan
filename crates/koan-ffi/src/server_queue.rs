@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use koan_core::config::Config;
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::PlaybackState;
+use koan_core::player::state::{PlaybackState, QueueMode};
 use koan_core::remote::client::{SavedPlayQueue, SubsonicClient};
 
 use crate::{KoanEngine, KoanError};
@@ -122,6 +122,7 @@ impl KoanEngine {
             items,
             position_ms: queue.position,
             play: false,
+            mode: QueueMode::Keep,
         })?;
         // Back only once the queue, its cursor and the paused state are all
         // published, so the saver's next look starts from them.

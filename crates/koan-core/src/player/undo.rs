@@ -40,13 +40,6 @@ pub enum UndoEntry {
         cursor: Option<QueueItemId>,
     },
 
-    /// Shuffle was turned on or off. Undo = put the queue back in `order`,
-    /// positions before shuffling included, and shuffle back to `shuffle`.
-    Shuffled {
-        shuffle: bool,
-        order: Vec<(QueueItemId, Option<u32>)>,
-    },
-
     /// Multiple operations batched as a single undo step (e.g. drag reorder).
     Batch(Vec<UndoEntry>),
 }

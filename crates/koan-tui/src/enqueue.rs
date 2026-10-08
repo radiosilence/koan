@@ -5,6 +5,7 @@
 
 use koan_core::db::queries;
 use koan_core::player::commands::PlayerCommand;
+use koan_core::player::state::QueueMode;
 
 use crate::app::PickerAction;
 
@@ -44,6 +45,7 @@ pub fn enqueue_playlist(
             start: 0,
             position_ms: 0,
             play: true,
+            mode: QueueMode::InOrder,
         })
         .ok();
         return;

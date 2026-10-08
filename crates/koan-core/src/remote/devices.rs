@@ -2482,6 +2482,7 @@ pub(crate) mod tests {
             position_ms: 0,
             paused: false,
             handoff: true,
+            mode: crate::player::state::QueueMode::Keep,
         };
         assert!(
             send_nearby("mac", play).is_err(),
@@ -2505,6 +2506,7 @@ pub(crate) mod tests {
             position_ms: 0,
             paused: false,
             handoff: true,
+            mode: crate::player::state::QueueMode::Keep,
         };
         for source in [
             CommandSource::Shared,
@@ -2711,6 +2713,7 @@ pub(crate) mod tests {
             position_ms: 0,
             paused: false,
             handoff: true,
+            mode: crate::player::state::QueueMode::Keep,
         };
         assert!(listed.iter().any(|d| d.id == "mac" && d.account));
         assert!(send_nearby("mac", play).is_err());

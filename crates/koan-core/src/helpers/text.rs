@@ -7,17 +7,31 @@ use std::path::Path;
 /// Deliberately not seeded from anything stable: "shuffle again" has to
 /// actually produce a new order, which a process-lifetime seed wouldn't.
 pub fn shuffle<T>(items: &mut [T]) {
-    let mut seed = [0u8; 8];
-    if getrandom::fill(&mut seed).is_err() {
+    let Some(mut rng) = Rng::seeded() else {
         return; // Leave the order alone rather than pretending to shuffle.
-    }
-    let mut state = u64::from_le_bytes(seed) | 1;
+    };
     for i in (1..items.len()).rev() {
-        // xorshift64 — plenty for shuffling a list nobody is betting on.
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        items.swap(i, (state % (i as u64 + 1)) as usize);
+        items.swap(i, rng.below(i + 1));
+    }
+}
+
+/// xorshift64 over a fresh seed — plenty for shuffling a list nobody is
+/// betting on.
+pub struct Rng(u64);
+
+impl Rng {
+    pub fn seeded() -> Option<Self> {
+        let mut seed = [0u8; 8];
+        getrandom::fill(&mut seed).ok()?;
+        Some(Self(u64::from_le_bytes(seed) | 1))
+    }
+
+    /// A number in `0..n`. `n` must not be zero.
+    pub fn below(&mut self, n: usize) -> usize {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 % n as u64) as usize
     }
 }
 

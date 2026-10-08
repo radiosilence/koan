@@ -132,7 +132,7 @@ fn poll_loop(client: GraphQLClient, state: Arc<SharedPlayerState>) {
                             disc: e.disc,
                             duration_ms: e.duration_ms,
                             state: ItemState::Ready,
-                            pre_shuffle: None,
+                            played: false,
                         }
                     })
                     .collect();

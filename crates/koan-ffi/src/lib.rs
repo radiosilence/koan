@@ -28,7 +28,9 @@ use koan_core::db::connection::Database;
 use koan_core::db::queries::{self, PersistedQueueItem};
 use koan_core::player::Player;
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::{PlaybackState, PlaylistItem, QueueItemId, SharedPlayerState};
+use koan_core::player::state::{
+    PlaybackState, PlaylistItem, QueueItemId, QueueMode, SharedPlayerState,
+};
 use koan_core::remote::client::SubsonicError;
 use uuid::Uuid;
 
@@ -649,7 +651,8 @@ impl KoanEngine {
     }
 
     /// Shuffle on or off, here or on the device being controlled. On, the
-    /// rest of the queue is reordered at random; off, it goes back as it was.
+    /// tracks yet to play this pass play in a random order; the queue itself
+    /// never moves.
     pub async fn set_shuffle(self: Arc<Self>, on: bool) -> Result<(), KoanError> {
         offload::sequenced(move || self.send(PlayerCommand::SetShuffle(on))).await
     }
@@ -768,7 +771,9 @@ impl KoanEngine {
         .await
     }
 
-    /// Replace the queue, starting at `start_at` (default: the first track).
+    /// Replace the queue, starting at `start_at` (default: the first track),
+    /// and play it in order, or `shuffled`, with repeat off: a play from a
+    /// play button starts as asked whatever the modes were.
     ///
     /// The index is part of the command rather than a follow-up `play` because
     /// two commands means the first track audibly starts before the jump lands:
@@ -778,6 +783,7 @@ impl KoanEngine {
         self: Arc<Self>,
         track_ids: Vec<i64>,
         start_at: Option<u32>,
+        shuffled: bool,
     ) -> Result<Vec<String>, KoanError> {
         offload::sequenced(move || {
             let db = self.db()?;
@@ -793,6 +799,11 @@ impl KoanEngine {
                 start: start_at.unwrap_or(0) as usize,
                 position_ms: 0,
                 play: true,
+                mode: if shuffled {
+                    QueueMode::Shuffled
+                } else {
+                    QueueMode::InOrder
+                },
             })?;
 
             Ok(ids)
@@ -2033,8 +2044,9 @@ impl KoanEngine {
     /// built here leaves out entries whose track the library has lost. A
     /// position means something different on each side of either.
     ///
-    /// `shuffled` orders the queue, not the playlist — the playlist on disk is
-    /// untouched.
+    /// The queue is the playlist's order either way; `shuffled` turns shuffle
+    /// on, and otherwise off, with repeat off, as any play from a play button
+    /// does.
     pub async fn play_playlist(
         self: Arc<Self>,
         playlist_id: i64,
@@ -2043,10 +2055,7 @@ impl KoanEngine {
     ) -> Result<Vec<String>, KoanError> {
         offload::sequenced(move || {
             let db = self.db()?;
-            let mut entries = queries::playlist_entries(&db.conn, playlist_id).map_err(db_err)?;
-            if shuffled {
-                koan_core::helpers::shuffle(&mut entries);
-            }
+            let entries = queries::playlist_entries(&db.conn, playlist_id).map_err(db_err)?;
             let track_ids: Vec<i64> = entries.iter().map(|e| e.track.id).collect();
 
             let mut items = self.build_items(&db, &track_ids);
@@ -2086,6 +2095,11 @@ impl KoanEngine {
                 start,
                 position_ms: 0,
                 play: true,
+                mode: if shuffled {
+                    QueueMode::Shuffled
+                } else {
+                    QueueMode::InOrder
+                },
             })?;
 
             Ok(ids)
@@ -2132,7 +2146,7 @@ impl KoanEngine {
             let db = self.db()?;
             // Read before the snapshot: an edit landing in between moves the
             // version again, and the next save writes it.
-            let content = self.state.content_version();
+            let content = self.state.saved_version();
             if self.saved_content.load(Ordering::Acquire) == content {
                 return self.write_position(&db);
             }
@@ -2241,7 +2255,8 @@ impl KoanEngine {
         let restored = offload::sequenced(move || {
             let db = self.db()?;
             // Before the queue and whether there is one: the mode is the
-            // player's, and a queue added under it would be shuffled again.
+            // player's, and a shuffled queue's play order is drawn as it
+            // arrives, from the rows not marked played.
             let mode = queries::load_play_mode(&db.conn).map_err(fav_err)?;
             self.send_local(PlayerCommand::RestorePlayMode(mode))?;
             let Some(saved) = queries::load_playback_state(&db.conn).map_err(fav_err)? else {
@@ -5778,6 +5793,7 @@ impl KoanEngine {
                 start,
                 position_ms,
                 play,
+                mode,
             } => {
                 // Where `start` lands once the tracks the server lacks are
                 // left out: on it, or on the next one that remains.
@@ -5795,6 +5811,7 @@ impl KoanEngine {
                     position_ms,
                     paused: !play,
                     handoff: false,
+                    mode,
                 }
             }
             PlayerCommand::RemoveFromPlaylist(id) => LinkCommand::RemoveItems {
@@ -6088,6 +6105,7 @@ impl KoanEngine {
                 position_ms,
                 paused,
                 handoff,
+                mode,
             } => self.db().and_then(|db| {
                 // The music is coming back here: stop controlling whatever
                 // this was controlling. A renderer this device was playing to
@@ -6111,6 +6129,7 @@ impl KoanEngine {
                     start,
                     position_ms,
                     play: !paused,
+                    mode,
                 })
             }),
             LinkCommand::PlayItem { id } => {
@@ -6356,6 +6375,7 @@ impl KoanEngine {
             position_ms,
             paused,
             handoff: true,
+            mode: QueueMode::Keep,
         };
         let (then, answer) = outcome_channel();
         let sent = koan_core::remote::devices::send_for_then(source, to, play, Some(then));
@@ -6452,7 +6472,7 @@ fn restore_items(db: &Database, saved: &[PersistedQueueItem]) -> Vec<PlaylistIte
         .zip(ids)
         .map(|(saved_item, id)| match id.and_then(|_| resolved.next()) {
             Some(item) => PlaylistItem {
-                pre_shuffle: saved_item.pre_shuffle,
+                played: saved_item.played.unwrap_or(false),
                 ..item
             },
             None => saved_item.to_playlist_item(),
@@ -7092,7 +7112,7 @@ mod restore_tests {
             disc: None,
             duration_ms: None,
             db_id,
-            pre_shuffle: None,
+            played: None,
         }
     }
 

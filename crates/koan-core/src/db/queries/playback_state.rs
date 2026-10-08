@@ -22,9 +22,47 @@ pub struct PersistedQueueItem {
     /// Absent in pre-v0.18.2 persisted state; serde default covers migration.
     #[serde(default)]
     pub db_id: Option<i64>,
-    /// Where the item stood before shuffle was turned on, while it is on.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pre_shuffle: Option<u32>,
+    /// Whether the item has played this pass. Always written; absent in a
+    /// session saved before it was recorded, where `load_playback_state`
+    /// works it out from the cursor as the queue then showed it.
+    #[serde(default)]
+    pub played: Option<bool>,
+}
+
+/// What a session saved while shuffle still reordered the queue noted per
+/// item: where it stood before shuffling.
+#[derive(Deserialize)]
+struct LegacyQueueItem {
+    #[serde(default)]
+    pre_shuffle: Option<u32>,
+}
+
+/// Bring a session saved by an older koan to what is saved now. Then, a row
+/// before the cursor showed as played, and shuffle reordered the queue
+/// itself, noting where each row had stood. The marks are taken from the
+/// cursor, and a shuffled queue is put back in its own order, as turning
+/// shuffle off would have put it.
+fn upgrade(items: &mut [PersistedQueueItem], legacy: &[LegacyQueueItem], cursor: Option<&str>) {
+    if items.iter().any(|item| item.played.is_none()) {
+        let at = cursor.and_then(|c| items.iter().position(|item| item.path == c));
+        for (i, item) in items.iter_mut().enumerate() {
+            item.played = Some(at.is_some_and(|at| i < at));
+        }
+    }
+    if legacy.len() != items.len() || legacy.iter().all(|item| item.pre_shuffle.is_none()) {
+        return;
+    }
+    let slots: Vec<usize> = (0..items.len())
+        .filter(|&at| legacy[at].pre_shuffle.is_some())
+        .collect();
+    let mut moved: Vec<(u32, PersistedQueueItem)> = slots
+        .iter()
+        .map(|&at| (legacy[at].pre_shuffle.unwrap_or(0), items[at].clone()))
+        .collect();
+    moved.sort_by_key(|(pre, _)| *pre);
+    for (at, (_, item)) in slots.into_iter().zip(moved) {
+        items[at] = item;
+    }
 }
 
 /// Full persisted playback state.
@@ -128,10 +166,13 @@ pub fn load_playback_state(conn: &Connection) -> rusqlite::Result<Option<Persist
 
     match result {
         Ok((json, cursor_path, position_ms, was_playing)) => {
-            let items: Vec<PersistedQueueItem> = serde_json::from_str(&json).unwrap_or_default();
+            let mut items: Vec<PersistedQueueItem> =
+                serde_json::from_str(&json).unwrap_or_default();
             if items.is_empty() {
                 return Ok(None);
             }
+            let legacy: Vec<LegacyQueueItem> = serde_json::from_str(&json).unwrap_or_default();
+            upgrade(&mut items, &legacy, cursor_path.as_deref());
             Ok(Some(PersistedPlaybackState {
                 items,
                 cursor_path,
@@ -168,7 +209,7 @@ impl PersistedQueueItem {
             disc: item.disc,
             duration_ms: item.duration_ms,
             db_id: item.db_id,
-            pre_shuffle: item.pre_shuffle,
+            played: Some(item.played),
         }
     }
 
@@ -203,7 +244,7 @@ impl PersistedQueueItem {
             disc: self.disc,
             duration_ms: self.duration_ms,
             state,
-            pre_shuffle: self.pre_shuffle,
+            played: self.played.unwrap_or(false),
         }
     }
 }
@@ -235,7 +276,7 @@ mod tests {
                 disc: Some(1),
                 duration_ms: Some(240_000),
                 db_id: None,
-                pre_shuffle: None,
+                played: None,
             },
             PersistedQueueItem {
                 path: "/music/track2.flac".into(),
@@ -249,7 +290,7 @@ mod tests {
                 disc: Some(1),
                 duration_ms: Some(180_000),
                 db_id: None,
-                pre_shuffle: None,
+                played: None,
             },
         ];
 
@@ -287,7 +328,7 @@ mod tests {
             disc: None,
             duration_ms: None,
             db_id: None,
-            pre_shuffle: None,
+            played: None,
         }];
         save_playback_state(&conn, &items, PlayMode::default(), None, 0, false).unwrap();
         assert!(!load_playback_state(&conn).unwrap().unwrap().was_playing);
@@ -308,7 +349,7 @@ mod tests {
             disc: None,
             duration_ms: None,
             db_id: None,
-            pre_shuffle: None,
+            played: None,
         }];
         save_playback_state(
             &conn,
@@ -368,7 +409,7 @@ mod tests {
             disc: None,
             duration_ms: None,
             db_id: None,
-            pre_shuffle: None,
+            played: None,
         }];
         save_playback_state(&conn, &items, PlayMode::default(), None, 0, false).unwrap();
         assert!(load_playback_state(&conn).unwrap().is_some());
@@ -410,7 +451,7 @@ mod tests {
             disc: None,
             duration_ms: None,
             db_id: Some(42),
-            pre_shuffle: None,
+            played: None,
         };
         let playlist_item = item.to_playlist_item();
         assert!(
@@ -441,7 +482,7 @@ mod tests {
             disc: None,
             duration_ms: None,
             db_id: None,
-            pre_shuffle: None,
+            played: None,
         };
         let playlist_item = item.to_playlist_item();
         assert!(
@@ -466,7 +507,7 @@ mod tests {
             disc: None,
             duration_ms: None,
             db_id: None,
-            pre_shuffle: None,
+            played: None,
         }];
         save_playback_state(&conn, &items1, PlayMode::default(), None, 100, false).unwrap();
 
@@ -482,7 +523,7 @@ mod tests {
             disc: None,
             duration_ms: None,
             db_id: None,
-            pre_shuffle: None,
+            played: None,
         }];
         save_playback_state(
             &conn,
@@ -516,7 +557,7 @@ mod tests {
                 disc: None,
                 duration_ms: None,
                 db_id: None,
-                pre_shuffle: None,
+                played: None,
             },
             PersistedQueueItem {
                 path: "/cache/remote.flac".into(),
@@ -530,7 +571,7 @@ mod tests {
                 disc: None,
                 duration_ms: None,
                 db_id: Some(99),
-                pre_shuffle: None,
+                played: None,
             },
         ];
         save_playback_state(&conn, &items, PlayMode::default(), None, 0, false).unwrap();
@@ -586,7 +627,7 @@ mod tests {
                 disc: Some(1),
                 duration_ms: Some(300_000),
                 db_id: Some(10),
-                pre_shuffle: None,
+                played: None,
             },
             PersistedQueueItem {
                 path: "/music/beta.flac".into(),
@@ -600,7 +641,7 @@ mod tests {
                 disc: Some(1),
                 duration_ms: Some(250_000),
                 db_id: Some(11),
-                pre_shuffle: None,
+                played: None,
             },
             PersistedQueueItem {
                 path: "/music/gamma.flac".into(),
@@ -614,7 +655,7 @@ mod tests {
                 disc: None,
                 duration_ms: Some(180_000),
                 db_id: None,
-                pre_shuffle: None,
+                played: None,
             },
         ];
 

@@ -221,13 +221,12 @@ struct PlayableMenu: View {
     }
 
     /// Replace the queue with this, in turn with every other request: see
-    /// `PlayerModel.playNow(resolving:_:)`.
+    /// `PlayerModel.playNow(resolving:shuffled:_:)`.
     private func playNow(shuffled: Bool) {
         let engine = library.engine
         let playable = self.playable
-        player.playNow(resolving: playable.name) {
-            let ids = await playable.trackIds(using: engine)
-            return shuffled ? ids.shuffled() : ids
+        player.playNow(resolving: playable.name, shuffled: shuffled) {
+            await playable.trackIds(using: engine)
         }
     }
 
