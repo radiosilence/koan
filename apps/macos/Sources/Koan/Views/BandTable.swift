@@ -243,8 +243,6 @@ extension View {
     func decimalPadDone<Field: Hashable>(_ focus: FocusState<Field?>.Binding, order: [Field]) -> some View {
         #if os(iOS)
         toolbar {
-            // The bar is the keyboard's accessory, which UIKit keeps as first
-            // built: each button reads where focus is when it is tapped.
             ToolbarItemGroup(placement: .keyboard) {
                 Button("Previous", koan: Icon.previousField) { step(-1, focus, order) }
                 Button("Next", koan: Icon.nextField) { step(1, focus, order) }

@@ -54,7 +54,8 @@ final class PresetTrayTests: XCTestCase {
     func testPresetTray() throws {
         let search = app.buttons[any: "Search"]
         XCTAssert(search.waitForExistence(timeout: 10), "no Search tab")
-        let track = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS[c] %@", "Quiet Tone")).firstMatch
+        // The row, not the heading over the results, which names the search too.
+        let track = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH[c] %@", "Quiet Tone")).firstMatch
         search.tap()
         var field = app.searchFields.firstMatch
         if !field.waitForExistence(timeout: 5) { field = app.textFields[any: "Artists, albums, tracks"] }
