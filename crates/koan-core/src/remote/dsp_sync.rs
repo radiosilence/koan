@@ -962,18 +962,11 @@ fn push(
         out.sent += 1;
     }
     // A deletion stays listed until it is sent: one made while this sync ran
-    // is sent by the next. One with nothing synced has nothing to send.
-    if cfg
-        .dsp
-        .removed
-        .iter()
-        .any(|u| sent.contains(u) || !synced.contains_key(u))
-    {
-        Config::persist(|c| {
-            c.dsp
-                .removed
-                .retain(|u| !sent.contains(u) && synced.contains_key(u))
-        })?;
+    // is sent by the next. One with nothing synced has nothing to send, and
+    // one here again, restored from the server, is no deletion any more.
+    let stale = |u: &String| sent.contains(u) || !synced.contains_key(u) || locals.contains_key(u);
+    if cfg.dsp.removed.iter().any(stale) {
+        Config::persist(|c| c.dsp.removed.retain(|u| !stale(u)))?;
     }
     // What was kept everywhere and no longer is, and was never sent or has
     // now been deleted: nothing is left to track. One kept everywhere that

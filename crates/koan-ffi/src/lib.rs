@@ -3209,7 +3209,8 @@ impl KoanEngine {
 
     /// Bring a deleted EQ back on every device, from the server's copy.
     pub async fn dsp_restore(self: Arc<Self>, uid: String) -> Result<(), KoanError> {
-        offload::sequenced(move || {
+        // Off the player's lane: the sync may fetch impulse files.
+        offload::offload(move || {
             dsp_deleted_client()?
                 .koan_dsp_restore(&uid)
                 .map_err(remote_error)?;

@@ -3991,7 +3991,7 @@ async fn koan_dsp_deleted(State(state): State<Arc<AppState>>, RawQuery(raw): Raw
                     Some(
                         XmlNode::new("profile")
                             .attr("uid", uid)
-                            .attr("name", &doc.name)
+                            .attr("name", &doc.profile.name)
                             .attr_int("deletedAt", *at)
                             .attr_int("expiresAt", at + queries::dsp::DELETED_KEPT_MS),
                     )
@@ -4024,6 +4024,15 @@ async fn koan_dsp_restore(State(state): State<Arc<AppState>>, RawQuery(raw): Raw
                 .map_err(dsp_failed)?
                 .ok_or_else(|| SubsonicError::not_found("Deleted EQ"))?;
                 let doc = SyncDoc::parse(&json).map_err(dsp_failed)?;
+                // A file never uploaded before the deletion would leave every
+                // device unable to take the profile, and its sync stuck there.
+                let held = queries::dsp::files(&db.conn, user).map_err(dsp_failed)?;
+                if doc.files.iter().any(|f| !held.contains_key(&f.sha256)) {
+                    return Err(SubsonicError::new(
+                        SubsonicErrorCode::Generic,
+                        "Its files never reached the server, so it cannot be restored",
+                    ));
+                }
                 let named =
                     dsp_named_files(&db.conn, user, Some(&uid), Some(&doc)).map_err(dsp_failed)?;
                 if named.values().sum::<u64>() > MAX_ACCOUNT {
@@ -10794,7 +10803,8 @@ mod tests {
         let owner = format!("apiKey={}&v=1.16.1&c=test&f=json", api_key(&state, "owner"));
         let path = state.pool.path().to_owned();
         let app = build_test_router(state);
-        let doc = dsp_doc("Room", b"RIFF and the rest");
+        let wav = b"RIFF and the rest";
+        let doc = dsp_doc("Room", wav);
         let call = |path: String, form: String| {
             let app = app.clone();
             async move { json(&post_form(app, &path, &form).await) }
@@ -10825,6 +10835,34 @@ mod tests {
         )
         .await;
         assert!(deleted(MATE.into()).await.is_empty(), "nothing deleted yet");
+
+        // One whose file never arrived is not brought back.
+        call(
+            format!("/rest/koanDspProfileDelete?{MATE}"),
+            format!("uid={UID}&editedAt=1500"),
+        )
+        .await;
+        let v = restore(MATE.into()).await;
+        assert!(
+            v["subsonic-response"]["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("never reached the server"),
+            "{v}"
+        );
+        call(
+            format!("/rest/koanDspProfileSave?{MATE}"),
+            format!("uid={UID}&editedAt=1600&doc={}", form_value(&doc.json())),
+        )
+        .await;
+        let body = upload_dsp(
+            app.clone(),
+            &format!("{MATE}&sha256={}", doc.files[0].sha256),
+            wav.to_vec(),
+        )
+        .await;
+        assert!(body.contains("\"status\":\"ok\""), "{body}");
+
         // Deleted by a device whose clock runs far ahead.
         let ahead = chrono::Utc::now().timestamp_millis() + 50_000;
         call(

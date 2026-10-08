@@ -397,12 +397,13 @@ others. Nothing else does: an EQ missing from a device without having been
 deleted there, after a config file that did not load or was edited by hand,
 is taken from the server again rather than deleted everywhere. The server
 keeps a copy of a deleted EQ, its files included, for thirty days after it
-records the deletion. Manage EQ on the Mac and iPhone lists these under
+records the deletion. An EQ elsewhere that played a deleted one reports it
+missing. Manage EQ on the Mac, iPhone and iPad lists deleted EQs under
 **Recently deleted**, with the days each has left, and **Restore** brings
 one back on every device as a new edit. The section is there only when
 something has been deleted and the server offers it (`koanDspDeleted`: older
-servers and Navidrome do not), and not while offline. An EQ elsewhere that
-played it reports it missing. The same
+servers and Navidrome do not), and not while offline. An EQ whose files
+never reached the server before it was deleted cannot be restored. The same
 EQ made on two devices before either synced, such as one headphone
 installed from AutoEQ on both, becomes one EQ. "The same" is what they
 play, not how they are written: bands in another order, or a gain a few
