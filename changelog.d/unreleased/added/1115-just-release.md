@@ -1,0 +1,1 @@
+- **`just release X.Y.Z` prepares a release PR.** It branches from main, bumps the version everywhere CI compares it, writes the changelog, commits and opens the PR.
