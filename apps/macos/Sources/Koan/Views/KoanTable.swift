@@ -117,6 +117,10 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         // theme, whose rows are told apart by rhythm and alignment.
         table.gridStyleMask = KoanTheme.isOn ? [] : .solidHorizontalGridLineMask
         table.gridColor = .koanSeparator
+        // A floating group row is drawn on AppKit's own grey band with a rule
+        // under it, which no list in the theme has; its headings scroll with
+        // their rows instead.
+        table.floatsGroupRows = !KoanTheme.isOn
         table.allowsMultipleSelection = true
         table.allowsTypeSelect = true
         table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
@@ -504,6 +508,21 @@ final class KoanTableView: NSTableView {
     override func layout() {
         super.layout()
         coordinator?.laidOut()
+    }
+
+    /// The rows lay out their own columns from their width, and a cell view
+    /// resized by its table is not asked to lay out again: opening the lyrics
+    /// narrowed the table and left each row's format and length past its new
+    /// edge.
+    override func setFrameSize(_ newSize: NSSize) {
+        let resized = newSize.width != frame.width
+        super.setFrameSize(newSize)
+        guard resized else { return }
+        sizeLastColumnToFit()
+        let visible = rows(in: visibleRect)
+        for row in visible.lowerBound..<visible.upperBound {
+            view(atColumn: 0, row: row, makeIfNecessary: false)?.needsLayout = true
+        }
     }
 
     private lazy var tracking = NSTrackingArea(

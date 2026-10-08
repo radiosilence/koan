@@ -698,7 +698,7 @@ private struct ClearsTransport: ViewModifier {
             // the hard edge instead.
             content
                 .safeAreaPadding(.bottom, height)
-                .scrollEdgeEffectStyle(glass && !KoanTheme.isOn ? .soft : .hard, for: .bottom)
+                .koanBottomEdge(soft: glass)
         }
     }
 }

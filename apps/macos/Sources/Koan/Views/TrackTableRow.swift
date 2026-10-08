@@ -6,7 +6,8 @@ import KoanFFI
 struct TrackLine: Equatable {
     enum Kind: Equatable {
         case track(Track)
-        /// A day in history. Not selectable; stays put while its run scrolls.
+        /// A day in history. Not selectable; in the platform's look, stays
+        /// put while its run scrolls.
         case heading(String)
     }
 

@@ -48,20 +48,7 @@ struct SettingsView: View {
                 .navigationTitle(KoanTheme.label(title))
                 .koanPushedPage()
         } label: {
-            #if os(tvOS)
-            if KoanTheme.isOn {
-                KoanLabel(title, icon: symbol)
-            } else {
-                // The symbols are of different widths; at television size a
-                // label's own spacing lets the wide ones touch their titles.
-                HStack(spacing: 24) {
-                    Image(systemName: symbol).frame(width: 56)
-                    Text(title)
-                }
-            }
-            #else
-            KoanLabel(title, icon: symbol)
-            #endif
+            KoanLabel(title, icon: symbol, style: .row)
         }
         .listLink()
     }

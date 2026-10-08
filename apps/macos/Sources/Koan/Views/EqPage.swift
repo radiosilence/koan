@@ -464,6 +464,19 @@ struct EqChain: View {
         overview.profiles.first { $0.name == overview.active }
     }
 
+    /// Every EQ that plays meets the correction matched: the whole chain is
+    /// drawn in the accent, as the line into a matched EQ is.
+    private var matched: Bool {
+        guard correction != nil else { return false }
+        let playing = zip(overview.chain, overview.joins).filter { $0.0.on }
+        return !playing.isEmpty && playing.allSatisfy { $0.1.join == .matched }
+    }
+
+    /// The chain's lines and outlines: the accent when it is matched.
+    private var outline: AnyShapeStyle {
+        matched ? AnyShapeStyle(.tint) : KoanTheme.style(.rule, system: Color.secondary.opacity(0.5)) // theme: raw — the system look's own
+    }
+
     var body: some View {
         #if os(iOS)
         // Each EQ a row of the list, for its swipe actions; the rows meet,
@@ -525,6 +538,7 @@ struct EqChain: View {
                             .joined(separator: " · "),
                     db: curves[correction.name],
                     stroke: .correction,
+                    outline: outline,
                     action: { choose(.correction) }
                 ) {
                     #if !os(tvOS)
@@ -558,6 +572,7 @@ struct EqChain: View {
                 detail: entry.on ? meets?.madeFor.map { "made for \($0)" } : KoanTheme.label("Off"),
                 db: curves[entry.name],
                 stroke: .eq(i),
+                outline: outline,
                 action: { open(entry.name) }
             ) {
                 #if !os(tvOS)
@@ -594,7 +609,7 @@ struct EqChain: View {
             }
             #if !os(tvOS)
             if correction?.role != .baked {
-                Placeholder(title: nil, prompt: "Add EQ", action: { choose(.eq) })
+                Placeholder(title: nil, prompt: "Add EQ", outline: matched ? AnyShapeStyle(.tint) : nil, action: { choose(.eq) })
                 link
             }
             #endif
@@ -614,8 +629,8 @@ struct EqChain: View {
 
     private var link: some View {
         Rectangle()
-            .fill(KoanTheme.style(.rule, system: Color.secondary.opacity(0.5))) // theme: raw — the system look's own
-            .frame(width: KoanTheme.hairline, height: 14)
+            .fill(outline)
+            .frame(width: matched ? 2 : KoanTheme.hairline, height: 14)
             .padding(.leading, 18)
             .accessibilityHidden(true)
     }
@@ -623,7 +638,7 @@ struct EqChain: View {
     /// The line into an EQ, saying how it meets the correction, and what of
     /// it does not play as chosen.
     private func join(_ meets: DspEqJoin?, eq: String) -> some View {
-        let matched = meets?.join == .matched
+        let matched = meets?.join == .matched || self.matched
         return VStack(alignment: .leading, spacing: 2) {
             switch meets?.join {
             case .matched:
@@ -670,7 +685,7 @@ struct EqChain: View {
         .padding(.leading, 18 + KoanTheme.Space.m)
         .background(alignment: .leading) {
             Rectangle()
-                .fill(matched ? AnyShapeStyle(.tint) : KoanTheme.style(.rule, system: Color.secondary.opacity(0.5))) // theme: raw — the system look's own
+                .fill(matched ? AnyShapeStyle(.tint) : outline)
                 .frame(width: matched ? 2 : KoanTheme.hairline)
                 .padding(.leading, 18)
                 .accessibilityHidden(true)
@@ -725,6 +740,7 @@ private struct StageBlock<Controls: View>: View {
     let detail: String?
     let db: [Double]?
     let stroke: StageStroke
+    let outline: AnyShapeStyle
     let action: () -> Void
     @ViewBuilder let controls: () -> Controls
 
@@ -757,7 +773,7 @@ private struct StageBlock<Controls: View>: View {
             controls()
         }
         .padding(KoanTheme.Space.s)
-        .overlay(Rectangle().stroke(KoanTheme.style(.rule, system: Color.secondary.opacity(0.4)), lineWidth: KoanTheme.hairline)) // theme: raw — the system look's own
+        .overlay(Rectangle().stroke(outline, lineWidth: KoanTheme.hairline))
     }
 }
 
@@ -765,6 +781,8 @@ private struct StageBlock<Controls: View>: View {
 private struct Placeholder: View {
     let title: String?
     let prompt: String
+    /// In place of the dashed `muted` outline: the accent of a matched chain.
+    var outline: AnyShapeStyle?
     let action: () -> Void
 
     var body: some View {
@@ -779,7 +797,7 @@ private struct Placeholder: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(KoanTheme.Space.s)
-            .overlay(Rectangle().stroke(KoanTheme.style(.muted, system: Color.secondary), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))) // theme: raw — the system look's own
+            .overlay(Rectangle().stroke(outline ?? KoanTheme.style(.muted, system: Color.secondary), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))) // theme: raw — the system look's own
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

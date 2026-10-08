@@ -117,7 +117,7 @@ struct PickerSheet: View {
                 }
             }
             .insetList()
-            .scrollEdgeEffectStyle(KoanTheme.isOn ? .hard : .soft, for: .bottom)
+            .koanBottomEdge()
         }
     }
 

@@ -183,16 +183,17 @@ private struct Scrubber: View {
     @Environment(PlayerModel.self) private var player
 
     var body: some View {
+        // In the theme the ring alone says it is focused.
+        let lifted = focused && !KoanTheme.isOn
         SeekBar()
             .padding(.vertical, 12)
             .padding(.horizontal, 16)
-            // In the theme the ring alone says it is focused.
             .background(
                 RoundedRectangle(cornerRadius: KoanTheme.radius(14))
-                    .fill(.white.opacity(focused && !KoanTheme.isOn ? 0.18 : 0))
-                    .stroke(.white.opacity(focused && !KoanTheme.isOn ? 0.6 : 0), lineWidth: 2)
+                    .fill(.white.opacity(lifted ? 0.18 : 0))
+                    .stroke(.white.opacity(lifted ? 0.6 : 0), lineWidth: 2)
             )
-            .scaleEffect(focused && !KoanTheme.isOn ? 1.02 : 1)
+            .scaleEffect(lifted ? 1.02 : 1)
             .animation(.easeOut(duration: 0.15), value: focused)
             .koanFocus()
             .onMoveCommand { direction in
