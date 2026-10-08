@@ -720,8 +720,9 @@ private struct RemoteSettings: View {
 
 // MARK: - Account
 
-/// The signed-in account's own keys to the server: its password, and the API
-/// keys apps sign in with. Each where the server has it.
+/// The signed-in account's own keys to the server: its password, the API
+/// keys apps sign in with, and app passwords for apps that cannot use a key.
+/// Each where the server has it.
 private struct AccountSettings: View {
     @Bindable var model: SettingsModel
     @Environment(EngineMirror.self) private var mirror
@@ -768,6 +769,11 @@ private struct AccountSettings: View {
             if mirror.offers(ApiKeysSettings.extensionName) {
                 ApiKeysSettings()
             }
+            #if !os(tvOS)
+            if AppPasswordsSettings.shown(mirror) {
+                AppPasswordsSettings()
+            }
+            #endif
         }
         .koanSheet()
     }

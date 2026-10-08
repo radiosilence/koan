@@ -1,0 +1,1 @@
+- **App passwords in the apps.** Settings → Account on the Mac and iPhone lists, makes and revokes app passwords for Subsonic clients that sign in only with a token, through new `koanAppPasswords` endpoints. Shown only when signed in to a koan server that offers them.

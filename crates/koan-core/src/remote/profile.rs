@@ -44,6 +44,11 @@ pub const PASSWORDS: &str = "koanPasswords";
 /// keys themselves), `/rest/koanCreateApiKey` and `/rest/koanRevokeApiKey`
 /// make and revoke one.
 pub const API_KEYS: &str = "koanApiKeys";
+/// The account's own app passwords, for Subsonic apps that sign in only with
+/// a token: `/rest/koanAppPasswords` lists them (never the passwords),
+/// `/rest/koanCreateAppPassword` and `/rest/koanRevokeAppPassword` make and
+/// revoke one. Listed only where the server can seal them.
+pub const APP_PASSWORDS: &str = "koanAppPasswords";
 /// Assistants connect to this server's `/mcp`: `/rest/koanMcp` gives its
 /// address and the page explaining how. Listed only where the server knows
 /// the address it is reached at (`sharing.public_url`), which MCP's sign-in
