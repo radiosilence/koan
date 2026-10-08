@@ -1,0 +1,1 @@
+- **Mac text size.** The kōan theme draws its type as large as the system's rather than about 15% larger, with spacing a little tighter, and Settings → Appearance → Text size and View → Bigger, Smaller and Actual Size (⌘+, ⌘−, ⌘0) scale it from 80% to 130%.
