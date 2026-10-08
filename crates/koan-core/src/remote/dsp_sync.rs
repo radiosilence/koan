@@ -1167,7 +1167,12 @@ fn adopt(
                 incoming.devices = std::mem::take(&mut p.devices);
                 *p = incoming;
             }
-            None => c.dsp.profiles.push(incoming),
+            None => {
+                c.dsp.profiles.push(incoming);
+                // Back after being deleted here, as a restore brings it: the
+                // deletion is no longer one to send.
+                c.dsp.removed.retain(|u| u != uid);
+            }
         }
     })?;
     Ok(renamed)

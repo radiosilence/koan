@@ -63,6 +63,7 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     (koan_core::remote::profile::DEVICE_KEYS, &[1]),
     (koan_core::remote::profile::SCROBBLING, &[1]),
     (koan_core::remote::profile::DSP_PROFILES, &[1]),
+    (koan_core::remote::profile::DSP_DELETED, &[1]),
 ];
 
 /// Articles clients strip when sorting the artist index. Every real server
@@ -3972,6 +3973,96 @@ async fn koan_dsp_profile_delete(
     .await
 }
 
+/// The caller's EQ profiles deleted in the last thirty days, newest first:
+/// each one's uid, name, when the server recorded the deletion and when it
+/// will forget it (ms).
+async fn koan_dsp_deleted(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    use koan_core::remote::dsp_sync::SyncDoc;
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        respond_db_caller(&state, &params.auth(), Role::Readonly, |db, caller, b| {
+            let user = dsp_account(caller)?;
+            let since = chrono::Utc::now().timestamp_millis() - queries::dsp::DELETED_KEPT_MS;
+            let deleted = queries::dsp::deleted_docs(&db.conn, user, since).map_err(dsp_failed)?;
+            Ok(b.child(XmlNode::new("koanDspDeleted").list(
+                "profile",
+                deleted.iter().filter_map(|(uid, at, json)| {
+                    let doc = SyncDoc::parse(json).ok()?;
+                    Some(
+                        XmlNode::new("profile")
+                            .attr("uid", uid)
+                            .attr("name", &doc.profile.name)
+                            .attr_int("deletedAt", *at)
+                            .attr_int("expiresAt", at + queries::dsp::DELETED_KEPT_MS),
+                    )
+                }),
+            )))
+        })
+    })
+    .await
+}
+
+/// Save deleted profile `uid` again from the copy the server kept, as an
+/// edit made now, so every device adopts it.
+async fn koan_dsp_restore(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    use koan_core::remote::dsp_sync::{MAX_ACCOUNT, SyncDoc};
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        let mut username = None;
+        let response = respond_db_caller(&state, &auth, Role::Readonly, |db, caller, b| {
+            let user = dsp_account(caller)?;
+            let uid = dsp_uid(&params)?;
+            let now = chrono::Utc::now().timestamp_millis();
+            let saved = queries::atomically(&db.conn, || {
+                let (deleted_at, json) = queries::dsp::deleted_doc(
+                    &db.conn,
+                    user,
+                    &uid,
+                    now - queries::dsp::DELETED_KEPT_MS,
+                )
+                .map_err(dsp_failed)?
+                .ok_or_else(|| SubsonicError::not_found("Deleted EQ"))?;
+                let doc = SyncDoc::parse(&json).map_err(dsp_failed)?;
+                // A file never uploaded before the deletion would leave every
+                // device unable to take the profile, and its sync stuck there.
+                let held = queries::dsp::files(&db.conn, user).map_err(dsp_failed)?;
+                if doc.files.iter().any(|f| !held.contains_key(&f.sha256)) {
+                    return Err(SubsonicError::new(
+                        SubsonicErrorCode::Generic,
+                        "Its files never reached the server, so it cannot be restored",
+                    ));
+                }
+                let named =
+                    dsp_named_files(&db.conn, user, Some(&uid), Some(&doc)).map_err(dsp_failed)?;
+                if named.values().sum::<u64>() > MAX_ACCOUNT {
+                    return Err(SubsonicError::new(
+                        SubsonicErrorCode::Generic,
+                        format!(
+                            "Too large to restore: the account's EQ files would pass {} MB",
+                            MAX_ACCOUNT >> 20
+                        ),
+                    ));
+                }
+                // Later than the deletion, whatever clock the deleting device
+                // kept.
+                let edited_at = now.max(deleted_at + 1);
+                let saved = queries::dsp::save(&db.conn, user, &uid, edited_at, Some(&json))
+                    .map_err(dsp_failed)?;
+                dsp_collect(&db.conn, user).map_err(dsp_failed)?;
+                Ok(saved)
+            })?;
+            username = Some(caller.username.clone());
+            Ok(b.child(dsp_saved_node(saved, &[])))
+        });
+        if let Some(username) = username {
+            dsp_profiles_changed(&username);
+        }
+        response
+    })
+    .await
+}
+
 /// Turn the AutoEQ suggestion for `output` down on every device.
 async fn koan_dsp_dismiss(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
     offload_response(move || {
@@ -5919,6 +6010,11 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         .route("/rest/koanDspProfileSave", post(koan_dsp_profile_save))
         .route("/rest/koanDspProfileDelete", post(koan_dsp_profile_delete))
         .route("/rest/koanDspDismiss", post(koan_dsp_dismiss))
+        .route(
+            "/rest/koanDspDeleted",
+            get(koan_dsp_deleted).post(koan_dsp_deleted),
+        )
+        .route("/rest/koanDspRestore", post(koan_dsp_restore))
         .route(
             "/rest/koanDspFile",
             get(koan_dsp_file).post(koan_dsp_file_upload),
@@ -10696,6 +10792,132 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    /// A deleted profile is listed and restored for its own account only,
+    /// and comes back as a new edit every device adopts; one past the thirty
+    /// days is neither.
+    #[tokio::test]
+    async fn a_deleted_dsp_profile_is_listed_and_restored_by_its_account() {
+        let (state, _dir) = test_state();
+        let owner = format!("apiKey={}&v=1.16.1&c=test&f=json", api_key(&state, "owner"));
+        let path = state.pool.path().to_owned();
+        let app = build_test_router(state);
+        let wav = b"RIFF and the rest";
+        let doc = dsp_doc("Room", wav);
+        let call = |path: String, form: String| {
+            let app = app.clone();
+            async move { json(&post_form(app, &path, &form).await) }
+        };
+        let deleted = |creds: String| {
+            let app = app.clone();
+            async move {
+                json(
+                    &get_response(app, &format!("/rest/koanDspDeleted?{creds}"))
+                        .await
+                        .1,
+                )["subsonic-response"]["koanDspDeleted"]["profile"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+            }
+        };
+        let restore = |creds: String| {
+            call(
+                format!("/rest/koanDspRestore?{creds}"),
+                format!("uid={UID}"),
+            )
+        };
+
+        call(
+            format!("/rest/koanDspProfileSave?{MATE}"),
+            format!("uid={UID}&editedAt=1000&doc={}", form_value(&doc.json())),
+        )
+        .await;
+        assert!(deleted(MATE.into()).await.is_empty(), "nothing deleted yet");
+
+        // One whose file never arrived is not brought back.
+        call(
+            format!("/rest/koanDspProfileDelete?{MATE}"),
+            format!("uid={UID}&editedAt=1500"),
+        )
+        .await;
+        let v = restore(MATE.into()).await;
+        assert!(
+            v["subsonic-response"]["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("never reached the server"),
+            "{v}"
+        );
+        call(
+            format!("/rest/koanDspProfileSave?{MATE}"),
+            format!("uid={UID}&editedAt=1600&doc={}", form_value(&doc.json())),
+        )
+        .await;
+        let body = upload_dsp(
+            app.clone(),
+            &format!("{MATE}&sha256={}", doc.files[0].sha256),
+            wav.to_vec(),
+        )
+        .await;
+        assert!(body.contains("\"status\":\"ok\""), "{body}");
+
+        // Deleted by a device whose clock runs far ahead.
+        let ahead = chrono::Utc::now().timestamp_millis() + 50_000;
+        call(
+            format!("/rest/koanDspProfileDelete?{MATE}"),
+            format!("uid={UID}&editedAt={ahead}"),
+        )
+        .await;
+
+        let listed = deleted(MATE.into()).await;
+        assert_eq!(listed.len(), 1, "{listed:?}");
+        assert_eq!(listed[0]["uid"], UID);
+        assert_eq!(listed[0]["name"], "Room");
+        assert_eq!(
+            listed[0]["expiresAt"].as_i64().unwrap() - listed[0]["deletedAt"].as_i64().unwrap(),
+            queries::dsp::DELETED_KEPT_MS
+        );
+
+        // Another account sees none of it and cannot restore it.
+        assert!(deleted(owner.clone()).await.is_empty());
+        let v = restore(owner).await;
+        assert_eq!(v["subsonic-response"]["error"]["code"], 70, "{v}");
+
+        let v = restore(MATE.into()).await;
+        assert_eq!(
+            v["subsonic-response"]["koanDspSaved"]["stored"], true,
+            "{v}"
+        );
+        let (_, body) = get_response(app.clone(), &format!("/rest/koanDspProfiles?{MATE}")).await;
+        let profile = &json(&body)["subsonic-response"]["koanDspProfiles"]["profile"][0];
+        assert_eq!(profile["doc"], doc.json().as_str(), "{body}");
+        assert!(profile["editedAt"].as_i64().unwrap() > ahead, "{body}");
+        assert!(deleted(MATE.into()).await.is_empty(), "restored");
+        let v = restore(MATE.into()).await;
+        assert_eq!(
+            v["subsonic-response"]["error"]["code"], 70,
+            "not deleted: {v}"
+        );
+
+        // Past the thirty days: not listed, not restorable.
+        call(
+            format!("/rest/koanDspProfileDelete?{MATE}"),
+            format!("uid={UID}&editedAt={}", ahead + 100_000),
+        )
+        .await;
+        Database::open(&path)
+            .unwrap()
+            .conn
+            .execute(
+                "UPDATE dsp_profiles SET deleted_at = ?1",
+                [chrono::Utc::now().timestamp_millis() - queries::dsp::DELETED_KEPT_MS - 1],
+            )
+            .unwrap();
+        assert!(deleted(MATE.into()).await.is_empty());
+        let v = restore(MATE.into()).await;
+        assert_eq!(v["subsonic-response"]["error"]["code"], 70, "expired: {v}");
     }
 
     /// A file is taken only as the bytes a profile of the account names, and

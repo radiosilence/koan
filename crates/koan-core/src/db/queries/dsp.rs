@@ -131,6 +131,25 @@ pub fn deleted_docs(
         .collect::<Result<Vec<_>, _>>()?)
 }
 
+/// The document profile `uid` had when it was deleted, if it was deleted
+/// since `since` (ms, the server's clock), with the deletion's `edited_at`.
+pub fn deleted_doc(
+    conn: &Connection,
+    user: i64,
+    uid: &str,
+    since: i64,
+) -> Result<Option<(i64, String)>, DbError> {
+    Ok(conn
+        .query_row(
+            "SELECT edited_at, deleted_doc FROM dsp_profiles
+              WHERE user_id = ?1 AND uid = ?2 AND doc IS NULL AND deleted_doc IS NOT NULL
+                AND COALESCE(deleted_at, ?3) >= ?3",
+            params![user, uid, since],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?)
+}
+
 /// Forget the documents of profiles deleted before `before` (ms, the
 /// server's clock).
 pub fn expire_deleted(conn: &Connection, user: i64, before: i64) -> Result<usize, DbError> {
@@ -402,6 +421,36 @@ mod tests {
         assert_eq!(expire_deleted(c, user, before).unwrap(), 0, "not old yet");
         assert_eq!(expire_deleted(c, user, now_ms() + 1).unwrap(), 1);
         assert!(deleted_docs(c, user, 0).unwrap().is_empty());
+    }
+
+    /// A deleted profile's document is found by its uid while it is kept,
+    /// and only for its own account.
+    #[test]
+    fn a_deleted_document_is_found_by_uid() {
+        let (conn, user) = db();
+        let c = &conn;
+        c.execute(
+            "INSERT INTO users (id, username, password_hash, role) VALUES (2, 'other', 'x', 'user')",
+            [],
+        )
+        .unwrap();
+        save(c, user, "a", 100, Some("v1")).unwrap();
+        assert_eq!(deleted_doc(c, user, "a", 0).unwrap(), None, "not deleted");
+        save(c, user, "a", 200, None).unwrap();
+        assert_eq!(
+            deleted_doc(c, user, "a", 0).unwrap(),
+            Some((200, "v1".into()))
+        );
+        assert_eq!(
+            deleted_doc(c, 2, "a", 0).unwrap(),
+            None,
+            "another account's"
+        );
+        assert_eq!(
+            deleted_doc(c, user, "a", now_ms() + 1).unwrap(),
+            None,
+            "too old"
+        );
     }
 
     /// The window runs from when the server recorded the deletion, whatever

@@ -2192,6 +2192,15 @@ pub struct NewApiKey {
     pub key: String,
 }
 
+/// An EQ deleted in the last thirty days, which the server keeps a copy of.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct DeletedDsp {
+    pub uid: String,
+    pub name: String,
+    /// Whole days until the server forgets it, at least 1 while it is listed.
+    pub days_left: u32,
+}
+
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct ServerAccount {
     pub username: String,

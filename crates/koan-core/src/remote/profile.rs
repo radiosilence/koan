@@ -71,6 +71,10 @@ pub const SCROBBLING: &str = "koanScrobbling";
 /// suggestion down everywhere. `LinkCommand::DspProfilesChanged` says when
 /// they moved. See `remote::dsp_sync`.
 pub const DSP_PROFILES: &str = "koanDspProfiles";
+/// EQ profiles deleted in the last thirty days, which the server keeps:
+/// `/rest/koanDspDeleted` lists the account's, `/rest/koanDspRestore` saves
+/// one again as a new edit, which every device then adopts.
+pub const DSP_DELETED: &str = "koanDspDeleted";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerProfile {
