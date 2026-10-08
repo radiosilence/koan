@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.61.5
+
+### Added
+
+- **Share pages offer a Download.** Anyone with a share link can take the shared tracks as one zip of the original files, streamed as it is written, so a visitor can keep what was shared without a koan account.
+
+### Changed
+
+- **The kōan theme's search field has no box.** It sits on the page's ground; the toolbar's filter field no longer puts its text under the magnifier when focused.
+
+### Fixed
+
+- **Mac pages stay below the toolbar after a window resize.** Lists and the album grid could end a resize under the toolbar and stay there; they now measure the toolbar from the window.
+
 ## 0.61.4
 
 ### Changed
