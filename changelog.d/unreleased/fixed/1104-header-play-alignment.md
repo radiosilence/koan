@@ -1,0 +1,1 @@
+- **Album and artist headers centre the play button on the title.** The title sat above the button's middle.
