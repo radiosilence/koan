@@ -142,7 +142,11 @@ struct NowPlayingPage: View {
                 TrackHeart(trackId: trackId, size: .title3)
             }
             Button { ui.toggleLyrics() } label: {
-                KoanIcon(Icon.lyrics).symbolVariant(ui.showLyrics ? .fill : .none)
+                KoanIcon(Icon.lyrics)
+                    .symbolVariant(ui.showLyrics ? .fill : .none)
+                    // The theme's glyph has no filled form: on is the accent, as
+                    // shuffle and repeat show it.
+                    .foregroundStyle(KoanTheme.isOn && ui.showLyrics ? KoanTheme.style(.accent) : AnyShapeStyle(.foreground))
             }
             .koanButton(.icon)
             .accessibilityLabel(ui.showLyrics ? "Show artwork" : "Show lyrics")

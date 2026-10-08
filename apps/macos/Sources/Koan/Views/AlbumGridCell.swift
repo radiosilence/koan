@@ -175,7 +175,7 @@ private struct SelectionMark: View {
         RoundedRectangle(cornerRadius: KoanTheme.radius(6))
             .strokeBorder(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), lineWidth: 3)
             .overlay(alignment: .topLeading) {
-                KoanIcon(selected ? Icon.picked : Icon.unpicked)
+                KoanIcon(selected ? Icon.picked : Icon.unpicked, palette: true)
                     .font(.system(size: 20))
                     .symbolRenderingMode(.palette)
                     .foregroundStyle(.white, selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.black.opacity(0.25)))

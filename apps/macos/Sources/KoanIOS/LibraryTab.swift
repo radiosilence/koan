@@ -53,6 +53,9 @@ struct LibraryTab: View {
             #endif
         }
         .listLink()
+        // Navigation is words alone in the theme, as the tabs are; the
+        // platform's look keeps its symbols.
+        .environment(\.koanIcons, false)
     }
 }
 

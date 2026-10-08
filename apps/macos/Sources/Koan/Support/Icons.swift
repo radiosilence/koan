@@ -158,15 +158,15 @@ extension Image {
     /// menus, toolbar items, segments. The kōan glyph in the theme, the SF
     /// Symbol in the platform's look. Elsewhere `KoanIcon` follows the font.
     @MainActor
-    init(koan icon: String, pointSize: CGFloat = Icon.pointSize) {
+    init(koan icon: String, pointSize: CGFloat = Icon.pointSize, layer: KoanGlyph.Layer = .all) {
         guard KoanTheme.isOn, let glyph = KoanGlyph.forSymbol(icon) else {
             self.init(systemName: icon) // theme: raw
             return
         }
         #if os(macOS)
-        self = Image(nsImage: glyph.image(pointSize: pointSize)).renderingMode(.template)
+        self = Image(nsImage: glyph.image(pointSize: pointSize, layer: layer)).renderingMode(.template)
         #else
-        self = Image(uiImage: glyph.image(pointSize: pointSize)).renderingMode(.template)
+        self = Image(uiImage: glyph.image(pointSize: pointSize, layer: layer)).renderingMode(.template)
         #endif
     }
 }

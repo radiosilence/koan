@@ -46,10 +46,16 @@ struct KoanGlyph: @unchecked Sendable {
         max(1, 0.6 + 0.04 * pointSize)
     }
 
+    /// The parts of a glyph to draw: both, or one layer alone for a view
+    /// that tints them separately.
+    enum Layer: Sendable { case all, fills, strokes }
+
     /// Draws the glyph into `rect` of a context whose y axis points down, as
     /// a flipped view's does. `fill` is the fill layer's colour; without
     /// one, strokes are cut out of the fill.
-    func draw(in context: CGContext, rect: CGRect, pointSize: CGFloat, colour: CGColor, fill: CGColor? = nil) {
+    func draw(
+        in context: CGContext, rect: CGRect, pointSize: CGFloat, colour: CGColor, fill: CGColor? = nil, layer: Layer = .all
+    ) {
         let scale = rect.width / Self.grid
         context.saveGState()
         context.translateBy(x: rect.minX, y: rect.minY)
@@ -57,12 +63,16 @@ struct KoanGlyph: @unchecked Sendable {
         context.setLineWidth(Self.strokeWidth(for: pointSize) / scale)
         context.setLineCap(.square)
         context.setLineJoin(.miter)
-        if let fills {
+        if let fills, layer != .strokes {
             context.setFillColor(fill ?? colour)
             context.setStrokeColor(fill ?? colour)
             context.addPath(fills)
             context.drawPath(using: .fillStroke)
-            if fill == nil { context.setBlendMode(.clear) }
+            if fill == nil, layer == .all { context.setBlendMode(.clear) }
+        }
+        guard layer != .fills else {
+            context.restoreGState()
+            return
         }
         context.setStrokeColor(colour)
         context.addPath(strokes)
@@ -126,13 +136,13 @@ extension KoanGlyph {
     /// whatever resolution it lands on. Tinted where it is used, as a
     /// symbol is.
     @MainActor
-    func image(pointSize: CGFloat) -> NSImage {
-        let key = "\(name) \(pointSize)"
+    func image(pointSize: CGFloat, layer: Layer = .all) -> NSImage {
+        let key = "\(name) \(pointSize) \(layer)"
         if let held = Self.images[key] { return held }
         let side = Self.side(for: pointSize)
         let image = NSImage(size: NSSize(width: side, height: side), flipped: true) { rect in
             guard let context = NSGraphicsContext.current?.cgContext else { return false }
-            draw(in: context, rect: rect, pointSize: pointSize, colour: NSColor.black.cgColor)
+            draw(in: context, rect: rect, pointSize: pointSize, colour: NSColor.black.cgColor, layer: layer)
             return true
         }
         image.isTemplate = true
@@ -147,12 +157,12 @@ extension KoanGlyph {
     /// The glyph as a template image beside type of `pointSize`, at the
     /// screen's scale. Tinted where it is used, as a symbol is.
     @MainActor
-    func image(pointSize: CGFloat) -> UIImage {
-        let key = "\(name) \(pointSize)"
+    func image(pointSize: CGFloat, layer: Layer = .all) -> UIImage {
+        let key = "\(name) \(pointSize) \(layer)"
         if let held = Self.images[key] { return held }
         let side = Self.side(for: pointSize)
         let image = UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { context in
-            draw(in: context.cgContext, rect: CGRect(x: 0, y: 0, width: side, height: side), pointSize: pointSize, colour: UIColor.black.cgColor)
+            draw(in: context.cgContext, rect: CGRect(x: 0, y: 0, width: side, height: side), pointSize: pointSize, colour: UIColor.black.cgColor, layer: layer)
         }
         .withRenderingMode(.alwaysTemplate)
         Self.images[key] = image

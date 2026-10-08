@@ -260,22 +260,38 @@ final class AppearanceModel {
 /// font sets, as a symbol would be. The SF Symbol in the platform's look.
 struct KoanIcon: View {
     let name: String
+    /// A glyph with a fill takes the secondary foreground style for it and
+    /// the primary for its strokes, as a symbol in palette rendering does.
+    /// Otherwise its strokes are cut out of the fill.
+    var palette = false
 
     @Environment(\.font) private var font
     @Environment(\.fontResolutionContext) private var fontContext
     @Environment(\.imageScale) private var imageScale
 
-    init(_ name: String) { self.name = name }
+    init(_ name: String, palette: Bool = false) {
+        self.name = name
+        self.palette = palette
+    }
 
     var body: some View {
-        if KoanTheme.isOn, KoanGlyph.forSymbol(name) != nil {
+        if KoanTheme.isOn, let glyph = KoanGlyph.forSymbol(name) {
             let pointSize = (font ?? .body).resolve(in: fontContext).pointSize * scale
-            Image(koan: name, pointSize: pointSize)
-                // Centred on the capitals beside it, as a symbol sits.
-                .alignmentGuide(.firstTextBaseline) { $0.height / 2 + pointSize * 0.35 }
-                .alignmentGuide(.lastTextBaseline) { $0.height / 2 + pointSize * 0.35 }
-                // VoiceOver names it as it named the symbol.
-                .accessibilityRepresentation { Image(systemName: name) } // theme: raw
+            Group {
+                if palette, glyph.fills != nil {
+                    ZStack {
+                        Image(koan: name, pointSize: pointSize, layer: .fills).foregroundStyle(.secondary)
+                        Image(koan: name, pointSize: pointSize, layer: .strokes)
+                    }
+                } else {
+                    Image(koan: name, pointSize: pointSize)
+                }
+            }
+            // Centred on the capitals beside it, as a symbol sits.
+            .alignmentGuide(.firstTextBaseline) { $0.height / 2 + pointSize * 0.35 }
+            .alignmentGuide(.lastTextBaseline) { $0.height / 2 + pointSize * 0.35 }
+            // VoiceOver names it as it named the symbol.
+            .accessibilityRepresentation { Image(systemName: name) } // theme: raw
         } else if KoanTheme.isOn {
             Image(systemName: name) // theme: raw
                 .fontWeight(.light)
