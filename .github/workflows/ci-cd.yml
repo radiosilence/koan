@@ -775,11 +775,12 @@ jobs:
     name: Publish to crates.io
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    # Not after the release binaries: crates do not contain them, and waiting
-    # put this behind the slowest notarisation. Publishing is skipped when the
-    # version is already out (below), so a release re-run after a binary fails
-    # passes straight through here.
-    needs: [fmt, clippy, test, build, check-version]
+    # After every release build, the Mac app's included: a version on
+    # crates.io cannot be taken back, so it goes out only once the rest of the
+    # release can follow it. Notarisation comes after the GitHub release and is
+    # not waited for. Publishing is skipped when the version is already out
+    # (below), so a re-run after a later failure passes straight through.
+    needs: [fmt, clippy, test, build, macos-app, create-release, create-macos-app, check-version]
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.check-version.outputs.should_release == 'true' }}
     env:
       VERSION: ${{ needs.check-version.outputs.version }}
@@ -1017,8 +1018,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Before the release: the updater that deploys koan follows releases, and
-    # a release it finds must already have its package.
-    needs: [fmt, clippy, test, build, container, check-version]
+    # a release it finds must already have its package. After every release
+    # build, as the crates are: a published package version cannot be reused.
+    needs: [fmt, clippy, test, build, macos-app, create-release, create-macos-app, container, check-version]
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.check-version.outputs.should_release == 'true' }}
     permissions:
       packages: write
