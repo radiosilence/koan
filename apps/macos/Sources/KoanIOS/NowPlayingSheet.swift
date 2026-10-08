@@ -97,10 +97,12 @@ struct NowPlayingSheet: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .transition(.opacity)
         } else {
+            // The sleeve's own placeholder, so nothing playing and a record
+            // without a cover look alike.
             RoundedRectangle(cornerRadius: KoanTheme.radius(12))
-                .fill(.quaternary)
+                .fill(KoanTheme.style(.rule))
                 .aspectRatio(1, contentMode: .fit)
-                .overlay { Image(systemName: "music.note").font(.role(.display, system: .largeTitle)) }
+                .overlay { EnsoPlaceholder() }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
