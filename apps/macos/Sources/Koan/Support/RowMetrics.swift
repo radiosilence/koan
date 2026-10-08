@@ -24,7 +24,7 @@ enum RowMetrics {
     static var sleeve: CGFloat { (32 * KoanTheme.sizeScale).rounded() }
     /// What a list puts above and below each row. More in the theme, whose
     /// rows have no rules between them: the space is what tells them apart.
-    static var padding: CGFloat { KoanTheme.isOn ? (7 * KoanTheme.spaceScale).rounded() : 4 }
+    static var padding: CGFloat { KoanTheme.isOn ? 7 * KoanTheme.spaceScale : 4 }
     /// What a row with a sleeve adds above and below, so the cover clears the
     /// separators.
     static let artPadding: CGFloat = 4
