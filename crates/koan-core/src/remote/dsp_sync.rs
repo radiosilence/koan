@@ -962,17 +962,18 @@ fn push(
         out.sent += 1;
     }
     // A deletion stays listed until it is sent: one made while this sync ran
-    // is sent by the next. One with nothing synced has nothing to send.
+    // is sent by the next, its profile included where this pass sends it
+    // first. One neither synced nor being sent has nothing to send.
     if cfg
         .dsp
         .removed
         .iter()
-        .any(|u| sent.contains(u) || !synced.contains_key(u))
+        .any(|u| sent.contains(u) || !(synced.contains_key(u) || locals.contains_key(u)))
     {
         Config::persist(|c| {
             c.dsp
                 .removed
-                .retain(|u| !sent.contains(u) && synced.contains_key(u))
+                .retain(|u| !sent.contains(u) && (synced.contains_key(u) || locals.contains_key(u)))
         })?;
     }
     // What was kept everywhere and no longer is, and was never sent or has
@@ -1702,6 +1703,37 @@ mod tests {
         b.sync(&server);
         assert!(b.profile("Bass").is_none(), "deleted on B");
         assert!(a.profile("Bass").is_none(), "not restored on A");
+        a.on();
+        assert!(removed().is_empty());
+    }
+
+    /// A profile deleted after this sync looked at the profiles and before it
+    /// was ever synced, as a new EQ deleted at once, stays deleted: the
+    /// deletion is kept while the profile is still being sent, and sent next.
+    #[test]
+    fn a_profile_deleted_before_its_first_sync_stays_deleted() {
+        let _guard = lock();
+        let (server, a, b) = shared(vec![]);
+        a.on();
+        let uid = uuid::Uuid::now_v7().to_string();
+        Config::persist(|c| {
+            let mut new = bass();
+            new.uid = Some(uid.clone());
+            new.scope = Some(DspScope::Everywhere);
+            c.dsp.profiles.push(new);
+            // Deleted after the sync observed it.
+            c.dsp.removed.push(uid.clone());
+        })
+        .unwrap();
+        a.sync(&server);
+        a.on();
+        assert_eq!(removed(), vec![uid.clone()], "kept while it is sent");
+
+        Config::persist(|c| c.dsp.profiles.retain(|p| p.name != "Bass")).unwrap();
+        a.sync(&server);
+        b.sync(&server);
+        assert!(a.profile("Bass").is_none(), "not restored on A");
+        assert!(b.profile("Bass").is_none(), "never on B");
         a.on();
         assert!(removed().is_empty());
     }
