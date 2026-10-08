@@ -1,8 +1,5 @@
 import KoanFFI
 import SwiftUI
-#if os(macOS)
-import AVKit
-#endif
 
 /// The transport, as a slab of glass floating over the stage.
 ///
@@ -251,19 +248,6 @@ struct TransportBar: View {
                 OutputButton(open: $showingDevices, labelled: !compact, iconSize: 17)
                     .font(.role(.fine, system: .caption))
             }
-
-            // AirPlay is the system's to choose, so it is the system's button:
-            // it switches this Mac's output, which the music follows. Shown
-            // only while this Mac is what is playing.
-            #if os(macOS)
-            if !player.isControllingAnother && player.renderer == nil {
-                AirPlayButton()
-                    .frame(width: 22, height: 22)
-                    .koanRoutePicker(Icon.airplay)
-                    .help("AirPlay")
-            }
-            #endif
-
         }
         // Natural size, always. What does not fit is dropped above rather than
         // compressed — a badge and a menu squeezed to a few points wide say
@@ -656,18 +640,3 @@ extension View {
         }
     }
 }
-
-#if os(macOS)
-/// The system's AirPlay picker. Without a player of its own it changes the
-/// Mac's output device, which `PlayerModel` follows while playing to the
-/// system default.
-private struct AirPlayButton: NSViewRepresentable {
-    func makeNSView(context: Context) -> AVRoutePickerView {
-        let picker = AVRoutePickerView()
-        picker.isRoutePickerButtonBordered = false
-        return picker
-    }
-
-    func updateNSView(_ view: AVRoutePickerView, context: Context) {}
-}
-#endif

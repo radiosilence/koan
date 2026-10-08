@@ -13,9 +13,10 @@ Playing, make the two choices:
   that is each of its audio devices (built-in speakers, a USB DAC, a display;
   on a phone, the route iOS chose) and the UPnP amplifiers it can see. Picking
   one keeps the queue and transport where they are and moves only the sound.
-  AirPlay has its own button beside it: the system's picker, since no app may
-  pick a speaker itself. Playing to the system default, the music moves to the
-  speaker chosen there, from where it was. On a phone or an Apple TV the route
+  On a phone, AirPlay has its own button beside it: the system's picker, since
+  no app may pick a speaker itself. On the Mac, choose an AirPlay speaker in
+  System Settings or Control Centre; playing to the system default, the music
+  moves to the speaker chosen there, from where it was. On a phone or an Apple TV the route
   is the only audio device, so Output appears only once an amplifier answers
   (Now Playing looks for them on opening) or while another device is
   controlled.
