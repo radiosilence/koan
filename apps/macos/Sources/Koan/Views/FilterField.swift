@@ -27,7 +27,7 @@ struct FilterField: NSViewRepresentable {
     var focusToken = 0
 
     func makeNSView(context: Context) -> NSSearchField {
-        let field = KoanTheme.isOn ? FlatSearchField() : NSSearchField()
+        let field: NSSearchField = KoanTheme.isOn ? FlatSearchField() : NSSearchField()
         field.placeholderString = placeholder
         field.delegate = context.coordinator
         field.sendsSearchStringImmediately = true
