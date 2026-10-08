@@ -138,12 +138,14 @@ pub fn sessions() -> Vec<Session> {
 }
 
 /// A device the person disconnected: by the address it connected from, and
-/// by its id once it has given one.
+/// by its id once it has proved it is one of the person's own. Any other id
+/// is not held, a shared device's included, since another account can give
+/// its device one of this account's ids: a device claiming the person's
+/// phone would otherwise have the phone held off with it, and be let back in
+/// whenever the phone is played on.
 struct Held {
     addr: String,
     id: Option<String>,
-    /// It proved it is the device `id` names.
-    proven: bool,
 }
 
 /// Devices disconnected from Settings, held off until the person reaches
@@ -170,8 +172,11 @@ pub fn end(key: u64) {
         .find(|i| i.session.key == Some(key))
         .map(|i| Held {
             addr: i.session.addr.clone(),
-            id: i.session.id.clone(),
-            proven: i.session.proven.is_some(),
+            id: i
+                .session
+                .id
+                .clone()
+                .filter(|_| i.session.proven == Some(Peer::Own)),
         })
     else {
         return;
@@ -206,7 +211,7 @@ pub fn end(key: u64) {
 pub fn held() -> Vec<(String, Option<String>)> {
     HELD.lock()
         .iter()
-        .map(|h| (h.addr.clone(), h.id.clone().filter(|_| h.proven)))
+        .map(|h| (h.addr.clone(), h.id.clone()))
         .collect()
 }
 
@@ -2854,12 +2859,36 @@ mod tests {
         end(key);
         assert!(ended.load(Ordering::Relaxed));
         assert!(held_addr(&addr.ip()));
-        assert!(held_id("held-phone"));
         drop(listed);
         assert!(sessions().iter().all(|s| s.key != Some(key)));
 
-        // Its id was only its word: listed by address.
+        // Its id was only its word: held and listed by address alone, so
+        // the device it claimed to be is neither held off nor lets it back.
+        assert!(!held_id("held-phone"));
         assert!(held().contains(&("192.0.2.77".into(), None)));
+        release("held-phone");
+        assert!(held_addr(&addr.ip()));
+        release_addr("192.0.2.77");
+        assert!(!held_addr(&addr.ip()));
+
+        // A shared device's id is its account's choice: held by address.
+        let (listed, _) = Listed::new(&addr, &waker);
+        listed.said("held-phone", Some(Peer::Shared("other".into())));
+        end(listed.0);
+        drop(listed);
+        assert!(!held_id("held-phone"));
+        assert!(held_addr(&addr.ip()));
+        release_addr("192.0.2.77");
+
+        // One of the person's own is held by its id too, wherever it
+        // connects from, until it is reached for.
+        let (listed, ended) = Listed::new(&addr, &waker);
+        listed.said("held-phone", Some(Peer::Own));
+        end(listed.0);
+        assert!(ended.load(Ordering::Relaxed));
+        assert!(held_id("held-phone"));
+        assert!(held().contains(&("192.0.2.77".into(), Some("held-phone".into()))));
+        drop(listed);
         release("held-phone");
         assert!(!held_id("held-phone"));
         assert!(!held_addr(&addr.ip()));
