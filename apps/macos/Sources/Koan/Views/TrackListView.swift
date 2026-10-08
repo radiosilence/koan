@@ -51,9 +51,14 @@ struct TrackListView: View {
         VStack(spacing: 0) {
             if !headerScrolls {
                 header
+                    #if os(macOS)
+                    .padding([.horizontal, .top], RowMetrics.pageEdge)
+                    .padding(.bottom, RowMetrics.headerGap)
+                    #else
                     .padding(.horizontal, 24)
                     .padding(.top, 18)
                     .padding(.bottom, 16)
+                    #endif
             }
 
             if tracks.isEmpty {
