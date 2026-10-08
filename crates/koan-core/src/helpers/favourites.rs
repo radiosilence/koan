@@ -1,7 +1,5 @@
 //! Favourites shared with the remote server: pushing a change, and reconciling the two sides.
 
-use std::sync::Arc;
-
 use crate::config::Config;
 use crate::db::connection::Database;
 use crate::db::queries;
@@ -262,6 +260,7 @@ pub fn sync_collection_favourite_to_remote(
 mod favourite_sync_tests {
     use super::*;
     use crate::db::queries::sample_meta;
+    use std::sync::Arc;
     use std::sync::Mutex;
 
     /// How the server answers an unstar.

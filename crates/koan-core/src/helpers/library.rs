@@ -1,13 +1,9 @@
 //! Index maintenance: rebuilding, counting and forgetting what a folder or the server put in the library.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use crate::config::Config;
 use crate::db::connection::Database;
 use crate::db::queries;
-use crate::player::state::ItemState;
-
-use super::*;
 
 /// What a library rebuild re-reads.
 #[derive(Debug, Clone, Copy, Default)]
@@ -158,7 +154,11 @@ pub fn forget_remote(db: &Database) -> Result<u64, crate::db::connection::DbErro
 #[cfg(test)]
 mod rebuild_tests {
     use super::*;
+    use crate::config::Config;
     use crate::db::queries::sample_meta;
+    use crate::helpers::*;
+    use crate::player::state::ItemState;
+    use std::path::PathBuf;
 
     fn test_db() -> Database {
         let conn = rusqlite::Connection::open_in_memory().unwrap();

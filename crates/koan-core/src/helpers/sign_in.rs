@@ -3,10 +3,7 @@
 use std::sync::Arc;
 
 use crate::config::Config;
-use crate::db::connection::Database;
 use crate::remote::client::{Credential, SubsonicAuth, SubsonicClient, SubsonicError};
-
-use super::*;
 
 /// What signs in to the remote server, from `config.local.toml` or a
 /// `KOAN_REMOTE__*` variable layered over it: the API key when there is one,
@@ -430,6 +427,8 @@ mod sign_in_tests {
 #[cfg(test)]
 mod refusal_tests {
     use super::*;
+    use crate::db::connection::Database;
+    use crate::helpers::*;
     use std::collections::HashSet;
     use std::sync::Mutex;
 
