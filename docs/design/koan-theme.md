@@ -25,7 +25,7 @@ New screens follow these by default; a screen that breaks one says why in its PR
 | Token | Dark | Light | Use |
 |-------|------|-------|-----|
 | `bg` | `#1e1e1e` | `#ffffff` | Window and page background |
-| `surface` | `#2a2a2a` | `#f2f2f2` | A raised field: the search field, a sheet. Used sparingly; most separation is by rule |
+| `surface` | `#2a2a2a` | `#f2f2f2` | A raised field, a sheet. Used sparingly; most separation is by rule |
 | `rule` | `#383838` | `#e0e0e0` | Hairlines between rows and around regions |
 | `hover` | `#4d4d4d` | `#c4c4c4` | Pointer hover and pressed fill |
 | `ink` | `#cccccc` | `#333333` | Body text and icons |
@@ -151,7 +151,7 @@ The label in `body`, `muted`, lowercase, after its glyph when icons are on (see 
 
 ### Sidebar (Mac)
 
-The page's ground, with no system glass: the wash with it under the whole window, `bg` otherwise. At the top, the theme's search field: square, `surface`, the glyph and placeholder in `muted`. Its suggestions open beneath it as a square `bg` panel in a hairline `rule`, over the rows: up to five tracks, four records and four artists under `fine`, `muted` headings, each a square sleeve with its title in `meta` and the rest in `fine`, `muted`, the row under the pointer or the arrow keys on `surface`. Return takes that row, or with none lit opens every result; Escape empties the field; `/` focuses it. Playlist sleeves are square. The library counts sit at the foot on the same ground, below a hairline of `koanRowRule`, and the rows stop at both edges rather than passing beneath.
+The page's ground, with no system glass: the wash with it under the whole window, `bg` otherwise. At the top, the theme's search field: no box of its own, on the page's ground, the glyph and placeholder in `muted`. Its suggestions open beneath it as a square `bg` panel in a hairline `rule`, over the rows: up to five tracks, four records and four artists under `fine`, `muted` headings, each a square sleeve with its title in `meta` and the rest in `fine`, `muted`, the row under the pointer or the arrow keys on `surface`. Return takes that row, or with none lit opens every result; Escape empties the field; `/` focuses it. Playlist sleeves are square. The library counts sit at the foot on the same ground, below a hairline of `koanRowRule`, and the rows stop at both edges rather than passing beneath.
 
 ### Filter panel (Mac)
 
