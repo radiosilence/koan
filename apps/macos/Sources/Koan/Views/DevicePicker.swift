@@ -389,7 +389,7 @@ enum Action {
     var glyph: String {
         switch self {
         case .output: Icon.output
-        case .control: Icon.remote
+        case .control: Icon.devices
         }
     }
 

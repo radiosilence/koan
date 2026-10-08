@@ -1,0 +1,1 @@
+- **Play on icon.** The Play on button uses the devices icon, as the Devices section does.
