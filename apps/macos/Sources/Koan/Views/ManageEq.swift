@@ -36,6 +36,7 @@ struct ManageEq: View {
                 list("Presets", o.profiles.filter(\.preset), o)
             }
             #if !os(tvOS)
+            RecentlyDeletedEq()
             Section {
                 Button("Import a File…") { importing = true }
                     .koanButton(.bordered)
@@ -276,3 +277,74 @@ struct ManageEq: View {
         app.dsp.setTunings(chain + added.map { DspTuningEntry(name: $0, on: true) }, for: device)
     }
 }
+
+#if !os(tvOS)
+/// EQs deleted in the last thirty days, which the server keeps: each with
+/// the days it has left and Restore, which brings it back on every device.
+/// Not there at all without any, or on a server that keeps none.
+private struct RecentlyDeletedEq: View {
+    @Environment(AppState.self) private var app
+    @Environment(EngineMirror.self) private var mirror
+    @State private var deleted: [DeletedDsp] = []
+    @State private var restoring: String?
+    @State private var error: String?
+
+    private var offered: Bool {
+        mirror.offers("koanDspDeleted") && mirror.connection?.offline != true
+    }
+
+    var body: some View {
+        Group {
+            if offered, !deleted.isEmpty {
+                Section {
+                    ForEach(deleted, id: \.uid) { profile in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(profile.name)
+                                Text(profile.daysLeft == 1 ? "1 day left" : "\(profile.daysLeft) days left")
+                                    .koanText(.fine, .muted)
+                            }
+                            Spacer()
+                            Button("Restore") { restore(profile) }
+                                .koanButton(.bordered, system: .borderless)
+                                .disabled(restoring != nil)
+                        }
+                    }
+                } header: {
+                    KoanSectionHeader("Recently deleted")
+                } footer: {
+                    Text(error ?? "Kept on the server for thirty days after they were deleted. Restoring one brings it back on every device.")
+                        .koanText(.fine, error == nil ? .muted : .bad)
+                }
+            }
+        }
+        .task(id: "\(app.dsp.stamp) \(offered)") { await load() }
+    }
+
+    private func load() async {
+        guard offered else {
+            deleted = []
+            return
+        }
+        do {
+            deleted = try await app.engine.dspDeleted()
+        } catch {
+            deleted = []
+        }
+    }
+
+    private func restore(_ profile: DeletedDsp) {
+        restoring = profile.uid
+        Task {
+            do {
+                try await app.engine.dspRestore(uid: profile.uid)
+                error = nil
+            } catch {
+                self.error = SettingsModel.describe(error)
+            }
+            restoring = nil
+            await load()
+        }
+    }
+}
+#endif
