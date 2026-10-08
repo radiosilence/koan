@@ -136,6 +136,10 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         table.allowsMultipleSelection = true
         table.allowsTypeSelect = true
         table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        // Following the clip view both ways, as a table from Interface Builder
+        // does: without it the table grows with the page but never shrinks,
+        // and the lyrics opening left every row's trailing columns under them.
+        table.autoresizingMask = [.width]
         table.setDraggingSourceOperationMask([.copy, .move], forLocal: true)
         table.setDraggingSourceOperationMask(.copy, forLocal: false)
         var accepted: [NSPasteboard.PasteboardType] = []
