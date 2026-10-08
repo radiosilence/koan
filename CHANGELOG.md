@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.61.3
+
+### Removed
+
+- **Mac AirPlay button.** The transport bar no longer has an AirPlay button, which did not work on the Mac. Choose an AirPlay speaker in System Settings or Control Centre; koan follows the system output as before. iOS keeps the button.
+
+### Fixed
+
+- **Context-menu icons follow the menu text colour.** The kōan glyphs still drew black in the Mac app's menus.
+- **Mac pages after a resize.** The first row of an album grid, artist list or track list no longer ends up under the toolbar when the window is resized or the toolbar settles after the first layout; the scroll position now follows the top inset.
+
 ## 0.61.2
 
 ### Added
