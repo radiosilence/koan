@@ -3781,6 +3781,14 @@ impl KoanEngine {
         }
     }
 
+    /// Text size on the Mac, in percent (see `appearance.text_size`). Saved at
+    /// once; the app redraws from its own copy.
+    pub fn set_text_size(&self, percent: u16) {
+        if let Err(e) = Config::persist(|cfg| cfg.appearance.text_size = percent) {
+            log::warn!("appearance: text_size not saved: {e}");
+        }
+    }
+
     /// How the app is drawn, from `[appearance]`. Read once, as the app opens:
     /// a change takes effect on the next launch.
     pub fn appearance(&self) -> Appearance {
@@ -3791,6 +3799,7 @@ impl KoanEngine {
             record_colours: cfg.appearance.record_colours,
             wash_window: cfg.appearance.wash_window,
             rainbow: cfg.appearance.rainbow,
+            text_size: cfg.appearance.text_size,
         }
     }
 

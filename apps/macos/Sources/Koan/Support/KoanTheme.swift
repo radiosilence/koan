@@ -29,6 +29,7 @@ enum KoanTheme {
 
     static func apply(_ appearance: Appearance) {
         isOn = appearance.koan
+        setTextSize(Int(appearance.textSize))
         guard isOn else { return }
         registerFace()
         #if os(iOS)
@@ -111,14 +112,44 @@ enum KoanTheme {
         #endif
     }
 
+    /// What the Mac's type is drawn at, against the scale's points. Geist Mono
+    /// at 15 points stands as tall as the system's 13-point body at 12.9, by
+    /// cap height and x-height alike; it runs wider whatever its size.
+    static let macFit: CGFloat = 0.86
+
+    /// The type's scale: on the Mac in the theme, `macFit` times the text size
+    /// chosen in Settings (`appearance.text_size`); 1 everywhere else. Written
+    /// on the main actor before the windows that read it are rebuilt, read
+    /// from layer code as well.
+    nonisolated(unsafe) private(set) static var textScale: CGFloat = 1
+    /// Spacing's scale: half of the type's change, so the theme stays as open
+    /// as it was while the type comes down to the system's.
+    nonisolated(unsafe) private(set) static var spaceScale: CGFloat = 1
+    /// The text size chosen, in percent, which row heights follow.
+    nonisolated(unsafe) private(set) static var sizeScale: CGFloat = 1
+
+    /// The text size steps Settings and the View menu move through.
+    static let textSizes = stride(from: 80, through: 130, by: 5).map { $0 }
+
+    static func setTextSize(_ percent: Int) {
+        #if os(macOS)
+        guard isOn else { return }
+        let size = CGFloat(min(max(percent, textSizes.first!), textSizes.last!)) / 100
+        sizeScale = size
+        textScale = macFit * size
+        spaceScale = 1 - (1 - textScale) / 2
+        #endif
+    }
+
     /// Spacing steps. Page margins are `xl` on a phone, `xxl` on the Mac.
+    /// On the Mac in the theme they follow `spaceScale`.
     enum Space {
-        static let xs: CGFloat = 4
-        static let s: CGFloat = 8
-        static let m: CGFloat = 12
-        static let l: CGFloat = 16
-        static let xl: CGFloat = 22
-        static let xxl: CGFloat = 32
+        nonisolated static var xs: CGFloat { 4 * spaceScale }
+        nonisolated static var s: CGFloat { 8 * spaceScale }
+        nonisolated static var m: CGFloat { 12 * spaceScale }
+        nonisolated static var l: CGFloat { 16 * spaceScale }
+        nonisolated static var xl: CGFloat { 22 * spaceScale }
+        nonisolated static var xxl: CGFloat { 32 * spaceScale }
         static var page: CGFloat {
             #if os(macOS)
             xxl
@@ -178,6 +209,24 @@ final class AppearanceModel {
         didSet { if showIcons != oldValue { engine.setThemeIcons(on: showIcons) } }
     }
 
+    /// Text size on the Mac, in percent of the theme's own (`KoanTheme.textSizes`).
+    /// Takes effect at once: each window is drawn again at the new size.
+    var textSize: Int {
+        didSet {
+            guard textSize != oldValue else { return }
+            KoanTheme.setTextSize(textSize)
+            engine.setTextSize(percent: UInt16(textSize))
+        }
+    }
+
+    /// One step of `KoanTheme.textSizes` larger (`1`) or smaller (`-1`), as
+    /// the View menu's Bigger and Smaller do; nothing past either end.
+    func stepTextSize(_ by: Int) {
+        let sizes = KoanTheme.textSizes
+        let here = sizes.firstIndex { $0 >= textSize } ?? sizes.count - 1
+        textSize = sizes[min(max(here + by, 0), sizes.count - 1)]
+    }
+
     /// The theme chosen in Settings, which may not be the one drawn: it takes
     /// effect on the next launch (`KoanTheme.isOn` is the one drawn).
     var koan: Bool {
@@ -228,6 +277,7 @@ final class AppearanceModel {
         self.koan = appearance.koan
         self.recordColours = appearance.recordColours
         self.washWindow = appearance.washWindow
+        self.textSize = Int(appearance.textSize)
         self.rainbow = appearance.rainbow
         Rainbow.drawn = appearance.rainbow
     }
@@ -706,7 +756,7 @@ enum KoanType {
         #if os(tvOS)
         base * 1.8
         #else
-        base
+        base * KoanTheme.textScale
         #endif
     }
 
@@ -861,20 +911,37 @@ extension UIFont {
 extension NSFont {
     /// A role of the theme's type scale, for AppKit's own views. Falls back to
     /// the system monospace where the face is not registered.
+    ///
+    /// Kept per role, weight and size: the layer rows ask for theirs on every
+    /// layout, and the size moves with the text size setting.
     @MainActor
     static func koan(_ role: KoanType, weight: NSFont.Weight? = nil) -> NSFont {
         let wanted = weight ?? NSFont.Weight(role.faceWeight)
-        guard NSFont(name: "Geist Mono", size: role.size) != nil else {
-            return .monospacedSystemFont(ofSize: role.size, weight: wanted)
+        let key = FontKey(role: role, weight: wanted.rawValue, size: role.size)
+        if let font = made[key] { return font }
+        let font: NSFont
+        if NSFont(name: "Geist Mono", size: role.size) == nil {
+            font = .monospacedSystemFont(ofSize: role.size, weight: wanted)
+        } else {
+            // From the family, not from a face's descriptor: a weight added to
+            // the Regular face's descriptor keeps the Regular face.
+            let descriptor = NSFontDescriptor(fontAttributes: [
+                .family: "Geist Mono",
+                .traits: [NSFontDescriptor.TraitKey.weight: wanted],
+            ])
+            font = NSFont(descriptor: descriptor, size: role.size) ?? .monospacedSystemFont(ofSize: role.size, weight: wanted)
         }
-        // From the family, not from a face's descriptor: a weight added to the
-        // Regular face's descriptor keeps the Regular face.
-        let descriptor = NSFontDescriptor(fontAttributes: [
-            .family: "Geist Mono",
-            .traits: [NSFontDescriptor.TraitKey.weight: wanted],
-        ])
-        return NSFont(descriptor: descriptor, size: role.size) ?? .monospacedSystemFont(ofSize: role.size, weight: wanted)
+        made[key] = font
+        return font
     }
+
+    private struct FontKey: Hashable {
+        let role: KoanType
+        let weight: CGFloat
+        let size: CGFloat
+    }
+
+    @MainActor private static var made: [FontKey: NSFont] = [:]
 
     /// A role as whichever look is on: Geist Mono in the theme, the given
     /// system font otherwise.
@@ -2964,5 +3031,10 @@ extension View {
     func koanTheme(_ appearance: AppearanceModel) -> some View {
         environment(appearance)
             .environment(\.koanIcons, appearance.showIcons)
+            #if os(macOS)
+            // Type and spacing are read as views are made, so a new text size
+            // makes them again. Only where it applies: in the theme.
+            .id(KoanTheme.isOn ? appearance.textSize : 100)
+            #endif
     }
 }

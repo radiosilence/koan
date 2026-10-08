@@ -57,7 +57,7 @@ struct ShelfView: View {
     /// The same tile the grids use, at the same sizes.
     private static let tileMin: CGFloat = 140
     private static let tileMax: CGFloat = 190
-    private static let tileSpacing = KoanTheme.Space.l
+    private static var tileSpacing: CGFloat { KoanTheme.Space.l }
     /// What an inset list keeps clear at each side.
     private static let listInset: CGFloat = 20
 

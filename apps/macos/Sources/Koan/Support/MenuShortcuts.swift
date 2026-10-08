@@ -93,6 +93,14 @@ extension MenuShortcut {
     static let lyrics = Self(
         title: "Toggle Lyrics", icon: Icon.lyrics, key: "l", modifiers: [.command, .option],
         group: .view)
+    // ⌘= is Bigger as well, as it is in every app with the item: `Hotkeys`
+    // takes it, since a menu's "+" asks for Shift.
+    static let bigger = Self(
+        title: "Bigger", icon: Icon.add, key: "+", modifiers: .command, group: .view)
+    static let smaller = Self(
+        title: "Smaller", icon: Icon.subtract, key: "-", modifiers: .command, group: .view)
+    static let actualSize = Self(
+        title: "Actual Size", icon: Icon.appearance, key: "0", modifiers: .command, group: .view)
     static let shortcuts = Self(
         title: "Keyboard Shortcuts", icon: Icon.shortcuts, key: "/", modifiers: .command,
         group: .view)
@@ -127,6 +135,7 @@ extension MenuShortcut {
         all += [back, forward]
         all += [next, previous, skipForward, skipBack, favourite]
         all += [lyrics, shortcuts]
+        if KoanTheme.isOn { all += [bigger, smaller, actualSize] }
         all += [undo, redo, cut, copy, paste, delete, selectAll, find]
         all.append(rescan)
         return all

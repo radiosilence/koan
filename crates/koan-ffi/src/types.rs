@@ -2007,6 +2007,8 @@ pub struct Appearance {
     pub wash_window: bool,
     /// The accent, wash and indicators in the pride flag's hues, on this device.
     pub rainbow: bool,
+    /// Text size on the Mac, in percent.
+    pub text_size: u16,
 }
 
 /// Everything the settings window reads and writes.

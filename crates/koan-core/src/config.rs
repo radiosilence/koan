@@ -63,6 +63,9 @@ pub struct AppearanceConfig {
     /// An alternative palette for the accent, wash and indicators (see the
     /// apps' `Rainbow.swift`). Per device, and not offered in Settings.
     pub rainbow: bool,
+    /// Text size on the Mac, in percent of the theme's own (80–130, in steps
+    /// of 5). Spacing follows it at half the rate. Per device.
+    pub text_size: u16,
 }
 
 impl Default for AppearanceConfig {
@@ -73,6 +76,7 @@ impl Default for AppearanceConfig {
             record_colours: true,
             wash_window: true,
             rainbow: false,
+            text_size: 100,
         }
     }
 }
@@ -1410,7 +1414,9 @@ pub fn layer_of(path: &str) -> Layer {
         | "visualizer.mode"
         | "visualizer.matrix_overlay"
         | "visualizer.bass_shake"
-        | "appearance.rainbow" => Layer::Machine,
+        | "appearance.rainbow"
+        // How large this screen draws text, which is a matter of the screen.
+        | "appearance.text_size" => Layer::Machine,
         // The listening setup: these headphones, this room.
         p if p == "dsp" || p.starts_with("dsp.") => Layer::Machine,
         _ => Layer::Shared,

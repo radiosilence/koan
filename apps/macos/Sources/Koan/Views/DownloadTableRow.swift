@@ -15,9 +15,9 @@ final class DownloadTableRow: TableCell, TableRow, TransferGauge {
     static let identifier = NSUserInterfaceItemIdentifier("DownloadTableRow")
     static let height: CGFloat = 60
 
-    private static let titleFont = NSFont.role(.body, system: NSFont.preferredFont(forTextStyle: .body))
-    private static let captionFont = NSFont.role(.meta, system: NSFont.preferredFont(forTextStyle: .caption1))
-    private static let figureFont = NSFont.role(.meta, system: NSFont.monospacedDigitSystemFont(ofSize: captionFont.pointSize, weight: .regular))
+    private static var titleFont: NSFont { NSFont.role(.body, system: NSFont.preferredFont(forTextStyle: .body)) }
+    private static var captionFont: NSFont { NSFont.role(.meta, system: NSFont.preferredFont(forTextStyle: .caption1)) }
+    private static var figureFont: NSFont { NSFont.role(.meta, system: NSFont.monospacedDigitSystemFont(ofSize: captionFont.pointSize, weight: .regular)) }
 
     private let sleeve = CALayer()
     private let track = CALayer()

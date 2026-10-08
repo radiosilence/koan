@@ -62,13 +62,15 @@ One face, Geist Mono (variable, weights 100–900), bundled with the app. Sizes 
 
 `body` through `title` are the server UI's `--text-*` scale; `display` is the page title, as large as the site's but lighter.
 
+On the Mac the scale is drawn at 0.86 of these sizes, so `body` is 12.9 points. Measured against the system face, that is where Geist Mono's cap height and x-height meet those of the system's 13-point body; its lines still run about a quarter wider, which no size fixes without making the type too small to read. **Text size** (Settings → Appearance, and View → Bigger, Smaller, Actual Size) multiplies it again, from 80 % to 130 % in steps of 5. Spacing and the theme's row padding follow at half the rate (0.93 at 100 %), so the theme keeps more air than the system's look; row heights follow the text size alone. The platform's look, and iOS and tvOS, are not scaled.
+
 - **Case.** Navigation, headings, buttons and labels the app writes are lowercase, as on the site. Text from the library (titles, artists, albums, genres) and from people (playlist names) keeps its own case. Accessibility labels keep proper case.
 - **Numbers.** Geist Mono's figures are tabular, so durations and counts align without a separate style.
 - **Truncation.** Monospace runs about 15–20 % wider than the system face at the same size: one line, truncated at the tail, for titles in rows and tiles, and two lines for titles on their own page.
 
 ### Spacing and shape
 
-- **Spacing** in steps of 4: 4, 8, 12, 16, 22, 32. Page margins are 32 on the Mac and 22 on a phone. Rows have 11–14 vertical padding.
+- **Spacing** in steps of 4: 4, 8, 12, 16, 22, 32, scaled on the Mac as [Type](#type) says. Page margins are 32 on the Mac and 22 on a phone. Rows have 11–14 vertical padding.
 - **Rules** are 1 px (one device pixel on a 2× display is too faint at `rule`'s contrast; use 1 point). A selected navigation row is marked by a 2-point `accent` rule on its leading edge.
 - **Corners** are square: controls, covers, sheets and the transport. The window's own corners are the system's.
 - **No materials.** No blur, glass, vibrancy or shadows. A region is told apart by a rule, or rarely by `surface`. The [wash](#wash) is the one thing under the ground that is not flat.

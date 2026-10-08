@@ -194,6 +194,7 @@ Single keys never fire while a text field has focus, so typing an `f` into the s
 | `⌥←` / `⌥→` | Seek ∓10 seconds |
 | `⌘D` | Favourite the current track |
 | `⌥⌘L` | Lyrics panel |
+| `⌘+` (or `⌘=`) / `⌘−` / `⌘0` | Bigger / smaller / actual text size (kōan theme) |
 | `⌘Z` / `⇧⌘Z` | Undo / redo a queue change |
 | `⌘X` `⌘C` `⌘V` `⌫` `⌘A` | Queue editing, or the ordinary thing while typing |
 | `⇧⌘R` | Rescan local folders |
