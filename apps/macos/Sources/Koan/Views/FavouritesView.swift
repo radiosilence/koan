@@ -11,7 +11,7 @@ struct FavouritesView: View {
             shelf: .favourites,
             summary: library.visibleShelf,
             empty: EmptyShelf(
-                icon: "heart",
+                icon: Icon.favourite,
                 title: "Nothing favourited yet",
                 detail: "Hit the heart on a track, a record or an artist."
             )

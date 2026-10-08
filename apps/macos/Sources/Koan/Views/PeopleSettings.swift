@@ -197,7 +197,7 @@ struct PeopleSettings: View {
                     Button("Delete", role: .destructive) { deleting = account.username }
                 }
             } label: {
-                Image(systemName: "ellipsis.circle")
+                KoanIcon(Icon.moreCircled)
             }.koanControl()
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -230,26 +230,26 @@ struct InviteSheet: View {
                         subject: Text(invite.emailSubject),
                         message: Text(invite.emailText)
                     ) {
-                        KoanLabel("Send Invite…", icon: "square.and.arrow.up")
+                        KoanLabel("Send Invite…", icon: Icon.export)
                     }
                     .koanButton(.prominent)
                     #endif
                     if let mail = URL(string: invite.mailto) {
-                        Link(destination: mail) { KoanLabel("Open in Mail", icon: "envelope") }
+                        Link(destination: mail) { KoanLabel("Open in Mail", icon: Icon.mail) }
                             .koanButton(.link)
                     }
                     Button {
                         Pasteboard.write(html: invite.emailHtml, text: invite.emailText)
                         copied = "email"
                     } label: {
-                        KoanLabel(copied == "email" ? "Copied" : "Copy Email", icon: "doc.on.doc")
+                        KoanLabel(copied == "email" ? "Copied" : "Copy Email", icon: Icon.copy)
                     }
                     .koanButton(.bordered)
                     Button {
                         Pasteboard.write(text: invite.link)
                         copied = "link"
                     } label: {
-                        KoanLabel(copied == "link" ? "Copied" : "Copy Link", icon: "link")
+                        KoanLabel(copied == Icon.share ? "Copied" : "Copy Link", icon: Icon.share)
                     }
                     .koanButton(.bordered)
                 } header: {

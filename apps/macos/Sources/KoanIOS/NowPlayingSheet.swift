@@ -78,7 +78,7 @@ struct NowPlayingSheet: View {
             RoundedRectangle(cornerRadius: KoanTheme.radius(12))
                 .fill(.quaternary)
                 .aspectRatio(1, contentMode: .fit)
-                .overlay { Image(systemName: "music.note").font(.role(.display, system: .largeTitle)) }
+                .overlay { KoanIcon(Icon.track).font(.role(.display, system: .largeTitle)) }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
@@ -127,7 +127,7 @@ struct NowPlayingSheet: View {
                 Menu {
                     PlayableMenu(playable: .track(info.track))
                 } label: {
-                    Image(systemName: "ellipsis")
+                    KoanIcon(Icon.more)
                         .font(.role(.body, system: .body))
                         .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                         .touchTarget()
@@ -146,7 +146,7 @@ struct NowPlayingSheet: View {
             ShuffleButton().font(.role(.titleSmall, system: .title3))
             Spacer()
             Button { player.previous() } label: {
-                Image(systemName: Icon.previous).font(.role(.title, system: .title))
+                KoanIcon(Icon.previous).font(.role(.title, system: .title))
             }
             Spacer()
             Button { player.togglePlayPause() } label: {
@@ -154,7 +154,7 @@ struct NowPlayingSheet: View {
                     if player.isWaitingForTrack {
                         ProgressView().controlSize(.large)
                     } else {
-                        Image(systemName: player.isPlaying ? "pause.fill" : Icon.play)
+                        KoanIcon(player.isPlaying ? Icon.pause : Icon.play)
                             .font(.system(size: KoanTheme.metric(24, system: 46)))
                             .contentTransition(.symbolEffect(.replace))
                     }
@@ -166,7 +166,7 @@ struct NowPlayingSheet: View {
             .accessibilityLabel(player.isWaitingForTrack ? "Loading" : player.isPlaying ? "Pause" : "Play")
             Spacer()
             Button { player.next() } label: {
-                Image(systemName: Icon.next).font(.role(.title, system: .title))
+                KoanIcon(Icon.next).font(.role(.title, system: .title))
             }
             Spacer()
             RepeatButton().font(.role(.titleSmall, system: .title3))
@@ -184,7 +184,7 @@ struct NowPlayingSheet: View {
             Button {
                 ui.toggleLyrics()
             } label: {
-                Image(systemName: Icon.lyrics)
+                KoanIcon(Icon.lyrics)
                     .symbolVariant(ui.showLyrics ? .fill : .none)
             }
             .accessibilityLabel(ui.showLyrics ? "Show artwork" : "Show lyrics")
@@ -235,7 +235,7 @@ struct NowPlayingSheet: View {
                     // This phone in control is the usual case, and its glyph
                     // says enough; the room goes to the preset's name.
                     Pill(
-                        systemImage: Action.control.glyph,
+                        icon: Action.control.glyph,
                         text: player.isControllingAnother ? device : nil,
                         tinted: player.isControllingAnother
                     )
@@ -247,7 +247,7 @@ struct NowPlayingSheet: View {
             }
             if player.canChooseOutput {
                 Button { showingDevices = true } label: {
-                    Pill(systemImage: "hifispeaker", text: outputName, tinted: player.renderer != nil)
+                    Pill(icon: Icon.speaker, text: outputName, tinted: player.renderer != nil)
                 }
                 .accessibilityLabel("Output: \(player.outputName ?? "default")")
                 .pillWidth(natural, name: outputName)
@@ -260,7 +260,7 @@ struct NowPlayingSheet: View {
                 let preset = presets.summary
                 PresetMenu(presets: presets, title: output.name) {
                     Pill(
-                        systemImage: "slider.horizontal.3",
+                        icon: Icon.filters,
                         text: preset,
                         tinted: player.currentFormat?.dsp != nil
                     )
@@ -286,13 +286,13 @@ struct NowPlayingSheet: View {
 /// A device choice under the transport: an icon and a name, tinted while it
 /// is not this phone's own way of playing.
 private struct Pill: View {
-    let systemImage: String
+    let icon: String
     let text: String?
     let tinted: Bool
 
     var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: systemImage)
+            KoanIcon(icon)
                 .foregroundStyle(KoanTheme.style(tinted ? .accent : .muted, system: tinted ? AnyShapeStyle(.tint) : KoanTheme.style(.muted, system: .secondary)))
             if let text {
                 Text(text)
@@ -346,7 +346,7 @@ struct NowPlayingPresentation: ViewModifier {
                 NowPlayingSheet()
                     .overlay(alignment: .topLeading) {
                         Button { isPresented = false } label: {
-                            KoanIcon("chevron.down")
+                            KoanIcon(Icon.expand)
                                 .font(.koan(.titleSmall))
                                 .frame(width: 44, height: 44)
                                 .contentShape(Rectangle())

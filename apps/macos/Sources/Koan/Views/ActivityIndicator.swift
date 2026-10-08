@@ -70,7 +70,7 @@ private struct ActivityRow: View {
                 // cancel is worse than none.
                 if task.cancellable {
                     Button(action: cancel) {
-                        Image(systemName: "xmark.circle")
+                        KoanIcon(Icon.deselect)
                             .font(.role(.fine, system: .caption2))
                     }
                     .buttonStyle(.plain)

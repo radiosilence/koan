@@ -75,7 +75,7 @@ struct MeasurementFlow: View {
                     }
                     if let problem {
                         Section {
-                            Label(problem, systemImage: "exclamationmark.triangle.fill")
+                            Label(problem, koan: Icon.warningFilled)
                                 .foregroundStyle(KoanTheme.style(.bad, system: .orange))
                         }
                         .id(Self.problemID)
@@ -209,7 +209,7 @@ struct MeasurementFlow: View {
                                 if picking == hit {
                                     ProgressView().controlSize(.small)
                                 } else if fetched == hit {
-                                    Image(systemName: "checkmark")
+                                    KoanIcon(Icon.check)
                                         .foregroundStyle(KoanTheme.style(.accent, system: .tint))
                                 }
                             }
@@ -293,7 +293,7 @@ struct MeasurementFlow: View {
                 Section {
                     EqGraph(response: preview, startOn: .headphone)
                 } footer: {
-                    Text("Measured shows your measurement, the target, and what your \(speaker ? "speaker" : "headphones") will sound like with the correction. EQ shows the correction itself.")
+                    Text("Measured shows your measurement, the target, and what your \(speaker ? "speaker" : Icon.headphones) will sound like with the correction. EQ shows the correction itself.")
                         .koanText(.fine, .muted)
                 }
             }

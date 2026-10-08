@@ -27,8 +27,8 @@ struct KoanThemeSheet: View {
                 Button("Copy") { }.koanButton(.bordered)
                 Button("Find your token") { }.koanButton(.link)
                 Button("Clear") { }.koanButton(.text)
-                Button { } label: { KoanLabel("Sleep", icon: "moon", style: .compact) }.koanButton(.icon)
-                Button { } label: { Image(systemName: "pause.fill") }.koanButton(.iconOutlined)
+                Button { } label: { KoanLabel("Sleep", icon: Icon.sleep, style: .compact) }.koanButton(.icon)
+                Button { } label: { KoanIcon(Icon.pause) }.koanButton(.iconOutlined)
                 Button("Disabled") { }.koanButton(.standard).disabled(true)
             }
 

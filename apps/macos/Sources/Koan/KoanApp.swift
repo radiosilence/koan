@@ -85,7 +85,7 @@ struct KoanApp: App {
                 // contest. Hotkeys handles the key; this stays for
                 // discoverability and the menu shows the shortcut anyway.
                 Button { state?.player.togglePlayPause() } label: {
-                    Label("Play / Pause", systemImage: Icon.playPause)
+                    Label("Play / Pause", koan: Icon.playPause)
                 }
                 // Arrow keys with a modifier are text navigation first: ⌘← is
                 // start-of-line, ⌥← is previous word. Disabled rather than
@@ -161,10 +161,10 @@ struct KoanApp: App {
 
             CommandMenu("Queue") {
                 Button { Task { await state?.player.saveSession() } } label: {
-                    Label("Save Session", systemImage: Icon.save)
+                    Label("Save Session", koan: Icon.save)
                 }
                 Button { state?.player.clearQueue() } label: {
-                    Label("Clear Queue", systemImage: Icon.clear)
+                    Label("Clear Queue", koan: Icon.clear)
                 }
             }
 
@@ -180,21 +180,21 @@ struct KoanApp: App {
                 Group {
                     ShortcutButton(.rescan) { state?.library.scan() }
                     Button { state?.library.scan(force: true) } label: {
-                        Label("Force Rescan", systemImage: Icon.rescanAll)
+                        Label("Force Rescan", koan: Icon.rescanAll)
                     }
                 }
                 .disabled(state?.activity.conflicts(with: .localLibrary) ?? false)
                 Divider()
                 Button { state?.library.syncRemote() } label: {
-                    Label("Sync", systemImage: Icon.sync)
+                    Label("Sync", koan: Icon.sync)
                 }
                 .disabled(state?.activity.conflicts(with: [.remoteTracks]) ?? false)
                 Divider()
                 Button { state?.art.purge() } label: {
-                    Label("Clear Artwork Cache", systemImage: Icon.clear)
+                    Label("Clear Artwork Cache", koan: Icon.clear)
                 }
                 Button { state?.library.clearDownloads() } label: {
-                    Label("Clear Downloaded Files", systemImage: Icon.clear)
+                    Label("Clear Downloaded Files", koan: Icon.clear)
                 }
                 .disabled(state?.activity.conflicts(with: [.downloads]) ?? false)
             }
@@ -263,7 +263,7 @@ private struct MenuBarLabel: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Image(systemName: Icon.track)
+        KoanIcon(Icon.track)
             .onChange(of: residency?.wantsWindow ?? false, initial: true) { _, wants in
                 if wants { residency?.showWindow(with: openWindow) }
             }
@@ -301,7 +301,7 @@ private struct StartupErrorView: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            Image(systemName: "exclamationmark.triangle")
+            KoanIcon(Icon.warning)
                 .font(.system(size: 34, weight: .light))
                 .foregroundStyle(KoanTheme.style(.bad, system: .orange))
             Text("Couldn't open your library")

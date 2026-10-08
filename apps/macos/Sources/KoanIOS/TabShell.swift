@@ -89,28 +89,28 @@ struct TabShell: View {
         TabView(selection: tab) {
             #if os(tvOS)
             // The room's first page: what is playing, at the size a sofa reads.
-            Tab(Self.title("Now Playing"), systemImage: "play.circle", value: TabID.nowPlaying) {
+            Tab(Self.title("Now Playing"), systemImage: Icon.nowPlaying, value: TabID.nowPlaying) { // theme: raw
                 NowPlayingPage()
                     .koanHidesSystemTabBar()
                     .onExitCommand(perform: toBar)
             }
             #endif
-            Tab(Self.title("Queue"), systemImage: Icon.queueSection, value: TabID.queue) {
+            Tab(Self.title("Queue"), systemImage: Icon.queueSection, value: TabID.queue) { // theme: raw
                 stack(.queue) { QueueView() }
             }
             #if os(tvOS)
-            Tab(Self.title("Library"), systemImage: "music.note.house", value: TabID.library) {
+            Tab(Self.title("Library"), systemImage: Icon.library, value: TabID.library) { // theme: raw
                 stack(.library) { LibraryTab() }
             }
             #else
             // Only lists what the sidebar shows as its own rows.
-            Tab("Library", systemImage: "music.note.house", value: TabID.library) {
+            Tab("Library", systemImage: Icon.library, value: TabID.library) { // theme: raw
                 stack(.library) { LibraryTab() }
             }
             .hidden(sidebar)
             TabSection {
                 ForEach(Self.librarySections, id: \.section) { item in
-                    Tab(item.title, systemImage: item.icon, value: TabID.section(item.section)) {
+                    Tab(item.title, systemImage: item.icon, value: TabID.section(item.section)) { // theme: raw
                         stack(.section(item.section), grounded: false) { RouteView(route: .page(.section(item.section))) }
                     }
                     // Read only where it can show: each transfer starting or ending
@@ -126,14 +126,14 @@ struct TabShell: View {
             .hidden(!sidebar)
             TabSection {
                 ForEach(playlists.playlists, id: \.id) { playlist in
-                    Tab(playlist.name, systemImage: Icon.playlist, value: TabID.section(.playlist(playlist.id))) {
+                    Tab(playlist.name, systemImage: Icon.playlist, value: TabID.section(.playlist(playlist.id))) { // theme: raw
                         stack(.section(.playlist(playlist.id)), grounded: false) {
                             RouteView(route: .page(.section(.playlist(playlist.id))))
                         }
                     }
                     .contextMenu {
-                        Button("Play", systemImage: Icon.play) { play(playlist) }
-                        Button("Shuffle", systemImage: Icon.shuffle) { play(playlist, shuffled: true) }
+                        Button("Play", koan: Icon.play) { play(playlist) }
+                        Button("Shuffle", koan: Icon.shuffle) { play(playlist, shuffled: true) }
                     }
                 }
             } header: {
@@ -141,16 +141,16 @@ struct TabShell: View {
             }
             // The Mac's "New Playlist…" row.
             .sectionActions {
-                Button("New Playlist", systemImage: Icon.add) { playlists.naming = [] }
+                Button("New Playlist", koan: Icon.add) { playlists.naming = [] }
             }
             .defaultVisibility(.hidden, for: .tabBar)
             .hidden(!sidebar)
-            Tab("Settings", systemImage: "gearshape", value: TabID.settings) {
+            Tab("Settings", systemImage: Icon.settings, value: TabID.settings) { // theme: raw
                 stack(.settings) { SettingsView() }
             }
             #endif
             #if os(tvOS)
-            Tab(Self.title("Search"), systemImage: Icon.search, value: TabID.search, role: .search) {
+            Tab(Self.title("Search"), systemImage: Icon.search, value: TabID.search, role: .search) { // theme: raw
                 stack(.search) { IOSSearchView() }
             }
             #else
@@ -160,7 +160,7 @@ struct TabShell: View {
             #endif
             // Last on a television, where it is visited least.
             #if os(tvOS)
-            Tab(Self.title("Settings"), systemImage: "gearshape", value: TabID.settings) {
+            Tab(Self.title("Settings"), systemImage: Icon.settings, value: TabID.settings) { // theme: raw
                 stack(.settings) { SettingsView() }
             }
             #endif
@@ -626,8 +626,8 @@ private struct Transport: ViewModifier {
 
     private static let items: [(id: TabShell.TabID, title: String, icon: String)] = [
         (.queue, "Queue", Icon.queueSection),
-        (.library, "Library", "music.note.house"),
-        (.settings, "Settings", "gearshape"),
+        (.library, "Library", Icon.library),
+        (.settings, "Settings", Icon.settings),
         (.search, "Search", Icon.search),
     ]
     #endif
@@ -675,11 +675,11 @@ private struct TelevisionTabs: View {
     }
 
     private static let items: [(id: TabShell.TabID, title: String, icon: String)] = [
-        (.nowPlaying, "Now Playing", "play.circle"),
+        (.nowPlaying, "Now Playing", Icon.nowPlaying),
         (.queue, "Queue", Icon.queueSection),
-        (.library, "Library", "music.note.house"),
+        (.library, "Library", Icon.library),
         (.search, "Search", Icon.search),
-        (.settings, "Settings", "gearshape"),
+        (.settings, "Settings", Icon.settings),
     ]
 }
 #endif
@@ -751,7 +751,7 @@ private struct PadSidebar: View {
             Section {
                 row(.queue, "Queue", Icon.queueSection)
                 row(.search, "Search", Icon.search)
-                row(.settings, "Settings", "gearshape")
+                row(.settings, "Settings", Icon.settings)
             }
             Section {
                 ForEach(sections, id: \.section) { item in
@@ -767,8 +767,8 @@ private struct PadSidebar: View {
                 ForEach(playlists.playlists, id: \.id) { playlist in
                     row(.section(.playlist(playlist.id)), playlist.name, Icon.playlist, data: true)
                         .contextMenu {
-                            Button("Play", systemImage: Icon.play) { play(playlist, false) }
-                            Button("Shuffle", systemImage: Icon.shuffle) { play(playlist, true) }
+                            Button("Play", koan: Icon.play) { play(playlist, false) }
+                            Button("Shuffle", koan: Icon.shuffle) { play(playlist, true) }
                         }
                         .listRowSeparator(.hidden)
                 }

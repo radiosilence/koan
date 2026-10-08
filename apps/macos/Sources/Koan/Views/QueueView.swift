@@ -110,7 +110,7 @@ struct QueueView: View {
 
             if listed.isEmpty {
                 EmptyState(
-                    icon: "list.bullet",
+                    icon: Icon.queueSection,
                     title: "Queue is empty",
                     detail: emptyDetail
                 )
@@ -365,8 +365,8 @@ struct QueueView: View {
                 }
             } else {
                 Picker("Queue layout", selection: $grouped) { // theme: raw — the platform's look; the theme's is above
-                    Image(systemName: Icon.album).tag(true)
-                    Image(systemName: Icon.queueSection).tag(false)
+                    KoanIcon(Icon.album).tag(true)
+                    KoanIcon(Icon.queueSection).tag(false)
                 }
                 .pickerStyle(.segmented) // theme: raw
                 .labelsHidden()
@@ -377,9 +377,9 @@ struct QueueView: View {
             // Undo is a keyboard's idea of a control. The buttons exist to show
             // ⌘Z is available, and there is no ⌘Z on a phone.
             #if os(macOS)
-            Button { player.undo() } label: { Image(systemName: Icon.undo) }
+            Button { player.undo() } label: { KoanIcon(Icon.undo) }
                 .help("Undo (⌘Z)")
-            Button { player.redo() } label: { Image(systemName: Icon.redo) }
+            Button { player.redo() } label: { KoanIcon(Icon.redo) }
                 .help("Redo (⇧⌘Z)")
             #endif
 
@@ -389,18 +389,18 @@ struct QueueView: View {
                 Button {
                     playlists.naming = player.queue.compactMap(\.trackId)
                 } label: {
-                    Label("Save as Playlist…", systemImage: Icon.playlist)
+                    Label("Save as Playlist…", koan: Icon.playlist)
                 }
                 Divider()
                 #endif
                 Button(role: .destructive) { player.clearQueue() } label: {
-                    Label("Clear Queue", systemImage: Icon.clear)
+                    Label("Clear Queue", koan: Icon.clear)
                 }
             } label: {
                 #if os(tvOS)
-                Image(systemName: "ellipsis")
+                KoanIcon(Icon.more)
                 #else
-                Image(systemName: KoanTheme.isOn ? "ellipsis" : "ellipsis.circle")
+                KoanIcon(KoanTheme.isOn ? Icon.more : Icon.moreCircled)
                 #endif
             }
             #if os(tvOS)
@@ -438,7 +438,7 @@ struct QueueView: View {
     /// in `ink` over an accent underline, the other `muted`.
     private func layoutOption(_ value: Bool, _ icon: String, _ label: String) -> some View {
         Button { grouped = value } label: {
-            Image(systemName: icon)
+            KoanIcon(icon)
                 .padding(.bottom, KoanTheme.Space.xs)
                 .overlay(alignment: .bottom) {
                     if grouped == value { Rectangle().fill(.tint).frame(height: KoanTheme.hairline) }
@@ -505,12 +505,12 @@ struct QueueView: View {
         Button {
             if let first = group.items.first { player.play(itemId: first.queueItemId) }
         } label: {
-            Label("Play", systemImage: Icon.play)
+            Label("Play", koan: Icon.play)
         }
         Button {
             player.remove(itemIds: group.items.map(\.queueItemId))
         } label: {
-            Label("Remove Album", systemImage: Icon.remove)
+            Label("Remove Album", koan: Icon.remove)
         }
         Divider()
         AddToPlaylistMenu { $0(group.items.compactMap(\.trackId)) }
@@ -518,7 +518,7 @@ struct QueueView: View {
         organizeButton(trackIds: group.items.compactMap(\.trackId), title: group.album)
         if let trackId = group.items.compactMap(\.trackId).first {
             Button { showInLibrary(trackId: trackId, highlight: false) } label: {
-                Label("Go to Album", systemImage: Icon.album)
+                Label("Go to Album", koan: Icon.album)
             }
         }
         Button {
@@ -530,9 +530,9 @@ struct QueueView: View {
             )
         } label: {
             #if os(tvOS)
-            Label("Share Album…", systemImage: Icon.share)
+            Label("Share Album…", koan: Icon.share)
             #else
-            Label("Copy Album Share Link", systemImage: Icon.share)
+            Label("Copy Album Share Link", koan: Icon.share)
             #endif
         }
     }
@@ -557,10 +557,10 @@ struct QueueView: View {
     @ViewBuilder
     private func trackMenu(_ item: QueueItem) -> some View {
         Button { player.play(itemId: item.queueItemId) } label: {
-            Label("Play", systemImage: Icon.play)
+            Label("Play", koan: Icon.play)
         }
         Button { player.remove(itemIds: [item.queueItemId]) } label: {
-            Label("Remove", systemImage: Icon.remove)
+            Label("Remove", koan: Icon.remove)
         }
         if let trackId = item.trackId {
             Divider()
@@ -571,19 +571,19 @@ struct QueueView: View {
             Button { library.toggleFavourite(track: trackId) } label: {
                 Label(
                     favourited ? "Remove Favourite" : "Favourite Track",
-                    systemImage: favourited ? Icon.favourited : Icon.favourite
+                    koan: favourited ? Icon.favourited : Icon.favourite
                 )
             }
             Button { showInLibrary(trackId: trackId, highlight: true) } label: {
-                Label("Go to Album", systemImage: Icon.album)
+                Label("Go to Album", koan: Icon.album)
             }
             if item.onDisk {
                 Button { library.clearDownloads(trackIds: [trackId]) } label: {
-                    Label("Remove Downloaded File", systemImage: Icon.clear)
+                    Label("Remove Downloaded File", koan: Icon.clear)
                 }
             } else {
                 Button { library.downloadToCache(trackIds: [trackId]) } label: {
-                    Label("Download to Cache", systemImage: Icon.downloads)
+                    Label("Download to Cache", koan: Icon.downloads)
                 }
             }
             Button {
@@ -594,7 +594,7 @@ struct QueueView: View {
                     player: player
                 )
             } label: {
-                Label(Share.label, systemImage: Icon.share)
+                Label(Share.label, koan: Icon.share)
             }
         }
     }
@@ -662,17 +662,17 @@ struct QueueView: View {
             }
         } else {
             Button { player.remove(itemIds: itemIds(in: ids)) } label: {
-                Label("Remove", systemImage: Icon.remove)
+                Label("Remove", koan: Icon.remove)
             }
             Divider()
             AddToPlaylistMenu { $0(trackIds(in: ids)) }
             Divider()
             organizeButton(trackIds: trackIds(in: ids), title: nil)
             Button { library.downloadToCache(trackIds: trackIds(in: ids)) } label: {
-                Label("Download to Cache", systemImage: Icon.downloads)
+                Label("Download to Cache", koan: Icon.downloads)
             }
             Button { library.clearDownloads(trackIds: trackIds(in: ids)) } label: {
-                Label("Remove Downloaded Files", systemImage: Icon.clear)
+                Label("Remove Downloaded Files", koan: Icon.clear)
             }
         }
     }
@@ -702,7 +702,7 @@ struct QueueView: View {
                 )
             }
         } label: {
-            Label("Organize Files…", systemImage: Icon.organize)
+            Label("Organize Files…", koan: Icon.organize)
         }
         .disabled(trackIds.isEmpty)
         #endif
@@ -873,10 +873,10 @@ private struct QueueSelectionHeader: View {
                 .fixedSize()
             Group {
                 Button { selection = [] } label: {
-                    Label("Clear", systemImage: Icon.deselect)
+                    Label("Clear", koan: Icon.deselect)
                 }
                 Button(role: .destructive, action: remove) {
-                    Label("Remove", systemImage: Icon.remove)
+                    Label("Remove", koan: Icon.remove)
                 }
             }
             .fixedSize()
@@ -913,7 +913,7 @@ private struct JumpToPlayingButton: View {
         Button { ui.toggleFollowingQueue() } label: {
             // On a disc of the tint while following, so the state reads by
             // shape as well as colour.
-            Image(systemName: Icon.jumpToPlaying)
+            KoanIcon(Icon.jumpToPlaying)
                 .foregroundStyle(following ? AnyShapeStyle(.tint) : KoanTheme.style(.ink, system: .primary))
                 .padding(4)
                 .background(

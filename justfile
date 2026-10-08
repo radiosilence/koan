@@ -39,6 +39,22 @@ css:
     tailwindcss --input crates/koan-server/styles/ui.css --output crates/koan-server/assets/ui.css
     tailwindcss --input crates/koan-server/styles/share.css --output crates/koan-server/assets/share.css
 
+# Compile the kōan icon set (apps/macos/Resources/Icons/*.svg) into
+# Support/KoanGlyphs.swift. The output is committed; `--check` fails if stale.
+icons *args:
+    python3 scripts/icons.py {{args}}
+
+# Every glyph of the icon set beside its SF Symbol, on one page, drawn by the
+# apps' own glyph code: target/icons-sheet.png.
+icons-sheet: icons
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out="${CARGO_TARGET_DIR:-target}"
+    mkdir -p "$out"
+    swiftc -O -o "$out/icons-sheet" apps/macos/tools/icons-sheet/main.swift \
+        apps/macos/Sources/Koan/Support/KoanGlyph.swift apps/macos/Sources/Koan/Support/KoanGlyphs.swift
+    "$out/icons-sheet" "$out/icons-sheet.png" site/public/geist-mono.woff2
+
 # Install dev build to ~/.local/bin/koan-dev
 install-dev:
     cargo build --release
@@ -430,6 +446,15 @@ theme-leaks:
         '[^.]\.(labelColor|secondaryLabelColor|tertiaryLabelColor)\b'
     )
     found=0
+    # Icons go through the theme's role, which draws the kōan set in the theme
+    # and SF Symbols otherwise; every `Icon` has a glyph.
+    python3 scripts/icons.py --check || found=1
+    hits=$(grep -rnE 'Image\(systemName:|systemImage:|systemSymbolName:|UIImage\(systemName:' apps/macos/Sources --include='*.swift' \
+        | grep -v -e 'Support/Icons.swift' -e 'Support/KoanGlyph.swift' -e 'Views/LayerSymbol.swift' -e '// theme: raw')
+    if [ -n "$hits" ]; then
+        found=1
+        echo "$hits"
+    fi
     for pattern in "${patterns[@]}"; do
         hits=$(grep -rnE "$pattern" apps/macos/Sources --include='*.swift' \
             | grep -v -e 'Support/KoanTheme.swift' -e '// theme: raw' -e 'role(\.' -e 'NSFont.role(' -e 'KoanTheme\.' -e 'Support/Graphics.swift' -e '\.pointSize' -e 'koanBad(' -e 'koanSelection(')

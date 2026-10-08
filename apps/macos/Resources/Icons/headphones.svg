@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" data-sf="headphones" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter">
+  <path d="M4 17 V12 A8 8 0 0 1 20 12 V17"/>
+  <rect x="3" y="14" width="4" height="6"/>
+  <rect x="17" y="14" width="4" height="6"/>
+</svg>

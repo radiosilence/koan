@@ -66,11 +66,11 @@ struct SearchResultsView: View {
 
     @ViewBuilder private var empty: some View {
         if !search.hasQuery {
-            EmptyState(icon: "magnifyingglass", title: "Search your library")
+            EmptyState(icon: Icon.search, title: "Search your library")
                 .frame(maxWidth: .infinity, minHeight: 320)
         } else {
             EmptyState(
-                icon: "magnifyingglass",
+                icon: Icon.search,
                 title: "Nothing found",
                 detail: "No artists, albums or tracks match “\(search.query)”."
             )
@@ -233,7 +233,7 @@ private struct SectionHeading: View {
                 Text("\(total ?? UInt64(count))")
                     .font(.role(.fine, system: .caption.monospacedDigit()))
                     .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
-                Image(systemName: "chevron.right")
+                KoanIcon(Icon.disclosure)
                     .font(.role(.fine, system: .caption.weight(.semibold)))
                     .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 Spacer(minLength: 0)

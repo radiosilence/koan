@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" data-sf="keyboard" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter">
+  <rect x="2.5" y="6" width="19" height="12"/>
+  <path d="M5.75 9.5 h.5"/>
+  <path d="M9.25 9.5 h.5"/>
+  <path d="M12.75 9.5 h.5"/>
+  <path d="M16.25 9.5 h.5"/>
+  <path d="M7.5 12 h.5"/>
+  <path d="M11 12 h.5"/>
+  <path d="M14.5 12 h.5"/>
+  <path d="M8 14.5 H16"/>
+</svg>

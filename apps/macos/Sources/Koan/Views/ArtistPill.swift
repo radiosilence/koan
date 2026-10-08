@@ -18,7 +18,7 @@ struct ArtistPill: View {
                 if let selection, selection.isActive {
                     SelectionTick(key: playable.key, selection: selection)
                 } else {
-                    Image(systemName: "music.mic")
+                    KoanIcon(Icon.artist)
                         .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                 }
             }

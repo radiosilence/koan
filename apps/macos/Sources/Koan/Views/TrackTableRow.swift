@@ -260,10 +260,10 @@ final class TrackTableRow: NSTableCellView, TableRow {
         mark.isHidden = !showsMark
         if context.picking {
             markImage = ticked
-                ? Symbol.image("checkmark.circle.fill", size: 13, colours: [.white, context.tint], appearance: appearance)
-                : Symbol.image("circle", size: 13, colours: [.koanTertiaryLabel], appearance: appearance)
+                ? Symbol.image(Icon.picked, size: 13, colours: [.white, context.tint], appearance: appearance)
+                : Symbol.image(Icon.unpicked, size: 13, colours: [.koanTertiaryLabel], appearance: appearance)
         } else if showsMark {
-            markImage = Symbol.image("play.circle.fill", size: 15, colours: [selected && !onSleeve ? .white : context.tint], appearance: appearance)
+            markImage = Symbol.image(Icon.playMark, size: 15, colours: [selected && !onSleeve ? .white : context.tint], appearance: appearance)
         }
         badge.isHidden = !onSleeve || !(showsMark || current)
         appearance.performAsCurrentDrawingAppearance {
@@ -298,7 +298,7 @@ final class TrackTableRow: NSTableCellView, TableRow {
         CATransaction.setDisableActions(true)
         note.isHidden = item.note == nil
         if item.note != nil {
-            noteImage = Symbol.image("antenna.radiowaves.left.and.right", size: 10, colours: [selected ? .white : .koanTertiaryLabel], appearance: appearance)
+            noteImage = Symbol.image(Icon.renderer, size: 10, colours: [selected ? .white : .koanTertiaryLabel], appearance: appearance)
         }
         CATransaction.commit()
         toolTip = item.note ?? toolTip
@@ -308,7 +308,7 @@ final class TrackTableRow: NSTableCellView, TableRow {
         CATransaction.setDisableActions(true)
         heart.isHidden = !context.columns.contains(.heart) || !(favourite || hovered != nil)
         heartImage = Symbol.image(
-            favourite ? "heart.fill" : "heart", size: 12,
+            favourite ? Icon.favourited : Icon.favourite, size: 12,
             colours: [favourite ? NSColor.koanBad(.systemRed) : (selected ? .white : .koanTertiaryLabel)], appearance: appearance
         )
         CATransaction.commit()
@@ -383,7 +383,7 @@ final class TrackTableRow: NSTableCellView, TableRow {
             CATransaction.setDisableActions(true)
             sleeve.backgroundColor = sleeve.contents == nil ? NSColor.koanQuaternaryLabel.cgColor : nil
             placeholder.strokeColor = NSColor.koanTertiaryLabel.cgColor
-            noRecord.contents = Symbol.image("music.note", size: 10, colours: [.koanTertiaryLabel], appearance: effectiveAppearance)
+            noRecord.contents = Symbol.image(Icon.track, size: 10, colours: [.koanTertiaryLabel], appearance: effectiveAppearance)
             CATransaction.commit()
         }
     }

@@ -244,7 +244,7 @@ struct SidebarView: View {
     /// only because the row takes no selection — on a selectable row it would
     /// be racing the gesture that selects it.
     private var newPlaylistRow: some View {
-        KoanLabel("New Playlist…", icon: "plus")
+        KoanLabel("New Playlist…", icon: Icon.add)
             .foregroundStyle(KoanTheme.style(.muted))
             .koanNavRow(selected: false)
             .frame(maxWidth: .infinity, alignment: .leading)

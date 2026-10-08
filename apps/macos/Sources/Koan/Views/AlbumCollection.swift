@@ -482,7 +482,7 @@ final class AlbumTile: NSCollectionViewItem {
         sleeve.addSublayer(dim)
         sleeve.addSublayer(downloadBar)
 
-        playMark.contents = Symbol.image("play.circle.fill", size: 34, colours: [.white])
+        playMark.contents = Symbol.image(Icon.playMark, size: 34, colours: [.white])
         playMark.isHidden = true
         playMark.shadowOpacity = 0.33
         playMark.shadowRadius = 4
@@ -580,8 +580,8 @@ final class AlbumTile: NSCollectionViewItem {
         tick.isHidden = !context.selecting
         if context.selecting {
             tick.contents = selected
-                ? Symbol.image("checkmark.circle.fill", size: 20, colours: [.white, context.tint])
-                : Symbol.image("circle", size: 20, colours: [.white, .black.withAlphaComponent(0.25)])
+                ? Symbol.image(Icon.picked, size: 20, colours: [.white, context.tint])
+                : Symbol.image(Icon.unpicked, size: 20, colours: [.white, .black.withAlphaComponent(0.25)])
         }
         CATransaction.commit()
 
@@ -711,8 +711,8 @@ final class AlbumTile: NSCollectionViewItem {
         ensō.lineWidth = side * 0.045
         ensō.path = EnsoShape().path(in: CGRect(x: inset, y: inset, width: side - 2 * inset, height: side - 2 * inset)).cgPath
 
-        playMark.frame = Symbol.frame(of: Symbol.image("play.circle.fill", size: 34, colours: [.white]), centredIn: art)
-        tick.frame = Symbol.frame(of: Symbol.image("circle", size: 20, colours: [.white, .black.withAlphaComponent(0.25)]), at: CGPoint(x: 7, y: 7))
+        playMark.frame = Symbol.frame(of: Symbol.image(Icon.playMark, size: 34, colours: [.white]), centredIn: art)
+        tick.frame = Symbol.frame(of: Symbol.image(Icon.unpicked, size: 20, colours: [.white, .black.withAlphaComponent(0.25)]), at: CGPoint(x: 7, y: 7))
 
         let text = codec.string as? String ?? ""
         let textWidth = ceil((text as NSString).size(withAttributes: [.font: Self.codecFont]).width)
@@ -903,9 +903,8 @@ private final class HeartButton: NSButton {
     var isOn = false {
         didSet {
             guard isOn != oldValue || glyph.image == nil else { return }
-            let name = isOn ? "heart.fill" : "heart"
-            glyph.image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
-                .withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
+            let name = isOn ? Icon.favourited : Icon.favourite
+            glyph.image = Symbol.nsImage(name, size: 13)
             glyph.contentTintColor = isOn ? NSColor.koanBad(.systemRed) : .koanTertiaryLabel
             setAccessibilityLabel(isOn ? "Remove favourite" : "Favourite")
             toolTip = isOn ? "Remove favourite" : "Favourite"

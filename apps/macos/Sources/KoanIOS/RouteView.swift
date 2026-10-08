@@ -176,7 +176,7 @@ private struct SortMenu<Value: Hashable>: View {
         #if os(tvOS)
         if KoanTheme.isOn {
             Button { open = true } label: {
-                KoanLabel("Sort", icon: "arrow.up.arrow.down")
+                KoanLabel("Sort", icon: Icon.sort)
             }
             .televisionPanel(isPresented: $open, title: "Sort") {
                 TelevisionChoices(
@@ -198,7 +198,7 @@ private struct SortMenu<Value: Hashable>: View {
                 ForEach(options, id: \.value) { Text($0.label).tag($0.value) }
             }
         } label: {
-            Label("Sort", systemImage: "arrow.up.arrow.down")
+            Label("Sort", koan: Icon.sort)
         }
     }
 }
@@ -231,7 +231,7 @@ private struct BrowseControlsRow: View {
     @ViewBuilder private var browserControls: some View {
         if section == .albums, library.albumSort == .random {
             Button { library.reshuffleAlbums() } label: {
-                Label("Shuffle", systemImage: Icon.reshuffle)
+                Label("Shuffle", koan: Icon.reshuffle)
             }
         }
         BrowseFilterButton()
@@ -279,7 +279,7 @@ private struct AlbumSortControls: ToolbarContent {
                 Button {
                     library.reshuffleAlbums()
                 } label: {
-                    Label("Shuffle", systemImage: Icon.reshuffle)
+                    Label("Shuffle", koan: Icon.reshuffle)
                 }
                 .koanControl()
             }

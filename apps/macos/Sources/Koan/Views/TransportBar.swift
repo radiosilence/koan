@@ -119,7 +119,7 @@ struct TransportBar: View {
                         .fill(.quaternary)
                         .frame(width: 44, height: 44)
                         .overlay {
-                            Image(systemName: "music.note")
+                            KoanIcon(Icon.track)
                                 .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                         }
                 }
@@ -198,7 +198,7 @@ struct TransportBar: View {
                 backSkips += 1
                 player.previous()
             } label: {
-                Image(systemName: Icon.previous)
+                KoanIcon(Icon.previous)
                     .symbolEffect(.bounce, value: reduceMotion ? 0 : backSkips)
             }
             .help("Previous track (⌘←)")
@@ -209,7 +209,7 @@ struct TransportBar: View {
                 forwardSkips += 1
                 player.next()
             } label: {
-                Image(systemName: Icon.next)
+                KoanIcon(Icon.next)
                     .symbolEffect(.bounce, value: reduceMotion ? 0 : forwardSkips)
             }
             .help("Next track (⌘→)")
@@ -518,7 +518,7 @@ private struct PlayPauseButton: View {
         // Bigger than the pair either side of it: it is the one you reach
         // for without looking.
         Button(action: player.togglePlayPause) {
-            Image(systemName: player.isPlaying ? "pause.fill" : Icon.play)
+            KoanIcon(player.isPlaying ? Icon.pause : Icon.play)
                 .font(.system(size: KoanTheme.metric(13, system: 25)))
                 .contentTransition(.symbolEffect(.replace))
                 .frame(width: KoanTheme.metric(16, system: 30))
@@ -536,7 +536,7 @@ struct ShuffleButton: View {
 
     var body: some View {
         Button(action: player.toggleShuffle) {
-            Image(systemName: Icon.shuffle)
+            KoanIcon(Icon.shuffle)
                 .foregroundStyle(KoanTheme.style(player.shuffle ? .accent : .muted))
         }
         .help(player.shuffle ? "Shuffle is on: turn it off to put the queue back" : "Shuffle the rest of the queue")
@@ -552,7 +552,7 @@ struct RepeatButton: View {
     var body: some View {
         let mode = player.repeatMode
         Button(action: player.cycleRepeat) {
-            Image(systemName: mode == .one ? Icon.repeatOne : Icon.repeatQueue)
+            KoanIcon(mode == .one ? Icon.repeatOne : Icon.repeatQueue)
                 .foregroundStyle(KoanTheme.style(mode == .off ? .muted : .accent))
                 .contentTransition(.symbolEffect(.replace))
         }
@@ -599,7 +599,7 @@ struct SleepButton: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: sleep == nil ? "moon" : "moon.zzz.fill")
+                KoanIcon(sleep == nil ? Icon.sleep : Icon.sleepSet)
                 switch sleep {
                 case _ where player.sleepFading: Text("Fading").koanCase()
                 case .at(let unixMs):
