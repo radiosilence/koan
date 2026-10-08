@@ -204,7 +204,7 @@ private struct YearField: View {
     @State private var text = ""
 
     var body: some View {
-        TextField(prompt, text: $text, prompt: Text(prompt))
+        TextField(prompt, text: $text, prompt: Text(KoanTheme.label(prompt)))
             .labelsHidden()
             .multilineTextAlignment(.center)
             #if os(tvOS)
