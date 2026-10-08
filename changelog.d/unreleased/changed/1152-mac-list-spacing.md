@@ -1,0 +1,1 @@
+- **Even spacing on the Mac's lists.** Album, playlist and queue pages share one 16pt margin for the header's side and top and for the gap above the first track, and track rows are tighter.
