@@ -17,9 +17,8 @@ enum RowHit {
 }
 
 /// A row of a `KoanTable`, which lays out its own columns from its width.
-/// A cell resized by its table is not asked to lay out again by AppKit, so a
-/// table narrowed by the lyrics opening left every row's trailing columns
-/// past its new edge, prepared rows off screen included.
+/// Resized by its table, prepared rows off screen included, it lays out again
+/// at the new width rather than waiting to be asked.
 class TableCell: NSTableCellView {
     override func setFrameSize(_ newSize: NSSize) {
         let resized = newSize.width != frame.width
