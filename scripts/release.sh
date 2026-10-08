@@ -22,7 +22,7 @@ done
 
 cd "$(git rev-parse --show-toplevel)"
 tag="v$version"
-branch="release/$tag"
+branch="release-$tag"
 
 [ -z "$(git status --porcelain)" ] || { echo "working tree is not clean" >&2; exit 1; }
 git fetch origin --quiet
@@ -73,6 +73,6 @@ fi
 
 cat <<MSG
 
-Merge nothing else to main until \`gh release view $tag\` succeeds, then run:
+Once \`gh release view $tag\` succeeds, deploy the server:
   gh workflow run update-apps.yml -R radiosilence/jaritanet
 MSG
