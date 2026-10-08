@@ -161,16 +161,16 @@ pub enum PlayerCommand {
     ReleaseRenderer(crossbeam_channel::Sender<()>),
     /// Set the volume of the renderer being played to, 0–100.
     SetRendererVolume(u8),
-    /// Turn shuffle on or off: the items after the cursor reordered at
-    /// random, or put back as they were. One undo step.
+    /// Turn shuffle on or off. The queue never moves: shuffle chooses which
+    /// of the items yet to play this pass plays next.
     SetShuffle(bool),
     /// What follows a track at its end: the queue's next, the first again
     /// after the last, or the same item.
     SetRepeat(Repeat),
     /// Set the sleep timer, or with `None` cancel it.
     SetSleepTimer(Option<SleepTimer>),
-    /// Take the mode a saved session had, its queue already restored in the
-    /// order it was saved. Shuffle reorders nothing here.
+    /// Take the mode a saved session had. Sent before its queue, so a
+    /// shuffled one is played in a play order drawn as the queue arrives.
     RestorePlayMode(PlayMode),
     /// What the renderer was heard to do, during the session numbered
     /// `session`. Dropped once that session is over, like `DecodeFinished`.

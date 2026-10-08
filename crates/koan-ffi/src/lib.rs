@@ -649,7 +649,8 @@ impl KoanEngine {
     }
 
     /// Shuffle on or off, here or on the device being controlled. On, the
-    /// rest of the queue is reordered at random; off, it goes back as it was.
+    /// tracks yet to play this pass play in a random order; the queue itself
+    /// never moves.
     pub async fn set_shuffle(self: Arc<Self>, on: bool) -> Result<(), KoanError> {
         offload::sequenced(move || self.send(PlayerCommand::SetShuffle(on))).await
     }
@@ -2132,7 +2133,7 @@ impl KoanEngine {
             let db = self.db()?;
             // Read before the snapshot: an edit landing in between moves the
             // version again, and the next save writes it.
-            let content = self.state.content_version();
+            let content = self.state.saved_version();
             if self.saved_content.load(Ordering::Acquire) == content {
                 return self.write_position(&db);
             }
@@ -2241,7 +2242,8 @@ impl KoanEngine {
         let restored = offload::sequenced(move || {
             let db = self.db()?;
             // Before the queue and whether there is one: the mode is the
-            // player's, and a queue added under it would be shuffled again.
+            // player's, and a shuffled queue's play order is drawn as it
+            // arrives, from the rows not marked played.
             let mode = queries::load_play_mode(&db.conn).map_err(fav_err)?;
             self.send_local(PlayerCommand::RestorePlayMode(mode))?;
             let Some(saved) = queries::load_playback_state(&db.conn).map_err(fav_err)? else {
@@ -6443,7 +6445,7 @@ fn restore_items(db: &Database, saved: &[PersistedQueueItem]) -> Vec<PlaylistIte
         .zip(ids)
         .map(|(saved_item, id)| match id.and_then(|_| resolved.next()) {
             Some(item) => PlaylistItem {
-                pre_shuffle: saved_item.pre_shuffle,
+                played: saved_item.played.unwrap_or(false),
                 ..item
             },
             None => saved_item.to_playlist_item(),
@@ -7083,7 +7085,7 @@ mod restore_tests {
             disc: None,
             duration_ms: None,
             db_id,
-            pre_shuffle: None,
+            played: false,
         }
     }
 

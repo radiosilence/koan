@@ -115,8 +115,8 @@ pub enum LinkCommand {
     },
     Undo,
     Redo,
-    /// Turn shuffle on or off: the rest of the queue reordered at random, or
-    /// put back as it was.
+    /// Turn shuffle on or off. The queue keeps its order; shuffle picks
+    /// which track yet to play this pass plays next.
     Shuffle {
         on: bool,
     },

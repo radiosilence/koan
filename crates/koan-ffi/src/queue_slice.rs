@@ -235,7 +235,7 @@ mod tests {
             disc: Some(1),
             duration_ms: Some(240_000),
             state,
-            pre_shuffle: None,
+            played: false,
         }
     }
 

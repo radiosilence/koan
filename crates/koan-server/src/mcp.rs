@@ -263,7 +263,7 @@ The user listens in kōan apps on their devices, linked to this server. Query \
 title artist current } }` to see each device, what it is playing and what it has queued. Every \
 command about the user's music goes to a device:
 - `controlClient(action: PAUSE|RESUME|NEXT|PREVIOUS)`, `seekOnClient(positionMs)`
-- `setPlayModeOnClient(shuffle, repeat: OFF|QUEUE|ONE)`: shuffle reorders the rest of the device's queue, and turning it off puts the queue back; `clients { shuffle repeat }` reports each device's modes
+- `setPlayModeOnClient(shuffle, repeat: OFF|QUEUE|ONE)`: shuffle plays the tracks not yet played in a random order, each once, without moving the queue, and turning it off carries on in queue order; `clients { shuffle repeat }` reports each device's modes
 - `setSleepTimerOnClient(minutes)` or `setSleepTimerOnClient(endOf: TRACK|RECORD)` (\"stop the music in 30 minutes\", \"after this album\"): it fades out and pauses, the queue kept; `cancelSleepTimerOnClient`; `clients { sleep { remainingMs endOf } }` shows what is set
 - `playOnClient(trackIds, startAt)` replaces the queue and plays; `enqueue: true` appends. \
 A phone iOS has suspended is not linked but is still reached. Music comes up there as a \

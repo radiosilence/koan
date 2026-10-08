@@ -99,8 +99,9 @@ impl Repeat {
     }
 }
 
-/// The transport's play mode. Shuffle is not an order kept beside the queue:
-/// turning it on reorders the queue itself, so what is listed is what plays.
+/// The transport's play mode. Shuffle never moves the queue: it plays the
+/// queue in an order kept beside it (`PlayOrder`), and repeat says what
+/// follows the last track of that order or of the queue.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct PlayMode {
     pub shuffle: bool,
@@ -151,6 +152,75 @@ pub enum Sleep {
     },
     EndOfTrack,
     EndOfRecord,
+}
+
+/// What identifies a track for shuffle. Rows sharing one are one track, which
+/// a pass plays once: a queue holding a track twice does not give it two
+/// chances.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum TrackKey<'a> {
+    Library(i64),
+    File(&'a std::path::Path),
+}
+
+impl PlaylistItem {
+    fn key(&self) -> TrackKey<'_> {
+        match self.db_id {
+            Some(id) => TrackKey::Library(id),
+            None => TrackKey::File(&self.path),
+        }
+    }
+
+    fn playable(&self) -> bool {
+        !matches!(self.state, ItemState::Failed(_))
+    }
+}
+
+/// The order shuffle plays the queue in, held beside it and never shown as
+/// its order. Present while shuffle is on.
+///
+/// A pass plays every track in the queue once. `upcoming` is what is left of
+/// this one; it never holds a played row, the cursor's track, or two rows of
+/// one track. Rows queued while shuffle is on take random places in it, and
+/// rows removed leave it — `Playlist::reconcile` keeps it so after every
+/// edit. What plays next is `upcoming`'s first playable row, so the
+/// decoder's lookahead and the advance read one order and make one pick.
+#[derive(Debug, Clone, Default)]
+pub struct PlayOrder {
+    upcoming: Vec<QueueItemId>,
+    /// The order of the pass after this one, made when this one has nothing
+    /// left and the queue repeats. Kept rather than drawn at each look, so a
+    /// lookahead taken across the end of a pass is the pass that plays.
+    next_pass: Option<Vec<QueueItemId>>,
+    /// The rows the cursor has been on, oldest first: what Previous goes
+    /// back along.
+    history: Vec<QueueItemId>,
+}
+
+/// Put `fresh` into `order` at random places, leaving the order of what is
+/// there alone.
+fn scatter(order: &mut Vec<QueueItemId>, mut fresh: Vec<QueueItemId>) {
+    if fresh.is_empty() {
+        return;
+    }
+    crate::helpers::shuffle(&mut fresh);
+    let Some(mut rng) = crate::helpers::Rng::seeded() else {
+        order.extend(fresh);
+        return;
+    };
+    let old = std::mem::take(order);
+    let (mut left, mut right) = (old.len(), fresh.len());
+    let (mut old, mut fresh) = (old.into_iter(), fresh.into_iter());
+    order.reserve(left + right);
+    while left + right > 0 {
+        if rng.below(left + right) < left {
+            order.extend(old.next());
+            left -= 1;
+        } else {
+            order.extend(fresh.next());
+            right -= 1;
+        }
+    }
 }
 
 /// What follows `after` under `repeat`: `Some(None)` at the end of the queue,
@@ -335,17 +405,202 @@ pub struct PlaylistItem {
     /// What the item can say about itself. Ask [`SharedPlayerState::load_state`]
     /// for this together with any transfer against it.
     pub state: ItemState,
-    /// Where the item stood in the queue before shuffle was turned on, which
-    /// is where turning it off puts it back. `None` while shuffle is off, and
-    /// for an item added since it was turned on, which stays where it was put.
-    pub pre_shuffle: Option<u32>,
+    /// The item has played in this pass of the queue: set when the
+    /// playhead reaches it, cleared when a repeating queue starts over. A
+    /// fact about the row, not its place relative to the cursor, so a queue
+    /// played out of order — shuffled, or jumped about in — shows what was
+    /// heard.
+    pub played: bool,
 }
 
-/// The playlist — one flat array, one cursor. Everything else derived.
+/// The playlist — one flat array, one cursor, and shuffle's order beside it.
 #[derive(Debug, Clone, Default)]
 pub struct Playlist {
     pub items: Vec<PlaylistItem>,
     pub cursor: Option<QueueItemId>,
+    pub order: Option<PlayOrder>,
+}
+
+impl Playlist {
+    fn find(&self, id: QueueItemId) -> Option<&PlaylistItem> {
+        self.items.iter().find(|item| item.id == id)
+    }
+
+    /// Bring shuffle's order up to date with the queue: rows gone or played
+    /// leave it, and rows that could play but are not in it — queued since,
+    /// or a duplicate whose twin was removed — take random places in it.
+    fn reconcile(&mut self) {
+        let Playlist {
+            items,
+            cursor,
+            order,
+        } = self;
+        let Some(order) = order.as_mut() else {
+            return;
+        };
+        let rows: HashMap<QueueItemId, &PlaylistItem> =
+            items.iter().map(|item| (item.id, item)).collect();
+
+        let mut seen: std::collections::HashSet<TrackKey> = items
+            .iter()
+            .filter(|item| item.played)
+            .map(PlaylistItem::key)
+            .chain(cursor.and_then(|c| rows.get(&c)).map(|item| item.key()))
+            .collect();
+        let mut take =
+            |item: &PlaylistItem| !item.played && item.playable() && seen.insert(item.key());
+        order
+            .upcoming
+            .retain(|id| rows.get(id).is_some_and(|item| take(item)));
+        let fresh = items
+            .iter()
+            .filter(|item| take(item))
+            .map(|item| item.id)
+            .collect();
+        scatter(&mut order.upcoming, fresh);
+
+        if let Some(next) = order.next_pass.as_mut() {
+            let mut seen = std::collections::HashSet::new();
+            let mut take = |item: &PlaylistItem| item.playable() && seen.insert(item.key());
+            next.retain(|id| rows.get(id).is_some_and(|item| take(item)));
+            let fresh = items
+                .iter()
+                .filter(|item| take(item))
+                .map(|item| item.id)
+                .collect();
+            scatter(next, fresh);
+        }
+
+        order.history.retain(|id| rows.contains_key(id));
+    }
+
+    /// Every track in the queue once, in a random order: a pass. Not opening
+    /// on `last`'s track when there is another, so the turn of a pass does
+    /// not play one track twice running.
+    fn new_pass(&self, last: Option<QueueItemId>) -> Vec<QueueItemId> {
+        let mut seen = std::collections::HashSet::new();
+        let mut pass: Vec<QueueItemId> = self
+            .items
+            .iter()
+            .filter(|item| item.playable() && seen.insert(item.key()))
+            .map(|item| item.id)
+            .collect();
+        crate::helpers::shuffle(&mut pass);
+        let last = last.and_then(|id| self.find(id)).map(PlaylistItem::key);
+        if pass.len() > 1 && last.is_some() && self.find(pass[0]).map(PlaylistItem::key) == last {
+            let other =
+                crate::helpers::Rng::seeded().map_or(1, |mut rng| 1 + rng.below(pass.len() - 1));
+            pass.swap(0, other);
+        }
+        pass
+    }
+
+    /// What plays after `after` — after nothing, with `None` — under
+    /// `repeat`, and whether getting there starts the queue over.
+    /// `Some(None)` at the end; `None` when `after` is no longer queued,
+    /// since starting over from a row nobody is at would replay the queue.
+    ///
+    /// In order, that is `follows`. Shuffled, it is the next playable row of
+    /// the play order, and once this pass is spent and the queue repeats,
+    /// the next pass's, which is drawn here the first time it is needed.
+    fn follows(
+        &mut self,
+        after: Option<QueueItemId>,
+        repeat: Repeat,
+    ) -> Option<(Option<QueueItemId>, bool)> {
+        let Some(order) = self.order.as_ref() else {
+            return match after {
+                Some(after) => follows(&self.items, after, repeat)
+                    .map(|(next, wrapped)| (next.map(|item| item.id), wrapped)),
+                None => Some((
+                    self.items
+                        .iter()
+                        .find(|item| item.playable())
+                        .map(|item| item.id),
+                    false,
+                )),
+            };
+        };
+        if let Some(after) = after {
+            let item = self.find(after)?;
+            if repeat == Repeat::One && item.playable() {
+                return Some((Some(after), false));
+            }
+        }
+        let playable = |id: &&QueueItemId| self.find(**id).is_some_and(PlaylistItem::playable);
+        let from = |order: &[QueueItemId]| {
+            after
+                .and_then(|after| order.iter().position(|id| *id == after))
+                .map_or(0, |at| at + 1)
+        };
+        let upcoming = &order.upcoming;
+        if let Some(next) = upcoming[from(upcoming)..].iter().find(playable) {
+            return Some((Some(*next), false));
+        }
+        if repeat == Repeat::Off {
+            return Some((None, false));
+        }
+        // From this pass, the next starts at its top. Only a lookahead that
+        // has already gone round steps on from within the next pass.
+        let within =
+            after.is_some_and(|after| Some(after) != self.cursor && !upcoming.contains(&after));
+        if order.next_pass.is_none() {
+            let pass = self.new_pass(after.or(self.cursor));
+            self.order.as_mut().expect("checked above").next_pass = Some(pass);
+        }
+        let next = self.order.as_ref()?.next_pass.as_ref()?;
+        let at = if within { from(next) } else { 0 };
+        let playable = |id: &&QueueItemId| self.find(**id).is_some_and(PlaylistItem::playable);
+        let found = next[at..].iter().chain(&next[..at]).find(playable).copied();
+        Some((found, true))
+    }
+
+    /// Put the cursor on `id`. Shuffled, its track leaves what is still to
+    /// play this pass, and the row goes on the history Previous walks back.
+    fn place_cursor(&mut self, id: Option<QueueItemId>) {
+        self.cursor = id;
+        let Some(id) = id else { return };
+        let Some(key) = self.find(id).map(PlaylistItem::key) else {
+            return;
+        };
+        let Playlist { items, order, .. } = self;
+        let Some(order) = order.as_mut() else { return };
+        let keys: HashMap<QueueItemId, TrackKey> =
+            items.iter().map(|item| (item.id, item.key())).collect();
+        order.upcoming.retain(|row| keys.get(row) != Some(&key));
+        if order.history.last() != Some(&id) {
+            order.history.push(id);
+        }
+    }
+
+    /// The cursor moves on to `id`, the row that follows it: at the end of a
+    /// track, or by Next. Getting there by starting the queue over begins a
+    /// new pass — nothing has played in it yet, and shuffled, the next
+    /// pass's order becomes what is left to play.
+    fn move_on(&mut self, id: QueueItemId) {
+        let wrapped = match &self.order {
+            Some(order) => {
+                !order.upcoming.contains(&id)
+                    && order
+                        .next_pass
+                        .as_ref()
+                        .is_some_and(|pass| pass.contains(&id))
+            }
+            None => {
+                let at = |id| self.items.iter().position(|item| item.id == id);
+                matches!((self.cursor.and_then(at), at(id)), (Some(from), Some(to)) if to < from)
+            }
+        };
+        if wrapped {
+            for item in &mut self.items {
+                item.played = false;
+            }
+            if let Some(order) = self.order.as_mut() {
+                order.upcoming = order.next_pass.take().unwrap_or_default();
+            }
+        }
+        self.place_cursor(Some(id));
+    }
 }
 
 // --- UI view types ---
@@ -455,6 +710,11 @@ pub struct SharedPlayerState {
     /// not move it.
     pending_version: AtomicU64,
 
+    /// Bumped when an item is marked played or a pass clears the marks: a
+    /// change to what a saved session holds that clients read as a status
+    /// change, not an edit. See `saved_version`.
+    played_version: AtomicU64,
+
     /// Every transfer this player's items are fetched by.
     downloads: Arc<DownloadStore>,
 
@@ -520,6 +780,7 @@ impl SharedPlayerState {
             playlist_version: AtomicU64::new(0),
             content_version: AtomicU64::new(0),
             pending_version: AtomicU64::new(0),
+            played_version: AtomicU64::new(0),
             downloads: DownloadStore::new(),
             quit_requested: AtomicBool::new(false),
             metadata_refresh_pending: AtomicBool::new(false),
@@ -907,8 +1168,19 @@ impl SharedPlayerState {
         self.content_version.load(Ordering::Acquire)
     }
 
-    /// `bump_version`, for a change to what a saved session holds.
+    /// Moves whenever anything a saved session holds changes: the content,
+    /// and which items have played. What a saver compares to know whether to
+    /// write the queue again.
+    pub fn saved_version(&self) -> u64 {
+        self.content_version()
+            .wrapping_add(self.played_version.load(Ordering::Acquire))
+    }
+
+    /// `bump_version`, for a change to what a saved session holds. Shuffle's
+    /// order is brought up to date with it here, so no edit can leave it
+    /// naming a row that is gone or missing one that was queued.
     fn bump_content(&self) {
+        self.playlist.write().reconcile();
         self.content_version.fetch_add(1, Ordering::AcqRel);
         self.pending_version.fetch_add(1, Ordering::AcqRel);
         self.bump_version();
@@ -1049,9 +1321,66 @@ impl SharedPlayerState {
     /// Set the cursor (what's playing / should play).
     pub fn set_cursor(&self, id: Option<QueueItemId>) {
         let mut pl = self.playlist.write();
-        pl.cursor = id;
+        pl.place_cursor(id);
         drop(pl);
         self.bump_version();
+    }
+
+    /// The playhead has moved on to `id`, the item that followed the cursor:
+    /// gaplessly, or a renderer taking the track it was handed. As an advance
+    /// does, a move that starts the queue over begins a new pass.
+    pub fn move_on_to(&self, id: QueueItemId) {
+        let mut pl = self.playlist.write();
+        pl.move_on(id);
+        drop(pl);
+        self.played_version.fetch_add(1, Ordering::AcqRel);
+        self.bump_version();
+    }
+
+    /// The item has started playing: mark it played for this pass.
+    pub fn mark_played(&self, id: QueueItemId) {
+        let mut pl = self.playlist.write();
+        let Some(item) = pl.items.iter_mut().find(|item| item.id == id) else {
+            return;
+        };
+        if std::mem::replace(&mut item.played, true) {
+            return;
+        }
+        drop(pl);
+        self.played_version.fetch_add(1, Ordering::AcqRel);
+        self.bump_version();
+    }
+
+    /// Turn shuffle's play order on or off. On, it is drawn from the items
+    /// yet to play this pass; off, it is dropped, and the queue — never moved
+    /// — plays on in its own order from the cursor.
+    pub fn set_shuffled(&self, on: bool) {
+        let mut pl = self.playlist.write();
+        if pl.order.is_some() == on {
+            return;
+        }
+        pl.order = on.then(PlayOrder::default);
+        let cursor = pl.cursor;
+        pl.reconcile();
+        pl.place_cursor(cursor);
+        drop(pl);
+        // The downloads follow the play order.
+        self.pending_version.fetch_add(1, Ordering::AcqRel);
+        self.bump_version();
+    }
+
+    pub fn is_shuffled(&self) -> bool {
+        self.playlist.read().order.is_some()
+    }
+
+    /// What is left of this pass of the play order, next first.
+    #[cfg(test)]
+    pub(crate) fn upcoming(&self) -> Vec<QueueItemId> {
+        let pl = self.playlist.read();
+        pl.order
+            .as_ref()
+            .map(|o| o.upcoming.clone())
+            .unwrap_or_default()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -1122,18 +1451,11 @@ impl SharedPlayerState {
             Repeat::Queue | Repeat::One => Repeat::Queue,
         };
         let mut pl = self.playlist.write();
-        let next = match pl.cursor {
-            Some(cid) => follows(&pl.items, cid, repeat)?.0?.id,
-            None => {
-                pl.items
-                    .iter()
-                    .find(|item| !matches!(item.state, ItemState::Failed(_)))?
-                    .id
-            }
-        };
-
-        pl.cursor = Some(next);
+        let cursor = pl.cursor;
+        let next = pl.follows(cursor, repeat)?.0?;
+        pl.move_on(next);
         drop(pl);
+        self.played_version.fetch_add(1, Ordering::AcqRel);
         self.bump_version();
         Some(next)
     }
@@ -1156,8 +1478,9 @@ impl SharedPlayerState {
     /// to follow, and starting from the top would gaplessly replay the queue.
     pub fn lookahead_after(&self, after_id: QueueItemId) -> Option<Lookahead> {
         let repeat = self.play_mode().repeat;
-        let pl = self.playlist.read();
-        let (next, wrapped) = follows(&pl.items, after_id, repeat)?;
+        let mut pl = self.playlist.write();
+        let (next, wrapped) = pl.follows(Some(after_id), repeat)?;
+        let next = next.and_then(|id| pl.find(id));
         Some(Lookahead {
             after: after_id,
             next: next.map(|item| item.id),
@@ -1177,16 +1500,37 @@ impl SharedPlayerState {
     /// track appended after the one a wrap left from.
     pub fn still_follows(&self, step: &Lookahead) -> bool {
         let repeat = self.play_mode().repeat;
-        let pl = self.playlist.read();
-        follows(&pl.items, step.after, repeat)
-            .is_some_and(|(next, _)| next.map(|item| item.id) == step.next)
+        self.playlist
+            .write()
+            .follows(Some(step.after), repeat)
+            .is_some_and(|(next, _)| next == step.next)
     }
 
     /// Retreat cursor to the previous item. Returns (id, path) if found.
     /// For prev_track — goes to the item before cursor regardless of load state,
     /// and from the first to the last while repeat is on.
+    ///
+    /// Shuffled, the previous item is the one played before this, from the
+    /// play order's history; with none, there is nothing to go back to.
     pub fn retreat_cursor(&self) -> Option<(QueueItemId, PathBuf)> {
         let mut pl = self.playlist.write();
+        if pl.order.is_some() {
+            let cursor = pl.cursor;
+            let history = &pl.order.as_ref()?.history;
+            let end =
+                history.len() - usize::from(cursor.is_some() && history.last() == cursor.as_ref());
+            let at = history[..end]
+                .iter()
+                .rposition(|id| pl.find(*id).is_some())?;
+            let id = history[at];
+            let path = pl.find(id)?.path.clone();
+            let order = pl.order.as_mut()?;
+            order.history.truncate(at + 1);
+            pl.cursor = Some(id);
+            drop(pl);
+            self.bump_version();
+            return Some((id, path));
+        }
         let cursor_pos = match pl.cursor {
             Some(cid) => pl.items.iter().position(|item| item.id == cid),
             None => None,
@@ -1384,19 +1728,11 @@ impl SharedPlayerState {
 
     /// Every playlist item still waiting for its file that has a track to
     /// fetch, as `(db_id, QueueItemId)`, in the order the player will reach
-    /// it: from the cursor to the end, then from the top. What the download
-    /// queue fetches, and in that order — the tracks before the cursor are
-    /// the ones least likely to be played next.
+    /// it — see `reach_order`. What the download queue fetches, and in that
+    /// order.
     pub fn pending_downloads(&self) -> Vec<(i64, QueueItemId)> {
         let pl = self.playlist.read();
-        let from = pl
-            .cursor
-            .and_then(|c| pl.items.iter().position(|item| item.id == c))
-            .unwrap_or(0);
-        let (before, after) = pl.items.split_at(from);
-        after
-            .iter()
-            .chain(before)
+        reach_order(&pl)
             .filter(|item| matches!(item.state, ItemState::Pending))
             .filter_map(|item| item.db_id.map(|db_id| (db_id, item.id)))
             .collect()
@@ -1407,14 +1743,7 @@ impl SharedPlayerState {
     /// not, for the player to reach it.
     pub fn playback_order(&self) -> Vec<(i64, QueueItemId)> {
         let pl = self.playlist.read();
-        let from = pl
-            .cursor
-            .and_then(|c| pl.items.iter().position(|item| item.id == c))
-            .unwrap_or(0);
-        let (before, after) = pl.items.split_at(from);
-        after
-            .iter()
-            .chain(before)
+        reach_order(&pl)
             .filter_map(|item| item.db_id.map(|db_id| (db_id, item.id)))
             .collect()
     }
@@ -1483,88 +1812,6 @@ impl SharedPlayerState {
         }
         sorted.extend(taken.into_iter().flatten());
         pl.items = sorted;
-        drop(pl);
-        self.bump_content();
-    }
-
-    /// Every item's id and where it stood before shuffling, in queue order:
-    /// what undoing a shuffle puts back.
-    pub fn shuffle_order(&self) -> Vec<(QueueItemId, Option<u32>)> {
-        let pl = self.playlist.read();
-        pl.items
-            .iter()
-            .map(|item| (item.id, item.pre_shuffle))
-            .collect()
-    }
-
-    /// Put back an order `shuffle_order` read, positions before shuffling
-    /// included. Items not named keep theirs and follow, as in `reorder_to`.
-    pub fn restore_shuffle_order(&self, order: &[(QueueItemId, Option<u32>)]) {
-        let ids: Vec<QueueItemId> = order.iter().map(|(id, _)| *id).collect();
-        self.reorder_to(&ids);
-        let was: HashMap<QueueItemId, Option<u32>> = order.iter().copied().collect();
-        let mut pl = self.playlist.write();
-        for item in pl.items.iter_mut() {
-            if let Some(pre) = was.get(&item.id) {
-                item.pre_shuffle = *pre;
-            }
-        }
-        drop(pl);
-        self.bump_content();
-    }
-
-    /// Note where every item stands, then put the items after the cursor in a
-    /// random order — all of them with no cursor. The playing item stays
-    /// where it is, so nothing that is heard changes.
-    pub fn shuffle_after_cursor(&self) {
-        let mut pl = self.playlist.write();
-        for (at, item) in pl.items.iter_mut().enumerate() {
-            item.pre_shuffle = Some(at as u32);
-        }
-        let from = pl
-            .cursor
-            .and_then(|c| pl.items.iter().position(|item| item.id == c))
-            .map_or(0, |at| at + 1);
-        crate::helpers::shuffle(&mut pl.items[from..]);
-        drop(pl);
-        self.bump_content();
-    }
-
-    /// A queue arriving whole while shuffle is on — replaced, or added to an
-    /// empty one — plays shuffled: `start` first, the rest in a random order
-    /// after it, each item noting where it was given so turning shuffle off
-    /// puts the queue back as it came. A queue that already carries those
-    /// notes, a shuffled session restored, is left as it was saved.
-    pub fn shuffle_from(&self, start: QueueItemId) {
-        let mut pl = self.playlist.write();
-        if pl.items.iter().any(|item| item.pre_shuffle.is_some()) {
-            return;
-        }
-        for (at, item) in pl.items.iter_mut().enumerate() {
-            item.pre_shuffle = Some(at as u32);
-        }
-        if let Some(at) = pl.items.iter().position(|item| item.id == start) {
-            let item = pl.items.remove(at);
-            pl.items.insert(0, item);
-        }
-        crate::helpers::shuffle(&mut pl.items[1..]);
-        drop(pl);
-        self.bump_content();
-    }
-
-    /// Put the items shuffle moved back in the order they had before it, in
-    /// the places such items occupy now. An item added since keeps its place.
-    pub fn unshuffle(&self) {
-        let mut pl = self.playlist.write();
-        let slots: Vec<usize> = (0..pl.items.len())
-            .filter(|&at| pl.items[at].pre_shuffle.is_some())
-            .collect();
-        let mut moved: Vec<PlaylistItem> = slots.iter().map(|&at| pl.items[at].clone()).collect();
-        moved.sort_by_key(|item| item.pre_shuffle);
-        for (at, mut item) in slots.into_iter().zip(moved) {
-            item.pre_shuffle = None;
-            pl.items[at] = item;
-        }
         drop(pl);
         self.bump_content();
     }
@@ -1693,9 +1940,9 @@ impl SharedPlayerState {
         let mut queue_count = 0;
         self.each_visible(|item, place, reading| {
             match place {
-                Place::Before => finished_count += 1,
+                Place::Played => finished_count += 1,
                 Place::Cursor => has_playing = true,
-                Place::After => queue_count += 1,
+                Place::Unplayed => queue_count += 1,
             }
             entries.push(QueueEntry {
                 id: item.id,
@@ -1738,9 +1985,12 @@ impl SharedPlayerState {
         readings
     }
 
-    /// Walk the playlist under its read lock, with each item's place relative
-    /// to the cursor and its reading. The one place a row's status is decided,
-    /// so the derived queue and its readings cannot disagree.
+    /// Walk the playlist under its read lock, with each item's place — the
+    /// cursor, played or not — and its reading. The one place a row's status
+    /// is decided, so the derived queue and its readings cannot disagree.
+    ///
+    /// Played is the item's own mark, never its position: a row behind the
+    /// cursor that was jumped over or not yet reached by shuffle is queued.
     fn each_visible(&self, mut f: impl FnMut(&PlaylistItem, Place, QueueReading)) {
         // Read before the playlist lock — see current_download_fraction.
         let playing_duration_ms = self.track_info.read().as_ref().map(|ti| ti.duration_ms);
@@ -1754,16 +2004,13 @@ impl SharedPlayerState {
             .collect();
         let pl = self.playlist.read();
 
-        let cursor_pos = match pl.cursor {
-            Some(cid) => pl.items.iter().position(|item| item.id == cid),
-            None => None,
-        };
-
-        for (i, item) in pl.items.iter().enumerate() {
-            let place = match cursor_pos {
-                Some(cp) if i == cp => Place::Cursor,
-                Some(cp) if i < cp => Place::Before,
-                _ => Place::After,
+        for item in &pl.items {
+            let place = if pl.cursor == Some(item.id) {
+                Place::Cursor
+            } else if item.played {
+                Place::Played
+            } else {
+                Place::Unplayed
             };
 
             // The byte count is the download thread's own counter, written per
@@ -1775,25 +2022,14 @@ impl SharedPlayerState {
             };
             let transferring = download_progress.is_some();
 
-            let status = match place {
-                Place::Cursor => QueueEntryStatus::at_cursor(&item.state, transferring),
-                Place::Before => match &item.state {
-                    ItemState::Ready => QueueEntryStatus::Played,
-                    // A spinner only while bytes are moving: a track skipped
-                    // past is not being fetched just for being behind the
-                    // cursor.
-                    ItemState::Pending if transferring => QueueEntryStatus::Downloading,
-                    ItemState::Pending => QueueEntryStatus::Queued,
-                    ItemState::Failed(_) => QueueEntryStatus::Failed,
-                },
-                Place::After => match &item.state {
-                    ItemState::Ready => QueueEntryStatus::Queued,
-                    ItemState::Pending if transferring => QueueEntryStatus::Downloading,
-                    // Waiting its turn, not arriving: a spinner on every one
-                    // of these read as the whole album downloading at once.
-                    ItemState::Pending => QueueEntryStatus::Queued,
-                    ItemState::Failed(_) => QueueEntryStatus::Failed,
-                },
+            let status = match (place, &item.state) {
+                (Place::Cursor, state) => QueueEntryStatus::at_cursor(state, transferring),
+                (_, ItemState::Failed(_)) => QueueEntryStatus::Failed,
+                (_, ItemState::Pending) if transferring => QueueEntryStatus::Downloading,
+                (Place::Played, _) => QueueEntryStatus::Played,
+                // Waiting its turn, not arriving: a spinner on every one of
+                // these read as the whole album downloading at once.
+                (Place::Unplayed, _) => QueueEntryStatus::Queued,
             };
 
             // The playing track's duration from its stream, when the item
@@ -1843,12 +2079,36 @@ impl SharedPlayerState {
     }
 }
 
-/// Where a row stands relative to the cursor.
+/// Every item once, in the order the player will reach it: from the cursor
+/// to the end, then from the top — the tracks before the cursor are the ones
+/// least likely to be played next. Shuffled, the cursor and then the play
+/// order go first, and the rest follow in that order.
+fn reach_order(pl: &Playlist) -> impl Iterator<Item = &PlaylistItem> {
+    let from = pl
+        .cursor
+        .and_then(|c| pl.items.iter().position(|item| item.id == c))
+        .unwrap_or(0);
+    let (before, after) = pl.items.split_at(from);
+    let queue = after.iter().chain(before);
+    let mut first: Vec<&PlaylistItem> = Vec::new();
+    if let Some(order) = &pl.order {
+        let rows: HashMap<QueueItemId, &PlaylistItem> =
+            pl.items.iter().map(|item| (item.id, item)).collect();
+        first.extend(pl.cursor.and_then(|c| rows.get(&c).copied()));
+        first.extend(order.upcoming.iter().filter_map(|id| rows.get(id).copied()));
+    }
+    let led: std::collections::HashSet<QueueItemId> = first.iter().map(|item| item.id).collect();
+    first
+        .into_iter()
+        .chain(queue.filter(move |item| !led.contains(&item.id)))
+}
+
+/// Whether a row is the cursor's, or has played or is yet to.
 #[derive(Clone, Copy)]
 enum Place {
-    Before,
+    Played,
     Cursor,
-    After,
+    Unplayed,
 }
 
 #[cfg(test)]
@@ -1873,8 +2133,299 @@ mod tests {
             disc: None,
             duration_ms: Some(200_000),
             state,
-            pre_shuffle: None,
+            played: false,
         }
+    }
+
+    // --- shuffle ---
+
+    /// `n` ready items, each its own library track.
+    fn tracks(n: usize) -> Vec<PlaylistItem> {
+        (0..n)
+            .map(|i| PlaylistItem {
+                db_id: Some(i as i64 + 1),
+                ..make_item(&format!("t{i}"), ItemState::Ready)
+            })
+            .collect()
+    }
+
+    fn shuffled(items: Vec<PlaylistItem>) -> (Arc<SharedPlayerState>, Vec<QueueItemId>) {
+        let state = SharedPlayerState::new();
+        let ids = items.iter().map(|i| i.id).collect();
+        state.add_items(items);
+        state.set_shuffled(true);
+        (state, ids)
+    }
+
+    fn queue_ids(state: &SharedPlayerState) -> Vec<QueueItemId> {
+        state.snapshot_playlist().0.iter().map(|i| i.id).collect()
+    }
+
+    /// Play what is under the cursor, then move on as the end of a track
+    /// does: what the advance lands on.
+    fn play_on(state: &SharedPlayerState) -> Option<QueueItemId> {
+        if let Some(id) = state.cursor() {
+            state.mark_played(id);
+        }
+        state.advance_cursor_loadable()
+    }
+
+    fn status_of(state: &SharedPlayerState, id: QueueItemId) -> QueueEntryStatus {
+        let snap = state.derive_visible_queue();
+        snap.entries.iter().find(|e| e.id == id).unwrap().status
+    }
+
+    fn set_repeat(state: &SharedPlayerState, repeat: Repeat) {
+        let shuffle = state.play_mode().shuffle;
+        state.set_play_mode(PlayMode { shuffle, repeat });
+    }
+
+    #[test]
+    fn shuffle_on_and_off_never_moves_the_queue() {
+        let state = SharedPlayerState::new();
+        let items = tracks(20);
+        let ids: Vec<_> = items.iter().map(|i| i.id).collect();
+        state.add_items(items);
+        state.set_cursor(Some(ids[3]));
+
+        state.set_shuffled(true);
+        assert_eq!(queue_ids(&state), ids);
+        for _ in 0..6 {
+            play_on(&state).unwrap();
+        }
+        assert_eq!(queue_ids(&state), ids, "playing shuffled moves nothing");
+        state.set_shuffled(false);
+        assert_eq!(queue_ids(&state), ids);
+    }
+
+    #[test]
+    fn the_rows_that_played_shuffled_stay_marked_once_it_is_off() {
+        let (state, ids) = shuffled(tracks(20));
+        let mut heard = vec![state.advance_cursor_loadable().unwrap()];
+        for _ in 0..7 {
+            heard.push(play_on(&state).unwrap());
+        }
+        let playing = state.cursor().unwrap();
+        state.set_shuffled(false);
+
+        for &id in &ids {
+            let expected = if id == playing {
+                QueueEntryStatus::Playing
+            } else if heard.contains(&id) {
+                QueueEntryStatus::Played
+            } else {
+                QueueEntryStatus::Queued
+            };
+            assert_eq!(
+                status_of(&state, id),
+                expected,
+                "row {}",
+                ids.iter().position(|i| *i == id).unwrap()
+            );
+        }
+        let snap = state.derive_visible_queue();
+        assert_eq!(snap.finished_count, 7);
+        assert_eq!(snap.queue_count, 12);
+
+        // Off, the queue plays on in its own order from the cursor.
+        let at = ids.iter().position(|id| *id == playing).unwrap();
+        assert_eq!(play_on(&state), ids.get(at + 1).copied());
+    }
+
+    #[test]
+    fn a_row_is_played_because_it_played_not_for_being_behind_the_cursor() {
+        let state = SharedPlayerState::new();
+        let items = tracks(6);
+        let ids: Vec<_> = items.iter().map(|i| i.id).collect();
+        state.add_items(items);
+        state.set_cursor(Some(ids[0]));
+        play_on(&state);
+        state.set_cursor(Some(ids[4]));
+
+        assert_eq!(status_of(&state, ids[0]), QueueEntryStatus::Played);
+        for &id in &ids[1..4] {
+            assert_eq!(
+                status_of(&state, id),
+                QueueEntryStatus::Queued,
+                "jumped over"
+            );
+        }
+    }
+
+    #[test]
+    fn a_shuffled_pass_plays_every_track_once() {
+        let (state, ids) = shuffled(tracks(30));
+        let mut heard = vec![state.advance_cursor_loadable().unwrap()];
+        while let Some(id) = play_on(&state) {
+            heard.push(id);
+        }
+        assert_ne!(heard, ids, "a shuffled order");
+        let mut sorted = heard.clone();
+        sorted.sort_by_key(|id| ids.iter().position(|i| i == id));
+        assert_eq!(sorted, ids, "each once");
+    }
+
+    #[test]
+    fn a_track_queued_twice_plays_once_a_pass() {
+        let mut items = tracks(5);
+        let twins: Vec<_> = [1, 3, 3]
+            .iter()
+            .map(|&i| PlaylistItem {
+                id: QueueItemId::new(),
+                ..items[i].clone()
+            })
+            .collect();
+        items.extend(twins);
+        let (state, _) = shuffled(items);
+        let track = |id| state.item_db_id(id).unwrap();
+
+        let mut heard = vec![track(state.advance_cursor_loadable().unwrap())];
+        while let Some(id) = play_on(&state) {
+            heard.push(track(id));
+        }
+        heard.sort();
+        assert_eq!(heard, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn rows_queued_while_shuffled_play_later_in_the_pass() {
+        let (state, ids) = shuffled(tracks(10));
+        let mut heard = vec![state.advance_cursor_loadable().unwrap()];
+        for _ in 0..3 {
+            heard.push(play_on(&state).unwrap());
+        }
+        let more: Vec<_> = (10..15)
+            .map(|i| PlaylistItem {
+                db_id: Some(i + 1),
+                ..make_item(&format!("t{i}"), ItemState::Ready)
+            })
+            .collect();
+        let added: Vec<_> = more.iter().map(|i| i.id).collect();
+        state.add_items(more);
+        assert_eq!(queue_ids(&state)[10..], added, "added where they were put");
+
+        while let Some(id) = play_on(&state) {
+            heard.push(id);
+        }
+        assert_eq!(heard.len(), 15);
+        assert!(added.iter().all(|id| heard[4..].contains(id)));
+        assert!(ids.iter().all(|id| heard.contains(id)));
+    }
+
+    #[test]
+    fn a_row_removed_while_shuffled_does_not_play() {
+        let (state, ids) = shuffled(tracks(10));
+        let mut heard = vec![state.advance_cursor_loadable().unwrap()];
+        let gone = *ids.iter().find(|id| !heard.contains(id)).unwrap();
+        state.remove_items(&[gone]);
+        while let Some(id) = play_on(&state) {
+            heard.push(id);
+        }
+        assert_eq!(heard.len(), 9);
+        assert!(!heard.contains(&gone));
+    }
+
+    #[test]
+    fn previous_goes_back_along_what_played_while_shuffled() {
+        let (state, ids) = shuffled(tracks(12));
+        let mut heard = vec![state.advance_cursor_loadable().unwrap()];
+        for _ in 0..4 {
+            heard.push(play_on(&state).unwrap());
+        }
+        assert_eq!(state.retreat_cursor().map(|(id, _)| id), Some(heard[3]));
+        assert_eq!(state.retreat_cursor().map(|(id, _)| id), Some(heard[2]));
+        assert_eq!(state.retreat_cursor().map(|(id, _)| id), Some(heard[1]));
+        assert_eq!(state.retreat_cursor().map(|(id, _)| id), Some(heard[0]));
+        assert_eq!(state.retreat_cursor(), None, "nothing before the first");
+        assert_eq!(state.cursor(), Some(heard[0]));
+
+        // Back is not a new pass: what has played does not come round again.
+        let next = play_on(&state).unwrap();
+        assert!(!heard.contains(&next));
+        assert_eq!(queue_ids(&state), ids);
+    }
+
+    #[test]
+    fn a_repeating_shuffled_queue_starts_a_new_pass_once_every_track_played() {
+        let (state, ids) = shuffled(tracks(8));
+        set_repeat(&state, Repeat::Queue);
+        let mut heard = vec![state.advance_cursor_loadable().unwrap()];
+        for _ in 0..(3 * ids.len() - 1) {
+            heard.push(play_on(&state).unwrap());
+        }
+        for (n, pass) in heard.chunks(ids.len()).enumerate() {
+            let mut sorted = pass.to_vec();
+            sorted.sort_by_key(|id| ids.iter().position(|i| i == id));
+            assert_eq!(sorted, ids, "pass {n} plays each track once");
+        }
+        for turn in heard.windows(2) {
+            assert_ne!(turn[0], turn[1], "no track twice running at a turn");
+        }
+
+        // Three passes in, the third's first track playing: nothing else has
+        // played in this pass.
+        let snap = state.derive_visible_queue();
+        assert_eq!(snap.finished_count, ids.len() - 1);
+        state.mark_played(state.cursor().unwrap());
+        play_on(&state);
+        let snap = state.derive_visible_queue();
+        assert_eq!(snap.finished_count, 1, "a new pass clears the marks");
+    }
+
+    #[test]
+    fn repeating_in_order_starts_a_new_pass_at_the_top() {
+        let state = SharedPlayerState::new();
+        let items = tracks(4);
+        let ids: Vec<_> = items.iter().map(|i| i.id).collect();
+        state.add_items(items);
+        set_repeat(&state, Repeat::Queue);
+        state.set_cursor(Some(ids[0]));
+        for _ in 0..4 {
+            play_on(&state);
+        }
+        assert_eq!(state.cursor(), Some(ids[0]));
+        for &id in &ids[1..] {
+            assert_eq!(status_of(&state, id), QueueEntryStatus::Queued);
+        }
+    }
+
+    #[test]
+    fn the_lookahead_picks_what_the_advance_plays() {
+        let (state, ids) = shuffled(tracks(7));
+        set_repeat(&state, Repeat::Queue);
+        state.advance_cursor_loadable();
+        // Across three passes, the turns between them included: each step the
+        // decoder would queue — two ahead, as it looks ahead — is the step
+        // the cursor then takes.
+        for _ in 0..(3 * ids.len()) {
+            let cursor = state.cursor().unwrap();
+            let next = state.lookahead_after(cursor).unwrap();
+            let after = state.lookahead_after(next.next.unwrap()).unwrap();
+            assert!(state.still_follows(&next));
+            assert_eq!(play_on(&state), next.next);
+            assert_eq!(play_on(&state), after.next);
+            assert_eq!(next.chosen.map(|(id, _)| id), next.next);
+        }
+    }
+
+    #[test]
+    fn the_downloads_follow_the_play_order() {
+        let state = SharedPlayerState::new();
+        let items: Vec<_> = tracks(10)
+            .into_iter()
+            .map(|item| PlaylistItem {
+                state: ItemState::Pending,
+                ..item
+            })
+            .collect();
+        state.add_items(items);
+        state.set_shuffled(true);
+        let first = state.advance_cursor_loadable().unwrap();
+        let second = state.lookahead_after(first).unwrap().next.unwrap();
+        let order = state.pending_downloads();
+        assert_eq!(order[0].1, first);
+        assert_eq!(order[1].1, second);
+        assert_eq!(order.len(), 10);
     }
 
     /// An item with a transfer running against it, told to the state's store
@@ -2600,7 +3151,7 @@ mod tests {
             disc: None,
             duration_ms: Some(200_000),
             state: ItemState::Ready,
-            pre_shuffle: None,
+            played: false,
         }
     }
 

@@ -365,8 +365,8 @@ pub(super) struct GqlNowPlaying {
     pub seekable_ms: Option<u64>,
     pub track: Option<GqlNowPlayingTrack>,
     pub queue_item_id: Option<String>,
-    /// Shuffle is on: the queue after the current track was reordered at
-    /// random. The queue is the play order either way.
+    /// Shuffle is on: the next track is picked at random from those yet to
+    /// play this pass. The queue keeps its order.
     pub shuffle: bool,
     pub repeat: GqlRepeat,
     pub sleep: Option<GqlSleep>,
@@ -1118,11 +1118,11 @@ pub(super) struct GqlQueueSnapshot {
     pub version: u64,
     /// Queue entries with derived status.
     pub entries: Vec<GqlQueueEntry>,
-    /// Number of entries before the cursor (already played).
+    /// Number of entries other than the current one that have played.
     pub finished_count: i32,
     /// Whether any entry is currently playing.
     pub has_playing: bool,
-    /// Number of entries after the cursor (queued).
+    /// Number of entries other than the current one yet to play.
     pub queue_count: i32,
 }
 

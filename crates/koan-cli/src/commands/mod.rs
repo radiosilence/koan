@@ -285,7 +285,7 @@ fn playlist_item_from_track_row(track: &queries::TrackRow, path: &Path) -> Playl
         disc: track.disc.map(|n| n as i64),
         duration_ms: track.duration_ms.map(|d| d as u64),
         state: ItemState::Ready,
-        pre_shuffle: None,
+        played: false,
     }
 }
 
@@ -308,7 +308,7 @@ fn read_metadata_to_item(p: &Path) -> PlaylistItem {
             disc: meta.disc.map(|n| n as i64),
             duration_ms: meta.duration_ms.map(|d| d as u64),
             state: ItemState::Ready,
-            pre_shuffle: None,
+            played: false,
         },
         Err(_) => {
             let title = p
@@ -331,7 +331,7 @@ fn read_metadata_to_item(p: &Path) -> PlaylistItem {
                 disc: None,
                 duration_ms: None,
                 state: ItemState::Ready,
-                pre_shuffle: None,
+                played: false,
             }
         }
     }

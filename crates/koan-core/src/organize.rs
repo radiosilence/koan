@@ -2780,7 +2780,7 @@ mod tests {
             disc: Some(1),
             duration_ms: None,
             db_id: None,
-            pre_shuffle: None,
+            played: None,
         };
         queries::save_playback_state(
             &db.conn,

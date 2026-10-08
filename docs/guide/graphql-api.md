@@ -122,8 +122,9 @@ The server binds to `127.0.0.1` by default. Use `--bind 0.0.0.0` or `bind = "0.0
   }
 }
 
-# Shuffle reorders the rest of the queue itself; off puts it back in its
-# original order. Repeat is OFF, QUEUE or ONE. `setPlayModeOnClient` does the
+# Shuffle plays the tracks not yet played in a random order, each once, and
+# never moves the queue; `queue` marks what has played as PLAYED whatever its
+# place. Repeat is OFF, QUEUE or ONE. `setPlayModeOnClient` does the
 # same on a linked app, whose modes `clients { shuffle repeat }` reports.
 mutation { setPlayMode(shuffle: true, repeat: QUEUE) { ok } }
 

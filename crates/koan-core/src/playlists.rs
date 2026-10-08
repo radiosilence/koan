@@ -765,7 +765,7 @@ mod tests {
             disc: None,
             duration_ms: None,
             state: ItemState::Ready,
-            pre_shuffle: None,
+            played: false,
         };
 
         assert_eq!(
@@ -820,7 +820,7 @@ mod tests {
                 disc: None,
                 duration_ms: None,
                 state: ItemState::Ready,
-                pre_shuffle: None,
+                played: false,
             })
             .collect();
         let ids: Vec<QueueItemId> = items.iter().map(|i| i.id).collect();
@@ -872,7 +872,7 @@ mod tests {
             disc: None,
             duration_ms: None,
             state: ItemState::Ready,
-            pre_shuffle: None,
+            played: false,
         };
 
         state.add_items(vec![queued(a)]);

@@ -375,8 +375,9 @@ impl MutationRoot {
         Ok(GqlStatus::success(format!("sent to {}", reached(&sent))))
     }
 
-    /// Set shuffle, repeat or both on a linked koan app. Shuffle on reorders
-    /// the rest of its queue at random; off puts it back as it was.
+    /// Set shuffle, repeat or both on a linked koan app. Shuffle picks the
+    /// next track at random from those yet to play this pass and never moves
+    /// the queue.
     async fn set_play_mode_on_client(
         &self,
         ctx: &Context<'_>,
