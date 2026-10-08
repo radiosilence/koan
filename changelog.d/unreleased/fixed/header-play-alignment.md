@@ -1,1 +1,0 @@
-- **Mac and iOS: the play button in an album or artist header is centred on the title.** The title's capitals were aligned with the button's top edge, which left the title above the button's middle; the button is now centred on the first line.
