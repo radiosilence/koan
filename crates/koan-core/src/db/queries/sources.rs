@@ -1157,7 +1157,9 @@ pub(crate) fn fold_twin(conn: &Connection, twin: &str, walked: &str) -> Result<b
 /// stored every path under `~/music`. Scans now walk the disk's spelling;
 /// without this, each file would be indexed a second time under it and the
 /// old rows would sit outside every range stale removal looks at. A file
-/// already indexed under both is folded into one track (`fold_twin`).
+/// already indexed under both is folded into one track (`fold_twin`), or,
+/// where both tracks are on the server, left to the one under the disk's
+/// spelling.
 /// Returns the number of files moved or folded.
 pub(crate) fn respell_folder(
     conn: &Connection,
@@ -1178,16 +1180,32 @@ pub(crate) fn respell_folder(
     for path in &files {
         let to = respelled(path);
         if load(conn, Kind::Local, &to)?.is_some() {
-            moved += usize::from(fold_twin(conn, path, &to)?);
+            // Two tracks the server has both stay; the file goes to the one
+            // indexed under the disk's spelling, and the other plays from
+            // the server.
+            if !fold_twin(conn, path, &to)?
+                && let Some((track, _)) = load(conn, Kind::Local, path)?
+            {
+                forget_tracks(conn, &[track], Forget::Demote)?;
+            }
         } else {
             rename_file(conn, path, &to)?;
-            moved += 1;
         }
+        moved += 1;
     }
+    let chars = lower.chars().count() as i64;
+    // A playlist file read under both spellings keeps the playlist made
+    // first, which is the one clients know.
+    conn.prepare_cached(
+        "DELETE FROM playlists WHERE id IN (
+             SELECT later.id FROM playlists earlier JOIN playlists later
+               ON later.source_path = ?3 || substr(earlier.source_path, ?4 + 1)
+             WHERE earlier.source_path >= ?1 AND earlier.source_path < ?2)",
+    )?
+    .execute(params![lower, upper, to_prefix, chars])?;
     // The paths that go with the files, and those of tracks a rebuilt index
     // has not re-read. A row whose new path is taken keeps the old one, and
     // goes as stale once its file is found under the new.
-    let chars = lower.chars().count() as i64;
     for (table, column) in [
         ("tracks", "path"),
         ("scan_cache", "path"),

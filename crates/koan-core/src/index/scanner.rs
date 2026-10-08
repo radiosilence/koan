@@ -1177,6 +1177,87 @@ mod tests {
         assert_eq!(stale, 0);
     }
 
+    /// The rarer leftovers of a library scanned under both spellings: a file
+    /// two server tracks claimed, which cannot be folded, goes to the track
+    /// under the disk's spelling; a playlist file read twice keeps its first
+    /// playlist.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn respelling_a_folder_leaves_nothing_under_the_old_spelling() {
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("Music");
+        let given = dir.path().join("music");
+        std::fs::create_dir_all(&music).unwrap();
+        if !given.exists() {
+            return;
+        }
+        let file = music.join("b.wav");
+        test_utils::generate_wav(&file, 8000, 1, 0.1, 16);
+        let db = test_db(dir.path());
+        let mut tracks = Vec::new();
+        for (root, remote) in [(&given, "sub-1"), (&music, "sub-2")] {
+            let mut meta = metadata::read_metadata(&file).unwrap();
+            meta.path = Some(root.join("b.wav").to_string_lossy().into_owned());
+            meta.remote_id = Some(remote.into());
+            tracks.push(queries::upsert_track(&db.conn, &meta).unwrap());
+        }
+        let local_files = |db: &Database| -> Vec<(i64, String)> {
+            db.conn
+                .prepare("SELECT track_id, path FROM local_files ORDER BY path")
+                .unwrap()
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert_eq!(local_files(&db).len(), 2, "two tracks, one file each");
+        let playlists: Vec<i64> = [&given, &music]
+            .iter()
+            .map(|root| {
+                let id =
+                    queries::create_playlist(&db.conn, queries::LOCAL_USER, "list", None).unwrap();
+                db.conn
+                    .execute(
+                        "UPDATE playlists SET source_path = ?1 WHERE id = ?2",
+                        rusqlite::params![root.join("list.nsp").to_string_lossy(), id],
+                    )
+                    .unwrap();
+                id
+            })
+            .collect();
+
+        queries::sources::respell_folder(&db.conn, &given, &music).unwrap();
+
+        assert_eq!(
+            local_files(&db),
+            vec![(tracks[1], file.to_string_lossy().into_owned())]
+        );
+        let remaining: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM tracks WHERE id IN (?1, ?2)",
+                [tracks[0], tracks[1]],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 2, "both stay as the server's");
+        let kept: Vec<(i64, String)> = db
+            .conn
+            .prepare("SELECT id, source_path FROM playlists WHERE source_path IS NOT NULL")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            kept,
+            vec![(
+                playlists[0],
+                music.join("list.nsp").to_string_lossy().into_owned()
+            )]
+        );
+    }
+
     #[test]
     fn a_file_moved_between_library_folders_keeps_its_track() {
         let dir = tempfile::tempdir().unwrap();
