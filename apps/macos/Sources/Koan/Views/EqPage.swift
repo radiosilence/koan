@@ -465,14 +465,20 @@ struct EqChain: View {
     }
 
     /// Every EQ that plays meets the correction matched: the whole chain is
-    /// drawn in the accent, as the line into a matched EQ is.
+    /// drawn in the accent, as the line into a matched EQ is. What plays is
+    /// what `sentence` says plays.
     private var matched: Bool {
-        guard correction != nil else { return false }
-        let playing = zip(overview.chain, overview.joins).filter { $0.0.on }
+        guard let correction, correction.role != .baked, overview.tuningPlays else { return false }
+        let playing = zip(overview.chain, overview.joins).filter { entry, _ in
+            entry.on && !overview.leftOutEqs.contains(entry.name)
+        }
         return !playing.isEmpty && playing.allSatisfy { $0.1.join == .matched }
     }
 
-    /// The chain's lines and outlines: the accent when it is matched.
+    /// The stages' outlines in a matched chain; their own otherwise.
+    private var accent: AnyShapeStyle? { matched ? AnyShapeStyle(.tint) : nil }
+
+    /// The lines between the stages: the accent when it is matched.
     private var outline: AnyShapeStyle {
         matched ? AnyShapeStyle(.tint) : KoanTheme.style(.rule, system: Color.secondary.opacity(0.5)) // theme: raw — the system look's own
     }
@@ -538,7 +544,7 @@ struct EqChain: View {
                             .joined(separator: " · "),
                     db: curves[correction.name],
                     stroke: .correction,
-                    outline: outline,
+                    outline: accent,
                     action: { choose(.correction) }
                 ) {
                     #if !os(tvOS)
@@ -572,7 +578,7 @@ struct EqChain: View {
                 detail: entry.on ? meets?.madeFor.map { "made for \($0)" } : KoanTheme.label("Off"),
                 db: curves[entry.name],
                 stroke: .eq(i),
-                outline: outline,
+                outline: accent,
                 action: { open(entry.name) }
             ) {
                 #if !os(tvOS)
@@ -609,7 +615,7 @@ struct EqChain: View {
             }
             #if !os(tvOS)
             if correction?.role != .baked {
-                Placeholder(title: nil, prompt: "Add EQ", outline: matched ? AnyShapeStyle(.tint) : nil, action: { choose(.eq) })
+                Placeholder(title: nil, prompt: "Add EQ", outline: accent, action: { choose(.eq) })
                 link
             }
             #endif
@@ -740,7 +746,8 @@ private struct StageBlock<Controls: View>: View {
     let detail: String?
     let db: [Double]?
     let stroke: StageStroke
-    let outline: AnyShapeStyle
+    /// In place of the `rule` outline: the accent of a matched chain.
+    let outline: AnyShapeStyle?
     let action: () -> Void
     @ViewBuilder let controls: () -> Controls
 
@@ -773,7 +780,7 @@ private struct StageBlock<Controls: View>: View {
             controls()
         }
         .padding(KoanTheme.Space.s)
-        .overlay(Rectangle().stroke(outline, lineWidth: KoanTheme.hairline))
+        .overlay(Rectangle().stroke(outline ?? KoanTheme.style(.rule, system: Color.secondary.opacity(0.4)), lineWidth: KoanTheme.hairline)) // theme: raw — the system look's own
     }
 }
 

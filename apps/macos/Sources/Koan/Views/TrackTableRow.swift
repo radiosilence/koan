@@ -54,7 +54,7 @@ struct TrackColumns: OptionSet {
 /// the sleeve when the list is gathered from many records; the title over the
 /// artist and record, which link out; where the file is; the heart; the
 /// format; the length.
-final class TrackTableRow: NSTableCellView, TableRow {
+final class TrackTableRow: TableCell, TableRow {
     struct Context {
         let showsAlbum: Bool
         var columns = TrackColumns.all

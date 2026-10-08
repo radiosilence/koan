@@ -16,6 +16,18 @@ enum RowHit {
     case link(() -> Void)
 }
 
+/// A row of a `KoanTable`, which lays out its own columns from its width.
+/// A cell resized by its table is not asked to lay out again by AppKit, so a
+/// table narrowed by the lyrics opening left every row's trailing columns
+/// past its new edge, prepared rows off screen included.
+class TableCell: NSTableCellView {
+    override func setFrameSize(_ newSize: NSSize) {
+        let resized = newSize.width != frame.width
+        super.setFrameSize(newSize)
+        if resized { needsLayout = true }
+    }
+}
+
 /// A row of a `KoanTable`, made of layers and labels.
 ///
 /// Not of AppKit controls: on macOS 26 each is a SwiftUI view graph of its
@@ -508,21 +520,6 @@ final class KoanTableView: NSTableView {
     override func layout() {
         super.layout()
         coordinator?.laidOut()
-    }
-
-    /// The rows lay out their own columns from their width, and a cell view
-    /// resized by its table is not asked to lay out again: opening the lyrics
-    /// narrowed the table and left each row's format and length past its new
-    /// edge.
-    override func setFrameSize(_ newSize: NSSize) {
-        let resized = newSize.width != frame.width
-        super.setFrameSize(newSize)
-        guard resized else { return }
-        sizeLastColumnToFit()
-        let visible = rows(in: visibleRect)
-        for row in visible.lowerBound..<visible.upperBound {
-            view(atColumn: 0, row: row, makeIfNecessary: false)?.needsLayout = true
-        }
     }
 
     private lazy var tracking = NSTrackingArea(

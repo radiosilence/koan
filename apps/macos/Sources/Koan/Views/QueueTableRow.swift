@@ -35,7 +35,7 @@ struct QueueHeading: Equatable {
 /// SwiftUI: what the track is doing, its place or its sleeve, its title over
 /// its artist, where its file is, the heart, the codec, the length. Played
 /// tracks dim in their colours, not their alpha.
-final class QueueTableRow: NSTableCellView, TableRow {
+final class QueueTableRow: TableCell, TableRow {
     struct Context {
         let isPlaying: Bool
         /// Whether the bars follow the music — see `PlayingIndicator.live`.

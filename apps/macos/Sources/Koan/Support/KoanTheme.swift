@@ -1010,13 +1010,8 @@ extension View {
     /// Where content scrolling under a bar at the foot meets it: the hard
     /// edge in the theme, which has no glass to fade into; elsewhere the
     /// platform's soft, blurred one where `soft` allows it.
-    @ViewBuilder
     func koanBottomEdge(soft: Bool = true) -> some View {
-        #if os(tvOS)
-        self
-        #else
         scrollEdgeEffectStyle(soft && !KoanTheme.isOn ? .soft : .hard, for: .bottom)
-        #endif
     }
 
     /// A material behind a region, out to the edges past the safe area as
