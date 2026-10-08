@@ -1103,7 +1103,6 @@ private struct RememberedSize: NSViewRepresentable {
 
     final class Probe: NSView {
         let key: String
-        private var resized: NSObjectProtocol?
 
         init(key: String) {
             self.key = key
@@ -1114,8 +1113,6 @@ private struct RememberedSize: NSViewRepresentable {
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            if let resized { NotificationCenter.default.removeObserver(resized) }
-            resized = nil
             guard let window else { return }
             window.styleMask.insert(.resizable)
             // SwiftUI caps a sheet's and the Settings window's content at
@@ -1136,16 +1133,13 @@ private struct RememberedSize: NSViewRepresentable {
                 height: max(size.height, window.contentMinSize.height)
             )
             if size != window.contentLayoutRect.size { window.setContentSize(size) }
-            let key = key
-            resized = NotificationCenter.default.addObserver(
-                forName: NSWindow.didEndLiveResizeNotification, object: window, queue: .main
-            ) { note in
-                MainActor.assumeIsolated {
-                    guard let window = note.object as? NSWindow,
-                          let content = window.contentView else { return }
-                    UserDefaults.standard.set(NSStringFromSize(content.frame.size), forKey: key)
-                }
-            }
+        }
+
+        /// Every view in a window is told when a drag of its edge ends.
+        override func viewDidEndLiveResize() {
+            super.viewDidEndLiveResize()
+            guard let content = window?.contentView else { return }
+            UserDefaults.standard.set(NSStringFromSize(content.frame.size), forKey: key)
         }
     }
 }
