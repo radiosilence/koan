@@ -619,6 +619,10 @@ pub struct DspConfig {
     /// which they are compared with to say whether it was changed since.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub presets: Vec<DspOutputPreset>,
+    /// Outputs that play filters alone: no headphone correction, and
+    /// nothing matched to a target. Speakers, mostly.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub filters_only: Vec<String>,
 }
 
 /// One EQ of an output's tuning.
@@ -654,6 +658,7 @@ impl Default for DspConfig {
             autoeq_dismissed: Vec::new(),
             tunings: Vec::new(),
             presets: Vec::new(),
+            filters_only: Vec::new(),
         }
     }
 }
@@ -719,6 +724,10 @@ pub struct DspProfile {
     /// output is set from, and what the quick EQ menu lists.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub preset: bool,
+    /// For a preset: the output plays its filters alone, with no correction
+    /// (`DspConfig::filters_only`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub filters_only: bool,
     /// Whether it is the account's, kept on every device signed in to its
     /// kōan server, or this device's alone. Unset, it follows from what the
     /// profile is: see `audio::dsp::profiles::scope`.

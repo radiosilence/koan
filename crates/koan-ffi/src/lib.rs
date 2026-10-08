@@ -3287,13 +3287,62 @@ impl KoanEngine {
         .await
     }
 
-    /// Add a flat band at 1 kHz to `name`; its index among the filters.
-    pub async fn dsp_add_band(self: Arc<Self>, name: String) -> Result<u32, KoanError> {
+    /// Add a flat band at 1 kHz to `name`, on `channel` alone or on both;
+    /// its index among the filters.
+    pub async fn dsp_add_band(
+        self: Arc<Self>,
+        name: String,
+        channel: Option<u16>,
+    ) -> Result<u32, KoanError> {
         offload::sequenced(move || {
-            let index = koan_core::audio::dsp::profiles::add_band(&name)
+            let index = koan_core::audio::dsp::profiles::add_band(&name, channel)
                 .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)?;
             Ok(index as u32)
+        })
+        .await
+    }
+
+    /// Make the EQ `name`, eight bands from `starter`.
+    pub async fn dsp_create_eq(
+        self: Arc<Self>,
+        name: String,
+        starter: DspStarter,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::create_eq(&name, starter.into())
+                .map_err(|message| KoanError::BadArgument { message })
+        })
+        .await
+    }
+
+    /// Give `name` a list of bands for each channel, or one for both from
+    /// channel `keep`.
+    pub async fn dsp_set_stereo(
+        self: Arc<Self>,
+        name: String,
+        stereo: bool,
+        keep: u16,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::set_stereo(&name, stereo, keep)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// Have `device` play filters alone, its correction taken off, or
+    /// correct for a headphone again.
+    pub async fn dsp_set_filters_only(
+        self: Arc<Self>,
+        device: String,
+        only: bool,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::set_filters_only(&device, only)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
         })
         .await
     }

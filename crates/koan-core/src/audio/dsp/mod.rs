@@ -78,12 +78,17 @@ const MAX_LAYER_VISITS: usize = 1024;
 /// preamp is worked out from. A graphic curve counts as its design, which
 /// its minimum-phase FIR follows; delays change no level.
 pub fn response(filters: &[DspFilter], freqs: &[f64], rate: u32) -> Vec<f64> {
+    response_on(filters, freqs, rate, 0)
+}
+
+/// [`response`] on `channel` of two.
+pub fn response_on(filters: &[DspFilter], freqs: &[f64], rate: u32, channel: usize) -> Vec<f64> {
     let plan = steps::plan(filters, rate, 2);
     freqs
         .iter()
         .map(|&hz| {
             let w = std::f64::consts::TAU * hz / rate as f64;
-            let gain: f64 = steps::gain_matrix(&plan, 2, w, rate)[0].iter().sum();
+            let gain: f64 = steps::gain_matrix(&plan, 2, w, rate)[channel].iter().sum();
             20.0 * gain.max(1e-6).log10()
         })
         .collect()

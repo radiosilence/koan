@@ -1413,6 +1413,9 @@ pub struct DspOverview {
     pub profiles: Vec<DspProfileSummary>,
     /// What to call the devices named by a UDN, where the renderer is known.
     pub names: std::collections::HashMap<String, String>,
+    /// The output plays filters alone: no correction, nothing matched to a
+    /// target.
+    pub filters_only: bool,
 }
 
 /// What a device is set to, for a menu of presets.
@@ -1600,6 +1603,9 @@ pub struct DspResponse {
     pub tuning: Option<Vec<f64>>,
     /// For a split's preview: the baked EQ it comes from.
     pub original: Option<Vec<f64>>,
+    /// For an EQ with bands for each channel: the right, where `total` is
+    /// the left.
+    pub right: Option<Vec<f64>>,
 }
 
 impl From<koan_core::audio::dsp::profiles::Response> for DspResponse {
@@ -1624,6 +1630,7 @@ impl From<koan_core::audio::dsp::profiles::Response> for DspResponse {
             correction: r.correction,
             tuning: r.tuning,
             original: r.original,
+            right: r.right,
         }
     }
 }
@@ -1691,6 +1698,37 @@ pub struct DspProfileDetail {
     pub can_revert: bool,
     /// A correction, which plays as made: its bands are not edited.
     pub read_only: bool,
+    /// For an EQ of bands alone: one list for both channels, or one each.
+    pub channels: Option<DspChannelLayout>,
+}
+
+/// How an EQ of bands lays them over the two channels.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspChannelLayout {
+    /// A list of bands for each channel, rather than one for both.
+    pub stereo: bool,
+    /// The two lists say different things.
+    pub differ: bool,
+}
+
+/// Where a new EQ of bands starts.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DspStarter {
+    Flat,
+    BassBoost,
+    Warm,
+    Bright,
+}
+
+impl From<DspStarter> for koan_core::audio::dsp::profiles::Starter {
+    fn from(s: DspStarter) -> Self {
+        match s {
+            DspStarter::Flat => Self::Flat,
+            DspStarter::BassBoost => Self::BassBoost,
+            DspStarter::Warm => Self::Warm,
+            DspStarter::Bright => Self::Bright,
+        }
+    }
 }
 
 /// One of a profile's filters, in the order they run.
@@ -1864,6 +1902,10 @@ impl From<koan_core::audio::dsp::profiles::Detail> for DspProfileDetail {
             edited: d.edited,
             can_revert: d.can_revert,
             read_only: d.read_only,
+            channels: d.channels.map(|c| DspChannelLayout {
+                stereo: c.stereo,
+                differ: c.differ,
+            }),
         }
     }
 }
@@ -1872,6 +1914,7 @@ impl From<koan_core::audio::dsp::profiles::Overview> for DspOverview {
     fn from(o: koan_core::audio::dsp::profiles::Overview) -> Self {
         Self {
             enabled: o.enabled,
+            filters_only: o.filters_only,
             names: Default::default(),
             device: o.device,
             active: o.active,

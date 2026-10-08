@@ -536,6 +536,8 @@ pub struct Overview {
     pub profiles: Vec<Summary>,
     /// Every device the EQ names, and what each is set to.
     pub outputs: Vec<OutputState>,
+    /// That device plays filters alone, with no correction.
+    pub filters_only: bool,
 }
 
 /// The device the player resolves to: the configured one if it is there, or
@@ -569,6 +571,9 @@ pub fn overview_for(device: Option<String>) -> Overview {
         .and_then(|c| aims_at(c, &cfg.dsp.profiles));
     Overview {
         enabled: cfg.dsp.enabled,
+        filters_only: device
+            .as_deref()
+            .is_some_and(|d| cfg.dsp.filters_only.iter().any(|f| f == d)),
         active: device
             .as_deref()
             .and_then(|d| cfg.dsp.profile_for(d))
@@ -861,6 +866,8 @@ pub struct Detail {
     pub can_revert: bool,
     /// A correction, which plays as made: its bands are not edited.
     pub read_only: bool,
+    /// For an EQ of bands alone: one list for both channels, or one each.
+    pub channels: Option<ChannelLayout>,
 }
 
 /// Everything in the profile `name`.
@@ -959,6 +966,11 @@ pub fn detail(name: &str) -> Option<Detail> {
         edited: edited(profile),
         can_revert: profile.original.is_some(),
         read_only: editable(profile, &cfg.dsp.profiles).is_err(),
+        channels: if profile.layers.is_empty() && profile.impulses.is_empty() {
+            channel_layout(&profile.filters)
+        } else {
+            None
+        },
     })
 }
 
@@ -1253,6 +1265,10 @@ pub fn assign(name: Option<&str>, device: &str) -> Result<(), String> {
                 p.devices.push(device.to_string());
             }
         }
+        // A correction chosen is the output correcting again.
+        if name.is_some() {
+            cfg.dsp.filters_only.retain(|d| d != device);
+        }
     })
     .map_err(|e| e.to_string())
 }
@@ -1430,9 +1446,9 @@ pub fn set_curve(name: &str, index: usize, points: &[(f64, f64)]) -> Result<(), 
     found
 }
 
-/// Add a band to `name`: flat, at 1 kHz, for shaping from there. Answers
-/// with its index among the profile's filters.
-pub fn add_band(name: &str) -> Result<usize, String> {
+/// Add a flat peaking band at 1 kHz to the end of `name`'s filters, on
+/// `channel` alone or, with none, on every channel. Returns its index.
+pub fn add_band(name: &str, channel: Option<u16>) -> Result<usize, String> {
     use crate::config::{DspFilter, EqFilter, EqFilterKind};
     may_edit(name)?;
     let mut index = 0;
@@ -1443,12 +1459,152 @@ pub fn add_band(name: &str) -> Result<usize, String> {
             freq: 1000.0,
             gain_db: 0.0,
             q: 1.0,
-            channels: vec![],
+            channels: channel.into_iter().collect(),
         }));
         index = p.filters.len() - 1;
     })
     .map_err(|e| e.to_string())?;
     Ok(index)
+}
+
+/// Where a new EQ of bands starts: flat, or tilted the way most people
+/// first reach for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Starter {
+    Flat,
+    BassBoost,
+    Warm,
+    Bright,
+}
+
+/// Eight bands spread across the range, as a parametric EQ opens: a low
+/// shelf, six peaks an octave apart and a high shelf, at `starter`'s gains.
+pub fn starter_bands(starter: Starter) -> Vec<crate::config::DspFilter> {
+    use crate::config::{DspFilter, EqFilter, EqFilterKind};
+    let (low, high, presence) = match starter {
+        Starter::Flat => (0.0, 0.0, 0.0),
+        Starter::BassBoost => (4.0, 0.0, 0.0),
+        Starter::Warm => (2.0, -2.0, 0.0),
+        Starter::Bright => (0.0, 2.5, 1.0),
+    };
+    let band = |kind, freq, gain_db, q| {
+        DspFilter::Band(EqFilter {
+            kind,
+            freq,
+            gain_db,
+            q,
+            channels: vec![],
+        })
+    };
+    let mut bands = vec![band(EqFilterKind::LowShelf, 100.0, low, std::f64::consts::FRAC_1_SQRT_2)];
+    for freq in [200.0, 400.0, 800.0, 1600.0, 3200.0, 6400.0] {
+        let gain = if freq == 3200.0 { presence } else { 0.0 };
+        bands.push(band(EqFilterKind::Peaking, freq, gain, 1.0));
+    }
+    bands.push(band(EqFilterKind::HighShelf, 10_000.0, high, std::f64::consts::FRAC_1_SQRT_2));
+    bands
+}
+
+/// Make the EQ `name`: `starter`'s bands, on every channel, to edit.
+pub fn create_eq(name: &str, starter: Starter) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("It needs a name".into());
+    }
+    if Config::cached().dsp.profiles.iter().any(|p| p.name == name) {
+        return Err(format!("There is already an EQ called {name}"));
+    }
+    persist(|cfg| {
+        cfg.dsp.profiles.push(DspProfile {
+            name: name.to_owned(),
+            filters: starter_bands(starter),
+            role: Some(DspRole::Tuning),
+            ..Default::default()
+        });
+    })
+    .map_err(|e| e.to_string())
+}
+
+/// How an EQ of bands lays them over the two channels: one list for both,
+/// or one for each, and whether the two lists say different things.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChannelLayout {
+    pub stereo: bool,
+    pub differ: bool,
+}
+
+/// `filters`' layout, where they are bands alone, each on every channel or
+/// on the left or right alone. `None` for anything else: delays, mixes,
+/// curves, or bands over more channels than two.
+pub fn channel_layout(filters: &[crate::config::DspFilter]) -> Option<ChannelLayout> {
+    use crate::config::DspFilter;
+    let mut stereo = false;
+    for f in filters {
+        let DspFilter::Band(b) = f else { return None };
+        match b.channels.as_slice() {
+            [] => {}
+            [0] | [1] => stereo = true,
+            _ => return None,
+        }
+    }
+    let on = |c: u16| -> Vec<(crate::config::EqFilterKind, u64, u64, u64)> {
+        filters
+            .iter()
+            .filter_map(|f| match f {
+                DspFilter::Band(b) if b.channels.is_empty() || b.channels.contains(&c) => {
+                    Some((b.kind, b.freq.to_bits(), b.gain_db.to_bits(), b.q.to_bits()))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    Some(ChannelLayout {
+        stereo,
+        differ: stereo && on(0) != on(1),
+    })
+}
+
+/// Give `name` a list of bands for each channel, each starting as the one
+/// list it had, or one list for both: the bands of channel `keep`, the
+/// other's dropped.
+pub fn set_stereo(name: &str, stereo: bool, keep: u16) -> Result<(), String> {
+    use crate::config::DspFilter;
+    may_edit(name)?;
+    let cfg = Config::cached();
+    let p = cfg
+        .dsp
+        .profiles
+        .iter()
+        .find(|p| p.name == name)
+        .ok_or_else(|| format!("No EQ called {name}"))?;
+    if channel_layout(&p.filters).is_none() {
+        return Err(format!("{name} is not bands alone, so it has no channels to set"));
+    }
+    let on = |c: u16| -> Vec<DspFilter> {
+        p.filters
+            .iter()
+            .filter(|f| {
+                let ch = f.channels();
+                ch.is_empty() || ch.contains(&c)
+            })
+            .cloned()
+            .map(|mut f| {
+                if let Some(ch) = f.channels_mut() {
+                    *ch = if stereo { vec![c] } else { vec![] };
+                }
+                f
+            })
+            .collect()
+    };
+    let filters = if stereo {
+        let mut both = on(0);
+        both.extend(on(1));
+        both
+    } else {
+        on(keep)
+    };
+    persist(|cfg| profile_mut(&mut cfg.dsp.profiles, name).filters = filters)
+        .map_err(|e| e.to_string())
 }
 
 /// Take filter `index` out of `name`.
@@ -1496,6 +1652,9 @@ pub struct Response {
     /// For a split's preview: the baked EQ it comes from, which `total`
     /// plays the same as.
     pub original: Option<Vec<f64>>,
+    /// For an EQ with a list of bands for each channel: the right channel,
+    /// where `total` is the left.
+    pub right: Option<Vec<f64>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1616,6 +1775,10 @@ fn response_of(profile: &DspProfile, all: &[DspProfile], rate: u32) -> Option<Re
         correction,
         tuning,
         original: None,
+        right: (profile.layers.is_empty()
+            && profile.impulses.is_empty()
+            && channel_layout(&profile.filters).is_some_and(|l| l.stereo))
+        .then(|| super::response_on(&profile.filters, &freqs, rate, 1)),
     })
 }
 
@@ -2242,7 +2405,28 @@ pub fn preset_for(device: &str) -> Option<(String, bool)> {
         .iter()
         .find(|p| p.name == name && p.preset)?;
     let now = chain_of(&cfg.dsp, device);
-    Some((name, now != preset.layers))
+    let only = cfg.dsp.filters_only.iter().any(|d| d == device);
+    Some((name, now != preset.layers || only != preset.filters_only))
+}
+
+/// Whether `device` plays filters alone, with no correction.
+pub fn filters_only(device: &str) -> bool {
+    Config::cached().dsp.filters_only.iter().any(|d| d == device)
+}
+
+/// Have `device` play filters alone, or correct for a headphone again. Alone,
+/// its correction is taken off it; the correction itself is kept.
+pub fn set_filters_only(device: &str, only: bool) -> Result<(), String> {
+    persist(|cfg| {
+        cfg.dsp.filters_only.retain(|d| d != device);
+        if only {
+            cfg.dsp.filters_only.push(device.to_owned());
+            for p in cfg.dsp.profiles.iter_mut().filter(|p| !p.preset) {
+                p.devices.retain(|d| d != device);
+            }
+        }
+    })
+    .map_err(|e| e.to_string())
 }
 
 /// `device`'s correction and tuning as a preset's layers: the correction,
@@ -2283,14 +2467,19 @@ pub fn save_preset(device: &str, name: &str) -> Result<String, String> {
     }
     let layers = chain_of(&cfg.dsp, device);
     let unsaid = unsaid_correction(&cfg.dsp, device);
+    let only = cfg.dsp.filters_only.iter().any(|d| d == device);
     persist(|cfg| {
         say_corrects(cfg, unsaid.as_deref());
         match cfg.dsp.profiles.iter_mut().find(|p| p.name == name) {
-            Some(p) => p.layers = layers,
+            Some(p) => {
+                p.layers = layers;
+                p.filters_only = only;
+            }
             None => cfg.dsp.profiles.push(DspProfile {
                 name: name.to_owned(),
                 preset: true,
                 layers,
+                filters_only: only,
                 ..Default::default()
             }),
         }
@@ -2386,6 +2575,7 @@ fn set_output(
 pub fn apply_preset(device: &str, name: Option<&str>) -> Result<(), String> {
     let cfg = Config::cached();
     let all = &cfg.dsp.profiles;
+    let mut only = None;
     let (correction, tunings) = match name {
         None => (None, Vec::new()),
         Some(name) => {
@@ -2411,10 +2601,19 @@ pub fn apply_preset(device: &str, name: Option<&str>) -> Result<(), String> {
             for (t, _) in &parts.1 {
                 check_tuning(t, all)?;
             }
+            only = Some(p.filters_only);
             parts
         }
     };
-    persist(|cfg| set_output(cfg, device, correction.as_deref(), &tunings, name))
+    persist(|cfg| {
+        set_output(cfg, device, correction.as_deref(), &tunings, name);
+        if let Some(only) = only {
+            cfg.dsp.filters_only.retain(|d| d != device);
+            if only {
+                cfg.dsp.filters_only.push(device.to_owned());
+            }
+        }
+    })
 }
 
 /// An output set from a preset by `migrate`: the device, its correction,
@@ -2898,6 +3097,7 @@ pub fn preview_measurement(text: &str, target: &str, rate: u32) -> Result<Respon
         correction: None,
         tuning: None,
         original: None,
+        right: None,
         total,
         freqs,
     })
@@ -2995,6 +3195,7 @@ pub fn preview_split(name: &str, text: &str, target: &str, rate: u32) -> Result<
         correction: Some(s.correction),
         tuning: Some(s.tuning),
         original: Some(s.original),
+        right: None,
         total,
         freqs: s.freqs,
     })
@@ -3759,6 +3960,114 @@ mod tests {
         assert!(!r.layers[0].on);
     }
 
+    fn fresh_config() -> (std::sync::MutexGuard<'static, ()>, tempfile::TempDir) {
+        let guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        (guard, dir)
+    }
+
+    /// A new EQ is eight bands, a shelf at each end and six peaks, flat or
+    /// at its starter's gains, and a tuning; a name taken is refused.
+    #[test]
+    fn a_new_eq_starts_as_eight_bands() {
+        use crate::config::{DspFilter, EqFilterKind};
+        let (_guard, _dir) = fresh_config();
+        create_eq("Desk", Starter::Flat).unwrap();
+        let d = detail("Desk").unwrap();
+        assert_eq!(d.filters.len(), 8);
+        assert_eq!(d.role, DspRole::Tuning);
+        let kinds: Vec<EqFilterKind> = d
+            .filters
+            .iter()
+            .map(|f| match f {
+                DspFilter::Band(b) => {
+                    assert_eq!(b.gain_db, 0.0);
+                    b.kind
+                }
+                _ => panic!("bands alone"),
+            })
+            .collect();
+        assert_eq!(kinds[0], EqFilterKind::LowShelf);
+        assert_eq!(kinds[7], EqFilterKind::HighShelf);
+        assert!(kinds[1..7].iter().all(|k| *k == EqFilterKind::Peaking));
+        let r = response("Desk", 48000).unwrap();
+        assert!(r.total.iter().all(|db| db.abs() < 1e-9), "flat plays untouched");
+
+        create_eq("Thump", Starter::BassBoost).unwrap();
+        let r = response("Thump", 48000).unwrap();
+        assert!(r.total[0] > 3.0 && r.total.last().unwrap().abs() < 0.5);
+        assert!(create_eq("Desk", Starter::Warm).is_err());
+        assert!(create_eq("  ", Starter::Flat).is_err());
+    }
+
+    /// Stereo gives each channel the one list it had; the right channel is
+    /// drawn of its own; mono keeps the channel asked for.
+    #[test]
+    fn an_eq_switches_between_one_list_and_one_per_channel() {
+        use crate::config::DspFilter;
+        let (_guard, _dir) = fresh_config();
+        create_eq("Desk", Starter::Flat).unwrap();
+        let layout = || detail("Desk").unwrap().channels.unwrap();
+        assert_eq!(layout(), ChannelLayout { stereo: false, differ: false });
+        assert!(response("Desk", 48000).unwrap().right.is_none());
+
+        set_stereo("Desk", true, 0).unwrap();
+        assert_eq!(layout(), ChannelLayout { stereo: true, differ: false });
+        assert_eq!(detail("Desk").unwrap().filters.len(), 16);
+
+        // The right channel's bass shelf up.
+        set_band("Desk", 8, "low_shelf", 100.0, 6.0, 0.7).unwrap();
+        assert_eq!(layout(), ChannelLayout { stereo: true, differ: true });
+        let r = response("Desk", 48000).unwrap();
+        assert!(r.total[0].abs() < 1e-9, "left untouched");
+        assert!(r.right.unwrap()[0] > 5.0, "right drawn of its own");
+        let i = add_band("Desk", Some(1)).unwrap();
+        assert_eq!(detail("Desk").unwrap().filters[i].channels(), &[1]);
+        remove_filter("Desk", i).unwrap();
+
+        set_stereo("Desk", false, 1).unwrap();
+        assert_eq!(layout(), ChannelLayout { stereo: false, differ: false });
+        let filters = detail("Desk").unwrap().filters;
+        assert_eq!(filters.len(), 8);
+        assert!(filters.iter().all(|f| f.channels().is_empty()));
+        assert!(matches!(&filters[0], DspFilter::Band(b) if b.gain_db == 6.0), "kept the right");
+    }
+
+    /// An output playing filters alone has no correction; a preset saved
+    /// from it says so and sets it again; choosing a correction ends it.
+    #[test]
+    fn an_output_plays_filters_alone() {
+        let (_guard, _dir) = fresh_config();
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "HD 650".into(),
+                role: Some(DspRole::Correction),
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        create_eq("Room", Starter::Warm).unwrap();
+        assign(Some("HD 650"), "Desk").unwrap();
+        set_tunings("Desk", &[("Room".into(), true)]).unwrap();
+
+        set_filters_only("Desk", true).unwrap();
+        assert!(filters_only("Desk"));
+        assert!(Config::cached().dsp.profile_for("Desk").is_none(), "no correction");
+        save_preset("Desk", "Speakers").unwrap();
+        assert_eq!(preset_for("Desk"), Some(("Speakers".into(), false)));
+
+        set_filters_only("Desk", false).unwrap();
+        assert_eq!(preset_for("Desk"), Some(("Speakers".into(), true)), "changed since");
+        apply_preset("Desk", Some("Speakers")).unwrap();
+        assert!(filters_only("Desk"));
+
+        assign(Some("HD 650"), "Desk").unwrap();
+        assert!(!filters_only("Desk"));
+    }
+
     /// A band edited by hand is held to its ranges, keeps its channels, and
     /// changes what plays; one added starts flat; one taken out is gone.
     #[test]
@@ -3798,14 +4107,14 @@ mod tests {
         assert!(set_band("Mine", 0, "wobble", 80.0, 0.0, 1.0).is_err());
         assert!(set_band("Mine", 0, "peaking", f64::NAN, 0.0, 1.0).is_err());
         assert!(set_band("Mine", 5, "peaking", 80.0, 0.0, 1.0).is_err());
-        assert_eq!(add_band("Mine").unwrap(), 1);
+        assert_eq!(add_band("Mine", None).unwrap(), 1);
         assert_eq!(filters().len(), 2);
         let r = response("Mine", 48000).unwrap();
         assert_eq!(r.bands.len(), 2);
         remove_filter("Mine", 0).unwrap();
         assert_eq!(filters().len(), 1);
         assert!(remove_filter("Mine", 3).is_err());
-        assert!(add_band("Nobody").is_err());
+        assert!(add_band("Nobody", None).is_err());
         assert!(set_curve("Mine", 0, &[(100.0, 1.0)]).is_err(), "a band");
     }
 
@@ -5287,7 +5596,7 @@ mod tests {
         .unwrap();
         let refused = set_band("HD 600", 0, "peaking", 200.0, 1.0, 1.0).unwrap_err();
         assert!(refused.contains("plays as made"), "{refused}");
-        assert!(add_band("HD 600").is_err());
+        assert!(add_band("HD 600", None).is_err());
         assert!(remove_filter("HD 600", 0).is_err());
         assert!(detail("HD 600").unwrap().read_only);
 
