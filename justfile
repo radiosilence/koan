@@ -33,6 +33,11 @@ fmt:
 changelog *args:
     python3 scripts/changelog.py {{args}}
 
+# Prepare a release PR: branch, bump the version, write the changelog, commit,
+# push and open the PR. `--no-push` stops before the push.
+release version *args:
+    scripts/release.sh {{version}} {{args}}
+
 # Compile the web UI and share page stylesheets. The output is committed, since
 # the server embeds it; CI fails a build where it is stale.
 css:
