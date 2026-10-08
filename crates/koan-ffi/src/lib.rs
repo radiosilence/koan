@@ -7103,7 +7103,7 @@ mod restore_tests {
             disc: None,
             duration_ms: None,
             db_id,
-            played: false,
+            played: None,
         }
     }
 

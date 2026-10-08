@@ -1164,11 +1164,10 @@ impl Player {
         let timeline = self.timeline.clone();
         move || {
             let mut steps = steps.lock();
-            let current = match steps.last() {
-                None => id,
-                Some(step) => step.chosen.as_ref()?.0,
+            let mut step = match steps.last() {
+                None => state.lookahead_after(id)?,
+                Some(step) => state.lookahead_from(step)?,
             };
-            let mut step = state.lookahead_after(current)?;
             step.boundary = timeline.boundary_count();
             let next = step.chosen.clone();
             steps.push(step);
@@ -1975,6 +1974,14 @@ impl Player {
         let Transport::Loaded(session) = &mut self.transport else {
             return;
         };
+        // The pass the decoder's step put this track in: by id alone, a row
+        // in this pass and the next is ambiguous.
+        let pass = session
+            .lookahead
+            .lock()
+            .iter()
+            .find(|step| step.boundary == playhead.boundary)
+            .map(|step| step.pass);
         if session.track.id == id {
             return;
         }
@@ -1992,7 +1999,7 @@ impl Player {
             channels: info.channels,
             duration_ms: info.duration_ms,
         };
-        self.shared_state.move_on_to(id);
+        self.shared_state.move_on_to(id, pass);
     }
 
     /// Whether a sleep timer set for the end of the track or record ends

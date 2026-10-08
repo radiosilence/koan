@@ -1433,7 +1433,7 @@ impl Player {
             position_ms: 0,
             running: Some(Instant::now()),
         }));
-        self.shared_state.move_on_to(id);
+        self.shared_state.move_on_to(id, None);
         // A new play even of the same item, repeated: the renderer opened it
         // again.
         self.begin_play(id, 0, 0);

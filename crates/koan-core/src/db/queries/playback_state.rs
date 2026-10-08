@@ -42,7 +42,7 @@ struct LegacyQueueItem {
 /// itself, noting where each row had stood. The marks are taken from the
 /// cursor, and a shuffled queue is put back in its own order, as turning
 /// shuffle off would have put it.
-fn upgrade(items: &mut Vec<PersistedQueueItem>, legacy: &[LegacyQueueItem], cursor: Option<&str>) {
+fn upgrade(items: &mut [PersistedQueueItem], legacy: &[LegacyQueueItem], cursor: Option<&str>) {
     if items.iter().any(|item| item.played.is_none()) {
         let at = cursor.and_then(|c| items.iter().position(|item| item.path == c));
         for (i, item) in items.iter_mut().enumerate() {

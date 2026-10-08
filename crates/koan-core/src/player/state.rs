@@ -50,6 +50,11 @@ pub struct Lookahead {
     /// so this rather than a step's index is what places it against the
     /// playhead. Set by the decoder's cursor; 0 elsewhere.
     pub boundary: usize,
+    /// The pass of the queue `after` is in, and the one `next` is in: one
+    /// more once a step has gone round. A row can be in this pass and the
+    /// next at once, so its id alone cannot say which a step is from.
+    pub after_pass: u64,
+    pub pass: u64,
 }
 
 /// What follows a track once it ends, beyond the queue's own order.
@@ -453,6 +458,8 @@ pub struct Playlist {
     pub items: Vec<PlaylistItem>,
     pub cursor: Option<QueueItemId>,
     pub order: Option<PlayOrder>,
+    /// Counts the times the queue has started over.
+    pub pass: u64,
 }
 
 impl Playlist {
@@ -468,6 +475,7 @@ impl Playlist {
             items,
             cursor,
             order,
+            ..
         } = self;
         let Some(order) = order.as_mut() else {
             return;
@@ -546,9 +554,13 @@ impl Playlist {
     /// In order, that is `follows`. Shuffled, it is the next playable row of
     /// the play order, and once this pass is spent and the queue repeats,
     /// the next pass's, which is drawn here the first time it is needed.
+    ///
+    /// `ahead` says `after` is a step the lookahead took into the next pass,
+    /// which is searched from it rather than from the top.
     fn follows(
         &mut self,
         after: Option<QueueItemId>,
+        ahead: bool,
         repeat: Repeat,
     ) -> Option<(Option<QueueItemId>, bool)> {
         let Some(order) = self.order.as_ref() else {
@@ -576,6 +588,14 @@ impl Playlist {
                 .and_then(|after| order.iter().position(|id| *id == after))
                 .map_or(0, |at| at + 1)
         };
+        if ahead {
+            let Some(next) = order.next_pass.as_ref() else {
+                return Some((None, false));
+            };
+            let at = from(next);
+            let found = next[at..].iter().chain(&next[..at]).find(playable).copied();
+            return Some((found, true));
+        }
         let upcoming = &order.upcoming;
         if let Some(next) = upcoming[from(upcoming)..].iter().find(playable) {
             return Some((Some(*next), false));
@@ -583,19 +603,13 @@ impl Playlist {
         if repeat == Repeat::Off {
             return Some((None, false));
         }
-        // From this pass, the next starts at its top. Only a lookahead that
-        // has already gone round steps on from within the next pass.
-        let within =
-            after.is_some_and(|after| Some(after) != self.cursor && !upcoming.contains(&after));
         if order.next_pass.is_none() {
             let pass = self.new_pass(after.or(self.cursor));
             self.order.as_mut().expect("checked above").next_pass = Some(pass);
         }
         let next = self.order.as_ref()?.next_pass.as_ref()?;
-        let at = if within { from(next) } else { 0 };
         let playable = |id: &&QueueItemId| self.find(**id).is_some_and(PlaylistItem::playable);
-        let found = next[at..].iter().chain(&next[..at]).find(playable).copied();
-        Some((found, true))
+        Some((next.iter().find(playable).copied(), true))
     }
 
     /// Put the cursor on `id`. Shuffled, its track leaves what is still to
@@ -605,6 +619,7 @@ impl Playlist {
             items,
             cursor,
             order,
+            ..
         } = self;
         *cursor = id;
         let Some(id) = id else { return };
@@ -628,9 +643,14 @@ impl Playlist {
     /// track, or by Next. Getting there by starting the queue over begins a
     /// new pass — nothing has played in it yet, and shuffled, the next
     /// pass's order becomes what is left to play.
-    fn move_on(&mut self, id: QueueItemId) {
-        let wrapped = match &self.order {
-            Some(order) => {
+    ///
+    /// `pass` is the pass the step that chose `id` put it in, when known.
+    /// Without it, a move one step on from the cursor is read: a row of the
+    /// next pass is chosen only once nothing in this one can play.
+    fn move_on(&mut self, id: QueueItemId, pass: Option<u64>) {
+        let wrapped = match (&self.order, pass) {
+            (_, Some(pass)) => pass > self.pass,
+            (Some(order), None) => {
                 self.cursor != Some(id)
                     && !order.upcoming.contains(&id)
                     && order
@@ -638,7 +658,7 @@ impl Playlist {
                         .as_ref()
                         .is_some_and(|pass| pass.contains(&id))
             }
-            None => {
+            (None, None) => {
                 let at = |id| self.items.iter().position(|item| item.id == id);
                 matches!((self.cursor.and_then(at), at(id)), (Some(from), Some(to)) if to < from)
             }
@@ -647,11 +667,33 @@ impl Playlist {
             for item in &mut self.items {
                 item.played = false;
             }
+            self.pass += 1;
             if let Some(order) = self.order.as_mut() {
                 order.upcoming = order.next_pass.take().unwrap_or_default();
             }
         }
         self.place_cursor(Some(id));
+    }
+
+    /// Start a new pass when every row has played: a queue played out, then
+    /// played again from a row, or shuffled once it has. Without this, a
+    /// shuffled queue with nothing left unplayed would play the one row and
+    /// stop. Says whether it did.
+    fn start_over_if_spent(&mut self) -> bool {
+        let mut playable = self.items.iter().filter(|item| item.playable()).peekable();
+        if playable.peek().is_none() || !playable.all(|item| item.played) {
+            return false;
+        }
+        for item in &mut self.items {
+            item.played = false;
+        }
+        self.pass += 1;
+        if let Some(order) = self.order.as_mut() {
+            order.upcoming.clear();
+            order.next_pass = None;
+        }
+        self.reconcile();
+        true
     }
 }
 
@@ -1374,16 +1416,21 @@ impl SharedPlayerState {
     pub fn set_cursor(&self, id: Option<QueueItemId>) {
         let mut pl = self.playlist.write();
         pl.place_cursor(id);
+        let replayed = pl.start_over_if_spent();
         drop(pl);
+        if replayed {
+            self.played_version.fetch_add(1, Ordering::AcqRel);
+        }
         self.bump_version();
     }
 
     /// The playhead has moved on to `id`, the item that followed the cursor:
     /// gaplessly, or a renderer taking the track it was handed. As an advance
-    /// does, a move that starts the queue over begins a new pass.
-    pub fn move_on_to(&self, id: QueueItemId) {
+    /// does, a move that starts the queue over begins a new pass. `pass` is
+    /// the pass the lookahead step that chose `id` put it in, if one did.
+    pub fn move_on_to(&self, id: QueueItemId, pass: Option<u64>) {
         let mut pl = self.playlist.write();
-        pl.move_on(id);
+        pl.move_on(id, pass);
         drop(pl);
         self.played_version.fetch_add(1, Ordering::AcqRel);
         self.bump_version();
@@ -1415,6 +1462,9 @@ impl SharedPlayerState {
         let cursor = pl.cursor;
         pl.reconcile();
         pl.place_cursor(cursor);
+        if on && pl.start_over_if_spent() {
+            self.played_version.fetch_add(1, Ordering::AcqRel);
+        }
         drop(pl);
         // The downloads follow the play order.
         self.pending_version.fetch_add(1, Ordering::AcqRel);
@@ -1504,12 +1554,13 @@ impl SharedPlayerState {
         };
         let mut pl = self.playlist.write();
         let cursor = pl.cursor;
-        let next = pl.follows(cursor, repeat)?.0?;
-        pl.move_on(next);
+        let (next, wrapped) = pl.follows(cursor, false, repeat)?;
+        let pass = pl.pass + u64::from(wrapped);
+        pl.move_on(next?, Some(pass));
         drop(pl);
         self.played_version.fetch_add(1, Ordering::AcqRel);
         self.bump_version();
-        Some(next)
+        next
     }
 
     /// One step of the decoder's gapless lookahead from `after_id`. Does not
@@ -1529,9 +1580,22 @@ impl SharedPlayerState {
     /// None when `after_id` has been removed: the lookahead then has nothing
     /// to follow, and starting from the top would gaplessly replay the queue.
     pub fn lookahead_after(&self, after_id: QueueItemId) -> Option<Lookahead> {
+        self.lookahead(after_id, None)
+    }
+
+    /// The step after `step`, from what it chose: the decoder's next step
+    /// through the queue, in the pass `step` reached.
+    pub fn lookahead_from(&self, step: &Lookahead) -> Option<Lookahead> {
+        self.lookahead(step.chosen.as_ref()?.0, Some(step.pass))
+    }
+
+    fn lookahead(&self, after_id: QueueItemId, after_pass: Option<u64>) -> Option<Lookahead> {
         let repeat = self.play_mode().repeat;
         let mut pl = self.playlist.write();
-        let (next, wrapped) = pl.follows(Some(after_id), repeat)?;
+        let after_pass = after_pass.unwrap_or(pl.pass);
+        let ahead = after_pass > pl.pass;
+        let (next, wrapped) = pl.follows(Some(after_id), ahead, repeat)?;
+        let pass = pl.pass + u64::from(ahead || wrapped);
         let next = next.and_then(|id| pl.find(id));
         Some(Lookahead {
             after: after_id,
@@ -1541,6 +1605,8 @@ impl SharedPlayerState {
                 .map(|item| (item.id, item.path.clone())),
             wrapped,
             boundary: 0,
+            after_pass,
+            pass,
         })
     }
 
@@ -1552,9 +1618,9 @@ impl SharedPlayerState {
     /// track appended after the one a wrap left from.
     pub fn still_follows(&self, step: &Lookahead) -> bool {
         let repeat = self.play_mode().repeat;
-        self.playlist
-            .write()
-            .follows(Some(step.after), repeat)
+        let mut pl = self.playlist.write();
+        let ahead = step.after_pass > pl.pass;
+        pl.follows(Some(step.after), ahead, repeat)
             .is_some_and(|(next, _)| next == step.next)
     }
 
@@ -2452,12 +2518,65 @@ mod tests {
         for _ in 0..(3 * ids.len()) {
             let cursor = state.cursor().unwrap();
             let next = state.lookahead_after(cursor).unwrap();
-            let after = state.lookahead_after(next.next.unwrap()).unwrap();
+            let after = state.lookahead_from(&next).unwrap();
             assert!(state.still_follows(&next));
             assert_eq!(play_on(&state), next.next);
             assert_eq!(play_on(&state), after.next);
             assert_eq!(next.chosen.map(|(id, _)| id), next.next);
         }
+    }
+
+    #[test]
+    fn a_lookahead_steps_deep_crosses_into_the_next_pass_as_the_advance_does() {
+        let (state, ids) = shuffled(tracks(4));
+        set_repeat(&state, Repeat::Queue);
+        state.advance_cursor_loadable();
+        // As the decoder chains steps when tracks are shorter than the ring:
+        // the rest of this pass and all of the next, before the playhead
+        // reaches any of them.
+        let mut step = state.lookahead_after(state.cursor().unwrap()).unwrap();
+        let mut chain = vec![step.next.unwrap()];
+        for _ in 1..(ids.len() - 1 + ids.len()) {
+            step = state.lookahead_from(&step).unwrap();
+            chain.push(step.next.unwrap());
+        }
+        let played: Vec<_> = chain.iter().map(|_| play_on(&state).unwrap()).collect();
+        assert_eq!(played, chain);
+        let mut next_pass = chain[ids.len() - 1..].to_vec();
+        next_pass.sort_by_key(|id| ids.iter().position(|i| i == id));
+        assert_eq!(next_pass, ids, "the next pass whole, not this one again");
+    }
+
+    #[test]
+    fn a_played_out_shuffled_queue_plays_again_from_a_row_picked() {
+        let (state, ids) = shuffled(tracks(5));
+        state.advance_cursor_loadable();
+        while play_on(&state).is_some() {}
+
+        state.set_cursor(Some(ids[2]));
+        let mut heard = vec![ids[2]];
+        while let Some(id) = play_on(&state) {
+            heard.push(id);
+        }
+        heard.sort_by_key(|id| ids.iter().position(|i| i == id));
+        assert_eq!(heard, ids, "a new pass from the row picked");
+    }
+
+    #[test]
+    fn shuffling_a_played_out_queue_plays_it_again() {
+        let state = SharedPlayerState::new();
+        let items = tracks(5);
+        let ids: Vec<_> = items.iter().map(|i| i.id).collect();
+        state.add_items(items);
+        state.set_cursor(Some(ids[0]));
+        while play_on(&state).is_some() {}
+
+        state.set_shuffled(true);
+        let mut heard = vec![state.cursor().unwrap()];
+        while let Some(id) = play_on(&state) {
+            heard.push(id);
+        }
+        assert_eq!(heard.len(), ids.len());
     }
 
     #[test]
