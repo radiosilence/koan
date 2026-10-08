@@ -2952,6 +2952,7 @@ fps = 30
             layers: vec![],
             group: false,
             preset: false,
+            filters_only: false,
             scope: None,
             uid: None,
             origin: None,
