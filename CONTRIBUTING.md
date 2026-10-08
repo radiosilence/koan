@@ -124,6 +124,10 @@ only). Otherwise the macOS checks report success without running. A release PR
 (branch `release-*`, or one that changes the version) runs everything, so a
 change to shared Rust that breaks only on macOS is caught there at the latest.
 
+## Releasing
+
+`just release X.Y.Z` branches `release/vX.Y.Z` from `origin/main`, bumps the version in `Cargo.toml`, `deploy/pulumi/package.json` and `deploy/pulumi/src/versions.ts` (CI's `check-version` requires all three to match), refreshes `Cargo.lock`, runs `just changelog --release X.Y.Z`, commits `release: vX.Y.Z`, then pushes and opens the PR. `--no-push` stops after the commit. It never creates tags. Merge nothing else to main until `gh release view vX.Y.Z` succeeds, then dispatch `update-apps.yml` in `radiosilence/jaritanet` to deploy.
+
 ## Architecture
 
 Five crates: `koan-core` (library -- audio engine, player, database, indexer), `koan-tui` (TUI, visualizers, media keys), `koan-server` (GraphQL, Subsonic REST, MCP), `koan-ffi` (uniffi bindings for the macOS and iOS apps), and `koan-cli` (binary -- CLI entry point). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.

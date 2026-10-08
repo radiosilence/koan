@@ -97,6 +97,7 @@ The manager coordinates and does not write features. It keeps the context, makes
 ```bash
 just check          # cargo test + clippy -D warnings
 just fmt            # cargo fmt
+just release X.Y.Z  # branch, bump, changelog, commit, PR
 just theme-leaks    # styling in the apps that bypasses the kōan theme's roles
 just cli            # cargo run --release -p koan-cli -- <args>
 just build          # cargo build --release
