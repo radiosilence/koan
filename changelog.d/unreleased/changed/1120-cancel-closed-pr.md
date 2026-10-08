@@ -1,0 +1,1 @@
+- **A closed pull request's CI runs are cancelled.** Merged and abandoned pull requests no longer hold the macOS runners that main and releases wait for.
