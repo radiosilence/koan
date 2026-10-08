@@ -3358,6 +3358,17 @@ pub fn remove(name: &str) -> Result<(), String> {
         .iter()
         .any(|p| p.name != name && slug(&p.name) == slug(name));
     persist(|cfg| {
+        // For sync to delete it on the account's other devices too.
+        if let Some(uid) = cfg
+            .dsp
+            .profiles
+            .iter()
+            .find(|p| p.name == name)
+            .and_then(|p| p.uid.clone())
+            && !cfg.dsp.removed.contains(&uid)
+        {
+            cfg.dsp.removed.push(uid);
+        }
         cfg.dsp.profiles.retain(|p| p.name != name);
         for p in &mut cfg.dsp.profiles {
             p.layers.retain(|l| l.profile != name);

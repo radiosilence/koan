@@ -637,11 +637,11 @@ fn now_ms() -> i64 {
 fn sync_with(db: &Database, remote: &dyn Remote, url: &str) -> Result<DspSync, Failed> {
     let mut out = DspSync::default();
     first_sync(db)?;
-    let mut locals = observe(db)?;
+    let mut locals = observe(db, url)?;
     let mut dismissed = pull(db, remote, url, &mut locals, &mut out)?;
     if push(db, remote, url, &locals, &dismissed, &mut out)? {
         // The server kept a copy edited later than one sent: take it.
-        locals = observe(db)?;
+        locals = observe(db, url)?;
         dismissed = pull(db, remote, url, &mut locals, &mut out)?;
     }
     let _ = dismissed;
@@ -685,9 +685,41 @@ fn first_sync(db: &Database) -> Result<(), Failed> {
 
 /// Every profile kept everywhere, each given a uid if it lacks one, with an
 /// edit recorded for each whose content moved since it was last seen.
-fn observe(db: &Database) -> Result<HashMap<String, Local>, Failed> {
+///
+/// A profile that travels has its scope set to everywhere, so only a choice
+/// made later keeps it on this device. Left to be worked out, it would
+/// change on its own: set for a built-in output, given an impulse response,
+/// or a stack given a layer kept here, it would read as kept here alone, and
+/// `push` would delete it from the server and every other device. One synced
+/// already whose worked-out scope has since changed is set back, for the
+/// same reason.
+fn observe(db: &Database, url: &str) -> Result<HashMap<String, Local>, Failed> {
+    use crate::audio::dsp::profiles::scope;
     let cfg = Config::cached();
     let all = cfg.dsp.profiles.clone();
+    let synced = rows::synced(&db.conn, url)?;
+    let unpinned: Vec<String> = all
+        .iter()
+        .filter(|p| p.scope.is_none())
+        .filter(|p| {
+            scope(p, &all) == DspScope::Everywhere
+                || p.uid.as_ref().is_some_and(|u| synced.contains_key(u))
+        })
+        .map(|p| p.name.clone())
+        .collect();
+    if !unpinned.is_empty() {
+        Config::persist(|c| {
+            for p in c
+                .dsp
+                .profiles
+                .iter_mut()
+                .filter(|p| unpinned.contains(&p.name))
+            {
+                p.scope = Some(DspScope::Everywhere);
+            }
+        })?;
+        return observe(db, url);
+    }
     let everywhere: Vec<&DspProfile> = all
         .iter()
         .filter(|p| crate::audio::dsp::profiles::scope(p, &all) == DspScope::Everywhere)
@@ -708,7 +740,7 @@ fn observe(db: &Database) -> Result<HashMap<String, Local>, Failed> {
                 p.uid = Some(uuid::Uuid::now_v7().to_string());
             }
         })?;
-        return observe(db);
+        return observe(db, url);
     }
     let seen = rows::local_edits(&db.conn)?;
     let mut locals = HashMap::new();
@@ -877,7 +909,7 @@ fn pull(
         Config::persist(|c| c.dsp.autoeq_dismissed.extend(missing))?;
     }
     if out.applied > 0 {
-        *locals = observe(db)?;
+        *locals = observe(db, url)?;
     }
     Ok(dismissed)
 }
@@ -895,18 +927,41 @@ fn push(
 ) -> Result<bool, Failed> {
     let synced = rows::synced(&db.conn, url)?;
     let edits = rows::local_edits(&db.conn)?;
-    // Gone from here, or kept here alone now: gone everywhere else too.
+    let cfg = Config::cached();
+    // Deleted here, or kept here alone by choice: gone everywhere else too.
     // Deletions go first, so a profile deleted and made again under its
     // name reaches other devices after the one it replaces has left.
+    let mut restore = false;
     for uid in synced.keys().filter(|u| !locals.contains_key(*u)) {
         let refused = edits.get(uid).is_some_and(|e| e.refused.is_some());
         if refused {
+            continue;
+        }
+        let kept_here = cfg
+            .dsp
+            .profiles
+            .iter()
+            .any(|p| p.uid.as_deref() == Some(uid) && p.scope == Some(DspScope::Device));
+        if !kept_here && !cfg.dsp.removed.contains(uid) {
+            // Missing without having been deleted: a config that did not
+            // load, or one edited by hand. Never a reason to delete it from
+            // every device; the server's copy is taken again instead.
+            log::warn!("dsp sync: {uid} is missing here but was not deleted; restoring it");
+            rows::forget_synced(&db.conn, url, uid)?;
+            restore = true;
             continue;
         }
         remote.delete(uid, now_ms())?;
         rows::forget_synced(&db.conn, url, uid)?;
         rows::forget_local(&db.conn, uid)?;
         out.sent += 1;
+    }
+    if restore {
+        rows::set_sync_cursor(&db.conn, url, 0)?;
+    }
+    // A deletion is sent once; one never synced has nothing to send.
+    if !cfg.dsp.removed.is_empty() {
+        Config::persist(|c| c.dsp.removed.clear())?;
     }
     // What was kept everywhere and no longer is, and was never sent or has
     // now been deleted: nothing is left to track. One kept everywhere that
@@ -927,7 +982,7 @@ fn push(
     {
         rows::forget_local(&db.conn, uid)?;
     }
-    let mut kept_later = false;
+    let mut kept_later = restore;
     let mut uids: Vec<&String> = locals.keys().collect();
     uids.sort();
     for uid in uids {
@@ -1446,6 +1501,164 @@ mod tests {
         a.sync(&server);
         assert!(a.profile("HD 650").is_none());
         assert!(a.profile("Desk speakers").is_some());
+    }
+
+    /// Sync `made` from A to B, change it on A with `drift` in a way that
+    /// makes its worked-out scope this device's, and sync again: `name`
+    /// must still be on the server and on B.
+    fn stays_shared(made: Vec<DspProfile>, name: &str, drift: impl FnOnce()) {
+        let server = Server::new();
+        let (a, b) = (Device::new(), Device::new());
+        a.on();
+        Config::persist(|c| c.dsp.profiles.extend(made)).unwrap();
+        a.sync(&server);
+        b.sync(&server);
+        assert!(b.profile(name).is_some(), "{name} reached B");
+
+        a.on();
+        drift();
+        a.sync(&server);
+        b.sync(&server);
+
+        let uid = a.profile(name).unwrap().uid.unwrap();
+        assert!(
+            rows::live_docs(&server.conn, USER)
+                .unwrap()
+                .iter()
+                .any(|(u, _)| *u == uid),
+            "{name} was deleted from the server"
+        );
+        assert!(b.profile(name).is_some(), "{name} was deleted from B");
+        assert_eq!(a.profile(name).unwrap().scope, Some(DspScope::Everywhere));
+    }
+
+    #[test]
+    fn a_shared_profile_set_for_a_built_in_output_stays_shared() {
+        let _guard = lock();
+        stays_shared(vec![headphone()], "HD 650 (AutoEQ, oratory1990)", || {
+            Config::persist(|c| c.dsp.profiles[0].devices.push("Speaker".into())).unwrap();
+        });
+    }
+
+    #[test]
+    fn a_shared_profile_given_an_impulse_response_stays_shared() {
+        let _guard = lock();
+        let name = "HD 650 (AutoEQ, oratory1990)";
+        stays_shared(vec![headphone()], name, || {
+            let dir = crate::audio::dsp::profiles::dir(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("48000.wav"), b"RIFF not really").unwrap();
+            let rel = Path::new("dsp")
+                .join(dir.file_name().unwrap())
+                .join("48000.wav");
+            Config::persist(|c| c.dsp.profiles[0].impulses.push(rel)).unwrap();
+        });
+    }
+
+    fn local_layer() -> DspProfile {
+        DspProfile {
+            name: "Desk".into(),
+            filters: vec![band(-2.0)],
+            scope: Some(DspScope::Device),
+            ..Default::default()
+        }
+    }
+
+    fn stack(group: bool) -> DspProfile {
+        DspProfile {
+            name: "Stack".into(),
+            layers: vec![crate::config::DspLayer {
+                profile: headphone().name,
+                on: true,
+            }],
+            group,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_shared_stack_given_a_layer_kept_here_stays_shared() {
+        let _guard = lock();
+        stays_shared(vec![headphone(), stack(false)], "Stack", || {
+            Config::persist(|c| {
+                c.dsp.profiles.push(local_layer());
+                let s = c
+                    .dsp
+                    .profiles
+                    .iter_mut()
+                    .find(|p| p.name == "Stack")
+                    .unwrap();
+                s.layers.push(crate::config::DspLayer {
+                    profile: "Desk".into(),
+                    on: true,
+                });
+            })
+            .unwrap();
+        });
+    }
+
+    #[test]
+    fn a_shared_group_given_a_member_kept_here_stays_shared() {
+        let _guard = lock();
+        stays_shared(vec![headphone(), stack(true)], "Stack", || {
+            Config::persist(|c| {
+                c.dsp.profiles.push(local_layer());
+                let s = c
+                    .dsp
+                    .profiles
+                    .iter_mut()
+                    .find(|p| p.name == "Stack")
+                    .unwrap();
+                s.layers.push(crate::config::DspLayer {
+                    profile: "Desk".into(),
+                    on: false,
+                });
+            })
+            .unwrap();
+        });
+    }
+
+    /// A profile synced by a build that left its scope to be worked out, and
+    /// whose worked-out scope changed before this sync, is set back to
+    /// everywhere rather than deleted.
+    #[test]
+    fn a_synced_profile_that_drifted_before_this_build_stays_shared() {
+        let _guard = lock();
+        stays_shared(vec![headphone()], "HD 650 (AutoEQ, oratory1990)", || {
+            Config::persist(|c| {
+                c.dsp.profiles[0].scope = None;
+                c.dsp.profiles[0].devices.push("Speaker".into());
+            })
+            .unwrap();
+        });
+    }
+
+    /// A profile missing here without having been deleted, as after a
+    /// config that did not load, is not deleted from the server or the
+    /// other devices: the server's copy comes back.
+    #[test]
+    fn a_profile_missing_without_a_deletion_is_restored_not_deleted() {
+        let _guard = lock();
+        let name = "HD 650 (AutoEQ, oratory1990)";
+        let server = Server::new();
+        let (a, b) = (Device::new(), Device::new());
+        a.on();
+        Config::persist(|c| c.dsp.profiles.push(headphone())).unwrap();
+        a.sync(&server);
+        b.sync(&server);
+
+        a.on();
+        Config::persist(|c| c.dsp.profiles.clear()).unwrap();
+        a.sync(&server);
+        b.sync(&server);
+
+        assert!(b.profile(name).is_some(), "still on B");
+        assert_eq!(rows::live_docs(&server.conn, USER).unwrap().len(), 1);
+        assert_eq!(
+            a.profile(name).unwrap().filters,
+            vec![band(3.0)],
+            "back on A"
+        );
     }
 
     /// Files travel by content: an impulse response arrives byte for byte,

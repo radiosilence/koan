@@ -619,6 +619,12 @@ pub struct DspConfig {
     /// which they are compared with to say whether it was changed since.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub presets: Vec<DspOutputPreset>,
+    /// The uids of profiles deleted here and not yet deleted on the account's
+    /// server. Sync deletes a profile everywhere only when it is listed here
+    /// or kept on this device by choice; one that is merely missing, after a
+    /// config that failed to load or an edit by hand, is not deleted.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub removed: Vec<String>,
 }
 
 /// One EQ of an output's tuning.
@@ -654,6 +660,7 @@ impl Default for DspConfig {
             autoeq_dismissed: Vec::new(),
             tunings: Vec::new(),
             presets: Vec::new(),
+            removed: Vec::new(),
         }
     }
 }
