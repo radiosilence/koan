@@ -50,14 +50,21 @@ committed dotfile should be one that makes sense on all of them.
 The graphics level is the one worth knowing about. Settings -> Appearance, or:
 
 ```bash
-defaults write cc.blit.koan graphics -int 0   # 0 plain, 1 reduced, 2 full
+defaults write cc.blit.koan graphics -int 0   # 3 bare, 0 plain, 1 reduced, 2 full
 ```
 
-| | Wash | Indicators | Chrome | Cost |
+| | Wash | Chrome | Window | Cost |
 |---|---|---|---|---|
-| `2` Full (default) | drifts | dance | glass | 15-18% of a core |
-| `1` Reduced | held still | dance | glass | ~9% |
-| `0` Plain | none | held still | flat materials | ~6% |
+| `2` Full (default) | drifts | glass | glass toolbar | 15-18% of a core |
+| `1` Reduced | held still | glass | glass toolbar | ~9% |
+| `0` Plain | none | flat materials | glass toolbar | ~6% |
+| `3` Bare | none | flat materials | opaque toolbar | |
+
+The playing indicators move at every level; only Reduce Motion holds them
+still. The Chrome column is the system look's: the kōan theme draws its own
+flat chrome, with no Liquid Glass, at every level. Bare also stands down the
+window's own glass, the toolbar floating over the page and the soft edge under
+the transport, which macOS redraws whenever anything behind them moves.
 
 Measured on an M1 Pro, playing, window frontmost. The wash's blur is close to
 free -- it is rasterised once and magnified as a texture -- so holding it still

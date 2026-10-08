@@ -263,7 +263,8 @@ The correction's block names the target it corrects to ("to Neutral, in-ear
 (diffuse field)"), and each EQ the target it was made against ("made for Neutral"). The
 line into each EQ says how the two meet. Drawn in the accent and marked
 **Matched**, the EQ was made against the correction's own target and plays as
-made. Made against another target, it shows the conversion kōan plays first
+made. When every EQ that plays is matched, the whole chain is drawn in the
+accent, so a chain that plays as made reads as one at a glance. Made against another target, it shows the conversion kōan plays first
 ("Target difference: Neutral → Harman in-ear 2019"), which is correct and not
 a warning. A correction built from a measurement is instead fitted again to
 that target ("Correction fitted to Harman in-ear 2019 for it"): one fit to the
@@ -299,8 +300,12 @@ said on the line into it. VoiceOver reads each of these after the chain's
 sentence. Each EQ's page draws its own curve. The curve is computed by
 the core from the same filters and impulse responses the DSP runs, at 48 kHz,
 so it shows what plays rather than what the filters were meant to do, the EQs it plays
-and a moved target included. The preamp is shown beside the curve rather than
-in it, so the curve lines up with the bands' own gains. The curve is the left
+and a moved target included. The graph is drawn at the level the EQ plays
+at: the curve is moved by the preamp, and a dashed line at that level is
+labelled with it ("preamp −5.0 dB"). A profile whose file states its gain as a
+filter, such as a CamillaDSP `Gain`, draws the same as one that states it as a
+preamp, so the two read alike. On the Mac and iPhone the graph stays at the top
+of the page while the bands scroll under it. The curve is the left
 channel's; a band on the right channel alone draws nothing there and has no
 handle. Each parametric band is drawn faintly behind the total. For a
 correction from AutoEQ, the Measured view draws the device as measured, the
