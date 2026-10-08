@@ -2440,14 +2440,12 @@ private struct KoanSheetRole: ViewModifier {
 /// glyph above it when icons are on; the accent and an underline when chosen.
 struct KoanTabItem: View {
     let title: String
-    let icon: String
     let selected: Bool
     /// Shared by a bar's items, so the underline slides from tab to tab.
     var underline: Namespace.ID?
     /// Where the tab sits in its bar, for VoiceOver: "tab 2 of 4", as the
     /// platform's tab bar says it.
     var position: (index: Int, count: Int)?
-    @Environment(\.koanIcons) private var icons
     @Environment(\.koanRainbow) private var rainbow
 
     var body: some View {
@@ -2456,37 +2454,25 @@ struct KoanTabItem: View {
             .contentShape(Rectangle())
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(title)
-            .accessibilityShowsLargeContentViewer {
-                KoanIcon(icon)
-                Text(title)
-            }
+            .accessibilityShowsLargeContentViewer { Text(title) }
             .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
             .accessibilityValue(position.map { "Tab \($0.index + 1) of \($0.count)" } ?? "")
     }
 
-    /// A television's tabs run across the top, each the glyph beside its
-    /// name at the size of the page's text; a phone's share the bar's width,
-    /// the glyph above.
+    /// Tabs are words alone in the theme, whatever "Show icons" says. A
+    /// television's run across the top at the size of the page's text; a
+    /// phone's share the bar's width.
     @ViewBuilder
     private var item: some View {
         #if os(tvOS)
-        HStack(spacing: KoanTheme.Space.m) {
-            if icons {
-                KoanIcon(icon)
-            }
-            name
-        }
-        .font(.koan(.body))
-        .padding(.horizontal, KoanTheme.Space.l)
-        .padding(.vertical, KoanTheme.Space.s)
+        name
+            .font(.koan(.body))
+            .padding(.horizontal, KoanTheme.Space.l)
+            .padding(.vertical, KoanTheme.Space.s)
         #else
-        VStack(spacing: 4) {
-            if icons {
-                KoanIcon(icon).font(.system(size: 19))
-            }
-            name.font(.koan(.fine))
-        }
-        .frame(maxWidth: .infinity, minHeight: 44)
+        name
+            .font(.koan(.fine))
+            .frame(maxWidth: .infinity, minHeight: 44)
         #endif
     }
 

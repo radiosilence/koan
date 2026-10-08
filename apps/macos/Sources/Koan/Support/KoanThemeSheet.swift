@@ -32,6 +32,14 @@ struct KoanThemeSheet: View {
                 Button("Disabled") { }.koanButton(.standard).disabled(true)
             }
 
+            KoanSectionHeader("Tabs")
+            HStack(spacing: 0) {
+                ForEach(["Queue", "Library", "Settings", "Search"], id: \.self) { title in
+                    KoanTabItem(title: title, selected: title == "Library")
+                }
+            }
+            .frame(width: 360)
+
             KoanSectionHeader("Toggles")
             Toggle("Show icons", isOn: $on).koanToggle()
             Toggle("Gapless", isOn: $off).koanToggle()

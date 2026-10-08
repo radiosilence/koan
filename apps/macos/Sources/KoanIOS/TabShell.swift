@@ -606,7 +606,7 @@ private struct Transport: ViewModifier {
                     if selection == item.id { reselect(item.id) } else { selection = item.id }
                 } label: {
                     KoanTabItem(
-                        title: item.title, icon: item.icon, selected: selection == item.id,
+                        title: item.title, selected: selection == item.id,
                         underline: underline, position: (index, Self.items.count)
                     )
                 }
@@ -624,11 +624,11 @@ private struct Transport: ViewModifier {
         .koanAnimation(KoanTheme.Motion.normal, value: selection)
     }
 
-    private static let items: [(id: TabShell.TabID, title: String, icon: String)] = [
-        (.queue, "Queue", Icon.queueSection),
-        (.library, "Library", Icon.library),
-        (.settings, "Settings", Icon.settings),
-        (.search, "Search", Icon.search),
+    private static let items: [(id: TabShell.TabID, title: String)] = [
+        (.queue, "Queue"),
+        (.library, "Library"),
+        (.settings, "Settings"),
+        (.search, "Search"),
     ]
     #endif
 
@@ -654,7 +654,7 @@ private struct TelevisionTabs: View {
                     selection = item.id
                 } label: {
                     KoanTabItem(
-                        title: item.title, icon: item.icon, selected: selection == item.id,
+                        title: item.title, selected: selection == item.id,
                         underline: underline, position: (index, Self.items.count)
                     )
                 }
@@ -674,12 +674,12 @@ private struct TelevisionTabs: View {
         .tint(accent.color)
     }
 
-    private static let items: [(id: TabShell.TabID, title: String, icon: String)] = [
-        (.nowPlaying, "Now Playing", Icon.nowPlaying),
-        (.queue, "Queue", Icon.queueSection),
-        (.library, "Library", Icon.library),
-        (.search, "Search", Icon.search),
-        (.settings, "Settings", Icon.settings),
+    private static let items: [(id: TabShell.TabID, title: String)] = [
+        (.nowPlaying, "Now Playing"),
+        (.queue, "Queue"),
+        (.library, "Library"),
+        (.search, "Search"),
+        (.settings, "Settings"),
     ]
 }
 #endif
@@ -749,14 +749,14 @@ private struct PadSidebar: View {
                     .listRowBackground(Color.clear)
             }
             Section {
-                row(.queue, "Queue", Icon.queueSection)
-                row(.search, "Search", Icon.search)
-                row(.settings, "Settings", Icon.settings)
+                row(.queue, "Queue")
+                row(.search, "Search")
+                row(.settings, "Settings")
             }
             Section {
                 ForEach(sections, id: \.section) { item in
                     row(
-                        .section(item.section), item.title, item.icon,
+                        .section(item.section), item.title,
                         badge: item.section == .downloads ? mirror.activeTransfers : 0
                     )
                 }
@@ -765,7 +765,7 @@ private struct PadSidebar: View {
             }
             Section {
                 ForEach(playlists.playlists, id: \.id) { playlist in
-                    row(.section(.playlist(playlist.id)), playlist.name, Icon.playlist, data: true)
+                    row(.section(.playlist(playlist.id)), playlist.name, data: true)
                         .contextMenu {
                             Button("Play", koan: Icon.play) { play(playlist, false) }
                             Button("Shuffle", koan: Icon.shuffle) { play(playlist, true) }
@@ -786,28 +786,27 @@ private struct PadSidebar: View {
         }
         .listStyle(.plain)
         .koanSidebar()
+        // Navigation is words alone in the theme, as the tabs are.
+        .environment(\.koanIcons, false)
         .environment(\.defaultMinListHeaderHeight, 0)
         .listRowSeparator(.hidden)
         .listSectionSeparator(.hidden)
     }
 
     /// A row that is a tab: chosen again, back to its root, as a tab is.
+    /// Words alone, as the theme's tabs are.
     /// A playlist's name is the person's, and keeps its case. The badge goes
     /// on before the row's role: on the row it replaces the row's background,
     /// the selection's rule with it, by the list's own.
     private func row(
-        _ id: TabShell.TabID, _ title: String, _ icon: String, data: Bool = false, badge: Int = 0
+        _ id: TabShell.TabID, _ title: String, data: Bool = false, badge: Int = 0
     ) -> some View {
         Button {
             if selection == id { reselect(id) } else { selection = id }
         } label: {
-            Label {
-                Text(title).textCase(data ? nil : .lowercase)
-            } icon: {
-                KoanIcon(icon)
-            }
-            .labelStyle(PadRowLabel())
-            .lineLimit(1)
+            Text(title)
+                .textCase(data ? nil : .lowercase)
+                .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
@@ -818,16 +817,4 @@ private struct PadSidebar: View {
     }
 }
 
-/// A row's glyph, or not, as "Show icons" says.
-private struct PadRowLabel: LabelStyle {
-    @Environment(\.koanIcons) private var icons
-
-    func makeBody(configuration: Configuration) -> some View {
-        if icons {
-            Label(configuration).labelStyle(.titleAndIcon)
-        } else {
-            Label(configuration).labelStyle(.titleOnly)
-        }
-    }
-}
 #endif

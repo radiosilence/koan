@@ -145,7 +145,7 @@ The title in `body`, `ink`; secondary text in `meta`, `muted`; numbers right-ali
 
 ### Navigation row (sidebar)
 
-The label in `body`, `muted`, lowercase; with icons, the glyph before it in the same colour. Selected: `accent`, with the 2-point leading rule, and no fill. On the Mac the list keeps AppKit's selection, which is what VoiceOver announces and the arrow keys move, but does not draw its rounded highlight. Section headings in `fine`, `ink`, with 16 points above.
+The label in `body`, `muted`, lowercase, with no glyph (see [Icons](#icons)). Selected: `accent`, with the 2-point leading rule, and no fill. On the Mac the list keeps AppKit's selection, which is what VoiceOver announces and the arrow keys move, but does not draw its rounded highlight. Section headings in `fine`, `ink`, with 16 points above.
 
 ### Sidebar (Mac)
 
@@ -153,19 +153,19 @@ The page's ground, with no system glass: the wash with it under the whole window
 
 ### Tab bar (phone)
 
-Flat and full-width, with a 1-point `rule` along its top and `bg` beneath, 64 points tall. Labels in `fine`, lowercase; with icons, a glyph above each. Unselected: `muted`. Selected: `accent`, the label underlined. The mini player sits directly above it as a row with its own top rule, whose first part is the playhead in a 2-point `accent` line.
+Flat and full-width, with a 1-point `rule` along its top and `bg` beneath, 64 points tall. Labels in `fine`, lowercase, with no glyphs. Unselected: `muted`. Selected: `accent`, the label underlined. The mini player sits directly above it as a row with its own top rule, whose first part is the playhead in a 2-point `accent` line.
 
 ### Tabs (television)
 
-A row across the top of the screen on no ground, centred: each tab its glyph beside its label in `body`, lowercase; unselected `muted`, selected `accent` and underlined, focus the 2-point `accent` ring. They behave as the platform's do: moving onto a tab chooses it, coming up from a page lands on the tab showing, Menu at a tab's root goes up to them and Menu on them leaves the app. The platform's tab bar is a glass capsule with a white platter for focus, and no appearance reaches either, so the theme hides it; the platform's look keeps it.
+A row across the top of the screen on no ground, centred: each tab its label in `body`, lowercase, with no glyph; unselected `muted`, selected `accent` and underlined, focus the 2-point `accent` ring. They behave as the platform's do: moving onto a tab chooses it, coming up from a page lands on the tab showing, Menu at a tab's root goes up to them and Menu on them leaves the app. The platform's tab bar is a glass capsule with a white platter for focus, and no appearance reaches either, so the theme hides it; the platform's look keeps it.
 
 ### Settings tabs (Mac)
 
-The Settings window's panes are chosen from the tab bar's items, drawn by the theme in a row along the top of the window, with no rule beneath: labels in `fine`, lowercase, with their glyphs above; unselected `muted`, selected `accent` and underlined. The window is on `bg`, its titlebar transparent, with no title and no separator, so only the window's buttons sit above the row. The row follows Show icons. The system's toolbar tabs are glass buttons no role reaches, so the theme does not use them; the platform's look keeps them.
+The Settings window's panes are chosen from the tab bar's items, drawn by the theme in a row along the top of the window, with no rule beneath: labels in `fine`, lowercase, with no glyphs; unselected `muted`, selected `accent` and underlined. The window is on `bg`, its titlebar transparent, with no title and no separator, so only the window's buttons sit above the row. The system's toolbar tabs are glass buttons no role reaches, so the theme does not use them; the platform's look keeps them.
 
 ### Select bar (phone)
 
-Select mode is switched by a checkbox glyph, an icon button, in a page's bar (in the queue's header, which has no bar): an empty square while off, ticked while on, and a second tap ends the mode. A glyph rather than the word, which a crowded bar cuts short. VoiceOver reads it as "Select", with its value on or off. Rows take the List's ticks and tiles a ring; a bar along the foot of the page, over the mini player, says how many are picked with "done" beside it, and below, the verbs as the tab bar's items are drawn: play, play next, add to queue, add to playlist, favourite, and remove where the page holds the things picked (the queue, a playlist, history). Each verb ends the mode. VoiceOver reads each tick as selected or not, and each verb by its full name.
+Select mode is switched by a checkbox glyph, an icon button, in a page's bar (in the queue's header, which has no bar): an empty square while off, ticked while on, and a second tap ends the mode. A glyph rather than the word, which a crowded bar cuts short. VoiceOver reads it as "Select", with its value on or off. Rows take the List's ticks and tiles a ring; a bar along the foot of the page, over the mini player, says how many are picked with "done" beside it, and below, the verbs laid out as the tab bar's items are, each with its glyph above: play, play next, add to queue, add to playlist, favourite, and remove where the page holds the things picked (the queue, a playlist, history). Each verb ends the mode. VoiceOver reads each tick as selected or not, and each verb by its full name.
 
 ### Transport (Mac)
 
@@ -173,7 +173,9 @@ A full-width bar, 68 points tall, with a 1-point `rule` along its top and no sha
 
 ## Icons
 
-With icons (`appearance.theme_icons = true`), each navigation row, tab, transport control and action has its glyph. Glyphs never replace a label that the plain variant shows.
+With icons (`appearance.theme_icons = true`), each transport control and action has its glyph. Glyphs never replace a label that the plain variant shows.
+
+Navigation never has glyphs in the theme, with icons or without: the phone's tab bar, the iPad's sidebar, the television's tabs, and the Mac's sidebar and Settings tabs are words alone. `KoanTabItem` takes no icon, and the sidebars set `koanIcons` off. The platform's look keeps its tab and sidebar symbols.
 
 The theme draws its own set, in `apps/macos/Resources/Icons`: one SVG per glyph, naming in `data-sf` the SF Symbols it stands in for. The platform's look keeps those SF Symbols.
 

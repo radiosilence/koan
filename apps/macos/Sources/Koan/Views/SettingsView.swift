@@ -129,7 +129,7 @@ struct SettingsView: View {
                                 ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
                                     Button { pane = tab.id } label: {
                                         KoanTabItem(
-                                            title: tab.title, icon: tab.icon, selected: pane == tab.id,
+                                            title: tab.title, selected: pane == tab.id,
                                             position: (index, tabs.count)
                                         )
                                     }
