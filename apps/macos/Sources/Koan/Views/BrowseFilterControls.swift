@@ -10,9 +10,7 @@ struct BrowseFilterButton: View {
 
     var body: some View {
         let count = library.browseFilter.activeCount
-        let symbol = count > 0
-            ? "line.3.horizontal.decrease.circle.fill"
-            : "line.3.horizontal.decrease.circle"
+        let symbol = Icon.filters
         Button { open = true } label: {
             #if os(tvOS)
             // In a row above the listing, with room for the name.
