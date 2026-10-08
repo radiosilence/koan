@@ -95,7 +95,7 @@ struct RootView: View {
                         Button {
                             ui.toggleLyrics()
                         } label: {
-                            Label("Lyrics", systemImage: Icon.lyrics)
+                            Label("Lyrics", koan: Icon.lyrics)
                         }
                         .help("Lyrics panel (⌥⌘L)")
                         .koanButton(.toolbar)
@@ -476,7 +476,7 @@ private struct SelectionControls: View {
                 Button {
                     selection.commit(engine: library.engine, player: player, play: true)
                 } label: {
-                    Label(count > 0 ? "Play \(count)" : "Play", systemImage: Icon.play)
+                    Label(count > 0 ? "Play \(count)" : "Play", koan: Icon.play)
                         .labelStyle(.titleAndIcon)
                 }
                 .disabled(count == 0)
@@ -484,7 +484,7 @@ private struct SelectionControls: View {
                 Button {
                     selection.commit(engine: library.engine, player: player, play: false)
                 } label: {
-                    Label(count > 0 ? "Add \(count) to Queue" : "Add to Queue", systemImage: Icon.queue)
+                    Label(count > 0 ? "Add \(count) to Queue" : "Add to Queue", koan: Icon.queue)
                         .labelStyle(.titleAndIcon)
                 }
                 .disabled(count == 0)
@@ -496,7 +496,7 @@ private struct SelectionControls: View {
             Button {
                 selection.begin()
             } label: {
-                Label("Select", systemImage: Icon.selectAll)
+                Label("Select", koan: Icon.selectAll)
             }
             .help("Pick several to play or queue (⌘-click one, or ⌘A)")
             .koanButton(.toolbar)
@@ -619,8 +619,8 @@ private struct ErrorToast: View {
 
         var symbol: String {
             switch self {
-            case .warning: "exclamationmark.circle.fill"
-            case .notice: "arrow.down.circle.fill"
+            case .warning: Icon.alert
+            case .notice: Icon.downloadNotice
             }
         }
 
@@ -638,13 +638,13 @@ private struct ErrorToast: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: kind.symbol)
+            KoanIcon(kind.symbol)
                 .foregroundStyle(kind.tint)
             Text(message)
                 .font(.role(.control, system: .callout))
                 .lineLimit(2)
             Button(action: dismiss) {
-                Image(systemName: "xmark")
+                KoanIcon(Icon.close)
             }
             .buttonStyle(.plain)
             .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
@@ -698,7 +698,7 @@ private struct ClearsTransport: ViewModifier {
             // the hard edge instead.
             content
                 .safeAreaPadding(.bottom, height)
-                .scrollEdgeEffectStyle(glass && !KoanTheme.isOn ? .soft : .hard, for: .bottom)
+                .koanBottomEdge(soft: glass)
         }
     }
 }
@@ -795,21 +795,21 @@ private struct PageToolbar: ToolbarContent {
                 Button {
                     NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
                 } label: {
-                    Label("Sidebar", systemImage: "sidebar.left")
+                    Label("Sidebar", koan: Icon.sidebar)
                 }
                 .help("Show or hide the sidebar (⌃⌘S)")
                 .koanButton(.toolbar)
             }
             #endif
             Button { nav.goBack() } label: {
-                Label("Back", systemImage: Icon.back)
+                Label("Back", koan: Icon.back)
             }
             .disabled(!nav.canGoBack)
             .help("Back (⌘[)")
             .koanButton(.toolbar)
 
             Button { nav.goForward() } label: {
-                Label("Forward", systemImage: Icon.forward)
+                Label("Forward", koan: Icon.forward)
             }
             .disabled(!nav.canGoForward)
             .help("Forward (⌘])")
@@ -897,7 +897,7 @@ private struct AlbumSortControls: View {
                     ).map { ($0.label, $0) }
                 )
             } label: {
-                Label("Sort", systemImage: "arrow.up.arrow.down")
+                Label("Sort", koan: Icon.sort)
             }
             // The accent marks what is playing and what is selected. A toolbar
             // control that is always there is neither.
@@ -911,7 +911,7 @@ private struct AlbumSortControls: View {
                 Button {
                     library.reshuffleAlbums()
                 } label: {
-                    Label("Shuffle", systemImage: Icon.reshuffle)
+                    Label("Shuffle", koan: Icon.reshuffle)
                 }
                 .tint(.primary)
                 .help("Shuffle again")
@@ -933,7 +933,7 @@ private struct TrackSortControls: View {
                     .map { ($0.label, $0) }
             )
         } label: {
-            Label("Sort", systemImage: "arrow.up.arrow.down")
+            Label("Sort", koan: Icon.sort)
         }
         .tint(.primary)
         .help("Sort tracks — \(library.trackSort.label)")

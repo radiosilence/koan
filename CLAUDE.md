@@ -256,6 +256,8 @@ follows the top of the stack in front — see `TabShell`.
 | `Support/SettingsModel.swift` | Settings state over `config.toml`. Commits on edit, re-reads on focus |
 | `Support/KoanTheme.swift` | The kōan theme: tokens, the record accent (OKLCH, cached per colour), motion, and the roles views use instead of colours, fonts, corners and materials. Each role draws the platform's look unchanged when the theme is off. Spec: `docs/design/koan-theme.md`; `just theme-leaks` finds what bypasses it |
 | `Support/KoanThemeSheet.swift` | Every component of the theme on one page, for the evidence renderer |
+| `Support/Icons.swift` | `Icon.*`, every icon the apps draw, named once by its SF Symbol, and `Image(koan:)`, `Label(_:koan:)`, `Button(_:koan:)` for the places that take only an image |
+| `Support/KoanGlyph.swift` | The kōan icon set: glyphs compiled from `Resources/Icons/*.svg` by `just icons` into `KoanGlyphs.swift`, the stroke rule, drawing. `KoanIcon` and `Symbol.image` draw them in the theme |
 | `Support/EngineMirror.swift` | The engine's state as SwiftUI sees it. `Observable` by hand: one property per slice, invalidated only where a slice actually moved |
 | `Support/PlayerModel.swift` | What the app *does* to the player — commands, and the little that is genuinely local. Reads everything through the mirror |
 | `Support/Navigator.swift` | Where the app is: one page, the linear history of pages visited, and a cursor. No `NavigationStack` — koan navigates like a browser, any page from any page |

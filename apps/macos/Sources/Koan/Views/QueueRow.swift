@@ -246,7 +246,7 @@ struct QueueRow: View {
         // Offline is not a failure: whatever happened to the download, the
         // reason this track cannot play now is that it is not here.
         if unplayable, item.status != .playing {
-            Image(systemName: "icloud.slash")
+            KoanIcon(Icon.cloudMissing)
                 .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                 .help("Not on this device")
         } else {
@@ -268,22 +268,22 @@ struct QueueRow: View {
             // same time as this column shows the track playing.
             Color.clear
         case .priorityPending:
-            Image(systemName: "arrow.down.circle")
+            KoanIcon(Icon.downloads)
                 .foregroundStyle(.tint)
                 .help("Queued for download")
         case .failed:
-            Image(systemName: "exclamationmark.triangle.fill")
+            KoanIcon(Icon.warningFilled)
                 .foregroundStyle(KoanTheme.style(.bad, system: .orange))
                 .help(item.failureReason ?? "Couldn't be fetched")
         case .played:
-            Image(systemName: "checkmark").foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
+            KoanIcon(Icon.check).foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
         case .queued:
             // On a desktop or a phone, where rows are picked out; a television
             // has no selection for the mark to belong to.
             #if os(tvOS)
             Color.clear
             #else
-            Image(systemName: "circle.dotted").foregroundStyle(KoanTheme.style(.rule, system: .quaternary))
+            KoanIcon(Icon.pending).foregroundStyle(KoanTheme.style(.rule, system: .quaternary))
             #endif
         }
     }

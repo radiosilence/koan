@@ -201,7 +201,8 @@ wash_window = true    # provisional. Mac, kōan theme: the wash under the whole 
 
 Settings → Appearance → **Theme** chooses between them on every app, and
 **Show icons**, shown while the kōan theme is chosen, sets `theme_icons`. The
-system look always draws its icons. **Colours from the record** sets
+kōan theme draws its own icon set, thin square-ended lines; the system look
+always draws its icons, which are Apple's SF Symbols. **Colours from the record** sets
 `record_colours`: off, there is no wash behind the window and the accent is
 koan's mint, in either theme. `wash_window` (the Mac, kōan theme only) is provisional,
 there to live with both looks while one is chosen, and likely to go: on, the

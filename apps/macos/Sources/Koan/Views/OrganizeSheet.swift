@@ -150,14 +150,14 @@ struct OrganizeSheet: View {
     private var table: some View {
         if !organize.hasDestination {
             EmptyState(
-                icon: "folder.badge.questionmark",
+                icon: Icon.folderUnknown,
                 title: "No library folder",
                 detail: "kōan has nowhere to move these to. Add a folder in Settings › Library."
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let error = organize.error {
             EmptyState(
-                icon: "exclamationmark.triangle",
+                icon: Icon.warning,
                 title: "That pattern won't work",
                 detail: error
             )
@@ -173,7 +173,7 @@ struct OrganizeSheet: View {
             Color.clear
         } else {
             EmptyState(
-                icon: "folder",
+                icon: Icon.folder,
                 title: organize.pattern.isEmpty ? "Choose a pattern" : "Nothing to organize",
                 detail: organize.pattern.isEmpty
                     ? nil : "None of these tracks have a local file to move."
@@ -209,18 +209,18 @@ struct OrganizeSheet: View {
             HStack(spacing: 10) {
                 Text(Format.count(Int64(plan.movedCount), "file") + " to move")
                 if plan.unchangedCount > 0 {
-                    KoanLabel("\(plan.unchangedCount) already in place", icon: "checkmark")
+                    KoanLabel("\(plan.unchangedCount) already in place", icon: Icon.check)
                 }
                 if plan.conflictCount > 0 {
-                    KoanLabel("\(plan.conflictCount) blocked", icon: "exclamationmark.triangle")
+                    KoanLabel("\(plan.conflictCount) blocked", icon: Icon.warning)
                         .koanText(.fine, .bad)
                 }
                 if plan.errorCount > 0 {
-                    KoanLabel("\(plan.errorCount) failed", icon: "xmark.octagon")
+                    KoanLabel("\(plan.errorCount) failed", icon: Icon.failure)
                         .koanText(.fine, .bad)
                 }
                 if plan.unresolved > 0 {
-                    KoanLabel("\(plan.unresolved) not on disk", icon: "cloud")
+                    KoanLabel("\(plan.unresolved) not on disk", icon: Icon.cloud)
                 }
             }
             .koanText(.fine, .muted)
@@ -257,7 +257,7 @@ private struct OrganizeRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
-            Image(systemName: icon)
+            KoanIcon(icon)
                 .koanText(.fine, tone)
                 .frame(width: 14)
                 .padding(.top, 2)
@@ -307,10 +307,10 @@ private struct OrganizeRow: View {
 
     private var icon: String {
         switch entry.outcome {
-        case .move: "arrow.right"
-        case .unchanged: "checkmark"
-        case .conflict: "exclamationmark.triangle.fill"
-        case .error: "xmark.octagon.fill"
+        case .move: Icon.move
+        case .unchanged: Icon.check
+        case .conflict: Icon.warningFilled
+        case .error: Icon.failureFilled
         }
     }
 
@@ -338,7 +338,7 @@ struct OrganizeWindow: View {
             OrganizeSheet()
         } else {
             EmptyState(
-                icon: "folder",
+                icon: Icon.folder,
                 title: "Nothing to organize",
                 detail: "Select tracks in the queue or the library, then choose Organize Files."
             )

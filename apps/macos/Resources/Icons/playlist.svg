@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" data-sf="music.note.list" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter">
+  <path d="M3 6 H14"/>
+  <path d="M3 10.5 H14"/>
+  <path d="M3 15 H9.5"/>
+  <circle cx="15" cy="17.5" r="2"/>
+  <path d="M17 17.5 L17 5.5 L21 7.5"/>
+</svg>

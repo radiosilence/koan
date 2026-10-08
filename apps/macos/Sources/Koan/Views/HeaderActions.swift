@@ -23,12 +23,12 @@ struct HeaderActions: View {
                     Menu {
                         if let shuffle {
                             Button(action: shuffle) {
-                                Label("Shuffle", systemImage: Icon.shuffle)
+                                Label("Shuffle", koan: Icon.shuffle)
                             }
                         }
                         PlayableMenu(playable: playable)
                     } label: {
-                        Image(systemName: "ellipsis")
+                        KoanIcon(Icon.more)
                             .font(.role(.body, system: .body))
                             .touchTarget()
                     }
@@ -44,7 +44,7 @@ struct HeaderActions: View {
                 QueueButtons(playable: playable)
                 if let shuffle {
                     Button(action: shuffle) {
-                        Label("Shuffle", systemImage: Icon.shuffle)
+                        Label("Shuffle", koan: Icon.shuffle)
                     }
                 }
                 if let playable {

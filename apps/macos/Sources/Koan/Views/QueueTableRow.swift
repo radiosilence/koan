@@ -35,7 +35,7 @@ struct QueueHeading: Equatable {
 /// SwiftUI: what the track is doing, its place or its sleeve, its title over
 /// its artist, where its file is, the heart, the codec, the length. Played
 /// tracks dim in their colours, not their alpha.
-final class QueueTableRow: NSTableCellView, TableRow {
+final class QueueTableRow: TableCell, TableRow {
     struct Context {
         let isPlaying: Bool
         /// Whether the bars follow the music — see `PlayingIndicator.live`.
@@ -210,13 +210,13 @@ final class QueueTableRow: NSTableCellView, TableRow {
         status.isHidden = false
         switch notHere ? nil : content.status {
         case .priorityPending:
-            statusImage = Symbol.image("arrow.down.circle", size: 10, colours: [selected ? .white : context.tint], appearance: appearance)
+            statusImage = Symbol.image(Icon.downloads, size: 10, colours: [selected ? .white : context.tint], appearance: appearance)
         case .failed:
-            statusImage = Symbol.image("exclamationmark.triangle.fill", size: 10, colours: [NSColor.koanBad(.systemOrange)], appearance: appearance)
+            statusImage = Symbol.image(Icon.warningFilled, size: 10, colours: [NSColor.koanBad(.systemOrange)], appearance: appearance)
         case .played:
-            statusImage = Symbol.image("checkmark", size: 10, colours: [selected ? .white : .koanTertiaryLabel], appearance: appearance)
+            statusImage = Symbol.image(Icon.check, size: 10, colours: [selected ? .white : .koanTertiaryLabel], appearance: appearance)
         case .queued:
-            statusImage = Symbol.image("circle.dotted", size: 10, colours: [selected ? .white : .koanQuaternaryLabel], appearance: appearance)
+            statusImage = Symbol.image(Icon.pending, size: 10, colours: [selected ? .white : .koanQuaternaryLabel], appearance: appearance)
         default:
             statusImage = nil
         }
@@ -231,7 +231,7 @@ final class QueueTableRow: NSTableCellView, TableRow {
         let favourite = content.trackId.map(context.favourites.contains) ?? false
         heart.isHidden = content.trackId == nil || !(favourite || hovered)
         heartImage = Symbol.image(
-            favourite ? "heart.fill" : "heart", size: 10,
+            favourite ? Icon.favourited : Icon.favourite, size: 10,
             colours: [favourite ? NSColor.koanBad(.systemRed) : (selected ? .white : .koanTertiaryLabel)], appearance: appearance
         )
         CATransaction.commit()

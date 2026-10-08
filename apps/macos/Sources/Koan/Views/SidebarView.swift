@@ -159,6 +159,9 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         // The theme's sidebar is flat ground, not the system's material.
         .koanSidebar()
+        // Navigation is words alone in the theme, whatever "Show icons" says;
+        // the platform's look keeps its symbols.
+        .environment(\.koanIcons, false)
         // The List's own hooks rather than per-row gestures, the same way the
         // queue and every track list does it: wired into selection, so the
         // double-click does not steal the click that selects the row. Only
@@ -244,7 +247,7 @@ struct SidebarView: View {
     /// only because the row takes no selection — on a selectable row it would
     /// be racing the gesture that selects it.
     private var newPlaylistRow: some View {
-        KoanLabel("New Playlist…", icon: "plus")
+        KoanLabel("New Playlist…", icon: Icon.add)
             .foregroundStyle(KoanTheme.style(.muted))
             .koanNavRow(selected: false)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -328,7 +331,16 @@ private struct SidebarFooter: View {
             if let stats = library.stats {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(Format.count(stats.totalTracks, "track"))
-                    Text("\(Format.count(stats.totalAlbums, "album")) · \(Format.count(stats.totalArtists, "artist"))")
+                    // On one line where it fits, else a line each: wrapped,
+                    // the separator ended the first line.
+                    ViewThatFits(in: .horizontal) {
+                        Text("\(Format.count(stats.totalAlbums, "album")) · \(Format.count(stats.totalArtists, "artist"))")
+                            .fixedSize()
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(Format.count(stats.totalAlbums, "album"))
+                            Text(Format.count(stats.totalArtists, "artist"))
+                        }
+                    }
                     if stats.remoteTracks > 0 {
                         Text("\(stats.cachedTracks.formatted(.number)) of \(stats.remoteTracks.formatted(.number)) remote cached")
                     }

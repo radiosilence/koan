@@ -278,7 +278,7 @@ struct EqSettings: View {
                 Spacer()
                 #if !os(tvOS)
                 Button { explaining = true } label: {
-                    Label("How EQ works", systemImage: "info.circle")
+                    Label("How EQ works", koan: Icon.info)
                 }
                 .koanButton(.link)
                 #endif
@@ -464,6 +464,25 @@ struct EqChain: View {
         overview.profiles.first { $0.name == overview.active }
     }
 
+    /// Every EQ that plays meets the correction matched: the whole chain is
+    /// drawn in the accent, as the line into a matched EQ is. What plays is
+    /// what `sentence` says plays.
+    private var matched: Bool {
+        guard let correction, correction.role != .baked, overview.tuningPlays else { return false }
+        let playing = zip(overview.chain, overview.joins).filter { entry, _ in
+            entry.on && !overview.leftOutEqs.contains(entry.name)
+        }
+        return !playing.isEmpty && playing.allSatisfy { $0.1.join == .matched }
+    }
+
+    /// The stages' outlines in a matched chain; their own otherwise.
+    private var accent: AnyShapeStyle? { matched ? AnyShapeStyle(.tint) : nil }
+
+    /// The lines between the stages: the accent when it is matched.
+    private var outline: AnyShapeStyle {
+        matched ? AnyShapeStyle(.tint) : KoanTheme.style(.rule, system: Color.secondary.opacity(0.5)) // theme: raw — the system look's own
+    }
+
     var body: some View {
         #if os(iOS)
         // Each EQ a row of the list, for its swipe actions; the rows meet,
@@ -485,12 +504,12 @@ struct EqChain: View {
                     }
                     .contextMenu {
                         if i > 0 {
-                            Button("Move Up", systemImage: "arrow.up") { move(i, by: -1) }
+                            Button("Move Up", koan: Icon.moveUp) { move(i, by: -1) }
                         }
                         if i < overview.chain.count - 1 {
-                            Button("Move Down", systemImage: "arrow.down") { move(i, by: 1) }
+                            Button("Move Down", koan: Icon.moveDown) { move(i, by: 1) }
                         }
-                        Button("Remove from Tuning", systemImage: "trash", role: .destructive) { remove(i) }
+                        Button("Remove from Tuning", koan: Icon.clear, role: .destructive) { remove(i) }
                     }
             }
             tail
@@ -512,7 +531,7 @@ struct EqChain: View {
     /// Music in, the correction, and the tuning's heading.
     private var head: some View {
         VStack(alignment: .leading, spacing: 0) {
-            end(KoanTheme.label("Music in"), systemImage: "music.note")
+            end(KoanTheme.label("Music in"), icon: Icon.track)
             link
             if let correction {
                 StageBlock(
@@ -525,6 +544,7 @@ struct EqChain: View {
                             .joined(separator: " · "),
                     db: curves[correction.name],
                     stroke: .correction,
+                    outline: accent,
                     action: { choose(.correction) }
                 ) {
                     #if !os(tvOS)
@@ -558,6 +578,7 @@ struct EqChain: View {
                 detail: entry.on ? meets?.madeFor.map { "made for \($0)" } : KoanTheme.label("Off"),
                 db: curves[entry.name],
                 stroke: .eq(i),
+                outline: accent,
                 action: { open(entry.name) }
             ) {
                 #if !os(tvOS)
@@ -594,11 +615,11 @@ struct EqChain: View {
             }
             #if !os(tvOS)
             if correction?.role != .baked {
-                Placeholder(title: nil, prompt: "Add EQ", action: { choose(.eq) })
+                Placeholder(title: nil, prompt: "Add EQ", outline: accent, action: { choose(.eq) })
                 link
             }
             #endif
-            end("\(device) out", systemImage: "hifispeaker")
+            end("\(device) out", icon: Icon.speaker)
         }
     }
 
@@ -614,8 +635,8 @@ struct EqChain: View {
 
     private var link: some View {
         Rectangle()
-            .fill(KoanTheme.style(.rule, system: Color.secondary.opacity(0.5))) // theme: raw — the system look's own
-            .frame(width: KoanTheme.hairline, height: 14)
+            .fill(outline)
+            .frame(width: matched ? 2 : KoanTheme.hairline, height: 14)
             .padding(.leading, 18)
             .accessibilityHidden(true)
     }
@@ -623,11 +644,11 @@ struct EqChain: View {
     /// The line into an EQ, saying how it meets the correction, and what of
     /// it does not play as chosen.
     private func join(_ meets: DspEqJoin?, eq: String) -> some View {
-        let matched = meets?.join == .matched
+        let matched = meets?.join == .matched || self.matched
         return VStack(alignment: .leading, spacing: 2) {
             switch meets?.join {
             case .matched:
-                Label("Matched", systemImage: "checkmark")
+                Label("Matched", koan: Icon.check)
                     .koanText(.fine, .accent)
                     .koanCase()
             case let .converted(from, to):
@@ -643,11 +664,11 @@ struct EqChain: View {
                     .koanText(.fine, .muted)
             case .unknown:
                 #if os(tvOS)
-                Label("Made against: unknown. This may apply a target twice", systemImage: "exclamationmark.triangle")
+                Label("Made against: unknown. This may apply a target twice", koan: Icon.warning)
                     .koanText(.fine, .bad)
                 #else
                 Button { open(eq) } label: {
-                    Label("Made against: unknown. This may apply a target twice; set it", systemImage: "exclamationmark.triangle")
+                    Label("Made against: unknown. This may apply a target twice; set it", koan: Icon.warning)
                         .koanText(.fine, .bad)
                         .multilineTextAlignment(.leading)
                 }
@@ -661,7 +682,7 @@ struct EqChain: View {
                 EmptyView()
             }
             if let note = meets?.note {
-                Label(note, systemImage: "exclamationmark.triangle")
+                Label(note, koan: Icon.warning)
                     .koanText(.fine, .bad)
             }
         }
@@ -670,15 +691,15 @@ struct EqChain: View {
         .padding(.leading, 18 + KoanTheme.Space.m)
         .background(alignment: .leading) {
             Rectangle()
-                .fill(matched ? AnyShapeStyle(.tint) : KoanTheme.style(.rule, system: Color.secondary.opacity(0.5))) // theme: raw — the system look's own
+                .fill(matched ? AnyShapeStyle(.tint) : outline)
                 .frame(width: matched ? 2 : KoanTheme.hairline)
                 .padding(.leading, 18)
                 .accessibilityHidden(true)
         }
     }
 
-    private func end(_ title: String, systemImage: String) -> some View {
-        Label(title, systemImage: systemImage)
+    private func end(_ title: String, icon: String) -> some View {
+        Label(title, koan: icon)
             .koanText(.meta, .muted)
             .padding(.leading, 8)
     }
@@ -725,6 +746,8 @@ private struct StageBlock<Controls: View>: View {
     let detail: String?
     let db: [Double]?
     let stroke: StageStroke
+    /// In place of the `rule` outline: the accent of a matched chain.
+    let outline: AnyShapeStyle?
     let action: () -> Void
     @ViewBuilder let controls: () -> Controls
 
@@ -757,7 +780,7 @@ private struct StageBlock<Controls: View>: View {
             controls()
         }
         .padding(KoanTheme.Space.s)
-        .overlay(Rectangle().stroke(KoanTheme.style(.rule, system: Color.secondary.opacity(0.4)), lineWidth: KoanTheme.hairline)) // theme: raw — the system look's own
+        .overlay(Rectangle().stroke(outline ?? KoanTheme.style(.rule, system: Color.secondary.opacity(0.4)), lineWidth: KoanTheme.hairline)) // theme: raw — the system look's own
     }
 }
 
@@ -765,6 +788,8 @@ private struct StageBlock<Controls: View>: View {
 private struct Placeholder: View {
     let title: String?
     let prompt: String
+    /// In place of the dashed `muted` outline: the accent of a matched chain.
+    var outline: AnyShapeStyle?
     let action: () -> Void
 
     var body: some View {
@@ -773,13 +798,13 @@ private struct Placeholder: View {
                 if let title {
                     Text(title).koanText(.fine, .muted).koanCase()
                 }
-                Label(prompt, systemImage: "plus")
+                Label(prompt, koan: Icon.add)
                     .koanText(.body, .accent)
                     .koanCase()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(KoanTheme.Space.s)
-            .overlay(Rectangle().stroke(KoanTheme.style(.muted, system: Color.secondary), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))) // theme: raw — the system look's own
+            .overlay(Rectangle().stroke(outline ?? KoanTheme.style(.muted, system: Color.secondary), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))) // theme: raw — the system look's own
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -968,7 +993,7 @@ struct StagePicker: View {
                 )
             }
             if let c = correction, c.role == .baked {
-                Label("\(name) already includes a tuning, so no other tuning plays on it. Split it into a correction and a tuning to change that.", systemImage: "info.circle")
+                Label("\(name) already includes a tuning, so no other tuning plays on it. Split it into a correction and a tuning to change that.", koan: Icon.info)
                     .koanText(.meta, .muted)
                 #if !os(tvOS)
                 if c.rates.isEmpty, c.layers == 0 {
@@ -1012,7 +1037,7 @@ struct StagePicker: View {
                 }
                 Spacer()
                 if chosen {
-                    Image(systemName: "checkmark")
+                    KoanIcon(Icon.check)
                         .koanText(.body, .accent)
                         .accessibilityLabel("Chosen")
                 }

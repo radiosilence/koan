@@ -5,7 +5,7 @@ import KoanFFI
 /// One transfer in the Mac's downloads list, as `DownloadRow` draws it in
 /// SwiftUI: the sleeve; the title and how far along; a bar; who it is by and
 /// how it is going, with a link to the record under the pointer.
-final class DownloadTableRow: NSTableCellView, TableRow, TransferGauge {
+final class DownloadTableRow: TableCell, TableRow, TransferGauge {
     struct Context {
         let meter: TransferMeter
         let art: CoverArtCache

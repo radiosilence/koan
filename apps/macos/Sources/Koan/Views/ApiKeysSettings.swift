@@ -164,7 +164,7 @@ struct NewSecretSheet: View {
                         Pasteboard.write(text: secret)
                         copied = true
                     } label: {
-                        KoanLabel(copied ? "Copied" : "Copy \(kind)", icon: "doc.on.doc")
+                        KoanLabel(copied ? "Copied" : "Copy \(kind)", icon: Icon.copy)
                     }
                     .koanButton(.bordered)
                     #endif
