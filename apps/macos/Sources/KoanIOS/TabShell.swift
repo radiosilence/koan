@@ -34,8 +34,10 @@ struct TabShell: View {
     /// The tab of the theme's bar the remote is on, if it is on the bar.
     @FocusState private var barFocus: TabID?
     /// The pushed pages on screen. The theme's bar shows only while there are
-    /// none, at a tab's root; Menu pops back to it. Only drawn: its room stays.
+    /// none, at a tab's root; Menu pops back to it.
     @State private var pushedShowing: Set<UUID> = []
+    /// The bar's height as laid out, kept for the room it leaves.
+    @State private var barHeight: CGFloat = 0
     #endif
     @Environment(\.horizontalSizeClass) private var width
     @State private var showingNowPlaying = false
@@ -92,28 +94,28 @@ struct TabShell: View {
         TabView(selection: tab) {
             #if os(tvOS)
             // The room's first page: what is playing, at the size a sofa reads.
-            Tab(Self.title("Now Playing"), systemImage: "play.circle", value: TabID.nowPlaying) {
+            Tab(Self.title("Now Playing"), systemImage: Icon.nowPlaying, value: TabID.nowPlaying) { // theme: raw
                 NowPlayingPage()
                     .koanHidesSystemTabBar()
                     .onExitCommand(perform: toBar)
             }
             #endif
-            Tab(Self.title("Queue"), systemImage: Icon.queueSection, value: TabID.queue) {
+            Tab(Self.title("Queue"), systemImage: Icon.queueSection, value: TabID.queue) { // theme: raw
                 stack(.queue) { QueueView() }
             }
             #if os(tvOS)
-            Tab(Self.title("Library"), systemImage: "music.note.house", value: TabID.library) {
+            Tab(Self.title("Library"), systemImage: Icon.library, value: TabID.library) { // theme: raw
                 stack(.library) { LibraryTab() }
             }
             #else
             // Only lists what the sidebar shows as its own rows.
-            Tab("Library", systemImage: "music.note.house", value: TabID.library) {
+            Tab("Library", systemImage: Icon.library, value: TabID.library) { // theme: raw
                 stack(.library) { LibraryTab() }
             }
             .hidden(sidebar)
             TabSection {
                 ForEach(Self.librarySections, id: \.section) { item in
-                    Tab(item.title, systemImage: item.icon, value: TabID.section(item.section)) {
+                    Tab(item.title, systemImage: item.icon, value: TabID.section(item.section)) { // theme: raw
                         stack(.section(item.section), grounded: false) { RouteView(route: .page(.section(item.section))) }
                     }
                     // Read only where it can show: each transfer starting or ending
@@ -129,14 +131,14 @@ struct TabShell: View {
             .hidden(!sidebar)
             TabSection {
                 ForEach(playlists.playlists, id: \.id) { playlist in
-                    Tab(playlist.name, systemImage: Icon.playlist, value: TabID.section(.playlist(playlist.id))) {
+                    Tab(playlist.name, systemImage: Icon.playlist, value: TabID.section(.playlist(playlist.id))) { // theme: raw
                         stack(.section(.playlist(playlist.id)), grounded: false) {
                             RouteView(route: .page(.section(.playlist(playlist.id))))
                         }
                     }
                     .contextMenu {
-                        Button("Play", systemImage: Icon.play) { play(playlist) }
-                        Button("Shuffle", systemImage: Icon.shuffle) { play(playlist, shuffled: true) }
+                        Button("Play", koan: Icon.play) { play(playlist) }
+                        Button("Shuffle", koan: Icon.shuffle) { play(playlist, shuffled: true) }
                     }
                 }
             } header: {
@@ -144,16 +146,16 @@ struct TabShell: View {
             }
             // The Mac's "New Playlist…" row.
             .sectionActions {
-                Button("New Playlist", systemImage: Icon.add) { playlists.naming = [] }
+                Button("New Playlist", koan: Icon.add) { playlists.naming = [] }
             }
             .defaultVisibility(.hidden, for: .tabBar)
             .hidden(!sidebar)
-            Tab("Settings", systemImage: "gearshape", value: TabID.settings) {
+            Tab("Settings", systemImage: Icon.settings, value: TabID.settings) { // theme: raw
                 stack(.settings) { SettingsView() }
             }
             #endif
             #if os(tvOS)
-            Tab(Self.title("Search"), systemImage: Icon.search, value: TabID.search, role: .search) {
+            Tab(Self.title("Search"), systemImage: Icon.search, value: TabID.search, role: .search) { // theme: raw
                 stack(.search) { IOSSearchView() }
             }
             #else
@@ -163,7 +165,7 @@ struct TabShell: View {
             #endif
             // Last on a television, where it is visited least.
             #if os(tvOS)
-            Tab(Self.title("Settings"), systemImage: "gearshape", value: TabID.settings) {
+            Tab(Self.title("Settings"), systemImage: Icon.settings, value: TabID.settings) { // theme: raw
                 stack(.settings) { SettingsView() }
             }
             #endif
@@ -173,13 +175,18 @@ struct TabShell: View {
         // style folds them behind a pill a remote has to find first.
         .tabViewStyle(.tabBarOnly)
         .safeAreaInset(edge: .top, spacing: 0) {
-            // Its room is kept on a pushed page, so no page moves when it
-            // goes or comes back.
+            // Gone from a pushed page, so nothing there can focus it, but its
+            // room is kept: no page moves when it goes or comes back.
             if KoanTheme.isOn {
-                TelevisionTabs(selection: tab, focus: $barFocus)
-                    .opacity(pushedShowing.isEmpty ? 1 : 0)
-                    .disabled(!pushedShowing.isEmpty)
-                    .koanAnimation(KoanTheme.Motion.normal, value: pushedShowing.isEmpty)
+                VStack(spacing: 0) {
+                    if pushedShowing.isEmpty {
+                        TelevisionTabs(selection: tab, focus: $barFocus)
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { barHeight = $0 }
+                            .transition(.opacity)
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: barHeight)
+                .koanAnimation(KoanTheme.Motion.normal, value: pushedShowing.isEmpty)
             }
         }
         .environment(\.koanPushedPageShown) { id, shown in
@@ -617,7 +624,7 @@ private struct Transport: ViewModifier {
                     if selection == item.id { reselect(item.id) } else { selection = item.id }
                 } label: {
                     KoanTabItem(
-                        title: item.title, icon: item.icon, selected: selection == item.id,
+                        title: item.title, selected: selection == item.id,
                         underline: underline, position: (index, Self.items.count)
                     )
                 }
@@ -635,11 +642,11 @@ private struct Transport: ViewModifier {
         .koanAnimation(KoanTheme.Motion.normal, value: selection)
     }
 
-    private static let items: [(id: TabShell.TabID, title: String, icon: String)] = [
-        (.queue, "Queue", Icon.queueSection),
-        (.library, "Library", "music.note.house"),
-        (.settings, "Settings", "gearshape"),
-        (.search, "Search", Icon.search),
+    private static let items: [(id: TabShell.TabID, title: String)] = [
+        (.queue, "Queue"),
+        (.library, "Library"),
+        (.settings, "Settings"),
+        (.search, "Search"),
     ]
     #endif
 
@@ -666,7 +673,7 @@ private struct TelevisionTabs: View {
                     selection = item.id
                 } label: {
                     KoanTabItem(
-                        title: item.title, icon: item.icon, selected: selection == item.id,
+                        title: item.title, selected: selection == item.id,
                         underline: underline, position: (index, Self.items.count)
                     )
                 }
@@ -686,12 +693,12 @@ private struct TelevisionTabs: View {
         .tint(accent.color)
     }
 
-    private static let items: [(id: TabShell.TabID, title: String, icon: String)] = [
-        (.nowPlaying, "Now Playing", "play.circle"),
-        (.queue, "Queue", Icon.queueSection),
-        (.library, "Library", "music.note.house"),
-        (.search, "Search", Icon.search),
-        (.settings, "Settings", "gearshape"),
+    private static let items: [(id: TabShell.TabID, title: String)] = [
+        (.nowPlaying, "Now Playing"),
+        (.queue, "Queue"),
+        (.library, "Library"),
+        (.search, "Search"),
+        (.settings, "Settings"),
     ]
 }
 #endif
@@ -761,14 +768,14 @@ private struct PadSidebar: View {
                     .listRowBackground(Color.clear)
             }
             Section {
-                row(.queue, "Queue", Icon.queueSection)
-                row(.search, "Search", Icon.search)
-                row(.settings, "Settings", "gearshape")
+                row(.queue, "Queue")
+                row(.search, "Search")
+                row(.settings, "Settings")
             }
             Section {
                 ForEach(sections, id: \.section) { item in
                     row(
-                        .section(item.section), item.title, item.icon,
+                        .section(item.section), item.title,
                         badge: item.section == .downloads ? mirror.activeTransfers : 0
                     )
                 }
@@ -777,10 +784,10 @@ private struct PadSidebar: View {
             }
             Section {
                 ForEach(playlists.playlists, id: \.id) { playlist in
-                    row(.section(.playlist(playlist.id)), playlist.name, Icon.playlist, data: true)
+                    row(.section(.playlist(playlist.id)), playlist.name, data: true)
                         .contextMenu {
-                            Button("Play", systemImage: Icon.play) { play(playlist, false) }
-                            Button("Shuffle", systemImage: Icon.shuffle) { play(playlist, true) }
+                            Button("Play", koan: Icon.play) { play(playlist, false) }
+                            Button("Shuffle", koan: Icon.shuffle) { play(playlist, true) }
                         }
                         .listRowSeparator(.hidden)
                 }
@@ -798,28 +805,27 @@ private struct PadSidebar: View {
         }
         .listStyle(.plain)
         .koanSidebar()
+        // Navigation is words alone in the theme, as the tabs are.
+        .environment(\.koanIcons, false)
         .environment(\.defaultMinListHeaderHeight, 0)
         .listRowSeparator(.hidden)
         .listSectionSeparator(.hidden)
     }
 
     /// A row that is a tab: chosen again, back to its root, as a tab is.
+    /// Words alone, as the theme's tabs are.
     /// A playlist's name is the person's, and keeps its case. The badge goes
     /// on before the row's role: on the row it replaces the row's background,
     /// the selection's rule with it, by the list's own.
     private func row(
-        _ id: TabShell.TabID, _ title: String, _ icon: String, data: Bool = false, badge: Int = 0
+        _ id: TabShell.TabID, _ title: String, data: Bool = false, badge: Int = 0
     ) -> some View {
         Button {
             if selection == id { reselect(id) } else { selection = id }
         } label: {
-            Label {
-                Text(title).textCase(data ? nil : .lowercase)
-            } icon: {
-                KoanIcon(icon)
-            }
-            .labelStyle(PadRowLabel())
-            .lineLimit(1)
+            Text(title)
+                .textCase(data ? nil : .lowercase)
+                .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
@@ -830,16 +836,4 @@ private struct PadSidebar: View {
     }
 }
 
-/// A row's glyph, or not, as "Show icons" says.
-private struct PadRowLabel: LabelStyle {
-    @Environment(\.koanIcons) private var icons
-
-    func makeBody(configuration: Configuration) -> some View {
-        if icons {
-            Label(configuration).labelStyle(.titleAndIcon)
-        } else {
-            Label(configuration).labelStyle(.titleOnly)
-        }
-    }
-}
 #endif

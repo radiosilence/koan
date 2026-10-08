@@ -120,6 +120,7 @@ final class TVBackTests: XCTestCase {
         reach(app.buttons[any: "Artists"], by: .down)
         press(.select)
         pause(3)
+        press(.down)
         let focused = app.descendants(matching: .any).matching(NSPredicate(format: "hasFocus == true")).firstMatch
         for _ in 0..<4 where !focused.label.hasPrefix("Artist ") {
             press(.down)

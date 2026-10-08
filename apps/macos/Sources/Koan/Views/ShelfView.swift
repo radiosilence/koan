@@ -238,7 +238,7 @@ struct ShelfView: View {
                 Text("\(total)")
                     .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                     .monospacedDigit()
-                Image(systemName: "chevron.right")
+                KoanIcon(Icon.disclosure)
                     .font(.role(.fine, system: .caption.weight(.semibold)))
                 Spacer(minLength: 0)
             }

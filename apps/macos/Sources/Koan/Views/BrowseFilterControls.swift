@@ -19,7 +19,7 @@ struct BrowseFilterButton: View {
             KoanLabel(count > 0 ? "Filters (\(count))" : "Filters", icon: symbol)
             #else
             HStack(spacing: 3) {
-                Image(systemName: symbol)
+                KoanIcon(symbol)
                 if count > 0 {
                     Text("\(count)").monospacedDigit()
                 }

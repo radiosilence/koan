@@ -27,10 +27,18 @@ struct KoanThemeSheet: View {
                 Button("Copy") { }.koanButton(.bordered)
                 Button("Find your token") { }.koanButton(.link)
                 Button("Clear") { }.koanButton(.text)
-                Button { } label: { KoanLabel("Sleep", icon: "moon", style: .compact) }.koanButton(.icon)
-                Button { } label: { Image(systemName: "pause.fill") }.koanButton(.iconOutlined)
+                Button { } label: { KoanLabel("Sleep", icon: Icon.sleep, style: .compact) }.koanButton(.icon)
+                Button { } label: { KoanIcon(Icon.pause) }.koanButton(.iconOutlined)
                 Button("Disabled") { }.koanButton(.standard).disabled(true)
             }
+
+            KoanSectionHeader("Tabs")
+            HStack(spacing: 0) {
+                ForEach(["Queue", "Library", "Settings", "Search"], id: \.self) { title in
+                    KoanTabItem(title: title, selected: title == "Library")
+                }
+            }
+            .frame(width: 360)
 
             KoanSectionHeader("Toggles")
             Toggle("Show icons", isOn: $on).koanToggle()

@@ -176,7 +176,7 @@ private struct SelectionMark: View {
         RoundedRectangle(cornerRadius: KoanTheme.radius(6))
             .strokeBorder(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), lineWidth: 3)
             .overlay(alignment: .topLeading) {
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                KoanIcon(selected ? Icon.picked : Icon.unpicked, palette: true)
                     .font(.system(size: 20))
                     .symbolRenderingMode(.palette)
                     .foregroundStyle(.white, selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.black.opacity(0.25)))
@@ -211,7 +211,7 @@ struct SelectionTick: View {
 
     var body: some View {
         let selected = selection.contains(key)
-        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+        KoanIcon(selected ? Icon.picked : Icon.unpicked)
             .foregroundStyle(selected ? AnyShapeStyle(.tint) : KoanTheme.style(.muted, system: .tertiary))
             .accessibilityLabel(selected ? "Selected" : "Not selected")
     }

@@ -255,20 +255,58 @@ final class AppearanceModel {
     }
 }
 
-/// One of the app's icons (`Icon.*`), drawn as the theme draws icons: a thin
-/// monochrome line in the colour of the text beside it.
+/// One of the app's icons (`Icon.*`), drawn as the theme draws icons: the kōan
+/// glyph, a single line in the colour of the text beside it, at the size the
+/// font sets, as a symbol would be. The SF Symbol in the platform's look.
 struct KoanIcon: View {
     let name: String
+    /// A glyph with a fill takes the secondary foreground style for it and
+    /// the primary for its strokes, as a symbol in palette rendering does.
+    /// Otherwise its strokes are cut out of the fill.
+    var palette = false
 
-    init(_ name: String) { self.name = name }
+    @Environment(\.font) private var font
+    @Environment(\.fontResolutionContext) private var fontContext
+    @Environment(\.imageScale) private var imageScale
+
+    init(_ name: String, palette: Bool = false) {
+        self.name = name
+        self.palette = palette
+    }
 
     var body: some View {
-        if KoanTheme.isOn {
-            Image(systemName: name)
+        if KoanTheme.isOn, let glyph = KoanGlyph.forSymbol(name) {
+            let pointSize = (font ?? .body).resolve(in: fontContext).pointSize * scale
+            Group {
+                if palette, glyph.fills != nil {
+                    ZStack {
+                        Image(koan: name, pointSize: pointSize, layer: .fills).foregroundStyle(.secondary)
+                        Image(koan: name, pointSize: pointSize, layer: .strokes)
+                    }
+                } else {
+                    Image(koan: name, pointSize: pointSize)
+                }
+            }
+            // Centred on the capitals beside it, as a symbol sits.
+            .alignmentGuide(.firstTextBaseline) { $0.height / 2 + pointSize * 0.35 }
+            .alignmentGuide(.lastTextBaseline) { $0.height / 2 + pointSize * 0.35 }
+            // VoiceOver names it as it named the symbol.
+            .accessibilityRepresentation { Image(systemName: name) } // theme: raw
+        } else if KoanTheme.isOn {
+            Image(systemName: name) // theme: raw
                 .fontWeight(.light)
                 .symbolRenderingMode(.monochrome)
         } else {
-            Image(systemName: name)
+            Image(systemName: name) // theme: raw
+        }
+    }
+
+    /// What `imageScale` does to a symbol's size.
+    private var scale: CGFloat {
+        switch imageScale {
+        case .small: 0.8
+        case .large: 1.25
+        default: 1
         }
     }
 }
@@ -310,9 +348,9 @@ struct KoanLabel: View {
             .labelStyle(KoanLabelStyle(icons: icons, style: style))
             .accessibilityLabel(title)
         } else if style == .compact {
-            Label(title, systemImage: icon).labelStyle(.iconOnly)
+            Label(title, systemImage: icon).labelStyle(.iconOnly) // theme: raw
         } else {
-            Label(title, systemImage: icon)
+            Label(title, systemImage: icon) // theme: raw
         }
     }
 }
@@ -1436,7 +1474,7 @@ struct KoanToggleStyle: ToggleStyle {
                         #else
                         Rectangle().fill(.tint)
                         #endif
-                        Image(systemName: "checkmark")
+                        KoanIcon(Icon.check)
                             .font(.system(size: Self.box * 0.64, weight: .bold))
                             .foregroundStyle(Color.koanBg)
                     } else {
@@ -1509,7 +1547,7 @@ struct KoanSegmentedPicker<Value: Hashable>: View {
             Picker(title, selection: $selection) {
                 ForEach(Array(options.enumerated()), id: \.element.value) { index, option in
                     if let icons {
-                        Image(systemName: icons[index]).tag(option.value)
+                        Image(systemName: icons[index]).tag(option.value) // theme: raw
                     } else {
                         Text(option.label).tag(option.value)
                     }
@@ -1565,7 +1603,7 @@ struct KoanPicker<Value: Hashable>: View {
                         Text(shown(options.first { $0.value == selection }?.label ?? ""))
                             .textCase(nil)
                             .lineLimit(1)
-                        KoanIcon("chevron.up.chevron.down").font(.koan(.fine))
+                        KoanIcon(Icon.choose).font(.koan(.fine))
                     }
                     .font(.koan(.control))
                     .foregroundStyle(Color.koanInk)
@@ -1644,7 +1682,7 @@ struct KoanListPicker<Value: Hashable, Row: View>: View {
                 } label: {
                     HStack(spacing: KoanTheme.Space.xs) {
                         Text(name(selection)).textCase(nil).lineLimit(1)
-                        KoanIcon("chevron.up.chevron.down").font(.koan(.fine))
+                        KoanIcon(Icon.choose).font(.koan(.fine))
                     }
                     .font(.koan(.control))
                     .foregroundStyle(Color.koanInk)
@@ -1700,7 +1738,7 @@ private struct KoanListPickerPage<Value: Hashable, Row: View>: View {
                                 row(value)
                                 Spacer(minLength: 0)
                                 if value == selection {
-                                    KoanIcon("checkmark")
+                                    KoanIcon(Icon.check)
                                 }
                             }
                             .contentShape(Rectangle())
@@ -1764,7 +1802,7 @@ struct TelevisionChoices<Value: Hashable>: View {
                     Text(option.label).textCase(nil)
                     Spacer(minLength: 0)
                     if option.value == selection {
-                        KoanIcon("checkmark")
+                        KoanIcon(Icon.check)
                     }
                 }
             }
@@ -1955,8 +1993,8 @@ struct KoanStepper<Value: Strideable>: View {
                     .foregroundStyle(Color.koanInk)
                     .textCase(.lowercase)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                button("minus", by: -step, allowed: value > range.lowerBound)
-                button("plus", by: step, allowed: value < range.upperBound)
+                button(Icon.subtract, by: -step, allowed: value > range.lowerBound)
+                button(Icon.add, by: step, allowed: value < range.upperBound)
             }
             .opacity(enabled ? 1 : 0.4)
             .accessibilityElement(children: .ignore)
@@ -2418,14 +2456,12 @@ private struct KoanSheetRole: ViewModifier {
 /// glyph above it when icons are on; the accent and an underline when chosen.
 struct KoanTabItem: View {
     let title: String
-    let icon: String
     let selected: Bool
     /// Shared by a bar's items, so the underline slides from tab to tab.
     var underline: Namespace.ID?
     /// Where the tab sits in its bar, for VoiceOver: "tab 2 of 4", as the
     /// platform's tab bar says it.
     var position: (index: Int, count: Int)?
-    @Environment(\.koanIcons) private var icons
     @Environment(\.koanRainbow) private var rainbow
 
     var body: some View {
@@ -2434,37 +2470,25 @@ struct KoanTabItem: View {
             .contentShape(Rectangle())
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(title)
-            .accessibilityShowsLargeContentViewer {
-                KoanIcon(icon)
-                Text(title)
-            }
+            .accessibilityShowsLargeContentViewer { Text(title) }
             .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
             .accessibilityValue(position.map { "Tab \($0.index + 1) of \($0.count)" } ?? "")
     }
 
-    /// A television's tabs run across the top, each the glyph beside its
-    /// name at the size of the page's text; a phone's share the bar's width,
-    /// the glyph above.
+    /// Tabs are words alone in the theme, whatever "Show icons" says. A
+    /// television's run across the top at the size of the page's text; a
+    /// phone's share the bar's width.
     @ViewBuilder
     private var item: some View {
         #if os(tvOS)
-        HStack(spacing: KoanTheme.Space.m) {
-            if icons {
-                KoanIcon(icon)
-            }
-            name
-        }
-        .font(.koan(.body))
-        .padding(.horizontal, KoanTheme.Space.l)
-        .padding(.vertical, KoanTheme.Space.s)
+        name
+            .font(.koan(.body))
+            .padding(.horizontal, KoanTheme.Space.l)
+            .padding(.vertical, KoanTheme.Space.s)
         #else
-        VStack(spacing: 4) {
-            if icons {
-                KoanIcon(icon).font(.system(size: 19))
-            }
-            name.font(.koan(.fine))
-        }
-        .frame(maxWidth: .infinity, minHeight: 44)
+        name
+            .font(.koan(.fine))
+            .frame(maxWidth: .infinity, minHeight: 44)
         #endif
     }
 
@@ -2512,7 +2536,7 @@ private struct KoanBackButton: ViewModifier {
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         Button { dismiss() } label: {
-                            KoanIcon("chevron.left")
+                            KoanIcon(Icon.back)
                                 .font(.koan(.titleSmall))
                                 .foregroundStyle(Color.koanInk)
                                 .frame(width: 44, height: 44, alignment: .leading)
@@ -2612,7 +2636,7 @@ struct KoanSearchField: View {
                 .accessibilityLabel(prompt)
             if !text.isEmpty {
                 Button { text = "" } label: {
-                    KoanIcon("xmark")
+                    KoanIcon(Icon.close)
                         .foregroundStyle(Color.koanMuted)
                         .frame(minWidth: 28, minHeight: 28)
                         .contentShape(Rectangle())
@@ -2818,7 +2842,7 @@ struct KoanUnavailable: View {
             .frame(maxWidth: 420 * KoanType.body.size / 15)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ContentUnavailableView(title, systemImage: icon, description: detail.map(Text.init))
+            ContentUnavailableView(title, systemImage: icon, description: detail.map(Text.init)) // theme: raw
         }
     }
 }

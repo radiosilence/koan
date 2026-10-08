@@ -22,7 +22,7 @@ struct FavouriteButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: isOn ? "heart.fill" : "heart")
+            KoanIcon(isOn ? Icon.favourited : Icon.favourite)
                 .font(size)
                 .foregroundStyle(
                     isOn

@@ -28,7 +28,7 @@ struct MiniPlayer: View {
                 if player.isControllingAnother {
                     // Where it is playing matters more than who by, when it
                     // is not here.
-                    Label(player.controlled?.name ?? "Another device", systemImage: "laptopcomputer.and.iphone")
+                    Label(player.controlled?.name ?? "Another device", koan: Icon.devices)
                         .font(.role(.fine, system: .caption))
                         .foregroundStyle(.tint)
                         .lineLimit(1)
@@ -57,7 +57,7 @@ struct MiniPlayer: View {
                         if player.isWaitingForTrack {
                             ProgressView()
                         } else {
-                            Image(systemName: player.isPlaying ? "pause.fill" : Icon.play)
+                            KoanIcon(player.isPlaying ? Icon.pause : Icon.play)
                                 .font(.role(.titleSmall, system: .title3))
                                 .contentTransition(.symbolEffect(.replace))
                         }
@@ -69,7 +69,7 @@ struct MiniPlayer: View {
                 .disabled(entry == nil)
 
                 Button { player.next() } label: {
-                    Image(systemName: Icon.next)
+                    KoanIcon(Icon.next)
                         .font(.role(.body, system: .body))
                         .frame(width: Self.target, height: Self.target)
                         .contentShape(Rectangle())
@@ -103,7 +103,7 @@ struct MiniPlayer: View {
             RoundedRectangle(cornerRadius: KoanTheme.radius(7))
                 .fill(.quaternary)
                 .frame(width: Self.sleeveSide, height: Self.sleeveSide)
-                .overlay { Image(systemName: "music.note").font(.role(.fine, system: .caption)) }
+                .overlay { KoanIcon(Icon.track).font(.role(.fine, system: .caption)) }
         }
     }
 }

@@ -104,7 +104,7 @@ struct PlayableArtwork: View {
                                 .controlSize(.small)
                                 .tint(.white)
                         } else {
-                            Image(systemName: "play.circle.fill")
+                            KoanIcon(Icon.playMark)
                                 .font(.system(size: 34))
                                 .foregroundStyle(.white)
                                 .koanShadow(0.33, radius: 4)

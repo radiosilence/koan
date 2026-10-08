@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" data-sf="cable.connector" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter">
+  <rect x="7" y="7" width="10" height="8"/>
+  <path d="M10 3.5 V7"/>
+  <path d="M14 3.5 V7"/>
+  <path d="M12 15 V21"/>
+</svg>

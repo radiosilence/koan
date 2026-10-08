@@ -45,7 +45,7 @@ struct DownloadsView: View {
         .toolbar {
             if mirror.hasSettledTransfers {
                 Button { app.engine.clearSettledDownloads() } label: {
-                    Label("Clear Finished", systemImage: Icon.clear)
+                    Label("Clear Finished", koan: Icon.clear)
                 }
                 .help("Forget the transfers that have already settled")
                 .toolbarButton()
@@ -106,11 +106,11 @@ struct DownloadMenu: View {
 
     var body: some View {
         Button { Self.showInLibrary(transfer, library: library, nav: nav) } label: {
-            Label("Show in Library", systemImage: Icon.album)
+            Label("Show in Library", koan: Icon.album)
         }
         if transfer.state == .done {
             Button { library.clearDownloads(trackIds: [transfer.trackId]) } label: {
-                Label("Remove Downloaded File", systemImage: Icon.clear)
+                Label("Remove Downloaded File", koan: Icon.clear)
             }
         }
     }

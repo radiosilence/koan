@@ -23,7 +23,7 @@ struct RowPlayButton: View {
         Button {
             play()
         } label: {
-            Image(systemName: "play.circle.fill")
+            KoanIcon(Icon.playMark)
                 .font(.system(size: 15))
                 .foregroundStyle(.tint)
         }

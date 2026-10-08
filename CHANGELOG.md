@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.60.12
+
+This release fixes a library folder configured in another case than the disk's, such as `~/music` on a Mac whose folder is `~/Music`: 0.60.11 indexed every file in it a second time. The first scan after upgrading folds each duplicate back into its original track. The database schema is unchanged from 0.60.11.
+
+### Security
+
+- **Disconnect no longer shuts out the device another one claims to be.** A device on the network that had not proved it is one of yours, including one shared from another account, was held off by the device id it gave as well as by its address. One giving your phone's id could therefore, once disconnected, cut your phone off from this device until the phone was played on, which also let it back in. Such a device is now held off by its address alone.
+
+### Fixed
+
+- **A library folder configured in another case no longer shows every track twice.** With a folder set as `~/music` on a Mac whose folder is `~/Music`, 0.60.11 indexed each file again under the disk's spelling and kept the old rows. Scans now move the old rows to the disk's spelling and fold each duplicate back into its original track, keeping its history, favourites and playlist places.
+- **Apple TV and iPad: the kōan look's own TV tabs, no grey slab above a text field, and the iPad sidebar on the page's ground.** On the TV the tabs across the top are flat and lowercase in the theme's type, with the accent ring for focus, in place of the system's glass capsule and white platter; the remote moves through them and Menu reaches them as before. A filter field at the top of a TV page no longer paints a grey band up to the top of the screen. On iPad in dark mode the sidebar's library rows no longer sit on a black block, and the selected one has its accent rule.
+
 ## 0.60.11
 
 0.60.10 was never published: its macOS and tvOS release builds failed in the Swift compiler, so its GitHub release, server image and TestFlight builds did not go out. 0.60.11 is the first release to carry its changes, below under 0.60.10. This release moves the database from schema 22 to 23, rebuilding the scan and lyrics caches (#1059), and builds older than 0.60.11 refuse a database that has been migrated. Snapshot the server's database before deploying.

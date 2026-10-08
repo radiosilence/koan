@@ -160,7 +160,7 @@ private struct NewKeySheet: View {
                         Pasteboard.write(text: key.key)
                         copied = true
                     } label: {
-                        KoanLabel(copied ? "Copied" : "Copy Key", icon: "doc.on.doc")
+                        KoanLabel(copied ? "Copied" : "Copy Key", icon: Icon.copy)
                     }
                     .koanButton(.bordered)
                     #endif
