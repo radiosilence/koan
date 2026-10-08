@@ -724,7 +724,11 @@ private struct StopsAtBars: ViewModifier {
             }
             .ignoresSafeArea(.container, edges: .top)
             .background {
+                #if os(macOS)
                 ToolbarHeight { top = $0 }
+                #else
+                Color.clear.onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { top = $0 }
+                #endif
             }
     }
 }
@@ -733,6 +737,7 @@ private struct StopsAtBars: ViewModifier {
 /// `contentLayoutRect`. SwiftUI's safe area passes through zero on layout
 /// passes during and after a resize, and a page that took its top from it
 /// could keep that zero.
+#if os(macOS)
 private struct ToolbarHeight: NSViewRepresentable {
     let changed: (CGFloat) -> Void
 
@@ -758,6 +763,7 @@ private struct ToolbarHeight: NSViewRepresentable {
         }
     }
 }
+#endif
 
 /// The sidebar column on the wash, in the theme with the wash under the whole
 /// window: no glass of the platform's, and a hairline where it meets the page.
