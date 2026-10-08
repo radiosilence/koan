@@ -1,0 +1,1 @@
+- **Integrations.** The Settings section for server-side features is called Integrations again, as the longer name wrapped in the heading.
