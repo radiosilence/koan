@@ -243,16 +243,11 @@ extension View {
     func decimalPadDone<Field: Hashable>(_ focus: FocusState<Field?>.Binding, order: [Field]) -> some View {
         #if os(iOS)
         toolbar {
+            // The bar is the keyboard's accessory, which UIKit keeps as first
+            // built: each button reads where focus is when it is tapped.
             ToolbarItemGroup(placement: .keyboard) {
-                let at = focus.wrappedValue.flatMap { order.firstIndex(of: $0) }
-                Button("Previous", koan: Icon.previousField) {
-                    if let at, at > 0 { focus.wrappedValue = order[at - 1] }
-                }
-                .disabled((at ?? 0) == 0)
-                Button("Next", koan: Icon.nextField) {
-                    if let at, at < order.count - 1 { focus.wrappedValue = order[at + 1] }
-                }
-                .disabled(at.map { $0 >= order.count - 1 } ?? true)
+                Button("Previous", koan: Icon.previousField) { step(-1, focus, order) }
+                Button("Next", koan: Icon.nextField) { step(1, focus, order) }
                 Spacer()
                 Button("Done") { focus.wrappedValue = nil }
             }
@@ -262,6 +257,14 @@ extension View {
         self
         #endif
     }
+
+    #if os(iOS)
+    /// Focus moved `by` fields through `order`, staying put at either end.
+    private func step<Field: Hashable>(_ by: Int, _ focus: FocusState<Field?>.Binding, _ order: [Field]) {
+        guard let at = focus.wrappedValue.flatMap({ order.firstIndex(of: $0) }), order.indices.contains(at + by) else { return }
+        focus.wrappedValue = order[at + by]
+    }
+    #endif
 }
 
 #if !os(tvOS)

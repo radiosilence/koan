@@ -83,7 +83,8 @@ final class EqKeyboardTests: XCTestCase {
         attach("next")
         app.buttons[any: "Next"].tap()
         XCTAssert(hasFocus(app.textFields[any: "Band 10 Q"]), "Next did not reach Q")
-        XCTAssertFalse(app.buttons[any: "Next"].isEnabled, "Next past the last figure")
+        app.buttons[any: "Next"].tap()
+        XCTAssert(hasFocus(app.textFields[any: "Band 10 Q"]), "Next past the last figure")
 
         done.tap()
         XCTAssert(keyboard.waitForNonExistence(timeout: 5), "Done left the keyboard up")

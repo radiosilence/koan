@@ -66,8 +66,11 @@ final class PresetTrayTests: XCTestCase {
             field.typeText(" " + XCUIKeyboardKey.delete.rawValue)
         }
         XCTAssert(track.exists, "the track was never indexed")
+        // The keyboard away first: it covers the mini player.
+        field.typeText("\n")
         track.tap()
         sleep(2)
+        attach("played")
 
         let lyrics = app.buttons[any: "Show lyrics"]
         for _ in 0..<3 where !lyrics.exists {
