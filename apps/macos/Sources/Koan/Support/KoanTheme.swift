@@ -2671,7 +2671,7 @@ struct KoanSearchField: View {
                 Button { text = "" } label: {
                     KoanIcon(Icon.close)
                         .foregroundStyle(Color.koanMuted)
-                        .frame(minWidth: 28, minHeight: 28)
+                        .frame(minWidth: 28)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

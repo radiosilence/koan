@@ -1,0 +1,1 @@
+- **Context menus tint the kōan glyphs.** They drew black instead of in the menu's text colour.

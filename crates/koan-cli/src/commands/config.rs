@@ -119,18 +119,11 @@ pub fn cmd_init() {
             "(exists)".dimmed()
         );
     } else {
-        let default_folders = config::Config::default().library.folders;
-        let folders_str = default_folders
-            .iter()
-            .map(|p| format!("\"{}\"", p.display()))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let local_content = format!(
-            r#"# koan — machine-specific overrides (gitignored)
-# Edit the paths below, then run: koan scan
+        let local_content = r#"# koan — machine-specific overrides (gitignored)
+# Name the folders your music is in, then run: koan scan
 
 [library]
-folders = [{folders_str}]
+# folders = ["/path/to/your/music"]
 
 # Uncomment to connect a Navidrome/Subsonic server:
 # (run `koan remote login URL username` instead for interactive setup)
@@ -140,8 +133,7 @@ folders = [{folders_str}]
 # url = "https://music.example.com"
 # username = "admin"
 # password = ""
-"#
-        );
+"#;
         if let Err(e) = std::fs::write(&local_path, local_content) {
             eprintln!("{} {}", "error:".red().bold(), e);
         } else {

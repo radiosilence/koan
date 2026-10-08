@@ -151,6 +151,10 @@ The label in `body`, `muted`, lowercase, after its glyph when icons are on (see 
 
 The page's ground, with no system glass: the wash with it under the whole window, `bg` otherwise. At the top, the theme's search field: square, `surface`, the glyph and placeholder in `muted`. Its suggestions open beneath it as a square `bg` panel in a hairline `rule`, over the rows: up to five tracks, four records and four artists under `fine`, `muted` headings, each a square sleeve with its title in `meta` and the rest in `fine`, `muted`, the row under the pointer or the arrow keys on `surface`. Return takes that row, or with none lit opens every result; Escape empties the field; `/` focuses it. Playlist sleeves are square. The library counts sit at the foot on the same ground, below a hairline of `koanRowRule`, and the rows stop at both edges rather than passing beneath.
 
+### Filter panel (Mac)
+
+The album, artist and track browsers' filters open in the theme's square panel at a fixed 300 points wide and their own height, never the window's. Three groups between hairlines of `koanRowRule`: the toggles as the theme's square boxes, then codec and genre as the theme's bordered menu buttons and the years as two `surface` fields, each row's label leading in `body`, lowercase, and its control trailing; then reset, a bordered button, trailing.
+
 ### Tab bar (phone)
 
 Flat and full-width, with a 1-point `rule` along its top and `bg` beneath, 64 points tall. Labels in `fine`, lowercase, with no glyphs. Unselected: `muted`. Selected: `accent`, the label underlined. The mini player sits directly above it as a row with its own top rule, whose first part is the playhead in a 2-point `accent` line.
