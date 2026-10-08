@@ -22,12 +22,20 @@ enum RowMetrics {
     static var art: CGFloat { (40 * KoanTheme.sizeScale).rounded() }
     /// The sleeve in such a row.
     static var sleeve: CGFloat { (32 * KoanTheme.sizeScale).rounded() }
-    /// What a list puts above and below each row. More in the theme, whose
-    /// rows have no rules between them: the space is what tells them apart.
-    static var padding: CGFloat { KoanTheme.isOn ? 7 * KoanTheme.spaceScale : 4 }
+    /// What a list puts above and below each row; in the theme it follows the
+    /// spacing scale.
+    static var padding: CGFloat { KoanTheme.isOn ? 4 * KoanTheme.spaceScale : 4 }
     /// What a row with a sleeve adds above and below, so the cover clears the
     /// separators.
     static let artPadding: CGFloat = 4
+    /// The page's margin: where AppKit's inset table style puts its cells,
+    /// and so where a header above one sits, from the side and from the top.
+    static let pageEdge: CGFloat = 16
+    /// How far down the inset style puts its first row.
+    static let tableTop: CGFloat = 10
+    /// What a header above a table adds below itself, so that the gap to the
+    /// first row's box is the page's margin too.
+    static var headerGap: CGFloat { max(0, pageEdge - tableTop - padding) }
     #else
     /// The least a row stands, before the list's own insets. Taller for a
     /// title on two lines.

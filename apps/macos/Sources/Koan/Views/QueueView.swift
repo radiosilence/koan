@@ -431,7 +431,12 @@ struct QueueView: View {
         #else
         .padding(.horizontal, 16)
         #endif
+        #if os(macOS)
+        .padding(.top, RowMetrics.pageEdge)
+        .padding(.bottom, RowMetrics.headerGap)
+        #else
         .padding(.vertical, 11)
+        #endif
     }
 
     /// One option of the theme's segmented control, as glyphs: the chosen one

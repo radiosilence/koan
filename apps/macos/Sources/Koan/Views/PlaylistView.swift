@@ -75,9 +75,14 @@ struct PlaylistView: View {
         VStack(spacing: 0) {
             if !headerScrolls {
                 header(rows)
+                    #if os(macOS)
+                    .padding([.horizontal, .top], RowMetrics.pageEdge)
+                    .padding(.bottom, RowMetrics.headerGap)
+                    #else
                     .padding(.horizontal, 24)
                     .padding(.top, 18)
                     .padding(.bottom, 16)
+                    #endif
             }
 
             if entries.isEmpty {
