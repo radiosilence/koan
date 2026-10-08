@@ -3173,9 +3173,11 @@ mod tests {
         let item0 = ready_item("played-track");
         let item1 = ready_item("playing-track");
         let item2 = ready_item("queued-track");
-        let id1 = item1.id;
+        let (id0, id1) = (item0.id, item1.id);
 
         state.add_items(vec![item0, item1, item2]);
+        state.set_cursor(Some(id0));
+        state.mark_played(id0);
         state.set_cursor(Some(id1));
 
         let snap = state.derive_visible_queue();
