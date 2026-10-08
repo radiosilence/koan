@@ -126,6 +126,7 @@ pub fn router(
         )
         .route("/share/{id}", get(page))
         .route("/share/{id}/cover", get(cover))
+        .route("/share/{id}/download", get(download))
         .route("/share/{id}/{n}", get(track))
         .route("/share/{id}/{n}/cover", get(track_cover))
         .with_state(ShareState {
@@ -505,7 +506,7 @@ max-wide:aspect-square max-wide:h-auto max-wide:w-full\" src=\"/share/{id}/cover
 <h1>{title}</h1><p class=\"mt-0 mb-3.5 text-muted\">{sub}</p>{note}\
 <div class=\"flex items-center gap-2\"><button id=prev class=\"bg-transparent text-muted\" aria-label=Previous>&#9198;</button>\
 <button id=play class=\"min-w-24 border-brand bg-brand font-semibold text-bg\">Play</button>\
-<button id=next class=\"bg-transparent text-muted\" aria-label=Next>&#9197;</button></div>\
+<button id=next class=\"bg-transparent text-muted\" aria-label=Next>&#9197;</button>{download}</div>\
 <div class=\"mt-3 flex items-center gap-2.5 text-meta text-muted tabular-nums\"><span id=pos>0:00</span>\
 <input id=seek class=\"min-w-0 flex-1 accent-brand\" type=range min=0 max=0 step=0.1 value=0 aria-label=Position>\
 <span id=len>0:00</span></div></div></header>\
@@ -520,6 +521,17 @@ max-wide:aspect-square max-wide:h-auto max-wide:w-full\" src=\"/share/{id}/cover
         js = *SHARE_JS_URL,
         sub = escape(&sub.join(" · ")),
         start = start.map_or(-1, |i| i as i64),
+        download = if tracks
+            .iter()
+            .any(|t| crate::subsonic::track_file_path(t).is_some())
+        {
+            format!(
+                "<a class=\"ml-auto rounded-md border border-rule bg-rule px-3.5 py-2 text-ink no-underline \
+                 hover:border-hover\" href=\"/share/{id}/download\" download>Download</a>"
+            )
+        } else {
+            String::new()
+        },
     )
 }
 
@@ -585,6 +597,169 @@ async fn track(
         }
         Err(_) => not_found(),
     }
+}
+
+/// A name that is safe as a file or folder on any system a visitor unzips on.
+fn file_name(s: &str) -> String {
+    let clean: String = s
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+    let clean = clean.trim().trim_start_matches('.').trim_end_matches('.');
+    if clean.is_empty() {
+        "koan".into()
+    } else {
+        clean.into()
+    }
+}
+
+/// `Content-Disposition` for `name`: an ASCII fallback, and the name itself
+/// percent-encoded for every browser that reads `filename*`.
+fn attachment(name: &str) -> String {
+    let ascii: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii() && c != '"' && c != '\\' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let encoded: String = name
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                (b as char).to_string()
+            }
+            b => format!("%{b:02X}"),
+        })
+        .collect();
+    format!("attachment; filename=\"{ascii}\"; filename*=UTF-8''{encoded}")
+}
+
+/// What a download holds: its folder, and each shared track with a file as
+/// its name in the zip and its path. Numbered by place in the share, so names
+/// are unique; an artist's records get a folder each.
+fn archive(
+    share: &ShareRow,
+    tracks: &[TrackRow],
+    subject: &Subject,
+) -> (String, Vec<(String, PathBuf)>) {
+    let artist = subject.artist.as_ref();
+    let one_album = tracks
+        .first()
+        .filter(|f| tracks.iter().all(|t| t.album_id == f.album_id));
+    let folder = match (artist, one_album) {
+        (Some(a), _) => a.name.clone(),
+        (None, Some(t)) if share.slice.kind == ShareKind::Album => {
+            format!("{} - {}", t.album_artist_name, t.album_title)
+        }
+        _ => share
+            .description
+            .clone()
+            .filter(|d| !d.trim().is_empty())
+            .or_else(|| one_album.map(|t| format!("{} - {}", t.album_artist_name, t.album_title)))
+            .unwrap_or_else(|| "koan share".into()),
+    };
+    let files = tracks
+        .iter()
+        .enumerate()
+        .filter_map(|(i, t)| {
+            let path = PathBuf::from(crate::subsonic::track_file_path(t)?);
+            let ext = path
+                .extension()
+                .map(|e| format!(".{}", e.to_string_lossy()))
+                .unwrap_or_default();
+            let credit = if one_album.is_some() || artist.is_some() {
+                String::new()
+            } else {
+                format!("{} - ", t.artist_name)
+            };
+            let name = file_name(&format!("{:02} {credit}{}", i + 1, t.title));
+            let name = match artist {
+                Some(_) => format!("{}/{name}{ext}", file_name(&t.album_title)),
+                None => format!("{name}{ext}"),
+            };
+            Some((name, path))
+        })
+        .collect();
+    (file_name(&folder), files)
+}
+
+/// Feeds a response body from the thread writing the zip.
+struct BodyWriter(tokio::sync::mpsc::Sender<std::io::Result<axum::body::Bytes>>);
+
+impl std::io::Write for BodyWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .blocking_send(Ok(axum::body::Bytes::copy_from_slice(buf)))
+            .map_err(|_| std::io::Error::from(std::io::ErrorKind::BrokenPipe))?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Every shared track with a file, as one zip written while it is sent. Audio
+/// is compressed already, so entries are stored. A file that fails partway
+/// aborts the response rather than ending it as a zip that looks whole.
+async fn download(State(s): State<ShareState>, Path(id): Path<String>) -> Response {
+    let found = blocking(move || {
+        let (db, share, tracks) = live(&s.pool, &id)?;
+        let subject = subject(&db, &share, &tracks);
+        let (folder, files) = archive(&share, &tracks, &subject);
+        (!files.is_empty()).then_some((folder, files))
+    })
+    .await;
+    let Some((folder, files)) = found else {
+        return not_found();
+    };
+    let disposition = attachment(&format!("{folder}.zip"));
+    let (tx, rx) = tokio::sync::mpsc::channel(4);
+    let fail = tx.clone();
+    tokio::task::spawn_blocking(move || {
+        let write = || -> std::io::Result<()> {
+            use std::io::Write as _;
+            let out = std::io::BufWriter::with_capacity(256 * 1024, BodyWriter(tx));
+            let mut zip = zip::ZipWriter::new_stream(out);
+            for (name, path) in files {
+                let mut file = std::fs::File::open(&path)?;
+                let large = file.metadata()?.len() >= u32::MAX as u64;
+                let opts = zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Stored)
+                    .large_file(large);
+                zip.start_file(format!("{folder}/{name}"), opts)
+                    .map_err(std::io::Error::other)?;
+                std::io::copy(&mut file, &mut zip)?;
+            }
+            zip.finish()
+                .map_err(std::io::Error::other)?
+                .into_inner()
+                .flush()
+        };
+        if let Err(e) = write() {
+            let _ = fail.blocking_send(Err(e));
+        }
+    });
+    let mut resp = (
+        [
+            (header::CONTENT_TYPE, "application/zip"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        axum::body::Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx)),
+    )
+        .into_response();
+    if let Ok(v) = HeaderValue::from_str(&disposition) {
+        resp.headers_mut().insert(header::CONTENT_DISPOSITION, v);
+    }
+    resp
 }
 
 /// The cover at the size link previews and the page's header want.
@@ -729,6 +904,31 @@ mod tests {
             .unwrap()
             .to_vec();
         (parts.status, parts.headers, bytes)
+    }
+
+    #[tokio::test]
+    async fn the_download_is_a_zip_of_the_shared_files_only() {
+        let (_dir, app, id, _) = setup();
+        let (status, headers, body) = get(&app, &format!("/share/{id}/download"), None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers[header::CONTENT_TYPE], "application/zip");
+        let disposition = headers[header::CONTENT_DISPOSITION].to_str().unwrap();
+        assert!(disposition.contains("filename=\"Rrose - Hymn to Moisture.zip\""));
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(body)).unwrap();
+        assert_eq!(zip.len(), 1);
+        let mut entry = zip.by_index(0).unwrap();
+        assert_eq!(
+            entry.name(),
+            "Rrose - Hymn to Moisture/01 Wet _Moss_ & Stone.flac"
+        );
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut bytes).unwrap();
+        assert_eq!(bytes, b"0123456789");
+
+        let html = String::from_utf8(get(&app, &format!("/share/{id}"), None).await.2).unwrap();
+        assert!(html.contains(&format!("href=\"/share/{id}/download\" download")));
+        let (status, _, _) = get(&app, &format!("/share/{}/download", "0".repeat(32)), None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

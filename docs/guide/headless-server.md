@@ -186,7 +186,7 @@ The apps reach this through the `koanScrobbling` extension: `koanScrobbling` rep
 
 ## Sharing
 
-A server makes share links itself: `createShare` (GraphQL, MCP, or a Subsonic client's own share button) returns `https://<public_url>/share/<id>`, a page anyone can open without an account, with a player for each shared track. Set where the server is reached from outside:
+A server makes share links itself: `createShare` (GraphQL, MCP, or a Subsonic client's own share button) returns `https://<public_url>/share/<id>`, a page anyone can open without an account, with a player for each shared track and a Download button that sends the shared files, untouched, as one zip. Set where the server is reached from outside:
 
 ```toml
 [sharing]

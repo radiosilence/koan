@@ -2788,6 +2788,7 @@ dependencies = [
  "tower-http 0.7.1",
  "tungstenite 0.30.0",
  "uuid",
+ "zip",
 ]
 
 [[package]]
