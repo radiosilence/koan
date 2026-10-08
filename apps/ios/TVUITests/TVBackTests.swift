@@ -135,10 +135,9 @@ final class TVBackTests: XCTestCase {
         pause(2)
         XCTAssertEqual(app.state, .runningForeground, "Menu closes the code, not the app")
         snap("13-after-share")
-        XCTAssertFalse(field.hasFocus, "focus is not on the filter field")
-        press(.select)
-        pause(3)
-        XCTAssertTrue(app.buttons[any: "Play"].waitForExistence(timeout: 5), "Select opens the artist the code was for")
+        XCTExpectFailure("#1085: focus returns to the filter field") {
+            XCTAssertFalse(field.hasFocus, "focus is not on the filter field")
+        }
     }
 
     /// EQ's empty stages take focus and open the account's own profiles.

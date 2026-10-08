@@ -1445,7 +1445,7 @@ _demo-server library out:
     [ -z "{{library}}" ] || printf '[library]\nfolders = ["%s"]\n' "$(cd "{{library}}" && pwd)" > "$dir/config.toml"
     KOAN_CONFIG_DIR=$dir KOAN_USERNAME=owner KOAN_PASSWORD=$password "$koan" auth setup >/dev/null
     [ -z "{{library}}" ] || KOAN_CONFIG_DIR=$dir "$koan" scan >/dev/null 2>&1
-    KOAN_CONFIG_DIR=$dir KOAN_SUBSONIC__ENABLED=true KOAN_GRAPHQL__AUTH_ENABLED=true \
+    KOAN_CONFIG_DIR=$dir KOAN_SUBSONIC__ENABLED=true KOAN_GRAPHQL__AUTH_ENABLED=true KOAN_SHARING__PUBLIC_URL=http://127.0.0.1:$port \
         nohup "$koan" --headless --port "$port" >"{{out}}/server.log" 2>&1 &
     echo "$! $dir" > "{{out}}/server.pid"
     echo "$password" > "{{out}}/server.password"
