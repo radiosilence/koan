@@ -2478,16 +2478,20 @@ private struct KoanSheetRole: ViewModifier {
     }
 }
 
-/// One tab of the theme's tab bar: the label in `fine`, lowercase, with its
-/// glyph above it when icons are on; the accent and an underline when chosen.
+/// One tab of the theme's tab bar: the label in `fine`, lowercase; the accent
+/// and an underline when chosen. With an `icon`, its glyph above the label
+/// when icons are on: the Mac's Settings tabs. A phone's and a television's
+/// tabs pass none and stay words alone.
 struct KoanTabItem: View {
     let title: String
+    var icon: String?
     let selected: Bool
     /// Shared by a bar's items, so the underline slides from tab to tab.
     var underline: Namespace.ID?
     /// Where the tab sits in its bar, for VoiceOver: "tab 2 of 4", as the
     /// platform's tab bar says it.
     var position: (index: Int, count: Int)?
+    @Environment(\.koanIcons) private var icons
     @Environment(\.koanRainbow) private var rainbow
 
     var body: some View {
@@ -2501,9 +2505,8 @@ struct KoanTabItem: View {
             .accessibilityValue(position.map { "Tab \($0.index + 1) of \($0.count)" } ?? "")
     }
 
-    /// Tabs are words alone in the theme, whatever "Show icons" says. A
-    /// television's run across the top at the size of the page's text; a
-    /// phone's share the bar's width.
+    /// A television's tabs run across the top at the size of the page's
+    /// text; the others share the bar's width.
     @ViewBuilder
     private var item: some View {
         #if os(tvOS)
@@ -2512,9 +2515,13 @@ struct KoanTabItem: View {
             .padding(.horizontal, KoanTheme.Space.l)
             .padding(.vertical, KoanTheme.Space.s)
         #else
-        name
-            .font(.koan(.fine))
-            .frame(maxWidth: .infinity, minHeight: 44)
+        VStack(spacing: KoanTheme.Space.xs) {
+            if icons, let icon {
+                KoanIcon(icon).font(.koan(.body))
+            }
+            name.font(.koan(.fine))
+        }
+        .frame(maxWidth: .infinity, minHeight: 44)
         #endif
     }
 

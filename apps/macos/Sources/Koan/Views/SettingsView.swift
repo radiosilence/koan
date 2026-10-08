@@ -51,9 +51,11 @@ struct SettingsView: View {
             KoanLabel(title, icon: symbol, style: .row)
         }
         .listLink()
-        // Navigation is words alone in the theme, as the tabs are; the
-        // platform's look keeps its symbols.
+        // A television's lists are words alone, as its tabs are; elsewhere
+        // the glyph follows "Show icons".
+        #if os(tvOS)
         .environment(\.koanIcons, false)
+        #endif
     }
     #endif
 
@@ -119,7 +121,7 @@ struct SettingsView: View {
                                 ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
                                     Button { pane = tab.id } label: {
                                         KoanTabItem(
-                                            title: tab.title, selected: pane == tab.id,
+                                            title: tab.title, icon: tab.icon, selected: pane == tab.id,
                                             position: (index, tabs.count)
                                         )
                                     }

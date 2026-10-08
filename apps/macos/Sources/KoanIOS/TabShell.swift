@@ -759,6 +759,7 @@ private struct PadSidebar: View {
     let play: (Playlist, _ shuffled: Bool) -> Void
     @Environment(EngineMirror.self) private var mirror
     @Environment(PlaylistsModel.self) private var playlists
+    @Environment(\.koanIcons) private var icons
 
     var body: some View {
         List {
@@ -768,14 +769,14 @@ private struct PadSidebar: View {
                     .listRowBackground(Color.clear)
             }
             Section {
-                row(.queue, "Queue")
-                row(.search, "Search")
-                row(.settings, "Settings")
+                row(.queue, "Queue", icon: Icon.queueSection)
+                row(.search, "Search", icon: Icon.search)
+                row(.settings, "Settings", icon: Icon.settings)
             }
             Section {
                 ForEach(sections, id: \.section) { item in
                     row(
-                        .section(item.section), item.title,
+                        .section(item.section), item.title, icon: item.icon,
                         badge: item.section == .downloads ? mirror.activeTransfers : 0
                     )
                 }
@@ -784,7 +785,7 @@ private struct PadSidebar: View {
             }
             Section {
                 ForEach(playlists.playlists, id: \.id) { playlist in
-                    row(.section(.playlist(playlist.id)), playlist.name, data: true)
+                    row(.section(.playlist(playlist.id)), playlist.name, icon: Icon.playlist, data: true)
                         .contextMenu {
                             Button("Play", koan: Icon.play) { play(playlist, false) }
                             Button("Shuffle", koan: Icon.shuffle) { play(playlist, true) }
@@ -805,27 +806,32 @@ private struct PadSidebar: View {
         }
         .listStyle(.plain)
         .koanSidebar()
-        // Navigation is words alone in the theme, as the tabs are.
-        .environment(\.koanIcons, false)
         .environment(\.defaultMinListHeaderHeight, 0)
         .listRowSeparator(.hidden)
         .listSectionSeparator(.hidden)
     }
 
     /// A row that is a tab: chosen again, back to its root, as a tab is.
-    /// Words alone, as the theme's tabs are.
+    /// Its glyph before the name when icons are on, as the Mac's sidebar has.
     /// A playlist's name is the person's, and keeps its case. The badge goes
     /// on before the row's role: on the row it replaces the row's background,
     /// the selection's rule with it, by the list's own.
     private func row(
-        _ id: TabShell.TabID, _ title: String, data: Bool = false, badge: Int = 0
+        _ id: TabShell.TabID, _ title: String, icon: String, data: Bool = false, badge: Int = 0
     ) -> some View {
         Button {
             if selection == id { reselect(id) } else { selection = id }
         } label: {
-            Text(title)
-                .textCase(data ? nil : .lowercase)
-                .lineLimit(1)
+            Group {
+                let name = Text(title)
+                    .textCase(data ? nil : .lowercase)
+                    .lineLimit(1)
+                if icons {
+                    Label { name } icon: { KoanIcon(icon) }
+                } else {
+                    name
+                }
+            }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }

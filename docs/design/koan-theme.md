@@ -145,7 +145,7 @@ The title in `body`, `ink`; secondary text in `meta`, `muted`; numbers right-ali
 
 ### Navigation row (sidebar)
 
-The label in `body`, `muted`, lowercase, after its glyph on the Mac and with none elsewhere (see [Icons](#icons)). Selected: `accent`, with the 2-point leading rule, and no fill. On the Mac the list keeps AppKit's selection, which is what VoiceOver announces and the arrow keys move, but does not draw its rounded highlight. Section headings in `fine`, `ink`, with 16 points above.
+The label in `body`, `muted`, lowercase, after its glyph when icons are on (see [Icons](#icons)). Selected: `accent`, with the 2-point leading rule, and no fill. On the Mac the list keeps AppKit's selection, which is what VoiceOver announces and the arrow keys move, but does not draw its rounded highlight. Section headings in `fine`, `ink`, with 16 points above.
 
 ### Sidebar (Mac)
 
@@ -165,7 +165,7 @@ A row across the top of the screen on no ground, centred: each tab its label in 
 
 ### Settings tabs (Mac)
 
-The Settings window's panes are chosen from the tab bar's items, drawn by the theme in a row along the top of the window, with no rule beneath: labels in `fine`, lowercase, with no glyphs; unselected `muted`, selected `accent` and underlined. The window is on `bg`, its titlebar transparent, with no title and no separator, so only the window's buttons sit above the row. The system's toolbar tabs are glass buttons no role reaches, so the theme does not use them; the platform's look keeps them.
+The Settings window's panes are chosen from the tab bar's items, drawn by the theme in a row along the top of the window, with no rule beneath: labels in `fine`, lowercase, each under its glyph when icons are on; unselected `muted`, selected `accent` and underlined. The window is on `bg`, its titlebar transparent, with no title and no separator, so only the window's buttons sit above the row. The system's toolbar tabs are glass buttons no role reaches, so the theme does not use them; the platform's look keeps them.
 
 ### Select bar (phone)
 
@@ -179,7 +179,7 @@ A full-width bar, 68 points tall, with a 1-point `rule` along its top and no sha
 
 With icons (`appearance.theme_icons = true`), each transport control and action has its glyph. Glyphs never replace a label that the plain variant shows.
 
-The Mac's sidebar is the one place navigation has glyphs: with icons on, each place's glyph sits before its label. Elsewhere navigation is words alone, with icons or without: the phone's tab bar, the iPad's sidebar, the television's tabs, the Mac's Settings tabs, and the lists of Library sections and Settings panes on the phone and television. `KoanTabItem` takes no icon, and the iPad's sidebar and those lists set `koanIcons` off. The platform's look keeps its tab and sidebar symbols.
+Navigation within a page follows "Show icons" like everything else: the Mac's and the iPad's sidebars, the Mac's Settings tabs, and the lists of Library sections and Settings panes on the phone each carry the place's glyph. The bars that stay on screen are words alone, with icons or without: the phone's tab bar and the television's tabs, whose `KoanTabItem`s pass no icon, and the television's Library and Settings lists, which set `koanIcons` off. The platform's look keeps its tab and sidebar symbols.
 
 The theme draws its own set, in `apps/macos/Resources/Icons`: one SVG per glyph, naming in `data-sf` the SF Symbols it stands in for. The platform's look keeps those SF Symbols.
 
