@@ -321,7 +321,7 @@ private struct StatusLine: View {
                 KoanLabel(error, icon: Icon.warningFilled)
                     .koanText(.fine, .bad)
             } else if let result = model.lastResult {
-                KoanLabel(result, icon: Icon.selectAll)
+                KoanLabel(result, icon: Icon.success)
             } else {
                 Text(" ")
             }

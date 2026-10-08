@@ -249,7 +249,7 @@ struct InviteSheet: View {
                         Pasteboard.write(text: invite.link)
                         copied = "link"
                     } label: {
-                        KoanLabel(copied == Icon.share ? "Copied" : "Copy Link", icon: Icon.share)
+                        KoanLabel(copied == "link" ? "Copied" : "Copy Link", icon: Icon.share)
                     }
                     .koanButton(.bordered)
                 } header: {

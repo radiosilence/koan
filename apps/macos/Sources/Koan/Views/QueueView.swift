@@ -365,8 +365,8 @@ struct QueueView: View {
                 }
             } else {
                 Picker("Queue layout", selection: $grouped) { // theme: raw — the platform's look; the theme's is above
-                    KoanIcon(Icon.album).tag(true)
-                    KoanIcon(Icon.queueSection).tag(false)
+                    Image(systemName: Icon.album).tag(true) // theme: raw
+                    Image(systemName: Icon.queueSection).tag(false) // theme: raw
                 }
                 .pickerStyle(.segmented) // theme: raw
                 .labelsHidden()

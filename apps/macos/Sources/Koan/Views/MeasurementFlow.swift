@@ -293,7 +293,7 @@ struct MeasurementFlow: View {
                 Section {
                     EqGraph(response: preview, startOn: .headphone)
                 } footer: {
-                    Text("Measured shows your measurement, the target, and what your \(speaker ? "speaker" : Icon.headphones) will sound like with the correction. EQ shows the correction itself.")
+                    Text("Measured shows your measurement, the target, and what your \(speaker ? "speaker" : "headphones") will sound like with the correction. EQ shows the correction itself.")
                         .koanText(.fine, .muted)
                 }
             }
