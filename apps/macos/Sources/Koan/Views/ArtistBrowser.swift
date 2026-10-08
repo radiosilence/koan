@@ -250,6 +250,7 @@ struct ArtistDetailView: View {
     @Environment(UIState.self) private var ui
     /// Off stage while a page is pushed over it on a phone — see `StageView`.
     @Environment(\.onStage) private var onStage
+    @Environment(\.horizontalSizeClass) private var width
 
     /// Whatever the navigator loaded before it brought us here, so the first
     /// body evaluation already has the whole page. Guarded on the id because
@@ -285,48 +286,12 @@ struct ArtistDetailView: View {
     private var discography: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                // The play button reads as part of the title, so it sits on the
-                // title's line. Everything below is full width rather than
-                // indented into a column beside it.
-                // Top-aligned, as a record's header is: the photo's top edge
-                // meets the name's first line.
-                HStack(alignment: .top, spacing: 20) {
-                    if info?.hasImage == true {
-                        AlbumArtwork(source: .artist(artistId), size: .tile, cornerRadius: KoanTheme.radius(56))
-                            .frame(width: 112, height: 112)
-                            .transition(.opacity)
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(alignment: .headerCentre, spacing: 14) {
-                            #if !os(tvOS)
-                            if let artist {
-                                PlayableHeaderButton(
-                                    playable: .artist(id: artist.id, name: artist.name)
-                                )
-                            }
-                            #endif
-                            Text(artist?.name ?? "Artist")
-                                // The album page's title size, on each platform.
-                                #if os(tvOS)
-                                .font(.role(.display, system: .system(size: 48, weight: .semibold)))
-                                .headerTitleCentre(.display, systemSize: 48)
-                                #else
-                                .font(.role(.title, system: .system(size: 26, weight: .semibold)))
-                                .headerTitleCentre(.title, systemSize: 26)
-                                #endif
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Text(Format.count(Int64(albums.count), "album"))
-                            .font(.role(.control, system: .callout))
-                            .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                        if let artist {
-                            let playable = Playable.artist(id: artist.id, name: artist.name)
-                            HeaderActions(playable: playable, shuffle: shufflePlay)
-                                .padding(.top, 4)
-                        }
-                    }
+                if width == .compact {
+                    compactHeader
+                    bio(collapsible: true)
+                } else {
+                    header
                 }
-                .animation(.easeOut(duration: 0.2), value: info?.hasImage)
 
                 LazyVGrid(columns: columns, spacing: 22) {
                     ForEach(albums, id: \.id) { album in
@@ -335,22 +300,11 @@ struct ArtistDetailView: View {
                 }
                 .modifier(SelectionDrag(selection: library.artistSelection))
 
-                if let info, let bio = info.bio {
-                    Divider()
-                    ArtistBio(bio: bio, source: info.bioUrl, imageCredit: info.imageCredit)
-                        .transition(.opacity)
-                } else if record?.infoLoading == true {
-                    Divider()
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text("Looking up biography…")
-                            .font(.role(.control, system: .callout))
-                            .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                    }
-                    .transition(.opacity)
+                if width != .compact {
+                    bio(collapsible: false)
                 }
             }
-            .padding(22)
+            .padding(width == .compact ? 16 : 22)
             .animation(.easeOut(duration: 0.2), value: info?.bio)
             .animation(.easeOut(duration: 0.2), value: record?.infoLoading)
         }
@@ -371,6 +325,101 @@ struct ArtistDetailView: View {
         #endif
     }
 
+    private var header: some View {
+        // The play button reads as part of the title, so it sits on the
+        // title's line. Everything below is full width rather than
+        // indented into a column beside it.
+        // Top-aligned, as a record's header is: the photo's top edge
+        // meets the name's first line.
+        HStack(alignment: .top, spacing: 20) {
+            if info?.hasImage == true {
+                AlbumArtwork(source: .artist(artistId), size: .tile, cornerRadius: KoanTheme.radius(56))
+                    .frame(width: 112, height: 112)
+                    .transition(.opacity)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .headerCentre, spacing: 14) {
+                    #if !os(tvOS)
+                    if let artist {
+                        PlayableHeaderButton(
+                            playable: .artist(id: artist.id, name: artist.name)
+                        )
+                    }
+                    #endif
+                    Text(artist?.name ?? "Artist")
+                        // The album page's title size, on each platform.
+                        #if os(tvOS)
+                        .font(.role(.display, system: .system(size: 48, weight: .semibold)))
+                        .headerTitleCentre(.display, systemSize: 48)
+                        #else
+                        .font(.role(.title, system: .system(size: 26, weight: .semibold)))
+                        .headerTitleCentre(.title, systemSize: 26)
+                        #endif
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text(Format.count(Int64(albums.count), "album"))
+                    .font(.role(.control, system: .callout))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                if let artist {
+                    let playable = Playable.artist(id: artist.id, name: artist.name)
+                    HeaderActions(playable: playable, shuffle: shufflePlay)
+                        .padding(.top, 4)
+                }
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: info?.hasImage)
+    }
+
+    /// A phone's header, stacked as a record's is: the photo, the name on a
+    /// line of its own, then play with the lesser actions beside it.
+    private var compactHeader: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if info?.hasImage == true {
+                AlbumArtwork(source: .artist(artistId), size: .tile, cornerRadius: KoanTheme.radius(80))
+                    .frame(width: 160, height: 160)
+                    .transition(.opacity)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(artist?.name ?? "Artist")
+                    .font(.role(.titleSmall, system: .system(size: 22, weight: .semibold)))
+                    .foregroundStyle(KoanTheme.style(.strong, system: .primary))
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(Format.count(Int64(albums.count), "album"))
+                    .font(.role(.fine, system: .footnote))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+            }
+            if let artist {
+                let playable = Playable.artist(id: artist.id, name: artist.name)
+                HStack(spacing: 12) {
+                    PlayableHeaderButton(playable: playable)
+                    HeaderActions(playable: playable, shuffle: shufflePlay)
+                }
+                .padding(.top, 6)
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: info?.hasImage)
+    }
+
+    /// Below the records where there is room for both; above them on a phone,
+    /// cut to a few lines, where below is several screens down.
+    @ViewBuilder private func bio(collapsible: Bool) -> some View {
+        if let info, let bio = info.bio {
+            if !collapsible { Divider() }
+            ArtistBio(bio: bio, source: info.bioUrl, imageCredit: info.imageCredit, collapsible: collapsible)
+                .transition(.opacity)
+        } else if record?.infoLoading == true {
+            if !collapsible { Divider() }
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Looking up biography…")
+                    .font(.role(.control, system: .callout))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+            }
+            .transition(.opacity)
+        }
+    }
+
     private func shufflePlay() {
         let engine = library.engine
         let id = artistId
@@ -387,36 +436,54 @@ private struct ArtistBio: View {
     let bio: String
     let source: String?
     let imageCredit: String?
+    /// Opens on its first few lines, and a tap gives the rest.
+    var collapsible = false
+
+    @State private var expanded = false
 
     var body: some View {
+        let folded = collapsible && !expanded
         VStack(alignment: .leading, spacing: 10) {
-            Text("About").koanCase()
-                .font(.role(.body, system: .headline))
+            if !collapsible {
+                Text("About").koanCase()
+                    .font(.role(.body, system: .headline))
+            }
             // The extract separates paragraphs with a single newline.
             Text(bio.replacingOccurrences(of: "\n", with: "\n\n"))
                 .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 .lineSpacing(3)
+                .lineLimit(folded ? 4 : nil)
                 .selectableText()
                 .frame(maxWidth: 680, alignment: .leading)
-            HStack(spacing: 12) {
-                if let url = source.flatMap(URL.init(string:)) {
-                    #if os(tvOS)
-                    // A television opens no web pages; the credit stands as text.
-                    Text("From Wikipedia")
-                        .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
-                        .accessibilityHint(url.absoluteString)
-                    #else
-                    Link("From Wikipedia", destination: url)
-                        .koanButton(.link)
-                    #endif
-                }
-                if let imageCredit {
-                    Text("Photo: \(imageCredit)")
-                        .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
-                }
+            if folded {
+                Button("more") { withAnimation(.easeOut(duration: 0.2)) { expanded = true } }
+                    .koanButton(.link)
+                    .font(.role(.fine, system: .caption))
+            } else {
+                credits
             }
-            .font(.role(.fine, system: .caption))
         }
+    }
+
+    private var credits: some View {
+        HStack(spacing: 12) {
+            if let url = source.flatMap(URL.init(string:)) {
+                #if os(tvOS)
+                // A television opens no web pages; the credit stands as text.
+                Text("From Wikipedia")
+                    .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
+                    .accessibilityHint(url.absoluteString)
+                #else
+                Link("From Wikipedia", destination: url)
+                    .koanButton(.link)
+                #endif
+            }
+            if let imageCredit {
+                Text("Photo: \(imageCredit)")
+                    .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
+            }
+        }
+        .font(.role(.fine, system: .caption))
     }
 }
 

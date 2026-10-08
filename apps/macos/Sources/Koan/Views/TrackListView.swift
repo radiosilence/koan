@@ -148,6 +148,7 @@ struct TrackListView: View {
                                 .rowSeparator(.hidden)
                                 .selectionDisabled()
                                 .washedRow()
+                                .listRowInsets(rowInsets)
                                 .onAppear { headerShown = true }
                                 .onDisappear { headerShown = false }
                         }
@@ -159,6 +160,7 @@ struct TrackListView: View {
                                 allTrackIds: allTrackIds
                             )
                             .rowBehaviour(playable: .track(track))
+                            .listRowInsets(rowInsets)
                             .primaryTap { play([track.id]) } menu: { menu(for: [track.id]) }
                         }
                     }
@@ -207,6 +209,12 @@ struct TrackListView: View {
                 }
     }
 
+    /// A phone's rows sit on the header's edge, with little above and below:
+    /// the list's own insets leave a tracklist a few titles to a screen.
+    private var rowInsets: EdgeInsets? {
+        headerScrolls ? EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16) : nil
+    }
+
     #if os(iOS)
     /// A pick of tracks: every verb, on the tracks themselves.
     static func selectionActions(_ ids: [Int64]) -> SelectionBar.Actions {
@@ -247,9 +255,12 @@ struct TrackListView: View {
         subtitle.components(separatedBy: " · ").first ?? subtitle
     }
 
+    private var subtitleDetails: String {
+        subtitle.components(separatedBy: " · ").dropFirst().joined(separator: " · ")
+    }
+
     private var subtitleRest: String {
-        let parts = subtitle.components(separatedBy: " · ").dropFirst()
-        return parts.isEmpty ? "" : "· " + parts.joined(separator: " · ")
+        subtitleDetails.isEmpty ? "" : "· " + subtitleDetails
     }
 
     /// Side by side where there is room, stacked where there is not.
@@ -261,7 +272,7 @@ struct TrackListView: View {
         if width == .compact {
             VStack(alignment: .leading, spacing: 14) {
                 sleeve
-                titleBlock
+                compactTitleBlock
             }
             // Without this the stack is only as wide as its widest child and
             // the parent centres the lot, which is not koan's alignment
@@ -332,6 +343,40 @@ struct TrackListView: View {
             }
     }
 
+    /// A phone's header: the title, the artist and the details each on a line
+    /// of their own, then play with the lesser actions beside it. Beside the
+    /// play button a title has half the screen and wraps at every word.
+    private var compactTitleBlock: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(Format.title(title))
+                .font(.role(.titleSmall, system: .system(size: 22, weight: .semibold)))
+                .foregroundStyle(KoanTheme.style(.strong, system: .primary))
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+            if let artistLink {
+                LinkText(text: subtitleArtist, target: .artist(artistLink))
+                if !subtitleDetails.isEmpty {
+                    Text(subtitleDetails)
+                        .font(.role(.fine, system: .footnote))
+                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                }
+            } else if !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(.role(.fine, system: .footnote))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+            }
+            HStack(spacing: 12) {
+                #if !os(tvOS)
+                if let playable {
+                    PlayableHeaderButton(playable: playable)
+                }
+                #endif
+                HeaderActions(playable: playable)
+            }
+            .padding(.top, 10)
+        }
+    }
+
     /// The same record can be opened again highlighting a different track.
     private struct HighlightKey: Equatable {
         let target: Int64?
@@ -360,8 +405,12 @@ struct TrackRow: View {
         // so this is thirty small bodies rather than one large one.
         let isCurrent = player.currentTrackId == track.id
         let isSelected = prominence == .increased
+        let compact = width == .compact
+        // A record's tracks by its own artist are credited in the header; a
+        // phone has no room to say it again on every row.
+        let credited = showsAlbum || !compact || track.artistName != track.albumArtistName
 
-        HStack(spacing: 12) {
+        HStack(spacing: compact ? 8 : 12) {
             // The row number becomes bars for whatever is playing —
             // same width either way so the column doesn't twitch.
             Group {
@@ -379,7 +428,8 @@ struct TrackRow: View {
                 }
             }
             .font(.role(.fine, system: .caption.monospacedDigit()))
-            .frame(width: 22, alignment: .trailing)
+            // On a phone, as wide as the longest number and no wider.
+            .frame(width: compact ? max(16, CGFloat(String(allTrackIds.count).count) * 8) : 22, alignment: .trailing)
 
             if showsAlbum {
                 // The cover is what you recognise a record by, and a list
@@ -398,28 +448,30 @@ struct TrackRow: View {
                             ? AnyShapeStyle(.tint)
                             : KoanTheme.style(.ink, system: .primary)
                     )
-                HStack(spacing: 5) {
-                    LinkText(
-                        text: track.artistName,
-                        target: track.artistId.map { .artist($0) },
-                        font: .role(.fine, system: .caption)
-                    )
-                    if showsAlbum {
-                        Text("·")
-                            .font(.role(.fine, system: .caption))
-                            .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
+                if credited {
+                    HStack(spacing: 5) {
                         LinkText(
-                            text: track.albumTitle,
-                            target: track.albumId.map { .album($0) },
+                            text: track.artistName,
+                            target: track.artistId.map { .artist($0) },
                             font: .role(.fine, system: .caption)
                         )
+                        if showsAlbum {
+                            Text("·")
+                                .font(.role(.fine, system: .caption))
+                                .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
+                            LinkText(
+                                text: track.albumTitle,
+                                target: track.albumId.map { .album($0) },
+                                font: .role(.fine, system: .caption)
+                            )
+                        }
                     }
                 }
             }
 
-            Spacer(minLength: 8)
+            Spacer(minLength: compact ? 4 : 8)
 
-            TrackAvailability(track: track)
+            TrackAvailability(track: track, width: compact ? 18 : 30)
 
             // There is no hover on a phone, so a heart that appears on it is a
             // heart that never appears.
@@ -438,7 +490,8 @@ struct TrackRow: View {
             Text(Format.duration(track.durationMs))
                 .font(.role(.fine, system: .caption.monospacedDigit()))
                 .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                .frame(width: Columns.duration, alignment: .trailing)
+                .fixedSize()
+                .frame(minWidth: compact ? Columns.compactDuration : Columns.duration, alignment: .trailing)
         }
         #if os(iOS) || os(tvOS)
         .frame(minHeight: showsAlbum ? RowMetrics.art : RowMetrics.text)
@@ -476,6 +529,7 @@ struct TrackSleeve: View {
 /// queue state when there is one and falls back to the library's answer.
 private struct TrackAvailability: View {
     let track: Track
+    var width: CGFloat = 30
 
     @Environment(EngineMirror.self) private var mirror
 
@@ -491,7 +545,7 @@ private struct TrackAvailability: View {
             }
         }
         .font(.role(.fine, system: .caption))
-        .frame(width: 30, height: 16, alignment: .trailing)
+        .frame(width: width, height: 16, alignment: .trailing)
     }
 
     /// Only these say something neither the library row nor the badge can.
@@ -523,6 +577,7 @@ private enum Columns {
     #if os(tvOS)
     static let quality = 190.0
     static let duration = 96.0
+    static let compactDuration = 96.0
     static let headerGap = 32.0
     static let sleeve = 260.0
     static let compactSleeve = 260.0
@@ -530,9 +585,10 @@ private enum Columns {
     #else
     static let quality = 92.0
     static let duration = 48.0
+    static let compactDuration = 36.0
     static let headerGap = 12.0
     static let sleeve = 132.0
-    static let compactSleeve = 96.0
+    static let compactSleeve = 200.0
     static let title = 26.0
     #endif
 }
