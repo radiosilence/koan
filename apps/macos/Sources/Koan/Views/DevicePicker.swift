@@ -524,7 +524,9 @@ private struct DeviceChoiceRow: View {
                 #if os(macOS)
                 .menuStyle(.borderlessButton)
                 #endif
-                // In the theme the menu is the theme's panel behind a button.
+                // In the theme the menu is the theme's panel behind a button,
+                // on the Mac, and a menu whose button is the glyph on a phone.
+                .koanMenuButton(.icon)
                 .koanButtons(.icon)
                 .menuIndicator(.hidden)
                 .fixedSize()

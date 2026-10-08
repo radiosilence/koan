@@ -1,0 +1,1 @@
+- **iPhone: Now Playing's close chevron and missing-cover sleeve.** In the kōan theme the chevron sits in its own row on the sleeve's edge instead of over its top, and a record without a cover shows a flat placeholder rather than a framed grey square.
