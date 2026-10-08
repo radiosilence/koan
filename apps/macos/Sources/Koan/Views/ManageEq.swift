@@ -281,11 +281,13 @@ struct ManageEq: View {
 #if !os(tvOS)
 /// EQs deleted in the last thirty days, which the server keeps: each with
 /// the days it has left and Restore, which brings it back on every device.
-/// Not there at all without any, or on a server that keeps none.
+/// Shown on a server that keeps them, saying so when there are none, so the
+/// place to look exists before it is needed. Nothing until the first read
+/// answers, and the last list kept while a new one is read.
 private struct RecentlyDeletedEq: View {
     @Environment(AppState.self) private var app
     @Environment(EngineMirror.self) private var mirror
-    @State private var deleted: [DeletedDsp] = []
+    @State private var deleted: [DeletedDsp]?
     @State private var restoring: String?
     @State private var error: String?
 
@@ -295,8 +297,13 @@ private struct RecentlyDeletedEq: View {
 
     var body: some View {
         Group {
-            if offered, !deleted.isEmpty {
+            if offered, let deleted {
                 Section {
+                    if deleted.isEmpty {
+                        Text("Nothing deleted in the last thirty days")
+                            .koanCase()
+                            .koanText(.fine, .muted)
+                    }
                     ForEach(deleted, id: \.uid) { profile in
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
@@ -323,14 +330,11 @@ private struct RecentlyDeletedEq: View {
 
     private func load() async {
         guard offered else {
-            deleted = []
+            deleted = nil
             return
         }
-        do {
-            deleted = try await app.engine.dspDeleted()
-        } catch {
-            deleted = []
-        }
+        // A failed read is not an empty one.
+        deleted = try? await app.engine.dspDeleted()
     }
 
     private func restore(_ profile: DeletedDsp) {
