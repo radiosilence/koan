@@ -58,6 +58,9 @@ struct NowPlayingSheet: View {
         .onChange(of: nav.current) { dismiss() }
         .outputSheet(isPresented: $showingDevices)
         .controlSheet(isPresented: $showingControl)
+        // One search for renderers on opening: those that answer are what
+        // makes Output worth showing.
+        .onAppear { player.searchRenderers() }
         .tray(isPresented: $showingInfo) {
             if let info { TrackInfoView(info: info) }
         }

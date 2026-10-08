@@ -604,20 +604,28 @@ extension View {
     /// square panel on `bg` across the screen, under a rule, over the page
     /// dimmed, as tall as its content and scrolling past a limit.
     @ViewBuilder
-    func tray<Tray: View>(isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Tray) -> some View {
+    func tray<Tray: View>(
+        isPresented: Binding<Bool>,
+        onDismiss: (() -> Void)? = nil,
+        @ViewBuilder content: @escaping () -> Tray
+    ) -> some View {
         #if os(iOS)
         if KoanTheme.isOn {
-            modifier(PhoneTray(isPresented: isPresented, tray: content))
+            modifier(PhoneTray(isPresented: isPresented, onDismiss: onDismiss, tray: content))
         } else {
-            systemTray(isPresented: isPresented, content: content)
+            systemTray(isPresented: isPresented, onDismiss: onDismiss, content: content)
         }
         #else
-        systemTray(isPresented: isPresented, content: content)
+        systemTray(isPresented: isPresented, onDismiss: onDismiss, content: content)
         #endif
     }
 
-    private func systemTray<Tray: View>(isPresented: Binding<Bool>, content: @escaping () -> Tray) -> some View {
-        sheet(isPresented: isPresented) {
+    private func systemTray<Tray: View>(
+        isPresented: Binding<Bool>,
+        onDismiss: (() -> Void)?,
+        content: @escaping () -> Tray
+    ) -> some View {
+        sheet(isPresented: isPresented, onDismiss: onDismiss) {
             ScrollView { content() }
                 .koanSheet()
                 .presentationDetents([.medium, .large])

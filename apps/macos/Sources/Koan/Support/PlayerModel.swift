@@ -534,11 +534,21 @@ final class PlayerModel {
     var outputs: OutputsInfo? { mirror.outputs }
 
     /// Whether the device in view's output can be chosen from here: this
-    /// device's always, another's if it is the account's own or lets it.
+    /// device's when there is more than one to choose, another's if it is the
+    /// account's own or lets it.
     var canChooseOutput: Bool {
+        if !isControllingAnother {
+            #if os(iOS) || os(tvOS)
+            // A phone's or a television's own output is its route, which the
+            // system's route picker chooses: the choice here is a renderer.
+            return renderer != nil || outputs?.renderers.isEmpty == false
+            #else
+            return true
+            #endif
+        }
         // Another account's device, shared or on this network, publishes its
         // outputs only when it lets them be chosen.
-        !isControllingAnother || controlled?.account == true || mirror.outputs != nil
+        return controlled?.account == true || mirror.outputs != nil
     }
 
     /// Play the device in view through `output`. On another device it

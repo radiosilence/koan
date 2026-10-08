@@ -65,6 +65,9 @@ enum Icon {
     static let disclosure = "chevron.right"
     static let expand = "chevron.down"
     static let choose = "chevron.up.chevron.down"
+    /// The field before and after, above a keyboard.
+    static let previousField = "chevron.up"
+    static let nextField = "chevron.down"
     static let lyrics = "quote.bubble"
     static let lyricsText = "text.quote"
     static let shortcuts = "keyboard"

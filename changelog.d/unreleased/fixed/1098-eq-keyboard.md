@@ -1,0 +1,1 @@
+- **EQ on iPhone.** Typing a band's figure keeps its row in view: the graph goes short above it, and the bar over the keyboard steps between figures and has Done.

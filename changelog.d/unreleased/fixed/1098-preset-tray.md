@@ -1,0 +1,1 @@
+- **Presets on iPhone.** In the kōan look, Now Playing's preset choice opens the theme's tray, as Output and Control do, in place of the system's glass menu.

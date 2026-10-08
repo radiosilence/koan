@@ -1,0 +1,1 @@
+- **Output on iPhone and Apple TV.** The Output button is hidden while the only choice is the route iOS already picked; it appears once a UPnP amplifier answers, or while another device is controlled.
