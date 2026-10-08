@@ -87,18 +87,18 @@ final class TrackTableRow: TableCell, TableRow {
     static var artHeight: CGFloat { RowMetrics.art + 2 * RowMetrics.padding }
     static let headingHeight: CGFloat = 28
 
-    private static let titleFont = NSFont.role(.body, system: NSFont.preferredFont(forTextStyle: .body))
-    private static let captionFont = NSFont.role(.meta, system: NSFont.preferredFont(forTextStyle: .caption1))
-    private static let numberFont = NSFont.role(.meta, system: NSFont.monospacedDigitSystemFont(ofSize: captionFont.pointSize, weight: .regular))
-    private static let qualityFont = NSFont.role(.fine, system: NSFont.monospacedSystemFont(
+    private static var titleFont: NSFont { NSFont.role(.body, system: NSFont.preferredFont(forTextStyle: .body)) }
+    private static var captionFont: NSFont { NSFont.role(.meta, system: NSFont.preferredFont(forTextStyle: .caption1)) }
+    private static var numberFont: NSFont { NSFont.role(.meta, system: NSFont.monospacedDigitSystemFont(ofSize: captionFont.pointSize, weight: .regular)) }
+    private static var qualityFont: NSFont { NSFont.role(.fine, system: NSFont.monospacedSystemFont(
         ofSize: NSFont.preferredFont(forTextStyle: .caption2).pointSize, weight: .regular
-    ))
+    )) }
     private static let spacing: CGFloat = 12
     /// Wide enough for an hour or more ("1:02:34") and for the widest format
     /// ("VORBIS 44.1 kHz", the lossy form) in whichever face the rows are drawn
     /// in; never narrower than the columns were.
-    private static let durationWidth = max(48, measure("0:00:00", numberFont))
-    private static let qualityWidth = max(92, measure("VORBIS 44.1 kHz", qualityFont))
+    private static var durationWidth: CGFloat { max(48, measure("0:00:00", numberFont)) }
+    private static var qualityWidth: CGFloat { max(92, measure("VORBIS 44.1 kHz", qualityFont)) }
 
     private static func measure(_ text: String, _ font: NSFont) -> CGFloat {
         ceil((text as NSString).size(withAttributes: [.font: font]).width) + 2
@@ -106,9 +106,9 @@ final class TrackTableRow: TableCell, TableRow {
 
     private enum Part { case lead, artist, album, heart, elsewhere }
 
-    private static let headingFont = NSFont.role(.fine, system: NSFont.systemFont(
+    private static var headingFont: NSFont { NSFont.role(.fine, system: NSFont.systemFont(
         ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .semibold
-    ))
+    )) }
 
     private let number = NSTextField(labelWithString: "")
     private let mark = CALayer()

@@ -780,7 +780,7 @@ private final class TrackItem: NSCollectionViewItem {
 /// plain capsule, which goes to the artist.
 private final class ArtistPillItem: NSCollectionViewItem {
     static let identifier = NSUserInterfaceItemIdentifier("ArtistPillItem")
-    private static let font = NSFont.role(.control, system: NSFont.preferredFont(forTextStyle: .callout))
+    private static var font: NSFont { NSFont.role(.control, system: NSFont.preferredFont(forTextStyle: .callout)) }
 
     private let capsule = CALayer()
     private let mic = CALayer()

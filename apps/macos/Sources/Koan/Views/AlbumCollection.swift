@@ -395,14 +395,14 @@ final class AlbumTile: NSCollectionViewItem {
 
     private enum Part { case sleeve, title, artist, elsewhere }
 
-    private static let titleFont = NSFont.role(.meta, system: NSFont.systemFont(
+    private static var titleFont: NSFont { NSFont.role(.meta, system: NSFont.systemFont(
         ofSize: NSFont.preferredFont(forTextStyle: .callout).pointSize, weight: .medium
-    ))
-    private static let detailFont = NSFont.role(.fine, system: NSFont.preferredFont(forTextStyle: .caption1))
+    )) }
+    private static var detailFont: NSFont { NSFont.role(.fine, system: NSFont.preferredFont(forTextStyle: .caption1)) }
     /// The gap between sleeve, title and credit, as `AlbumGridCell`'s stack.
     private static let gap: CGFloat = 7
-    private static let titleHeight = lineHeight(titleFont)
-    private static let detailHeight = lineHeight(detailFont)
+    private static var titleHeight: CGFloat { lineHeight(titleFont) }
+    private static var detailHeight: CGFloat { lineHeight(detailFont) }
 
     static var captionHeight: CGFloat { gap + titleHeight + gap + detailHeight }
 
@@ -428,7 +428,7 @@ final class AlbumTile: NSCollectionViewItem {
     private var spinner: NSProgressIndicator?
     private let badge = CALayer()
     private let codec = CATextLayer()
-    private static let codecFont = NSFont.role(.fine, system: NSFont.monospacedSystemFont(ofSize: 9, weight: .semibold))
+    private static var codecFont: NSFont { NSFont.role(.fine, system: NSFont.monospacedSystemFont(ofSize: 9, weight: .semibold)) }
     /// Made while there is a heart to show: the tile is hovered or the
     /// record a favourite. See `spinner`.
     private var heart: HeartButton?

@@ -58,6 +58,8 @@ final class Hotkeys {
     private var konami = SecretCode<UInt16>([126, 126, 125, 125, 123, 124, 123, 124, 11, 0])
     /// What the code does: gay mode (see `Rainbow`).
     var onKonami: (() -> Void)?
+    /// ⌘=, the unshifted Bigger (see `MenuShortcut.bigger`).
+    var onBigger: (() -> Void)?
 
     /// In table order, for the shortcuts sheet.
     let all: [Hotkey]
@@ -125,6 +127,12 @@ final class Hotkeys {
         if bare, !event.isARepeat, ownWindow != nil, !EditCommands.isEditingText,
            konami.press(event.keyCode), let onKonami {
             onKonami()
+            return true
+        }
+
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+           event.charactersIgnoringModifiers == "=", ownWindow != nil, let onBigger {
+            onBigger()
             return true
         }
 

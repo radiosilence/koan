@@ -17,13 +17,13 @@ final class ArtistTableRow: TableCell, TableRow {
     static let identifier = NSUserInterfaceItemIdentifier("ArtistTableRow")
     static var height: CGFloat { RowMetrics.line + 2 * RowMetrics.padding }
 
-    private static let nameFont = NSFont.role(.body, system: NSFont.preferredFont(forTextStyle: .body))
-    private static let countFont = NSFont.role(.meta, system: NSFont.monospacedDigitSystemFont(
+    private static var nameFont: NSFont { NSFont.role(.body, system: NSFont.preferredFont(forTextStyle: .body)) }
+    private static var countFont: NSFont { NSFont.role(.meta, system: NSFont.monospacedDigitSystemFont(
         ofSize: NSFont.preferredFont(forTextStyle: .caption1).pointSize, weight: .regular
-    ))
+    )) }
     /// Wide enough for the longest count in the count's own face, which in the
     /// theme's monospace is wider than the system's digits.
-    private static let countWidth = max(78, ceil(("9,999 tracks" as NSString).size(withAttributes: [.font: countFont]).width) + 8)
+    private static var countWidth: CGFloat { max(78, ceil(("9,999 tracks" as NSString).size(withAttributes: [.font: countFont]).width) + 8) }
 
     private enum Part { case mark, name, heart, elsewhere }
 
