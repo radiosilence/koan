@@ -50,6 +50,9 @@ enum EvidenceRenderer {
             ControlPicker().koanPopover().appEnvironment(state)
                 .tint(room.color).environment(\.koanAccent, room).environment(\.roomTint, room.color)
         )))
+        pages.append(("popover-filter", CGSize(width: 300, height: 340), AnyView(
+            BrowseFilterForm().frame(width: 300).koanPopover().appEnvironment(state)
+        )))
         if KoanTheme.isOn {
             let warm = KoanAccent.of(Color(red: 0.94, green: 0.54, blue: 0.36)) // theme: raw — a sleeve's colour, as input
             let navy = KoanAccent.of(Color(red: 0.04, green: 0.10, blue: 0.23)) // theme: raw — a sleeve's colour, as input

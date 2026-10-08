@@ -145,11 +145,15 @@ The title in `body`, `ink`; secondary text in `meta`, `muted`; numbers right-ali
 
 ### Navigation row (sidebar)
 
-The label in `body`, `muted`, lowercase, with no glyph (see [Icons](#icons)). Selected: `accent`, with the 2-point leading rule, and no fill. On the Mac the list keeps AppKit's selection, which is what VoiceOver announces and the arrow keys move, but does not draw its rounded highlight. Section headings in `fine`, `ink`, with 16 points above.
+The label in `body`, `muted`, lowercase, after its glyph on the Mac and with none elsewhere (see [Icons](#icons)). Selected: `accent`, with the 2-point leading rule, and no fill. On the Mac the list keeps AppKit's selection, which is what VoiceOver announces and the arrow keys move, but does not draw its rounded highlight. Section headings in `fine`, `ink`, with 16 points above.
 
 ### Sidebar (Mac)
 
 The page's ground, with no system glass: the wash with it under the whole window, `bg` otherwise. At the top, the theme's search field: square, `surface`, the glyph and placeholder in `muted`. Its suggestions open beneath it as a square `bg` panel in a hairline `rule`, over the rows: up to five tracks, four records and four artists under `fine`, `muted` headings, each a square sleeve with its title in `meta` and the rest in `fine`, `muted`, the row under the pointer or the arrow keys on `surface`. Return takes that row, or with none lit opens every result; Escape empties the field; `/` focuses it. Playlist sleeves are square. The library counts sit at the foot on the same ground, below a hairline of `koanRowRule`, and the rows stop at both edges rather than passing beneath.
+
+### Filter panel (Mac)
+
+The album, artist and track browsers' filters open in the theme's square panel at a fixed 300 points wide and their own height, never the window's. Three groups between hairlines of `koanRowRule`: the toggles as the theme's square boxes, then codec and genre as the theme's bordered menu buttons and the years as two `surface` fields, each row's label leading in `body`, lowercase, and its control trailing; then reset, a bordered button, trailing.
 
 ### Tab bar (phone)
 
@@ -175,7 +179,7 @@ A full-width bar, 68 points tall, with a 1-point `rule` along its top and no sha
 
 With icons (`appearance.theme_icons = true`), each transport control and action has its glyph. Glyphs never replace a label that the plain variant shows.
 
-Navigation never has glyphs in the theme, with icons or without: the phone's tab bar, the iPad's sidebar, the television's tabs, the Mac's sidebar and Settings tabs, and the lists of Library sections and Settings panes on the phone and television are words alone. `KoanTabItem` takes no icon, and the sidebars and those lists set `koanIcons` off. The platform's look keeps its tab and sidebar symbols.
+The Mac's sidebar is the one place navigation has glyphs: with icons on, each place's glyph sits before its label. Elsewhere navigation is words alone, with icons or without: the phone's tab bar, the iPad's sidebar, the television's tabs, the Mac's Settings tabs, and the lists of Library sections and Settings panes on the phone and television. `KoanTabItem` takes no icon, and the iPad's sidebar and those lists set `koanIcons` off. The platform's look keeps its tab and sidebar symbols.
 
 The theme draws its own set, in `apps/macos/Resources/Icons`: one SVG per glyph, naming in `data-sf` the SF Symbols it stands in for. The platform's look keeps those SF Symbols.
 
