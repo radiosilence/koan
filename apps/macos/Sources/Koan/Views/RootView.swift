@@ -336,12 +336,15 @@ struct RecordRoom: ViewModifier {
         let artCache = art
         let appearanceModel = appearance
         let playingLevels = levels
+        // Read only with the rainbow drawn: off, the app coming and going
+        // re-runs none of this.
+        let inFront = !appearance.rainbowDrawn || active
         // Over an opaque ground, because this *replaces* the window's own
         // background rather than sitting on it — a half-transparent wash on its
         // own leaves you looking through the app at the desktop.
         let washLayer = ZStack {
             Rectangle().fill(KoanTheme.ground(.background))
-            WindowWash(source: wash, player: player)
+            WindowWash(source: wash, player: player, inFront: inFront)
                 .environment(artCache)
                 .environment(appearanceModel)
                 .environment(playingLevels)
@@ -416,7 +419,7 @@ struct RecordRoom: ViewModifier {
             .onReceive(NotificationCenter.default.publisher(for: .appResignsActive)) { _ in active = false }
             .onReceive(NotificationCenter.default.publisher(for: .appBecomesActive)) { _ in active = true }
             .background { RainbowForTrack() }
-            .overlay { MirrorBall(active: active).ignoresSafeArea() }
+            .overlay { MirrorBall(active: inFront).ignoresSafeArea() }
             .overlay { RainbowBurst().ignoresSafeArea() }
             .overlay(alignment: .bottom) { RainbowToast() }
             // The theme's text button for every button that names no style.
@@ -509,9 +512,10 @@ private struct SelectionControls: View {
 private struct WindowWash: View {
     let source: AlbumArtwork.Source?
     let player: PlayerModel
+    let inFront: Bool
 
     var body: some View {
-        ArtworkBleed(source: source, drifts: player.isPlaying)
+        ArtworkBleed(source: source, drifts: player.isPlaying, inFront: inFront)
     }
 }
 

@@ -25,6 +25,9 @@ struct ArtworkBleed: View {
     /// Whether there is anything to breathe to. The room breathes while
     /// something is playing and settles when it stops.
     var drifts = false
+    /// Whether the app is in front. The rainbow drifts with nothing playing,
+    /// but not behind.
+    var inFront = true
 
     @Environment(CoverArtCache.self) private var cache
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -62,8 +65,9 @@ struct ArtworkBleed: View {
     @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
     /// Whether the wash is moving: something to breathe to, a setting that
     /// allows it, and a system that has not asked for less motion.
-    /// The rainbow drifts whether or not anything plays.
-    private var breathes: Bool { (drifts || rainbow) && graphics.drifts && !reduceMotion && !powerSaving }
+    /// The rainbow drifts whether or not anything plays, while the app is in
+    /// front.
+    private var breathes: Bool { (drifts || rainbow && inFront) && graphics.drifts && !reduceMotion && !powerSaving }
 
     /// Gay mode: its sheen in place of the sleeve, whatever the record and
     /// whether or not colours come from it.

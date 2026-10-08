@@ -104,8 +104,8 @@ final class TVWalkTests: XCTestCase {
             if place == 1 {
                 // The browser's own controls sit above the listing, and each
                 // must open something: in a toolbar they took focus and did
-                // nothing.
-                press(.up)
+                // nothing. Focus arrives on the filter field, beside them.
+                press(.right)
                 snap("12a-controls")
                 press(.select)
                 pause(2)
