@@ -40,6 +40,7 @@ final class TVBackTests: XCTestCase {
         press(.select)
         pause(3)
         snap("1-album")
+        XCTAssertFalse(app.buttons[any: "Settings"].exists, "no tabs over a pushed page")
 
         press(.menu)
         pause(2)
@@ -50,6 +51,10 @@ final class TVBackTests: XCTestCase {
         pause(2)
         XCTAssertEqual(app.state, .runningForeground, "Menu on the grid goes back, not out")
         XCTAssertTrue(index.waitForExistence(timeout: 3), "two pages back is the library's index")
+        XCTAssertTrue(app.buttons[any: "Settings"].waitForExistence(timeout: 3), "the tabs are back at the root")
+        reach(app.buttons[any: "Library"], by: .up)
+        press(.down)
+        XCTAssertFalse(app.buttons[any: "Library"].hasFocus, "down from the tabs goes back into the page")
 
         press(.menu)
         pause(2)
@@ -105,6 +110,32 @@ final class TVBackTests: XCTestCase {
         pause(2)
         XCTAssertEqual(app.state, .runningForeground, "Menu at Settings goes to the tab bar")
         XCTAssertTrue(app.buttons[any: "Settings"].hasFocus, "the tab bar has focus")
+    }
+
+    /// A share code opened from an artist's menu closes back onto that artist,
+    /// not onto the filter field at the top of the page.
+    func testShareCodeReturnsFocusToTheRow() {
+        open(.library)
+        reach(app.buttons[any: "Artists"], by: .down)
+        press(.select)
+        pause(3)
+        let focused = app.descendants(matching: .any).matching(NSPredicate(format: "hasFocus == true")).firstMatch
+        for _ in 0..<4 where !focused.label.hasPrefix("Artist ") {
+            press(.down)
+        }
+        XCTAssertTrue(focused.label.hasPrefix("Artist "), "an artist's row has focus, not \(focused.label)")
+        let name = focused.label
+        remote.press(.select, forDuration: 1.5)
+        pause(2)
+        reach(app.buttons[any: "Share…"], by: .down)
+        press(.select)
+        XCTAssertTrue(app.staticTexts[any: "Scan to open"].waitForExistence(timeout: 10), "the share code")
+        snap("12-share-code")
+        press(.menu)
+        pause(2)
+        XCTAssertEqual(app.state, .runningForeground, "Menu closes the code, not the app")
+        snap("13-after-share")
+        XCTAssertEqual(focused.label, name, "focus is back on the artist")
     }
 
     /// EQ's empty stages take focus and open the account's own profiles.

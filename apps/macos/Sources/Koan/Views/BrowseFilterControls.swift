@@ -134,6 +134,7 @@ private struct BrowseFilterForm: View {
         }
         Section {
             Button("Reset") { library.browseFilter = .none }
+                .koanButton(.standard)
                 .disabled(library.browseFilter.activeCount == 0)
         }
     }
@@ -165,7 +166,14 @@ private struct YearField: View {
         TextField(prompt, text: $text, prompt: Text(prompt))
             .labelsHidden()
             .multilineTextAlignment(.center)
+            #if os(tvOS)
+            // tvOS draws a rounded platter no style removes; the theme draws
+            // its own box over the field.
+            .koanField(text, prompt: prompt)
+            .frame(width: KoanTheme.isOn ? 180 : 60)
+            #else
             .frame(width: 60)
+            #endif
             #if os(iOS)
             .keyboardType(.numberPad)
             #endif

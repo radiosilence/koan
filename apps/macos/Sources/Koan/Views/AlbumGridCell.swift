@@ -34,7 +34,8 @@ struct AlbumGridCell: View {
             Button { nav.open(album: album.id) } label: {
                 AlbumArtwork(source: .album(album.id), size: .tile, cornerRadius: KoanTheme.radius(10))
             }
-            .buttonStyle(.card)
+            // The theme's ring in place of the system's rounded lift.
+            .koanButton(.card, system: .card)
             .contextMenu { PlayableMenu(playable: .album(album)) }
 
             VStack(alignment: .leading, spacing: 2) {
