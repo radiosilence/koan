@@ -10357,8 +10357,10 @@ mod tests {
                 )
             })
             .collect();
+        // The test server can seal app passwords, so it offers them too.
         let expected: Vec<(String, Vec<i64>)> = EXTENSIONS
             .iter()
+            .chain(&[(koan_core::remote::profile::APP_PASSWORDS, &[1][..])])
             .map(|(n, v)| (n.to_string(), v.to_vec()))
             .collect();
         assert_eq!(listed, expected);
