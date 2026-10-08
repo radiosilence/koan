@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.61.4
+
+### Changed
+
+- Moved the album/artist on to two lines in tvOS
+
 ## 0.61.3
 
 ### Removed
