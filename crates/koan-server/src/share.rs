@@ -721,6 +721,7 @@ async fn download(State(s): State<ShareState>, Path(id): Path<String>) -> Respon
     let Some((folder, files)) = found else {
         return not_found();
     };
+    let disposition = attachment(&format!("{folder}.zip"));
     let (tx, rx) = tokio::sync::mpsc::channel(4);
     let fail = tx.clone();
     tokio::task::spawn_blocking(move || {
@@ -747,7 +748,6 @@ async fn download(State(s): State<ShareState>, Path(id): Path<String>) -> Respon
             let _ = fail.blocking_send(Err(e));
         }
     });
-    let disposition = attachment(&format!("{folder}.zip"));
     let mut resp = (
         [
             (header::CONTENT_TYPE, "application/zip"),
