@@ -60,6 +60,39 @@ pub fn tracks_under(db: &Database, folder: &Path) -> u64 {
         .unwrap_or(0) as u64
 }
 
+/// Write `~/Music` into the config as a library folder for someone whose
+/// library came from it while it was the default.
+///
+/// koan once indexed `~/Music` when no folder was set; it no longer does. Run
+/// at startup, before anything reads the folders, so a library indexed from
+/// there keeps its folder. Does nothing when the files or `KOAN_*` already
+/// name the folders (an empty list included), or when nothing in the index
+/// came from there. Returns whether it wrote the folder.
+pub fn keep_former_default_folder(db: &Database) -> bool {
+    if std::env::var_os("KOAN_LIBRARY__FOLDERS").is_some()
+        || crate::config::Config::set_in_files("library.folders")
+    {
+        return false;
+    }
+    let folder = crate::config::former_default_folder();
+    if tracks_under(db, &folder) == 0 {
+        return false;
+    }
+    match crate::config::Config::persist(|cfg| cfg.library.folders = vec![folder.clone()]) {
+        Ok(()) => {
+            log::info!("kept {} as a library folder", folder.display());
+            true
+        }
+        Err(e) => {
+            log::warn!(
+                "could not keep {} as a library folder: {e}",
+                folder.display()
+            );
+            false
+        }
+    }
+}
+
 /// How many tracks the server accounts for.
 pub fn tracks_from_server(db: &Database) -> u64 {
     db.conn
@@ -169,6 +202,75 @@ mod rebuild_tests {
         conn.pragma_update(None, "foreign_keys", "on").unwrap();
         crate::db::schema::create_tables(&conn).unwrap();
         Database { conn }
+    }
+
+    /// A library indexed from `~/Music` while it was the default.
+    fn indexed_from_music(db: &Database) {
+        let mut meta = sample_meta("Song", "Artist", "Album");
+        let file = crate::config::former_default_folder().join("Artist/Album/Song.flac");
+        meta.path = Some(file.to_string_lossy().into_owned());
+        queries::upsert_track(&db.conn, &meta).unwrap();
+    }
+
+    #[test]
+    fn a_library_from_the_former_default_keeps_its_folder() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        crate::config::set_config_dir(dir.path());
+        let db = test_db();
+        indexed_from_music(&db);
+
+        assert!(keep_former_default_folder(&db));
+        let local = std::fs::read_to_string(crate::config::config_local_file_path()).unwrap();
+        assert!(
+            local.contains("folders"),
+            "a machine's path, in the local file: {local}"
+        );
+        assert!(!crate::config::config_file_path().exists());
+        assert_eq!(
+            Config::load().unwrap().library.folders,
+            vec![crate::config::former_default_folder()]
+        );
+        assert!(!keep_former_default_folder(&db), "once");
+    }
+
+    #[test]
+    fn nothing_is_chosen_for_someone_who_never_indexed_the_former_default() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        crate::config::set_config_dir(dir.path());
+        let db = test_db();
+        let mut meta = sample_meta("Song", "Artist", "Album");
+        meta.path = Some("/Volumes/Music/Artist/Album/Song.flac".into());
+        queries::upsert_track(&db.conn, &meta).unwrap();
+
+        assert!(!keep_former_default_folder(&db));
+        assert!(Config::load().unwrap().library.folders.is_empty());
+        assert!(!crate::config::config_local_file_path().exists());
+    }
+
+    #[test]
+    fn folders_already_named_are_left_alone() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        crate::config::set_config_dir(dir.path());
+        let db = test_db();
+        indexed_from_music(&db);
+        // Emptied on purpose: an empty list is a choice too.
+        std::fs::write(
+            crate::config::config_local_file_path(),
+            "[library]\nfolders = []\n",
+        )
+        .unwrap();
+
+        assert!(!keep_former_default_folder(&db));
+        assert!(Config::load().unwrap().library.folders.is_empty());
     }
 
     #[test]

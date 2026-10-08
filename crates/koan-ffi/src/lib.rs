@@ -5490,7 +5490,7 @@ impl KoanEngine {
         init_logging();
         let db_path = config::db_path();
         // Fail fast on a broken library rather than after the audio threads exist.
-        let db = Database::open(&db_path).map_err(|e| KoanError::Database {
+        let db = Database::open_default().map_err(|e| KoanError::Database {
             message: e.to_string(),
         })?;
         let t_db = t0.elapsed();
