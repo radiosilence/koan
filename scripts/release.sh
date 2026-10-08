@@ -3,7 +3,7 @@
 # check-version compares, turn the unreleased changelog fragments into the
 # release, commit, push and open the PR. Never creates or pushes a tag.
 #
-#   scripts/release.sh X.Y.Z [--no-push]
+#   scripts/release.sh X.Y.Z|patch|minor|major [--no-push]
 set -euo pipefail
 
 version=""
@@ -15,17 +15,23 @@ for arg in "$@"; do
     *) version="$arg" ;;
   esac
 done
-[[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
-  echo "usage: scripts/release.sh X.Y.Z [--no-push]" >&2
-  exit 2
-}
+usage() { echo "usage: scripts/release.sh X.Y.Z|patch|minor|major [--no-push]" >&2; exit 2; }
+[ -n "$version" ] || usage
 
 cd "$(git rev-parse --show-toplevel)"
+git fetch origin --quiet
+current=$(git show origin/main:Cargo.toml | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
+IFS=. read -r major minor patch <<<"$current"
+case "$version" in
+  patch) version="$major.$minor.$((patch + 1))" ;;
+  minor) version="$major.$((minor + 1)).0" ;;
+  major) version="$((major + 1)).0.0" ;;
+esac
+[[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || usage
 tag="v$version"
 branch="release-$tag"
 
 [ -z "$(git status --porcelain)" ] || { echo "working tree is not clean" >&2; exit 1; }
-git fetch origin --quiet
 if git rev-parse -q --verify "refs/tags/$tag" >/dev/null || [ -n "$(git ls-remote --tags origin "refs/tags/$tag")" ]; then
   echo "tag $tag already exists" >&2
   exit 1
@@ -35,7 +41,6 @@ if git rev-parse -q --verify "refs/heads/$branch" >/dev/null; then
   exit 1
 fi
 
-current=$(git show origin/main:Cargo.toml | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
 newest=$(printf '%s\n%s\n' "$current" "$version" | sort -V | tail -1)
 if [ "$version" = "$current" ] || [ "$newest" != "$version" ]; then
   echo "$version is not greater than the current version $current" >&2
