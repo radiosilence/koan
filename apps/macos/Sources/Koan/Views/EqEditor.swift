@@ -13,6 +13,9 @@ struct EqEditor: View {
     let detail: DspProfileDetail
     let response: DspResponse
     var parts: [EqGraph.Part] = []
+    /// For an EQ with bands for each channel, the one being edited: its
+    /// curve and handles drawn, the other channel's curve beside it.
+    var channel: UInt16?
 
     /// The edit under way, drawn in place of `response` until a saved one is.
     @State private var live: DspResponse?
@@ -43,10 +46,24 @@ struct EqEditor: View {
 
     private var graph: EqGraph {
         let onEdit: ((EqGraph.Edit) -> Void)? = editable ? { edit($0) } : nil
+        var shown = live ?? response
+        var parts = self.parts
+        if let right = shown.right {
+            let left = shown.total
+            if channel == 1 {
+                shown.total = right
+                shown.gainDb = shown.rightGainDb
+            }
+            parts.append(EqGraph.Part(
+                name: channel == 1 ? "Left" : "Right",
+                db: channel == 1 ? left : right,
+                stroke: .eq(1)
+            ))
+        }
         return EqGraph(
-            response: live ?? response,
+            response: shown,
             parts: parts,
-            handles: editable ? BandTable.handles(detail.bands) : [],
+            handles: editable ? BandTable.handles(detail.bands, channel: channel ?? 0) : [],
             paints: editable && curveIndex != nil,
             onEdit: onEdit
         )

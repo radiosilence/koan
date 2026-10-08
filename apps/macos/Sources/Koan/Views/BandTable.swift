@@ -10,6 +10,9 @@ struct BandTable: View {
     let bands: [DspBand]
     /// A correction, which plays as made: its bands shown, not edited.
     var readOnly = false
+    /// For an EQ with bands for each channel, the channel shown: its bands
+    /// alone, and a band added goes on it.
+    var channel: UInt16?
 
     /// The band types that can be chosen, by the name the config uses: the
     /// short form the row shows and the name the menu gives.
@@ -32,13 +35,20 @@ struct BandTable: View {
     }
 
     /// The bands the graph draws a handle for: the ones with a gain to drag,
-    /// on the left channel the graph draws.
-    static func handles(_ bands: [DspBand]) -> [EqGraph.Handle] {
+    /// on the channel the graph draws.
+    static func handles(_ bands: [DspBand], channel: UInt16 = 0) -> [EqGraph.Handle] {
         bands.enumerated().compactMap { i, b in
-            ["peaking", "low_shelf", "high_shelf"].contains(b.kind) && (b.channels.isEmpty || b.channels.contains(0))
+            ["peaking", "low_shelf", "high_shelf"].contains(b.kind) && (b.channels.isEmpty || b.channels.contains(channel))
                 ? EqGraph.Handle(index: i, hz: b.freq, db: b.gainDb, q: b.q)
                 : nil
         }
+    }
+
+    /// The rows shown, each with its index among all the filters.
+    private var shown: [(index: Int, band: DspBand)] {
+        bands.enumerated()
+            .filter { _, b in channel.map { b.channels.isEmpty || b.channels.contains($0) } ?? true }
+            .map { (index: $0.offset, band: $0.element) }
     }
 
     var body: some View {
@@ -54,10 +64,11 @@ struct BandTable: View {
                 .koanText(.fine, .muted)
                 .listRowInsets(Self.rowInsets)
             }
-            ForEach(Array(bands.enumerated()), id: \.offset) { index, band in
+            ForEach(Array(shown.enumerated()), id: \.element.index) { position, row in
+                let (index, band) = row
                 Group {
                     if Self.editable(band.kind), !readOnly {
-                        BandEditor(dsp: dsp, profile: profile, index: index, band: band)
+                        BandEditor(dsp: dsp, profile: profile, index: index, number: position + 1, band: band)
                     } else if band.kind == "graphic", !readOnly {
                         #if os(tvOS)
                         BandRow(band: band)
@@ -86,12 +97,13 @@ struct BandTable: View {
             #if os(iOS)
             .onDelete(perform: readOnly ? nil : { offsets in
                 // One at a time, from the end, so the indices hold.
-                for index in offsets.sorted(by: >) { dsp.removeFilter(profile, index) }
+                let rows = shown
+                for index in offsets.map({ rows[$0].index }).sorted(by: >) { dsp.removeFilter(profile, index) }
             })
             #endif
             #if !os(tvOS)
             if !readOnly {
-                Button("Add a Band") { dsp.addBand(profile) }
+                Button("Add a Band") { dsp.addBand(profile, channel: channel) }
                     .koanButton(.bordered)
             }
             #endif
@@ -111,6 +123,8 @@ private struct BandEditor: View {
     let dsp: DspModel
     let profile: String
     let index: Int
+    /// Its place in the list shown.
+    let number: Int
     let band: DspBand
 
     @State private var kind = ""
@@ -123,7 +137,7 @@ private struct BandEditor: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text("\(index + 1)")
+            Text("\(number)")
                 .koanText(.meta, .muted)
                 .monospacedDigit()
                 .frame(width: 22, alignment: .leading)

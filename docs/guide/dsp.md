@@ -218,34 +218,48 @@ The originals are not needed again.
 
 - **Correction** makes a device neutral: headphones or speakers, measured and
   brought to a target. A device has one, and it plays as it was made.
-- **Tuning** is taste on top of the correction: one or more EQs, played in
-  order, each switched on or off.
+- **Filters** are the EQs on top of the correction, or on their own: one or
+  more, played in order, each switched on or off. An EQ made for taste rather
+  than to correct is a **tuning**, which is what its page calls it under What
+  it's for.
 - **EQ** is one set of bands, edited on its own page.
-- **Preset** is a correction and tuning saved together under a name, to switch
-  a device between or set another device from.
+- **Preset** is a correction and filters saved together under a name, to
+  switch a device between or set another device from.
 - **Flat** is a device with nothing chosen, which plays untouched.
 
 ## The EQ page
 
 The apps' EQ page is the chain a device plays, read top to bottom: music in,
-the correction, the tuning's EQs, the device out. **Device** at the top picks
+the correction, the filters' EQs, the device out. **Device** at the top picks
 which device, starting with the output in use; **Preset** sets it from a
-preset, or Flat, and reads **Unsaved** for a chain no preset holds. After a
+preset, or Flat, and reads **Unsaved** for a chain no preset holds.
+**Correct for a headphone profile** is on unless the device plays filters
+alone, as speakers usually do: switched off, the device's correction is taken
+off it (and kept), and the page drops the correction stage and everything
+about targets, leaving a list of filters. A preset saved from the device
+carries the setting, and choosing a correction switches it back on. After a
 change to a device set from a preset, **Save** puts the change in the preset
 and **Save as New…** keeps it as another; **ⓘ How EQ works** explains the
 words.
 
-Under them, the curve of the whole chain, always at the same height, so
+Under them, the curve of the whole chain (the left channel's, with the right
+drawn too where an EQ gives the two different bands), always at the same height, so
 choosing another preset changes the curve and not the page; a flat device
 says it plays untouched. Each stage is drawn in the stroke of its block in the
 chain below, the correction in the accent and each EQ in a dash of its own,
 over the total. Each block shows its own curve. Tapping the correction chooses
 another, its target and a group's member, with **Add…** at the foot to import
 one, find one in AutoEQ or build one from a measurement or squig.link. Each EQ
-of the tuning has **On**, and tapping it opens its page. On the iPhone, swipe
-it left to take it out of the tuning and right to move it up or down, or touch
-and hold it for the same; on the Mac, its **Options** menu does these. **Add EQ** adds another. An empty stage is a dashed
-place to add one.
+of the filters has **On**, and tapping it opens its page. On the iPhone, swipe
+it left to remove it from the filters and right to move it up or down, or touch
+and hold it for the same; on the Mac, its **Options** menu or a right-click
+does these, and ⌫ removes the one focused. Removing takes an EQ out of the
+device's filters and never deletes it: only **Delete…** in Manage EQ does,
+after asking. **Add EQ** adds another, and **New EQ…** there makes one: eight
+bands (a low shelf at 100 Hz, six peaks an octave apart from 200 Hz, a high
+shelf at 10 kHz), flat or from a bass boost, warm or bright starting curve,
+named before it is made, added to the filters and opened to edit. An empty
+stage is a dashed place to add one.
 
 On Apple TV the correction and **Add EQ** choose from the corrections and EQs
 already on the TV, which include those the account's other devices sync
@@ -306,8 +320,8 @@ labelled with it ("preamp −5.0 dB"). A profile whose file states its gain as a
 filter, such as a CamillaDSP `Gain`, draws the same as one that states it as a
 preamp, so the two read alike. On the Mac and iPhone the graph stays at the top
 of the page while the bands scroll under it. The curve is the left
-channel's; a band on the right channel alone draws nothing there and has no
-handle. Each parametric band is drawn faintly behind the total. For a
+channel's; where the right channel plays something else, it is drawn beside
+it. Each parametric band is drawn faintly behind the total. For a
 correction from AutoEQ, the Measured view draws the device as measured, the
 target it plays to, and the measurement with the correction applied.
 
@@ -327,30 +341,38 @@ row opens a page of its points, each frequency and gain editable within the
 same limits; a point moved past another takes its place in order. Delays and
 mixes are shown but not edited here.
 
+An EQ of bands alone is **Mono**, one list for both channels, or **Stereo**,
+one for each. Stereo starts each channel with a copy of the list, and
+**Editing** picks which channel the graph, its handles and the table show; the
+other channel's curve is drawn beside it. Going back to Mono when the two
+lists differ asks which channel to keep. A mono recording plays the left
+channel's bands, and an output with more than two channels has the stereo
+lists on its front left and right alone; its other channels play no bands.
+
 A correction plays as made: its bands are shown and not edited, since a
 correction is what makes the device neutral and an edit to it is no longer
-that. To change the sound, add a tuning on top; to edit a correction anyway,
+that. To change the sound, add filters on top; to edit a correction anyway,
 make it a tuning on its page first.
 
 Once a tuning is edited, **Save as Copy…** on its page keeps the edit as an EQ
 of its own, named "<name> copy" unless another name is given, in the
-original's place in the output's tuning, and puts the original back as it was
+original's place in the output's filters, and puts the original back as it was
 when the page was opened, or as its file had it for an import. The page then
 shows the copy. Where the output plays the original through a preset or a
-group rather than naming it in its tuning, the copy is saved but not placed,
+group rather than naming it in its filters, the copy is saved but not placed,
 and the page says so.
 
 An imported EQ keeps what it was imported as. Once edited, **Reset to File** on
 its page or `koan dsp revert NAME` puts it back, and `koan dsp copy NAME` keeps the edit as an EQ of its own
 first. EQs imported before this was kept have nothing to go back to.
 
-### Tunings of several EQs, and presets
+### Filters of several EQs, and presets
 
-An output's tuning can hold several EQs, played in order after the correction,
+An output's filters can hold several EQs, played in order after the correction,
 each switched on or off. Each EQ made against a target other than the
 correction's has the difference between the two played with it, and where the
 chain cannot hold them all, the last ones are left out and the EQ page says
-which. A **preset** saves an output's correction and tuning under a name; an
+which. A **preset** saves an output's correction and filters under a name; an
 output set from it plays the same, and says when it was changed since. A
 changed output can be saved over the preset, saved as a new one, or reverted
 to the preset as saved, which is setting it from the preset again; the quick
@@ -358,7 +380,7 @@ preset menus list the edited chain and the saved preset side by side. An EQ
 made before presets that played a correction with EQs on top became a preset,
 and the outputs that played it play its correction and EQs, set from it.
 
-The CLI does the same: `koan dsp set DEVICE --correction NAME --tuning EQ,EQ`,
+The CLI does the same, still calling the filters a tuning: `koan dsp set DEVICE --correction NAME --tuning EQ,EQ`,
 `koan dsp preset save NAME` and `koan dsp preset use NAME|flat` (which also
 reverts an edited output to the preset), with
 `koan dsp show` to read it back.
@@ -384,6 +406,10 @@ impulse responses, a room or speaker correction, stays on its device, as does
 one assigned to a built-in output or a network amplifier. The first time a
 device syncs, the EQs it already had stay on it unless they came from
 AutoEQ, so nothing leaves a device that was not made to travel or chosen to.
+Once an EQ has synced, it stays everywhere until **This device** is chosen
+for it: assigning it to a built-in output, giving it an impulse response or
+adding an EQ kept on one device to it does not take it off the other
+devices.
 
 An EQ kept everywhere cannot play one kept on one device, since the other
 devices would not have it: adding one is refused, as is moving an EQ such an
@@ -392,9 +418,19 @@ everywhere, such as a speaker correction with a shared bass shelf on top.
 
 Each EQ carries an id of its own, so a rename reaches every device. When
 two devices change one EQ, the later change wins, counted from when it
-was made, so a change made offline keeps its time. A deletion reaches every
-device; so does moving an EQ to one device, which removes it from the
-others. An EQ elsewhere that played it reports it missing. The same
+was made, so a change made offline keeps its time. Deleting an EQ reaches
+every device; so does moving an EQ to one device, which removes it from the
+others. Nothing else does: an EQ missing from a device without having been
+deleted there, after a config file that did not load or was edited by hand,
+is taken from the server again rather than deleted everywhere. The server
+keeps a copy of a deleted EQ, its files included, for thirty days after it
+records the deletion. An EQ elsewhere that played a deleted one reports it
+missing. Manage EQ on the Mac, iPhone and iPad lists deleted EQs under
+**Recently deleted**, with the days each has left, and **Restore** brings
+one back on every device as a new edit. The section is there only when
+something has been deleted and the server offers it (`koanDspDeleted`: older
+servers and Navidrome do not), and not while offline. An EQ whose files
+never reached the server before it was deleted cannot be restored. The same
 EQ made on two devices before either synced, such as one headphone
 installed from AutoEQ on both, becomes one EQ. "The same" is what they
 play, not how they are written: bands in another order, or a gain a few

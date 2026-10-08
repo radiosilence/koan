@@ -615,7 +615,7 @@ pub fn cmd_dsp_tuned_for(name: &str, target: Option<&str>) {
 }
 
 pub fn cmd_dsp_remove(name: &str) {
-    profiles::remove(name).unwrap_or_else(|e| fail(e));
+    profiles::delete(name).unwrap_or_else(|e| fail(e));
     println!("{} '{}'", "removed".green(), name.bold());
 }
 
