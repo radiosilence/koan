@@ -136,10 +136,6 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         table.allowsMultipleSelection = true
         table.allowsTypeSelect = true
         table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
-        // Following the clip view both ways, as a table from Interface Builder
-        // does: without it the table grows with the page but never shrinks,
-        // and the lyrics opening left every row's trailing columns under them.
-        table.autoresizingMask = [.width]
         table.setDraggingSourceOperationMask([.copy, .move], forLocal: true)
         table.setDraggingSourceOperationMask(.copy, forLocal: false)
         var accepted: [NSPasteboard.PasteboardType] = []
@@ -159,12 +155,17 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
-        let content = NSEdgeInsets(top: insets.top, left: insets.leading, bottom: insets.bottom, right: 0)
+        // The trailing inset is the lyrics, which float over the page as the
+        // sidebar does: without it each row's format and length sat under
+        // them.
+        let content = NSEdgeInsets(top: insets.top, left: insets.leading, bottom: insets.bottom, right: insets.trailing)
         let current = scroll.contentInsets
-        if current.top != content.top || current.left != content.left || current.bottom != content.bottom {
+        if current.top != content.top || current.left != content.left || current.bottom != content.bottom
+            || current.right != content.right {
             scroll.contentInsets = content
             // Up under the toolbar, as a SwiftUI scroll view's scroller runs,
-            // and clear of the transport.
+            // and clear of the transport. The content's trailing inset already
+            // brings it in from under the lyrics.
             scroll.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: insets.bottom, right: 0)
         }
         context.coordinator.update(self, environment: context.environment)
