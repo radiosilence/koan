@@ -114,7 +114,7 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    func makeNSView(context: Context) -> NSScrollView {
+    func makeNSView(context: Context) -> PageScrollView {
         let table = KoanTableView()
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("row"))
         column.resizingMask = .autoresizingMask
@@ -142,7 +142,7 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         if accept != nil { accepted.append(NSPasteboard.PasteboardType(UTType.koanPlayable.identifier)) }
         if !accepted.isEmpty { table.registerForDraggedTypes(accepted) }
 
-        let scroll = NSScrollView()
+        let scroll = PageScrollView()
         scroll.documentView = table
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
@@ -153,24 +153,17 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         return scroll
     }
 
-    func updateNSView(_ scroll: NSScrollView, context: Context) {
+    func updateNSView(_ scroll: PageScrollView, context: Context) {
         // The trailing inset is the lyrics, which float over the page as the
         // sidebar does: without it each row's format and length sat under
         // them.
-        let content = NSEdgeInsets(top: insets.top, left: insets.leading, bottom: insets.bottom, right: insets.trailing)
-        let current = scroll.contentInsets
-        if current.top != content.top || current.left != content.left || current.bottom != content.bottom
-            || current.right != content.right {
-            scroll.setContentInsets(content)
-            // Up under the toolbar, as a SwiftUI scroll view's scroller runs,
-            // and clear of the transport. The content's trailing inset already
-            // brings it in from under the lyrics.
-            scroll.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: insets.bottom, right: 0)
-        }
+        scroll.pageInsets = NSEdgeInsets(
+            top: 0, left: insets.leading, bottom: insets.bottom, right: insets.trailing
+        )
         context.coordinator.update(self, environment: context.environment)
     }
 
-    static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
+    static func dismantleNSView(_ scroll: PageScrollView, coordinator: Coordinator) {
         coordinator.detach()
     }
 
@@ -645,14 +638,49 @@ protocol HoverableRow {
     func hit(at point: NSPoint) -> RowHit
 }
 
-extension NSScrollView {
-    /// Sets the insets and keeps the content where it was relative to the top
-    /// inset. AppKit leaves the clip view's origin alone, so a toolbar that
-    /// grows or settles after the first layout, or a resize that changes it,
-    /// would otherwise leave the first row under the toolbar.
-    func setContentInsets(_ insets: NSEdgeInsets) {
-        let fromTop = contentView.bounds.minY + contentInsets.top
+/// The scroll view under a page's AppKit lists. It runs up under the toolbar
+/// and keeps its content clear of it, measuring the toolbar itself: the
+/// window's `contentLayoutRect` is the area below it, and the inset is how far
+/// this view reaches above that. SwiftUI's safe area passes through zero on
+/// layout passes during and after a window resize, and a list that took its
+/// top from it could keep that zero once the resize ended.
+final class PageScrollView: NSScrollView {
+    /// What SwiftUI reports and the toolbar does not cover: the transport, the
+    /// sidebar, the lyrics. Their top is ignored.
+    var pageInsets = NSEdgeInsets() {
+        didSet { applyInsets() }
+    }
+
+    private var watching: NSKeyValueObservation?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        watching = window?.observe(\.contentLayoutRect) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.applyInsets() }
+        }
+        applyInsets()
+    }
+
+    override func tile() {
+        super.tile()
+        applyInsets()
+    }
+
+    private func applyInsets() {
+        var insets = pageInsets
+        insets.top = window.map { max(convert(bounds, to: nil).maxY - $0.contentLayoutRect.maxY, 0) } ?? 0
+        let current = contentInsets
+        guard current.top != insets.top || current.left != insets.left || current.bottom != insets.bottom
+            || current.right != insets.right
+        else { return }
+        // AppKit leaves the clip view's origin alone when the insets change,
+        // which would leave the content where it was rather than where it was
+        // relative to the toolbar.
+        let fromTop = contentView.bounds.minY + current.top
         contentInsets = insets
+        // Up under the toolbar, as a SwiftUI scroll view's scroller runs, and
+        // clear of the transport.
+        scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: insets.bottom, right: 0)
         contentView.scroll(to: NSPoint(x: contentView.bounds.minX, y: fromTop - insets.top))
         reflectScrolledClipView(contentView)
     }

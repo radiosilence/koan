@@ -48,14 +48,14 @@ struct AlbumCollection: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    func makeNSView(context: Context) -> NSScrollView {
+    func makeNSView(context: Context) -> PageScrollView {
         let grid = AlbumGridView()
         grid.collectionViewLayout = TileLayout()
         grid.isSelectable = false
         grid.backgroundColors = [.clear]
         grid.register(AlbumTile.self, forItemWithIdentifier: AlbumTile.identifier)
 
-        let scroll = NSScrollView()
+        let scroll = PageScrollView()
         scroll.documentView = grid
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
@@ -66,14 +66,8 @@ struct AlbumCollection: NSViewRepresentable {
         return scroll
     }
 
-    func updateNSView(_ scroll: NSScrollView, context: Context) {
-        let insets = NSEdgeInsets(top: self.insets.top, left: 0, bottom: self.insets.bottom, right: 0)
-        if scroll.contentInsets.top != insets.top || scroll.contentInsets.bottom != insets.bottom {
-            scroll.setContentInsets(insets)
-            // The scroller runs up under the toolbar, as a SwiftUI scroll
-            // view's does, and stops above the transport.
-            scroll.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: insets.bottom, right: 0)
-        }
+    func updateNSView(_ scroll: PageScrollView, context: Context) {
+        scroll.pageInsets = NSEdgeInsets(top: 0, left: 0, bottom: insets.bottom, right: 0)
         // The sidebar floats over the page's leading edge. The grid scrolls
         // under it, as the toolbar, but its first column starts clear of it.
         if let grid = scroll.documentView as? NSCollectionView,
@@ -107,7 +101,7 @@ struct AlbumCollection: NSViewRepresentable {
         coordinator.rewind(to: rewinds)
     }
 
-    static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
+    static func dismantleNSView(_ scroll: PageScrollView, coordinator: Coordinator) {
         coordinator.detach()
     }
 

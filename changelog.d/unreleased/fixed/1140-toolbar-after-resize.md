@@ -1,0 +1,1 @@
+- **Mac pages stay below the toolbar after a window resize.** Lists and the album grid could end a resize under the toolbar and stay there; they now measure the toolbar from the window.
