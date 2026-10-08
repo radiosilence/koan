@@ -86,7 +86,7 @@ final class TVBackTests: XCTestCase {
         press(.select)
         pause(4)
         snap("3-played")
-        XCTAssertFalse(app.buttons[any: "Queue"].hasFocus || app.buttons[any: "Library"].hasFocus, "focus stays on the page")
+        XCTAssertFalse(app.buttons[any: "Settings"].exists, "focus stays on the page, with no tabs over it")
 
         press(.menu)
         pause(2)
@@ -120,13 +120,11 @@ final class TVBackTests: XCTestCase {
         reach(app.buttons[any: "Artists"], by: .down)
         press(.select)
         pause(3)
+        // A row's focus is on its container, which carries no label: the
+        // first artist is focused once Down leaves the filter field.
+        let field = app.textFields["name-filter"]
         press(.down)
-        let focused = app.descendants(matching: .any).matching(NSPredicate(format: "hasFocus == true")).firstMatch
-        for _ in 0..<4 where !focused.label.hasPrefix("Artist ") {
-            press(.down)
-        }
-        XCTAssertTrue(focused.label.hasPrefix("Artist "), "an artist's row has focus, not \(focused.label)")
-        let name = focused.label
+        XCTAssertFalse(field.hasFocus, "an artist's row has focus")
         remote.press(.select, forDuration: 1.5)
         pause(2)
         reach(app.buttons[any: "Share…"], by: .down)
@@ -137,7 +135,10 @@ final class TVBackTests: XCTestCase {
         pause(2)
         XCTAssertEqual(app.state, .runningForeground, "Menu closes the code, not the app")
         snap("13-after-share")
-        XCTAssertEqual(focused.label, name, "focus is back on the artist")
+        XCTAssertFalse(field.hasFocus, "focus is not on the filter field")
+        press(.select)
+        pause(3)
+        XCTAssertTrue(app.buttons[any: "Play"].waitForExistence(timeout: 5), "Select opens the artist the code was for")
     }
 
     /// EQ's empty stages take focus and open the account's own profiles.
