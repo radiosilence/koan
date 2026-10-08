@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.61.9
+
+### Fixed
+
+- **The Mac app builds again.** 0.61.8 shipped without it: a constant the phone's lists use was declared for iOS only.
+
 ## 0.61.8
 
 ### Changed
