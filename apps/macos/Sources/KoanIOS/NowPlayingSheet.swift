@@ -21,12 +21,18 @@ struct NowPlayingSheet: View {
     @State private var showingInfo = false
     /// The playing track as its info and its menu need it.
     @State private var info: TrackDetails?
+    /// Set where the sheet covers the screen and so has no grabber: the
+    /// chevron that closes it, in a row of its own above the sleeve.
+    var close: (() -> Void)?
 
     var body: some View {
         VStack(spacing: 20) {
+            if let close {
+                closeRow(close).padding(.horizontal, 28)
+            }
             stage
                 .padding(.horizontal, 28)
-                .padding(.top, 36)
+                .padding(.top, close == nil ? 36 : 0)
                 .frame(maxHeight: .infinity)
 
             titles.padding(.horizontal, 28)
@@ -59,6 +65,22 @@ struct NowPlayingSheet: View {
             info = nil
             guard let id = player.currentTrackId else { return }
             info = (try? await library.engine.trackDetails(trackId: id)) ?? nil
+        }
+    }
+
+    /// The chevron's glyph starts on the page's leading edge, where the
+    /// sleeve and the titles do; its touch target runs on past it.
+    private func closeRow(_ close: @escaping () -> Void) -> some View {
+        HStack {
+            Button(action: close) {
+                KoanIcon("chevron.down")
+                    .font(.koan(.titleSmall))
+                    .frame(width: 44, height: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .koanButton(.icon)
+            .accessibilityLabel("Close")
+            Spacer()
         }
     }
 
@@ -343,18 +365,7 @@ struct NowPlayingPresentation: ViewModifier {
         #if os(iOS)
         if KoanTheme.isOn {
             content.fullScreenCover(isPresented: $isPresented) {
-                NowPlayingSheet()
-                    .overlay(alignment: .topLeading) {
-                        Button { isPresented = false } label: {
-                            KoanIcon("chevron.down")
-                                .font(.koan(.titleSmall))
-                                .frame(width: 44, height: 44)
-                                .contentShape(Rectangle())
-                        }
-                        .koanButton(.icon)
-                        .accessibilityLabel("Close")
-                        .padding(KoanTheme.Space.m)
-                    }
+                NowPlayingSheet(close: { isPresented = false })
                     .gesture(
                         DragGesture(minimumDistance: 24).onEnded { drag in
                             let down = drag.translation

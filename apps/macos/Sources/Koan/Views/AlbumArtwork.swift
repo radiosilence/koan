@@ -80,7 +80,7 @@ struct AlbumArtwork: View {
             // a ground that never moves, so the composite is opaque throughout.
             .overlay {
                 Rectangle()
-                    .fill(.quaternary)
+                    .fill(KoanTheme.style(.rule))
                     .overlay {
                         if ready == nil {
                             if isLoading {
@@ -107,9 +107,13 @@ struct AlbumArtwork: View {
             // straight from placeholder to art reads as a stutter of pops.
             .animation(.easeOut(duration: 0.2), value: ready == nil)
             .clipShape(RoundedRectangle(cornerRadius: KoanTheme.radius(cornerRadius)))
+            // An edge for a dark sleeve on a dark ground. The placeholder is
+            // already a flat field of its own, and edged it reads as a frame.
             .overlay {
-                RoundedRectangle(cornerRadius: KoanTheme.radius(cornerRadius))
-                    .strokeBorder(.white.opacity(0.06))
+                if ready != nil {
+                    RoundedRectangle(cornerRadius: KoanTheme.radius(cornerRadius))
+                        .strokeBorder(.white.opacity(0.06))
+                }
             }
             // Keyed on the source, so a recycled cell in a scrolling grid
             // cancels the load it no longer needs and starts the one it does.
