@@ -481,25 +481,34 @@ impl Playlist {
             .map(PlaylistItem::key)
             .chain(cursor.and_then(|c| rows.get(&c)).map(|item| item.key()))
             .collect();
-        let mut take =
-            |item: &PlaylistItem| !item.played && item.playable() && seen.insert(item.key());
+        // A row stays in, or joins, an order when it can play, has not
+        // played (this pass's order only), and its track is not in it yet.
+        fn keep<'a>(
+            seen: &mut std::collections::HashSet<TrackKey<'a>>,
+            item: &'a PlaylistItem,
+            unplayed: bool,
+        ) -> bool {
+            (!unplayed || !item.played) && item.playable() && seen.insert(item.key())
+        }
         order
             .upcoming
-            .retain(|id| rows.get(id).is_some_and(|item| take(item)));
+            .retain(|id| rows.get(id).is_some_and(|item| keep(&mut seen, item, true)));
         let fresh = items
             .iter()
-            .filter(|item| take(item))
+            .filter(|item| keep(&mut seen, item, true))
             .map(|item| item.id)
             .collect();
         scatter(&mut order.upcoming, fresh);
 
         if let Some(next) = order.next_pass.as_mut() {
             let mut seen = std::collections::HashSet::new();
-            let mut take = |item: &PlaylistItem| item.playable() && seen.insert(item.key());
-            next.retain(|id| rows.get(id).is_some_and(|item| take(item)));
+            next.retain(|id| {
+                rows.get(id)
+                    .is_some_and(|item| keep(&mut seen, item, false))
+            });
             let fresh = items
                 .iter()
-                .filter(|item| take(item))
+                .filter(|item| keep(&mut seen, item, false))
                 .map(|item| item.id)
                 .collect();
             scatter(next, fresh);
@@ -592,12 +601,20 @@ impl Playlist {
     /// Put the cursor on `id`. Shuffled, its track leaves what is still to
     /// play this pass, and the row goes on the history Previous walks back.
     fn place_cursor(&mut self, id: Option<QueueItemId>) {
-        self.cursor = id;
+        let Playlist {
+            items,
+            cursor,
+            order,
+        } = self;
+        *cursor = id;
         let Some(id) = id else { return };
-        let Some(key) = self.find(id).map(PlaylistItem::key) else {
+        let Some(key) = items
+            .iter()
+            .find(|item| item.id == id)
+            .map(PlaylistItem::key)
+        else {
             return;
         };
-        let Playlist { items, order, .. } = self;
         let Some(order) = order.as_mut() else { return };
         let keys: HashMap<QueueItemId, TrackKey> =
             items.iter().map(|item| (item.id, item.key())).collect();
@@ -2397,14 +2414,14 @@ mod tests {
             assert_ne!(turn[0], turn[1], "no track twice running at a turn");
         }
 
-        // Three passes in, the third's first track playing: nothing else has
-        // played in this pass.
+        // The third pass's last track playing: the rest of it has played.
+        // Moving on to the fourth clears the marks.
         let snap = state.derive_visible_queue();
         assert_eq!(snap.finished_count, ids.len() - 1);
-        state.mark_played(state.cursor().unwrap());
         play_on(&state);
         let snap = state.derive_visible_queue();
-        assert_eq!(snap.finished_count, 1, "a new pass clears the marks");
+        assert_eq!(snap.finished_count, 0, "a new pass clears the marks");
+        assert!(snap.has_playing);
     }
 
     #[test]
