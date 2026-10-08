@@ -345,11 +345,11 @@ private struct SidebarFooter: View {
                 .koanText(.meta, .muted)
             }
         }
-        // In the theme: the rows' own inset at the sides, and clear of the
-        // window's rounded corner below. The platform's look as it was.
+        // In the theme: the same inset on the sides, above and below, which
+        // also clears the window's rounded corner. The platform's look as it was.
         .padding(.horizontal, KoanTheme.metric(KoanTheme.Space.l, system: 14))
-        .padding(.top, KoanTheme.metric(KoanTheme.Space.s, system: 0))
-        .padding(.bottom, KoanTheme.metric(KoanTheme.Space.xl, system: 10))
+        .padding(.top, KoanTheme.metric(KoanTheme.Space.l, system: 0))
+        .padding(.bottom, KoanTheme.metric(KoanTheme.Space.l, system: 10))
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
