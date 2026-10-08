@@ -1,0 +1,1 @@
+- **Now Playing title.** On iPhone the track title takes the full width of the sheet, with the heart and more button moved to the artist line.
