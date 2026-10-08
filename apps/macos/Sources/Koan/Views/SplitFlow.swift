@@ -64,7 +64,7 @@ struct SplitFlow: View {
                 }
                 if let problem {
                     Section {
-                        Label(problem, systemImage: "exclamationmark.triangle.fill")
+                        Label(problem, koan: Icon.warningFilled)
                             .koanText(.meta, .bad)
                     }
                 }

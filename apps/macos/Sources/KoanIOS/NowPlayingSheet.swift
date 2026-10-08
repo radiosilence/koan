@@ -21,12 +21,18 @@ struct NowPlayingSheet: View {
     @State private var showingInfo = false
     /// The playing track as its info and its menu need it.
     @State private var info: TrackDetails?
+    /// Set where the sheet covers the screen and so has no grabber: the
+    /// chevron that closes it, in a row of its own above the sleeve.
+    var close: (() -> Void)?
 
     var body: some View {
         VStack(spacing: 20) {
+            if let close {
+                closeRow(close).padding(.horizontal, 28)
+            }
             stage
                 .padding(.horizontal, 28)
-                .padding(.top, 36)
+                .padding(.top, close == nil ? 36 : 0)
                 .frame(maxHeight: .infinity)
 
             titles.padding(.horizontal, 28)
@@ -62,6 +68,22 @@ struct NowPlayingSheet: View {
         }
     }
 
+    /// The chevron's glyph starts on the page's leading edge, where the
+    /// sleeve and the titles do; its touch target runs on past it.
+    private func closeRow(_ close: @escaping () -> Void) -> some View {
+        HStack {
+            Button(action: close) {
+                KoanIcon(Icon.expand)
+                    .font(.koan(.titleSmall))
+                    .frame(width: 44, height: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .koanButton(.icon)
+            .accessibilityLabel("Close")
+            Spacer()
+        }
+    }
+
     /// The sleeve, or the words, in the same place — the way a record and its
     /// lyric sheet share a sleeve.
     @ViewBuilder private var stage: some View {
@@ -75,10 +97,12 @@ struct NowPlayingSheet: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .transition(.opacity)
         } else {
+            // The sleeve's own placeholder, so nothing playing and a record
+            // without a cover look alike.
             RoundedRectangle(cornerRadius: KoanTheme.radius(12))
-                .fill(.quaternary)
+                .fill(KoanTheme.style(.rule))
                 .aspectRatio(1, contentMode: .fit)
-                .overlay { Image(systemName: "music.note").font(.role(.display, system: .largeTitle)) }
+                .overlay { EnsoPlaceholder() }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
@@ -127,7 +151,7 @@ struct NowPlayingSheet: View {
                 Menu {
                     PlayableMenu(playable: .track(info.track))
                 } label: {
-                    Image(systemName: "ellipsis")
+                    KoanIcon(Icon.more)
                         .font(.role(.body, system: .body))
                         .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                         .touchTarget()
@@ -146,7 +170,7 @@ struct NowPlayingSheet: View {
             ShuffleButton().font(.role(.titleSmall, system: .title3))
             Spacer()
             Button { player.previous() } label: {
-                Image(systemName: Icon.previous).font(.role(.title, system: .title))
+                KoanIcon(Icon.previous).font(.role(.title, system: .title))
             }
             Spacer()
             Button { player.togglePlayPause() } label: {
@@ -154,7 +178,7 @@ struct NowPlayingSheet: View {
                     if player.isWaitingForTrack {
                         ProgressView().controlSize(.large)
                     } else {
-                        Image(systemName: player.isPlaying ? "pause.fill" : Icon.play)
+                        KoanIcon(player.isPlaying ? Icon.pause : Icon.play)
                             .font(.system(size: KoanTheme.metric(24, system: 46)))
                             .contentTransition(.symbolEffect(.replace))
                     }
@@ -166,7 +190,7 @@ struct NowPlayingSheet: View {
             .accessibilityLabel(player.isWaitingForTrack ? "Loading" : player.isPlaying ? "Pause" : "Play")
             Spacer()
             Button { player.next() } label: {
-                Image(systemName: Icon.next).font(.role(.title, system: .title))
+                KoanIcon(Icon.next).font(.role(.title, system: .title))
             }
             Spacer()
             RepeatButton().font(.role(.titleSmall, system: .title3))
@@ -184,8 +208,11 @@ struct NowPlayingSheet: View {
             Button {
                 ui.toggleLyrics()
             } label: {
-                Image(systemName: Icon.lyrics)
+                KoanIcon(Icon.lyrics)
                     .symbolVariant(ui.showLyrics ? .fill : .none)
+                    // The theme's glyph has no filled form: on is the accent, as
+                    // shuffle and repeat show it.
+                    .foregroundStyle(KoanTheme.isOn && ui.showLyrics ? KoanTheme.style(.accent) : AnyShapeStyle(.foreground))
             }
             .accessibilityLabel(ui.showLyrics ? "Show artwork" : "Show lyrics")
 
@@ -235,7 +262,7 @@ struct NowPlayingSheet: View {
                     // This phone in control is the usual case, and its glyph
                     // says enough; the room goes to the preset's name.
                     Pill(
-                        systemImage: Action.control.glyph,
+                        icon: Action.control.glyph,
                         text: player.isControllingAnother ? device : nil,
                         tinted: player.isControllingAnother
                     )
@@ -247,7 +274,7 @@ struct NowPlayingSheet: View {
             }
             if player.canChooseOutput {
                 Button { showingDevices = true } label: {
-                    Pill(systemImage: "hifispeaker", text: outputName, tinted: player.renderer != nil)
+                    Pill(icon: Icon.speaker, text: outputName, tinted: player.renderer != nil)
                 }
                 .accessibilityLabel("Output: \(player.outputName ?? "default")")
                 .pillWidth(natural, name: outputName)
@@ -260,11 +287,13 @@ struct NowPlayingSheet: View {
                 let preset = presets.summary
                 PresetMenu(presets: presets, title: output.name) {
                     Pill(
-                        systemImage: "slider.horizontal.3",
+                        icon: Icon.filters,
                         text: preset,
                         tinted: player.currentFormat?.dsp != nil
                     )
                 }
+                // The pill is the outline; the menu's button draws none.
+                .koanMenuButton(.card)
                 .accessibilityLabel("Preset: \(preset)")
                 .pillWidth(natural, name: preset)
             }
@@ -286,13 +315,13 @@ struct NowPlayingSheet: View {
 /// A device choice under the transport: an icon and a name, tinted while it
 /// is not this phone's own way of playing.
 private struct Pill: View {
-    let systemImage: String
+    let icon: String
     let text: String?
     let tinted: Bool
 
     var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: systemImage)
+            KoanIcon(icon)
                 .foregroundStyle(KoanTheme.style(tinted ? .accent : .muted, system: tinted ? AnyShapeStyle(.tint) : KoanTheme.style(.muted, system: .secondary)))
             if let text {
                 Text(text)
@@ -343,18 +372,7 @@ struct NowPlayingPresentation: ViewModifier {
         #if os(iOS)
         if KoanTheme.isOn {
             content.fullScreenCover(isPresented: $isPresented) {
-                NowPlayingSheet()
-                    .overlay(alignment: .topLeading) {
-                        Button { isPresented = false } label: {
-                            KoanIcon("chevron.down")
-                                .font(.koan(.titleSmall))
-                                .frame(width: 44, height: 44)
-                                .contentShape(Rectangle())
-                        }
-                        .koanButton(.icon)
-                        .accessibilityLabel("Close")
-                        .padding(KoanTheme.Space.m)
-                    }
+                NowPlayingSheet(close: { isPresented = false })
                     .gesture(
                         DragGesture(minimumDistance: 24).onEnded { drag in
                             let down = drag.translation

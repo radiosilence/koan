@@ -47,7 +47,7 @@ struct PickerSheet: View {
 
     private var searchField: some View {
         HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
+            KoanIcon(Icon.search)
                 .koanText(.body, .muted)
             TextField(prompt, text: $query)
                 .verbatimEntry()
@@ -59,7 +59,7 @@ struct PickerSheet: View {
                 Button {
                     query = ""
                 } label: {
-                    Image(systemName: "xmark.circle.fill")
+                    KoanIcon(Icon.clearField)
                 }
                 .koanButton(.icon, system: .plain)
             }
@@ -91,7 +91,7 @@ struct PickerSheet: View {
     @ViewBuilder
     private var resultList: some View {
         if query.isEmpty && picked.isEmpty {
-            EmptyState(icon: "magnifyingglass", title: "Search your library")
+            EmptyState(icon: Icon.search, title: "Search your library")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             // On the sheet's ground, which `koanSheet()` hides the list's for.
@@ -279,7 +279,7 @@ private struct PickerRowView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: isPicked ? "checkmark.circle.fill" : icon)
+            KoanIcon(isPicked ? Icon.picked : icon)
                 .koanText(.body, isPicked ? .accent : .muted)
                 .frame(width: 16)
 
@@ -306,9 +306,9 @@ private struct PickerRowView: View {
 
     private var icon: String {
         switch row.kind {
-        case .track: "music.note"
-        case .album: "square.stack"
-        case .artist: "music.mic"
+        case .track: Icon.track
+        case .album: Icon.album
+        case .artist: Icon.artist
         }
     }
 }

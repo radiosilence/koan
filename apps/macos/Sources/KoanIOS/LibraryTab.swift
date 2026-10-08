@@ -40,6 +40,9 @@ struct LibraryTab: View {
             KoanLabel(title, icon: symbol, style: .row)
         }
         .listLink()
+        // Navigation is words alone in the theme, as the tabs are; the
+        // platform's look keeps its symbols.
+        .environment(\.koanIcons, false)
     }
 }
 
@@ -56,12 +59,12 @@ struct LibraryStatus: View {
 
     var body: some View {
         if mirror.signInRefused {
-            Label(EngineMirror.signInRefusedDetail, systemImage: "exclamationmark.triangle")
+            Label(EngineMirror.signInRefusedDetail, koan: Icon.warning)
                 .foregroundStyle(KoanTheme.style(.bad, system: .orange))
         } else if let connection = mirror.connection, connection.offline {
             Label(
                 connection.offlineManual ? "Offline mode is on" : "Can't reach your server",
-                systemImage: "wifi.slash"
+                koan: Icon.offline
             )
             Text("Showing what is on this \(Self.device).")
                 .font(.role(.fine, system: .caption))

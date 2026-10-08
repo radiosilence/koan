@@ -82,7 +82,7 @@ struct PlaylistView: View {
 
             if entries.isEmpty {
                 EmptyState(
-                    icon: "music.note.list",
+                    icon: Icon.playlist,
                     title: playlists.isLoading ? "Loading…" : "Nothing in here yet",
                     detail: playlist?.smart == true
                         ? "Nothing in the library matches its rules yet."
@@ -341,7 +341,7 @@ struct PlaylistView: View {
         Button {
             playlists.shuffle(id: playlistId)
         } label: {
-            Label("Shuffle", systemImage: "shuffle")
+            Label("Shuffle", koan: Icon.shuffle)
         }
         .help("Reorder the playlist itself, for good")
         .disabled(entries.count < 2)
@@ -375,7 +375,7 @@ struct PlaylistView: View {
                     nav.show(.queue)
                 }
             } label: {
-                Image(systemName: "ellipsis.circle")
+                KoanIcon(Icon.moreCircled)
                     .touchTarget()
             }
             .menuStyle(.borderlessButton)
@@ -536,13 +536,13 @@ struct PlaylistView: View {
     @ViewBuilder
     private func menu(forRows ids: Set<String>) -> some View {
         Button { play(rowIds: ids) } label: {
-            Label("Play", systemImage: Icon.play)
+            Label("Play", koan: Icon.play)
         }
         Button { player.playNext(trackIds: trackIds(in: ids)) } label: {
-            Label("Play Next", systemImage: Icon.playNext)
+            Label("Play Next", koan: Icon.playNext)
         }
         Button { player.enqueue(trackIds: trackIds(in: ids)) } label: {
-            Label("Add to Queue", systemImage: Icon.queue)
+            Label("Add to Queue", koan: Icon.queue)
         }
         Divider()
         AddToPlaylistMenu { $0(trackIds(in: ids)) }
@@ -551,7 +551,7 @@ struct PlaylistView: View {
             playlists.remove(entryIds: entryIds(in: ids), from: playlistId)
             selection = []
         } label: {
-            Label("Remove from Playlist", systemImage: Icon.remove)
+            Label("Remove from Playlist", koan: Icon.remove)
         }
         if ids.count == 1, let position = positions(in: ids).first,
            let entry = entries[safe: position] {
@@ -562,7 +562,7 @@ struct PlaylistView: View {
                 Label(
                     library.isFavourite(track: entry.track.id)
                         ? "Remove Favourite" : "Favourite Track",
-                    systemImage: library.isFavourite(track: entry.track.id)
+                    koan: library.isFavourite(track: entry.track.id)
                         ? Icon.favourited : Icon.favourite
                 )
             }
@@ -570,7 +570,7 @@ struct PlaylistView: View {
                 Button {
                     nav.open(album: albumId, highlighting: entry.track.id)
                 } label: {
-                    Label("Go to Album", systemImage: Icon.album)
+                    Label("Go to Album", koan: Icon.album)
                 }
             }
         }

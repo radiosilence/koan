@@ -63,11 +63,11 @@ final class AvailabilityMark: CALayer {
         case .nothing:
             badgeImage = nil
         case .pending:
-            badgeImage = Symbol.image("arrow.down.circle", size: 11, colours: [selected ? .white : tint], appearance: appearance)
+            badgeImage = Symbol.image(Icon.downloads, size: 11, colours: [selected ? .white : tint], appearance: appearance)
         case .failed:
-            badgeImage = Symbol.image("exclamationmark.triangle.fill", size: 11, colours: [NSColor.koanBad(.systemOrange)], appearance: appearance)
+            badgeImage = Symbol.image(Icon.warningFilled, size: 11, colours: [NSColor.koanBad(.systemOrange)], appearance: appearance)
         case .notHere:
-            badgeImage = Symbol.image("icloud.slash", size: 10, colours: [quiet], appearance: appearance)
+            badgeImage = Symbol.image(Icon.cloudMissing, size: 10, colours: [quiet], appearance: appearance)
         case .transferring(let fraction):
             badge.isHidden = true
             ring.isHidden = false
@@ -85,9 +85,9 @@ final class AvailabilityMark: CALayer {
             }
         case .stored(let onServer, let onDisk):
             if onServer {
-                badgeImage = Symbol.image(onDisk ? "cloud.fill" : "cloud", size: 9, colours: [onDisk ? plain : quiet], appearance: appearance)
+                badgeImage = Symbol.image(onDisk ? Icon.cloudKept : Icon.cloud, size: 9, colours: [onDisk ? plain : quiet], appearance: appearance)
             } else if onDisk {
-                badgeImage = Symbol.image("internaldrive", size: 9, colours: [plain], appearance: appearance)
+                badgeImage = Symbol.image(Icon.onDevice, size: 9, colours: [plain], appearance: appearance)
             } else {
                 badgeImage = nil
             }

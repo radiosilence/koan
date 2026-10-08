@@ -57,7 +57,7 @@ struct TrackListView: View {
             }
 
             if tracks.isEmpty {
-                EmptyState(icon: "music.note.list", title: emptyTitle)
+                EmptyState(icon: Icon.playlist, title: emptyTitle)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 #if os(macOS)
@@ -461,7 +461,7 @@ struct TrackSleeve: View {
         if let albumId {
             AlbumArtwork(source: .album(albumId), size: .thumb, cornerRadius: KoanTheme.radius(3))
         } else {
-            Image(systemName: "music.note")
+            KoanIcon(Icon.track)
                 .font(.role(.fine, system: .caption))
                 .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
         }
@@ -503,11 +503,11 @@ private struct TrackAvailability: View {
     private func queueState(_ item: QueueItem) -> some View {
         switch item.status {
         case .priorityPending:
-            Image(systemName: "arrow.down.circle")
+            KoanIcon(Icon.downloads)
                 .foregroundStyle(.tint)
                 .help("Queued for download")
         case .failed:
-            Image(systemName: "exclamationmark.triangle.fill")
+            KoanIcon(Icon.warningFilled)
                 .foregroundStyle(KoanTheme.style(.bad, system: .orange))
                 .help(item.failureReason ?? "Couldn't be fetched")
         default:

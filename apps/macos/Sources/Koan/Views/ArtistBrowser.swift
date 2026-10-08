@@ -73,7 +73,7 @@ struct ArtistBrowser: View {
         .clearsSelection($selection)
         .overlay {
             if library.visibleArtists.isEmpty {
-                EmptyState(icon: "music.mic", title: library.isNarrowed ? "Nothing matches" : "No artists yet")
+                EmptyState(icon: Icon.artist, title: library.isNarrowed ? "Nothing matches" : "No artists yet")
             }
         }
     }
@@ -140,7 +140,7 @@ struct ArtistBrowser: View {
         }
         .overlay {
             if library.visibleArtists.isEmpty {
-                EmptyState(icon: "music.mic", title: library.isNarrowed ? "Nothing matches" : "No artists yet")
+                EmptyState(icon: Icon.artist, title: library.isNarrowed ? "Nothing matches" : "No artists yet")
             }
         }
     }
@@ -181,7 +181,7 @@ private struct ArtistRow: View {
                 if hovered {
                     RowPlayButton(playable: playable, visible: true)
                 } else {
-                    Image(systemName: "music.mic")
+                    KoanIcon(Icon.artist)
                         .font(.role(.fine, system: .caption))
                         .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                 }

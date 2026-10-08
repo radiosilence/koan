@@ -146,7 +146,7 @@ struct ShortcutButton: View {
 
     var body: some View {
         Button(action: action) {
-            Label(shortcut.title, systemImage: shortcut.icon)
+            Label(shortcut.title, koan: shortcut.icon)
         }
         .keyboardShortcut(shortcut.key, modifiers: shortcut.modifiers)
     }

@@ -22,7 +22,7 @@ struct AssistantsSettings: View {
                     Pasteboard.write(text: assistants.mcpUrl)
                     copied = true
                 } label: {
-                    KoanLabel(copied ? "Copied" : "Copy Address", icon: "doc.on.doc")
+                    KoanLabel(copied ? "Copied" : "Copy Address", icon: Icon.copy)
                 }
                 .koanButton(.bordered)
                 .task(id: copied) {
@@ -32,7 +32,7 @@ struct AssistantsSettings: View {
                 }
                 if let connect = URL(string: assistants.connectUrl) {
                     Link(destination: connect) {
-                        KoanLabel("How to Connect an Assistant", icon: "arrow.up.right.square")
+                        KoanLabel("How to Connect an Assistant", icon: Icon.openExternal)
                     }
                     .koanButton(.link)
                 }

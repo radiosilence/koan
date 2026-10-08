@@ -47,7 +47,7 @@ struct AlbumBrowser: View {
 
     private var empty: some View {
         EmptyState(
-            icon: "square.stack",
+            icon: Icon.album,
             title: library.isNarrowed ? "Nothing matches" : "No albums yet",
             detail: library.isNarrowed
                 ? "Try a different filter."
@@ -178,7 +178,7 @@ struct AlbumDetailView: View {
         } else if let record {
             VStack(spacing: 16) {
                 EmptyState(
-                    icon: "questionmark.square.dashed",
+                    icon: Icon.unknownAlbum,
                     title: record.failed ? "Couldn't read this album" : "This album isn't in the library any more"
                 )
                 HStack {
@@ -246,7 +246,7 @@ struct EmptyState: View {
 
     private var platform: some View {
         VStack(spacing: 10) {
-            Image(systemName: icon)
+            KoanIcon(icon)
                 .font(.role(.display, system: .system(size: 32, weight: .light)))
                 .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
             Text(title)

@@ -41,7 +41,7 @@ struct HistoryView: View {
 
             if entries.isEmpty {
                 EmptyState(
-                    icon: "clock.arrow.circlepath",
+                    icon: Icon.history,
                     title: library.filter.isEmpty ? "Nothing played yet" : "No matches",
                     detail: library.filter.isEmpty
                         ? "Everything you play lands here, most recent first." : nil
@@ -206,7 +206,7 @@ struct HistoryView: View {
         if !chosen.isEmpty {
             Divider()
             Button { library.forgetPlays(ids: ids) } label: {
-                Label("Remove from History", systemImage: Icon.remove)
+                Label("Remove from History", koan: Icon.remove)
             }
         }
     }
@@ -285,7 +285,7 @@ private struct HistoryRow: View {
             // A play recorded by another client scrobbling in did not happen
             // here, and saying so stops it reading as a phantom.
             if entry.source != "local" {
-                Image(systemName: "antenna.radiowaves.left.and.right")
+                KoanIcon(Icon.renderer)
                     .font(.role(.fine, system: .caption))
                     .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                     .help("Scrobbled by another client")

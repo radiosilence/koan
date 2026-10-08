@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" data-sf="questionmark.square.dashed" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter">
+  <path d="M5 4 h2"/>
+  <path d="M5 20 h2"/>
+  <path d="M4 5 v2"/>
+  <path d="M20 5 v2"/>
+  <path d="M9 4 h2"/>
+  <path d="M9 20 h2"/>
+  <path d="M4 9 v2"/>
+  <path d="M20 9 v2"/>
+  <path d="M13 4 h2"/>
+  <path d="M13 20 h2"/>
+  <path d="M4 13 v2"/>
+  <path d="M20 13 v2"/>
+  <path d="M17 4 h2"/>
+  <path d="M17 20 h2"/>
+  <path d="M4 17 v2"/>
+  <path d="M20 17 v2"/>
+  <path d="M9.75 10 A2.25 2.25 0 1 1 12 12.25 V13.75"/>
+  <path d="M11.75 16.5 h.5"/>
+</svg>

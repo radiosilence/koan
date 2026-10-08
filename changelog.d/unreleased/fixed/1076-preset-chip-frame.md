@@ -1,0 +1,1 @@
+- **The preset chip draws one outline.** In the kōan look, the EQ preset chip under the iPhone's Now Playing drew its own outline inside a second, larger one from the menu's bordered button. The menu now leaves the frame to its label, and the device picker's preset glyph on a phone is a bare glyph again.

@@ -106,17 +106,17 @@ struct PlayableMenu: View {
 
     var body: some View {
         Button { playNow(shuffled: false) } label: {
-            Label("Play", systemImage: Icon.play)
+            Label("Play", koan: Icon.play)
         }
         Button { act { player.playNext(trackIds: $0) } } label: {
-            Label("Play Next", systemImage: Icon.playNext)
+            Label("Play Next", koan: Icon.playNext)
         }
         Button { act { player.enqueue(trackIds: $0) } } label: {
-            Label("Add to Queue", systemImage: Icon.queue)
+            Label("Add to Queue", koan: Icon.queue)
         }
         if playable.hasChildren {
             Button { playNow(shuffled: true) } label: {
-                Label("Shuffle", systemImage: Icon.shuffle)
+                Label("Shuffle", koan: Icon.shuffle)
             }
         }
 
@@ -131,10 +131,10 @@ struct PlayableMenu: View {
             Divider()
 
             Button { library.toggleFavourite(playable) } label: {
-                Label(favouriteTitle, systemImage: isFavourite ? Icon.favourited : Icon.favourite)
+                Label(favouriteTitle, koan: isFavourite ? Icon.favourited : Icon.favourite)
             }
             Button { Share.link(for: playable, engine: library.engine, player: player) } label: {
-                Label(Share.label, systemImage: Icon.share)
+                Label(Share.label, koan: Icon.share)
             }
             // Renames files on disk; a phone has no library folder, and no
             // Organize window to open.
@@ -145,7 +145,7 @@ struct PlayableMenu: View {
                     Task { await organize.begin(title: playable.name, trackIds: ids) }
                 }
             } label: {
-                Label("Organize Files…", systemImage: Icon.organize)
+                Label("Organize Files…", koan: Icon.organize)
             }
             #endif
             // The cache looks after itself on a television, which has nowhere
@@ -158,21 +158,21 @@ struct PlayableMenu: View {
         if case .track(let track) = playable, let albumId = track.albumId {
             Divider()
             Button { nav.open(album: albumId, highlighting: track.id) } label: {
-                Label("Go to Album", systemImage: Icon.album)
+                Label("Go to Album", koan: Icon.album)
             }
             if let artistId = track.artistId {
                 Button { nav.open(artist: artistId) } label: {
-                    Label("Go to Artist", systemImage: Icon.artist)
+                    Label("Go to Artist", koan: Icon.artist)
                 }
             }
         }
         if case .album(let album) = playable {
             Divider()
             Button { nav.open(album: album.id) } label: {
-                Label("Go to Album", systemImage: Icon.album)
+                Label("Go to Album", koan: Icon.album)
             }
             Button { nav.open(artist: album.artistId) } label: {
-                Label("Go to Artist", systemImage: Icon.artist)
+                Label("Go to Artist", koan: Icon.artist)
             }
         }
     }
@@ -188,19 +188,19 @@ struct PlayableMenu: View {
         if case .track(let track) = playable {
             if track.onDisk {
                 Button { act { library.clearDownloads(trackIds: $0) } } label: {
-                    Label("Remove Downloaded File", systemImage: Icon.clear)
+                    Label("Remove Downloaded File", koan: Icon.clear)
                 }
             } else {
                 Button { act { library.downloadToCache(trackIds: $0) } } label: {
-                    Label("Download to Cache", systemImage: Icon.downloads)
+                    Label("Download to Cache", koan: Icon.downloads)
                 }
             }
         } else {
             Button { act { library.downloadToCache(trackIds: $0) } } label: {
-                Label("Download All to Cache", systemImage: Icon.downloads)
+                Label("Download All to Cache", koan: Icon.downloads)
             }
             Button { act { library.clearDownloads(trackIds: $0) } } label: {
-                Label("Remove Downloaded Files", systemImage: Icon.clear)
+                Label("Remove Downloaded Files", koan: Icon.clear)
             }
         }
     }
@@ -256,22 +256,22 @@ struct QueueActions: View {
 
     var body: some View {
         Button { player.playNow(trackIds: trackIds) } label: {
-            Label("Play", systemImage: Icon.play)
+            Label("Play", koan: Icon.play)
         }
         Button { player.playNext(trackIds: trackIds) } label: {
-            Label("Play Next", systemImage: Icon.playNext)
+            Label("Play Next", koan: Icon.playNext)
         }
         Button { player.enqueue(trackIds: trackIds) } label: {
-            Label("Add to Queue", systemImage: Icon.queue)
+            Label("Add to Queue", koan: Icon.queue)
         }
         Divider()
         // A selection is usually mixed, so both apply: fetching skips what is
         // already down and removing skips what is not.
         Button { library.downloadToCache(trackIds: trackIds) } label: {
-            Label("Download to Cache", systemImage: Icon.downloads)
+            Label("Download to Cache", koan: Icon.downloads)
         }
         Button { library.clearDownloads(trackIds: trackIds) } label: {
-            Label("Remove Downloaded Files", systemImage: Icon.clear)
+            Label("Remove Downloaded Files", koan: Icon.clear)
         }
     }
 }
@@ -385,7 +385,7 @@ struct ShareButton: View {
         Button {
             Share.link(for: playable, engine: library.engine, player: player)
         } label: {
-            Label(Share.label, systemImage: Icon.share)
+            Label(Share.label, koan: Icon.share)
         }
         .help("Create a public link on your server and copy it")
         .koanButtons(.compact)
@@ -418,11 +418,11 @@ struct FavouriteHeaderButton: View {
         let icon = isOn ? Icon.favourited : Icon.favourite
         if KoanTheme.isOn {
             HStack(spacing: KoanTheme.Space.xs) {
-                Image(systemName: icon).accessibilityHidden(true)
+                KoanIcon(icon).accessibilityHidden(true)
                 Text(title)
             }
         } else {
-            Label(title, systemImage: icon)
+            Label(title, koan: icon)
         }
     }
 }
@@ -461,7 +461,7 @@ struct PlayableHeaderButton: View {
             #if os(tvOS)
             // A television's play is a labelled button leading the row of
             // actions, the first thing focus lands on in a record's header.
-            Label(loading ? "Loading" : "Play", systemImage: Icon.play)
+            Label(loading ? "Loading" : "Play", koan: Icon.play)
             #else
             ZStack {
                 // The theme's primary action: outlined in the accent, square.
@@ -477,7 +477,7 @@ struct PlayableHeaderButton: View {
                 if loading {
                     ProgressView().controlSize(.small).tint(KoanTheme.isOn ? nil : .white)
                 } else {
-                    Image(systemName: Icon.play)
+                    KoanIcon(Icon.play)
                         .font(.system(size: 17))
                         .foregroundStyle(KoanTheme.style(.accent, system: .white))
                         .offset(x: 1)  // optical centring for a triangle
@@ -510,10 +510,10 @@ struct QueueButtons: View {
     var body: some View {
         HStack(spacing: 10) {
             Button { act { player.playNext(trackIds: $0) } } label: {
-                Label("Play Next", systemImage: Icon.playNext)
+                Label("Play Next", koan: Icon.playNext)
             }
             Button { act { player.enqueue(trackIds: $0) } } label: {
-                Label("Queue", systemImage: Icon.queue)
+                Label("Queue", koan: Icon.queue)
             }
             if working {
                 ProgressView().controlSize(.small)

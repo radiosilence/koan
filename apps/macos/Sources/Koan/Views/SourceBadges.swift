@@ -34,11 +34,11 @@ struct SourceBadges: View {
                 TransferRing(transfer: transferring, meter: meter)
             } else if onServer {
                 // Visible enough to be read at a glance down a list.
-                Image(systemName: onDisk ? "cloud.fill" : "cloud")
+                KoanIcon(onDisk ? Icon.cloudKept : Icon.cloud)
                     .foregroundStyle(onDisk ? KoanTheme.style(.muted, system: .secondary) : KoanTheme.style(.muted, system: .tertiary))
                     .help(onDisk ? "On your server, downloaded" : "On your server — downloads on play")
             } else if onDisk {
-                Image(systemName: "internaldrive")
+                KoanIcon(Icon.onDevice)
                     .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     .help("Local file")
             }

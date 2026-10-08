@@ -18,7 +18,7 @@ struct SearchSuggestions: View {
                 ForEach(search.tracks.prefix(5), id: \.id) { track in
                     SuggestionRow(
                         albumId: track.albumId,
-                        icon: "music.note",
+                        icon: Icon.track,
                         title: track.title,
                         subtitle: "\(track.artistName) — \(track.albumTitle)"
                     )
@@ -34,7 +34,7 @@ struct SearchSuggestions: View {
                 ForEach(search.albums.prefix(4), id: \.id) { album in
                     SuggestionRow(
                         albumId: album.id,
-                        icon: "square.stack",
+                        icon: Icon.album,
                         title: album.title,
                         subtitle: album.artistName
                     )
@@ -46,7 +46,7 @@ struct SearchSuggestions: View {
         if !search.artists.isEmpty {
             Section("Artists") {
                 ForEach(search.artists.prefix(4), id: \.id) { artist in
-                    SuggestionRow(albumId: nil, icon: "music.mic", title: artist.name, subtitle: nil)
+                    SuggestionRow(albumId: nil, icon: Icon.artist, title: artist.name, subtitle: nil)
                         .searchCompletion(SearchModel.Selection.artist(artist.id).token)
                 }
             }
@@ -68,7 +68,7 @@ private struct SuggestionRow: View {
                 if let albumId {
                     AlbumArtwork(source: .album(albumId), size: .thumb, cornerRadius: KoanTheme.radius(3))
                 } else {
-                    Image(systemName: icon)
+                    KoanIcon(icon)
                         .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                 }
             }

@@ -116,16 +116,16 @@ final class ArtistTableRow: TableCell, TableRow {
         CATransaction.setDisableActions(true)
         if hovered != nil || playing {
             markImage = Symbol.image(
-                "play.circle.fill", size: 15, colours: [selected ? .white : context.tint], appearance: appearance
+                Icon.playMark, size: 15, colours: [selected ? .white : context.tint], appearance: appearance
             )
         } else {
             markImage = Symbol.image(
-                "music.mic", size: 10, colours: [selected ? .white : .koanTertiaryLabel], appearance: appearance
+                Icon.artist, size: 10, colours: [selected ? .white : .koanTertiaryLabel], appearance: appearance
             )
         }
         heart.isHidden = !(favourite || hovered != nil)
         heartImage = Symbol.image(
-            favourite ? "heart.fill" : "heart", size: 10,
+            favourite ? Icon.favourited : Icon.favourite, size: 10,
             colours: [favourite ? NSColor.koanBad(.systemRed) : (selected ? .white : .koanTertiaryLabel)], appearance: appearance
         )
         CATransaction.commit()
