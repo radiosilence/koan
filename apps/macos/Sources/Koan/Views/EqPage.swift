@@ -394,6 +394,11 @@ struct EqSettings: View {
         for (i, name, db) in eqs {
             parts.append(EqGraph.Part(name: name, db: db, stroke: .eq(i)))
         }
+        // The total is the left channel's: the right drawn too where an EQ
+        // with bands for each channel makes it differ.
+        if let right = r.right {
+            parts.append(EqGraph.Part(name: "Right channel", db: right, stroke: .right))
+        }
         return parts
     }
 
@@ -428,6 +433,9 @@ struct StageStroke {
 
     static let correction = StageStroke(style: AnyShapeStyle(.tint), dash: [])
     static let total = StageStroke(style: KoanTheme.style(.strong, system: Color.primary), dash: []) // theme: raw — the system look's own
+    /// The chain's right channel, where it differs from the left the total
+    /// draws.
+    static let right = StageStroke(style: KoanTheme.style(.muted, system: Color.secondary), dash: [3, 2]) // theme: raw — the system look's own
 
     static func eq(_ index: Int) -> StageStroke {
         let dashes: [[CGFloat]] = [[5, 3], [2, 2], [8, 3, 2, 3], [1, 4]]

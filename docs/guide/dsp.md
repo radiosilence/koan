@@ -242,7 +242,8 @@ change to a device set from a preset, **Save** puts the change in the preset
 and **Save as New…** keeps it as another; **ⓘ How EQ works** explains the
 words.
 
-Under them, the curve of the whole chain, always at the same height, so
+Under them, the curve of the whole chain (the left channel's, with the right
+drawn too where an EQ gives the two different bands), always at the same height, so
 choosing another preset changes the curve and not the page; a flat device
 says it plays untouched. Each stage is drawn in the stroke of its block in the
 chain below, the correction in the accent and each EQ in a dash of its own,
