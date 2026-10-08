@@ -138,9 +138,11 @@ pub fn sessions() -> Vec<Session> {
 }
 
 /// A device the person disconnected: by the address it connected from, and
-/// by its id once it has proved it. An id a device only claims is not held:
-/// a stranger claiming the person's phone would otherwise have the phone
-/// held off with it, and let back in whenever the phone is played on.
+/// by its id once it has proved it is one of the person's own. Any other id
+/// is not held, a shared device's included, since another account can give
+/// its device one of this account's ids: a device claiming the person's
+/// phone would otherwise have the phone held off with it, and be let back in
+/// whenever the phone is played on.
 struct Held {
     addr: String,
     id: Option<String>,
@@ -170,7 +172,11 @@ pub fn end(key: u64) {
         .find(|i| i.session.key == Some(key))
         .map(|i| Held {
             addr: i.session.addr.clone(),
-            id: i.session.id.clone().filter(|_| i.session.proven.is_some()),
+            id: i
+                .session
+                .id
+                .clone()
+                .filter(|_| i.session.proven == Some(Peer::Own)),
         })
     else {
         return;
@@ -2865,7 +2871,16 @@ mod tests {
         release_addr("192.0.2.77");
         assert!(!held_addr(&addr.ip()));
 
-        // A device that proved it is held by its id too, wherever it
+        // A shared device's id is its account's choice: held by address.
+        let (listed, _) = Listed::new(&addr, &waker);
+        listed.said("held-phone", Some(Peer::Shared("other".into())));
+        end(listed.0);
+        drop(listed);
+        assert!(!held_id("held-phone"));
+        assert!(held_addr(&addr.ip()));
+        release_addr("192.0.2.77");
+
+        // One of the person's own is held by its id too, wherever it
         // connects from, until it is reached for.
         let (listed, ended) = Listed::new(&addr, &waker);
         listed.said("held-phone", Some(Peer::Own));
