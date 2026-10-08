@@ -2,7 +2,9 @@
 
 kōan on Apple TV is the iOS app's engine and pages, built around the remote:
 Now Playing first, the tabs across the top, and a long press for a row's
-menu. It is mostly something your phone or Mac plays to, through
+menu. The tabs show at a tab's root and fade out on a page opened from it, as
+the system's tab bar does, keeping their room so the page does not move; Menu
+goes back to them. It is mostly something your phone or Mac plays to, through
 [Control](devices.md), and it plays gaplessly from your server through HDMI.
 It needs tvOS 26.
 

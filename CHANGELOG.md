@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.61.0
+
+This release manages app passwords from the Mac and iPhone, gives the kōan theme its own icons, and stops EQs kept on every device from being deleted without anyone deleting them; a kōan server now keeps a deleted EQ for thirty days. The schema stays at 23: the server's `dsp_profiles` table gains two columns, `deleted_doc` and `deleted_at`, added in place, so 0.60.12 still opens the database. Snapshot a server's database before upgrading all the same.
+
+### Added
+
+- **App passwords in the apps.** Settings → Account on the Mac and iPhone lists, makes and revokes app passwords for Subsonic clients that sign in only with a token, through new `koanAppPasswords` endpoints. Shown only when signed in to a koan server that offers them.
+- **New EQs, stereo bands, and EQ for speakers.** Add EQ has **New EQ…**, which makes eight bands across the range, flat or from a bass boost, warm or bright starting curve. An EQ of bands can be stereo, with a list for each channel; going back to mono when the two differ asks which channel to keep. **Correct for a headphone profile** can be switched off for a device, such as speakers, which then plays a plain list of filters with no correction and nothing about targets; a preset keeps the setting.
+- **Recently deleted EQs.** Manage EQ on the Mac, iPhone and iPad lists EQs deleted in the last thirty days, with the days each has left, and restores one on every device. Shown only on a koan server that offers it (`koanDspDeleted`).
+
+### Changed
+
+- **The kōan theme draws its own icons.** A set of thin, square-ended line glyphs replaces SF Symbols throughout the Mac, iPhone, iPad and Apple TV apps when the kōan theme is on, so the icons match its monospaced type and square, hairline controls. The system look keeps SF Symbols.
+- **Removing an EQ never deletes it.** Taking an EQ out of a device's filters or a preset's layers says Remove everywhere, by swipe on iPhone and iPad, and on the Mac by right-click or ⌫; it leaves the EQ itself alone. Only Delete… in Manage EQ deletes one, after asking. What was called a device's tuning is now its filters.
+
+### Fixed
+
+- **Apple TV, in the kōan look: the tabs show only at a tab's root, and the share code, album tiles and filter panel are the theme's.** On a page opened from a tab the tabs fade out, as with the system's tab bar, and their room is kept so the page does not move; Menu goes back, and at the tab's root they return. A share code opens in the theme's square panel rather than a rounded card. Album tiles take the accent ring in place of the rounded lift, the filter panel's year fields are the theme's boxes, and its Reset is lowercase like the rest.
+- **iPhone: Now Playing's close chevron and missing-cover sleeve.** In the kōan theme the chevron sits in its own row on the sleeve's edge instead of over its top, and a record without a cover shows a flat placeholder rather than a framed grey square.
+- **The preset chip draws one outline.** In the kōan look, the EQ preset chip under the iPhone's Now Playing drew its own outline inside a second, larger one from the menu's bordered button. The menu now leaves the frame to its label, and the device picker's preset glyph on a phone is a bare glyph again.
+- **Mac lists keep their columns beside the lyrics.** Opening the lyrics narrowed the queue, album and other track lists without laying their rows out again, so each track's format and length sat hidden under the panel. History's day headings no longer float on AppKit's grey band in the kōan look. The sidebar's album and artist counts break onto two lines rather than leaving the separator at the end of a line, and the EQ chain is outlined in the accent, lines and boxes alike, when every EQ that plays is matched to the correction.
+- **Mac: Settings and the EQ sheets resize, and remember their size; the EQ graph stays in view and is drawn at the level it plays at.** The Settings window, an EQ's page, Manage EQ, the import confirmation and the picker can be resized by dragging, open larger, and reopen at the size they were last given. An EQ's page no longer lays itself out wider than its sheet and clips. On the Mac and iPhone its graph stays at the top while the bands scroll under it. The graph is centred on a dashed line at the preamp, labelled with its value, and its curve moved by the preamp, so a profile reads the same whether its gain is stated as a preamp or as a gain filter.
+- **EQs are no longer deleted from every device unless you delete them.** An EQ kept on every device could be deleted from the server and the account's other devices without anyone deleting it: assigning it to a built-in output or a phone's speaker, giving it an impulse response, or adding an EQ kept on one device to a stack or group made it count as kept on this device alone, and the next sync deleted it everywhere else. An EQ missing from a device for any other reason was deleted everywhere too. Now only deleting an EQ, or choosing This device for it, removes it elsewhere, and an EQ that is missing without having been deleted is taken from the server again. A kōan server now keeps a deleted EQ and its files for thirty days rather than discarding them at once.
+
 ## 0.60.12
 
 This release fixes a library folder configured in another case than the disk's, such as `~/music` on a Mac whose folder is `~/Music`: 0.60.11 indexed every file in it a second time. The first scan after upgrading folds each duplicate back into its original track. The database schema is unchanged from 0.60.11.
