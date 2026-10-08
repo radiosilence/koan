@@ -15,7 +15,9 @@ import SwiftUI
 /// go fully brat.
 ///
 /// Off, it costs nothing: the only timer is the accent's cycle, and that runs
-/// only while the rainbow is drawn and motion is allowed.
+/// only while the rainbow is drawn, motion is allowed and the app is in front.
+/// Behind, nothing of its own moves; what follows the music, the disco and
+/// the bars' glitter, follows it as the bars do.
 @MainActor
 enum Rainbow {
     /// Whether the rainbow is drawn, for layer views made outside SwiftUI —
@@ -535,7 +537,7 @@ final class ConfettiView: LayerView {
 /// flecks of coloured light across the window. Both are
 /// Core Animation's, committed once; nothing here wakes the main thread.
 struct MirrorBall: View {
-    /// Whether the app is in front. Behind, the flecks stop.
+    /// Whether the app is in front. Behind, all of it holds still.
     let active: Bool
     @Environment(\.koanRainbow) private var rainbow
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -555,7 +557,7 @@ private struct MirrorBallLayers: PlatformViewRepresentable {
     typealias PlatformViewType = MirrorBallView
     func makeView(context: Context) -> MirrorBallView { MirrorBallView(frame: .zero) }
     func updateView(_ view: MirrorBallView, context: Context) {
-        view.flecks.birthRate = active ? 1 : 0
+        view.moving = active
     }
 }
 
@@ -564,8 +566,28 @@ final class MirrorBallView: LayerView {
     /// The palette as a conic sheen, cut to the ball and turning.
     private let holo = CAGradientLayer()
     private let holoShape = CALayer()
-    /// Emitting only while the app is in front (`MirrorBallLayers`).
-    let flecks = CAEmitterLayer()
+    private let flecks = CAEmitterLayer()
+
+    /// Swaying, turning and throwing flecks only while the app is in front.
+    /// Behind, the ball holds where it had swung to, the sheen with it, and
+    /// the flecks in the air fade: a running animation is a frame from the
+    /// render server at the display's rate, whoever is looking.
+    var moving = true {
+        didSet {
+            guard moving != oldValue else { return }
+            flecks.birthRate = moving ? 1 : 0
+            if moving {
+                let held = ball.timeOffset
+                ball.speed = 1
+                ball.timeOffset = 0
+                ball.beginTime = 0
+                ball.beginTime = ball.convertTime(CACurrentMediaTime(), from: nil) - held
+            } else {
+                ball.timeOffset = ball.convertTime(CACurrentMediaTime(), from: nil)
+                ball.speed = 0
+            }
+        }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)

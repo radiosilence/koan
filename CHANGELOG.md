@@ -43,7 +43,6 @@
 - **The Mac's Settings window is drawn in the kōan look.** Its tabs were the system's glass toolbar buttons, with the chosen one dimmed almost out of sight. In the theme they are the theme's own tab row on the window's ground, lowercase, the chosen tab in the accent and underlined, with no glass anywhere in the window. The platform's look is unchanged.
 - **Mac search and shelf tracks line up with the page.** Track rows under the albums on search results, Favourites and Recently played start on the same margin as the headings and tiles, with the play mark and the playing bars in a badge on the sleeve rather than in an empty column.
 - **Mac search and shelf track rows answer where they are drawn.** The artist, the record and the sleeve took clicks and showed the pointing hand 8 pt to the left of where they sit.
-- **The Settings window has one ground in dark mode, title bar included.** The kōan look paints the window's ground behind the title bar as well as through the window's container, so no lighter band shows over the title bar and tabs where that container is not applied.
 
 ## 0.60.9
 
