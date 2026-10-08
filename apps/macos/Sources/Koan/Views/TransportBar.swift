@@ -522,6 +522,7 @@ private struct PlayPauseButton: View {
                 .font(.system(size: KoanTheme.metric(13, system: 25)))
                 .contentTransition(.symbolEffect(.replace))
                 .frame(width: KoanTheme.metric(16, system: 30))
+                .contentShape(Rectangle())
         }
         .koanButton(.iconOutlined)
         .help(player.isPlaying ? "Pause (Space)" : "Play (Space)")

@@ -299,7 +299,7 @@ A transfer nothing wants any more stops, mid-transfer included; it asks every 25
 | `queries/sources.rs` | Track identity: the `local_files` and `remote_entries` source rows, `link()` (which track a source is), `derive()` (a track's columns from its sources), merge, split and removal |
 | `queries/tracks.rs` | `upsert_track` and the removal entry points over `sources`, track reads, playback source resolution, `track_id_by_path()` |
 | `queries/search.rs` | FTS5 full-text search |
-| `queries/scan_cache.rs` | Mtime+size change detection to skip unchanged files |
+| `queries/scan_cache.rs` | Mtime+size change detection to skip unchanged files, read only for the directories a scan covers |
 | `queries/stats.rs` | Library statistics |
 | `queries/lyrics.rs` | Lyrics caching (synced + plain, per-track) |
 | `queries/bookmarks.rs` | Subsonic bookmarks: one saved position (and note) per account and track, for resuming long tracks. Followed through track merges |

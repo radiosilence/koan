@@ -95,7 +95,7 @@ The accent follows the record playing, and is tone-mapped the same way in both t
 
 The playing record's sleeve, blurred to colour fields and drifting, behind the ground. It is the one element that is not flat, and it carries data. Surfaces stay flat tokens drawn over it; it shows where the design leaves the ground bare: the Mac's content column, and Now Playing and page backgrounds on iOS and tvOS. Nothing glass sits on it.
 
-On the Mac, "wash the whole window" (`appearance.wash_window`) runs it under the toolbar and the sidebar as well, edge to edge from the toolbar down to the transport. Those have no ground and no material then: the sidebar's system glass is set clear, and each region meets the page at a hairline, where the page stops rather than passing beneath. The transport keeps its `bg` and spans the whole window beneath every column, as the phone's mini player does, and the sidebar, page and lyrics all stop at its rule. Off, toolbar and sidebar keep `bg` and the transport spans the page only.
+On the Mac, "wash the whole window" (`appearance.wash_window`) runs it under the toolbar and the sidebar as well, edge to edge from the toolbar down to the transport. Those have no ground and no material then: the sidebar's system glass draws nothing, and each region meets the page at a hairline, where the page stops rather than passing beneath. The transport keeps its `bg` and spans the whole window beneath every column, as the phone's mini player does, and the sidebar, page and lyrics all stop at its rule. Off, toolbar and sidebar keep `bg` and the transport spans the page only. Either way the sidebar's ground is the page's: never a lighter panel.
 
 Each sample of the baked sleeve is held to a luminance limit before it is drawn: in dark mode no brighter than the level at which `muted` text keeps 4.6:1, and in light mode no darker than keeps the wash, drawn over `bg`, at least as light as `surface` — so whatever reads on `surface`, the accent and `bad` included, reads over the wash. The wash so carries the record's hue and never its brightness, and every text token passes over any sleeve. `wash` is its strength, the share of the toned sleeve over `bg`: 0.6 on the Mac and iPhone, 0.5 on a television. The graphics level in Settings → Appearance governs it as in the platform's look: lower levels stop the drift, then remove the wash.
 
@@ -115,8 +115,11 @@ Three weights, assigned by the [rules](#rules); labels are lowercase and stay on
 - **Destructive:** compact or bordered, in `bad`.
 - **Text button:** the label in `muted`, no outline, used in bars ("clear", "sleep"). Hover: `ink`.
 - **Icon button** (transport): the glyph in `ink`, at least 44 × 44 pt to hit, with no outline, except play/pause, which has a square 1-point `ink` outline.
+- **Toolbar button** (Mac): the glyph in `ink` centred in a 36 × 36 pt cell, the size of the platform’s toolbar button. `surface` under the pointer, `hover` pressed. Back, forward, the sidebar and lyrics toggles, filter, sort and select.
 - **Disabled:** label and outline at 40 % opacity.
 - **Focus** (keyboard, and tvOS): a 2-point `accent` ring outside the control. On a television, no lift, shadow or glass.
+
+Whatever a button draws takes the click: its outline, its padding and the cell around its glyph, not only the glyph's own strokes. A label drawn by hand in a plain button sets a content shape over all of it.
 
 A text action that is not standard or prominent and not in a bar is bordered or underlined: bordered is a button, underlined is a link. *Why:* bare text in a form row reads as a value rather than something to press, and an underline is the long-standing sign that text goes somewhere.
 
@@ -142,7 +145,11 @@ The title in `body`, `ink`; secondary text in `meta`, `muted`; numbers right-ali
 
 ### Navigation row (sidebar)
 
-The label in `body`, `muted`, lowercase; with icons, the glyph before it in the same colour. Selected: `accent`, with the 2-point leading rule. On the Mac the list keeps AppKit's own selection beneath it, which is what VoiceOver announces and the arrow keys move. Section headings in `fine`, `ink`, with 16 points above.
+The label in `body`, `muted`, lowercase; with icons, the glyph before it in the same colour. Selected: `accent`, with the 2-point leading rule, and no fill. On the Mac the list keeps AppKit's selection, which is what VoiceOver announces and the arrow keys move, but does not draw its rounded highlight. Section headings in `fine`, `ink`, with 16 points above.
+
+### Sidebar (Mac)
+
+The page's ground, with no system glass: the wash with it under the whole window, `bg` otherwise. At the top, the theme's search field: square, `surface`, the glyph and placeholder in `muted`. Its suggestions open beneath it as a square `bg` panel in a hairline `rule`, over the rows: up to five tracks, four records and four artists under `fine`, `muted` headings, each a square sleeve with its title in `meta` and the rest in `fine`, `muted`, the row under the pointer or the arrow keys on `surface`. Return takes that row, or with none lit opens every result; Escape empties the field; `/` focuses it. Playlist sleeves are square. The library counts sit at the foot on the same ground, below a hairline of `koanRowRule`, and the rows stop at both edges rather than passing beneath.
 
 ### Tab bar (phone)
 

@@ -58,6 +58,8 @@ symphonia = { version = "0.6", default-features = false, features = [
     "flac", "mp3", "aac", "vorbis", "alac", "pcm", "adpcm", "isomp4", "ogg", "mkv", "caf", "wav", "aiff", "opt-simd",
     "all-meta",
 ] }
+# The ALAC magic cookie, which carries the bit depth Symphonia's MP4 demuxer drops.
+symphonia-common = { version = "0.6", default-features = false }
 # Utilities
 thiserror = "2"
 uuid = { version = "1", features = ["v7"] }

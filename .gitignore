@@ -15,6 +15,7 @@
 *.aiff
 *.m4a
 *.wv
+!crates/*/src/**/testdata/*
 
 # IDE
 .idea/

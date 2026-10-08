@@ -87,6 +87,8 @@ impl Device {
 #[derive(Default)]
 struct Store {
     linked: bool,
+    /// When the link that is up came up, in Unix seconds.
+    linked_at: Option<i64>,
     account: Vec<(LinkDevice, Instant)>,
     nearby: Vec<Nearby>,
     seen: Vec<SeenNearby>,
@@ -118,6 +120,10 @@ struct Store {
     accounts: Vec<String>,
     /// The last command that did not simply arrive, for the app to say so.
     notice: Option<Notice>,
+    /// When each Apple TV was last looked for among AirPlay announcements, by
+    /// id and host: one with none, or none that matches, is not looked for
+    /// again at every hello.
+    tv_looked: HashMap<(String, String), Instant>,
 }
 
 /// A command that was queued for a device asleep, or did not reach one: what
@@ -390,11 +396,47 @@ pub fn local() -> Option<&'static Local> {
 pub fn set_linked(linked: bool) {
     crate::remote::offline::link_changed(linked);
     changed(|s| {
+        if linked != s.linked {
+            s.linked_at = linked.then(|| chrono::Utc::now().timestamp());
+        }
         s.linked = linked;
         if !linked {
             s.fresh = false;
         }
     });
+}
+
+/// When the link that is up came up, in Unix seconds.
+pub fn linked_since() -> Option<i64> {
+    with(|s| s.linked.then_some(s.linked_at).flatten())
+}
+
+/// The account's other devices linked to the server now, each of which can
+/// control this one through it. Devices other accounts share with this one
+/// are this account's to control, not the other way round; the accounts this
+/// one is shared with are `shares`.
+pub fn linked_controllers() -> Vec<LinkDevice> {
+    let me = this_id();
+    with(|s| {
+        s.account
+            .iter()
+            .map(|(d, _)| d)
+            .filter(|d| d.linked && d.owner.is_none() && Some(&d.id) != me.as_ref())
+            .cloned()
+            .collect()
+    })
+}
+
+/// The name `id` goes by, as the server or the network last gave it.
+pub fn name_of(id: &str) -> Option<String> {
+    with(|s| {
+        s.account
+            .iter()
+            .map(|(d, _)| (&d.id, &d.name))
+            .chain(s.seen.iter().map(|n| (&n.id, &n.name)))
+            .find(|(i, _)| *i == id)
+            .map(|(_, name)| name.clone())
+    })
 }
 
 pub fn set_account(devices: Vec<LinkDevice>) {
@@ -563,13 +605,17 @@ pub fn remembered_nearby() -> Vec<SeenNearby> {
 pub fn nearby_hello(hello: LinkHello, addr: &str) {
     let host = crate::remote::airplay::host_of(addr).to_string();
     let look = changed(|s| {
-        let tv = s
+        let kept = s
             .seen
             .iter()
             .find(|n| n.id == hello.id)
-            .and_then(|n| n.tv.clone())
-            .filter(|tv| crate::remote::airplay::current(Some(tv), &host));
-        let look = hello.platform == "tvos" && tv.is_none();
+            .and_then(|n| n.tv.clone());
+        let look = hello.platform == "tvos"
+            && !crate::remote::airplay::current(kept.as_ref(), &host)
+            && look_for_tv(&mut s.tv_looked, &hello.id, &host, Instant::now());
+        // A record the look replaces is dropped; with no look, the one kept
+        // stands, as one matched by name rather than host does.
+        let tv = if look { None } else { kept };
         s.seen.retain(|n| n.id != hello.id);
         s.seen.push(SeenNearby {
             id: hello.id.clone(),
@@ -598,6 +644,27 @@ pub fn nearby_hello(hello: LinkHello, addr: &str) {
     if let Some((id, name)) = look {
         record_tv(id, name, addr.to_string());
     }
+}
+
+/// How long a look for an Apple TV's AirPlay announcement stands, found or
+/// not, before the same TV at the same host is looked for again.
+const TV_LOOK_AGAIN: Duration = Duration::from_secs(10 * 60);
+
+/// Whether to look for the AirPlay announcement of the Apple TV `id` at
+/// `host` now, noting the look if so. A look under way counts.
+fn look_for_tv(
+    looked: &mut HashMap<(String, String), Instant>,
+    id: &str,
+    host: &str,
+    now: Instant,
+) -> bool {
+    looked.retain(|_, at| now.saturating_duration_since(*at) < TV_LOOK_AGAIN);
+    let key = (id.to_string(), host.to_string());
+    if looked.contains_key(&key) {
+        return false;
+    }
+    looked.insert(key, now);
+    true
 }
 
 /// Find the AirPlay announcement of the Apple TV `id`, met at `addr`, and keep
@@ -1173,6 +1240,9 @@ pub fn target() -> Option<String> {
 
 pub fn set_target(id: Option<String>) {
     cancel_wake(id.as_deref());
+    if let Some(id) = &id {
+        crate::remote::nearby::release(id);
+    }
     let listed = id
         .as_ref()
         .and_then(|id| list().into_iter().find(|d| d.id == *id));
@@ -1608,8 +1678,67 @@ pub fn this_id() -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// A TV dialled by address whose AirPlay record was matched by name, at
+    /// its `.local.` host: a second hello inside the window, which does not
+    /// look again, keeps the record to wake it by.
+    #[test]
+    fn a_hello_that_does_not_look_keeps_the_tv_record() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        let tv = crate::remote::airplay::Tv {
+            name: "Living Room".into(),
+            host: "Living-Room.local.".into(),
+            mac: Some("AA:BB:CC:DD:EE:FF".into()),
+            ip: Some("10.0.0.9".into()),
+        };
+        with(|s| {
+            s.seen.push(SeenNearby {
+                id: "tv".into(),
+                name: "Living Room".into(),
+                platform: "tvos".into(),
+                addr: "10.0.0.9:5626".into(),
+                at: 0,
+                tv: Some(tv.clone()),
+            });
+            s.tv_looked
+                .insert(("tv".into(), "10.0.0.9".into()), Instant::now());
+        });
+        let mut hello = hello("tv");
+        hello.platform = "tvos".into();
+        nearby_hello(hello, "10.0.0.9:5626");
+        assert_eq!(tv_of("tv").map(|t| t.host), Some(tv.host));
+    }
+
+    #[test]
+    fn an_apple_tv_is_looked_for_once_per_host_for_a_while() {
+        let mut looked = HashMap::new();
+        let t0 = Instant::now();
+        assert!(look_for_tv(&mut looked, "tv", "living-room.local.", t0));
+        assert!(!look_for_tv(
+            &mut looked,
+            "tv",
+            "living-room.local.",
+            t0 + Duration::from_secs(5)
+        ));
+        // Another host, or another TV, is looked for at once.
+        assert!(look_for_tv(
+            &mut looked,
+            "tv",
+            "10.0.0.7",
+            t0 + Duration::from_secs(5)
+        ));
+        assert!(look_for_tv(&mut looked, "other", "living-room.local.", t0));
+        assert!(look_for_tv(
+            &mut looked,
+            "tv",
+            "living-room.local.",
+            t0 + TV_LOOK_AGAIN
+        ));
+    }
 
     #[test]
     fn a_live_send_with_no_way_through_sends_nothing() {
@@ -1641,7 +1770,7 @@ mod tests {
 
     /// The store is process-wide: each test walks it through its states with
     /// this held, rather than racing the others over it.
-    static STORE_LOCK: Mutex<()> = Mutex::new(());
+    pub(crate) static STORE_LOCK: Mutex<()> = Mutex::new(());
 
     fn hello(id: &str) -> LinkHello {
         LinkHello {

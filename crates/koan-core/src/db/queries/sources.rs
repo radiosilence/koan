@@ -824,10 +824,64 @@ fn index_for_search(
     Ok(())
 }
 
-/// Delete a track and everything that only means something with it, then the
-/// album and artist it leaves empty. Returns the downloaded copy, if there was one, for the caller to remove
+/// What [`forget_tracks`] does to a track the server also has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Forget {
+    /// Drop the file and keep the track while the server has it: it plays
+    /// from there, with its history, favourites and playlist places.
+    Demote,
+    /// Delete the track whatever else has it.
+    Delete,
+}
+
+/// Forget tracks, the one way rows leave the library.
+///
+/// Every track loses its file: the source row, and the scan cache entry that
+/// would otherwise tell a later scan the file was already read. Under
+/// [`Forget::Demote`] a track the server also has is kept and derived again
+/// from the server's entry; every other track is deleted with everything that
+/// only means something with it, which its foreign keys take. Returns the
+/// downloaded copies of the tracks deleted, for the caller to remove once the
+/// change is committed.
+pub fn forget_tracks(conn: &Connection, ids: &[i64], how: Forget) -> Result<Vec<String>, DbError> {
+    let mut downloads = Vec::new();
+    for &track in ids {
+        conn.prepare_cached(
+            "DELETE FROM scan_cache WHERE track_id = ?1
+                OR path IN (SELECT path FROM local_files WHERE track_id = ?1)",
+        )?
+        .execute(params![track])?;
+        conn.prepare_cached("DELETE FROM local_files WHERE track_id = ?1")?
+            .execute(params![track])?;
+        let partner = match how {
+            Forget::Demote => on_track(conn, Kind::Remote, track)?,
+            Forget::Delete => None,
+        };
+        match partner {
+            Some((entry, _)) => {
+                derive(conn, track)?;
+                link(conn, Kind::Remote, &entry)?;
+            }
+            None => downloads.extend(delete_track(conn, track)?),
+        }
+    }
+    Ok(downloads)
+}
+
+/// The track a file is the source of, or that a rebuilt index has not yet
+/// re-read it into.
+pub(crate) fn track_of_file(conn: &Connection, path: &str) -> Result<Option<i64>, DbError> {
+    match load(conn, Kind::Local, path)? {
+        Some((track, _)) => Ok(Some(track)),
+        None => legacy_row(conn, Kind::Local, path),
+    }
+}
+
+/// Delete a track, then the album and artist it leaves empty. What hangs off
+/// it goes by its foreign keys; the search index, which has none, by hand.
+/// Returns the downloaded copy, if there was one, for the caller to remove
 /// once the change is committed.
-pub(crate) fn delete_track(conn: &Connection, track: i64) -> Result<Option<String>, DbError> {
+fn delete_track(conn: &Connection, track: i64) -> Result<Option<String>, DbError> {
     let Some((album, artist, cached)): Option<(Option<i64>, Option<i64>, Option<String>)> = conn
         .prepare_cached("SELECT album_id, artist_id, cached_path FROM tracks WHERE id = ?1")?
         .query_row(params![track], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
@@ -835,20 +889,11 @@ pub(crate) fn delete_track(conn: &Connection, track: i64) -> Result<Option<Strin
     else {
         return Ok(None);
     };
-    for table in [
-        "tracks_fts WHERE rowid",
-        "lyrics_cache WHERE track_id",
-        "play_history WHERE track_id",
-        "favourites WHERE track_id",
-        "scan_cache WHERE track_id",
-        "playlist_tracks WHERE track_id",
-        "share_tracks WHERE track_id",
-        "local_files WHERE track_id",
-        "remote_entries WHERE track_id",
-        "tracks WHERE id",
+    for sql in [
+        "DELETE FROM tracks_fts WHERE rowid = ?1",
+        "DELETE FROM tracks WHERE id = ?1",
     ] {
-        conn.prepare_cached(&format!("DELETE FROM {table} = ?1"))?
-            .execute(params![track])?;
+        conn.prepare_cached(sql)?.execute(params![track])?;
     }
     super::tracks::prune_if_empty(conn, album, artist)?;
     Ok(cached)
@@ -915,11 +960,9 @@ pub(crate) fn fold_rows(conn: &Connection, winner: i64, loser: i64) -> rusqlite:
            WHERE id = ?1 AND cached_path IS NULL",
     )?
     .execute(params![winner, loser])?;
+    // What did not move across, a duplicate favourite or a second set of
+    // lyrics, goes with it by its foreign keys.
     for sql in [
-        "DELETE FROM lyrics_cache WHERE track_id = ?1",
-        "DELETE FROM favourites WHERE track_id = ?1",
-        "DELETE FROM track_ratings WHERE track_id = ?1",
-        "DELETE FROM bookmarks WHERE track_id = ?1",
         "DELETE FROM tracks_fts WHERE rowid = ?1",
         "DELETE FROM tracks WHERE id = ?1",
     ] {
@@ -1073,6 +1116,39 @@ pub(crate) fn adopt_moved(conn: &Connection, old: &str, arrived: &[i64]) -> Resu
     Ok(true)
 }
 
+/// Fold the row a file got under `twin`, another spelling of `walked`, into
+/// the row a scan gave it under `walked`, the directory's own. The two are one
+/// file: organize once stored the spelling the tags gave, and the next scan
+/// indexed the directory's as a second track. The older track survives with
+/// both tracks' history, favourites and playlist places, and takes the walked
+/// file. Declined when both tracks have a server entry. Whether it folded.
+pub(crate) fn fold_twin(conn: &Connection, twin: &str, walked: &str) -> Result<bool, DbError> {
+    let (Some((old, _)), Some((new, _))) = (
+        load(conn, Kind::Local, twin)?,
+        load(conn, Kind::Local, walked)?,
+    ) else {
+        return Ok(false);
+    };
+    if old != new
+        && on_track(conn, Kind::Remote, old)?.is_some()
+        && on_track(conn, Kind::Remote, new)?.is_some()
+    {
+        return Ok(false);
+    }
+    conn.prepare_cached("DELETE FROM local_files WHERE path = ?1")?
+        .execute(params![twin])?;
+    conn.prepare_cached("DELETE FROM scan_cache WHERE path = ?1")?
+        .execute(params![twin])?;
+    let track = if old == new {
+        derive(conn, old)?;
+        old
+    } else {
+        merge_into_older(conn, old, new)?
+    };
+    log::info!("{twin} is {walked} spelled another way; folded into track {track}");
+    Ok(true)
+}
+
 /// Record what a source says, linking and deriving as needed. Returns the
 /// track and whether this source made a new one.
 ///
@@ -1167,7 +1243,7 @@ pub(crate) fn remove(conn: &Connection, kind: Kind, key: &str) -> Result<Option<
             link(conn, kind.other(), &partner)?;
             Ok(None)
         }
-        None => delete_track(conn, track),
+        None => Ok(forget_tracks(conn, &[track], Forget::Delete)?.pop()),
     }
 }
 
@@ -1185,7 +1261,7 @@ pub(crate) fn forget_unread(
     };
     match on_track(conn, kind.other(), track)? {
         Some(_) => derive(conn, track),
-        None => delete_track(conn, track),
+        None => Ok(forget_tracks(conn, &[track], Forget::Delete)?.pop()),
     }
 }
 
@@ -1230,7 +1306,7 @@ pub(crate) fn remove_vanished(
             Some(other) => {
                 merge_into_older(conn, track, other)?;
             }
-            None => downloads.extend(delete_track(conn, track)?),
+            None => downloads.extend(forget_tracks(conn, &[track], Forget::Delete)?),
         }
     }
     Ok(downloads)

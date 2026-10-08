@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::config::Config;
-use crate::db::connection::Database;
+use crate::db::connection::{Database, DbError};
 use crate::db::queries;
 use crate::db::queries::shares::{ShareKind, Slice};
 use crate::player::commands::PlayerCommand;
@@ -429,11 +429,21 @@ pub fn evict_cache(
             return 0;
         }
     };
+    // A file two tracks record is kept if either is, and removed once.
+    let kept: std::collections::HashSet<&str> = files
+        .iter()
+        .filter(|f| keep.contains(&f.track_id))
+        .map(|f| f.path.as_str())
+        .collect();
+    let mut removed = std::collections::HashSet::new();
     let mut gone = Vec::new();
     let mut freed: i64 = 0;
-    for file in files.iter().filter(|f| !keep.contains(&f.track_id)) {
+    for file in files.iter().filter(|f| !kept.contains(f.path.as_str())) {
         if current <= limit {
             break;
+        }
+        if !removed.insert(file.path.as_str()) {
+            continue;
         }
         match std::fs::remove_file(&file.path) {
             Ok(()) => {}
@@ -477,18 +487,29 @@ pub fn playback_window(
     upcoming: &[i64],
 ) -> Result<usize, crate::db::connection::DbError> {
     let total = queries::total_cache_size(&db.conn)?;
-    let evictable: std::collections::HashMap<i64, i64> = queries::cached_files_lru(&db.conn)?
+    let files: Vec<_> = queries::cached_files_lru(&db.conn)?
         .into_iter()
         .filter(|f| !f.pinned)
-        .map(|f| (f.track_id, f.size))
+        .collect();
+    // By file, not by track: two tracks recording one file cost it once.
+    let evictable: std::collections::HashMap<&str, i64> =
+        files.iter().map(|f| (f.path.as_str(), f.size)).collect();
+    let file_of: std::collections::HashMap<i64, &str> = files
+        .iter()
+        .map(|f| (f.track_id, f.path.as_str()))
         .collect();
     let estimates = queries::download_estimates(&db.conn, upcoming)?;
 
     let mut used = (total - evictable.values().sum::<i64>()).max(0) as u64;
     let mut counted = std::collections::HashSet::new();
+    let mut counted_files = std::collections::HashSet::new();
     for (n, id) in upcoming.iter().enumerate() {
         if counted.insert(*id) {
-            let cost = evictable.get(id).or_else(|| estimates.get(id));
+            let cost = match file_of.get(id) {
+                Some(path) if !counted_files.insert(*path) => None,
+                Some(path) => evictable.get(path),
+                None => estimates.get(id),
+            };
             used += cost.copied().unwrap_or(0).max(0) as u64;
         }
         if n >= 2 && used > limit {
@@ -567,7 +588,7 @@ pub fn cache_size_bytes(cfg: &Config) -> u64 {
 /// The trailing separator matters: without it `/Volumes/Music` also counts
 /// `/Volumes/Music Backup`.
 pub fn tracks_under(db: &Database, folder: &Path) -> u64 {
-    let (lower, upper) = queries::folder_prefix_range(folder);
+    let (lower, upper) = queries::folder_prefix_range(&crate::index::spelling::on_disk(folder));
     db.conn
         .query_row(
             "SELECT COUNT(*) FROM tracks WHERE path >= ?1 AND path < ?2",
@@ -610,23 +631,22 @@ pub fn forget_folder(db: &Database, folder: &Path) -> Result<u64, crate::db::con
     let _lane = crate::index::lane::wait();
 
     let tx = crate::db::queries::write_transaction(&db.conn)?;
-    let paths: Vec<String> = {
-        let mut stmt = tx.prepare("SELECT path FROM local_files WHERE path >= ?1 AND path < ?2")?;
+    // The folder's files, and the tracks a rebuilt index has not yet re-read
+    // from it.
+    let tracks: Vec<i64> = {
+        let mut stmt = tx.prepare(
+            "SELECT track_id FROM local_files WHERE path >= ?1 AND path < ?2
+             UNION
+             SELECT t.id FROM tracks t WHERE t.path >= ?1 AND t.path < ?2
+                AND NOT EXISTS (SELECT 1 FROM local_files f WHERE f.track_id = t.id)",
+        )?;
         let rows = stmt.query_map([&lower, &upper], |r| r.get(0))?;
         rows.collect::<rusqlite::Result<_>>()?
     };
     // A track also on the server keeps its row, minus the file.
-    for path in &paths {
-        queries::sources::remove(&tx, queries::sources::Kind::Local, path)?;
-    }
-    // Otherwise the folder added back would find its files cached as read and
-    // skip them, leaving their tracks without a file.
-    tx.execute(
-        "DELETE FROM scan_cache WHERE path >= ?1 AND path < ?2",
-        [&lower, &upper],
-    )?;
+    queries::sources::forget_tracks(&tx, &tracks, queries::sources::Forget::Demote)?;
     tx.commit()?;
-    Ok(paths.len() as u64)
+    Ok(tracks.len() as u64)
 }
 
 /// Forget everything that only existed on the server.
@@ -829,6 +849,59 @@ pub fn relocate_cached_paths(db: &Database, cache_dir: &Path) -> rusqlite::Resul
         );
     }
     Ok(moved)
+}
+
+/// Record the downloads the cache holds that no track names.
+///
+/// A file can outlive its record: a track re-derived or merged without it, an
+/// older build, a crash between the rename and the write. Unrecorded, it reads
+/// as not on this machine and eviction cannot see it. Each is matched to the
+/// remote track whose download would land at that path
+/// (`cache_path_for_track`), the same match a play makes. A file no track
+/// lays out to is left alone: nothing would ever play it, and nothing here
+/// knows enough to say it is safe to delete.
+///
+/// Returns the number of tracks recorded.
+pub fn adopt_cached_files(db: &Database, cache_dir: &Path) -> Result<usize, DbError> {
+    let recorded: std::collections::HashSet<String> = db
+        .conn
+        .prepare("SELECT DISTINCT cached_path FROM tracks WHERE cached_path IS NOT NULL")?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let orphans: std::collections::HashSet<PathBuf> = walkdir::WalkDir::new(cache_dir)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext != "part"))
+        .map(walkdir::DirEntry::into_path)
+        .filter(|p| !recorded.contains(&*p.to_string_lossy()))
+        .collect();
+    if orphans.is_empty() {
+        return Ok(0);
+    }
+
+    let ids: Vec<i64> = db
+        .conn
+        .prepare("SELECT id FROM tracks WHERE cached_path IS NULL AND remote_id IS NOT NULL")?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let extras = queries::queue_item_extras(&db.conn, &ids)?;
+    let tracks = queries::tracks_by_ids(&db.conn, &ids)?;
+    let tx = queries::write_transaction(&db.conn)?;
+    let mut adopted = 0;
+    for track in &tracks {
+        let date = extras.get(&track.id).and_then(|e| e.album_date.as_deref());
+        let dest = cache_path_for_track(cache_dir, track, date);
+        if orphans.contains(&dest) && is_cached_audio(&dest) {
+            queries::set_cached_path(&tx, track.id, &dest.to_string_lossy())?;
+            adopted += 1;
+        }
+    }
+    tx.commit()?;
+    if adopted > 0 {
+        log::info!("recorded {adopted} download(s) the cache held unrecorded");
+    }
+    Ok(adopted)
 }
 
 /// Fetch again anything in the queue whose downloaded copy has just been
@@ -1798,7 +1871,10 @@ pub fn cache_path_for_track(
 /// Resolve a track to its path + load state (without downloading).
 /// Returns (path, `ItemState::Ready`) for local/cached, (cache path, `ItemState::Pending`)
 /// for remote — a track with no copy here yet has to be fetched before it plays.
+/// A copy found in the cache that the row does not name is added to `found`,
+/// for the caller to record.
 fn resolve_item_path(
+    found: &mut Vec<(i64, PathBuf)>,
     cfg: &Config,
     track: &queries::TrackRow,
     remote_url: Option<&str>,
@@ -1825,6 +1901,9 @@ fn resolve_item_path(
         Some(queries::PlaybackSource::Remote(_)) => {
             let dest = cache_path_for_track(&cfg.cache_dir(), track, album_date);
             if dest.exists() && is_cached_audio(&dest) {
+                if track.cached_path.as_deref() != Some(&*dest.to_string_lossy()) {
+                    found.push((track.id, dest.clone()));
+                }
                 (dest, ItemState::Ready)
             } else {
                 (dest, ItemState::Pending)
@@ -1872,20 +1951,47 @@ pub fn playlist_item_from_track(
 /// leave out — the stream URL and the album's date — is read for all of them
 /// together.
 pub fn playlist_items_for_tracks(db: &Database, tracks: &[queries::TrackRow]) -> Vec<PlaylistItem> {
-    let cfg = Config::load().unwrap_or_default();
+    playlist_items_with(db, &Config::load().unwrap_or_default(), tracks)
+}
+
+fn playlist_items_with(
+    db: &Database,
+    cfg: &Config,
+    tracks: &[queries::TrackRow],
+) -> Vec<PlaylistItem> {
     let ids: Vec<i64> = tracks.iter().map(|t| t.id).collect();
     let extras = queries::queue_item_extras(&db.conn, &ids).unwrap_or_default();
 
-    tracks
+    let mut found = Vec::new();
+    let items = tracks
         .iter()
         .map(|track| {
             let extra = extras.get(&track.id);
             let remote_url = extra.and_then(|e| e.remote_url.as_deref());
             let album_date = extra.and_then(|e| e.album_date.as_deref());
-            let (path, state) = resolve_item_path(&cfg, track, remote_url, album_date);
+            let (path, state) = resolve_item_path(&mut found, cfg, track, remote_url, album_date);
             playlist_item_from_track(track, album_date, path, state)
         })
-        .collect()
+        .collect();
+    // Bookkeeping an enqueue should not wait behind a scan for: skipped while
+    // a writer holds the lock, and found again the next time the track is
+    // queued, or at launch (`adopt_cached_files`).
+    if !found.is_empty() {
+        let recorded = crate::db::connection::without_waiting(&db.conn, |conn| {
+            queries::atomically(conn, || {
+                found.iter().try_for_each(|(id, path)| {
+                    queries::set_cached_path(conn, *id, &path.to_string_lossy())
+                })
+            })
+        });
+        if let Err(e) = recorded {
+            log::debug!(
+                "left {} cached file(s) unrecorded for now: {e}",
+                found.len()
+            );
+        }
+    }
+    items
 }
 
 // ---------------------------------------------------------------------------
@@ -1911,6 +2017,20 @@ fn is_cached_audio(path: &std::path::Path) -> bool {
             }
         }
         Err(_) => false,
+    }
+}
+
+/// Record a file found already in the cache as the track's download, unless
+/// it already is. A file can outlive its record — a row re-derived or merged
+/// without it, a crash between the rename and the write — and an unrecorded
+/// one reads as not on this machine and is never evicted.
+fn adopt_cached(conn: &rusqlite::Connection, track: &queries::TrackRow, dest: &Path) {
+    let dest = dest.to_string_lossy();
+    if track.cached_path.as_deref() == Some(&*dest) {
+        return;
+    }
+    if let Err(e) = queries::set_cached_path(conn, track.id, &dest) {
+        log::warn!("found {dest} in the cache but failed to record it ({e})");
     }
 }
 
@@ -1984,6 +2104,7 @@ pub(crate) fn download_track(
         let _ = std::fs::remove_file(&dest);
     }
     if dest.exists() {
+        adopt_cached(&db.conn, &track, &dest);
         return Some(Ok(dest));
     }
 
@@ -2173,6 +2294,116 @@ mod rebuild_tests {
             0,
             "idempotent"
         );
+    }
+
+    #[test]
+    fn queueing_a_track_whose_file_is_in_the_cache_records_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = test_db();
+        let mut cfg = Config::default();
+        cfg.remote.cache_dir = Some(dir.path().to_path_buf());
+        let id = remote_track(&db, "Raised by Evil", "Therapy Session");
+        db.conn
+            .execute(
+                "UPDATE tracks SET remote_url = 'https://music.example/stream' WHERE id = ?1",
+                [id],
+            )
+            .unwrap();
+        let file = cache_file(&db, dir.path(), id, 4096);
+
+        let on_disk = || queries::sources_for_tracks(&db.conn, &[id]).unwrap()[&id].1;
+        assert!(!on_disk(), "unrecorded, the file reads as absent");
+
+        let track = queries::get_track_row(&db.conn, id).unwrap().unwrap();
+        let items = playlist_items_with(&db, &cfg, &[track]);
+        assert_eq!(items[0].path, file);
+        assert_eq!(items[0].state, ItemState::Ready);
+        assert!(on_disk());
+        assert_eq!(
+            queries::cached_paths_for(&db.conn, &[id]).unwrap(),
+            vec![file.to_string_lossy().into_owned()],
+            "visible to eviction"
+        );
+    }
+
+    fn remote_track(db: &Database, title: &str, album: &str) -> i64 {
+        let mut meta = sample_meta(title, "Technical Itch", album);
+        meta.source = "remote".into();
+        meta.path = None;
+        meta.remote_id = Some(format!("{album}/{title}"));
+        queries::upsert_track(&db.conn, &meta).unwrap()
+    }
+
+    fn cache_file(db: &Database, dir: &Path, id: i64, bytes: usize) -> PathBuf {
+        let track = queries::get_track_row(&db.conn, id).unwrap().unwrap();
+        let date = queries::queue_item_extras(&db.conn, &[id]).unwrap()[&id]
+            .album_date
+            .clone();
+        let file = cache_path_for_track(dir, &track, date.as_deref());
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, vec![0u8; bytes]).unwrap();
+        file
+    }
+
+    #[test]
+    fn unrecorded_cache_files_are_matched_to_their_tracks() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = test_db();
+        let lost = remote_track(&db, "Raised by Evil", "Therapy Session");
+        let kept = remote_track(&db, "Death Jazz", "Therapy Session");
+        let lost_file = cache_file(&db, dir.path(), lost, 4096);
+        let kept_file = cache_file(&db, dir.path(), kept, 4096);
+        queries::set_cached_path(&db.conn, kept, &kept_file.to_string_lossy()).unwrap();
+        let stray = dir.path().join("Nobody/Nothing/01. Nobody - Nothing.opus");
+        std::fs::create_dir_all(stray.parent().unwrap()).unwrap();
+        std::fs::write(&stray, vec![0u8; 4096]).unwrap();
+
+        assert_eq!(adopt_cached_files(&db, dir.path()).unwrap(), 1);
+        assert_eq!(
+            queries::cached_paths_for(&db.conn, &[lost]).unwrap(),
+            vec![lost_file.to_string_lossy().into_owned()]
+        );
+        assert!(stray.exists(), "a file no track lays out to is left alone");
+        assert_eq!(
+            adopt_cached_files(&db, dir.path()).unwrap(),
+            0,
+            "idempotent"
+        );
+    }
+
+    #[test]
+    fn a_file_two_tracks_record_is_counted_and_evicted_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = test_db();
+        let a = remote_track(&db, "Raised by Evil", "Therapy Session");
+        let b = remote_track(&db, "Death Jazz", "Therapy Session");
+        let shared = cache_file(&db, dir.path(), a, 6000);
+        let other = cache_file(&db, dir.path(), b, 6000);
+        let edition = remote_track(&db, "Raised by Evil (edition)", "Therapy Session");
+        for (id, file) in [(a, &shared), (edition, &shared), (b, &other)] {
+            queries::set_cached_path(&db.conn, id, &file.to_string_lossy()).unwrap();
+        }
+        assert_eq!(queries::total_cache_size(&db.conn).unwrap(), 12_000);
+
+        // The edition sharing the kept file keeps it too.
+        let mut cfg = Config::default();
+        cfg.remote.cache_dir = Some(dir.path().to_path_buf());
+        cfg.remote.cache_limit = Some("1".into());
+        let freed = evict_cache(&db, &cfg, &[a].into_iter().collect(), false);
+        assert_eq!(freed, 6000);
+        assert!(shared.exists());
+        assert!(!other.exists());
+
+        // Without the keep, the shared file goes once and both rows forget it.
+        let freed = evict_cache(&db, &cfg, &Default::default(), false);
+        assert_eq!(freed, 6000);
+        assert!(!shared.exists());
+        assert!(
+            queries::cached_paths_for(&db.conn, &[a, edition])
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(queries::total_cache_size(&db.conn).unwrap(), 0);
     }
 
     #[test]

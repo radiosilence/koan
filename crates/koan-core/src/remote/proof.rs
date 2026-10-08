@@ -16,7 +16,10 @@
 //! Nearby connections are not encrypted, so every command after a proven
 //! handshake is signed too, over the handshake and a sequence number: one
 //! slipped into the stream, replayed, or taken from another session is
-//! refused.
+//! refused. So are the listening end's reports back (acks, state, levels),
+//! when both ends sign them: each says so by the mark on its nonce, which
+//! both signatures cover, so the mark cannot be stripped to have reports
+//! taken unsigned without the handshake failing.
 //!
 //! A peer that proves nothing, because it is older, signed out, or on another
 //! server, is classed as it always was.
@@ -42,6 +45,11 @@ const DIAL: &str = "koan-nearby-v1 dial";
 const LISTEN: &str = "koan-nearby-v1 listen";
 const SESSION: &str = "koan-nearby-v1 session";
 const COMMAND: &str = "koan-nearby-v1 command";
+const REPORT: &str = "koan-nearby-v1 report";
+
+/// Begins the nonce of a device that signs its reports and checks the other
+/// end's. A device that predates it reads the nonce as any other.
+const SIGNS_REPORTS: &str = "reports.";
 
 /// A fresh keypair, as kept in `remote.device_key`: base64 of its PKCS#8.
 pub fn new_device_key() -> Option<String> {
@@ -78,14 +86,19 @@ pub fn public_key() -> Option<String> {
     keypair().map(|pair| B64.encode(pair.public_key().as_ref()))
 }
 
-/// A fresh nonce, base64 of 32 random bytes. `None` if the system cannot
-/// give random bytes: a nonce that is not fresh would let a recorded
-/// handshake, and the commands signed after it, be replayed, so without one
-/// nothing is proven.
+/// A fresh nonce: base64 of 32 random bytes, marked as this device's
+/// (`SIGNS_REPORTS`). `None` if the system cannot give random bytes: a nonce
+/// that is not fresh would let a recorded handshake, and the commands signed
+/// after it, be replayed, so without one nothing is proven.
 pub fn nonce() -> Option<String> {
     let mut bytes = [0u8; 32];
     ring::rand::SystemRandom::new().fill(&mut bytes).ok()?;
-    Some(B64.encode(bytes))
+    Some(format!("{SIGNS_REPORTS}{}", B64.encode(bytes)))
+}
+
+/// Whether both ends of the handshake over these nonces sign reports.
+pub fn signs_reports(listen_nonce: &str, dial_nonce: &str) -> bool {
+    listen_nonce.starts_with(SIGNS_REPORTS) && dial_nonce.starts_with(SIGNS_REPORTS)
 }
 
 /// `label` and each field, each preceded by its length, so no two lists of
@@ -237,18 +250,36 @@ pub fn verify_listen(
     )
 }
 
-/// The signed half of a proven connection: what binds each command to this
-/// connection and puts it in order.
+/// The signed half of a proven connection, one way: what binds each message
+/// (a command, or a report) to this connection and puts it in order.
 pub struct Session {
     transcript: [u8; 32],
-    /// The dialler's: the last sequence number signed. The listener's: the
+    /// What the messages are, so one kind is never taken for the other.
+    label: &'static str,
+    /// The sender's: the last sequence number signed. The receiver's: the
     /// last accepted.
     seq: u64,
 }
 
 impl Session {
-    /// The session both ends compute from the handshake.
+    /// The session for the dialler's commands, as both ends compute it from
+    /// the handshake.
     pub fn new(listener: &str, dialer: &str, listen_nonce: &str, dial_nonce: &str) -> Self {
+        Self::of(COMMAND, listener, dialer, listen_nonce, dial_nonce)
+    }
+
+    /// The session for the listener's reports.
+    pub fn reports(listener: &str, dialer: &str, listen_nonce: &str, dial_nonce: &str) -> Self {
+        Self::of(REPORT, listener, dialer, listen_nonce, dial_nonce)
+    }
+
+    fn of(
+        label: &'static str,
+        listener: &str,
+        dialer: &str,
+        listen_nonce: &str,
+        dial_nonce: &str,
+    ) -> Self {
         let digest = ring::digest::digest(
             &ring::digest::SHA256,
             &message(
@@ -263,34 +294,35 @@ impl Session {
         );
         let mut transcript = [0u8; 32];
         transcript.copy_from_slice(digest.as_ref());
-        Self { transcript, seq: 0 }
+        Self {
+            transcript,
+            label,
+            seq: 0,
+        }
     }
 
-    fn command_message(&self, seq: u64, command: &str) -> Vec<u8> {
+    fn signed_message(&self, seq: u64, text: &str) -> Vec<u8> {
         message(
-            COMMAND,
-            &[&self.transcript, &seq.to_be_bytes(), command.as_bytes()],
+            self.label,
+            &[&self.transcript, &seq.to_be_bytes(), text.as_bytes()],
         )
     }
 
-    /// Sign `command` (its JSON) as the next in this session. `None` with no
-    /// keypair.
-    pub fn sign(&mut self, command: &str) -> Option<(u64, String)> {
+    /// Sign `text` (a command's or report's JSON) as the next in this
+    /// session. `None` with no keypair.
+    pub fn sign(&mut self, text: &str) -> Option<(u64, String)> {
         let pair = keypair()?;
-        self.sign_with(&pair, command)
+        self.sign_with(&pair, text)
     }
 
-    fn sign_with(&mut self, pair: &Ed25519KeyPair, command: &str) -> Option<(u64, String)> {
+    fn sign_with(&mut self, pair: &Ed25519KeyPair, text: &str) -> Option<(u64, String)> {
         self.seq += 1;
-        Some((
-            self.seq,
-            sign(pair, &self.command_message(self.seq, command)),
-        ))
+        Some((self.seq, sign(pair, &self.signed_message(self.seq, text))))
     }
 
-    /// Whether `command` was signed by `by` for this session, later in it
-    /// than anything accepted so far. Accepting it moves the session on.
-    pub fn accept(&mut self, by: &Proven, seq: u64, sig: &str, command: &str) -> bool {
+    /// Whether `text` was signed by `by` for this session, later in it than
+    /// anything accepted so far. Accepting it moves the session on.
+    pub fn accept(&mut self, by: &Proven, seq: u64, sig: &str, text: &str) -> bool {
         if seq <= self.seq {
             return false;
         }
@@ -298,7 +330,7 @@ impl Session {
             return false;
         };
         let ok = UnparsedPublicKey::new(&ED25519, &by.key)
-            .verify(&self.command_message(seq, command), &sig)
+            .verify(&self.signed_message(seq, text), &sig)
             .is_ok();
         if ok {
             self.seq = seq;
@@ -540,6 +572,33 @@ mod tests {
         let (s, sig) = other.sign_with(&phone, r#"{"type":"pause"}"#).unwrap();
         let mut fresh = Session::new("mac", "phone", "nl", "nd");
         assert!(!fresh.accept(&proven, s, &sig, r#"{"type":"pause"}"#));
+    }
+
+    #[test]
+    fn a_signed_command_is_never_taken_for_a_report() {
+        let (mac, mac_pub) = pair();
+        let keys = vec![key("mac", &mac_pub, None)];
+        let msg = listen_message("phone", "mac", "nd", "nl", true);
+        let proven = verify_with(&keys, "mac", &msg, &sign(&mac, &msg)).unwrap();
+        let text = r#"{"type":"state"}"#;
+        let (seq, sig) = Session::new("mac", "phone", "nl", "nd")
+            .sign_with(&mac, text)
+            .unwrap();
+        assert!(!Session::reports("mac", "phone", "nl", "nd").accept(&proven, seq, &sig, text));
+        let (seq, sig) = Session::reports("mac", "phone", "nl", "nd")
+            .sign_with(&mac, text)
+            .unwrap();
+        assert!(Session::reports("mac", "phone", "nl", "nd").accept(&proven, seq, &sig, text));
+    }
+
+    #[test]
+    fn reports_are_signed_only_when_both_nonces_say_so() {
+        let (a, b) = (nonce().unwrap(), nonce().unwrap());
+        assert!(signs_reports(&a, &b));
+        // An older device's nonce is bare base64.
+        let older = B64.encode([7u8; 32]);
+        assert!(!signs_reports(&a, &older));
+        assert!(!signs_reports(&older, &b));
     }
 
     #[test]
