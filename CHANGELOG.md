@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.61.1
+
+### Changed
+
+- **Play on uses the devices icon, and the filter and AirPlay buttons the kōan glyphs.** All three drew system symbols in the kōan theme.
+- **No library folder until you choose one.** kōan no longer indexes `~/Music` when no folder is set, which on macOS asked for access to the Apple Music library. A library already indexed from `~/Music` keeps it: the folder is written into `config.local.toml` the first time this version opens it.
+- **Glyphs on navigation in the kōan theme.** With "Show icons" on, the iPad sidebar, the Library section and Settings lists on iPhone and iPad, and the Mac Settings tabs draw each place's glyph. The phone's tab bar and the television stay words alone.
+
+### Fixed
+
+- **Integrations.** The Settings section for server-side features is called Integrations again, as the longer name wrapped in the heading.
+- **Mac: choosing an IEM correction's target no longer crashes.** The Correction sheet fitted itself to its content, which changed with the chosen target and re-wrapped at each new width, so the sheet resized itself until the app ran out of stack. It now opens at a fixed size, can be resized by dragging, and remembers its size like the other EQ sheets.
+- **Mac rows keep their marks in line.** The codec takes one width in the queue and playlists, and the format column keeps its place on a track without one, so the heart and availability mark line up down the list.
+- **Mac sidebar and filters in the kōan theme.** The sidebar draws each place's glyph again when icons are on, and the library filter popover uses the theme's toggles, menus, fields and buttons in place of the system form.
+- **Recently deleted EQs are always listed.** Manage EQ shows the section whenever the server keeps deleted EQs, saying so when it holds none, so the feature can be found before it is needed.
+- **EQ on iPhone.** Typing a band's figure keeps its row in view: the graph goes short above it, and the bar over the keyboard steps between figures and has Done.
+- **Output on iPhone and Apple TV.** The Output button is hidden while the only choice is the route iOS already picked; it appears once a UPnP amplifier answers, or while another device is controlled.
+- **Presets on iPhone.** In the kōan look, Now Playing's preset choice opens the theme's tray, as Output and Control do, in place of the system's glass menu.
+- **Context menus tint the kōan glyphs.** They drew black instead of in the menu's text colour.
+- **Search field.** The theme's search field no longer grows taller once text is typed into it.
+- **Album and artist headers centre the play button on the title.** The title sat above the button's middle.
+- **Mac: the theme's popovers no longer crash when what they show changes size.** Play on, Output and the theme's menus sized their window to their content from inside the window's own layout, so a row that changed while one was open, or an EQ chosen from the output menu, had the window resize itself until the app ran out of stack. The window now follows the content's size once each layout is done.
+- **Availability marks.** The cloud and on-device marks in track rows are larger, and a track kept on this device shows as a solid cloud.
+
 ## 0.61.0
 
 This release manages app passwords from the Mac and iPhone, gives the kōan theme its own icons, and stops EQs kept on every device from being deleted without anyone deleting them; a kōan server now keeps a deleted EQ for thirty days. The schema stays at 23: the server's `dsp_profiles` table gains two columns, `deleted_doc` and `deleted_at`, added in place, so 0.60.12 still opens the database. Snapshot a server's database before upgrading all the same.
