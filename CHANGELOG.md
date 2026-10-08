@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.61.7
+
+### Changed
+
+- **Album and artist pages on a phone.** A larger sleeve with the title, artist and details on lines of their own, play beside the lesser actions, tighter tracklist rows that drop a credit repeating the album artist, and the artist bio above the records.
+
+### Fixed
+
+- Share link text has correct spelling
+
 ## 0.61.6
 
 ### Fixed
