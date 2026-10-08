@@ -789,6 +789,10 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     // How far this device has read the server's play history: see
     // `remote::history`.
     ("remote_servers", "history_cursor", "TEXT"),
+    // A deleted EQ profile's last document, kept on the server so no
+    // deletion, however it was sent, loses one for good: see
+    // `queries::dsp::save`.
+    ("dsp_profiles", "deleted_doc", "TEXT"),
 ];
 
 /// A UUIDv7 in SQL, for the triggers that give every new row its `uid`: a

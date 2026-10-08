@@ -931,22 +931,26 @@ fn push(
     // Deleted here, or kept here alone by choice: gone everywhere else too.
     // Deletions go first, so a profile deleted and made again under its
     // name reaches other devices after the one it replaces has left.
+    let mut sent = HashSet::new();
     let mut restore = false;
     for uid in synced.keys().filter(|u| !locals.contains_key(*u)) {
-        let refused = edits.get(uid).is_some_and(|e| e.refused.is_some());
-        if refused {
-            continue;
-        }
+        let deleted = cfg.dsp.removed.contains(uid);
         let kept_here = cfg
             .dsp
             .profiles
             .iter()
             .any(|p| p.uid.as_deref() == Some(uid) && p.scope == Some(DspScope::Device));
-        if !kept_here && !cfg.dsp.removed.contains(uid) {
+        if !deleted && !kept_here {
+            if edits.get(uid).is_some_and(|e| e.refused.is_some()) {
+                continue;
+            }
             // Missing without having been deleted: a config that did not
             // load, or one edited by hand. Never a reason to delete it from
-            // every device; the server's copy is taken again instead.
+            // every device; the server's copy is taken again instead. The
+            // cursor goes back first, so the copy is found whatever happens
+            // after.
             log::warn!("dsp sync: {uid} is missing here but was not deleted; restoring it");
+            rows::set_sync_cursor(&db.conn, url, 0)?;
             rows::forget_synced(&db.conn, url, uid)?;
             restore = true;
             continue;
@@ -954,14 +958,22 @@ fn push(
         remote.delete(uid, now_ms())?;
         rows::forget_synced(&db.conn, url, uid)?;
         rows::forget_local(&db.conn, uid)?;
+        sent.insert(uid.clone());
         out.sent += 1;
     }
-    if restore {
-        rows::set_sync_cursor(&db.conn, url, 0)?;
-    }
-    // A deletion is sent once; one never synced has nothing to send.
-    if !cfg.dsp.removed.is_empty() {
-        Config::persist(|c| c.dsp.removed.clear())?;
+    // A deletion stays listed until it is sent: one made while this sync ran
+    // is sent by the next. One with nothing synced has nothing to send.
+    if cfg
+        .dsp
+        .removed
+        .iter()
+        .any(|u| sent.contains(u) || !synced.contains_key(u))
+    {
+        Config::persist(|c| {
+            c.dsp
+                .removed
+                .retain(|u| !sent.contains(u) && synced.contains_key(u))
+        })?;
     }
     // What was kept everywhere and no longer is, and was never sent or has
     // now been deleted: nothing is left to track. One kept everywhere that
@@ -1503,21 +1515,50 @@ mod tests {
         assert!(a.profile("Desk speakers").is_some());
     }
 
-    /// Sync `made` from A to B, change it on A with `drift` in a way that
-    /// makes its worked-out scope this device's, and sync again: `name`
-    /// must still be on the server and on B.
-    fn stays_shared(made: Vec<DspProfile>, name: &str, drift: impl FnOnce()) {
+    /// EQ bands made by hand: kept everywhere only while nothing says
+    /// otherwise, unlike an AutoEQ correction, whose target keeps it so.
+    fn bass() -> DspProfile {
+        DspProfile {
+            name: "Bass".into(),
+            filters: vec![band(4.0)],
+            ..Default::default()
+        }
+    }
+
+    fn edit(name: &str, f: impl FnOnce(&mut DspProfile)) {
+        Config::persist(|c| f(c.dsp.profiles.iter_mut().find(|p| p.name == name).unwrap()))
+            .unwrap();
+    }
+
+    fn removed() -> Vec<String> {
+        Config::cached().dsp.removed.clone()
+    }
+
+    /// A and B on one server, A past its first sync, with `made` synced to
+    /// both.
+    fn shared(made: Vec<DspProfile>) -> (Server, Device, Device) {
         let server = Server::new();
         let (a, b) = (Device::new(), Device::new());
+        a.on();
+        Config::persist(|c| c.dsp.profiles.push(headphone())).unwrap();
+        a.sync(&server);
         a.on();
         Config::persist(|c| c.dsp.profiles.extend(made)).unwrap();
         a.sync(&server);
         b.sync(&server);
+        (server, a, b)
+    }
+
+    /// Sync `made` to B, change it on A with `drift`, a change that once
+    /// made it read as kept on A alone, and sync again: `name` stays on the
+    /// server and on B, and A keeps it everywhere. Returns A's last sync.
+    fn stays_shared(made: Vec<DspProfile>, name: &str, drift: impl FnOnce()) -> DspSync {
+        let (server, a, b) = shared(made);
         assert!(b.profile(name).is_some(), "{name} reached B");
 
         a.on();
         drift();
-        a.sync(&server);
+        let synced = a.sync(&server);
         b.sync(&server);
 
         let uid = a.profile(name).unwrap().uid.unwrap();
@@ -1530,28 +1571,28 @@ mod tests {
         );
         assert!(b.profile(name).is_some(), "{name} was deleted from B");
         assert_eq!(a.profile(name).unwrap().scope, Some(DspScope::Everywhere));
+        synced
     }
 
     #[test]
     fn a_shared_profile_set_for_a_built_in_output_stays_shared() {
         let _guard = lock();
-        stays_shared(vec![headphone()], "HD 650 (AutoEQ, oratory1990)", || {
-            Config::persist(|c| c.dsp.profiles[0].devices.push("Speaker".into())).unwrap();
+        stays_shared(vec![bass()], "Bass", || {
+            edit("Bass", |p| p.devices.push("Speaker".into()));
         });
     }
 
     #[test]
     fn a_shared_profile_given_an_impulse_response_stays_shared() {
         let _guard = lock();
-        let name = "HD 650 (AutoEQ, oratory1990)";
-        stays_shared(vec![headphone()], name, || {
-            let dir = crate::audio::dsp::profiles::dir(name);
+        stays_shared(vec![bass()], "Bass", || {
+            let dir = crate::audio::dsp::profiles::dir("Bass");
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(dir.join("48000.wav"), b"RIFF not really").unwrap();
             let rel = Path::new("dsp")
                 .join(dir.file_name().unwrap())
                 .join("48000.wav");
-            Config::persist(|c| c.dsp.profiles[0].impulses.push(rel)).unwrap();
+            edit("Bass", |p| p.impulses.push(rel));
         });
     }
 
@@ -1568,7 +1609,7 @@ mod tests {
         DspProfile {
             name: "Stack".into(),
             layers: vec![crate::config::DspLayer {
-                profile: headphone().name,
+                profile: "Bass".into(),
                 on: true,
             }],
             group,
@@ -1576,61 +1617,45 @@ mod tests {
         }
     }
 
+    fn add_local_layer(on: bool) {
+        Config::persist(|c| c.dsp.profiles.push(local_layer())).unwrap();
+        edit("Stack", |s| {
+            s.layers.push(crate::config::DspLayer {
+                profile: "Desk".into(),
+                on,
+            })
+        });
+    }
+
     #[test]
     fn a_shared_stack_given_a_layer_kept_here_stays_shared() {
         let _guard = lock();
-        stays_shared(vec![headphone(), stack(false)], "Stack", || {
-            Config::persist(|c| {
-                c.dsp.profiles.push(local_layer());
-                let s = c
-                    .dsp
-                    .profiles
-                    .iter_mut()
-                    .find(|p| p.name == "Stack")
-                    .unwrap();
-                s.layers.push(crate::config::DspLayer {
-                    profile: "Desk".into(),
-                    on: true,
-                });
-            })
-            .unwrap();
+        stays_shared(vec![bass(), stack(false)], "Stack", || {
+            add_local_layer(true)
         });
     }
 
     #[test]
     fn a_shared_group_given_a_member_kept_here_stays_shared() {
         let _guard = lock();
-        stays_shared(vec![headphone(), stack(true)], "Stack", || {
-            Config::persist(|c| {
-                c.dsp.profiles.push(local_layer());
-                let s = c
-                    .dsp
-                    .profiles
-                    .iter_mut()
-                    .find(|p| p.name == "Stack")
-                    .unwrap();
-                s.layers.push(crate::config::DspLayer {
-                    profile: "Desk".into(),
-                    on: false,
-                });
-            })
-            .unwrap();
+        stays_shared(vec![bass(), stack(true)], "Stack", || {
+            add_local_layer(false)
         });
     }
 
     /// A profile synced by a build that left its scope to be worked out, and
     /// whose worked-out scope changed before this sync, is set back to
-    /// everywhere rather than deleted.
+    /// everywhere as it is: nothing is deleted, and nothing taken again.
     #[test]
     fn a_synced_profile_that_drifted_before_this_build_stays_shared() {
         let _guard = lock();
-        stays_shared(vec![headphone()], "HD 650 (AutoEQ, oratory1990)", || {
-            Config::persist(|c| {
-                c.dsp.profiles[0].scope = None;
-                c.dsp.profiles[0].devices.push("Speaker".into());
-            })
-            .unwrap();
+        let synced = stays_shared(vec![bass()], "Bass", || {
+            edit("Bass", |p| {
+                p.scope = None;
+                p.devices.push("Speaker".into());
+            });
         });
+        assert_eq!(synced.applied, 0, "kept as it was, not restored");
     }
 
     /// A profile missing here without having been deleted, as after a
@@ -1639,26 +1664,66 @@ mod tests {
     #[test]
     fn a_profile_missing_without_a_deletion_is_restored_not_deleted() {
         let _guard = lock();
-        let name = "HD 650 (AutoEQ, oratory1990)";
-        let server = Server::new();
-        let (a, b) = (Device::new(), Device::new());
+        let (server, a, b) = shared(vec![bass()]);
         a.on();
-        Config::persist(|c| c.dsp.profiles.push(headphone())).unwrap();
+        Config::persist(|c| c.dsp.profiles.retain(|p| p.name != "Bass")).unwrap();
         a.sync(&server);
         b.sync(&server);
 
-        a.on();
-        Config::persist(|c| c.dsp.profiles.clear()).unwrap();
-        a.sync(&server);
-        b.sync(&server);
-
-        assert!(b.profile(name).is_some(), "still on B");
-        assert_eq!(rows::live_docs(&server.conn, USER).unwrap().len(), 1);
+        assert!(b.profile("Bass").is_some(), "still on B");
         assert_eq!(
-            a.profile(name).unwrap().filters,
-            vec![band(3.0)],
+            a.profile("Bass").unwrap().filters,
+            vec![band(4.0)],
             "back on A"
         );
+    }
+
+    /// A deletion recorded after this sync looked at the profiles, as one
+    /// made while it runs, is kept until a sync sends it.
+    #[test]
+    fn a_deletion_made_while_syncing_is_sent_by_the_next_sync() {
+        let _guard = lock();
+        let (server, a, b) = shared(vec![bass()]);
+        a.on();
+        let uid = a.profile("Bass").unwrap().uid.unwrap();
+        // Recorded, with the profile still there when the sync looked.
+        Config::persist(|c| c.dsp.removed.push(uid.clone())).unwrap();
+        a.sync(&server);
+        a.on();
+        assert_eq!(removed(), vec![uid.clone()], "not sent yet, still listed");
+
+        Config::persist(|c| c.dsp.profiles.retain(|p| p.name != "Bass")).unwrap();
+        a.sync(&server);
+        b.sync(&server);
+        assert!(b.profile("Bass").is_none(), "deleted on B");
+        assert!(a.profile("Bass").is_none(), "not restored on A");
+        a.on();
+        assert!(removed().is_empty());
+    }
+
+    /// Deleting a profile whose last edit the server refused still deletes
+    /// it everywhere, and it does not come back.
+    #[test]
+    fn deleting_a_profile_whose_edit_was_refused_deletes_it() {
+        let _guard = lock();
+        let (server, a, b) = shared(vec![bass()]);
+        a.on();
+        let dir = crate::audio::dsp::profiles::dir("Bass");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::File::create(dir.join("48000.wav"))
+            .unwrap()
+            .set_len(MAX_FILE + 1)
+            .unwrap();
+        a.sync(&server);
+        a.on();
+        assert!(refusal(&a.db, "Bass").is_some());
+
+        crate::audio::dsp::profiles::remove("Bass").unwrap();
+        a.sync(&server);
+        a.sync(&server);
+        b.sync(&server);
+        assert!(a.profile("Bass").is_none(), "not restored on A");
+        assert!(b.profile("Bass").is_none(), "deleted on B");
     }
 
     /// Files travel by content: an impulse response arrives byte for byte,

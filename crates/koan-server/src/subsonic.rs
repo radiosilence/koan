@@ -3785,13 +3785,22 @@ fn dsp_named_files(
     Ok(named)
 }
 
-/// Drop the files no profile names any more.
+/// Drop the files no profile names any more, a profile deleted in the last
+/// thirty days included, and forget the documents of older deletions.
 fn dsp_collect(
     conn: &rusqlite::Connection,
     user: i64,
 ) -> Result<(), koan_core::db::connection::DbError> {
+    use koan_core::remote::dsp_sync::SyncDoc;
+    let since = chrono::Utc::now().timestamp_millis() - queries::dsp::DELETED_KEPT_MS;
+    queries::dsp::expire_deleted(conn, user, since)?;
     let named = dsp_named_files(conn, user, None, None)?;
-    let keep: std::collections::HashSet<String> = named.into_keys().collect();
+    let mut keep: std::collections::HashSet<String> = named.into_keys().collect();
+    for (_, _, json) in queries::dsp::deleted_docs(conn, user, since)? {
+        if let Ok(doc) = SyncDoc::parse(&json) {
+            keep.extend(doc.files.into_iter().map(|f| f.sha256));
+        }
+    }
     queries::dsp::keep_files(conn, user, &keep)?;
     Ok(())
 }

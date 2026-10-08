@@ -395,7 +395,9 @@ was made, so a change made offline keeps its time. Deleting an EQ reaches
 every device; so does moving an EQ to one device, which removes it from the
 others. Nothing else does: an EQ missing from a device without having been
 deleted there, after a config file that did not load or was edited by hand,
-is taken from the server again rather than deleted everywhere. An EQ elsewhere that played it reports it missing. The same
+is taken from the server again rather than deleted everywhere. The server
+keeps a deleted EQ, its files included, for thirty days after the deletion,
+so one deleted by mistake can still be recovered from it. An EQ elsewhere that played it reports it missing. The same
 EQ made on two devices before either synced, such as one headphone
 installed from AutoEQ on both, becomes one EQ. "The same" is what they
 play, not how they are written: bands in another order, or a gain a few

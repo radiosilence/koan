@@ -65,6 +65,9 @@ pub fn changes(
 
 /// Keep `doc` (`None` to delete) as `uid`'s, unless the copy here was edited
 /// after `edited_at`: the last edit wins, whichever device made it.
+///
+/// A deletion keeps the last document as `deleted_doc`: devices are told it
+/// is gone, but the server can still give it back. A later save clears it.
 pub fn save(
     conn: &Connection,
     user: i64,
@@ -88,10 +91,44 @@ pub fn save(
     conn.execute(
         "INSERT INTO dsp_profiles (user_id, uid, rev, edited_at, doc) VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT (user_id, uid) DO UPDATE
-            SET rev = excluded.rev, edited_at = excluded.edited_at, doc = excluded.doc",
+            SET rev = excluded.rev, edited_at = excluded.edited_at, doc = excluded.doc,
+                deleted_doc = CASE WHEN excluded.doc IS NULL
+                                   THEN COALESCE(dsp_profiles.doc, dsp_profiles.deleted_doc)
+                              END",
         params![user, uid, rev, edited_at, doc],
     )?;
     Ok(Saved { rev, stored: true })
+}
+
+/// How long the server keeps a deleted profile's document and files.
+pub const DELETED_KEPT_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+
+/// The account's profiles deleted since `since` (ms), with the document each
+/// had: uid, when it was deleted, and the document. Newest first.
+pub fn deleted_docs(
+    conn: &Connection,
+    user: i64,
+    since: i64,
+) -> Result<Vec<(String, i64, String)>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT uid, edited_at, deleted_doc FROM dsp_profiles
+          WHERE user_id = ?1 AND doc IS NULL AND deleted_doc IS NOT NULL AND edited_at >= ?2
+          ORDER BY edited_at DESC",
+    )?;
+    Ok(stmt
+        .query_map(params![user, since], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+/// Forget the documents of profiles deleted before `before` (ms).
+pub fn expire_deleted(conn: &Connection, user: i64, before: i64) -> Result<usize, DbError> {
+    Ok(conn.execute(
+        "UPDATE dsp_profiles SET deleted_doc = NULL
+          WHERE user_id = ?1 AND doc IS NULL AND deleted_doc IS NOT NULL AND edited_at < ?2",
+        params![user, before],
+    )?)
 }
 
 /// The documents of the account's profiles that are not deleted.
@@ -322,6 +359,32 @@ mod tests {
         )
         .unwrap();
         (conn, 1)
+    }
+
+    /// A deletion tells devices the profile is gone and keeps its last
+    /// document, deleted twice included; saving it again clears it, and an
+    /// old one is forgotten.
+    #[test]
+    fn a_deleted_profile_keeps_its_last_document() {
+        let (conn, user) = db();
+        let c = &conn;
+        save(c, user, "a", 100, Some("v1")).unwrap();
+        save(c, user, "a", 200, None).unwrap();
+        save(c, user, "a", 300, None).unwrap();
+        let (rows, _) = changes(c, user, 0).unwrap();
+        assert_eq!(rows[0].doc, None, "devices see it deleted");
+        assert_eq!(
+            deleted_docs(c, user, 0).unwrap(),
+            vec![("a".to_string(), 300, "v1".to_string())]
+        );
+
+        save(c, user, "a", 400, Some("v2")).unwrap();
+        assert!(deleted_docs(c, user, 0).unwrap().is_empty());
+
+        save(c, user, "a", 500, None).unwrap();
+        assert_eq!(deleted_docs(c, user, 450).unwrap().len(), 1);
+        assert_eq!(expire_deleted(c, user, 600).unwrap(), 1);
+        assert!(deleted_docs(c, user, 0).unwrap().is_empty());
     }
 
     /// The later edit is kept whichever arrives first, deletions included,
