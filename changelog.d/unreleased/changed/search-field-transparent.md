@@ -1,0 +1,1 @@
+- **The kōan theme's search field has no box.** It sits on the page's ground; the toolbar's filter field no longer puts its text under the magnifier when focused.

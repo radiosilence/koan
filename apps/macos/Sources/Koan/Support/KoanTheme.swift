@@ -1053,10 +1053,10 @@ extension View {
         modifier(KoanFormRole())
     }
 
-    /// A text field: the theme's type on a `surface` field, square, no bezel.
-    /// The platform's field otherwise.
-    func koanField() -> some View {
-        modifier(KoanFieldRole(shown: nil))
+    /// A text field: the theme's type on a `surface` field, square, no bezel,
+    /// or on nothing at all without `ground`. The platform's field otherwise.
+    func koanField(ground: Bool = true) -> some View {
+        modifier(KoanFieldRole(shown: nil, ground: ground))
     }
 
     /// `koanField()` for a field a television shows, given what it holds and
@@ -2361,6 +2361,7 @@ struct KoanFieldShown {
 
 private struct KoanFieldRole: ViewModifier {
     let shown: KoanFieldShown?
+    var ground = true
     #if os(tvOS)
     /// A plain field draws no focus of its own on a television; the ring is
     /// all that says which field the remote is on.
@@ -2401,7 +2402,7 @@ private struct KoanFieldRole: ViewModifier {
             // Inside the field's own frame. A style's background reaches
             // through every safe-area edge the field touches, and paints
             // whatever bar or inset lies beyond it.
-            .background(Color.koanSurface, ignoresSafeAreaEdges: [])
+            .background(ground ? Color.koanSurface : Color.clear, ignoresSafeAreaEdges: [])
             #if os(tvOS)
             .koanFocusRing(focused)
             #endif
@@ -2681,8 +2682,8 @@ private struct SwipeBack: UIViewControllerRepresentable {
 #endif
 
 extension View {
-    /// A page's search field. In the theme on iOS and the Mac, a flat `surface`
-    /// field under the title with a bare clear button, in place of the
+    /// A page's search field. In the theme on iOS and the Mac, a bare field on
+    /// the page's ground under the title with a bare clear button, in place of the
     /// platform's glass capsule (iOS) or glass toolbar item (the Mac).
     /// `.searchable` everywhere else. `just theme-leaks` flags `.searchable`
     /// outside this role.
@@ -2713,7 +2714,7 @@ extension View {
 
 #if !os(tvOS)
 /// The theme's search field: a glyph, the field and, once there is something
-/// to clear, a bare clear button, on `surface`. Given a focus binding, the
+/// to clear, a bare clear button, on the page's ground. Given a focus binding, the
 /// field takes it, for callers that move the keyboard to it.
 struct KoanSearchField: View {
     @Binding var text: String
@@ -2745,7 +2746,7 @@ struct KoanSearchField: View {
                 .accessibilityLabel("Clear")
             }
         }
-        .koanField()
+        .koanField(ground: false)
     }
 
     @ViewBuilder

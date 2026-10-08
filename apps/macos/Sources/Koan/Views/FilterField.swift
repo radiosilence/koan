@@ -27,7 +27,7 @@ struct FilterField: NSViewRepresentable {
     var focusToken = 0
 
     func makeNSView(context: Context) -> NSSearchField {
-        let field = NSSearchField()
+        let field = KoanTheme.isOn ? FlatSearchField() : NSSearchField()
         field.placeholderString = placeholder
         field.delegate = context.coordinator
         field.sendsSearchStringImmediately = true
@@ -85,6 +85,34 @@ struct FilterField: NSViewRepresentable {
         func controlTextDidChange(_ notification: Notification) {
             guard let field = notification.object as? NSSearchField else { return }
             text.wrappedValue = field.stringValue
+        }
+    }
+}
+
+/// An `NSSearchField` without its bezel. Unbezeled, the cell still draws its
+/// placeholder clear of the magnifier but opens the field editor across its
+/// whole frame, so focusing it put the text and caret under the glyph.
+private final class FlatSearchField: NSSearchField {
+    override class var cellClass: AnyClass? {
+        get { Cell.self }
+        set {}
+    }
+
+    final class Cell: NSSearchFieldCell {
+        override func edit(
+            withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, event: NSEvent?
+        ) {
+            super.edit(withFrame: searchTextRect(forBounds: rect), in: controlView, editor: textObj, delegate: delegate, event: event)
+        }
+
+        override func select(
+            withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?,
+            start selStart: Int, length selLength: Int
+        ) {
+            super.select(
+                withFrame: searchTextRect(forBounds: rect), in: controlView, editor: textObj, delegate: delegate,
+                start: selStart, length: selLength
+            )
         }
     }
 }
