@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.61.8
+
+### Changed
+
+- **Tighter lists on a phone.** The queue, playlists, search and the library's lists use the album page's row spacing, so a screen holds about twice as many tracks.
+- **Even spacing on the Mac's lists.** Album, playlist and queue pages share one 16pt margin for the header's side and top and for the gap above the first track, and track rows are tighter.
+
 ## 0.61.7
 
 ### Changed
