@@ -1,0 +1,1 @@
+- **Glyphs on navigation in the kōan theme.** With "Show icons" on, the iPad sidebar, the Library section and Settings lists on iPhone and iPad, and the Mac Settings tabs draw each place's glyph. The phone's tab bar and the television stay words alone.

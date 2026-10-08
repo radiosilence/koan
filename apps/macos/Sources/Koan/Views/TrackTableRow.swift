@@ -439,7 +439,8 @@ final class TrackTableRow: TableCell, TableRow {
         let durationHeight = lineHeight(Self.numberFont)
         duration.frame = CGRect(x: right - durationWidth, y: (height - durationHeight) / 2, width: durationWidth, height: durationHeight)
         right -= durationWidth + Self.spacing
-        if !quality.stringValue.isEmpty {
+        // Kept when a track has no format, so the marks beside it line up.
+        if context.columns.contains(.quality) {
             let qualityHeight = lineHeight(Self.qualityFont)
             quality.frame = CGRect(
                 x: right - Self.qualityWidth, y: (height - qualityHeight) / 2,

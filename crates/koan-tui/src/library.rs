@@ -418,7 +418,7 @@ impl Widget for LibraryView<'_> {
 
         if self.state.nodes.is_empty() {
             let msg = if self.state.filter.is_empty() {
-                " empty — run koan scan"
+                " empty — set library.folders, then run koan scan"
             } else {
                 " no matches"
             };

@@ -44,120 +44,138 @@ struct DspProfilePage: View {
     @State private var channel: UInt16 = 0
     /// Going to one list from two that differ: which to keep is asked.
     @State private var askingKeep = false
+    /// The band figure being typed.
+    @FocusState private var bandFocus: BandField?
+
+    /// On a phone the keyboard, the graph and the page share the screen: the
+    /// graph goes short while a figure is typed, so its row stays in sight.
+    private var typing: Bool {
+        #if os(iOS)
+        bandFocus != nil
+        #else
+        false
+        #endif
+    }
 
     var body: some View {
-        KoanForm {
-            if let d = detail {
-                Section {
-                    ChainSummaryCard(corrects: d.corrects, baked: d.correctsBaked, tunings: d.tunings)
-                    if let twice = d.correctsTwice {
-                        Label(twice, koan: Icon.warningFilled)
-                            .foregroundStyle(KoanTheme.style(.bad, system: .orange))
-                    }
-                }
-            }
-            Section {
-                TextField("Name", text: $editingName)
-                    .koanField()
-                    .onSubmit(rename)
-            }
-            if let message = notice ?? dsp.lastError {
-                Section {
-                    Label(message, koan: Icon.warningFilled)
-                        .foregroundStyle(KoanTheme.style(.bad, system: .orange))
-                }
-            }
-
-            if let d = detail {
-                if let layout = d.channels, !d.readOnly {
-                    channels(layout)
-                }
-                #if os(tvOS)
-                if let r = response {
+        ScrollViewReader { proxy in
+            KoanForm {
+                if let d = detail {
                     Section {
-                        EqEditor(
-                            dsp: dsp, name: name, detail: d, response: r, parts: onCorrection(d, r),
-                            channel: d.channels?.stereo == true ? channel : nil
-                        )
-                    }
-                }
-                #endif
-                #if !os(tvOS)
-                if !d.readOnly, before != now || (d.canRevert && d.edited) {
-                    keeping(d)
-                }
-                #endif
-                if let problem = d.problem {
-                    Section {
-                        Label(problem, koan: Icon.warningFilled)
-                            .foregroundStyle(KoanTheme.style(.bad, system: .orange))
-                    }
-                }
-
-                Section {
-                    if d.devices.isEmpty {
-                        Text("No output yet")
-                            .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                            .koanCase()
-                    }
-                    ForEach(d.devices, id: \.self) { Text(dsp.label($0)) }
-                    if let device = dsp.overview?.device {
-                        // The app's words follow the theme; the device's name
-                        // keeps its case.
-                        if d.devices.contains(device) {
-                            Button { dsp.use(nil) } label: {
-                                Text("\(KoanTheme.label("Stop using for")) \(dsp.label(device))").textCase(nil)
-                            }
-                        } else {
-                            Button { dsp.use(d.name) } label: {
-                                Text("\(KoanTheme.label("Use for")) \(dsp.label(device))").textCase(nil)
-                            }
+                        ChainSummaryCard(corrects: d.corrects, baked: d.correctsBaked, tunings: d.tunings)
+                        if let twice = d.correctsTwice {
+                            Label(twice, koan: Icon.warningFilled)
+                                .foregroundStyle(KoanTheme.style(.bad, system: .orange))
                         }
                     }
-                } header: {
-                    KoanSectionHeader("Used for")
+                }
+                Section {
+                    TextField("Name", text: $editingName)
+                        .koanField()
+                        .onSubmit(rename)
+                }
+                if let message = notice ?? dsp.lastError {
+                    Section {
+                        Label(message, koan: Icon.warningFilled)
+                            .foregroundStyle(KoanTheme.style(.bad, system: .orange))
+                    }
                 }
 
-                // A stack with nothing of its own is what its layers are.
-                if d.layers.isEmpty || !d.bands.isEmpty || !d.impulses.isEmpty {
-                    RoleSection(dsp: dsp, detail: d, madeForChoices: madeForChoices,
-                                targets: targets, suggestion: suggestion, previews: previews,
-                                adding: $addingTarget, splitting: $splitting)
-                }
-                if d.group {
-                    GroupSection(dsp: dsp, detail: d)
+                if let d = detail {
+                    if let layout = d.channels, !d.readOnly {
+                        channels(layout)
+                    }
+                    #if os(tvOS)
+                    if let r = response {
+                        Section {
+                            EqEditor(
+                                dsp: dsp, name: name, detail: d, response: r, parts: onCorrection(d, r),
+                                channel: d.channels?.stereo == true ? channel : nil
+                            )
+                        }
+                    }
+                    #endif
+                    #if !os(tvOS)
+                    if !d.readOnly, before != now || (d.canRevert && d.edited) {
+                        keeping(d)
+                    }
+                    #endif
+                    if let problem = d.problem {
+                        Section {
+                            Label(problem, koan: Icon.warningFilled)
+                                .foregroundStyle(KoanTheme.style(.bad, system: .orange))
+                        }
+                    }
+
+                    Section {
+                        if d.devices.isEmpty {
+                            Text("No output yet")
+                                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                                .koanCase()
+                        }
+                        ForEach(d.devices, id: \.self) { Text(dsp.label($0)) }
+                        if let device = dsp.overview?.device {
+                            // The app's words follow the theme; the device's name
+                            // keeps its case.
+                            if d.devices.contains(device) {
+                                Button { dsp.use(nil) } label: {
+                                    Text("\(KoanTheme.label("Stop using for")) \(dsp.label(device))").textCase(nil)
+                                }
+                            } else {
+                                Button { dsp.use(d.name) } label: {
+                                    Text("\(KoanTheme.label("Use for")) \(dsp.label(device))").textCase(nil)
+                                }
+                            }
+                        }
+                    } header: {
+                        KoanSectionHeader("Used for")
+                    }
+
+                    // A stack with nothing of its own is what its layers are.
+                    if d.layers.isEmpty || !d.bands.isEmpty || !d.impulses.isEmpty {
+                        RoleSection(dsp: dsp, detail: d, madeForChoices: madeForChoices,
+                                    targets: targets, suggestion: suggestion, previews: previews,
+                                    adding: $addingTarget, splitting: $splitting)
+                    }
+                    if d.group {
+                        GroupSection(dsp: dsp, detail: d)
+                    } else {
+                        LayersSection(dsp: dsp, detail: d)
+                    }
+
+                    // A correction is finished as installed; what it is made of
+                    // is there for those who look. A tuning is its bands.
+                    if d.role != .tuning {
+                        Section {
+                            Button {
+                                withAnimation { showingMore.toggle() }
+                            } label: {
+                                HStack {
+                                    Text(showingMore ? "Less" : "Bands, sync and more")
+                                    Spacer()
+                                    KoanIcon(Icon.disclosure)
+                                        .rotationEffect(.degrees(showingMore ? 90 : 0))
+                                        .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    if d.role == .tuning || showingMore {
+                        more(d)
+                    }
+
+                    Section {
+                        Button("Delete", role: .destructive) { confirmingDelete = true }
+                    }
                 } else {
-                    LayersSection(dsp: dsp, detail: d)
+                    ProgressView()
                 }
-
-                // A correction is finished as installed; what it is made of
-                // is there for those who look. A tuning is its bands.
-                if d.role != .tuning {
-                    Section {
-                        Button {
-                            withAnimation { showingMore.toggle() }
-                        } label: {
-                            HStack {
-                                Text(showingMore ? "Less" : "Bands, sync and more")
-                                Spacer()
-                                KoanIcon(Icon.disclosure)
-                                    .rotationEffect(.degrees(showingMore ? 90 : 0))
-                                    .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                if d.role == .tuning || showingMore {
-                    more(d)
-                }
-
-                Section {
-                    Button("Delete", role: .destructive) { confirmingDelete = true }
-                }
-            } else {
-                ProgressView()
+            }
+            .onChange(of: bandFocus?.index) { _, index in
+                guard let index else { return }
+                withAnimation(KoanTheme.Motion.normal) { proxy.scrollTo(BandField.row(index)) }
             }
         }
         #if !os(tvOS)
@@ -167,14 +185,19 @@ struct DspProfilePage: View {
             if let d = detail, let r = response {
                 EqEditor(
                     dsp: dsp, name: name, detail: d, response: r, parts: onCorrection(d, r),
-                    channel: d.channels?.stereo == true ? channel : nil
+                    channel: d.channels?.stereo == true ? channel : nil,
+                    compact: typing
                 )
                     .padding(.horizontal, KoanTheme.Space.l)
-                    .padding(.vertical, KoanTheme.Space.m)
+                    .padding(.vertical, typing ? KoanTheme.Space.s : KoanTheme.Space.m)
                     .koanMaterial(.bar)
                     .koanRule(.bottom)
+                    .koanAnimation(KoanTheme.Motion.normal, value: typing)
             }
         }
+        .decimalPadDone($bandFocus, order: detail.map {
+            BandTable.fields($0.bands, channel: $0.channels?.stereo == true ? channel : nil, readOnly: $0.readOnly)
+        } ?? [])
         #endif
         .navigationTitle(name)
         .task(id: "\(name)\u{0}\(dsp.stamp)") { await load() }
@@ -334,7 +357,8 @@ struct DspProfilePage: View {
 
         BandTable(
             dsp: dsp, profile: name, bands: d.bands, readOnly: d.readOnly,
-            channel: d.channels?.stereo == true ? channel : nil
+            channel: d.channels?.stereo == true ? channel : nil,
+            focus: $bandFocus
         )
 
         Section {

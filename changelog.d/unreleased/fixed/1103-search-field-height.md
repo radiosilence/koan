@@ -1,0 +1,1 @@
+- **Search field.** The theme's search field no longer grows taller once text is typed into it.

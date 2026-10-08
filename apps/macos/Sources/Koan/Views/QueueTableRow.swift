@@ -70,6 +70,11 @@ final class QueueTableRow: TableCell, TableRow {
     private static let codecFont = NSFont.role(.fine, system: NSFont.monospacedSystemFont(
         ofSize: NSFont.preferredFont(forTextStyle: .caption2).pointSize, weight: .regular
     ))
+    /// One width for every codec, the widest the library writes, so the heart
+    /// and the availability mark beside it line up down the list.
+    private static let codecWidth = ["VORBIS", "FLAC", "ALAC", "OPUS", "AIFF", "MP3", "AAC", "WAV"]
+        .map { ceil(($0 as NSString).size(withAttributes: [.font: codecFont]).width) + 5 }
+        .max() ?? 0
     /// Wide enough for an hour or more ("1:02:34") in whichever face the rows
     /// are drawn in; never narrower than the column was.
     private static let durationWidth = max(
@@ -119,6 +124,7 @@ final class QueueTableRow: TableCell, TableRow {
         number.alignment = .right
         artist.font = Self.captionFont
         codec.font = Self.codecFont
+        codec.alignment = .right
         duration.font = Self.numberFont
         duration.alignment = .right
         detail.font = Self.detailFont
@@ -358,12 +364,9 @@ final class QueueTableRow: TableCell, TableRow {
         let numberHeight = lineHeight(Self.numberFont)
         duration.frame = CGRect(x: right - durationWidth, y: (height - numberHeight) / 2, width: durationWidth, height: numberHeight)
         right -= durationWidth + 10
-        if !codec.stringValue.isEmpty {
-            let codecWidth = ceil((codec.stringValue as NSString).size(withAttributes: [.font: Self.codecFont]).width) + 5
-            let codecHeight = lineHeight(Self.codecFont)
-            codec.frame = CGRect(x: right - codecWidth, y: (height - codecHeight) / 2, width: codecWidth, height: codecHeight)
-            right -= codecWidth + 10
-        }
+        let codecHeight = lineHeight(Self.codecFont)
+        codec.frame = CGRect(x: right - Self.codecWidth, y: (height - codecHeight) / 2, width: Self.codecWidth, height: codecHeight)
+        right -= Self.codecWidth + 10
         heart.frame = Symbol.frame(of: heartImage, centredIn: CGRect(x: right - 16, y: 0, width: 16, height: height))
         right -= 16 + 10
         availability.frame = CGRect(x: right - 14, y: (height - 14) / 2, width: 14, height: 14)

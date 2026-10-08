@@ -132,19 +132,32 @@ struct KoanGlyph: @unchecked Sendable {
 extension KoanGlyph {
     @MainActor private static var images: [String: NSImage] = [:]
 
-    /// The glyph as a template image beside type of `pointSize`, drawn at
-    /// whatever resolution it lands on. Tinted where it is used, as a
-    /// symbol is.
+    /// The glyph as a bitmap template image beside type of `pointSize`. A
+    /// drawing-handler image reaches an `NSMenu` untinted and black; a bitmap
+    /// template is tinted as a symbol is.
     @MainActor
     func image(pointSize: CGFloat, layer: Layer = .all) -> NSImage {
         let key = "\(name) \(pointSize) \(layer)"
         if let held = Self.images[key] { return held }
         let side = Self.side(for: pointSize)
-        let image = NSImage(size: NSSize(width: side, height: side), flipped: true) { rect in
-            guard let context = NSGraphicsContext.current?.cgContext else { return false }
-            draw(in: context, rect: rect, pointSize: pointSize, colour: NSColor.black.cgColor, layer: layer)
-            return true
-        }
+        let scale: CGFloat = 3
+        let pixels = Int((side * scale).rounded(.up))
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels, bitsPerSample: 8,
+            samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+            bytesPerRow: 0, bitsPerPixel: 0
+        ) else { return NSImage(size: NSSize(width: side, height: side)) }
+        rep.size = NSSize(width: side, height: side)
+        guard let graphics = NSGraphicsContext(bitmapImageRep: rep) else { return NSImage(size: rep.size) }
+        let context = graphics.cgContext
+        context.translateBy(x: 0, y: side)
+        context.scaleBy(x: 1, y: -1)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = graphics
+        draw(in: context, rect: CGRect(x: 0, y: 0, width: side, height: side), pointSize: pointSize, colour: NSColor.black.cgColor, layer: layer)
+        NSGraphicsContext.restoreGraphicsState()
+        let image = NSImage(size: rep.size)
+        image.addRepresentation(rep)
         image.isTemplate = true
         Self.images[key] = image
         return image

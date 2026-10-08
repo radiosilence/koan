@@ -1,0 +1,1 @@
+- **Mac sidebar and filters in the kōan theme.** The sidebar draws each place's glyph again when icons are on, and the library filter popover uses the theme's toggles, menus, fields and buttons in place of the system form.

@@ -51,9 +51,11 @@ struct SettingsView: View {
             KoanLabel(title, icon: symbol, style: .row)
         }
         .listLink()
-        // Navigation is words alone in the theme, as the tabs are; the
-        // platform's look keeps its symbols.
+        // A television's lists are words alone, as its tabs are; elsewhere
+        // the glyph follows "Show icons".
+        #if os(tvOS)
         .environment(\.koanIcons, false)
+        #endif
     }
     #endif
 
@@ -81,7 +83,7 @@ struct SettingsView: View {
             Tab(id: "devices", title: "Devices", icon: Icon.devices),
         ]
         if ServerCapabilitySections.shown(model, mirror) {
-            tabs.append(Tab(id: "server-capabilities", title: "Server Capabilities", icon: Icon.extensions))
+            tabs.append(Tab(id: "server-capabilities", title: "Integrations", icon: Icon.extensions))
         }
         tabs.append(Tab(id: "appearance", title: "Appearance", icon: Icon.appearance))
         return tabs
@@ -119,7 +121,7 @@ struct SettingsView: View {
                                 ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
                                     Button { pane = tab.id } label: {
                                         KoanTabItem(
-                                            title: tab.title, selected: pane == tab.id,
+                                            title: tab.title, icon: tab.icon, selected: pane == tab.id,
                                             position: (index, tabs.count)
                                         )
                                     }
@@ -200,7 +202,7 @@ struct SettingsView: View {
                     }
                     #if !os(tvOS)
                     if ServerCapabilitySections.shown(model, mirror) {
-                        pane("Server Capabilities", Icon.extensions) {
+                        pane("Integrations", Icon.extensions) {
                             ServerCapabilitiesSettings()
                                 .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                         }
@@ -799,7 +801,7 @@ private struct PeoplePane: View {
     }
 }
 
-// MARK: - Server capabilities
+// MARK: - Integrations
 
 /// What the server does on the account's behalf: scrobbling to ListenBrainz,
 /// and serving assistants over MCP. Each where the server has it.
