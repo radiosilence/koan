@@ -162,6 +162,27 @@ extension KoanGlyph {
         Self.images[key] = image
         return image
     }
+
+    @MainActor private static var dynamicImages: [String: NSImage] = [:]
+
+    /// The glyph for SwiftUI, drawn in the label colour of whatever appearance
+    /// it lands in. An `NSMenu` tints only SF Symbols: a template made any
+    /// other way, by handler or from a bitmap, reaches it black. SwiftUI views
+    /// still tint it by its alpha under `.renderingMode(.template)`; views
+    /// that tint an `NSImage` themselves use `image(pointSize:layer:)`.
+    @MainActor
+    func dynamicImage(pointSize: CGFloat, layer: Layer = .all) -> NSImage {
+        let key = "\(name) \(pointSize) \(layer)"
+        if let held = Self.dynamicImages[key] { return held }
+        let side = Self.side(for: pointSize)
+        let image = NSImage(size: NSSize(width: side, height: side), flipped: true) { rect in
+            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+            draw(in: context, rect: rect, pointSize: pointSize, colour: NSColor.labelColor.cgColor, layer: layer)
+            return true
+        }
+        Self.dynamicImages[key] = image
+        return image
+    }
 }
 #else
 extension KoanGlyph {

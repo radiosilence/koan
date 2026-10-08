@@ -1,0 +1,1 @@
+- **Context-menu icons follow the menu text colour.** The kōan glyphs still drew black in the Mac app's menus.

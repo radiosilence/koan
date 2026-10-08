@@ -166,7 +166,7 @@ extension Image {
             return
         }
         #if os(macOS)
-        self = Image(nsImage: glyph.image(pointSize: pointSize, layer: layer)).renderingMode(.template)
+        self = Image(nsImage: glyph.dynamicImage(pointSize: pointSize, layer: layer)).renderingMode(.template)
         #else
         self = Image(uiImage: glyph.image(pointSize: pointSize, layer: layer)).renderingMode(.template)
         #endif
