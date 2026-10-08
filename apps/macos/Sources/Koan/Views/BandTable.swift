@@ -181,9 +181,9 @@ private struct BandEditor: View {
             .tint(KoanTheme.style(.ink, system: .tint))
             .accessibilityLabel(BandTable.kinds.first { $0.id == kind }?.name ?? kind)
             .frame(maxWidth: .infinity, alignment: .leading)
-            NumberField(value: $freq, focus: focus, name: BandField(index: index, part: .freq), width: 72, digits: 0, commit: commit)
-            NumberField(value: $gain, focus: focus, name: BandField(index: index, part: .gain), width: 56, digits: 1, commit: commit)
-            NumberField(value: $q, focus: focus, name: BandField(index: index, part: .q), width: 50, digits: 2, commit: commit)
+            NumberField(value: $freq, focus: focus, name: BandField(index: index, part: .freq), width: 72, digits: 0, label: "Band \(number) frequency", commit: commit)
+            NumberField(value: $gain, focus: focus, name: BandField(index: index, part: .gain), width: 56, digits: 1, label: "Band \(number) gain", commit: commit)
+            NumberField(value: $q, focus: focus, name: BandField(index: index, part: .q), width: 50, digits: 2, label: "Band \(number) Q", commit: commit)
         }
         .onChange(of: focus.wrappedValue) { was, _ in if was?.index == index { commit() } }
         .onAppear(perform: read)
@@ -211,11 +211,14 @@ private struct NumberField<Field: Hashable>: View {
     let name: Field
     let width: CGFloat
     let digits: Int
+    /// What VoiceOver reads it as: the field has no title of its own.
+    let label: String
     let commit: () -> Void
 
     var body: some View {
         TextField("", value: $value, format: .number.precision(.fractionLength(0 ... digits)))
             .focused(focus, equals: name)
+            .accessibilityLabel(label)
             .multilineTextAlignment(.trailing)
             .monospacedDigit()
             .frame(width: width)
@@ -348,8 +351,8 @@ private struct PointEditor: View {
                 .monospacedDigit()
                 .frame(width: 32, alignment: .leading)
             Spacer()
-            NumberField(value: $hz, focus: focus, name: PointField(index: index, part: .hz), width: 80, digits: 1, commit: save)
-            NumberField(value: $db, focus: focus, name: PointField(index: index, part: .db), width: 64, digits: 1, commit: save)
+            NumberField(value: $hz, focus: focus, name: PointField(index: index, part: .hz), width: 80, digits: 1, label: "Point \(index + 1) frequency", commit: save)
+            NumberField(value: $db, focus: focus, name: PointField(index: index, part: .db), width: 64, digits: 1, label: "Point \(index + 1) gain", commit: save)
         }
         .onChange(of: focus.wrappedValue) { was, _ in if was?.index == index { save() } }
         .onAppear(perform: read)
