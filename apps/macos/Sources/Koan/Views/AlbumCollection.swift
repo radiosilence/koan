@@ -69,7 +69,7 @@ struct AlbumCollection: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let insets = NSEdgeInsets(top: self.insets.top, left: 0, bottom: self.insets.bottom, right: 0)
         if scroll.contentInsets.top != insets.top || scroll.contentInsets.bottom != insets.bottom {
-            scroll.contentInsets = insets
+            scroll.setContentInsets(insets)
             // The scroller runs up under the toolbar, as a SwiftUI scroll
             // view's does, and stops above the transport.
             scroll.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: insets.bottom, right: 0)

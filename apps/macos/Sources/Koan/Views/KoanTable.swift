@@ -161,7 +161,7 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         let current = scroll.contentInsets
         if current.top != content.top || current.left != content.left || current.bottom != content.bottom
             || current.right != content.right {
-            scroll.contentInsets = content
+            scroll.setContentInsets(content)
             // Up under the toolbar, as a SwiftUI scroll view's scroller runs,
             // and clear of the transport. The content's trailing inset already
             // brings it in from under the lyrics.
@@ -643,6 +643,19 @@ extension KoanTable.Coordinator: KoanTableActions {}
 protocol HoverableRow {
     func hover(at point: NSPoint?) -> Bool
     func hit(at point: NSPoint) -> RowHit
+}
+
+extension NSScrollView {
+    /// Sets the insets and keeps the content where it was relative to the top
+    /// inset. AppKit leaves the clip view's origin alone, so a toolbar that
+    /// grows or settles after the first layout, or a resize that changes it,
+    /// would otherwise leave the first row under the toolbar.
+    func setContentInsets(_ insets: NSEdgeInsets) {
+        let fromTop = contentView.bounds.minY + contentInsets.top
+        contentInsets = insets
+        contentView.scroll(to: NSPoint(x: contentView.bounds.minX, y: fromTop - insets.top))
+        reflectScrolledClipView(contentView)
+    }
 }
 
 /// The page's safe area — the toolbar, the floating sidebar, the transport —

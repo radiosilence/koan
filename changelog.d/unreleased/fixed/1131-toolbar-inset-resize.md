@@ -1,0 +1,1 @@
+- **Mac pages after a resize.** The first row of an album grid, artist list or track list no longer ends up under the toolbar when the window is resized or the toolbar settles after the first layout; the scroll position now follows the top inset.

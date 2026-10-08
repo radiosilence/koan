@@ -100,7 +100,7 @@ struct MixedCollection: NSViewRepresentable {
         let content = NSEdgeInsets(top: insets.top, left: 0, bottom: insets.bottom, right: 0)
         let current = scroll.contentInsets
         if current.top != content.top || current.bottom != content.bottom {
-            scroll.contentInsets = content
+            scroll.setContentInsets(content)
             scroll.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: insets.bottom, right: 0)
         }
         if let layout = (scroll.documentView as? NSCollectionView)?.collectionViewLayout as? MixedLayout,
