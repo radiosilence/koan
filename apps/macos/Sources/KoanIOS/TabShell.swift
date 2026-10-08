@@ -31,6 +31,8 @@ struct TabShell: View {
     /// Taken as signed in until the engine says otherwise, so a signed-in TV
     /// never flashes the sign-in page on launch.
     @State private var signedIn = true
+    /// The tab of the theme's bar the remote is on, if it is on the bar.
+    @FocusState private var barFocus: TabID?
     #endif
     @Environment(\.horizontalSizeClass) private var width
     @State private var showingNowPlaying = false
@@ -89,6 +91,8 @@ struct TabShell: View {
             // The room's first page: what is playing, at the size a sofa reads.
             Tab(Self.title("Now Playing"), systemImage: "play.circle", value: TabID.nowPlaying) {
                 NowPlayingPage()
+                    .koanHidesSystemTabBar()
+                    .onExitCommand(perform: toBar)
             }
             #endif
             Tab(Self.title("Queue"), systemImage: Icon.queueSection, value: TabID.queue) {
@@ -165,6 +169,12 @@ struct TabShell: View {
         // Tabs across the top, as every television app has them; the sidebar
         // style folds them behind a pill a remote has to find first.
         .tabViewStyle(.tabBarOnly)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if KoanTheme.isOn {
+                TelevisionTabs(selection: tab, focus: $barFocus)
+            }
+        }
+        .defaultFocus($barFocus, selection)
         #else
         .modifier(AdaptableTabs(sidebar: sidebar))
         .onChange(of: sidebar) { regroup() }
@@ -288,6 +298,9 @@ struct TabShell: View {
             }
             .roomBackground()
             .koanHidesSystemTabBar()
+            #if os(tvOS)
+            .onExitCommand(perform: toBar)
+            #endif
             .environment(\.onStage, showing && routes.isEmpty)
             .navigationDestination(for: Route.self) { route in
                 RouteView(route: route)
@@ -482,6 +495,13 @@ struct TabShell: View {
     }
 
     #if os(tvOS)
+    /// Menu at a tab's root goes up to the tabs, as it does to the platform's
+    /// bar; Menu on the tabs, which take no exit command, leaves the app.
+    private var toBar: (() -> Void)? {
+        guard KoanTheme.isOn else { return nil }
+        return { barFocus = selection }
+    }
+
     private func checkSignedIn() async {
         signedIn = await app.engine.settings().remoteSignedIn
     }
@@ -617,6 +637,53 @@ private struct Transport: ViewModifier {
     }
 }
 
+#if os(tvOS)
+/// The theme's tabs on a television, across the top in place of the
+/// platform's glass capsule. They behave as its do: moving onto a tab chooses
+/// it, and coming up from a page lands on the tab showing.
+private struct TelevisionTabs: View {
+    @Binding var selection: TabShell.TabID
+    var focus: FocusState<TabShell.TabID?>.Binding
+    @Environment(\.koanAccent) private var accent
+    @Namespace private var underline
+
+    var body: some View {
+        HStack(spacing: KoanTheme.Space.l) {
+            ForEach(Array(Self.items.enumerated()), id: \.element.id) { index, item in
+                Button {
+                    selection = item.id
+                } label: {
+                    KoanTabItem(
+                        title: item.title, icon: item.icon, selected: selection == item.id,
+                        underline: underline, position: (index, Self.items.count)
+                    )
+                }
+                .buttonStyle(TelevisionChip())
+                .focused(focus, equals: item.id)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.bottom, KoanTheme.Space.l)
+        .focusSection()
+        .defaultFocus(focus, selection)
+        .onChange(of: focus.wrappedValue) { _, tab in
+            if let tab, tab != selection { selection = tab }
+        }
+        .koanAnimation(KoanTheme.Motion.normal, value: selection)
+        // The tab showing in the accent: a television sets no tint of its own.
+        .tint(accent.color)
+    }
+
+    private static let items: [(id: TabShell.TabID, title: String, icon: String)] = [
+        (.nowPlaying, "Now Playing", "play.circle"),
+        (.queue, "Queue", Icon.queueSection),
+        (.library, "Library", "music.note.house"),
+        (.search, "Search", Icon.search),
+        (.settings, "Settings", "gearshape"),
+    ]
+}
+#endif
+
 #if !os(tvOS)
 /// The playhead along the top of the theme's mini player: two points of the
 /// accent, handed to the render server as the seek bar's is.
@@ -688,9 +755,10 @@ private struct PadSidebar: View {
             }
             Section {
                 ForEach(sections, id: \.section) { item in
-                    row(.section(item.section), item.title, item.icon)
-                        .badge(item.section == .downloads ? mirror.activeTransfers : 0)
-                        .listRowSeparator(.hidden)
+                    row(
+                        .section(item.section), item.title, item.icon,
+                        badge: item.section == .downloads ? mirror.activeTransfers : 0
+                    )
                 }
             } header: {
                 KoanSectionHeader("Library")
@@ -724,8 +792,12 @@ private struct PadSidebar: View {
     }
 
     /// A row that is a tab: chosen again, back to its root, as a tab is.
-    /// A playlist's name is the person's, and keeps its case.
-    private func row(_ id: TabShell.TabID, _ title: String, _ icon: String, data: Bool = false) -> some View {
+    /// A playlist's name is the person's, and keeps its case. The badge goes
+    /// on before the row's role: on the row it replaces the row's background,
+    /// the selection's rule with it, by the list's own.
+    private func row(
+        _ id: TabShell.TabID, _ title: String, _ icon: String, data: Bool = false, badge: Int = 0
+    ) -> some View {
         Button {
             if selection == id { reselect(id) } else { selection = id }
         } label: {
@@ -740,6 +812,7 @@ private struct PadSidebar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .badge(badge)
         .koanNavRow(selected: selection == id)
         .listRowSeparator(.hidden)
     }
