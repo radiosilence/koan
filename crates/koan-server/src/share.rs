@@ -489,9 +489,9 @@ fn render(
         })
         .collect();
     let kicker = if artist.is_some() {
-        "Artist shared from koan"
+        "Artist shared from kōan"
     } else {
-        "Shared from koan"
+        "Shared from kōan"
     };
     format!(
         "<!doctype html><html lang=en><head><meta charset=utf-8>\
