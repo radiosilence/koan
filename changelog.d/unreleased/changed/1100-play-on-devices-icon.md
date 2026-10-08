@@ -1,0 +1,1 @@
+- **Play on uses the devices icon, and the filter and AirPlay buttons the kōan glyphs.** All three drew system symbols in the kōan theme.

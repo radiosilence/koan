@@ -232,6 +232,7 @@ struct NowPlayingSheet: View {
                 Spacer(minLength: 12)
                 RoutePicker()
                     .frame(width: 28, height: 28)
+                    .koanRoutePicker(Icon.airplay)
             }
         }
         .font(.role(.titleSmall, system: .title3))
