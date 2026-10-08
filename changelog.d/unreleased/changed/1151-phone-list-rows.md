@@ -1,0 +1,1 @@
+- **Tighter lists on a phone.** The queue, playlists, search and the library's lists use the album page's row spacing, so a screen holds about twice as many tracks.

@@ -10,6 +10,9 @@ import SwiftUI
 /// does. Rows only need a hit area and, where it applies, a drag payload.
 struct RowBehaviour: ViewModifier {
     let playable: Playable?
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var width
+    #endif
 
     func body(content: Content) -> some View {
         content
@@ -19,6 +22,9 @@ struct RowBehaviour: ViewModifier {
             .contentShape(Rectangle())
             .modifier(OptionalDrag(playable: playable))
             .washedRow()
+            #if os(iOS)
+            .listRowInsets(width == .compact ? RowMetrics.compactInsets : nil)
+            #endif
     }
 }
 

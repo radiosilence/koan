@@ -148,7 +148,7 @@ struct TrackListView: View {
                                 .rowSeparator(.hidden)
                                 .selectionDisabled()
                                 .washedRow()
-                                .listRowInsets(rowInsets)
+                                .listRowInsets(RowMetrics.compactInsets)
                                 .onAppear { headerShown = true }
                                 .onDisappear { headerShown = false }
                         }
@@ -160,7 +160,6 @@ struct TrackListView: View {
                                 allTrackIds: allTrackIds
                             )
                             .rowBehaviour(playable: .track(track))
-                            .listRowInsets(rowInsets)
                             .primaryTap { play([track.id]) } menu: { menu(for: [track.id]) }
                         }
                     }
@@ -207,12 +206,6 @@ struct TrackListView: View {
                         nav.highlightedTrackId = nil
                     }
                 }
-    }
-
-    /// A phone's rows sit on the header's edge, with little above and below:
-    /// the list's own insets leave a tracklist a few titles to a screen.
-    private var rowInsets: EdgeInsets? {
-        headerScrolls ? EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16) : nil
     }
 
     #if os(iOS)
