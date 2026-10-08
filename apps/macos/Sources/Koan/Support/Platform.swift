@@ -1121,9 +1121,21 @@ private struct RememberedSize: NSViewRepresentable {
             // SwiftUI caps a sheet's and the Settings window's content at
             // the size it fitted them to.
             window.contentMaxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
-            if let saved = UserDefaults.standard.string(forKey: key) {
-                window.setContentSize(NSSizeFromString(saved))
+            // The size last given, or the ideal it opened at, kept on the
+            // screen it is on: one saved on a larger display, or an ideal
+            // taller than a laptop's, would reach past the edge.
+            let wanted = UserDefaults.standard.string(forKey: key).map(NSSizeFromString)
+                ?? window.contentLayoutRect.size
+            var size = wanted
+            if let visible = window.screen?.visibleFrame {
+                let room = window.contentRect(forFrameRect: visible).size
+                size = NSSize(width: min(size.width, room.width), height: min(size.height, room.height))
             }
+            size = NSSize(
+                width: max(size.width, window.contentMinSize.width),
+                height: max(size.height, window.contentMinSize.height)
+            )
+            if size != window.contentLayoutRect.size { window.setContentSize(size) }
             let key = key
             resized = NotificationCenter.default.addObserver(
                 forName: NSWindow.didEndLiveResizeNotification, object: window, queue: .main

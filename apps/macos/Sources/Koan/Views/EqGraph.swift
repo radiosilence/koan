@@ -114,16 +114,17 @@ struct EqGraph: View {
                 RuleMark(y: .value("dB", 0.0))
                     .foregroundStyle(KoanTheme.style(.rule, system: Color.secondary.opacity(0.4)))
                     .lineStyle(StrokeStyle(lineWidth: 0.5))
-                RuleMark(y: .value("dB", level))
-                    .foregroundStyle(KoanTheme.style(.muted, system: Color.secondary))
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                    .annotation(position: level < 0 ? .bottom : .top, alignment: .trailing, spacing: 2) {
-                        if abs(level) >= 0.05 {
+                // At 0 the level is the 0 dB rule.
+                if abs(level) >= 0.05 {
+                    RuleMark(y: .value("dB", level))
+                        .foregroundStyle(KoanTheme.style(.muted, system: Color.secondary))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                        .annotation(position: level < 0 ? .bottom : .top, alignment: .trailing, spacing: 2) {
                             Text("\(KoanTheme.label("Preamp")) \(Self.dbLabel(level))")
                                 .koanText(.fine, .muted)
                                 .monospacedDigit()
                         }
-                    }
+                }
                 ForEach(bandAreas) { area in
                     AreaMark(
                         x: .value("Hz", area.hz),
@@ -499,7 +500,7 @@ struct EqGraph: View {
     }
 
     static func dbLabel(_ db: Double) -> String {
-        String(format: "%+.1f dB", db).replacingOccurrences(of: "-", with: "−")
+        abs(db) < 0.05 ? "0.0 dB" : String(format: "%+.1f dB", db).replacingOccurrences(of: "-", with: "−")
     }
 
     private var yStride: Double { (yDomain.upperBound - yDomain.lowerBound) > 30 ? 10 : 6 }
