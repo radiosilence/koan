@@ -55,7 +55,7 @@ private struct DspImportSheet: View {
             }
         }
         #if os(macOS)
-        .frame(minWidth: 440, minHeight: 360)
+        .resizableWindow("DspImport", min: CGSize(width: 440, height: 360), ideal: CGSize(width: 560, height: 560))
         #endif
     }
 }

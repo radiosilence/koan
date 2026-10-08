@@ -1595,6 +1595,9 @@ pub struct DspResponse {
     pub target: Option<Vec<f64>>,
     pub predicted: Option<Vec<f64>>,
     pub preamp_db: f64,
+    /// The flat gain among its filters, which `total` includes; with
+    /// `preamp_db`, the level the curve sits at.
+    pub gain_db: f64,
     /// For a chain with both: the correction alone, and the tuning on top.
     pub correction: Option<Vec<f64>>,
     pub tuning: Option<Vec<f64>>,
@@ -1621,6 +1624,7 @@ impl From<koan_core::audio::dsp::profiles::Response> for DspResponse {
             target: r.target,
             predicted: r.predicted,
             preamp_db: r.preamp_db,
+            gain_db: r.gain_db,
             correction: r.correction,
             tuning: r.tuning,
             original: r.original,

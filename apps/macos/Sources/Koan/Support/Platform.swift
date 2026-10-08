@@ -1077,3 +1077,64 @@ extension View {
         #endif
     }
 }
+
+#if os(macOS)
+extension View {
+    /// A sheet, or the settings window, that can be resized, opening at the
+    /// ideal size the first time and at the size it was last given after.
+    /// AppKit makes a sheet at its content's size and leaves it so, and a
+    /// root with no ideal of its own is laid out at whatever its content
+    /// asks, wider than the sheet when that grows after it opens.
+    func resizableWindow(_ name: String, min: CGSize, ideal: CGSize) -> some View {
+        frame(
+            minWidth: min.width, idealWidth: ideal.width, maxWidth: .infinity,
+            minHeight: min.height, idealHeight: ideal.height, maxHeight: .infinity
+        )
+        .background(RememberedSize(name: name))
+    }
+}
+
+/// Makes the window it is in resizable, and keeps its size under `name`.
+private struct RememberedSize: NSViewRepresentable {
+    let name: String
+
+    func makeNSView(context: Context) -> Probe { Probe(key: "KoanWindowSize.\(name)") }
+    func updateNSView(_ view: Probe, context: Context) {}
+
+    final class Probe: NSView {
+        let key: String
+        private var resized: NSObjectProtocol?
+
+        init(key: String) {
+            self.key = key
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let resized { NotificationCenter.default.removeObserver(resized) }
+            resized = nil
+            guard let window else { return }
+            window.styleMask.insert(.resizable)
+            // SwiftUI caps a sheet's and the Settings window's content at
+            // the size it fitted them to.
+            window.contentMaxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+            if let saved = UserDefaults.standard.string(forKey: key) {
+                window.setContentSize(NSSizeFromString(saved))
+            }
+            let key = key
+            resized = NotificationCenter.default.addObserver(
+                forName: NSWindow.didEndLiveResizeNotification, object: window, queue: .main
+            ) { note in
+                MainActor.assumeIsolated {
+                    guard let window = note.object as? NSWindow,
+                          let content = window.contentView else { return }
+                    UserDefaults.standard.set(NSStringFromSize(content.frame.size), forKey: key)
+                }
+            }
+        }
+    }
+}
+#endif

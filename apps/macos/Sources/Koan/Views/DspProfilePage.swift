@@ -65,11 +65,13 @@ struct DspProfilePage: View {
             }
 
             if let d = detail {
+                #if os(tvOS)
                 if let r = response {
                     Section {
                         EqEditor(dsp: dsp, name: name, detail: d, response: r, parts: onCorrection(d, r))
                     }
                 }
+                #endif
                 #if !os(tvOS)
                 if !d.readOnly, before != now || (d.canRevert && d.edited) {
                     keeping(d)
@@ -148,6 +150,19 @@ struct DspProfilePage: View {
                 ProgressView()
             }
         }
+        #if !os(tvOS)
+        // The graph stays in view while the bands scroll under it: what an
+        // edit does is the point of making it.
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let d = detail, let r = response {
+                EqEditor(dsp: dsp, name: name, detail: d, response: r, parts: onCorrection(d, r))
+                    .padding(.horizontal, KoanTheme.Space.l)
+                    .padding(.vertical, KoanTheme.Space.m)
+                    .koanMaterial(.bar)
+                    .koanRule(.bottom)
+            }
+        }
+        #endif
         .navigationTitle(name)
         .task(id: "\(name)\u{0}\(dsp.stamp)") { await load() }
         #if !os(tvOS)

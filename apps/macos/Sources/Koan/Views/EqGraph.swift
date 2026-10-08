@@ -9,6 +9,11 @@ import SwiftUI
 /// curve comes from the core, computed from the filters the DSP runs; this
 /// only draws them.
 ///
+/// The EQ view is drawn at the level the profile plays at: its curves moved
+/// by the preamp, and a dashed rule at the preamp and any flat gain together,
+/// which the plot is centred on. Two profiles of one shape draw alike however
+/// each states its gain. The axis reads the level as it is.
+///
 /// Given `handles`, each band has a point at its frequency and gain that can
 /// be dragged, and its width pinched (option-dragged with a mouse) for Q.
 /// With `paints`, a drag away from every handle paints a graphic curve.
@@ -109,11 +114,21 @@ struct EqGraph: View {
                 RuleMark(y: .value("dB", 0.0))
                     .foregroundStyle(KoanTheme.style(.rule, system: Color.secondary.opacity(0.4)))
                     .lineStyle(StrokeStyle(lineWidth: 0.5))
+                RuleMark(y: .value("dB", level))
+                    .foregroundStyle(KoanTheme.style(.muted, system: Color.secondary))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .annotation(position: level < 0 ? .bottom : .top, alignment: .trailing, spacing: 2) {
+                        if abs(level) >= 0.05 {
+                            Text("\(KoanTheme.label("Preamp")) \(Self.dbLabel(level))")
+                                .koanText(.fine, .muted)
+                                .monospacedDigit()
+                        }
+                    }
                 ForEach(bandAreas) { area in
                     AreaMark(
                         x: .value("Hz", area.hz),
-                        yStart: .value("dB", 0.0),
-                        yEnd: .value("dB", area.db),
+                        yStart: .value("dB", level),
+                        yEnd: .value("dB", level + area.db),
                         series: .value("Band", area.series)
                     )
                     // Each band neutral, so the accent is the curve that plays.
@@ -123,25 +138,28 @@ struct EqGraph: View {
                 // the whole.
                 ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
                     lines(curves: [Curve(name: part.name, db: part.db)],
-                          color: part.stroke.style, width: 1.2, dash: part.stroke.dash)
+                          color: part.stroke.style, width: 1.2, dash: part.stroke.dash, shift: response.preampDb)
                 }
                 // A chain with a correction and tuning: each in its role's
                 // colour, under the two together.
                 if parts.isEmpty, let correction = response.correction, let tuning = response.tuning {
                     lines(curves: [Curve(name: "Correction", db: correction)],
-                          color: AnyShapeStyle(ProfileRole.correction.color.opacity(0.7)), width: 1.2, dashed: true)
+                          color: AnyShapeStyle(ProfileRole.correction.color.opacity(0.7)), width: 1.2, dashed: true,
+                          shift: response.preampDb)
                     lines(curves: [Curve(name: "Tuning", db: tuning)],
-                          color: AnyShapeStyle(ProfileRole.tuning.color), width: 1.2)
+                          color: AnyShapeStyle(ProfileRole.tuning.color), width: 1.2, shift: response.preampDb)
                 }
                 // A split's preview: the baked EQ the two come from.
                 if let original = response.original {
                     lines(curves: [Curve(name: "Original", db: original)],
-                          color: KoanTheme.style(.muted, system: Color.secondary), width: 1.2, dashed: true)
+                          color: KoanTheme.style(.muted, system: Color.secondary), width: 1.2, dashed: true,
+                          shift: response.preampDb)
                 }
                 lines(curves: [Curve(name: "EQ", db: response.total)],
-                      color: parts.isEmpty ? AnyShapeStyle(.tint) : StageStroke.total.style, width: 2)
+                      color: parts.isEmpty ? AnyShapeStyle(.tint) : StageStroke.total.style, width: 2,
+                      shift: response.preampDb)
                 ForEach(shownHandles) { h in
-                    PointMark(x: .value("Hz", h.hz), y: .value("dB", h.db))
+                    PointMark(x: .value("Hz", h.hz), y: .value("dB", level + h.db))
                         .symbolSize(grabbed && h.index == dragging?.index ? 120 : 60)
                         .foregroundStyle(.tint)
                 }
@@ -211,10 +229,11 @@ struct EqGraph: View {
         color: AnyShapeStyle,
         width: CGFloat,
         dashed: Bool = false,
-        dash: [CGFloat]? = nil
+        dash: [CGFloat]? = nil,
+        shift: Double = 0
     ) -> some ChartContent {
         ForEach(curves.flatMap { curve in points(curve.db).map { (curve.name, $0) } }, id: \.1.id) { name, p in
-            LineMark(x: .value("Hz", p.hz), y: .value("dB", p.db), series: .value("Curve", name))
+            LineMark(x: .value("Hz", p.hz), y: .value("dB", shift + p.db), series: .value("Curve", name))
                 .foregroundStyle(color)
                 .lineStyle(StrokeStyle(lineWidth: width, dash: dash ?? (dashed ? [4, 3] : [])))
         }
@@ -280,7 +299,8 @@ struct EqGraph: View {
               let hz: Double = proxy.value(atX: at.x),
               let db: Double = proxy.value(atY: at.y)
         else { return }
-        let (hzIn, dbIn) = (min(max(hz, 20), 20000), min(max(db, yDomain.lowerBound), yDomain.upperBound))
+        // A band's gain and a curve's points are what they add to the level.
+        let (hzIn, dbIn) = (min(max(hz, 20), 20000), min(max(db, yDomain.lowerBound), yDomain.upperBound) - level)
         if painting {
             lastPaint = (hzIn, dbIn)
             onEdit?(.paint(hz: hzIn, db: dbIn, done: false))
@@ -362,7 +382,7 @@ struct EqGraph: View {
     private func nearest(to point: CGPoint, _ proxy: ChartProxy, within: CGFloat = 24) -> Handle? {
         handles
             .compactMap { h -> (Handle, CGFloat)? in
-                guard let at = proxy.position(for: (x: h.hz, y: h.db)) else { return nil }
+                guard let at = proxy.position(for: (x: h.hz, y: level + h.db)) else { return nil }
                 return (h, hypot(at.x - point.x, at.y - point.y))
             }
             .filter { $0.1 < within }
@@ -399,7 +419,7 @@ struct EqGraph: View {
                 key(KoanTheme.label("Target"), AnyShapeStyle(KoanTheme.style(.ink).opacity(0.55)), dashed: true)
                 key(KoanTheme.label("Corrected"), AnyShapeStyle(.tint))
             }
-            Text("\(KoanTheme.label("Preamp")) \(String(format: "%.1f", response.preampDb)) dB")
+            Text("\(KoanTheme.label("Preamp")) \(Self.dbLabel(response.preampDb + response.gainDb))")
                 .monospacedDigit()
         }
         .koanText(.fine, .muted)
@@ -447,22 +467,39 @@ struct EqGraph: View {
         }
     }
 
+    /// The level the EQ view's curve sits at: the preamp, and any flat gain
+    /// among the filters, which `total` holds.
+    private var level: Double { showingEq ? response.preampDb + response.gainDb : 0 }
+
+    /// What is drawn, as it is drawn.
     private var shown: [[Double]] {
         if showingEq {
-            return [response.total, response.correction ?? [], response.tuning ?? [], response.original ?? []]
+            let moved = [response.total, response.correction ?? [], response.tuning ?? [], response.original ?? []]
                 + parts.map(\.db)
-                + response.bands.map(\.db) + [handles.map(\.db)]
+            return moved.map { $0.map { $0 + response.preampDb } }
+                + (response.bands.map(\.db) + [handles.map(\.db)]).map { $0.map { $0 + level } }
+                + [[0, level]]
         }
         return [response.measurement, response.target, response.predicted].compactMap { $0 }
     }
 
     /// Round to the next 6 dB past whatever is drawn, at least ±6 dB, so a
-    /// small correction is not drawn as a large one.
+    /// small correction is not drawn as a large one. The EQ view is centred
+    /// on its level, so a preamp does not push the curve to the foot of it.
     private var yDomain: ClosedRange<Double> {
         let values = shown.flatMap { $0 }
+        if showingEq {
+            let reach = values.map { abs($0 - level) }.max() ?? 0
+            let half = max(6, (reach / 6).rounded(.up) * 6)
+            return level - half ... level + half
+        }
         let lo = min(-6, ((values.min() ?? 0) / 6).rounded(.down) * 6)
         let hi = max(6, ((values.max() ?? 0) / 6).rounded(.up) * 6)
         return lo ... hi
+    }
+
+    static func dbLabel(_ db: Double) -> String {
+        String(format: "%+.1f dB", db).replacingOccurrences(of: "-", with: "−")
     }
 
     private var yStride: Double { (yDomain.upperBound - yDomain.lowerBound) > 30 ? 10 : 6 }

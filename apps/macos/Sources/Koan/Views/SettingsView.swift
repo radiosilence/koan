@@ -133,7 +133,7 @@ struct SettingsView: View {
                         }
                         // No titlebar drawn: the ground runs up behind the
                         // window's buttons, as it does over the wash in the
-                        // main window (see `SettingsFrameAutosave` too).
+                        // main window (see `SettingsTitlebar` too).
                         .toolbar(removing: .title)
                         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
                         .scrollEdgeEffectHidden(true, for: .top)
@@ -236,12 +236,12 @@ struct SettingsView: View {
                 ProgressView()
             }
         }
-        // The settings window: tall enough for the longest pane on a 1440×900
-        // screen, resizable, and kept at whatever size it was last given. A
-        // phone gets whatever it has.
+        // The settings window: tall enough for the longest pane, resizable,
+        // and kept at whatever size it was last given. A phone gets whatever
+        // it has.
         #if os(macOS)
-        .frame(minWidth: 600, idealWidth: 920, maxWidth: .infinity, minHeight: 480, idealHeight: 780, maxHeight: .infinity)
-        .background(SettingsFrameAutosave())
+        .resizableWindow("Settings", min: CGSize(width: 600, height: 480), ideal: CGSize(width: 1000, height: 940))
+        .background(SettingsTitlebar())
         #endif
         #if os(macOS)
         .modifier(DspImportPrompts(dsp: app.dsp))
@@ -1719,26 +1719,15 @@ extension DevicesSettings {
 #endif
 
 #if os(macOS)
-/// Saves the settings window's frame under a name of its own and restores it
-/// when the window opens, as `Window` scenes do and the `Settings` scene does
-/// not.
-private struct SettingsFrameAutosave: NSViewRepresentable {
+/// The settings window's titlebar: in the theme, not drawn, the window's
+/// ground with no line under it. Its size is `resizableWindow`'s.
+private struct SettingsTitlebar: NSViewRepresentable {
     final class Probe: NSView {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            guard let window else { return }
-            // In the theme the titlebar is not drawn: the window's ground,
-            // with no line under it.
-            if KoanTheme.isOn {
-                window.titlebarAppearsTransparent = true
-                window.titlebarSeparatorStyle = .none
-            }
-            guard window.frameAutosaveName.isEmpty else { return }
-            // SwiftUI's Settings window is made without a resizable frame,
-            // whatever the scene's resizability says.
-            window.styleMask.insert(.resizable)
-            window.setFrameUsingName("KoanSettings")
-            window.setFrameAutosaveName("KoanSettings")
+            guard let window, KoanTheme.isOn else { return }
+            window.titlebarAppearsTransparent = true
+            window.titlebarSeparatorStyle = .none
         }
     }
 
