@@ -1,0 +1,1 @@
+- **Share pages offer a Download.** Anyone with a share link can take the shared tracks as one zip of the original files, streamed as it is written, so a visitor can keep what was shared without a koan account.
