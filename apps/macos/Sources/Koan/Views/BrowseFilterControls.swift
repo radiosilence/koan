@@ -84,59 +84,100 @@ private struct FilterSheet: ViewModifier {
 }
 #endif
 
-private struct BrowseFilterForm: View {
+struct BrowseFilterForm: View {
     @Environment(LibraryModel.self) private var library
 
     var body: some View {
-        // The theme's form, which a Mac's popover cannot size itself to.
         #if os(macOS)
-        Form { sections }
-            .koanForm()
-            .task { await library.loadBrowseChoices() }
+        if KoanTheme.isOn {
+            panel.task { await library.loadBrowseChoices() }
+        } else {
+            Form { sections } // theme: raw — the platform's look; the theme's is `panel`
+                .formStyle(.grouped)
+                .task { await library.loadBrowseChoices() }
+        }
         #else
         KoanForm { sections }
             .task { await library.loadBrowseChoices() }
         #endif
     }
 
+    #if os(macOS)
+    /// The theme's panel: the groups stacked on the ground between rules, at
+    /// their own height. Not `KoanForm`, whose scroll view has no height of
+    /// its own for the panel to take, nor a `Form`, which draws its cards.
+    private var panel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: KoanTheme.Space.s) {
+                toggles
+            }
+            .padding(KoanTheme.Space.l)
+            Rectangle().fill(Color.koanRowRule).frame(height: KoanTheme.hairline)
+            VStack(alignment: .leading, spacing: KoanTheme.Space.s) {
+                pickers
+            }
+            .padding(KoanTheme.Space.l)
+            Rectangle().fill(Color.koanRowRule).frame(height: KoanTheme.hairline)
+            reset
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(KoanTheme.Space.l)
+        }
+        .font(.koan(.body))
+        .foregroundStyle(Color.koanInk)
+        .toggleStyle(KoanToggleStyle())
+        .labeledContentStyle(FilterRowStyle())
+    }
+    #endif
+
     @ViewBuilder private var sections: some View {
+        Section { toggles }
+        Section { pickers }
+        Section { reset }
+    }
+
+    @ViewBuilder private var toggles: some View {
         @Bindable var library = library
-        Section {
-            Toggle("Favourites", isOn: $library.browseFilter.favourites)
-            Toggle("Recently Played", isOn: $library.browseFilter.recent)
-            Toggle("Downloaded", isOn: $library.browseFilter.downloaded)
-            // A track's codec says this already, and the track listing
-            // filters by codec rather than by what its record is in.
-            if library.section != .tracks {
-                Toggle("Lossless", isOn: $library.browseFilter.lossless)
+        Toggle("Favourites", isOn: $library.browseFilter.favourites)
+        Toggle("Recently Played", isOn: $library.browseFilter.recent)
+        Toggle("Downloaded", isOn: $library.browseFilter.downloaded)
+        // A track's codec says this already, and the track listing
+        // filters by codec rather than by what its record is in.
+        if library.section != .tracks {
+            Toggle("Lossless", isOn: $library.browseFilter.lossless)
+        }
+    }
+
+    @ViewBuilder private var pickers: some View {
+        @Bindable var library = library
+        KoanPicker(
+            "Codec",
+            selection: $library.browseFilter.codec,
+            options: choices(offered(library.browseChoices?.codecs, current: library.browseFilter.codec)),
+            keepsCase: true
+        )
+        KoanPicker(
+            "Genre",
+            selection: $library.browseFilter.genre,
+            options: choices(offered(library.browseChoices?.genres, current: library.browseFilter.genre)),
+            keepsCase: true
+        )
+        LabeledContent("Years") {
+            HStack(spacing: 4) {
+                YearField(prompt: "From", value: $library.browseFilter.yearFrom)
+                Text("–").foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                YearField(prompt: "To", value: $library.browseFilter.yearTo)
             }
         }
-        Section {
-            KoanPicker(
-                "Codec",
-                selection: $library.browseFilter.codec,
-                options: choices(offered(library.browseChoices?.codecs, current: library.browseFilter.codec)),
-                keepsCase: true
-            )
-            KoanPicker(
-                "Genre",
-                selection: $library.browseFilter.genre,
-                options: choices(offered(library.browseChoices?.genres, current: library.browseFilter.genre)),
-                keepsCase: true
-            )
-            LabeledContent("Years") {
-                HStack(spacing: 4) {
-                    YearField(prompt: "From", value: $library.browseFilter.yearFrom)
-                    Text("–").foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                    YearField(prompt: "To", value: $library.browseFilter.yearTo)
-                }
-            }
-        }
-        Section {
-            Button("Reset") { library.browseFilter = .none }
-                .koanButton(.standard)
-                .disabled(library.browseFilter.activeCount == 0)
-        }
+    }
+
+    private var reset: some View {
+        Button("Reset") { library.browseFilter = .none }
+            #if os(macOS)
+            .koanButton(.bordered)
+            #else
+            .koanButton(.standard)
+            #endif
+            .disabled(library.browseFilter.activeCount == 0)
     }
 
     /// "Any", then the library's own values as they are written.
@@ -171,6 +212,9 @@ private struct YearField: View {
             // its own box over the field.
             .koanField(text, prompt: prompt)
             .frame(width: KoanTheme.isOn ? 180 : 60)
+            #elseif os(macOS)
+            .koanField()
+            .frame(width: KoanTheme.isOn ? 72 : 60)
             #else
             .frame(width: 60)
             #endif
@@ -193,3 +237,20 @@ private struct YearField: View {
             }
     }
 }
+
+#if os(macOS)
+/// A row of the theme's filter panel: the label leading, as a toggle's is, and
+/// the control trailing, where a toggle's box sits.
+private struct FilterRowStyle: LabeledContentStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: KoanTheme.Space.m) {
+            configuration.label
+                .font(.koan(.body))
+                .foregroundStyle(Color.koanInk)
+                .textCase(.lowercase)
+            Spacer(minLength: 0)
+            configuration.content
+        }
+    }
+}
+#endif

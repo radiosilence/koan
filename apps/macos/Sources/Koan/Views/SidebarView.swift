@@ -159,9 +159,6 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         // The theme's sidebar is flat ground, not the system's material.
         .koanSidebar()
-        // Navigation is words alone in the theme, whatever "Show icons" says;
-        // the platform's look keeps its symbols.
-        .environment(\.koanIcons, false)
         // The List's own hooks rather than per-row gestures, the same way the
         // queue and every track list does it: wired into selection, so the
         // double-click does not steal the click that selects the row. Only
