@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.61.6
+
+### Fixed
+
+- Unbreak builds by gating toolbar probe
+
 ## 0.61.5
 
 ### Added
@@ -19,6 +25,7 @@
 ### Changed
 
 - Moved the album/artist on to two lines in tvOS
+ 
 
 ## 0.61.3
 
