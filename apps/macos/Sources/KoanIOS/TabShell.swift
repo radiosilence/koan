@@ -33,9 +33,6 @@ struct TabShell: View {
     @State private var signedIn = true
     /// The tab of the theme's bar the remote is on, if it is on the bar.
     @FocusState private var barFocus: TabID?
-    /// The pushed pages on screen. The theme's bar shows only while there are
-    /// none, at a tab's root; Menu pops back to it.
-    @State private var pushedShowing: Set<UUID> = []
     #endif
     @Environment(\.horizontalSizeClass) private var width
     @State private var showingNowPlaying = false
@@ -95,7 +92,7 @@ struct TabShell: View {
             Tab(Self.title("Now Playing"), systemImage: "play.circle", value: TabID.nowPlaying) {
                 NowPlayingPage()
                     .koanHidesSystemTabBar()
-                    .onExitCommand(perform: toBar)
+                    .modifier(televisionRoot)
             }
             #endif
             Tab(Self.title("Queue"), systemImage: Icon.queueSection, value: TabID.queue) {
@@ -172,14 +169,6 @@ struct TabShell: View {
         // Tabs across the top, as every television app has them; the sidebar
         // style folds them behind a pill a remote has to find first.
         .tabViewStyle(.tabBarOnly)
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if KoanTheme.isOn && pushedShowing.isEmpty {
-                TelevisionTabs(selection: tab, focus: $barFocus)
-            }
-        }
-        .environment(\.koanPushedPageShown) { id, shown in
-            if shown { pushedShowing.insert(id) } else { pushedShowing.remove(id) }
-        }
         .defaultFocus($barFocus, selection)
         #else
         .modifier(AdaptableTabs(sidebar: sidebar))
@@ -305,7 +294,7 @@ struct TabShell: View {
             .roomBackground()
             .koanHidesSystemTabBar()
             #if os(tvOS)
-            .onExitCommand(perform: toBar)
+            .modifier(televisionRoot)
             #endif
             .environment(\.onStage, showing && routes.isEmpty)
             .navigationDestination(for: Route.self) { route in
@@ -501,11 +490,8 @@ struct TabShell: View {
     }
 
     #if os(tvOS)
-    /// Menu at a tab's root goes up to the tabs, as it does to the platform's
-    /// bar; Menu on the tabs, which take no exit command, leaves the app.
-    private var toBar: (() -> Void)? {
-        guard KoanTheme.isOn else { return nil }
-        return { barFocus = selection }
+    private var televisionRoot: TelevisionRoot {
+        TelevisionRoot(selection: tab, focus: $barFocus)
     }
 
     private func checkSignedIn() async {
@@ -644,6 +630,27 @@ private struct Transport: ViewModifier {
 }
 
 #if os(tvOS)
+/// A tab's root page on a television, in the theme: the tabs above it, part of
+/// the page, so they leave with it when a page is pushed over it and return
+/// with it on the way back, as the platform's bar does. Menu here goes up to
+/// the tabs; Menu on the tabs, which take no exit command, leaves the app.
+private struct TelevisionRoot: ViewModifier {
+    @Binding var selection: TabShell.TabID
+    var focus: FocusState<TabShell.TabID?>.Binding
+
+    func body(content: Content) -> some View {
+        if KoanTheme.isOn {
+            content
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    TelevisionTabs(selection: $selection, focus: focus)
+                }
+                .onExitCommand { focus.wrappedValue = selection }
+        } else {
+            content
+        }
+    }
+}
+
 /// The theme's tabs on a television, across the top in place of the
 /// platform's glass capsule. They behave as its do: shown at a tab's root and
 /// gone from a page pushed over it, moving onto a tab chooses it, and coming

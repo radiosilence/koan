@@ -52,6 +52,7 @@ final class TVBackTests: XCTestCase {
         XCTAssertEqual(app.state, .runningForeground, "Menu on the grid goes back, not out")
         XCTAssertTrue(index.waitForExistence(timeout: 3), "two pages back is the library's index")
         XCTAssertTrue(app.buttons[any: "Settings"].waitForExistence(timeout: 3), "the tabs are back at the root")
+        XCTAssertFalse(app.buttons[any: "Library"].hasFocus, "the tabs coming back leave focus on the page")
         reach(app.buttons[any: "Library"], by: .up)
         press(.down)
         XCTAssertFalse(app.buttons[any: "Library"].hasFocus, "down from the tabs goes back into the page")
