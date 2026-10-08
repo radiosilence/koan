@@ -5160,10 +5160,6 @@ async fn koan_revoke_api_key(
     .await
 }
 
-/// The longest name an app password may have, as the web UI's Account page
-/// allows.
-const MAX_APP_PASSWORD_NAME: usize = 100;
-
 /// The key app passwords are sealed under, which a server without a signing
 /// key does not have; it then offers none.
 fn app_password_key(state: &AppState) -> Result<&[u8; 32], SubsonicError> {
@@ -5215,18 +5211,22 @@ async fn koan_create_app_password(
             let key = app_password_key(&state)?;
             let name = params
                 .get("name")
-                .map(str::trim)
                 .ok_or_else(|| SubsonicError::missing_param("name"))?;
-            if name.is_empty() || name.chars().count() > MAX_APP_PASSWORD_NAME {
-                return Err(SubsonicError::bad_param("name"));
-            }
+            let name = queries::app_passwords::app_password_name(name)
+                .ok_or_else(|| SubsonicError::bad_param("name"))?;
+            use queries::app_passwords::CreateAppPasswordError;
             let (id, password) =
-                queries::app_passwords::create_app_password(&db.conn, key, caller.user_id, name)
-                    .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                queries::app_passwords::create_app_password(&db.conn, key, caller.user_id, &name)
+                    .map_err(|e| match e {
+                    CreateAppPasswordError::TooMany => {
+                        SubsonicError::new(SubsonicErrorCode::Generic, e.to_string())
+                    }
+                    CreateAppPasswordError::Db(e) => SubsonicError::internal(e.to_string()),
+                })?;
             Ok(b.child(
                 XmlNode::new("appPassword")
                     .attr_int("id", id)
-                    .attr("name", name)
+                    .attr("name", &name)
                     .attr("password", &password),
             ))
         })
@@ -7860,7 +7860,7 @@ mod tests {
         assert!(listed[0]["created"].as_str().unwrap().ends_with('Z'), "{v}");
         assert!(!v.to_string().contains(&password), "{v}");
         let v = post("/rest/koanCreateAppPassword", format!("name=%20&{auth}")).await;
-        assert_eq!(v["error"]["code"], 0, "{v}");
+        assert_eq!(v["error"]["code"], 10, "{v}");
 
         // Another account's is neither listed nor revocable.
         let db = state.open_db().unwrap();
@@ -7912,6 +7912,22 @@ mod tests {
             !ping(format!("u=mate&t={token}&s={salt}"))
                 .await
                 .contains("status=\"ok\"")
+        );
+
+        // At most so many, refused with a reason.
+        for n in 0..queries::app_passwords::MAX_APP_PASSWORDS {
+            let v = post("/rest/koanCreateAppPassword", format!("name=app{n}&{auth}")).await;
+            assert_eq!(v["status"], "ok", "{v}");
+        }
+        let v = post(
+            "/rest/koanCreateAppPassword",
+            format!("name=one%20more&{auth}"),
+        )
+        .await;
+        assert_eq!(v["error"]["code"], 0, "{v}");
+        assert!(
+            v["error"]["message"].as_str().unwrap().contains("at most"),
+            "{v}"
         );
     }
 
