@@ -373,9 +373,11 @@ jobs:
   tvos-app:
     name: tvOS App
     runs-on: macos-latest
-    needs: [changes, check-version]
-    # On main, only for a release: the pull request built it already.
-    if: ${{ !cancelled() && needs.changes.outputs.code == 'true' && needs.changes.outputs.macos == 'true' && (github.event_name != 'push' || needs.check-version.outputs.should_release == 'true') }}
+    needs: [changes]
+    # Pull requests only: it is what catches a change that breaks the tvOS
+    # build before it merges. A release builds tvOS for TestFlight anyway, so
+    # building it here too would only hold a macOS runner.
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.code == 'true' && needs.changes.outputs.macos == 'true' }}
     timeout-minutes: 45
     concurrency:
       group: tvos-app-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
