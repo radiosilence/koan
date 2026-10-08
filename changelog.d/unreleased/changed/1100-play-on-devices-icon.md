@@ -1,2 +1,1 @@
-- **Play on icon.** The Play on button uses the devices icon, as the Devices section does.
-- **Themed glyphs.** The library filter button and the AirPlay button draw the kōan glyphs rather than system symbols.
+- **Play on uses the devices icon, and the filter and AirPlay buttons the kōan glyphs.** All three drew system symbols in the kōan theme.
