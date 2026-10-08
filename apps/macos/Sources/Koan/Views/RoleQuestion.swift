@@ -25,7 +25,7 @@ struct RoleQuestion: View {
                 } footer: {
                     if let into = ask.into {
                         Text(into.stage == .eq
-                             ? "A tuning is added to \(dsp.label(into.device))'s tuning; a correction becomes its correction."
+                             ? "A tuning is added to \(dsp.label(into.device))'s filters; a correction becomes its correction."
                              : "A correction becomes \(dsp.label(into.device))'s correction.")
                             .koanText(.fine, .muted)
                     }

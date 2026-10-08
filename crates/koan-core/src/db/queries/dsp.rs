@@ -65,6 +65,10 @@ pub fn changes(
 
 /// Keep `doc` (`None` to delete) as `uid`'s, unless the copy here was edited
 /// after `edited_at`: the last edit wins, whichever device made it.
+///
+/// A deletion keeps the last document as `deleted_doc`, with when the
+/// server recorded it by its own clock: devices are told it is gone, but the
+/// server keeps a copy. A later save clears both.
 pub fn save(
     conn: &Connection,
     user: i64,
@@ -85,13 +89,75 @@ pub fn save(
         return Ok(Saved { rev, stored: false });
     }
     let rev = next_rev(conn, user)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64);
     conn.execute(
         "INSERT INTO dsp_profiles (user_id, uid, rev, edited_at, doc) VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT (user_id, uid) DO UPDATE
-            SET rev = excluded.rev, edited_at = excluded.edited_at, doc = excluded.doc",
-        params![user, uid, rev, edited_at, doc],
+            SET rev = excluded.rev, edited_at = excluded.edited_at, doc = excluded.doc,
+                deleted_doc = CASE WHEN excluded.doc IS NULL
+                                   THEN COALESCE(dsp_profiles.doc, dsp_profiles.deleted_doc)
+                              END,
+                deleted_at = CASE WHEN excluded.doc IS NULL
+                                  THEN COALESCE(dsp_profiles.deleted_at, ?6)
+                             END",
+        params![user, uid, rev, edited_at, doc, now],
     )?;
     Ok(Saved { rev, stored: true })
+}
+
+/// How long the server keeps a deleted profile's document and files.
+pub const DELETED_KEPT_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+
+/// The account's profiles deleted since `since` (ms, the server's clock),
+/// with the document each had: uid, when the server recorded the deletion,
+/// and the document. Newest first.
+pub fn deleted_docs(
+    conn: &Connection,
+    user: i64,
+    since: i64,
+) -> Result<Vec<(String, i64, String)>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT uid, deleted_at, deleted_doc FROM dsp_profiles
+          WHERE user_id = ?1 AND doc IS NULL AND deleted_doc IS NOT NULL
+            AND COALESCE(deleted_at, ?2) >= ?2
+          ORDER BY deleted_at DESC",
+    )?;
+    Ok(stmt
+        .query_map(params![user, since], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+/// The document profile `uid` had when it was deleted, if it was deleted
+/// since `since` (ms, the server's clock), with the deletion's `edited_at`.
+pub fn deleted_doc(
+    conn: &Connection,
+    user: i64,
+    uid: &str,
+    since: i64,
+) -> Result<Option<(i64, String)>, DbError> {
+    Ok(conn
+        .query_row(
+            "SELECT edited_at, deleted_doc FROM dsp_profiles
+              WHERE user_id = ?1 AND uid = ?2 AND doc IS NULL AND deleted_doc IS NOT NULL
+                AND COALESCE(deleted_at, ?3) >= ?3",
+            params![user, uid, since],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?)
+}
+
+/// Forget the documents of profiles deleted before `before` (ms, the
+/// server's clock).
+pub fn expire_deleted(conn: &Connection, user: i64, before: i64) -> Result<usize, DbError> {
+    Ok(conn.execute(
+        "UPDATE dsp_profiles SET deleted_doc = NULL, deleted_at = NULL
+          WHERE user_id = ?1 AND doc IS NULL AND deleted_doc IS NOT NULL AND deleted_at < ?2",
+        params![user, before],
+    )?)
 }
 
 /// The documents of the account's profiles that are not deleted.
@@ -322,6 +388,91 @@ mod tests {
         )
         .unwrap();
         (conn, 1)
+    }
+
+    fn now_ms() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64
+    }
+
+    /// A deletion tells devices the profile is gone and keeps its last
+    /// document, deleted twice included; saving it again clears it, and an
+    /// old one is forgotten.
+    #[test]
+    fn a_deleted_profile_keeps_its_last_document() {
+        let (conn, user) = db();
+        let c = &conn;
+        let before = now_ms();
+        save(c, user, "a", 100, Some("v1")).unwrap();
+        save(c, user, "a", 200, None).unwrap();
+        save(c, user, "a", 300, None).unwrap();
+        let (rows, _) = changes(c, user, 0).unwrap();
+        assert_eq!(rows[0].doc, None, "devices see it deleted");
+        let kept = deleted_docs(c, user, before).unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!((kept[0].0.as_str(), kept[0].2.as_str()), ("a", "v1"));
+
+        save(c, user, "a", 400, Some("v2")).unwrap();
+        assert!(deleted_docs(c, user, 0).unwrap().is_empty());
+
+        save(c, user, "a", 500, None).unwrap();
+        assert_eq!(expire_deleted(c, user, before).unwrap(), 0, "not old yet");
+        assert_eq!(expire_deleted(c, user, now_ms() + 1).unwrap(), 1);
+        assert!(deleted_docs(c, user, 0).unwrap().is_empty());
+    }
+
+    /// A deleted profile's document is found by its uid while it is kept,
+    /// and only for its own account.
+    #[test]
+    fn a_deleted_document_is_found_by_uid() {
+        let (conn, user) = db();
+        let c = &conn;
+        c.execute(
+            "INSERT INTO users (id, username, password_hash, role) VALUES (2, 'other', 'x', 'user')",
+            [],
+        )
+        .unwrap();
+        save(c, user, "a", 100, Some("v1")).unwrap();
+        assert_eq!(deleted_doc(c, user, "a", 0).unwrap(), None, "not deleted");
+        save(c, user, "a", 200, None).unwrap();
+        assert_eq!(
+            deleted_doc(c, user, "a", 0).unwrap(),
+            Some((200, "v1".into()))
+        );
+        assert_eq!(
+            deleted_doc(c, 2, "a", 0).unwrap(),
+            None,
+            "another account's"
+        );
+        assert_eq!(
+            deleted_doc(c, user, "a", now_ms() + 1).unwrap(),
+            None,
+            "too old"
+        );
+    }
+
+    /// The window runs from when the server recorded the deletion, whatever
+    /// time the deleting device's clock gave it.
+    #[test]
+    fn a_deletion_is_kept_by_the_servers_clock() {
+        let (conn, user) = db();
+        let c = &conn;
+        let window = now_ms() - DELETED_KEPT_MS;
+        save(c, user, "past", 1, Some("p")).unwrap();
+        save(c, user, "past", 2, None).unwrap();
+        let future = now_ms() + 10 * DELETED_KEPT_MS;
+        save(c, user, "future", future, Some("f")).unwrap();
+        save(c, user, "future", future + 1, None).unwrap();
+
+        assert_eq!(expire_deleted(c, user, window).unwrap(), 0);
+        assert_eq!(deleted_docs(c, user, window).unwrap().len(), 2);
+        assert_eq!(
+            expire_deleted(c, user, now_ms() + 1).unwrap(),
+            2,
+            "a clock ahead keeps nothing forever"
+        );
     }
 
     /// The later edit is kept whichever arrives first, deletions included,

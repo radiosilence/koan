@@ -1,0 +1,1 @@
+- **Recently deleted EQs.** Manage EQ on the Mac, iPhone and iPad lists EQs deleted in the last thirty days, with the days each has left, and restores one on every device. Shown only on a koan server that offers it (`koanDspDeleted`).

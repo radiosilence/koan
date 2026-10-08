@@ -354,8 +354,10 @@ final class DspModel {
         act { try await $0.dspRevert(name: name) }
     }
 
-    func remove(_ profile: String) {
-        act { try await $0.dspRemove(name: profile) }
+    /// Delete the EQ `profile` everywhere it is kept. Taking it out of a
+    /// device's filters or a preset is `setTunings` or `setLayers`.
+    func delete(_ profile: String) {
+        act { try await $0.dspDelete(name: profile) }
     }
 
     private func act(_ run: @escaping @Sendable (KoanEngine) async throws -> Void) {
@@ -544,9 +546,35 @@ final class DspModel {
         }
     }
 
-    func addBand(_ name: String) {
+    /// A flat band at 1 kHz, on `channel` alone or, with nil, on both.
+    func addBand(_ name: String, channel: UInt16? = nil) {
         edits[name, default: 0] += 1
-        act { _ = try await $0.dspAddBand(name: name) }
+        act { _ = try await $0.dspAddBand(name: name, channel: channel) }
+    }
+
+    /// A list of bands for each channel, or one for both from `keep`.
+    func setStereo(_ name: String, _ stereo: Bool, keep: UInt16 = 0) {
+        edits[name, default: 0] += 1
+        act { try await $0.dspSetStereo(name: name, stereo: stereo, keep: keep) }
+    }
+
+    /// Make the EQ `name` from `starter`. Whether it took.
+    func createEq(_ name: String, _ starter: DspStarter) async -> Bool {
+        do {
+            try await engine.dspCreateEq(name: name, starter: starter)
+            lastError = nil
+            await changed()
+            return true
+        } catch {
+            lastError = SettingsModel.describe(error)
+            return false
+        }
+    }
+
+    /// Have `device` play filters alone, its correction taken off, or
+    /// correct for a headphone again.
+    func setFiltersOnly(_ only: Bool, for device: String) {
+        act { try await $0.dspSetFiltersOnly(device: device, only: only) }
     }
 
     func removeFilter(_ name: String, _ index: Int) {

@@ -3188,6 +3188,42 @@ impl KoanEngine {
         .await
     }
 
+    /// The account's EQs deleted in the last thirty days, newest first.
+    pub async fn dsp_deleted(self: Arc<Self>) -> Result<Vec<DeletedDsp>, KoanError> {
+        offload::offload(move || {
+            const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+            let now = chrono::Utc::now().timestamp_millis();
+            Ok(dsp_deleted_client()?
+                .koan_dsp_deleted()
+                .map_err(remote_error)?
+                .into_iter()
+                .map(|p| DeletedDsp {
+                    uid: p.uid,
+                    name: p.name,
+                    days_left: ((p.expires_at - now + DAY_MS - 1) / DAY_MS).clamp(1, 30) as u32,
+                })
+                .collect())
+        })
+        .await
+    }
+
+    /// Bring a deleted EQ back on every device, from the server's copy.
+    pub async fn dsp_restore(self: Arc<Self>, uid: String) -> Result<(), KoanError> {
+        // Off the player's lane: the sync may fetch impulse files.
+        offload::offload(move || {
+            dsp_deleted_client()?
+                .koan_dsp_restore(&uid)
+                .map_err(remote_error)?;
+            let db = self.db()?;
+            if koan_core::remote::dsp_sync::sync(&db).changed() {
+                self.library_changed();
+                self.send_local(PlayerCommand::ReloadDsp)?;
+            }
+            Ok(())
+        })
+        .await
+    }
+
     /// Move `name`'s correction to the target `id`, or with `None` back to the
     /// one it was made for.
     pub async fn dsp_choose_target(
@@ -3287,13 +3323,62 @@ impl KoanEngine {
         .await
     }
 
-    /// Add a flat band at 1 kHz to `name`; its index among the filters.
-    pub async fn dsp_add_band(self: Arc<Self>, name: String) -> Result<u32, KoanError> {
+    /// Add a flat band at 1 kHz to `name`, on `channel` alone or on both;
+    /// its index among the filters.
+    pub async fn dsp_add_band(
+        self: Arc<Self>,
+        name: String,
+        channel: Option<u16>,
+    ) -> Result<u32, KoanError> {
         offload::sequenced(move || {
-            let index = koan_core::audio::dsp::profiles::add_band(&name)
+            let index = koan_core::audio::dsp::profiles::add_band(&name, channel)
                 .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)?;
             Ok(index as u32)
+        })
+        .await
+    }
+
+    /// Make the EQ `name`, eight bands from `starter`.
+    pub async fn dsp_create_eq(
+        self: Arc<Self>,
+        name: String,
+        starter: DspStarter,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::create_eq(&name, starter.into())
+                .map_err(|message| KoanError::BadArgument { message })
+        })
+        .await
+    }
+
+    /// Give `name` a list of bands for each channel, or one for both from
+    /// channel `keep`.
+    pub async fn dsp_set_stereo(
+        self: Arc<Self>,
+        name: String,
+        stereo: bool,
+        keep: u16,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::set_stereo(&name, stereo, keep)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// Have `device` play filters alone, its correction taken off, or
+    /// correct for a headphone again.
+    pub async fn dsp_set_filters_only(
+        self: Arc<Self>,
+        device: String,
+        only: bool,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::set_filters_only(&device, only)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
         })
         .await
     }
@@ -3614,9 +3699,11 @@ impl KoanEngine {
         offload::sequenced(move || self.assign_dsp(profile, &device)).await
     }
 
-    pub async fn dsp_remove(self: Arc<Self>, name: String) -> Result<(), KoanError> {
+    /// Delete the profile `name` and its files. Taking an EQ out of a chain
+    /// or a stack is `dsp_set_tunings` or `dsp_set_layers`, never this.
+    pub async fn dsp_delete(self: Arc<Self>, name: String) -> Result<(), KoanError> {
         offload::sequenced(move || {
-            koan_core::audio::dsp::profiles::remove(&name)
+            koan_core::audio::dsp::profiles::delete(&name)
                 .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)
         })
@@ -6712,6 +6799,19 @@ fn api_keys_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, K
     if !offers {
         return Err(KoanError::BadArgument {
             message: "this server is older than this app: update it to manage API keys here".into(),
+        });
+    }
+    Ok(client)
+}
+
+/// The signed-in server's client, when it keeps deleted EQs.
+fn dsp_deleted_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {
+    let client = account_client()?;
+    let offers = koan_core::remote::profile::for_auth(client.auth())
+        .is_some_and(|p| p.offers(koan_core::remote::profile::DSP_DELETED));
+    if !offers {
+        return Err(KoanError::BadArgument {
+            message: "this server is older than this app: update it to restore EQs".into(),
         });
     }
     Ok(client)

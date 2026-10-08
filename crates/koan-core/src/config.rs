@@ -619,6 +619,16 @@ pub struct DspConfig {
     /// which they are compared with to say whether it was changed since.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub presets: Vec<DspOutputPreset>,
+    /// Outputs that play filters alone: no headphone correction, and
+    /// nothing matched to a target. Speakers, mostly.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub filters_only: Vec<String>,
+    /// The uids of profiles deleted here and not yet deleted on the account's
+    /// server. Sync deletes a profile everywhere only when it is listed here
+    /// or kept on this device by choice; one that is merely missing, after a
+    /// config that failed to load or an edit by hand, is not deleted.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub removed: Vec<String>,
 }
 
 /// One EQ of an output's tuning.
@@ -654,6 +664,8 @@ impl Default for DspConfig {
             autoeq_dismissed: Vec::new(),
             tunings: Vec::new(),
             presets: Vec::new(),
+            filters_only: Vec::new(),
+            removed: Vec::new(),
         }
     }
 }
@@ -668,14 +680,19 @@ impl DspProfile {
 
 impl DspConfig {
     /// The profile for the output device called `device`, if DSP is on and
-    /// one names it.
+    /// one names it. None that corrects a headphone for an output playing
+    /// filters alone, however it came to name it.
     pub fn profile_for(&self, device: &str) -> Option<&DspProfile> {
         if !self.enabled {
             return None;
         }
+        let only = self.filters_only.iter().any(|d| d == device);
         self.profiles
             .iter()
             .find(|p| p.devices.iter().any(|d| d == device))
+            .filter(|p| {
+                !only || !crate::audio::dsp::profiles::shown_role(p, &self.profiles).corrects()
+            })
     }
 }
 
@@ -719,6 +736,10 @@ pub struct DspProfile {
     /// output is set from, and what the quick EQ menu lists.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub preset: bool,
+    /// For a preset: the output plays its filters alone, with no correction
+    /// (`DspConfig::filters_only`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub filters_only: bool,
     /// Whether it is the account's, kept on every device signed in to its
     /// kōan server, or this device's alone. Unset, it follows from what the
     /// profile is: see `audio::dsp::profiles::scope`.
@@ -2938,6 +2959,7 @@ fps = 30
             layers: vec![],
             group: false,
             preset: false,
+            filters_only: false,
             scope: None,
             uid: None,
             origin: None,
