@@ -1,0 +1,1 @@
+This release fixes a library folder configured in another case than the disk's, such as `~/music` on a Mac whose folder is `~/Music`: 0.60.11 indexed every file in it a second time. The first scan after upgrading folds each duplicate back into its original track. The database schema is unchanged from 0.60.11.
