@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crossbeam_channel::{Receiver, SendTimeoutError, Sender, bounded};
 
-use super::state::{PlayMode, PlaylistItem, QueueItemId, Repeat, SleepTimer};
+use super::state::{PlayMode, PlaylistItem, QueueItemId, QueueMode, Repeat, SleepTimer};
 
 /// Commands from the UI layer to the audio engine.
 #[derive(Debug)]
@@ -79,11 +79,16 @@ pub enum PlayerCommand {
     /// `start` past the end starts at the beginning. It opens at
     /// `position_ms`, playing or paused, as `Cue` does: a hand-off picks up
     /// where the source stopped without the top of the track being heard.
+    ///
+    /// `mode` says whether the play mode is reset, as a play from a play
+    /// button resets it. Shuffled, the track opened is the play order's
+    /// first, not `start`.
     ReplacePlaylist {
         items: Vec<PlaylistItem>,
         start: usize,
         position_ms: u64,
         play: bool,
+        mode: QueueMode,
     },
     /// Download complete — check if cursor is waiting on this item.
     TrackReady(QueueItemId),

@@ -28,7 +28,9 @@ use koan_core::db::connection::Database;
 use koan_core::db::queries::{self, PersistedQueueItem};
 use koan_core::player::Player;
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::{PlaybackState, PlaylistItem, QueueItemId, SharedPlayerState};
+use koan_core::player::state::{
+    PlaybackState, PlaylistItem, QueueItemId, QueueMode, SharedPlayerState,
+};
 use koan_core::remote::client::SubsonicError;
 use uuid::Uuid;
 
@@ -769,7 +771,9 @@ impl KoanEngine {
         .await
     }
 
-    /// Replace the queue, starting at `start_at` (default: the first track).
+    /// Replace the queue, starting at `start_at` (default: the first track),
+    /// and play it in order, or `shuffled`, with repeat off: a play from a
+    /// play button starts as asked whatever the modes were.
     ///
     /// The index is part of the command rather than a follow-up `play` because
     /// two commands means the first track audibly starts before the jump lands:
@@ -779,6 +783,7 @@ impl KoanEngine {
         self: Arc<Self>,
         track_ids: Vec<i64>,
         start_at: Option<u32>,
+        shuffled: bool,
     ) -> Result<Vec<String>, KoanError> {
         offload::sequenced(move || {
             let db = self.db()?;
@@ -794,6 +799,11 @@ impl KoanEngine {
                 start: start_at.unwrap_or(0) as usize,
                 position_ms: 0,
                 play: true,
+                mode: if shuffled {
+                    QueueMode::Shuffled
+                } else {
+                    QueueMode::InOrder
+                },
             })?;
 
             Ok(ids)
@@ -2034,8 +2044,9 @@ impl KoanEngine {
     /// built here leaves out entries whose track the library has lost. A
     /// position means something different on each side of either.
     ///
-    /// `shuffled` orders the queue, not the playlist — the playlist on disk is
-    /// untouched.
+    /// The queue is the playlist's order either way; `shuffled` turns shuffle
+    /// on, and otherwise off, with repeat off, as any play from a play button
+    /// does.
     pub async fn play_playlist(
         self: Arc<Self>,
         playlist_id: i64,
@@ -2044,10 +2055,7 @@ impl KoanEngine {
     ) -> Result<Vec<String>, KoanError> {
         offload::sequenced(move || {
             let db = self.db()?;
-            let mut entries = queries::playlist_entries(&db.conn, playlist_id).map_err(db_err)?;
-            if shuffled {
-                koan_core::helpers::shuffle(&mut entries);
-            }
+            let entries = queries::playlist_entries(&db.conn, playlist_id).map_err(db_err)?;
             let track_ids: Vec<i64> = entries.iter().map(|e| e.track.id).collect();
 
             let mut items = self.build_items(&db, &track_ids);
@@ -2087,6 +2095,11 @@ impl KoanEngine {
                 start,
                 position_ms: 0,
                 play: true,
+                mode: if shuffled {
+                    QueueMode::Shuffled
+                } else {
+                    QueueMode::InOrder
+                },
             })?;
 
             Ok(ids)
@@ -5771,6 +5784,7 @@ impl KoanEngine {
                 start,
                 position_ms,
                 play,
+                mode,
             } => {
                 // Where `start` lands once the tracks the server lacks are
                 // left out: on it, or on the next one that remains.
@@ -5788,6 +5802,7 @@ impl KoanEngine {
                     position_ms,
                     paused: !play,
                     handoff: false,
+                    mode,
                 }
             }
             PlayerCommand::RemoveFromPlaylist(id) => LinkCommand::RemoveItems {
@@ -6081,6 +6096,7 @@ impl KoanEngine {
                 position_ms,
                 paused,
                 handoff,
+                mode,
             } => self.db().and_then(|db| {
                 // The music is coming back here: stop controlling whatever
                 // this was controlling. A renderer this device was playing to
@@ -6104,6 +6120,7 @@ impl KoanEngine {
                     start,
                     position_ms,
                     play: !paused,
+                    mode,
                 })
             }),
             LinkCommand::PlayItem { id } => {
@@ -6349,6 +6366,7 @@ impl KoanEngine {
             position_ms,
             paused,
             handoff: true,
+            mode: QueueMode::Keep,
         };
         let (then, answer) = outcome_channel();
         let sent = koan_core::remote::devices::send_for_then(source, to, play, Some(then));

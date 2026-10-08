@@ -265,7 +265,7 @@ command about the user's music goes to a device:
 - `controlClient(action: PAUSE|RESUME|NEXT|PREVIOUS)`, `seekOnClient(positionMs)`
 - `setPlayModeOnClient(shuffle, repeat: OFF|QUEUE|ONE)`: shuffle plays the tracks not yet played in a random order, each once, without moving the queue, and turning it off carries on in queue order; `clients { shuffle repeat }` reports each device's modes
 - `setSleepTimerOnClient(minutes)` or `setSleepTimerOnClient(endOf: TRACK|RECORD)` (\"stop the music in 30 minutes\", \"after this album\"): it fades out and pauses, the queue kept; `cancelSleepTimerOnClient`; `clients { sleep { remainingMs endOf } }` shows what is set
-- `playOnClient(trackIds, startAt)` replaces the queue and plays; `enqueue: true` appends. \
+- `playOnClient(trackIds, startAt)` replaces the queue and plays, with shuffle and repeat turned off (`shuffle: true` plays it shuffled); `enqueue: true` appends and leaves the modes alone. \
 A phone iOS has suspended is not linked but is still reached. Music comes up there as a \
 notification to tap, since iOS lets no app start audio on its own from sleep; queue and \
 other changes are applied as it wakes. The message says when a device was asleep: tell the user \

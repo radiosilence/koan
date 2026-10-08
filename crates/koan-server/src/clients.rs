@@ -2356,6 +2356,7 @@ mod tests {
             position_ms: 0,
             paused: false,
             handoff: false,
+            mode: koan_core::player::state::QueueMode::Keep,
         };
         assert_eq!(cover_track(&play), Some(uid.as_str()));
     }
@@ -2601,6 +2602,7 @@ mod tests {
             position_ms: 1000,
             paused: false,
             handoff: true,
+            mode: koan_core::player::state::QueueMode::Keep,
         };
         reg.relay_from("j", Some("dev-phone"), "dev-k", play.clone())
             .unwrap();
@@ -2623,6 +2625,7 @@ mod tests {
             position_ms: 0,
             paused: false,
             handoff: false,
+            mode: koan_core::player::state::QueueMode::Keep,
         };
         assert!(
             reg.relay_from("j", Some("dev-phone"), "dev-k", not_a_hand_off)

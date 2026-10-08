@@ -21,6 +21,7 @@ use tungstenite::stream::MaybeTlsStream;
 
 use crate::config::{self, Config};
 use crate::helpers::{subsonic_auth, subsonic_client};
+use crate::player::state::QueueMode;
 use crate::remote::client::SubsonicAuth;
 pub use crate::remote::outputs::{LinkOutput, LinkOutputs, OutputChoice};
 use crate::remote::profile;
@@ -48,6 +49,10 @@ pub enum LinkCommand {
         /// control each other on purpose.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         handoff: bool,
+        /// Whether to reset the play mode, as a play from a play button
+        /// does. Absent, the modes are kept.
+        #[serde(default, skip_serializing_if = "QueueMode::is_keep")]
+        mode: QueueMode,
     },
     /// Append these tracks to the queue.
     #[serde(rename_all = "camelCase")]
@@ -1399,6 +1404,7 @@ mod tests {
             position_ms: 0,
             paused: false,
             handoff: false,
+            mode: QueueMode::Keep,
         };
         let json = serde_json::to_string(&play).unwrap();
         assert_eq!(
@@ -1412,6 +1418,7 @@ mod tests {
             position_ms: 61_250,
             paused: true,
             handoff: false,
+            mode: QueueMode::Keep,
         };
         let json = serde_json::to_string(&held).unwrap();
         assert_eq!(

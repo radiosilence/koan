@@ -1451,7 +1451,7 @@ mod tests {
 
     use super::*;
     use crate::player::commands::PlayerCommand;
-    use crate::player::state::{PlaybackState, PlaylistItem};
+    use crate::player::state::{PlaybackState, PlaylistItem, QueueMode};
     use crate::upnp::fake::FakeRenderer;
 
     const WAV: &str = "http-get:*:audio/wav:*,http-get:*:audio/x-wav:*";
@@ -2735,6 +2735,7 @@ mod tests {
                     start: 0,
                     position_ms: 0,
                     play: false,
+                    mode: QueueMode::Keep,
                 });
                 r.player
                     .process_command(PlayerCommand::AddToPlaylist(items));
@@ -2988,6 +2989,7 @@ mod tests {
                         start: rng.below(4),
                         position_ms: if rng.coin() { 0 } else { 2_000 },
                         play: rng.coin(),
+                        mode: QueueMode::Keep,
                     }),
                 };
                 let label = cmd

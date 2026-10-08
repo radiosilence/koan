@@ -130,6 +130,40 @@ impl PlayMode {
     }
 }
 
+/// What replacing the queue does to the play mode. Something played from
+/// its play button — a record, an artist, a playlist, a selection — starts
+/// as asked, in order or shuffled, with repeat off, whatever the modes were.
+/// A queue restored, synced or handed over keeps them.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "camelCase")]
+pub enum QueueMode {
+    #[default]
+    Keep,
+    InOrder,
+    Shuffled,
+}
+
+impl QueueMode {
+    pub fn is_keep(&self) -> bool {
+        *self == QueueMode::Keep
+    }
+
+    /// The mode a queue started this way plays in, or `None` to keep it.
+    pub fn play_mode(self) -> Option<PlayMode> {
+        let shuffle = match self {
+            QueueMode::Keep => return None,
+            QueueMode::InOrder => false,
+            QueueMode::Shuffled => true,
+        };
+        Some(PlayMode {
+            shuffle,
+            repeat: Repeat::Off,
+        })
+    }
+}
+
 /// A sleep timer as asked for: stop after a while, or at the end of the
 /// track or record playing. It pauses, fading out, and leaves the queue as it
 /// was, so playing again carries on from there.
@@ -580,7 +614,8 @@ impl Playlist {
     fn move_on(&mut self, id: QueueItemId) {
         let wrapped = match &self.order {
             Some(order) => {
-                !order.upcoming.contains(&id)
+                self.cursor != Some(id)
+                    && !order.upcoming.contains(&id)
                     && order
                         .next_pass
                         .as_ref()

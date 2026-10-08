@@ -7,7 +7,7 @@ use koan_core::db::queries;
 use koan_core::db::queries::UidKind;
 use koan_core::db::queries::playback_state::PersistedQueueItem;
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::{PlaylistItem, QueueItemId, SharedPlayerState};
+use koan_core::player::state::{PlaylistItem, QueueItemId, QueueMode, SharedPlayerState};
 
 use koan_core::auth::Role;
 use koan_core::remote::link::LinkCommand;
@@ -72,6 +72,10 @@ impl MutationRoot {
     /// it, the one playing, else the one that played most recently. With
     /// several linked and none of them playing lately it is an error naming
     /// them: ask the person which.
+    ///
+    /// Replacing the queue turns repeat off and shuffle off, or on with
+    /// `shuffle`, as playing from a play button in the apps does; enqueueing
+    /// leaves the modes alone.
     async fn play_on_client(
         &self,
         ctx: &Context<'_>,
@@ -79,6 +83,7 @@ impl MutationRoot {
         client: Option<String>,
         start_at: Option<u32>,
         enqueue: Option<bool>,
+        shuffle: Option<bool>,
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
         if track_ids.is_empty() {
@@ -95,6 +100,11 @@ impl MutationRoot {
                 position_ms: 0,
                 paused: false,
                 handoff: false,
+                mode: if shuffle.unwrap_or(false) {
+                    QueueMode::Shuffled
+                } else {
+                    QueueMode::InOrder
+                },
             }
         };
         let sent = send_to_client(ctx, client.as_deref(), cmd).await?;
@@ -572,6 +582,7 @@ impl MutationRoot {
                     start: start_at.unwrap_or(0).max(0) as usize,
                     position_ms: 0,
                     play: true,
+                    mode: QueueMode::InOrder,
                 },
             )?;
         }
@@ -992,7 +1003,8 @@ impl MutationRoot {
         .await
     }
 
-    /// Replace the queue with a playlist and play it.
+    /// Replace the queue with a playlist and play it, in order or `shuffled`,
+    /// with repeat off.
     async fn play_playlist(
         &self,
         ctx: &Context<'_>,
@@ -1004,11 +1016,8 @@ impl MutationRoot {
         let user = super::user_id(ctx);
         let resolved = with_db(ctx, move |db| {
             super::readable_playlist(db, user, id)?;
-            let mut entries = queries::playlist_entries(&db.conn, id)
+            let entries = queries::playlist_entries(&db.conn, id)
                 .map_err(|e| super::internal_error("db", e))?;
-            if shuffled {
-                koan_core::helpers::shuffle(&mut entries);
-            }
 
             let tracks: Vec<_> = entries.iter().map(|e| e.track.clone()).collect();
             let mut items = koan_core::helpers::playlist_items_for_tracks(db, &tracks);
@@ -1033,6 +1042,11 @@ impl MutationRoot {
                     start: 0,
                     position_ms: 0,
                     play: true,
+                    mode: if shuffled {
+                        QueueMode::Shuffled
+                    } else {
+                        QueueMode::InOrder
+                    },
                 },
             )?;
         }

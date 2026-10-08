@@ -4,6 +4,12 @@ Shuffle and repeat change which track plays next. Neither moves anything in
 the queue: it stays in the order you gave it, and turning either on or off
 never rearranges it.
 
+Playing something from its play button — a record, an artist, a playlist, a
+selection, or a track in a list — starts it as asked: Play turns shuffle and
+repeat off, and Shuffle turns shuffle on and repeat off. Adding to the queue,
+Play Next and Add to Queue leave both as they are. This holds on every device
+and through the GraphQL API and MCP (`playOnClient`, `playPlaylist`).
+
 ## Shuffle
 
 With shuffle on, each time a track ends or you press Next, koan picks the next
