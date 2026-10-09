@@ -955,10 +955,20 @@ fn push(
             restore = true;
             continue;
         }
-        remote.delete(uid, now_ms())?;
+        let saved = remote.delete(uid, now_ms())?;
         rows::forget_synced(&db.conn, url, uid)?;
-        rows::forget_local(&db.conn, uid)?;
         sent.insert(uid.clone());
+        if !saved.stored {
+            // The server holds an edit made later than this deletion, by a
+            // clock that ran ahead of ours or by an edit made since. The later
+            // edit wins: the cursor goes back so the pull takes it again, and
+            // the deletion is dropped from the config with the rest sent.
+            log::info!("dsp sync: {uid} was edited later elsewhere; keeping it");
+            rows::set_sync_cursor(&db.conn, url, 0)?;
+            restore = true;
+            continue;
+        }
+        rows::forget_local(&db.conn, uid)?;
         out.sent += 1;
     }
     // A deletion stays listed until it is sent: one made while this sync ran
@@ -1682,6 +1692,50 @@ mod tests {
             vec![band(4.0)],
             "back on A"
         );
+    }
+
+    /// A deletion the server refuses, because it holds an edit stamped later
+    /// (a device whose clock ran ahead), is not forgotten here: the profile
+    /// comes back from the server instead of the two disagreeing for good.
+    #[test]
+    fn a_deletion_the_server_refuses_brings_the_profile_back() {
+        let _guard = lock();
+        let (server, a, _b) = shared(vec![bass()]);
+        a.on();
+        let uid = a.profile("Bass").unwrap().uid.unwrap();
+        Config::persist(|c| {
+            c.dsp.removed.push(uid.clone());
+            c.dsp.profiles.retain(|p| p.name != "Bass");
+        })
+        .unwrap();
+        let url = "https://music.example";
+        let mut locals = observe(&a.db, url).unwrap();
+
+        // Another device's edit lands after this one looked, stamped ahead.
+        let doc = rows::live_docs(&server.conn, USER)
+            .unwrap()
+            .into_iter()
+            .find(|(u, _)| *u == uid)
+            .unwrap()
+            .1;
+        server.save(&uid, now_ms() + 30_000, &doc).unwrap();
+
+        let mut out = DspSync::default();
+        let again = push(&a.db, &server, url, &locals, &HashSet::new(), &mut out).unwrap();
+        assert!(again, "the server's copy is taken again");
+        assert_eq!(out.sent, 0);
+        assert!(
+            rows::live_docs(&server.conn, USER)
+                .unwrap()
+                .iter()
+                .any(|(u, _)| *u == uid),
+            "still live on the server"
+        );
+
+        locals = observe(&a.db, url).unwrap();
+        pull(&a.db, &server, url, &mut locals, &mut out).unwrap();
+        assert!(a.profile("Bass").is_some(), "back on A");
+        assert!(removed().is_empty(), "the deletion is not left pending");
     }
 
     /// A deletion recorded after this sync looked at the profiles, as one

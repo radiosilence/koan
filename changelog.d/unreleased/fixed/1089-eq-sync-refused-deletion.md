@@ -1,0 +1,1 @@
+- **EQ sync keeps a profile the server holds a later edit of.** A deletion the server refuses, because a device whose clock ran ahead stamped an edit after it, no longer drops the profile on the deleting device only to have it return on the next pull; the server's copy is taken at once.
