@@ -94,6 +94,7 @@ fn setup_full(
             pool,
             state.clone(),
             auth_enabled,
+            true,
             Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
             public_url.map(str::to_owned),
             Vec::new(),
@@ -2512,4 +2513,130 @@ async fn a_username_reaches_the_delete_confirmation_as_data() {
         .unwrap();
     assert!(expression.contains("/delete')"), "{expression}");
     assert!(!expression.contains("alert"), "{expression}");
+}
+
+/// The UI over a server with no accounts, its setup page on or off.
+fn unset(setup_wizard: bool) -> (tempfile::TempDir, axum::Router) {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("koan.db");
+    Database::open(&db_path).unwrap();
+    let (private_pem, public_pem) = auth::generate_keypair_pem().unwrap();
+    let pool = Arc::new(koan_core::db::pool::Pool::new(db_path));
+    let state = AuthRouteState {
+        pool: pool.clone(),
+        private_pem: Arc::new(private_pem.into_bytes()),
+        public_pem: Arc::new(public_pem.into_bytes()),
+        access_ttl_secs: 900,
+        refresh_ttl_secs: 3600,
+        cookie_secure: true,
+        login_limiter: Arc::new(RateLimiter::default()),
+        users: Arc::new(crate::auth::password::PasswordVerifier::new(pool.clone())),
+    };
+    let app = super::router(
+        pool,
+        state,
+        true,
+        setup_wizard,
+        Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
+        None,
+        Vec::new(),
+        None,
+    );
+    (dir, app)
+}
+
+#[tokio::test]
+async fn an_empty_server_sends_sign_in_to_setup_which_makes_the_admin_once() {
+    let (_dir, app) = unset(true);
+    let r = send(&app, get("/login").body(Body::empty()).unwrap()).await;
+    assert_eq!((r.status, r.location()), (StatusCode::SEE_OTHER, "/setup"));
+    let r = send(&app, get("/setup").body(Body::empty()).unwrap()).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("action=\"/setup\""));
+
+    let mismatch = send(
+        &app,
+        form(
+            "/setup",
+            "username=ada&password=longenough&confirm=different",
+        ),
+    )
+    .await;
+    assert_eq!(mismatch.status, StatusCode::BAD_REQUEST);
+    assert!(mismatch.body.contains("do not match"));
+    let short = send(
+        &app,
+        form("/setup", "username=ada&password=short&confirm=short"),
+    )
+    .await;
+    assert_eq!(short.status, StatusCode::BAD_REQUEST);
+    assert!(short.body.contains("at least 8"));
+
+    let cross = Request::post("/setup")
+        .header(header::HOST, HOST)
+        .header(header::ORIGIN, "https://evil.test")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(
+            "username=eve&password=longenough&confirm=longenough",
+        ))
+        .unwrap();
+    assert_eq!(send(&app, cross).await.status, StatusCode::FORBIDDEN);
+
+    let made = send(
+        &app,
+        form(
+            "/setup",
+            "username=ada&password=longenough&confirm=longenough",
+        ),
+    )
+    .await;
+    assert_eq!((made.status, made.location()), (StatusCode::SEE_OTHER, "/"));
+    let access = made.cookie("koan_access");
+    let home = send(
+        &app,
+        get("/")
+            .header(header::COOKIE, format!("koan_access={access}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(home.status, StatusCode::OK);
+
+    // Closed for good: the page, a second admin, and sign-in is sign-in again.
+    let r = send(&app, get("/setup").body(Body::empty()).unwrap()).await;
+    assert_eq!((r.status, r.location()), (StatusCode::SEE_OTHER, "/login"));
+    let again = send(
+        &app,
+        form(
+            "/setup",
+            "username=eve&password=longenough&confirm=longenough",
+        ),
+    )
+    .await;
+    assert_eq!(
+        (again.status, again.location()),
+        (StatusCode::SEE_OTHER, "/login")
+    );
+    assert!(again.cookies().is_empty());
+    let r = send(&app, get("/login").body(Body::empty()).unwrap()).await;
+    assert_eq!(r.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn setup_turned_off_leaves_an_empty_server_to_the_cli() {
+    let (_dir, app) = unset(false);
+    let r = send(&app, get("/login").body(Body::empty()).unwrap()).await;
+    assert_eq!(r.status, StatusCode::OK);
+    let r = send(&app, get("/setup").body(Body::empty()).unwrap()).await;
+    assert_eq!((r.status, r.location()), (StatusCode::SEE_OTHER, "/login"));
+    let r = send(
+        &app,
+        form(
+            "/setup",
+            "username=ada&password=longenough&confirm=longenough",
+        ),
+    )
+    .await;
+    assert_eq!((r.status, r.location()), (StatusCode::SEE_OTHER, "/login"));
+    assert!(r.cookies().is_empty());
 }

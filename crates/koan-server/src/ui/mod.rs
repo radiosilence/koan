@@ -22,6 +22,7 @@ mod pages;
 mod pair;
 mod scrobbling;
 mod session;
+mod setup;
 #[cfg(test)]
 mod tests;
 mod users;
@@ -89,6 +90,8 @@ pub struct UiState {
     options: Arc<std::sync::Mutex<Option<(std::time::Instant, pages::Options)>>>,
     auth: AuthRouteState,
     auth_enabled: bool,
+    /// `graphql.setup_wizard`: whether `/setup` may make the first admin.
+    setup_wizard: bool,
     /// `sharing.public_url`, the address invites point clients at.
     public_url: Option<String>,
     /// OAuth codes awaiting their token request.
@@ -99,10 +102,12 @@ pub struct UiState {
     proxy_auth: Option<ProxyAuth>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn router(
     pool: Arc<Pool>,
     auth: AuthRouteState,
     auth_enabled: bool,
+    setup_wizard: bool,
     covers: Arc<Covers>,
     public_url: Option<String>,
     redirect_hosts: Vec<String>,
@@ -114,6 +119,7 @@ pub fn router(
         options: Arc::default(),
         auth,
         auth_enabled,
+        setup_wizard,
         public_url,
         codes: oauth::Codes::default(),
         redirect_hosts: Arc::new(redirect_hosts),
@@ -188,6 +194,9 @@ pub fn router(
     let sign_in = get(session::login_form).merge(
         post(session::login).layer(from_fn_with_state(state.auth.clone(), login_rate_limit)),
     );
+    // Making the first admin hashes a password, so it shares sign-in's window.
+    let setup = get(setup::form)
+        .merge(post(setup::create).layer(from_fn_with_state(state.auth.clone(), login_rate_limit)));
     axum::Router::new()
         .merge(gated)
         .merge(consent)
@@ -222,6 +231,7 @@ pub fn router(
             )),
         )
         .route("/login", sign_in)
+        .route("/setup", setup)
         .route("/auth/resume", get(session::resume))
         .route(session::PROXY_RESUME, get(session::proxy_resume))
         .route("/ui/renew", post(session::proxy_renew))

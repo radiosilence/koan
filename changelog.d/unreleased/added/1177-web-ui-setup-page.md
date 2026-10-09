@@ -1,0 +1,1 @@
+- **The web UI makes the first admin.** A server with auth on and no accounts shows a setup page instead of sign-in, so one in a container needs no shell to become usable; it closes once any account exists. Whoever reaches it first becomes the admin, so `graphql.setup_wizard = false` keeps `koan auth setup` the only way.

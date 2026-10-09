@@ -202,6 +202,10 @@ pub(super) async fn login_form(
     if vouched(&s, &headers, &ext) != Vouch::Absent {
         return see_other(&format!("{PROXY_RESUME}?next={}", encode(next)));
     }
+    // Nobody to sign in as yet: make the admin first.
+    if super::setup::open_for_setup(&s).await {
+        return see_other("/setup");
+    }
     html(StatusCode::OK, pages::login(next, None))
 }
 

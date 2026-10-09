@@ -67,7 +67,16 @@ Auth is enabled by default. See [Authentication](authentication.md) for the full
 
 ### The first account
 
-A new server has no accounts, and nothing can sign in until one exists. There is no sign-up page: on a server reachable from the internet, whoever found it first would become its admin. The first admin is made with `koan auth setup`, run on the server itself, against the same config directory the server uses. The server can be running at the time; it picks the account up on the next sign-in.
+A new server has no accounts, and nothing can sign in until one exists. Until then the web UI answers with a setup page instead of sign-in: open the server in a browser, choose the admin's username and password, and you are signed in as that admin. The page closes for good once any account exists, however it was made.
+
+Whoever reaches the setup page first becomes the admin, and the server logs a warning while it is open. On a server reachable from the internet, make the account as soon as it starts, or turn the page off and make the admin from a shell instead:
+
+```toml
+[graphql]
+setup_wizard = false          # or KOAN_GRAPHQL__SETUP_WIZARD=false
+```
+
+With the page off, or for scripts, the first admin is made with `koan auth setup`, run on the server itself, against the same config directory the server uses. The server can be running at the time; it picks the account up on the next sign-in.
 
 | Where the server runs | Run |
 |---|---|
@@ -223,7 +232,7 @@ An app is linked while it runs. iOS suspends a backgrounded app that is not play
 
 ## In a container
 
-The image at `ghcr.io/radiosilence/koan` runs `koan --headless --bind 0.0.0.0`, keeps config, database and auth keys in `/config`, and needs no sound card. `latest` and `vX.Y.Z` are releases; `main` and a commit sha follow the main branch between them. Mount the library read-only, list it under `[library] folders` in `/config/config.toml`, and add the public hostname to `allowed_hosts`. Create the first admin with `koan auth setup` inside the container (see [The first account](#the-first-account)), and `koan subsonic setup` to enable the Subsonic API.
+The image at `ghcr.io/radiosilence/koan` runs `koan --headless --bind 0.0.0.0`, keeps config, database and auth keys in `/config`, and needs no sound card. `latest` and `vX.Y.Z` are releases; `main` and a commit sha follow the main branch between them. Mount the library read-only, list it under `[library] folders` in `/config/config.toml`, and add the public hostname to `allowed_hosts`. Create the first admin on the setup page the web UI shows until one exists, or with `koan auth setup` inside the container (see [The first account](#the-first-account)), and `koan subsonic setup` to enable the Subsonic API.
 
 Set `sharing.public_url` to the public address (`KOAN_SHARING__PUBLIC_URL`) for share links and for MCP clients to sign in at `/mcp`.
 

@@ -260,6 +260,17 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
             access_ttl,
             refresh_ttl
         );
+        let no_accounts = pool
+            .get()
+            .ok()
+            .and_then(|db| koan_core::db::queries::auth::has_users(&db.conn).ok())
+            == Some(false);
+        if no_accounts && cfg.graphql.setup_wizard {
+            log::warn!(
+                "No accounts yet: whoever opens /setup first becomes the admin. \
+                 Set graphql.setup_wizard = false to make it with `koan auth setup` instead."
+            );
+        }
     } else {
         log::info!("Auth disabled — all requests treated as admin");
     }
@@ -309,6 +320,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
             pool.clone(),
             auth_route_state.clone(),
             auth_enabled,
+            cfg.graphql.setup_wizard,
             covers.clone(),
             cfg.sharing.public_url.clone(),
             cfg.mcp.redirect_hosts.clone(),
