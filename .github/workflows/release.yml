@@ -45,12 +45,10 @@ jobs:
         with:
           ref: main
           token: ${{ secrets.RELEASE_TOKEN }}
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
-        with:
-          toolchain: stable
+      # Rust and just from mise.toml, as a contributor's terminal has them.
       - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
         with:
-          install_args: just
+          install_args: rust just
       # release.sh refreshes Cargo.lock offline, which resolves against the
       # local registry cache: a fresh runner has none.
       - run: cargo fetch --locked
