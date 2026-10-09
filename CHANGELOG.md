@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.61.12
+
+### Changed
+
+- **The web UI and share pages are drawn in the kōan theme.** Square controls, one prominent action per page, bordered secondary buttons, flat list rows, lowercase labels and navigation, the theme's checkbox and seek slider, and the sidebar and transport on the page's own ground. Secondary text is a shade lighter everywhere, koan.rocks included, to meet AA contrast.
+
+### Fixed
+
+- **EQ sync keeps a profile the server holds a later edit of.** A deletion the server refuses, because a device whose clock ran ahead stamped an edit after it, no longer drops the profile on the deleting device only to have it return on the next pull; the server's copy is taken at once.
+
 ## 0.61.11
 
 ### Fixed
