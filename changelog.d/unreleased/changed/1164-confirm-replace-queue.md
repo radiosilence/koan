@@ -1,0 +1,1 @@
+- **Clicking a sleeve in search or on a shelf asks before replacing the queue.** With anything queued, choose to play the record in its place or add it to the queue.
