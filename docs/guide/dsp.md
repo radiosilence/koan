@@ -277,8 +277,10 @@ The correction's block names the target it corrects to ("to Neutral, in-ear
 (diffuse field)"), and each EQ the target it was made against ("made for Neutral"). The
 line into each EQ says how the two meet. Drawn in the accent and marked
 **Matched**, the EQ was made against the correction's own target and plays as
-made. When every EQ that plays is matched, the whole chain is drawn in the
-accent, so a chain that plays as made reads as one at a glance. Made against another target, it shows the conversion kōan plays first
+made. When the first EQ that plays is matched, and none after it was made
+against another target, the whole chain is drawn in the accent, so a chain that
+plays as made reads as one at a glance. A generic EQ stacked on top that says no
+target, a bass shelf say, leaves it matched. Made against another target, it shows the conversion kōan plays first
 ("Target difference: Neutral → Harman in-ear 2019"), which is correct and not
 a warning. A correction built from a measurement is instead fitted again to
 that target ("Correction fitted to Harman in-ear 2019 for it"): one fit to the
@@ -290,8 +292,10 @@ the line shows the conversion as above, where it would leave out an EQ that
 plays without it or add a note to the chain. Where the EQ does not say
 what it was made against, nothing can be
 converted, and if it already includes a target, as a finished preset like
-"Lush" does, that target is applied twice on top of the correction's: the line
-says so, and tapping it opens the EQ's page to set **Made against**. A
+"Lush" does, that target is applied twice on top of the correction's. Not
+saying is no mismatch, since a generic EQ has no target to say, so the line
+only notes it, quietly, and tapping it opens the EQ's page to set **Made
+against**. A
 converted line draws the difference kōan plays beside its label.
 
 An imported EQ cannot say what it was made against, so kōan offers a guess:

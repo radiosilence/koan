@@ -1480,7 +1480,7 @@ pub enum DspJoin {
     /// Made against another, under a correction fitted to a measurement:
     /// the correction is fitted to `to` in place of `from`.
     Refitted { from: String, to: String },
-    /// Made against a target not said: a target may be applied twice.
+    /// Made against a target not said, so nothing converts.
     Unknown,
 }
 

@@ -190,8 +190,8 @@ koan dsp show "Scarlett 4i4 USB" --json
 `flat` and `sentence`. A tuning EQ's `matched` is true where it was made
 against the correction's target, false where it was made against another or
 that is not set, and null where there is nothing to compare; `join.state` is
-`matched`, `converted` (with `from` and `to`) or `unknown`, the last meaning a
-target may be applied twice. `list --json` gives each one's `name`, `kind`
+`matched`, `converted` (with `from` and `to`) or `unknown`, the last meaning
+the EQ does not say what it was made against. `list --json` gives each one's `name`, `kind`
 (`correction`, `eq` or `preset`), `used_on`, `edited`, `members` (a group's)
 and `problem` (why it would not load); `preset list --json` gives each
 preset's `name`, `used_on` and `edited`. A refusal says what is wrong and the valid
