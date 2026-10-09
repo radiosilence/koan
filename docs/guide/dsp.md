@@ -292,8 +292,10 @@ the line shows the conversion as above, where it would leave out an EQ that
 plays without it or add a note to the chain. Where the EQ does not say
 what it was made against, nothing can be
 converted, and if it already includes a target, as a finished preset like
-"Lush" does, that target is applied twice on top of the correction's: the line
-says so, and tapping it opens the EQ's page to set **Made against**. A
+"Lush" does, that target is applied twice on top of the correction's. Not
+saying is no mismatch, since a generic EQ has no target to say, so the line
+only notes it, quietly, and tapping it opens the EQ's page to set **Made
+against**. A
 converted line draws the difference kōan plays beside its label.
 
 An imported EQ cannot say what it was made against, so kōan offers a guess:

@@ -714,13 +714,15 @@ struct EqChain: View {
                 Text("Correction fitted to \(to) for it")
                     .koanText(.fine, .muted)
             case .unknown:
+                // Not saying is not a mismatch: a generic EQ has no target
+                // to say. Only a target set and differing is worth a mark.
                 #if os(tvOS)
-                Label("Made against: unknown. This may apply a target twice", koan: Icon.warning)
-                    .koanText(.fine, .bad)
+                Text("Made against: not set")
+                    .koanText(.fine, .muted)
                 #else
                 Button { open(eq) } label: {
-                    Label("Made against: unknown. This may apply a target twice; set it", koan: Icon.warning)
-                        .koanText(.fine, .bad)
+                    Text("Made against: not set. Set it")
+                        .koanText(.fine, .muted)
                         .multilineTextAlignment(.leading)
                 }
                 .buttonStyle(.plain)
@@ -771,7 +773,7 @@ struct EqChain: View {
             case .matched: return "\(entry.name) was made for \(aim): matched."
             case let .converted(from, to): return "\(entry.name) was made for \(to), so the difference from \(from) to \(to) plays first."
             case let .refitted(_, to): return "\(entry.name) was made for \(to), so the correction is fitted to \(to) for it."
-            case .unknown: return "What \(entry.name) was made against is not set, so it may apply a target twice."
+            case .unknown: return "What \(entry.name) was made against is not set."
             case nil: return nil
             }
         }

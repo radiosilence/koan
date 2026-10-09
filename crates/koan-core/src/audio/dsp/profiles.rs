@@ -395,7 +395,7 @@ pub fn joined(eq: &str, join: &Join, aim: &str) -> String {
             format!("{eq} was made for {to}, so the correction is fitted to {to} for it.")
         }
         Join::Unknown => {
-            format!("What {eq} was made against is not set, so it may apply a target twice.")
+            format!("What {eq} was made against is not set.")
         }
     }
 }
@@ -6566,7 +6566,7 @@ mod tests {
         assert!(
             chain_view(dac)
                 .sentence
-                .contains("may apply a target twice")
+                .contains("What Warm was made against is not set.")
         );
         // Switched off, it meets nothing.
         set_tunings(dac, &[("Warm".into(), false)]).unwrap();
