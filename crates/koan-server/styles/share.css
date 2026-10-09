@@ -9,6 +9,7 @@
 @source "../src/share.rs";
 @source "../assets/share.js";
 @import "../../../site/src/theme.css";
+@import "./controls.css";
 
 @theme {
   /* Narrower than this, the cover stacks above the title. */
@@ -39,8 +40,9 @@
     @apply my-[1em];
   }
 
+  /* The page's title is what was shared, so it keeps its case. */
   h1 {
-    @apply my-1 text-title font-extralight wrap-anywhere max-wide:text-title-sm;
+    @apply my-1 text-display font-extralight text-strong wrap-anywhere max-wide:text-title;
   }
 
   /* A browser default that preflight removes, which the page is drawn with. */
@@ -48,7 +50,8 @@
     margin: revert;
   }
 
+  /* The theme's prominent button, the one this page has: play. Previous and next are icon buttons. */
   button {
-    @apply cursor-pointer rounded-md border border-rule bg-rule px-3.5 py-2 text-ink disabled:cursor-default disabled:opacity-50;
+    @apply cursor-pointer border border-brand bg-transparent px-5 py-3 text-body text-brand lowercase hover:bg-hover/30 active:bg-hover disabled:cursor-default disabled:opacity-40;
   }
 }

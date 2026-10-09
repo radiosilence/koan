@@ -46,10 +46,10 @@ aria-label=\"More\" title=\"More\">⋯</button>";
 /// The menu every track row opens, filled for the row by the UI's script.
 /// Beside the pointer on a wide screen, a sheet above the bar on a phone.
 const TRACK_MENU: &str = "<div id=track-menu popover=manual role=menu class=\"fixed inset-auto m-0 hidden min-w-52 \
-flex-col open:flex rounded-lg border border-rule bg-surface p-1.5 text-ink shadow-lg max-wide:inset-x-3 max-wide:w-auto \
+flex-col open:flex border border-rule bg-bg p-1 text-ink max-wide:inset-x-3 max-wide:w-auto \
 max-wide:bottom-[calc(var(--bar-h)+var(--tabs-h)+env(safe-area-inset-bottom)+8px)]\" aria-label=Track></div>";
 
-pub(super) const KICKER: &str = "m-0 text-fine tracking-[.08em] text-muted uppercase";
+pub(super) const KICKER: &str = "m-0 text-fine text-muted lowercase";
 pub(super) const SUB: &str = "mt-0 mb-3.5 text-muted wrap-anywhere";
 pub(super) const EMPTY: &str = "text-muted";
 pub(super) const ERROR: &str = "text-bad";
@@ -59,15 +59,17 @@ const ACTIONS: &str = "flex flex-wrap items-center gap-2";
 /// and would otherwise sit on the list.
 pub(super) const LIST_HEAD: &str =
     "mt-6 mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 [&>h1]:my-0 [&>h2]:my-0";
+/// Top-aligned, so the cover's top meets the kicker's first line.
 const HERO: &str =
-    "mb-6 flex items-end gap-6 max-wide:flex-col max-wide:items-stretch max-wide:gap-4";
-const HERO_COVER: &str = "size-[220px] flex-none rounded-lg border border-rule bg-surface object-cover \
+    "mb-6 flex items-start gap-6 max-wide:flex-col max-wide:items-stretch max-wide:gap-4";
+const HERO_COVER: &str = "size-[220px] flex-none bg-surface object-cover \
 max-wide:aspect-square max-wide:h-auto max-wide:w-full";
 const GRID: &str = "grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-x-4 gap-y-5 \
 max-wide:grid-cols-[repeat(auto-fill,minmax(140px,1fr))] max-wide:gap-x-3 max-wide:gap-y-4";
 /// A row of the artist and playlist lists: the link, its name and its count.
-const LIST_ROW: &str = "flex min-w-0 items-baseline gap-3 border-b border-rule px-1 py-2.5 text-ink \
-hover:text-brand hover:no-underline";
+/// No rules between rows, as in every list of the theme.
+const LIST_ROW: &str = "flex min-w-0 items-baseline gap-3 px-2 py-2.5 text-ink hover:bg-hover/30 \
+hover:no-underline max-wide:px-0";
 const LIST_NAME: &str = "min-w-0 flex-1 truncate";
 const LIST_COUNT: &str = "text-meta text-muted";
 /// A copyable link: the share, the new key, an invite, the MCP address.
@@ -81,35 +83,37 @@ pub(super) const SIGNIN_TITLE: &str = "text-brand";
 
 /// The transport buttons: in the bar, or larger on a phone on the queue page.
 fn buttons(page: bool) -> String {
-    let icon = "inline-flex items-center justify-center rounded-full p-0 *:fill-current";
+    let icon = "inline-flex items-center justify-center p-0 text-ink hover:bg-transparent hover:text-strong \
+*:fill-current";
     let (row, small, big, prev) = if page {
         (
             "flex flex-wrap items-center gap-2 max-wide:justify-center",
-            "size-9 *:size-[18px] max-wide:size-12 max-wide:*:size-6",
-            "size-10 *:size-[18px] max-wide:size-15 max-wide:*:size-6",
+            "size-11 *:size-[18px] max-wide:size-12 max-wide:*:size-6",
+            "size-11 *:size-[18px] max-wide:size-15 max-wide:*:size-6",
             "",
         )
     } else {
         (
             "flex items-center gap-1.5",
-            "size-9 *:size-[18px]",
-            "size-10 *:size-[18px]",
+            "size-11 *:size-[18px]",
+            "size-11 *:size-[18px]",
             "max-wide:hidden",
         )
     };
     format!(
-        "<div class=\"{row}\"><button class=\"quiet {icon} {small} {prev}\" data-ctl=prev aria-label=Previous>{ICON_PREV}</button>\
-<button class=\"primary {icon} {big}\" data-ctl=play aria-label=\"Play or pause\">{ICON_PLAY}{ICON_PAUSE}</button>\
-<button class=\"quiet {icon} {small}\" data-ctl=next aria-label=Next>{ICON_NEXT}</button></div>"
+        "<div class=\"{row}\"><button class=\"{icon} {small} {prev} border-transparent\" data-ctl=prev aria-label=Previous>{ICON_PREV}</button>\
+<button class=\"{icon} {big} border-ink\" data-ctl=play aria-label=\"Play or pause\">{ICON_PLAY}{ICON_PAUSE}</button>\
+<button class=\"{icon} {small} border-transparent\" data-ctl=next aria-label=Next>{ICON_NEXT}</button></div>"
     )
 }
 
-/// Position and length around the seek bar. `extra` places it.
-fn scrub(extra: &str) -> String {
+/// Position and length around the seek bar. `extra` places it; `height` is the
+/// slider's hit area, which the transport bar has no room to make 44 px.
+fn scrub(extra: &str, height: &str) -> String {
     format!(
         "<div class=\"flex w-full items-center gap-2.5 text-fine text-muted tabular-nums {extra}\">\
 <span data-np=pos>0:00</span>\
-<input type=range class=\"min-w-0 flex-1\" data-ctl=seek min=0 max=0 step=0.1 value=0 aria-label=Position>\
+<input type=range class=\"{height} min-w-0 flex-1\" data-ctl=seek min=0 max=0 step=0.1 value=0 aria-label=Position>\
 <span data-np=len>0:00</span></div>"
     )
 }
@@ -132,14 +136,18 @@ pub(super) fn head(title: &str) -> String {
 /// wide as its label, which fit a 360 px screen at the meta size. A phone has
 /// no room for a seventh, so there Playlists becomes Library, a page of the
 /// library's own lists; the sidebar lists them directly.
-const NAV_LINK: &str = "rounded-md px-2.5 py-2 text-muted hover:text-ink hover:no-underline \
-aria-[current=page]:bg-rule aria-[current=page]:text-ink max-wide:flex max-wide:flex-auto max-wide:items-center \
-max-wide:justify-center max-wide:rounded-none max-wide:px-0 max-wide:text-meta \
-max-wide:aria-[current=page]:bg-transparent max-wide:aria-[current=page]:text-brand";
+///
+/// The theme's navigation row: lowercase in `muted`, the page shown in the
+/// accent with a rule on its leading edge, and no fill. On a phone, the tab
+/// bar's: the page shown in the accent and underlined.
+const NAV_LINK: &str = "border-l-2 border-transparent px-2.5 py-1.5 text-muted lowercase hover:text-ink \
+hover:no-underline aria-[current=page]:border-brand aria-[current=page]:text-brand max-wide:flex \
+max-wide:flex-auto max-wide:items-center max-wide:justify-center max-wide:border-l-0 max-wide:px-0 \
+max-wide:text-meta max-wide:underline-offset-4 max-wide:aria-[current=page]:underline";
 
 /// The account's links in the sidebar.
-const ACCOUNT_LINK: &str = "rounded-md px-1.5 py-1 text-meta whitespace-nowrap text-muted hover:text-ink \
-hover:no-underline aria-[current=page]:bg-rule aria-[current=page]:text-ink";
+const ACCOUNT_LINK: &str = "px-1.5 py-1 text-meta whitespace-nowrap text-muted lowercase hover:text-ink \
+hover:no-underline aria-[current=page]:text-brand";
 
 /// `proxied`: an authenticating proxy is trusted, so the page renews its
 /// session from the proxy rather than a refresh cookie.
@@ -151,7 +159,7 @@ fn shell(title: &str, content: &str, user: &AuthUser, auth_enabled: bool, proxie
             "<form class=\"flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 px-1 text-meta text-muted\" \
 method=post action=\"/auth/signout\"><span class=\"min-w-0 flex-[1_0_100%] truncate px-1.5 pb-0.5 text-ink\">{}</span>\
 <a class=\"{ACCOUNT_LINK}\" href=\"/account\" data-nav=account>Account</a>\
-<button class=\"quiet px-2 py-1 text-meta\">Sign out</button></form>",
+<button class=\"quiet px-1.5 py-1 text-meta\">Sign out</button></form>",
             escape(&user.username)
         )
     } else {
@@ -161,7 +169,7 @@ method=post action=\"/auth/signout\"><span class=\"min-w-0 flex-[1_0_100%] trunc
     };
     let account = format!(
         "<div class=\"mt-auto flex min-w-0 flex-col gap-1 max-wide:hidden\">{signed_in}\
-<a class=\"rounded-md px-1 py-0.5 text-fine text-muted tabular-nums hover:text-ink hover:no-underline\" \
+<a class=\"px-1.5 py-0.5 text-fine text-muted tabular-nums hover:text-ink hover:no-underline\" \
 href=\"https://github.com/radiosilence/koan/releases/tag/v{v}\">kōan {v}</a></div>",
         v = env!("CARGO_PKG_VERSION")
     );
@@ -169,11 +177,11 @@ href=\"https://github.com/radiosilence/koan/releases/tag/v{v}\">kōan {v}</a></d
         "{head}<script type=module src=\"{datastar}\"></script>\
 <script src=\"{player}\" defer></script><script src=\"{ui}\" defer></script>\
 </head><body{proxied}><nav class=\"fixed top-0 bottom-(--bar-h) left-0 z-4 flex w-(--side-w) flex-col gap-0.5 border-r \
-border-rule bg-surface px-2.5 py-4 wide:overflow-y-auto pt-[max(16px,env(safe-area-inset-top))] max-wide:top-auto max-wide:right-0 \
+border-rule bg-bg px-2.5 py-4 wide:overflow-y-auto pt-[max(16px,env(safe-area-inset-top))] max-wide:top-auto max-wide:right-0 \
 max-wide:bottom-0 max-wide:h-[calc(var(--tabs-h)+env(safe-area-inset-bottom))] max-wide:w-auto \
 max-wide:flex-row max-wide:gap-0 max-wide:border-t max-wide:border-r-0 max-wide:p-0 \
 max-wide:pb-[env(safe-area-inset-bottom)]\" aria-label=Library>\
-<a class=\"mb-3 rounded-md px-2.5 py-2 text-[22px] font-extralight text-brand hover:text-ink hover:no-underline \
+<a class=\"mb-3 px-3 py-2 text-[22px] font-extralight text-brand hover:text-ink hover:no-underline \
 max-wide:hidden\" href=\"/\">kōan</a>\
 <a class=\"{NAV_LINK}\" href=\"/albums\" data-nav=albums>Albums</a>\
 <a class=\"{NAV_LINK}\" href=\"/artists\" data-nav=artists>Artists</a>\
@@ -191,7 +199,7 @@ pt-[max(24px,env(safe-area-inset-top))] pb-10 max-wide:ml-0 max-wide:p-4 \
 max-wide:pt-[max(16px,env(safe-area-inset-top))]\">{content}</main>\
 \
 <footer class=\"fixed inset-x-0 bottom-(--tabs-h) z-5 grid h-[calc(var(--bar-h)+env(safe-area-inset-bottom))] \
-grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center gap-4 border-t border-rule bg-surface px-4 \
+grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center gap-4 border-t border-rule bg-bg px-4 \
 pb-[env(safe-area-inset-bottom)] max-wide:bottom-[calc(var(--tabs-h)+env(safe-area-inset-bottom))] \
 max-wide:h-(--bar-h) max-wide:grid-cols-[minmax(0,1fr)_auto] max-wide:gap-2 max-wide:pr-2 max-wide:pb-0 \
 max-wide:pl-3\">\
@@ -199,16 +207,16 @@ max-wide:pl-3\">\
 max-wide:block [&::-moz-progress-bar]:bg-brand [&::-webkit-progress-bar]:bg-rule \
 [&::-webkit-progress-value]:bg-brand\" data-np=progress max=1 value=0></progress>\
 <a class=\"flex min-w-0 items-center gap-2.5 text-ink hover:no-underline\" href=\"/queue\">\
-<img class=\"size-12 flex-none rounded-sm bg-rule object-cover max-wide:size-10\" data-np=cover alt=\"\" hidden>\
-<span class=\"flex min-w-0 flex-col\"><span class=\"truncate\" data-np=title>Nothing playing</span>\
-<span class=\"truncate text-meta text-muted\" data-np=artist></span></span></a>\
+<img class=\"size-10 flex-none bg-surface object-cover\" data-np=cover alt=\"\" hidden>\
+<span class=\"flex min-w-0 flex-col\"><span class=\"truncate text-meta text-strong\" data-np=title>Nothing playing</span>\
+<span class=\"truncate text-fine text-muted\" data-np=artist></span></span></a>\
 <div class=\"flex min-w-0 flex-col items-center gap-1\">{buttons}{scrub}</div></footer>{TRACK_MENU}</body></html>",
         head = head(title),
         datastar = super::ASSETS.datastar_js,
         player = super::ASSETS.player_js,
         ui = super::ASSETS.ui_js,
         buttons = buttons(false),
-        scrub = scrub("max-wide:hidden"),
+        scrub = scrub("max-wide:hidden", "h-4"),
         proxied = if proxied { " data-proxied" } else { "" },
     )
 }
@@ -319,10 +327,10 @@ fn cells(albums: &[AlbumRow], versions: &Versions, hearts: Option<&Hearts>) -> S
         let _ = write!(
             out,
             "<div class=\"relative min-w-0\"><a class=\"group flex min-w-0 flex-col gap-0.5 text-ink hover:no-underline\" href=\"/album/{id}\">\
-<img class=\"mb-1.5 aspect-square h-auto w-full rounded-md border border-rule bg-surface object-cover \
-group-hover:border-hover [&.missing]:visible [&.missing]:text-transparent\" loading=lazy decoding=async \
+<img class=\"mb-1.5 aspect-square h-auto w-full bg-surface object-cover \
+[&.missing]:visible [&.missing]:text-transparent\" loading=lazy decoding=async \
 width={size} height={size} src=\"{src}\" alt=\"\">\
-<span class=\"truncate\">{title}</span><span class=\"truncate text-meta text-muted\">{artist}</span></a>{heart}</div>",
+<span class=\"truncate group-hover:text-strong\">{title}</span><span class=\"truncate text-meta text-muted\">{artist}</span></a>{heart}</div>",
             id = a.id,
             heart = hearts.map(|h| h.tile(a.id)).unwrap_or_default(),
             size = crate::covers::GRID,
@@ -540,8 +548,8 @@ pub(super) async fn album(
     }
     let share = if can_share {
         format!(
-            "<button data-indicator:_sharing data-attr:disabled=\"$_sharing\" data-class:busy=\"$_sharing\" \
-data-on:click=\"@post('/album/{}/share')\">Share</button>",
+            "<button class=\"standard\" data-indicator:_sharing data-attr:disabled=\"$_sharing\" \
+data-class:busy=\"$_sharing\" data-on:click=\"@post('/album/{}/share')\">Share</button>",
             album.id
         )
     } else {
@@ -549,10 +557,10 @@ data-on:click=\"@post('/album/{}/share')\">Share</button>",
     };
     let inner = format!(
         "<header class=\"{HERO}\"><img class=\"{HERO_COVER}\" src=\"{cover}\" width={large} height={large} alt=\"\">\
-<div class=\"min-w-0 flex-1\"><p class=\"{KICKER}\">Album</p><h1 class=\"mb-1\">{title}</h1><p class=\"{SUB}\">{sub}</p>\
+<div class=\"min-w-0 flex-1\"><p class=\"{KICKER}\">Album</p><h1 class=\"mb-1 normal-case\">{title}</h1><p class=\"{SUB}\">{sub}</p>\
 <div class=\"{ACTIONS}\">\
-<button class=\"primary\" data-act=play>Play</button><button data-act=shuffle>Shuffle</button>\
-<button data-act=queue>Add to queue</button>{share}{heart}</div><div id=share-result></div></div></header>\
+<button class=\"primary\" data-act=play>Play</button><button class=\"standard\" data-act=shuffle>Shuffle</button>\
+<button class=\"standard\" data-act=queue>Add to queue</button>{share}{heart}</div><div id=share-result></div></div></header>\
 <ol class=\"tracks\" data-context=album>{rows}</ol>",
         heart = hearts
             .as_ref()
@@ -727,10 +735,16 @@ pub(super) async fn tracks(
         format!("/tracks?{q}{sep}page={p}")
     };
     if page > 0 {
-        nav.push(format!("<a href=\"{}\">Previous</a>", at(page - 1)));
+        nav.push(format!(
+            "<a class=\"lowercase\" href=\"{}\">Previous</a>",
+            at(page - 1)
+        ));
     }
     if (((page + 1) * TRACKS_PAGE) as u64) < total {
-        nav.push(format!("<a href=\"{}\">Next</a>", at(page + 1)));
+        nav.push(format!(
+            "<a class=\"lowercase\" href=\"{}\">Next</a>",
+            at(page + 1)
+        ));
     }
     let nav = if nav.is_empty() {
         String::new()
@@ -766,7 +780,7 @@ pub(super) async fn artist(
     // Sharing and favouriting are the same accounts' to do.
     let share = match &hearts {
         Some(h) => format!(
-            "<div class=\"mb-5 {ACTIONS}\"><button data-indicator:_sharing data-attr:disabled=\"$_sharing\" \
+            "<div class=\"mb-5 {ACTIONS}\"><button class=\"standard\" data-indicator:_sharing data-attr:disabled=\"$_sharing\" \
 data-class:busy=\"$_sharing\" data-on:click=\"@post('/artist/{id}/share')\">Share</button>{heart}</div>\
 <div id=share-result></div>",
             id = artist.id,
@@ -775,7 +789,7 @@ data-class:busy=\"$_sharing\" data-on:click=\"@post('/artist/{id}/share')\">Shar
         None => String::new(),
     };
     let inner = format!(
-        "<p class=\"{KICKER}\">Artist</p><h1>{}</h1><p class=\"{SUB}\">{} album{} · {} tracks</p>{share}\
+        "<p class=\"{KICKER}\">Artist</p><h1 class=\"normal-case\">{}</h1><p class=\"{SUB}\">{} album{} · {} tracks</p>{share}\
 <div class=\"{GRID}\">{}</div>",
         escape(&artist.name),
         artist.album_count,
@@ -879,9 +893,9 @@ pub(super) async fn playlist(
         .unwrap_or_default();
     let inner = format!(
         "<header class=\"{HERO}\">{cover}<div class=\"min-w-0 flex-1\"><p class=\"{KICKER}\">Playlist</p>\
-<h1 class=\"mb-1\">{title}</h1><p class=\"{SUB}\">{sub}</p>{comment}<div class=\"{ACTIONS}\">\
+<h1 class=\"mb-1 normal-case\">{title}</h1><p class=\"{SUB}\">{sub}</p>{comment}<div class=\"{ACTIONS}\">\
 <button class=\"primary\" data-act=play>Play</button>\
-<button data-act=shuffle>Shuffle</button><button data-act=queue>Add to queue</button></div></div></header>\
+<button class=\"standard\" data-act=shuffle>Shuffle</button><button class=\"standard\" data-act=queue>Add to queue</button></div></div></header>\
 <ol class=\"tracks\" data-context=album>{rows}</ol>",
         title = escape(&list.name),
         sub = sub.join(" · "),
@@ -992,8 +1006,8 @@ fn pills(artists: &[queries::ArtistRow]) -> String {
     artists.iter().fold(String::new(), |mut out, a| {
         let _ = write!(
             out,
-            "<a class=\"inline-flex max-w-full rounded-full border border-rule bg-surface px-3.5 py-1.5 text-ink \
-hover:border-hover hover:no-underline\" href=\"/artist/{}\"><span class=\"truncate\">{}</span></a>",
+            "<a class=\"inline-flex max-w-full border border-muted px-3 py-1.5 text-control text-ink \
+hover:bg-hover/30 hover:no-underline\" href=\"/artist/{}\"><span class=\"truncate\">{}</span></a>",
             a.id,
             escape(&a.name)
         );
@@ -1022,7 +1036,7 @@ fn section_head(title: &str, total: u64, shelf: Shelf, kind: Kind, extra: &str) 
     format!(
         "<div class=\"{LIST_HEAD}\"><h2><a class=\"inline-flex items-center gap-1.5 text-[inherit] \
 hover:text-brand hover:no-underline\" href=\"{href}\">{title}\
-<span class=\"font-normal text-muted tabular-nums\">{total}</span>{ICON_CHEVRON}</a></h2>\
+<span class=\"text-muted tabular-nums\">{total}</span>{ICON_CHEVRON}</a></h2>\
 <div class=\"{ACTIONS}\">{extra}</div></div>"
     )
 }
@@ -1069,8 +1083,8 @@ fn shelf_sections(
                 s.tracks.total,
                 shelf,
                 Kind::Tracks,
-                "<button class=\"primary\" data-act=play>Play</button>\
-<button data-act=shuffle>Shuffle</button><button data-act=queue>Add to queue</button>",
+                "<button class=\"standard\" data-act=play>Play</button>\
+<button class=\"standard\" data-act=shuffle>Shuffle</button><button class=\"standard\" data-act=queue>Add to queue</button>",
             ),
         );
     }
@@ -1163,14 +1177,14 @@ pub(super) async fn queue(
     let inner = format!(
         "<header class=\"{HERO}\"><img class=\"{HERO_COVER} max-wide:max-w-[360px] max-wide:self-center\" \
 data-np=cover alt=\"\" hidden><div class=\"min-w-0 flex-1\"><p class=\"{KICKER}\">Now playing</p>\
-<h1 class=\"mb-1\" data-np=title>Nothing playing</h1>\
+<h1 class=\"mb-1 normal-case\" data-np=title>Nothing playing</h1>\
 <p class=\"{SUB}\"><span data-np=artist></span> <a data-np=album href=\"/albums\"></a></p>\
 {buttons}{scrub}</div></header>\
 <div class=\"{LIST_HEAD}\"><h2>Up next</h2>\
 <button class=\"quiet px-2 py-1\" data-act=clear>Clear</button></div>\
 <ol id=queue-list class=\"tracks\"></ol>",
         buttons = buttons(true),
-        scrub = scrub("max-w-form max-wide:mt-2 max-wide:text-meta"),
+        scrub = scrub("max-w-form max-wide:mt-2 max-wide:text-meta", "h-11"),
     );
     respond(&s, &headers, &user, "Queue", &inner)
 }

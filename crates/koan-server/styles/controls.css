@@ -1,0 +1,49 @@
+/*
+ * Controls the web UI and the share page draw alike, imported by both stylesheets.
+ */
+@layer base {
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-brand;
+  }
+
+  /* The theme's slider: a hairline track, the played part thicker in the accent, and a square thumb that shows
+   * only while it is being used. `--fill` is set by the script that moves the value. */
+  input[type="range"] {
+    @apply h-11 cursor-pointer appearance-none border-0 bg-transparent p-0;
+  }
+
+  input[type="range"]::-webkit-slider-runnable-track {
+    @apply h-[3px];
+    background:
+      linear-gradient(var(--brand), var(--brand)) 0 50% / var(--fill, 0%) 3px no-repeat,
+      linear-gradient(var(--rule), var(--rule)) 0 50% / 100% 1px no-repeat;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    @apply -mt-[2.5px] size-2 appearance-none border-0 bg-ink opacity-0;
+  }
+
+  input[type="range"]::-moz-range-track {
+    @apply h-px bg-rule;
+  }
+
+  input[type="range"]::-moz-range-progress {
+    @apply h-[3px] bg-brand;
+  }
+
+  input[type="range"]::-moz-range-thumb {
+    @apply size-2 rounded-none border-0 bg-ink opacity-0;
+  }
+
+  input[type="range"]:is(:hover, :focus-visible, :active)::-webkit-slider-thumb {
+    @apply opacity-100;
+  }
+
+  input[type="range"]:is(:hover, :focus-visible, :active)::-moz-range-thumb {
+    @apply opacity-100;
+  }
+
+  input[type="range"]:focus-visible {
+    @apply outline-none;
+  }
+}

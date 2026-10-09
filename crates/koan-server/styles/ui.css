@@ -9,6 +9,7 @@
 @source "../src/ui";
 @source "../assets/ui.js";
 @import "../../../site/src/theme.css";
+@import "./controls.css";
 
 @theme {
   /* Wider than this, a sidebar and a transport bar; narrower, a tab bar. ui.js matches on the same width. */
@@ -27,6 +28,12 @@
     --side-w: 200px;
     --bar-h: 76px;
     --tabs-h: 0px;
+    /* The toggle's tick, in `bg`: a data URL cannot read a custom property, so it is stated per scheme. */
+    --tick: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M3 7.5l2.5 2.5L11 4.5' fill='none' stroke='%231e1e1e' stroke-width='1.6' stroke-linecap='square'/%3E%3C/svg%3E");
+
+    @media (prefers-color-scheme: light) {
+      --tick: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M3 7.5l2.5 2.5L11 4.5' fill='none' stroke='%23ffffff' stroke-width='1.6' stroke-linecap='square'/%3E%3C/svg%3E");
+    }
 
     @variant max-wide {
       --bar-h: 60px;
@@ -58,33 +65,46 @@
     @apply my-[1em];
   }
 
+  /* The app's own words are lowercase, as on the site; what comes from the library or a person keeps its case, so a
+   * heading that shows one says `normal-case`. Screen readers read the markup, which keeps its capitals. */
   h1 {
-    @apply mt-1 mb-4 text-title font-extralight wrap-anywhere max-wide:text-title-sm;
+    @apply mt-1 mb-4 text-display font-extralight text-strong lowercase wrap-anywhere max-wide:text-title;
   }
 
   h2 {
-    @apply mt-6 mb-2.5 text-meta font-semibold tracking-[.08em] text-muted uppercase;
+    @apply mt-8 mb-3 text-title-sm font-light text-strong lowercase;
   }
 
+  button,
+  summary,
+  label {
+    @apply lowercase;
+  }
+
+  /* Bordered, the weight a button has unless the page says otherwise: a secondary action that bare text would not
+   * read as. Square, as every control in the theme is; the outline is `muted` because `rule` is too faint to mark
+   * where a control is. */
   button {
-    @apply cursor-pointer rounded-md border border-rule bg-rule px-3.5 py-2 text-ink hover:border-hover disabled:cursor-progress disabled:opacity-55;
+    @apply cursor-pointer border border-muted bg-transparent px-3 py-1.5 text-meta text-ink hover:bg-hover/30 active:bg-hover disabled:cursor-progress disabled:opacity-40;
   }
 
   input,
   select {
-    @apply rounded-md border border-rule bg-bg px-2.5 py-2 text-ink;
+    @apply border border-muted bg-transparent px-2.5 py-2 text-ink normal-case;
   }
 
   input {
     @apply min-w-0;
   }
 
-  input:focus {
-    @apply outline-1 outline-brand;
+  /* The theme's toggle: a square box, outlined off, filled with a tick on. */
+  input[type="checkbox"] {
+    @apply size-3.5 flex-none cursor-pointer appearance-none p-0 align-[-2px] checked:border-brand checked:bg-brand;
+    background-image: none;
   }
 
-  input[type="range"] {
-    @apply border-0 bg-transparent p-0 accent-brand;
+  input[type="checkbox"]:checked {
+    background: var(--brand) var(--tick) center / 100% no-repeat;
   }
 
   /* Browser defaults that preflight removes, which the pages are drawn with. */
@@ -107,18 +127,32 @@
 }
 
 @layer components {
-  /* Button variants, on every page and on the rows ui.js builds. */
+  /* The theme's button weights, beside the bordered default. Prominent is what the page is for, and a page has at
+   * most one; standard is the label alone; quiet is a bar's text button, and the icon buttons in rows. */
   .primary {
-    @apply border-brand bg-brand font-semibold text-bg;
+    @apply border-brand px-5 py-3 text-body text-brand;
+  }
+
+  .standard {
+    @apply border-transparent px-1 py-2 text-control hover:bg-transparent hover:text-strong;
   }
 
   .quiet {
-    @apply border-transparent bg-transparent text-muted hover:text-ink;
+    @apply border-transparent bg-transparent px-2 text-muted hover:bg-transparent hover:text-ink;
+  }
+
+  /* Destructive: compact or bordered, in `bad`. */
+  .bad {
+    @apply border-bad text-bad;
+  }
+
+  .quiet.bad {
+    @apply border-transparent hover:text-bad;
   }
 
   /* The track menu; ui.js fills it. */
   #track-menu button {
-    @apply rounded-md px-3 py-2 text-left text-ink hover:bg-rule;
+    @apply border-0 px-3 py-2 text-left text-control text-ink hover:bg-surface;
   }
 
   #track-menu p {
@@ -142,23 +176,20 @@
 
   /* Track lists: the pages render them, and ui.js builds the queue's. */
   .tracks {
-    @apply grid gap-1.5;
+    @apply grid;
   }
 
+  /* No rules between rows: they are told apart by rhythm and alignment. */
   .tracks li {
-    @apply flex min-w-0 cursor-pointer items-center gap-3 max-wide:gap-2 max-wide:select-none [-webkit-touch-callout:none] rounded-lg border border-rule bg-surface py-1.5 pr-1.5 pl-3 hover:border-hover focus-visible:border-hover focus-visible:outline-none;
+    @apply flex min-w-0 cursor-pointer items-center gap-3 px-2 py-1 max-wide:gap-2 max-wide:px-0 max-wide:select-none [-webkit-touch-callout:none] hover:bg-hover/30 focus-visible:bg-hover/30 focus-visible:outline-none;
   }
 
-  .tracks li.playing {
-    @apply border-l-3 border-l-brand;
-  }
-
-  .tracks li.playing .t {
+  .tracks li.playing :is(.n, .t) {
     @apply text-brand;
   }
 
   .tracks li.disc {
-    @apply cursor-default border-0 bg-transparent px-0 pt-3 pb-0.5 text-meta tracking-[.08em] text-muted uppercase;
+    @apply cursor-default px-0 pt-4 pb-1 text-meta text-muted lowercase hover:bg-transparent;
   }
 
   .tracks .n {
@@ -178,7 +209,7 @@
   }
 
   .tracks button {
-    @apply flex-none px-2.5 py-1 text-input leading-none max-wide:px-2;
+    @apply flex-none px-2.5 py-2 text-input leading-none max-wide:px-2;
   }
 
   .tracks button svg {

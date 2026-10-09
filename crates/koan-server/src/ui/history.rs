@@ -186,7 +186,7 @@ data-on:change=\"$forget = [...el.querySelectorAll('#history input:checked')].ma
 <h1>History</h1><div class=\"flex items-center gap-2\" data-show=\"$forget.length > 0\">\
 <span class=\"text-meta text-muted\" data-text=\"$forget.length + ' selected'\"></span>\
 <button data-on:click=\"el.closest('.page').querySelectorAll('#history input:checked').forEach(i => i.checked = false); $forget = []\">Deselect</button>\
-<button class=\"primary\" data-act-forget data-indicator:_forgetting data-attr:disabled=\"$_forgetting\" \
+<button class=\"bad\" data-act-forget data-indicator:_forgetting data-attr:disabled=\"$_forgetting\" \
 data-on:click=\"@post('/history/forget?page={page}')\">Forget</button></div></div>\
 <div id=history-result></div>{}</div>",
         list(&plays, page, zone(&headers))

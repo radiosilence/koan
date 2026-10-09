@@ -28,6 +28,9 @@
   // Set while the range is dragged; focus stays on a clicked range, so it is
   // no guide to whether the clock may move it.
   let dragging = false;
+  // How far the slider's accent runs; see styles/controls.css.
+  const fill = () => seek.style.setProperty("--fill", `${seek.max > 0 ? (seek.value / seek.max) * 100 : 0}%`);
+  seek.addEventListener("input", fill);
   for (const type of ["pointerdown", "touchstart"]) seek.addEventListener(type, () => { dragging = true; }, { passive: true });
   for (const type of ["pointerup", "pointercancel", "touchend", "touchcancel", "change", "blur"]) {
     seek.addEventListener(type, () => { dragging = false; }, { passive: true });
@@ -36,6 +39,7 @@
     const p = player.position();
     pos.textContent = fmt(p);
     if (!dragging) seek.value = p;
+    fill();
   };
 
   const player = window.KoanPlayer({

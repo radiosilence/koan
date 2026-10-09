@@ -84,7 +84,7 @@ pub(super) async fn confirm(
     };
     let action = format!("/pair/{}", encode(&pair));
     let body = format!(
-        "<h2>Sign in {device}?</h2>{origin}\
+        "<h2>Sign in <span class=\"normal-case\">{device}</span>?</h2>{origin}\
 <p>It will be signed in as <strong>{user}</strong>, and can do anything your account can until you \
 revoke its key.</p>\
 <p><small>Approve only a device you are setting up yourself, just now. Anyone can give a device \
@@ -94,7 +94,7 @@ any name.</small></p>\
 <form class=\"grid gap-3.5\" method=post action=\"{action}/decline\">\
 <button class=\"quiet\">Decline</button></form>\
 <form class=\"grid gap-3.5\" method=post action=\"/auth/signout\">\
-<input type=hidden name=next value=\"{action}\"><button class=\"quiet\">Not {user}? Sign out</button></form>",
+<input type=hidden name=next value=\"{action}\"><button class=\"quiet\">Not <span class=\"normal-case\">{user}</span>? Sign out</button></form>",
         device = escape(&info.device),
         origin = origin(&info),
         user = escape(&user.username),

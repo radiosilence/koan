@@ -52,7 +52,7 @@ fn user_list(rows: &[UserRow], me: i64) -> String {
         } else {
             format!(
                 "<button class=\"quiet\" data-on:click=\"@post('/users/{id}/password/form')\">Password</button>\
-<button class=\"quiet\" data-username=\"{name}\" data-on:click=\"confirm('Delete ' + el.dataset.username + \
+<button class=\"quiet bad\" data-username=\"{name}\" data-on:click=\"confirm('Delete ' + el.dataset.username + \
 '? Their devices stop working and their playlists and favourites go.') && @post('/users/{id}/delete')\">Delete</button>",
                 name = escape(&u.username),
                 id = u.id,
@@ -103,14 +103,14 @@ fn invite_panel(i: &Invite) -> String {
         None => String::new(),
     };
     format!(
-        "<div class=\"mt-2 mb-4 max-w-panel rounded-lg border border-rule bg-surface px-4 pt-1 pb-4\">\
-<h2>Invite for {user}</h2><p class=\"{SUB}\">Send this from your own mail. Opening the link on a phone, tablet or Mac with koan \
+        "<div class=\"mt-2 mb-4 max-w-panel border border-rule px-4 pt-1 pb-4\">\
+<h2>Invite for <span class=\"normal-case\">{user}</span></h2><p class=\"{SUB}\">Send this from your own mail. Opening the link on a phone, tablet or Mac with koan \
 installed signs in and loads the library, on each device, for a week.</p>\
 <div class=\"{COPY_ROW}\"><input id=invite-link readonly value=\"{link}\" \
 aria-label=\"Invite link\" class=\"{COPY_INPUT}\">\
 <button data-copy=invite-link>Copy link</button></div>\
-<div class=\"mt-2.5 flex flex-wrap gap-2\"><a class=\"inline-block rounded-md border border-rule bg-rule px-3.5 py-2 \
-text-ink hover:border-hover hover:no-underline\" href=\"{mailto}\">Open in Mail</a>\
+<div class=\"mt-2.5 flex flex-wrap gap-2\"><a class=\"inline-block border border-muted px-3 py-1.5 \
+text-meta text-ink lowercase hover:bg-hover/30 hover:no-underline\" href=\"{mailto}\">Open in Mail</a>\
 <button data-copy-email>Copy email</button>\
 <button data-share-email data-show=\"'share' in navigator\">Share…</button></div>{details}\
 <textarea id=invite-text hidden readonly data-subject=\"{subject}\">{text}</textarea>\

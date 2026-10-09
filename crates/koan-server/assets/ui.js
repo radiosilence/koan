@@ -148,6 +148,8 @@
   // The range being dragged, which the clock must not move under the finger.
   // Focus is no guide: a clicked range keeps it long after the drag ends.
   let dragging = null;
+  // How far a slider's accent runs; see styles/controls.css.
+  const fill = (el) => el.style.setProperty("--fill", `${el.max > 0 ? (el.value / el.max) * 100 : 0}%`);
   const isSeek = (t) => t && t.matches && t.matches("input[data-ctl=seek]");
   for (const type of ["pointerdown", "touchstart"]) {
     document.addEventListener(type, (e) => { if (isSeek(e.target)) dragging = e.target; }, { passive: true });
@@ -161,7 +163,10 @@
     const { track } = player.state();
     const p = track ? player.position() : 0;
     for (const el of all("[data-np=pos]")) el.textContent = fmt(p);
-    for (const el of all("input[data-ctl=seek]")) if (el !== dragging) el.value = p;
+    for (const el of all("input[data-ctl=seek]")) {
+      if (el !== dragging) el.value = p;
+      fill(el);
+    }
     for (const el of all("progress[data-np=progress]")) el.value = p;
     if (track && Date.now() - lastSave > 5000) { lastSave = Date.now(); save(p); }
   }
@@ -374,6 +379,7 @@
   document.addEventListener("input", (e) => {
     if (e.target.matches("input[data-ctl=seek]")) {
       for (const el of all("[data-np=pos]")) el.textContent = fmt(Number(e.target.value));
+      fill(e.target);
     }
   });
   document.addEventListener("change", (e) => {

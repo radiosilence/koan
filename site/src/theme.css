@@ -21,7 +21,9 @@
   --rule: #383838;
   --hover: #4d4d4d;
   --ink: #cccccc;
-  --muted: #8c8c8c;
+  --strong: #ffffff;
+  /* 4.6:1 on --surface, where #8c8c8c fell short of AA. */
+  --muted: #919191;
   --brand: #7dd3a7;
   --bad: #ef6b73;
 }
@@ -33,6 +35,7 @@
     --rule: #e0e0e0;
     --hover: #c4c4c4;
     --ink: #333333;
+    --strong: #111111;
     --muted: #666666;
     /* The green is under 2:1 on white; this is the same hue, darker. */
     --brand: #1f7a50;
@@ -53,6 +56,8 @@
   --text-title-sm--line-height: 1.2;
   --text-title: 26px;
   --text-title--line-height: 1.2;
+  --text-display: 34px;
+  --text-display--line-height: 1.1;
   --container-form: 520px;
   --container-panel: 560px;
 }
@@ -63,6 +68,7 @@
   --color-rule: var(--rule);
   --color-hover: var(--hover);
   --color-ink: var(--ink);
+  --color-strong: var(--strong);
   --color-muted: var(--muted);
   --color-brand: var(--brand);
   --color-bad: var(--bad);
