@@ -18,9 +18,10 @@ plays once before any plays again. A track queued twice counts as one track,
 so it gets one turn, not two. Tracks you add while shuffle is on join the
 remaining tracks at random places, and a track you remove is not played.
 
-Previous goes back through the tracks in the order they actually played, not
-to the track above in the queue. Before the first of them, it starts the
-current track again.
+Once a track has played for more than a second, Previous starts it again;
+pressed again straight away, it goes back a track. It goes back through the
+tracks in the order they actually played, not to the track above in the queue.
+Before the first of them, it starts the current track again.
 
 A track is marked as played when it starts playing, wherever it sits in the
 queue. When you turn shuffle off, the tracks that played keep that mark and

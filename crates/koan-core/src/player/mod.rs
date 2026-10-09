@@ -1472,7 +1472,15 @@ impl Player {
     }
 
     /// Go back to previous track.
+    /// Back to the start of the track once it has played for more than a
+    /// second, as every player does; before that, to the track before.
     pub fn prev_track(&mut self) {
+        if self.session().is_some() && self.shared_state.position_ms() > 1000 {
+            if let Err(e) = self.restart_current(0) {
+                log::error!("restart failed: {}", e);
+            }
+            return;
+        }
         match self.shared_state.retreat_cursor() {
             Some((id, _)) => self.play(id),
             None => {
