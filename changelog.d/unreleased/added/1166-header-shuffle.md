@@ -1,0 +1,1 @@
+- **Shuffle beside Play.** Record, artist and playlist pages have a shuffle button next to the play button: it replaces the queue with the page's tracks, shuffled, starting from a random one. On an artist's page it shuffles all of their tracks, rather than fifty picked at random.

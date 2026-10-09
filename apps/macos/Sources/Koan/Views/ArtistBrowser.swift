@@ -245,8 +245,6 @@ struct ArtistDetailView: View {
     let artistId: Int64
 
     @Environment(LibraryModel.self) private var library
-    @Environment(Navigator.self) private var nav
-    @Environment(PlayerModel.self) private var player
     @Environment(UIState.self) private var ui
     /// Off stage while a page is pushed over it on a phone — see `StageView`.
     @Environment(\.onStage) private var onStage
@@ -344,6 +342,7 @@ struct ArtistDetailView: View {
                         PlayableHeaderButton(
                             playable: .artist(id: artist.id, name: artist.name)
                         )
+                        ShuffleHeaderButton(playable: .artist(id: artist.id, name: artist.name))
                     }
                     #endif
                     Text(artist?.name ?? "Artist")
@@ -362,7 +361,7 @@ struct ArtistDetailView: View {
                     .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 if let artist {
                     let playable = Playable.artist(id: artist.id, name: artist.name)
-                    HeaderActions(playable: playable, shuffle: shufflePlay)
+                    HeaderActions(playable: playable)
                         .padding(.top, 4)
                 }
             }
@@ -393,7 +392,8 @@ struct ArtistDetailView: View {
                 let playable = Playable.artist(id: artist.id, name: artist.name)
                 HStack(spacing: 12) {
                     PlayableHeaderButton(playable: playable)
-                    HeaderActions(playable: playable, shuffle: shufflePlay)
+                    ShuffleHeaderButton(playable: playable)
+                    HeaderActions(playable: playable)
                 }
                 .padding(.top, 6)
             }
@@ -417,16 +417,6 @@ struct ArtistDetailView: View {
                     .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             }
             .transition(.opacity)
-        }
-    }
-
-    private func shufflePlay() {
-        let engine = library.engine
-        let id = artistId
-        Task {
-            let ids = ((try? await engine.randomTracks(count: 50, artistId: id)) ?? []).map(\.id)
-            player.playNow(trackIds: ids)
-            nav.showQueueWhenReady(watching: player)
         }
     }
 }

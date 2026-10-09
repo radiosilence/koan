@@ -12,7 +12,6 @@ import SwiftUI
 /// rather than an action you go looking for.
 struct HeaderActions: View {
     let playable: Playable?
-    var shuffle: (() -> Void)?
     @Environment(\.horizontalSizeClass) private var width
 
     var body: some View {
@@ -21,11 +20,6 @@ struct HeaderActions: View {
                 if let playable {
                     FavouriteHeaderButton(playable: playable)
                     Menu {
-                        if let shuffle {
-                            Button(action: shuffle) {
-                                Label("Shuffle", koan: Icon.shuffle)
-                            }
-                        }
                         PlayableMenu(playable: playable)
                     } label: {
                         KoanIcon(Icon.more)
@@ -39,14 +33,10 @@ struct HeaderActions: View {
                 #if os(tvOS)
                 if let playable {
                     PlayableHeaderButton(playable: playable)
+                    ShuffleHeaderButton(playable: playable)
                 }
                 #endif
                 QueueButtons(playable: playable)
-                if let shuffle {
-                    Button(action: shuffle) {
-                        Label("Shuffle", koan: Icon.shuffle)
-                    }
-                }
                 if let playable {
                     ShareButton(playable: playable)
                     FavouriteHeaderButton(playable: playable)

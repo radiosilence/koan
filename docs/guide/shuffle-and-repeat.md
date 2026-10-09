@@ -6,7 +6,7 @@ never rearranges it.
 
 Playing something from its play button — a record, an artist, a playlist, a
 selection, or a track in a list — starts it as asked: Play turns shuffle and
-repeat off, and Shuffle turns shuffle on and repeat off. Adding to the queue,
+repeat off, and Shuffle, beside Play on a record's, an artist's or a playlist's page and in its menu, turns shuffle on and repeat off and starts from a track at random. Adding to the queue,
 Play Next and Add to Queue leave both as they are. This holds on every device
 and through the GraphQL API and MCP (`playOnClient`, `playPlaylist`).
 
