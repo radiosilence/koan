@@ -1,0 +1,1 @@
+- **An EQ's name stays in sight while it is typed.** On iPhone the graph goes short and the field scrolls above the keyboard, as it does for the band figures.
