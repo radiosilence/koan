@@ -275,6 +275,29 @@ autocomplete=current-password required></label>\
     )
 }
 
+/// The setup page: the first admin's name and password, chosen here.
+pub(super) fn setup(username: &str, error: Option<&str>) -> String {
+    let error = error
+        .map(|e| format!("<p class=\"m-0 {ERROR}\" role=alert>{}</p>", escape(e)))
+        .unwrap_or_default();
+    let label = "grid gap-1.5 text-meta text-muted";
+    format!(
+        "{head}</head><body class=\"{SIGNIN_BODY}\"><main class=\"{SIGNIN_MAIN}\"><h1 class=\"{SIGNIN_TITLE}\">kōan</h1>\
+<p class=\"text-meta text-muted\">This server has no accounts yet. Choose the admin's name and password; \
+this page closes once it exists.</p>\
+<form class=\"grid gap-3.5\" method=post action=\"/setup\">\
+<label class=\"{label}\">Username<input class=\"text-input\" name=username value=\"{username}\" autocomplete=username \
+autocapitalize=none spellcheck=false required autofocus></label>\
+<label class=\"{label}\">Password<input class=\"text-input\" name=password type=password minlength=8 \
+autocomplete=new-password required></label>\
+<label class=\"{label}\">Confirm password<input class=\"text-input\" name=confirm type=password minlength=8 \
+autocomplete=new-password required></label>\
+{error}<button class=\"primary\">Create admin</button></form></main></body></html>",
+        head = head("Set up"),
+        username = escape(username),
+    )
+}
+
 fn year(date: Option<&str>) -> &str {
     date.and_then(|d| d.get(..4)).unwrap_or("")
 }

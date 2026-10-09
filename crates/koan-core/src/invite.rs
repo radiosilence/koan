@@ -386,6 +386,8 @@ pub enum AccountError {
     BadInvite,
     #[error("the last admin cannot be removed or demoted")]
     LastAdmin,
+    #[error("this server already has accounts")]
+    AlreadySetUp,
     #[error(transparent)]
     Other(#[from] Box<dyn std::error::Error + Send + Sync>),
 }
@@ -408,6 +410,20 @@ pub fn create_account(
     username: &str,
     role: Role,
 ) -> Result<NewAccount, AccountError> {
+    let username = valid_username(username)?;
+    if users::get_user_by_username(conn, username)
+        .map_err(other)?
+        .is_some()
+    {
+        return Err(AccountError::Taken(username.to_owned()));
+    }
+    let password = generate_password().map_err(other)?;
+    let id = users::create_user(conn, username, &password, role).map_err(other)?;
+    Ok(NewAccount { id, password })
+}
+
+/// `username` trimmed, or why it cannot name an account.
+fn valid_username(username: &str) -> Result<&str, AccountError> {
     let username = username.trim();
     if username.is_empty()
         || username.chars().count() > MAX_USERNAME
@@ -418,15 +434,30 @@ pub fn create_account(
     if username.eq_ignore_ascii_case(auth::ANONYMOUS) {
         return Err(AccountError::Reserved(username.to_owned()));
     }
-    if users::get_user_by_username(conn, username)
-        .map_err(other)?
-        .is_some()
-    {
-        return Err(AccountError::Taken(username.to_owned()));
+    Ok(username)
+}
+
+/// Make the first admin of a server that has no accounts, with the password
+/// they chose: the web UI's setup page. Refused once any account exists, and
+/// the check and the insert share one write lock, so two people racing for an
+/// empty server cannot both become its admin.
+pub fn create_first_admin(
+    conn: &Connection,
+    username: &str,
+    password: &str,
+) -> Result<i64, AccountError> {
+    let username = valid_username(username)?;
+    if password.chars().count() < MIN_PASSWORD {
+        return Err(AccountError::ShortPassword);
     }
-    let password = generate_password().map_err(other)?;
-    let id = users::create_user(conn, username, &password, role).map_err(other)?;
-    Ok(NewAccount { id, password })
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
+        .map_err(other)?;
+    if users::has_users(&tx).map_err(other)? {
+        return Err(AccountError::AlreadySetUp);
+    }
+    let id = users::create_user(&tx, username, password, Role::Admin).map_err(other)?;
+    tx.commit().map_err(other)?;
+    Ok(id)
 }
 
 /// The account called `username`, or `NoSuchUser`.
@@ -481,6 +512,32 @@ pub fn delete_account(conn: &Connection, username: &str) -> Result<(), AccountEr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_first_admin_is_made_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::connection::Database::open(&dir.path().join("t.db")).unwrap();
+        assert!(matches!(
+            create_first_admin(&db.conn, "ada", "short"),
+            Err(AccountError::ShortPassword)
+        ));
+        assert!(matches!(
+            create_first_admin(&db.conn, "a da", "long enough"),
+            Err(AccountError::BadUsername)
+        ));
+        let id = create_first_admin(&db.conn, " ada ", "long enough").unwrap();
+        let ada = users::get_user_by_id(&db.conn, id).unwrap().unwrap();
+        assert_eq!((ada.username.as_str(), ada.role), ("ada", Role::Admin));
+        assert!(matches!(
+            create_first_admin(&db.conn, "mallory", "long enough"),
+            Err(AccountError::AlreadySetUp)
+        ));
+        assert!(
+            users::get_user_by_username(&db.conn, "mallory")
+                .unwrap()
+                .is_none()
+        );
+    }
 
     fn invite() -> Invite {
         Invite::with_token(

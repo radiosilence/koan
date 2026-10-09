@@ -447,6 +447,12 @@ pub struct GraphqlConfig {
     pub proxy_auth_from: Vec<String>,
     /// Expose the `organize*` mutations, which physically move files on disk.
     pub allow_organize: bool,
+    /// While auth is on and no account exists, the web UI's `/setup` page
+    /// makes the first admin, so a server in a container needs no shell. The
+    /// first person to reach it becomes that admin: turn it off to keep
+    /// `koan auth setup` the only way.
+    #[serde(default = "default_true")]
+    pub setup_wizard: bool,
 }
 
 fn default_true() -> bool {
@@ -473,6 +479,7 @@ impl Default for GraphqlConfig {
             proxy_auth_header: String::new(),
             proxy_auth_from: Vec::new(),
             allow_organize: false,
+            setup_wizard: true,
         }
     }
 }

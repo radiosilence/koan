@@ -372,9 +372,10 @@ cookie_secure = false         # mark cookies Secure — only with HTTPS in front
 proxy_auth_header = ""        # header an authenticating proxy names the user in
 proxy_auth_from = []          # addresses or ranges that proxy connects from
 allow_organize = false        # expose the organize* mutations, which move files
+setup_wizard = true           # web UI /setup makes the first admin while there is none
 ```
 
-Auth is enabled by default. Run `koan auth setup` to create a keypair and admin user. Set `auth_enabled = false` if you only use localhost and don't need auth.
+Auth is enabled by default. Until an account exists, the web UI's setup page makes the first admin; `koan auth setup` does the same from a shell. `setup_wizard = false` turns the page off, since whoever reaches it first becomes the admin. Set `auth_enabled = false` if you only use localhost and don't need auth.
 
 ### Browser access
 
