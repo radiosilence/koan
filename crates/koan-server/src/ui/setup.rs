@@ -1,5 +1,5 @@
 //! The first admin, made in the browser: a server with auth on and no account
-//! yet answers `/setup` with a form, so one in a container needs no shell to
+//! yet answers `/setup` with a form, so one in Docker needs no shell to
 //! become usable. Whoever reaches it first becomes the admin, which is why it
 //! closes for good the moment any account exists, and why `graphql.setup_wizard`
 //! turns it off for anyone who would rather not have that window at all.
