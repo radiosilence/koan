@@ -310,6 +310,7 @@ struct TrackListView: View {
                     #if !os(tvOS)
                     if let playable {
                         PlayableHeaderButton(playable: playable)
+                        ShuffleHeaderButton(playable: playable)
                     }
                     #endif
                     Text(Format.title(title))
@@ -367,6 +368,7 @@ struct TrackListView: View {
                 #if !os(tvOS)
                 if let playable {
                     PlayableHeaderButton(playable: playable)
+                    ShuffleHeaderButton(playable: playable)
                 }
                 #endif
                 HeaderActions(playable: playable)

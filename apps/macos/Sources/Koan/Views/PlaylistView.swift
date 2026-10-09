@@ -322,6 +322,7 @@ struct PlaylistView: View {
                 #if !os(tvOS)
                 if let playable {
                     PlayableHeaderButton(playable: playable)
+                    ShuffleHeaderButton(playable: playable)
                 }
                 #endif
                 Text(playlist?.name ?? "Playlist")
@@ -335,8 +336,11 @@ struct PlaylistView: View {
                 .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             #if os(tvOS)
             if let playable {
-                PlayableHeaderButton(playable: playable)
-                    .padding(.top, 12)
+                HStack {
+                    PlayableHeaderButton(playable: playable)
+                    ShuffleHeaderButton(playable: playable)
+                }
+                .padding(.top, 12)
             }
             #endif
         }

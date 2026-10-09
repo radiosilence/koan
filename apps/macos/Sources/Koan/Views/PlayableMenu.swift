@@ -494,6 +494,48 @@ struct PlayableHeaderButton: View {
     }
 }
 
+/// Beside the play button and quieter than it: the same tracks in place of
+/// the queue, shuffled, from one of them at random.
+struct ShuffleHeaderButton: View {
+    let playable: Playable
+
+    @Environment(PlayerModel.self) private var player
+    @Environment(Navigator.self) private var nav
+    @Environment(LibraryModel.self) private var library
+
+    var body: some View {
+        Button {
+            let engine = library.engine
+            let playable = self.playable
+            let done = player.playNow(resolving: playable.name, shuffled: true) {
+                await playable.trackIds(using: engine)
+            }
+            // As play does: an artist's page shows nothing of what started.
+            if case .artist = playable {
+                Task {
+                    await done.value
+                    nav.showQueueWhenReady(watching: player)
+                }
+            }
+        } label: {
+            #if os(tvOS)
+            Label("Shuffle", koan: Icon.shuffle)
+            #else
+            KoanIcon(Icon.shuffle)
+                .font(.system(size: 15))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+            #endif
+        }
+        #if !os(tvOS)
+        .buttonStyle(.plain)
+        #endif
+        .disabled(player.resolving == playable.name)
+        .help("Shuffle \(playable.name)")
+    }
+}
+
 
 /// "Play Next" and "Queue", side by side under a page title.
 ///
