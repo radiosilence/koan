@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.61.10
+
+### Added
+
+- **Shuffle beside Play.** Record, artist and playlist pages have a shuffle button next to the play button: it replaces the queue with the page's tracks, shuffled, starting from a random one. On an artist's page it shuffles all of their tracks, rather than fifty picked at random.
+
+### Changed
+
+- **Previous restarts the track.** Once a track has played for more than a second, Previous starts it again; pressed again straight away, it goes back a track.
+- **Clicking a sleeve in search or on a shelf asks before replacing the queue.** With anything queued, choose to play the record in its place or add it to the queue.
+
+### Fixed
+
+- **Splitting a squig.link preset no longer puts its headphones' treble in the tuning.** The tuning is now taken against the correction the preset was fitted from. A tuning made by an earlier split keeps the old treble; split the preset again to replace it.
+- **Done above the keyboard works on an EQ's page.** The Previous, Next and Done bar shows only for the band figures it moves between; the name field keeps its own return key.
+
 ## 0.61.9
 
 ### Fixed
