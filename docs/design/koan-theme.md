@@ -1,6 +1,6 @@
 # The kōan theme
 
-The look koan.rocks and the web UI have, set down so a native app can be drawn in it: the tokens, and the few components every screen is made of. The Mac, iPhone and Apple TV apps are drawn in it by default (`appearance.theme = "koan"`; Settings → Appearance → Theme offers the platform's look instead); it is also the reference for a future Android app. The tokens come from `site/src/theme.css`, except where noted: `muted` is lighter here, to meet AA on `surface`, and the site should follow.
+The look koan.rocks and the web UI have, set down so a native app can be drawn in it: the tokens, and the few components every screen is made of. The Mac, iPhone and Apple TV apps are drawn in it by default (`appearance.theme = "koan"`; Settings → Appearance → Theme offers the platform's look instead); it is also the reference for a future Android app. The tokens come from `site/src/theme.css`, which the site, the web UI and the share page all import.
 
 Two variants differ only in icons. **Plain** has labels alone. **With icons**, the default, has the app's icons beside them, drawn as described under [Icons](#icons). "Show icons" in Settings → Appearance (`appearance.theme_icons`) chooses between them.
 
@@ -30,11 +30,11 @@ New screens follow these by default; a screen that breaks one says why in its PR
 | `hover` | `#4d4d4d` | `#c4c4c4` | Pointer hover and pressed fill |
 | `ink` | `#cccccc` | `#333333` | Body text and icons |
 | `strong` | `#ffffff` | `#111111` | Titles and the playing track's name |
-| `muted` | `#919191` | `#666666` | Secondary text, unselected navigation, control outlines. The site's `#8c8c8c` is 4.3:1 on `surface` |
+| `muted` | `#919191` | `#666666` | Secondary text, unselected navigation, control outlines. Was `#8c8c8c`, which is 4.3:1 on `surface` |
 | `accent` | `#7dd3a7` | `#1f7a50` | Selection, the primary action, progress, the playing row, toggles on, focus. Mint is its value with nothing playing; see [Accent](#accent) |
 | `bad` | `#ef6b73` | `#c43f3f` | Errors and destructive actions |
 
-`accent` is `--color-brand` in `theme.css`. `strong` is not in `theme.css`, which has no separate title colour; the apps need one for titles over long lists.
+`accent` is `--color-brand` in `theme.css`.
 
 Contrast, against `bg` unless stated (WCAG 2.2):
 
@@ -143,7 +143,7 @@ A 1-point `rule` track with a 3-point `accent` fill up to the value, and a squar
 
 ### List row
 
-The title in `body`, `ink`; secondary text in `meta`, `muted`; numbers right-aligned in `meta`, `muted`. No rule between rows in the native apps: rows are told apart by their rhythm and alignment, which a grey grid over the wash only obscures. Where a region would otherwise run into the next, a faint hairline of `ink` at 12 % opacity (`koanRowRule`) may mark it. Outlines stay on prominent buttons and in the web UI. Hover: `hover` at 30 % behind the row. The playing row's title and number are `accent`. A selected row has a `surface` fill.
+The title in `body`, `ink`; secondary text in `meta`, `muted`; numbers right-aligned in `meta`, `muted`. No rule between rows in the native apps: rows are told apart by their rhythm and alignment, which a grey grid over the wash only obscures. Where a region would otherwise run into the next, a faint hairline of `ink` at 12 % opacity (`koanRowRule`) may mark it. Outlines stay on prominent buttons. Hover: `hover` at 30 % behind the row. The playing row's title and number are `accent`. A selected row has a `surface` fill.
 
 ### Navigation row (sidebar)
 
@@ -209,4 +209,5 @@ On Android, Material Symbols Outlined at weight 200, or Lucide, with one glyph p
   - focus on tvOS: `.koanFocus()`, which the television's own button and row styles (`TelevisionButton`, `TelevisionRow`) draw in the theme in place of the system's platter.
 
   Each draws the platform's look exactly as before when the theme is off, so the "system" theme is the same roles with different answers. The accent is the environment's tint (`roomTint` for layer-drawn views), with `koanAccent` beside it saying whether it reads as text; whether icons are drawn is `koanIcons`, set at each scene's root by `.koanTheme(_:)`. Icons are `Icon.*` names asked for through `KoanIcon` (sized by the font), or `Image(koan:)`, `Label(_:koan:)` and `Button(_:koan:)` where only an image will do (menus, toolbar items, segments); layer-drawn rows get theirs from `Symbol.image`. AppKit-drawn views read `NSColor.koan*` (`koanBad`, `koanSeparator` and `koanSelection` among them) and `NSFont.role`. The platform's glass becomes `surface` in the theme through `.glass(_:fallback:in:)`, a material through `.koanMaterial(_:in:)`, a popover through `.koanPopover(isPresented:arrowEdge:content:)` (the theme's square panel on the Mac), a menu of actions through `KoanMenu` and `KoanMenuChoices`, and a search field through `.koanSearchable`; the album grid's AppKit heart draws its own flat ground. The Mac's tables keep AppKit's selection fill. The setting is `appearance.theme`, `"koan"` (the default) or `"system"`, read at launch; the Theme picker in Settings → Appearance writes it, and "Show icons" appears there only with the kōan theme. `just theme-leaks` finds styling that bypasses the roles.
+- **Web (the server's UI and share page):** `site/src/theme.css` holds the tokens and type scale, `crates/koan-server/styles/controls.css` the slider and focus ring both pages draw, and `ui.css` the rest. A button is bordered unless it says otherwise: `.primary` is prominent, `.standard` the label alone, `.quiet` a text button, `.bad` destructive. The app's own words are lowercased by CSS, so markup and screen readers keep proper case; a heading showing a title or name from the library takes `normal-case`. The accent is mint: it does not follow the record yet, and there is no wash. Icons are still the pages' own until the apps' set is bundled (#1170).
 - **Android:** the colour tokens map to a Material 3 `ColorScheme` (`bg` → `background`, `surface` → `surface`, `accent` → `primary`, `ink` → `onBackground`, `muted` → `onSurfaceVariant`, `rule` → `outlineVariant`, `bad` → `error`), the type roles to `Typography`, and `Shapes` are all zero-radius. The components above replace Material's own where they differ: outlined rather than filled buttons, the underlined segmented control, and the flat tab bar.

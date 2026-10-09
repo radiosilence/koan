@@ -47,7 +47,7 @@ impl Hearts {
     /// wrapper's, so the button inside can be replaced as any other is.
     pub fn tile(&self, id: i64) -> String {
         format!(
-            "<span class=\"absolute top-2 right-2 rounded-full bg-surface/85\">{}</span>",
+            "<span class=\"absolute top-2 right-2 bg-bg/85\">{}</span>",
             heart(Kind::Album, id, self.albums.contains(&id))
         )
     }

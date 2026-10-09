@@ -1,0 +1,1 @@
+- **The web UI and share pages are drawn in the kōan theme.** Square controls, one prominent action per page, bordered secondary buttons, flat list rows, lowercase labels and navigation, the theme's checkbox and seek slider, and the sidebar and transport on the page's own ground. Secondary text is a shade lighter everywhere, koan.rocks included, to meet AA contrast.

@@ -43,7 +43,7 @@ fn row(out: &mut String, name: &str, created: i64, used: Option<i64>, revoke: &s
         out,
         "<li class=\"{ROW}\"><span class=\"min-w-0 flex-1 overflow-hidden text-ellipsis wrap-anywhere\">{name}\
 <small class=\"block text-meta text-muted\">Created {created} · {used}</small></span>\
-<button class=\"quiet\" data-on:click=\"confirm('{confirm}') && @post('{revoke}')\">Revoke</button></li>",
+<button class=\"quiet bad\" data-on:click=\"confirm('{confirm}') && @post('{revoke}')\">Revoke</button></li>",
         name = escape(name),
         created = day(created),
     );

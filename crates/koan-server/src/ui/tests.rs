@@ -1337,7 +1337,8 @@ async fn a_waiting_device_is_approved_from_the_pair_page() {
     .await;
     assert_eq!(r.status, StatusCode::OK);
     assert!(
-        r.body.contains("Sign in Living &lt;room&gt; TV?"),
+        r.body
+            .contains("Sign in <span class=\"normal-case\">Living &lt;room&gt; TV</span>?"),
         "{}",
         r.body
     );
@@ -1510,7 +1511,12 @@ mod oauth {
 
         let r = send(&f.app, authed(&f.state, &uri).body(Body::empty()).unwrap()).await;
         assert_eq!(r.status, StatusCode::OK);
-        assert!(r.body.contains("Connect kōan to claude.ai?"), "{}", r.body);
+        assert!(
+            r.body
+                .contains("Connect kōan to <span class=\"normal-case\">claude.ai</span>?"),
+            "{}",
+            r.body
+        );
         let csp = r.headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
         assert!(csp.contains("form-action 'self' https://claude.ai"));
         assert!(csp.contains("frame-ancestors 'none'"));

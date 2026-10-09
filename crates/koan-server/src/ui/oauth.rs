@@ -376,7 +376,7 @@ pub(super) async fn authorize(
     );
     let host = to.host_str().unwrap_or_default();
     let body = format!(
-        "<h2>Connect kōan to {host}?</h2>\
+        "<h2>Connect kōan to <span class=\"normal-case\">{host}</span>?</h2>\
 <p>An app calling itself <em>{name}</em> wants to {abilities}, as <strong>{user}</strong>. \
 Anyone can give an app any name: {host} is where it really goes.</p>\
 <p><small>Approve only a connection you started yourself, just now. \
@@ -384,7 +384,7 @@ Approving connects whichever account started it.</small></p>\
 <form class=\"grid gap-3.5\" method=post action=\"/oauth/authorize\">{fields}\
 <button class=\"primary\" name=decision value=allow>Allow</button>\
 <button class=\"quiet\" name=decision value=deny>Deny</button></form>\
-<form class=\"grid gap-3.5\" method=post action=\"/auth/signout\">{next}<button class=\"quiet\">Not {user}? Sign out</button></form>",
+<form class=\"grid gap-3.5\" method=post action=\"/auth/signout\">{next}<button class=\"quiet\">Not <span class=\"normal-case\">{user}</span>? Sign out</button></form>",
         host = escape(host),
         name = escape(&c.client_name),
         abilities = abilities(&user),

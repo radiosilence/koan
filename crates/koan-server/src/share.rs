@@ -92,7 +92,7 @@ pub(crate) fn unstyled_classes(html: &str, css: &str, hooks: &[&str]) -> Vec<Str
 }
 
 /// The track lists' class list, on the page's one list or each album's.
-const TRACKS: &str = "grid gap-1.5";
+const TRACKS: &str = "grid";
 
 #[derive(Clone)]
 struct ShareState {
@@ -427,10 +427,10 @@ fn render(
         };
         // share.js marks the row playing.
         format!(
-            "<li class=\"group flex cursor-pointer items-center gap-3 rounded-lg border border-rule bg-surface px-3 \
-             py-2.5 hover:border-hover [&.playing]:border-l-3 [&.playing]:border-l-brand\" tabindex=0 \
+            "<li class=\"group flex cursor-pointer items-center gap-3 px-2 py-2 hover:bg-hover/30 \
+             focus-visible:bg-hover/30 focus-visible:outline-none max-wide:px-0\" tabindex=0 \
              data-src=\"/share/{id}/{pos}\" data-dur=\"{secs}\" data-title=\"{title}\" data-artist=\"{art}\" \
-             data-album=\"{alb}\"><span class=\"w-[1.5em] text-right text-muted tabular-nums\">{n}</span>\
+             data-album=\"{alb}\"><span class=\"w-[1.5em] text-right text-muted tabular-nums group-[.playing]:text-brand\">{n}</span>\
              <span class=\"min-w-0 flex-1 truncate group-[.playing]:text-brand\">{title}{small}</span>\
              <span class=\"text-meta text-muted tabular-nums\">{dur}</span></li>",
             pos = i + 1,
@@ -461,9 +461,9 @@ fn render(
             let rows: String = (i..end).map(|k| row(k, &tracks[k])).collect();
             out.push_str(&format!(
                 "<section class=\"mt-7\"><header class=\"mb-2.5 flex items-center gap-3.5\">\
-                 <img class=\"art size-16 flex-none rounded-md border border-rule bg-surface object-cover \
+                 <img class=\"art size-16 flex-none bg-surface object-cover \
                  [&.missing]:invisible\" src=\"/share/{id}/{first}/cover\" alt=\"\" loading=lazy>\
-                 <div><h2 class=\"m-0 text-[17px] font-bold wrap-anywhere\">{title}</h2>\
+                 <div><h2 class=\"m-0 text-title-sm font-light text-strong wrap-anywhere\">{title}</h2>\
                  <p class=\"mt-0.5 mb-0 text-meta text-muted\">{sub}</p></div></header>\
                  <ol class=\"{TRACKS}\">{rows}</ol></section>",
                 first = i + 1,
@@ -500,15 +500,17 @@ fn render(
 {icons}<link rel=stylesheet href=\"{css}\"></head><body>\
 <main class=\"mx-auto max-w-[760px] px-4 pt-[max(24px,env(safe-area-inset-top))] pb-12\">\
 <header class=\"mb-5 flex items-end gap-5 max-wide:flex-col max-wide:items-stretch\">\
-<img id=cover class=\"size-[200px] flex-none rounded-lg border border-rule bg-surface object-cover \
+<img id=cover class=\"size-[200px] flex-none bg-surface object-cover \
 max-wide:aspect-square max-wide:h-auto max-wide:w-full\" src=\"/share/{id}/cover\" alt=\"\">\
-<div class=\"min-w-0 flex-1\"><p class=\"m-0 text-fine tracking-[.08em] text-muted uppercase\">{kicker}</p>\
+<div class=\"min-w-0 flex-1\"><p class=\"m-0 text-fine text-muted lowercase\">{kicker}</p>\
 <h1>{title}</h1><p class=\"mt-0 mb-3.5 text-muted\">{sub}</p>{note}\
-<div class=\"flex items-center gap-2\"><button id=prev class=\"bg-transparent text-muted\" aria-label=Previous>&#9198;</button>\
-<button id=play class=\"min-w-24 border-brand bg-brand font-semibold text-bg\">Play</button>\
-<button id=next class=\"bg-transparent text-muted\" aria-label=Next>&#9197;</button>{download}</div>\
+<div class=\"flex items-center gap-2\"><button id=prev class=\"size-11 border-transparent p-0 text-ink hover:bg-transparent hover:text-strong\" \
+aria-label=Previous>&#9198;</button>\
+<button id=play class=\"min-w-24\">Play</button>\
+<button id=next class=\"size-11 border-transparent p-0 text-ink hover:bg-transparent hover:text-strong\" \
+aria-label=Next>&#9197;</button>{download}</div>\
 <div class=\"mt-3 flex items-center gap-2.5 text-meta text-muted tabular-nums\"><span id=pos>0:00</span>\
-<input id=seek class=\"min-w-0 flex-1 accent-brand\" type=range min=0 max=0 step=0.1 value=0 aria-label=Position>\
+<input id=seek class=\"min-w-0 flex-1\" type=range min=0 max=0 step=0.1 value=0 aria-label=Position>\
 <span id=len>0:00</span></div></div></header>\
 <div id=tracks data-start=\"{start}\">{body}</div><noscript><p>{links}</p></noscript></main>\
 <script src=\"{engine}\" defer></script>\
@@ -526,8 +528,8 @@ max-wide:aspect-square max-wide:h-auto max-wide:w-full\" src=\"/share/{id}/cover
             .any(|t| crate::subsonic::track_file_path(t).is_some())
         {
             format!(
-                "<a class=\"ml-auto rounded-md border border-rule bg-rule px-3.5 py-2 text-ink no-underline \
-                 hover:border-hover\" href=\"/share/{id}/download\" download>Download</a>"
+                "<a class=\"ml-auto border border-muted px-3 py-1.5 text-meta text-ink lowercase no-underline \
+                 hover:bg-hover/30\" href=\"/share/{id}/download\" download>Download</a>"
             )
         } else {
             String::new()

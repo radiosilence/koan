@@ -61,7 +61,7 @@ autocomplete=off aria-label=\"ListenBrainz user token\"><button class=\"primary\
     };
     format!(
         "<div id=listenbrainz><p>Connected as <strong>{name}</strong> since {since}.</p>{message}{state}{reconnect}\
-<button class=\"quiet\" data-on:click=\"confirm('{DISCONNECT_CONFIRM}') && \
+<button class=\"quiet bad\" data-on:click=\"confirm('{DISCONNECT_CONFIRM}') && \
 @post('/scrobbling/listenbrainz/disconnect')\">Disconnect</button>\
 <div id=scrobble-result></div></div>",
         name = escape(&s.account_name),
