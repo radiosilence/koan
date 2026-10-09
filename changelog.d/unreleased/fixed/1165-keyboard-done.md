@@ -1,0 +1,1 @@
+- **Done above the keyboard works on an EQ's page.** The Previous, Next and Done bar shows only for the band figures it moves between; the name field keeps its own return key.
