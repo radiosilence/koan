@@ -3228,15 +3228,34 @@ fn split(name: &str, text: &str, target: &str, rate: u32) -> Result<Split, Strin
     let correction = super::response(&squig_fit(&measured, &aim).0, &freqs, rate);
     let curve =
         |db: &[f64]| -> targets::Curve { freqs.iter().copied().zip(db.iter().copied()).collect() };
-    // The taste is what the EQ does beyond target minus measurement whole,
-    // its treble too, so it carries to other headphones; the correction
-    // saved holds the treble back where measurements disagree.
+    // The taste is what the EQ does beyond the correction it was baked from.
+    // That is target minus measurement whole when the EQ is a graphic
+    // export, and the fitted bands, whose treble is held back, when it is a
+    // squig.link preset. Taken from the wrong one, the taste carries this
+    // measurement's treble peaks and notches, inverted, to every headphone it
+    // plays on. A taste is broad, so the right one is the one leaving the
+    // least in the treble.
     let neutral = super::response(
         &[DspFilter::Graphic(targets::difference(&measured, &aim))],
         &freqs,
         rate,
     );
-    let taste = targets::difference(&curve(&neutral), &curve(&original));
+    let treble = |base: &[f64]| -> f64 {
+        let (sum, n) = freqs
+            .iter()
+            .zip(original.iter().zip(base))
+            .filter(|(hz, _)| **hz >= 2000.0)
+            .fold((0.0, 0), |(sum, n), (_, (o, b))| {
+                (sum + (o - b).powi(2), n + 1)
+            });
+        sum / n.max(1) as f64
+    };
+    let base = if treble(&correction) < treble(&neutral) {
+        &correction
+    } else {
+        &neutral
+    };
+    let taste = targets::difference(&curve(base), &curve(&original));
     let tuning = super::response(&[DspFilter::Graphic(taste.clone())], &freqs, rate);
     Ok(Split {
         taste,
@@ -5661,6 +5680,75 @@ mod tests {
             refused.contains("treats its channels differently"),
             "{refused}"
         );
+    }
+
+    /// A squig.link preset is bands fitted to the target and the taste, its
+    /// treble held back. Split, its tuning is the taste alone: none of the
+    /// measurement's treble, inverted, which the fit never corrected.
+    #[test]
+    fn a_fitted_preset_splits_without_the_measurements_treble() {
+        use super::super::targets;
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let peak =
+            |hz: f64, at: f64, db: f64, width: f64| db * (-(hz / at).log2().powi(2) / width).exp();
+        let mut text = String::from("frequency,raw\n");
+        for hz in targets::grid() {
+            text.push_str(&format!(
+                "{hz:.2},{:.2}\n",
+                90.0 + peak(hz, 3000.0, 6.0, 0.1)
+                    + peak(hz, 6000.0, -9.0, 0.02)
+                    + peak(hz, 9000.0, 7.0, 0.02)
+                    + peak(hz, 13000.0, -8.0, 0.03)
+            ));
+        }
+        let target = "harman-in-ear-2019";
+        let measured = read_measurement(&text).unwrap();
+        let shelf = |hz: f64| 3.0 / (1.0 + (hz / 80.0).powi(2));
+        let tasted: targets::Curve = targets::choice_curve(target)
+            .unwrap()
+            .into_iter()
+            .map(|(hz, db)| (hz, db + shelf(hz)))
+            .collect();
+        let (bands, _) = squig_fit(&measured, &tasted);
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Super".into(),
+                filters: bands,
+                role: Some(DspRole::Baked),
+                ..Default::default()
+            })
+        })
+        .unwrap();
+
+        let r = preview_split("Super", &text, target, 48_000).unwrap();
+        let tuning = r.tuning.as_ref().unwrap();
+        let worst = r
+            .freqs
+            .iter()
+            .zip(tuning)
+            .filter(|(hz, _)| **hz >= 2000.0)
+            .map(|(_, db)| db.abs())
+            .fold(0.0, f64::max);
+        assert!(worst < 1.5, "the tuning's treble reaches {worst:.1} dB");
+        let i = r.freqs.iter().position(|&f| f >= 40.0).unwrap();
+        assert!(
+            (tuning[i] - shelf(40.0)).abs() < 1.0,
+            "{} at 40 Hz",
+            tuning[i]
+        );
+        // Correction and tuning together play what the preset played.
+        let original = r.original.as_ref().unwrap();
+        let apart = r
+            .total
+            .iter()
+            .zip(original)
+            .map(|(t, o)| (t - o).abs())
+            .fold(0.0, f64::max);
+        assert!(apart < 0.5, "{apart:.2} dB from the preset");
     }
 
     /// A tuning is EQs in order, each on or off, each with its own target

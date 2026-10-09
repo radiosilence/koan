@@ -1,0 +1,1 @@
+- **Splitting a squig.link preset no longer puts its headphones' treble in the tuning.** The tuning is now taken against the correction the preset was fitted from. A tuning made by an earlier split keeps the old treble; split the preset again to replace it.
