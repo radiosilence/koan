@@ -1,0 +1,1 @@
+- **Previous restarts the track.** Once a track has played for more than a second, Previous starts it again; pressed again straight away, it goes back a track.
