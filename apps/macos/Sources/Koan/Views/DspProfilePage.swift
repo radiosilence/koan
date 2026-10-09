@@ -46,16 +46,19 @@ struct DspProfilePage: View {
     @State private var askingKeep = false
     /// The band figure being typed.
     @FocusState private var bandFocus: BandField?
+    @FocusState private var nameFocused: Bool
 
     /// On a phone the keyboard, the graph and the page share the screen: the
-    /// graph goes short while a figure is typed, so its row stays in sight.
+    /// graph goes short while anything is typed, so its field stays in sight.
     private var typing: Bool {
         #if os(iOS)
-        bandFocus != nil
+        bandFocus != nil || nameFocused
         #else
         false
         #endif
     }
+
+    private static let nameRow = "name"
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -72,7 +75,9 @@ struct DspProfilePage: View {
                 Section {
                     TextField("Name", text: $editingName)
                         .koanField()
+                        .focused($nameFocused)
                         .onSubmit(rename)
+                        .id(Self.nameRow)
                 }
                 if let message = notice ?? dsp.lastError {
                     Section {
@@ -176,6 +181,10 @@ struct DspProfilePage: View {
             .onChange(of: bandFocus?.index) { _, index in
                 guard let index else { return }
                 withAnimation(KoanTheme.Motion.normal) { proxy.scrollTo(BandField.row(index)) }
+            }
+            .onChange(of: nameFocused) { _, focused in
+                guard focused else { return }
+                withAnimation(KoanTheme.Motion.normal) { proxy.scrollTo(Self.nameRow) }
             }
         }
         #if !os(tvOS)
