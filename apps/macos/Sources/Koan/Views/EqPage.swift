@@ -495,15 +495,18 @@ struct EqChain: View {
         overview.profiles.first { $0.name == overview.active }
     }
 
-    /// Every EQ that plays meets the correction matched: the whole chain is
-    /// drawn in the accent, as the line into a matched EQ is. What plays is
-    /// what `sentence` says plays.
+    /// The first EQ that plays meets the correction matched, and none after
+    /// it was made against another target: the whole chain is drawn in the
+    /// accent, as the line into a matched EQ is. An EQ that says no target
+    /// (a generic one stacked on top) leaves it matched. What plays is what
+    /// `sentence` says plays.
     private var matched: Bool {
         guard let correction, correction.role != .baked, overview.tuningPlays else { return false }
         let playing = zip(overview.chain, overview.joins).filter { entry, _ in
             entry.on && !overview.leftOutEqs.contains(entry.name)
         }
-        return !playing.isEmpty && playing.allSatisfy { $0.1.join == .matched }
+        guard let first = playing.first, first.1.join == .matched else { return false }
+        return playing.dropFirst().allSatisfy { $0.1.join == .matched || $0.1.join == .unknown }
     }
 
     /// The stages' outlines in a matched chain; their own otherwise.

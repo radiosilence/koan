@@ -1,0 +1,1 @@
+- **A generic EQ no longer unmatches the chain.** The EQ page draws a chain as matched when its first EQ is made for the correction's target; EQs after it that say no target no longer break that, only ones made against another target do.
