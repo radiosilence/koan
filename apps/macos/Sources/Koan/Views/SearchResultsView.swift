@@ -18,6 +18,8 @@ struct SearchResultsView: View {
     @Environment(TransferMeter.self) private var meter
     @Environment(\.roomTint) private var tint
     @AppStorage("graphics") private var graphics = Graphics.full
+    /// A record whose sleeve was clicked, waiting to be told the queue may go.
+    @State private var replacing: Int64?
     #endif
 
     private let columns = GridItem.tiles(minimum: 140, maximum: 190, spacing: 16)
@@ -44,6 +46,7 @@ struct SearchResultsView: View {
         #if os(macOS)
         if search.hasQuery, !search.isEmpty || search.isSearching {
             results
+                .confirmsReplacingQueue(with: $replacing)
         } else {
             ScrollView { empty }
         }
@@ -93,6 +96,8 @@ struct SearchResultsView: View {
         let library = library
         let nav = nav
         let player = player
+        let mirror = mirror
+        let replacing = $replacing
         return SafeAreaReader { insets in
             MixedCollection(
                 artists: search.artists,
@@ -110,10 +115,8 @@ struct SearchResultsView: View {
                         open: { nav.open(album: $0) },
                         openArtist: { nav.open(artist: $0) },
                         play: { id in
-                            nav.open(album: id)
-                            let engine = library.engine
-                            let ids = await Task.detached { (try? await engine.trackIds(albumId: id, artistId: nil)) ?? [] }.value
-                            player.playNow(trackIds: ids)
+                            guard mirror.queue.isEmpty else { replacing.wrappedValue = id; return }
+                            await ReplaceQueueDialog.play(id, player: player, library: library, nav: nav)
                         },
                         toggleFavourite: { library.toggleFavourite(album: $0) }
                     ),

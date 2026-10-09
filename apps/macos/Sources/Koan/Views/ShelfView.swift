@@ -42,6 +42,8 @@ struct ShelfView: View {
     #endif
     #if os(macOS)
     @Environment(EngineMirror.self) private var mirror
+    /// A record whose sleeve was clicked, waiting to be told the queue may go.
+    @State private var replacing: Int64?
     @Environment(CoverArtCache.self) private var art
     @Environment(PlayingLevels.self) private var levels
     @Environment(TransferMeter.self) private var meter
@@ -78,6 +80,7 @@ struct ShelfView: View {
             } else {
                 #if os(macOS)
                 collection
+                    .confirmsReplacingQueue(with: $replacing)
                 #else
                 list
                 #endif
@@ -108,6 +111,8 @@ struct ShelfView: View {
         let library = library
         let nav = nav
         let player = player
+        let mirror = mirror
+        let replacing = $replacing
         return SafeAreaReader { insets in
             MixedCollection(
                 artists: artists,
@@ -125,10 +130,8 @@ struct ShelfView: View {
                         open: { nav.open(album: $0) },
                         openArtist: { nav.open(artist: $0) },
                         play: { id in
-                            nav.open(album: id)
-                            let engine = library.engine
-                            let ids = await Task.detached { (try? await engine.trackIds(albumId: id, artistId: nil)) ?? [] }.value
-                            player.playNow(trackIds: ids)
+                            guard mirror.queue.isEmpty else { replacing.wrappedValue = id; return }
+                            await ReplaceQueueDialog.play(id, player: player, library: library, nav: nav)
                         },
                         toggleFavourite: { library.toggleFavourite(album: $0) }
                     ),
