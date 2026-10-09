@@ -244,10 +244,14 @@ extension View {
         #if os(iOS)
         toolbar {
             ToolbarItemGroup(placement: .keyboard) {
-                Button("Previous", koan: Icon.previousField) { step(-1, focus, order) }
-                Button("Next", koan: Icon.nextField) { step(1, focus, order) }
-                Spacer()
-                Button("Done") { focus.wrappedValue = nil }
+                // The page's other fields, its name among them, keep their
+                // own return key: these buttons move and dismiss only these.
+                if focus.wrappedValue != nil {
+                    Button("Previous", koan: Icon.previousField) { step(-1, focus, order) }
+                    Button("Next", koan: Icon.nextField) { step(1, focus, order) }
+                    Spacer()
+                    Button("Done") { focus.wrappedValue = nil }
+                }
             }
             .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
         }
