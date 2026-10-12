@@ -58,6 +58,8 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // Robolectric runs the few Compose tests that draw a control on the JVM.
+        unitTests.isIncludeAndroidResources = true
     }
 }
 
@@ -142,6 +144,10 @@ dependencies {
     implementation(libs.rustls.platform.verifier)
 
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
     testImplementation(libs.kotlinx.coroutines.test)
     // The JVM jar, so the generated bindings load in a unit test.
     testImplementation(libs.jna)
