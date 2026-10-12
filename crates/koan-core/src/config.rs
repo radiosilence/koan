@@ -36,6 +36,7 @@ pub struct Config {
     pub sharing: SharingConfig,
     pub mcp: McpConfig,
     pub push: PushConfig,
+    pub lastfm: LastfmConfig,
     pub devices: DevicesConfig,
     pub dsp: DspConfig,
     pub appearance: AppearanceConfig,
@@ -90,6 +91,28 @@ pub struct SharingConfig {
     /// it cannot know which of its addresses a stranger can reach.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_url: Option<String>,
+}
+
+/// The Last.fm API account this server scrobbles through. Last.fm hands out
+/// one key and shared secret per application, so the server's admin registers
+/// them (<https://www.last.fm/api/account/create>) and every account on the
+/// server connects its own Last.fm through them. Without both, Last.fm is not
+/// offered. Secrets: `config.local.toml`, or `KOAN_LASTFM__API_KEY` and
+/// `KOAN_LASTFM__SECRET`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LastfmConfig {
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub api_key: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub secret: String,
+}
+
+impl LastfmConfig {
+    /// Both are set, so connecting and sending can work.
+    pub fn is_set(&self) -> bool {
+        !self.api_key.trim().is_empty() && !self.secret.trim().is_empty()
+    }
 }
 
 /// MCP clients signing in through this server's OAuth.
@@ -1382,6 +1405,8 @@ pub fn layer_of(path: &str) -> Layer {
         | "push.key_path"
         | "push.key_id"
         | "push.team_id"
+        | "lastfm.api_key"
+        | "lastfm.secret"
         // This machine's paths, disk and account.
         | "library.folders"
         | "remote.enabled"
@@ -2201,7 +2226,7 @@ fn check_secrets_in_git() {
 }
 
 fn scan_for_tracked_secrets() {
-    let sensitive_fields = ["password", "api_key", "refresh_token"];
+    let sensitive_fields = ["password", "api_key", "refresh_token", "secret"];
 
     for (label, path) in [
         ("config.toml", config_file_path()),
@@ -3149,6 +3174,20 @@ fps = 30
              otherwise be silently ignored: {}",
             fs::read_to_string(&local).unwrap()
         );
+    }
+
+    #[test]
+    fn lastfm_credentials_are_secrets_and_need_both_halves() {
+        assert!(matches!(layer_of("lastfm.api_key"), Layer::Machine));
+        assert!(matches!(layer_of("lastfm.secret"), Layer::Machine));
+        let mut cfg = LastfmConfig::default();
+        assert!(!cfg.is_set());
+        cfg.api_key = "key".into();
+        assert!(!cfg.is_set());
+        cfg.secret = " ".into();
+        assert!(!cfg.is_set());
+        cfg.secret = "secret".into();
+        assert!(cfg.is_set());
     }
 
     #[test]
