@@ -1799,19 +1799,43 @@ impl SharedPlayerState {
     /// time. Only items with a database row behind them: one without has
     /// nowhere to be fetched from, and parking the cursor on it would be worse
     /// than letting it fail honestly.
+    ///
+    /// The files are looked at with no lock held: a slow or hung mount would
+    /// otherwise stall the decode thread's lookahead behind the write lock.
     pub fn reset_items_with_missing_files(&self) -> Vec<(i64, QueueItemId)> {
+        self.reset_items_where(|path| !path.exists())
+    }
+
+    fn reset_items_where(
+        &self,
+        missing: impl Fn(&std::path::Path) -> bool,
+    ) -> Vec<(i64, QueueItemId)> {
+        let ready: Vec<(QueueItemId, i64, PathBuf)> = self
+            .playlist
+            .read()
+            .items
+            .iter()
+            .filter(|item| matches!(item.state, ItemState::Ready))
+            .filter_map(|item| Some((item.id, item.db_id?, item.path.clone())))
+            .collect();
+        let gone: Vec<_> = ready.into_iter().filter(|(_, _, p)| missing(p)).collect();
+        if gone.is_empty() {
+            return Vec::new();
+        }
+
+        // Only what is still Ready at the path that was looked at: the item
+        // may have been fetched again, or replaced, in the meantime.
         let mut pl = self.playlist.write();
         let mut reset = Vec::new();
         for item in pl.items.iter_mut() {
-            let Some(db_id) = item.db_id else { continue };
-            if !matches!(item.state, ItemState::Ready) {
-                continue;
+            if matches!(item.state, ItemState::Ready)
+                && let Some((_, db_id, _)) = gone
+                    .iter()
+                    .find(|(id, _, path)| *id == item.id && *path == item.path)
+            {
+                item.state = ItemState::Pending;
+                reset.push((*db_id, item.id));
             }
-            if item.path.exists() {
-                continue;
-            }
-            item.state = ItemState::Pending;
-            reset.push((db_id, item.id));
         }
         drop(pl);
         if !reset.is_empty() {
@@ -2265,6 +2289,40 @@ mod tests {
             state,
             played: false,
         }
+    }
+
+    // --- missing files ---
+
+    #[test]
+    fn missing_files_are_checked_with_no_lock_held() {
+        let state = SharedPlayerState::new();
+        let gone = PlaylistItem {
+            db_id: Some(1),
+            ..ready_item("gone")
+        };
+        let kept = PlaylistItem {
+            db_id: Some(2),
+            ..ready_item("kept")
+        };
+        let loose = ready_item("no-db-row");
+        let (gone_id, kept_id, loose_id) = (gone.id, kept.id, loose.id);
+        state.add_items(vec![gone, kept, loose]);
+
+        let reset = state.reset_items_where(|path| {
+            // A write lock held across the look would refuse this.
+            assert!(
+                state.playlist.try_write().is_some(),
+                "the playlist is locked while its files are checked"
+            );
+            path.ends_with("gone.flac") || path.ends_with("no-db-row.flac")
+        });
+
+        assert_eq!(reset, vec![(1, gone_id)]);
+        let pl = state.playlist.read();
+        let state_of = |id| pl.items.iter().find(|i| i.id == id).unwrap().state.clone();
+        assert!(matches!(state_of(gone_id), ItemState::Pending));
+        assert!(matches!(state_of(kept_id), ItemState::Ready));
+        assert!(matches!(state_of(loose_id), ItemState::Ready));
     }
 
     // --- shuffle ---
