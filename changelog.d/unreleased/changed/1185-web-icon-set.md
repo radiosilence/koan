@@ -1,0 +1,1 @@
+- **Web icons from the kōan set.** The web UI and share page draw their transport, share, chevron and heart icons from the same SVGs as the apps (`just icons` now emits a Rust module too), replacing hand-drawn glyphs and the share page's emoji skip buttons.
