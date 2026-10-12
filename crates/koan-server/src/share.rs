@@ -14,6 +14,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 
+use crate::icon;
 use axum::extract::{Path, RawQuery, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -505,16 +506,18 @@ max-wide:aspect-square max-wide:h-auto max-wide:w-full\" src=\"/share/{id}/cover
 <div class=\"min-w-0 flex-1\"><p class=\"m-0 text-fine text-muted lowercase\">{kicker}</p>\
 <h1>{title}</h1><p class=\"mt-0 mb-3.5 text-muted\">{sub}</p>{note}\
 <div class=\"flex items-center gap-2\"><button id=prev class=\"size-11 border-transparent p-0 text-ink hover:bg-transparent hover:text-strong\" \
-aria-label=Previous>&#9198;</button>\
+aria-label=Previous>{prev_icon}</button>\
 <button id=play class=\"min-w-24\">Play</button>\
 <button id=next class=\"size-11 border-transparent p-0 text-ink hover:bg-transparent hover:text-strong\" \
-aria-label=Next>&#9197;</button>{download}</div>\
+aria-label=Next>{next_icon}</button>{download}</div>\
 <div class=\"mt-3 flex items-center gap-2.5 text-meta text-muted tabular-nums\"><span id=pos>0:00</span>\
 <input id=seek class=\"min-w-0 flex-1\" type=range min=0 max=0 step=0.1 value=0 aria-label=Position>\
 <span id=len>0:00</span></div></div></header>\
 <div id=tracks data-start=\"{start}\">{body}</div><noscript><p>{links}</p></noscript></main>\
 <script src=\"{engine}\" defer></script>\
 <script src=\"{js}\" defer></script></body></html>",
+        prev_icon = icon::PREVIOUS.svg(18.0, "size-[18px] mx-auto"),
+        next_icon = icon::NEXT.svg(18.0, "size-[18px] mx-auto"),
         title = escape(&title),
         preview = preview.concat(),
         icons = icon_links("/share/assets"),

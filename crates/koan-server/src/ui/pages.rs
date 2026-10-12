@@ -20,22 +20,11 @@ use super::browse::{self, Browse, Kind};
 use super::favourite::Hearts;
 use super::{PARTIAL, UiState, events, html, open, patch};
 use crate::auth::AuthUser;
+use crate::icon;
 use crate::share::{blocking, duration, escape, not_found};
 use koan_core::shelves::{self, Shelf, Summary};
 
 const GENRES_OFFERED: u32 = 80;
-
-const ICON_PREV: &str =
-    "<svg viewBox=\"0 0 24 24\" aria-hidden=true><path d=\"M6 5h2v14H6zM20 5v14L9 12z\"/></svg>";
-const ICON_NEXT: &str =
-    "<svg viewBox=\"0 0 24 24\" aria-hidden=true><path d=\"M16 5h2v14h-2zM4 5v14l11-7z\"/></svg>";
-const ICON_CHEVRON: &str = "<svg class=\"size-[0.8em] fill-none stroke-current stroke-[2.5]\" \
-viewBox=\"0 0 24 24\" aria-hidden=true><path d=\"M9 5l7 7-7 7\"/></svg>";
-// `playing` is on the body while music plays.
-const ICON_PLAY: &str = "<svg class=\"in-[.playing]:hidden\" viewBox=\"0 0 24 24\" aria-hidden=true>\
-     <path d=\"M7 4v16l13-8z\"/></svg>";
-const ICON_PAUSE: &str = "<svg class=\"hidden in-[.playing]:inline\" viewBox=\"0 0 24 24\" aria-hidden=true>\
-     <path d=\"M6 4h4v16H6zM14 4h4v16h-4z\"/></svg>";
 
 /// A track row's actions on a narrow screen: one button opening the row's
 /// menu, which right-click and long-press open on any screen. The row's own
@@ -83,8 +72,7 @@ pub(super) const SIGNIN_TITLE: &str = "text-brand";
 
 /// The transport buttons: in the bar, or larger on a phone on the queue page.
 fn buttons(page: bool) -> String {
-    let icon = "inline-flex items-center justify-center p-0 text-ink hover:bg-transparent hover:text-strong \
-*:fill-current";
+    let icon = "inline-flex items-center justify-center p-0 text-ink hover:bg-transparent hover:text-strong";
     let (row, small, big, prev) = if page {
         (
             "flex flex-wrap items-center gap-2 max-wide:justify-center",
@@ -100,10 +88,14 @@ fn buttons(page: bool) -> String {
             "max-wide:hidden",
         )
     };
+    // `playing` is on the body while music plays.
+    let (prev_icon, next_icon) = (icon::PREVIOUS.svg(18.0, ""), icon::NEXT.svg(18.0, ""));
+    let play_icon = icon::PLAY.svg(18.0, "in-[.playing]:hidden");
+    let pause_icon = icon::PAUSE.svg(18.0, "hidden in-[.playing]:inline");
     format!(
-        "<div class=\"{row}\"><button class=\"{icon} {small} {prev} border-transparent\" data-ctl=prev aria-label=Previous>{ICON_PREV}</button>\
-<button class=\"{icon} {big} border-ink\" data-ctl=play aria-label=\"Play or pause\">{ICON_PLAY}{ICON_PAUSE}</button>\
-<button class=\"{icon} {small} border-transparent\" data-ctl=next aria-label=Next>{ICON_NEXT}</button></div>"
+        "<div class=\"{row}\"><button class=\"{icon} {small} {prev} border-transparent\" data-ctl=prev aria-label=Previous>{prev_icon}</button>\
+<button class=\"{icon} {big} border-ink\" data-ctl=play aria-label=\"Play or pause\">{play_icon}{pause_icon}</button>\
+<button class=\"{icon} {small} border-transparent\" data-ctl=next aria-label=Next>{next_icon}</button></div>"
     )
 }
 
@@ -388,17 +380,15 @@ fn filter_options(s: &UiState) -> Option<Options> {
     Some(options)
 }
 
-const ICON_SHARE: &str = "<svg viewBox=\"0 0 24 24\" aria-hidden=true>\
-     <path d=\"M12 3l4.5 4.5h-3.5v7h-2v-7H7.5zM5 12h2v7h10v-7h2v9H5z\"/></svg>";
-
 /// Share this track: its album, cued to it. Only where the page has a
 /// `#share-result` to show the link in.
 fn share_track_button(t: &TrackRow) -> String {
+    let share_icon = icon::EXPORT.svg(15.0, "");
     match t.album_id {
         Some(album) => format!(
             "<button class=\"quiet\" data-act-share data-indicator:_sharing data-attr:disabled=\"$_sharing\" \
 data-on:click=\"@post('/album/{album}/share?track={id}')\" aria-label=\"Share this track\" \
-title=\"Share this track\">{ICON_SHARE}</button>",
+title=\"Share this track\">{share_icon}</button>",
             id = t.id
         ),
         None => String::new(),
@@ -1056,10 +1046,11 @@ fn shelf_versions(conn: &rusqlite::Connection, s: &Summary) -> Versions {
 /// filter. The preview below may show fewer.
 fn section_head(title: &str, total: u64, shelf: Shelf, kind: Kind, extra: &str) -> String {
     let href = escape(&browse::shelf_browser(shelf, kind));
+    let chevron = icon::CHEVRON_RIGHT.svg(14.0, "size-[0.8em]");
     format!(
         "<div class=\"{LIST_HEAD}\"><h2><a class=\"inline-flex items-center gap-1.5 text-[inherit] \
 hover:text-brand hover:no-underline\" href=\"{href}\">{title}\
-<span class=\"text-muted tabular-nums\">{total}</span>{ICON_CHEVRON}</a></h2>\
+<span class=\"text-muted tabular-nums\">{total}</span>{chevron}</a></h2>\
 <div class=\"{ACTIONS}\">{extra}</div></div>"
     )
 }

@@ -45,7 +45,7 @@ css:
     tailwindcss --input crates/koan-server/styles/share.css --output crates/koan-server/assets/share.css
 
 # Compile the kōan icon set (apps/macos/Resources/Icons/*.svg) into
-# Support/KoanGlyphs.swift. The output is committed; `--check` fails if stale.
+# Support/KoanGlyphs.swift and the web's crates/koan-server/src/icon/glyphs.rs. The output is committed; `--check` fails if stale.
 icons *args:
     python3 scripts/icons.py {{args}}
 

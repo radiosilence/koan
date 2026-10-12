@@ -190,7 +190,7 @@ The theme draws its own set, in `apps/macos/Resources/Icons`: one SVG per glyph,
 - **Fills.** None, except in two glyphs whose state is the point: favourited (the heart) and selecting (the ticked square). Their fill takes the stroke colour, and any stroke inside it is cut out; given a second colour, as the album grid's tick is, the fill takes that instead.
 - **States are glyphs.** Where SF Symbols fill a shape for a state (`cloud.fill`, `moon.zzz.fill`), the set draws a second glyph with a mark inside.
 
-`just icons` compiles the SVGs into `Support/KoanGlyphs.swift`; `just icons-sheet` draws every glyph beside its SF Symbol, at 17 and 13 points, at 2× and 1×, light and dark, into `target/icons-sheet.png`. `just theme-leaks` fails if an `Icon` has no glyph or a view asks for an SF Symbol directly.
+`just icons` compiles the SVGs into `Support/KoanGlyphs.swift` and, for the web UI and the share page, into `crates/koan-server/src/icon/glyphs.rs` (`crate::icon`, which draws a glyph as inline SVG on the same stroke rule); `just icons --check` fails if either is stale; `just icons-sheet` draws every glyph beside its SF Symbol, at 17 and 13 points, at 2× and 1×, light and dark, into `target/icons-sheet.png`. `just theme-leaks` fails if an `Icon` has no glyph or a view asks for an SF Symbol directly.
 
 On Android, Material Symbols Outlined at weight 200, or Lucide, with one glyph per role mapped from the same names.
 

@@ -16,6 +16,7 @@ use koan_core::db::queries;
 
 use super::{UiState, events, open, patch};
 use crate::auth::AuthUser;
+use crate::icon;
 use crate::share::blocking;
 use crate::subsonic::EntityKind;
 
@@ -67,7 +68,8 @@ impl Hearts {
     pub fn mark(&self) -> String {
         format!(
             "<span class=\"fav-mark\" role=img aria-label=Favourite title=Favourite>\
-<svg viewBox=\"0 0 24 24\" aria-hidden=true><path d=\"{HEART}\"/></svg></span>"
+{heart}</span>",
+            heart = icon::HEART_FILLED.svg(13.0, "")
         )
     }
 }
@@ -106,8 +108,6 @@ impl Kind {
     }
 }
 
-const HEART: &str = "M12 20.5s-7.6-4.6-9.5-9.1C1.1 8 3.2 4.5 6.7 4.5c2 0 3.6 1.1 4.5 2.6L12 8.3l.8-1.2c.9-1.5 2.5-2.6 4.5-2.6 3.5 0 5.6 3.5 4.2 6.9-1.9 4.5-9.5 9.1-9.5 9.1z";
-
 /// A heart for one thing, filled while it is a favourite. Pressing it asks
 /// for the opposite.
 fn heart(kind: Kind, id: i64, on: bool) -> String {
@@ -119,9 +119,16 @@ fn heart(kind: Kind, id: i64, on: bool) -> String {
     format!(
         "<button class=\"quiet text-muted aria-pressed:text-brand\" data-fav=\"{k}-{id}\" aria-pressed=\"{on}\" \
 aria-label=\"{label}\" title=\"{label}\" data-on:click=\"@post('/favourite/{k}/{id}?on={next}')\">\
-<svg class=\"inline size-[15px] fill-none stroke-current stroke-2 align-[-2px] in-aria-pressed:fill-current\" \
-viewBox=\"0 0 24 24\" aria-hidden=true><path d=\"{HEART}\"/></svg></button>",
+{outline}{filled}</button>",
         k = kind.as_str(),
+        outline = icon::HEART.svg(
+            15.0,
+            "inline size-[15px] align-[-2px] in-aria-pressed:hidden"
+        ),
+        filled = icon::HEART_FILLED.svg(
+            15.0,
+            "hidden size-[15px] align-[-2px] in-aria-pressed:inline"
+        ),
     )
 }
 
