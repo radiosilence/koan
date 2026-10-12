@@ -1578,17 +1578,10 @@ where
         .spawn(move || {
             // Deliberately outside the pool: this connection is held for
             // minutes and must not deny one to request-path resolvers.
-            let outcome = match handle.open_detached() {
+            registry.run(&id, || match handle.open_detached() {
                 Ok(db) => work(db, reporter),
                 Err(e) => Err(e.to_string()),
-            };
-            match outcome {
-                Ok(message) => registry.finish(&id, JobState::Succeeded, message),
-                Err(message) => {
-                    log::error!("{} job failed: {}", kind, message);
-                    registry.finish(&id, JobState::Failed, message)
-                }
-            }
+            });
         });
 
     if spawned.is_err() {
