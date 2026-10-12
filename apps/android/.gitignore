@@ -1,0 +1,9 @@
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+.kotlin/
+captures/
+# Built by the `generateKoanFfi` task, as the iOS bindings are: not checked in.
+app/src/main/jniLibs/

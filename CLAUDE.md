@@ -14,6 +14,8 @@ Plus **tools/uniffi-bindgen** — the Swift bindings generator (`just ffi-bindin
 
 Plus **apps/macos** — SwiftUI app (SwiftPM, Swift 6, macOS 26+). Links koan-ffi.
 
+Plus **apps/android** — Kotlin + Jetpack Compose app (Gradle, Kotlin DSL, minSdk 28). Links koan-ffi through uniffi's Kotlin bindings, which Gradle generates; neither they nor the `.so` files are checked in. Phase 2 of #535: the playback service, the mirror and the models, and one placeholder screen.
+
 Dependency rules (compiler-enforced): koan-tui, koan-server and koan-ffi cannot import each other; all three depend only on koan-core. Native clients import koan-core through koan-ffi.
 
 **Local UI goes through FFI, not GraphQL.** The macOS app links the engine in-process — a daemon, a port and an auth surface buy nothing when the UI is sitting on top of the audio engine. GraphQL is the surface for clients that genuinely can't link the core: the web UI, jukebox remotes. The iOS app links the core like the Mac app does. When adding a capability to one, consider whether the other needs it too — both are thin shims over the same koan-core helpers.
@@ -297,6 +299,25 @@ follows the top of the stack in front — see `TabShell`.
 | `Views/OrganizeSheet.swift` | Organize: pattern + destination pickers, preview table with conflicts flagged per row |
 | `Support/DspModel.swift` | EQ and convolution profiles, and the one import flow Settings, "Open in" and the iOS share extension (`apps/ios/Share`, via `KoanIOS/ShareInbox.swift`) all go through. `Views/DspProfilePage.swift` shows what a profile holds |
 | `Support/OrganizeModel.swift` | Organize sheet state — debounced preview, generation-guarded so a slow plan can't land on a newer one |
+
+### apps/android (`apps/android/app/src/main/kotlin/cc/blit/koan/`)
+
+The Kotlin counterparts of the Swift modules above, with the Swift doc comments as their specification. Engine calls run on `EngineDispatcher`, never on Main, and nothing in a composable calls the engine: a page reads a `StateFlow` and calls a model method that returns at once. `./gradlew assembleDebug` builds the engine (`cargo ndk`) and the bindings first; `./gradlew testDebugUnitTest` runs the JVM tests.
+
+| Module | What |
+|--------|------|
+| `Native.kt` | The one JNI entry point: loads `koan_ffi` and hands the application context to rustls-platform-verifier (`initTlsOnce`). Everything else crosses by JNA |
+| `engine/KoanProcess.kt` | The process's one engine (`KoanEngine.withAppDirs`), built once by the service on the engine dispatcher; the route told to the engine; the bit-perfect status read back from `audioOutputGrant()`. Outlives a service instance, because the engine is one per process |
+| `engine/EngineDispatcher.kt` | The single thread every engine call is issued from, so commands are issued in the order they were asked |
+| `state/EngineMirror.kt` | `EngineMirror.swift`: one `StateFlow` per slice, fed by following `observe()`; a value equal to the one held wakes nobody. Big lists (`QueueRows`, `QueueState`) are compared by identity |
+| `state/PlayerModel.kt` | `PlayerModel.swift`: commands, the seek hold, the session autosave. Leaves out devices, renderers, the pasteboard and drops |
+| `state/SettingsModel.kt` | The server sign-in state, for now; the Settings pages grow it |
+| `service/KoanPlaybackService.kt` | A Media3 `MediaSessionService` (foreground type `mediaPlayback`). Starts the engine; audio focus, becoming noisy, route changes and USB bit-perfect are wired here |
+| `service/KoanPlayer.kt` | A `SimpleBasePlayer` that reports the mirror and forwards commands. Its timeline is the current track only; `KoanPlayerState` is the pure mapping, tested on the JVM |
+| `service/AudioFocusPolicy.kt`, `AudioFocusController.kt` | Pause on loss, pause until gain on transient loss, duck by the system on a transient loss that allows it |
+| `service/RouteWatcher.kt`, `OutputRoute.kt` | Which output music goes to, and telling the engine (`setAudioRouteAndroid`) |
+| `service/UsbBitPerfect.kt`, `BitPerfect.kt` | `setPreferredMixerAttributes` with bit-perfect behaviour at the source rate on API 34+, and the judgement of whether a route is bit-perfect from what was granted |
+| `ui/PlaceholderScreen.kt` | The only screen until the pages land |
 
 ### koan-server (`crates/koan-server/src/`)
 

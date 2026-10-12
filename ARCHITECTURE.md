@@ -160,7 +160,7 @@ The device rate is not koan's to own — it is one property shared by every clie
 
 ## Android
 
-The core and `koan-ffi` build for Android (`arm64-v8a` for devices, `x86_64` for the emulator; the 32-bit ABIs are not built). There is no app yet; this is the engine side that one links.
+The core and `koan-ffi` build for Android (`arm64-v8a` for devices, `x86_64` for the emulator; the 32-bit ABIs are not built). `apps/android` is the app that links it: a Gradle project (Kotlin DSL, version catalog) whose `generateKoanBindings` task runs the commands of `just android-ffi` before Kotlin compiles. The libraries land in `app/src/main/jniLibs` and the bindings in `app/build/generated/uniffi/kotlin`; neither is checked in.
 
 **Toolchain.** NDK r27c (`27.2.12479018`) installed with `sdkmanager "ndk;27.2.12479018"`, `cargo-ndk`, and the two Rust targets (`rustup target add aarch64-linux-android x86_64-linux-android`). The platform level is 28: `ndk`'s AAudio `Usage` and `ContentType` need it, and the symbols are linked at load. `just android-ffi` builds both ABIs and generates the Kotlin bindings.
 
@@ -173,6 +173,10 @@ A route change (headphones out, Bluetooth in, a USB DAC attached) arrives as a d
 **TLS.** reqwest verifies certificates with `rustls-platform-verifier`, which on Android needs the application context over JNI and its Kotlin component (`rustls:rustls-platform-verifier`, found through the crate's `maven` directory) on the app's classpath. `koan-ffi` exports `Java_cc_blit_koan_Native_initTls`; the app declares `object Native { external fun initTls(context: Context) }` in package `cc.blit.koan`, loads `koan_ffi`, and calls it once with the application context before the engine starts.
 
 **Logging.** Warnings and errors go to logcat as well as `koan.log`.
+
+**Service and state.** The engine belongs to the process and is started by `KoanPlaybackService`, a Media3 `MediaSessionService` in the foreground with type `mediaPlayback`; the activity never starts it, so leaving or rotating the app does not touch playback. `KoanProcess` builds it once (TLS first, then `KoanEngine.withAppDirs`) on `EngineDispatcher`, a single thread that no UI code shares, and a service that is stopped and started again in the same process finds it running. `KoanPlayer`, the session's `SimpleBasePlayer`, reports `EngineMirror` and forwards commands to `PlayerModel`; its timeline is the current track only, since a session needs that to draw a notification and a queue of five hundred rows rebuilt on every change is the cost. `EngineMirror` is `EngineMirror.swift` in Kotlin: one `StateFlow` per slice, so a page collects only what it draws, with `collectAsStateWithLifecycle`.
+
+Android-specific policy lives beside the service and is plain Kotlin where it can be, so a JVM test runs it: `AudioFocusPolicy` (pause on loss, resume only what focus paused, duck by the system), `OutputRoutes` (which output music goes to), and `BitPerfect`. Bit-perfect output exists only to a USB DAC on API 34 and later: the service sets the mixer to `MIXER_BEHAVIOR_BIT_PERFECT` at the source rate before the engine opens its stream, tells the engine the route (`setAudioRouteAndroid`) so it reopens, and judges the result from `audioOutputGrant()`, never from the request. `StrictMode` with `penaltyDeath` is on in debug builds.
 
 **What does not run yet.** UPnP discovery is skipped (it needs a `MulticastLock`), and the offline mode that narrows the library when the server is out of reach is iOS and tvOS only.
 
