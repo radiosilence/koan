@@ -729,6 +729,8 @@ impl LinkIdentity {
             ("tvos", "Apple TV")
         } else if cfg!(target_os = "macos") {
             ("macos", "Mac")
+        } else if cfg!(target_os = "android") {
+            ("android", "Android")
         } else {
             ("linux", "Linux")
         };

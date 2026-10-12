@@ -36,6 +36,8 @@ use uuid::Uuid;
 
 use koan_core::db::queries::RECENT_LIMIT;
 
+#[cfg(target_os = "android")]
+mod android;
 mod offload;
 mod queue_slice;
 mod server_queue;
@@ -135,6 +137,22 @@ impl koan_core::audio::ios_backend::AudioSession for SessionBridge {
     }
 }
 
+/// What Android granted the output stream. Whether the route is bit-perfect
+/// is for the app to say from this: `exclusive` with `hardware_rate` equal to
+/// the source's means the hardware runs at the source's rate; anything else
+/// went through the system mixer.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct AudioOutputGrant {
+    /// The stream is the device's own rather than the system mixer's.
+    pub exclusive: bool,
+    /// The rate the stream was opened at, which is the source's.
+    pub stream_rate: u32,
+    /// The rate the output hardware runs at, as far as the platform says.
+    pub hardware_rate: u32,
+    /// `AudioDeviceInfo.getId()` of the device the stream is on; 0 if unknown.
+    pub device_id: i32,
+}
+
 /// Send `log` output to `~/.config/koan/koan.log`, the same file the CLI
 /// writes.
 ///
@@ -155,6 +173,8 @@ fn init_logging() {
             if !self.enabled(record.metadata()) {
                 return;
             }
+            #[cfg(target_os = "android")]
+            android::to_logcat(record);
             let Ok(mut file) = self.0.lock() else { return };
             let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
             file.write(format_args!(
@@ -476,6 +496,10 @@ const HAND_OFF_ANSWER: std::time::Duration = std::time::Duration::from_secs(12);
 /// takes longer, and is reported as not started yet.
 const HAND_OFF_TAKEN: std::time::Duration = std::time::Duration::from_secs(8);
 
+// Not on Android: uniffi's Kotlin bindings cannot generate an async primary
+// constructor, and `new` is the primary one. An Android app starts the engine
+// with `with_app_dirs`, which it needs anyway (it has no home directory).
+#[cfg(not(target_os = "android"))]
 #[uniffi::export]
 impl KoanEngine {
     /// Spawns the player thread and opens the library. One per process.
@@ -484,6 +508,28 @@ impl KoanEngine {
     #[uniffi::constructor]
     pub async fn new(device_name: Option<String>) -> Result<Arc<Self>, KoanError> {
         offload::offload(move || Self::build(device_name)).await
+    }
+}
+
+#[uniffi::export]
+impl KoanEngine {
+    /// Spawns the player thread and opens the library, in the directories an
+    /// Android app is given: `filesDir` for the configuration, library and
+    /// logs, and `cacheDir` for downloads, which the system may reclaim. An
+    /// Android app has no home directory to find its way from, and this is
+    /// the only constructor its bindings have. Does the same anywhere else;
+    /// the paths are simply used. One engine per process, as with `new`.
+    #[uniffi::constructor]
+    pub async fn with_app_dirs(
+        device_name: Option<String>,
+        files_dir: String,
+        cache_dir: String,
+    ) -> Result<Arc<Self>, KoanError> {
+        offload::offload(move || {
+            config::set_app_dirs(Path::new(&files_dir), Path::new(&cache_dir));
+            Self::build(device_name)
+        })
+        .await
     }
     // --- Transport ---------------------------------------------------------
 
@@ -3751,6 +3797,53 @@ impl KoanEngine {
             let _ = name;
             Ok(())
         }
+    }
+
+    /// The route Android is playing to, on each route change and once at
+    /// start: what profiles are chosen by on a phone, and the cue to reopen
+    /// the output on it. `device_id` is the route's `AudioDeviceInfo.getId()`
+    /// (0 to follow the system's default) and `sample_rate` the rate the
+    /// platform says it runs at (0 if it does not say). Does nothing
+    /// elsewhere.
+    pub async fn set_audio_route_android(
+        self: Arc<Self>,
+        name: String,
+        device_id: i32,
+        sample_rate: u32,
+    ) -> Result<(), KoanError> {
+        #[cfg(target_os = "android")]
+        {
+            offload::sequenced(move || {
+                koan_core::audio::android_backend::set_route(name, device_id, sample_rate);
+                self.send_local(PlayerCommand::RouteChanged)
+            })
+            .await
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = (name, device_id, sample_rate);
+            Ok(())
+        }
+    }
+
+    /// What the output stream was granted by the system, read back from the
+    /// stream rather than what was asked for. `None` before any stream has
+    /// opened, and off Android.
+    pub fn audio_output_grant(&self) -> Option<AudioOutputGrant> {
+        #[cfg(target_os = "android")]
+        {
+            use koan_core::audio::android_policy::Sharing;
+            let granted = koan_core::audio::android_backend::granted()?;
+            Some(AudioOutputGrant {
+                exclusive: granted.sharing == Sharing::Exclusive,
+                stream_rate: granted.sample_rate,
+                hardware_rate: koan_core::audio::android_backend::hardware_rate()
+                    .unwrap_or(granted.sample_rate),
+                device_id: granted.device_id,
+            })
+        }
+        #[cfg(not(target_os = "android"))]
+        None
     }
 
     // --- Settings ----------------------------------------------------------
