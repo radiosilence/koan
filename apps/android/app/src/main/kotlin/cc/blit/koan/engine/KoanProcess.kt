@@ -8,9 +8,17 @@ import cc.blit.koan.service.BitPerfect
 import cc.blit.koan.service.BitPerfectStatus
 import cc.blit.koan.service.Grant
 import cc.blit.koan.service.OutputRoute
+import cc.blit.koan.art.Artwork
+import cc.blit.koan.art.ArtworkStore
+import cc.blit.koan.nav.Navigator
+import cc.blit.koan.state.ActivityModel
 import cc.blit.koan.state.EngineMirror
+import cc.blit.koan.state.KeyValueStore
+import cc.blit.koan.state.LibraryModel
 import cc.blit.koan.state.PlayerModel
+import cc.blit.koan.state.PlaylistsModel
 import cc.blit.koan.state.SettingsModel
+import cc.blit.koan.theme.KoanAccent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
@@ -26,6 +34,13 @@ class KoanRuntime(
     val mirror: EngineMirror,
     val player: PlayerModel,
     val settings: SettingsModel,
+    val library: LibraryModel,
+    val playlists: PlaylistsModel,
+    val activity: ActivityModel,
+    val navigator: Navigator,
+    val artwork: ArtworkStore,
+    /** The accent of the record playing; see [ModelWiring.accent]. */
+    val accent: StateFlow<KoanAccent>,
 )
 
 /**
@@ -82,10 +97,20 @@ object KoanProcess {
                 val mirror = EngineMirror()
                 val player = PlayerModel(engine, mirror, scope)
                 val settings = SettingsModel(engine, mirror, scope)
+                val artwork = Artwork.store
+                val activity = ActivityModel().also { it.cancelLibraryTask = engine::cancelLibraryTask }
+                val store = KeyValueStore.Prefs(app)
+                val library = LibraryModel(engine, mirror, scope, store, activity, artwork)
+                val playlists = PlaylistsModel(engine, mirror, scope)
+                val navigator = Navigator(scope, AppPageLoader(library, playlists))
+                val wiring = ModelWiring(scope, mirror, library, playlists, activity, artwork)
                 scope.launch { mirror.follow(engine.observe()) }
                 player.start()
                 settings.refresh()
-                _runtime.value = KoanRuntime(engine, mirror, player, settings)
+                wiring.start()
+                _runtime.value = KoanRuntime(
+                    engine, mirror, player, settings, library, playlists, activity, navigator, artwork, wiring.accent,
+                )
                 route?.let { announce(engine, it, 0) }
                 player.restoreSession()
             } catch (e: Throwable) {

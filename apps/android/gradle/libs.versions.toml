@@ -10,6 +10,10 @@ lifecycle = "2.10.0"
 activityCompose = "1.12.4"
 coreKtx = "1.17.0"
 jna = "5.18.1"
+# Navigation 3: the back stack is a plain list the app owns.
+navigation3 = "1.0.0"
+# Coil 3 draws the artwork; its fetcher asks the engine for the bytes.
+coil = "3.3.0"
 junit = "4.13.2"
 # The JVM half of rustls-platform-verifier. Not on Maven Central: the crate
 # ships it in its own `maven` directory (see settings.gradle.kts), at the
@@ -28,6 +32,9 @@ androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx"
 androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
 androidx-media3-session = { module = "androidx.media3:media3-session", version.ref = "media3" }
 androidx-media3-common = { module = "androidx.media3:media3-common", version.ref = "media3" }
+androidx-navigation3-runtime = { module = "androidx.navigation3:navigation3-runtime", version.ref = "navigation3" }
+androidx-navigation3-ui = { module = "androidx.navigation3:navigation3-ui", version.ref = "navigation3" }
+coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 rustls-platform-verifier = { module = "rustls:rustls-platform-verifier", version.ref = "rustlsPlatformVerifier" }
 junit = { module = "junit:junit", version.ref = "junit" }

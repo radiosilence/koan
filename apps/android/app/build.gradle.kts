@@ -129,6 +129,9 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.navigation3.runtime)
+    implementation(libs.androidx.navigation3.ui)
+    implementation(libs.coil.compose)
     implementation(libs.androidx.media3.session)
     implementation(libs.androidx.media3.common)
     // uniffi's generated Kotlin crosses into the engine through JNA; on
