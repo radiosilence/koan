@@ -1,0 +1,1 @@
+- **EQ sync no longer lets a fast clock win.** An edit stamped ahead of the server is counted as made on receipt, so edits from correct clocks made after it still win.
