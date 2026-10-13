@@ -35,7 +35,8 @@ import cc.blit.koan.ffi.Transfer
 import cc.blit.koan.ffi.TransferState
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
-import cc.blit.koan.ui.library.NoFilter
+import cc.blit.koan.ui.library.Shelf
+import cc.blit.koan.ui.library.ShelfRoute
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.nonce
 import cc.blit.koan.ui.playlists.CollectionRow
@@ -67,13 +68,8 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class DownloadsRoute(val nonce: String = nonce()) : NavKey
 
-/** What is on this device: the records with files here, and how much of each. */
-@Serializable
-data class DownloadedRoute(val nonce: String = nonce()) : NavKey
-
 fun EntryProviderScope<NavKey>.downloadsEntries() {
     entry<DownloadsRoute> { DownloadsPage() }
-    entry<DownloadedRoute> { DownloadedPage() }
 }
 
 /**
@@ -149,7 +145,7 @@ private fun CacheUsage(onRemoveAll: () -> Unit) {
         "Downloaded Records",
         "What plays here without your server",
         appText = true,
-        onClick = { nav.push(DownloadedRoute()) },
+        onClick = { nav.push(ShelfRoute(Shelf.Downloaded)) },
         leading = { KoanIcon(KoanIcons.onDevice, null) },
         trailing = { KoanIcon(KoanIcons.disclosure, null, color = KoanTheme.color(KoanTone.Muted)) },
     )
@@ -213,66 +209,6 @@ private fun TransferRow(transfer: Transfer, modifier: Modifier) {
             if (transfer.state == TransferState.DONE) {
                 DownloadMenuItems(onDisk = true, dismiss = { menu = false }) { listOf(transfer.trackId) }
             }
-        }
-    }
-}
-
-/** The records with files on this device, fully there first, asked for again as the library moves. */
-class DownloadedModel(mirror: EngineMirror) : ViewModel() {
-    val albums: StateFlow<List<Album>?> = mirror.library
-        .mapLatest {
-            runCatching { mirror.engine().albums(null, AlbumSort.DOWNLOADED, 0, null, NoFilter.copy(downloaded = true)) }
-                .getOrDefault(emptyList())
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
-}
-
-/** What a phone can play with no signal: each record with a bar for how much of it is here. */
-@Composable
-private fun DownloadedPage() {
-    val app = koanApp()
-    val model = viewModel { DownloadedModel(app.mirror) }
-    val albums by model.albums.collectAsStateWithLifecycle()
-    Column {
-        PageBar("Downloaded")
-        val shown = albums
-        when {
-            shown == null -> Unit
-            shown.isEmpty() -> KoanUnavailable(
-                "Nothing downloaded yet",
-                KoanIcons.onDevice,
-                "Records you play or download from your server appear here, with how much of each is on this device.",
-            )
-            else -> LazyColumn {
-                items(shown, key = { it.id }) { DownloadedRow(it, Modifier.animateItem()) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun DownloadedRow(album: Album, modifier: Modifier) {
-    val nav = LocalNavigator.current
-    var menu by remember { mutableStateOf(false) }
-    val have = album.onDevice?.have ?: 0u
-    val total = album.onDevice?.total ?: 0u
-    val whole = total > 0u && have >= total
-    val albumTracks: suspend KoanEngine.() -> List<Long> = { trackIds(album.id, null) }
-
-    Box(modifier) {
-        CollectionRow(
-            album.title,
-            album.artistName,
-            onClick = { nav.push(AlbumRoute(album.id)) },
-            onLongClick = { menu = true },
-            leading = { Sleeve(Art.album(album.id)) },
-            below = if (whole || total == 0u) null else ({ KoanBar(have.toFloat() / total.toFloat(), Modifier.padding(top = KoanSpace.xs)) }),
-            trailing = {
-                KoanText(if (whole) "all" else "$have of $total", role = KoanType.Meta, tone = KoanTone.Muted, appText = whole)
-            },
-        )
-        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-            DownloadMenuItems(onDisk = if (whole) true else null, dismiss = { menu = false }, trackIds = albumTracks)
         }
     }
 }

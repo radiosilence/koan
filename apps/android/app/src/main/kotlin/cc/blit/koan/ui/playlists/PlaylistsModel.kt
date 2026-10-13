@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalCoroutinesApi::class)
+
 package cc.blit.koan.ui.playlists
 
 import androidx.lifecycle.ViewModel
@@ -6,6 +8,7 @@ import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.ffi.Playlist
 import cc.blit.koan.ffi.PlaylistEntry
 import cc.blit.koan.ffi.Track
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.mapLatest

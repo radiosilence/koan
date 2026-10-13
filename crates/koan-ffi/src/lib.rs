@@ -3887,6 +3887,11 @@ impl KoanEngine {
                     .as_ref()
                     .map(|db| koan_core::helpers::tracks_from_server(db))
                     .unwrap_or(0),
+                remote_last_sync: db.as_ref().and_then(|db| {
+                    koan_core::remote::sync::get_last_sync(db, &cfg.remote.url)
+                        .ok()
+                        .flatten()
+                }),
                 download_workers: cfg.remote.download_workers as u32,
                 cache_limit: cfg.remote.cache_limit.clone().unwrap_or_default(),
                 cache_dir: cache_dir.to_string_lossy().into_owned(),

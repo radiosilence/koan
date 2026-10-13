@@ -63,6 +63,11 @@ pub fn sync_remote(
         .flatten();
     let library = if walk == Walk::IfChanged && version.is_some() && version == walked {
         log::info!("library unchanged on the server; not walked");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        sync::update_last_sync(db, url, username, now)?;
         sync::SyncResult::default()
     } else {
         let library = sync::sync_library(db, client, url, username, progress).inspect_err(|e| {
