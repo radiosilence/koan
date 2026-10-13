@@ -34,6 +34,7 @@ class KoanApp : Application(), SingletonImageLoader.Factory {
         val name = Settings.Global.getString(contentResolver, Settings.Global.DEVICE_NAME) ?: Build.MODEL
         mirror = EngineMirror(name)
         player = PlayerModel(mirror)
+        player.followSession()
     }
 
     /** Coil, with covers fetched from the engine and their bytes kept in the app's cache directory. */

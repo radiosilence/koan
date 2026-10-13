@@ -34,7 +34,9 @@ import kotlinx.serialization.Serializable
 enum class Pane(val title: String) {
     Server("Server"),
     Account("Account"),
+    People("People"),
     Playback("Playback"),
+    Eq("EQ"),
     Downloads("Downloads"),
     Devices("Devices"),
     Integrations("Integrations"),
@@ -46,7 +48,9 @@ private val Pane.icon
     get() = when (this) {
         Pane.Server -> KoanIcons.server
         Pane.Account -> KoanIcons.account
+        Pane.People -> KoanIcons.people
         Pane.Playback -> KoanIcons.speaker
+        Pane.Eq -> KoanIcons.tuning
         Pane.Downloads -> KoanIcons.downloads
         Pane.Devices -> KoanIcons.devices
         Pane.Integrations -> KoanIcons.extensions
@@ -59,12 +63,17 @@ data class SettingsPaneRoute(val pane: Pane, val nonce: String = nonce()) : NavK
 
 fun EntryProviderScope<NavKey>.settingsEntries() {
     entry<Tab.Settings> { SettingsRoot() }
+    entry<DspProfileRoute> { key -> DspProfilePage(key.name, settingsModel()) }
+    entry<AutoEqRoute> { key -> AutoEqPage(key.query, settingsModel()) }
+    entry<AutoEqMakerRoute> { key -> AutoEqMakerPage(key.maker, settingsModel()) }
     entry<SettingsPaneRoute> { key ->
         val model = settingsModel()
         when (key.pane) {
             Pane.Server -> ServerPane(model)
             Pane.Account -> AccountPane(model)
+            Pane.People -> PeoplePane(model)
             Pane.Playback -> PlaybackPane(model)
+            Pane.Eq -> EqPane(model)
             Pane.Downloads -> DownloadsPane(model)
             Pane.Devices -> DevicesPane(model)
             Pane.Integrations -> IntegrationsPane(model)
@@ -72,6 +81,14 @@ fun EntryProviderScope<NavKey>.settingsEntries() {
             Pane.About -> AboutPane(model)
         }
     }
+}
+
+/** The profiles a share or Settings imports into: one for the activity, so a share lands on any page. */
+@Composable
+fun dspModel(): DspModel {
+    val app = koanApp()
+    val activity = LocalActivity.current as ComponentActivity
+    return viewModel(viewModelStoreOwner = activity) { DspModel(app.mirror::engine) }
 }
 
 /** The account model the whole activity shares: the sign-in page, Settings and opened links. */
@@ -102,10 +119,17 @@ private fun SettingsRoot() {
     val connection by app.mirror.connection.collectAsStateWithLifecycle()
     val nav = LocalNavigator.current
     val signedIn = state.settings?.remoteSignedIn == true
+    // Asked for each account signed in as: the list loading is what says
+    // the account is an admin's, and so whether there is a People page.
+    val people = viewModel(key = "people-${state.settings?.remoteUrl}-${state.settings?.remoteUsername}") {
+        PeopleModel(app.mirror::engine)
+    }
+    val admin = people.state.collectAsStateWithLifecycle().value.accounts != null
     val panes = Pane.entries.filter {
         when (it) {
-            Pane.Account -> signedIn && connection.offers(PASSWORDS)
-            Pane.Integrations -> signedIn && connection?.scrobbling == true
+            Pane.Account -> signedIn && accountShown(connection)
+            Pane.People -> signedIn && admin
+            Pane.Integrations -> signedIn && (connection?.scrobbling == true || connection.offers(ASSISTANTS))
             else -> true
         }
     }
@@ -170,6 +194,13 @@ fun AccountPrompts(model: AccountModel) {
 
 /** The extension a koan server lists when an account can change its own password. */
 internal const val PASSWORDS = "koanPasswords"
+
+/** The extension a koan server lists when it serves assistants over MCP. */
+internal const val ASSISTANTS = "koanMcp"
+
+/** Whether the Account page has anything on it: a password to change, or keys to manage. */
+internal fun accountShown(c: ConnectionInfo?) =
+    c.offers(PASSWORDS) || c.offers(API_KEYS) || (c.offers(APP_PASSWORDS) && c?.offline != true)
 
 /** Whether the server listed `extension`. Features beyond Subsonic are used only where it does. */
 internal fun ConnectionInfo?.offers(extension: String) = this?.extensions?.any { it.name == extension } == true

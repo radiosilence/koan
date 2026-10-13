@@ -46,6 +46,8 @@ State comes from `koanApp().mirror`, collected with `collectAsStateWithLifecycle
 
 A new tab is a `Tab` object, its place in `Tab.all`, a label and an icon in `AppShell`, and an `entry<Tab.Foo>` in its package.
 
-## Invite and pairing links
+## Links and shared files
 
 `koan.rocks/join/`, `koan.rocks/pair/` and `koan://join` open the app (`ui/settings/Links.kt`), as they open the iPhone app. The https filters are App Links with `autoVerify`; until `koan.rocks/.well-known/assetlinks.json` lists the release signing key's fingerprint, Android does not hand those links to the app, and only `koan://join` reaches it.
+
+EQ and convolution files (`.txt`, `.wav`, `.zip`) shared to the app or opened with it are copied into the cache and go through the same import as Settings → EQ's file picker (`DspModel`), questions included. Profiles apply to the phone's own output, keyed as the core keys it; nothing is applied until one is chosen.

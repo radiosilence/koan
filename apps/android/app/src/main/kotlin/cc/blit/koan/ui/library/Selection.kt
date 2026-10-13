@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -215,7 +217,15 @@ private fun RowScope.BarItem(title: String, short: String, icon: Int, enabled: B
         verticalArrangement = Arrangement.spacedBy(KoanSpace.xs, Alignment.CenterVertically),
     ) {
         if (KoanTheme.icons || !KoanTheme.isOn) KoanIcon(icon, null, color = KoanTheme.color(tone))
-        KoanText(short, role = KoanType.Fine, tone = tone, appText = true, maxLines = 1)
+        // Shrinks to three quarters before it would run into its neighbour, as the Swift bar's does.
+        val style = KoanType.Fine.style.copy(color = KoanTheme.textColor(tone))
+        BasicText(
+            KoanTheme.label(short),
+            Modifier.padding(horizontal = 2.dp),
+            style = style,
+            maxLines = 1,
+            autoSize = TextAutoSize.StepBased(minFontSize = style.fontSize * 0.75f, maxFontSize = style.fontSize),
+        )
     }
 }
 

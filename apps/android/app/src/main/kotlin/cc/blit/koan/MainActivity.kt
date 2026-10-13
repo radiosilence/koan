@@ -35,6 +35,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        (application as KoanApp).player.saveOnLeaving()
         controller?.let(MediaController::releaseFuture)
         controller = null
         super.onStop()

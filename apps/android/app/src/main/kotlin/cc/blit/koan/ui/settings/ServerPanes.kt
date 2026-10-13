@@ -1,6 +1,5 @@
 package cc.blit.koan.ui.settings
 
-import android.content.ClipData
 import android.text.format.DateUtils
 import android.text.format.Formatter
 import androidx.compose.foundation.layout.Arrangement
@@ -15,18 +14,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.platform.ClipEntry
-import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.ffi.ConnectionInfo
 import cc.blit.koan.ffi.SyncPhase
@@ -41,8 +35,6 @@ import cc.blit.koan.ui.theme.KoanSpace
 import cc.blit.koan.ui.theme.KoanText
 import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 /** The server signed in to, syncing it, signing out, and what it offers. */
 @Composable
@@ -53,10 +45,7 @@ fun ServerPane(model: SettingsModel) {
     val connection by app.mirror.connection.collectAsStateWithLifecycle()
     val tasks by app.mirror.tasks.collectAsStateWithLifecycle()
     val progress by app.mirror.sync.collectAsStateWithLifecycle()
-    val clipboard = LocalClipboard.current
-    val scope = rememberCoroutineScope()
     var signingOut by remember { mutableStateOf(false) }
-    var copied by remember { mutableStateOf(false) }
     val s = state.settings ?: return SettingsPage(Pane.Server.title, state) {}
 
     SettingsPage(Pane.Server.title, state) {
@@ -67,16 +56,7 @@ fun ServerPane(model: SettingsModel) {
         header("Signed in")
         item {
             // The address is what another device or app asks for.
-            ValueRow("Server", s.remoteUrl) {
-                KoanButton(if (copied) "Copied" else "Copy", {
-                    scope.launch {
-                        clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("Server", s.remoteUrl)))
-                        copied = true
-                        delay(1_500)
-                        copied = false
-                    }
-                }, kind = KoanButtonKind.Bordered)
-            }
+            ValueRow("Server", s.remoteUrl) { CopyButton("Server", s.remoteUrl) }
         }
         item { ValueRow("User", s.remoteUsername) }
         item { ValueRow("Tracks", "%,d".format(s.remoteTracks.toLong())) }
@@ -99,6 +79,13 @@ fun ServerPane(model: SettingsModel) {
                 KoanButton("Sign out", { signingOut = true }, kind = KoanButtonKind.Bordered, destructive = true)
             }
         }
+
+        // Offline is from a server, so it lives with the server.
+        item { SwitchRow("Offline mode", connection?.offlineManual == true, onChange = model::setOffline) }
+        footer(
+            "Shows only what is on this phone. It turns on by itself when your server cannot be reached, and off " +
+                "again when it can.",
+        )
 
         header("Automatic sync")
         item { SwitchRow("Keep the library in sync", s.autoSync) { on -> model.edit { it.copy(autoSync = on) } } }
@@ -184,13 +171,12 @@ private fun LazyListScope.serverOffers(c: ConnectionInfo?) {
     )
 }
 
-/** Downloads kept on this phone, how many run at once, and offline mode. */
+/** Downloads kept on this phone, and how many run at once. */
 @Composable
 fun DownloadsPane(model: SettingsModel) {
     val app = koanApp()
     val context = LocalContext.current
     val state by model.state.collectAsStateWithLifecycle()
-    val connection by app.mirror.connection.collectAsStateWithLifecycle()
     val cacheBytes by app.mirror.cacheBytes.collectAsStateWithLifecycle()
     // The limit as typed, committed whole: "5" on the way to "50GB" is not a
     // limit anyone set.
@@ -202,13 +188,6 @@ fun DownloadsPane(model: SettingsModel) {
     }
 
     SettingsPage(Pane.Downloads.title, state) {
-        if (s.remoteSignedIn) {
-            item { SwitchRow("Offline mode", connection?.offlineManual == true, onChange = model::setOffline) }
-            footer(
-                "Shows only what is on this phone. It turns on by itself when your server cannot be reached, and off " +
-                    "again when it can.",
-            )
-        }
         header("Downloads")
         item {
             KoanFormRow("Parallel", inset) {
@@ -257,65 +236,6 @@ fun DownloadsPane(model: SettingsModel) {
         }
     }
 }
-
-/** The signed-in account's password, where the server lets it be changed here. */
-@Composable
-fun AccountPane(model: SettingsModel) {
-    val state by model.state.collectAsStateWithLifecycle()
-    var changing by remember { mutableStateOf(false) }
-    var current by remember { mutableStateOf("") }
-    var new by remember { mutableStateOf("") }
-    val s = state.settings ?: return SettingsPage(Pane.Account.title, state) {}
-    SettingsPage(Pane.Account.title, state) {
-        header("Password")
-        item { ValueRow("User", s.remoteUsername) }
-        item { ButtonRow { KoanButton("Change password", { changing = true }, kind = KoanButtonKind.Bordered) } }
-        footer(PASSWORD_NOTE)
-    }
-    if (changing) {
-        val close = {
-            changing = false
-            current = ""
-            new = ""
-        }
-        val secret = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false)
-        AlertDialog(
-            onDismissRequest = close,
-            title = { KoanText("Change your password", role = KoanType.TitleSmall, appText = true) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(KoanSpace.s)) {
-                    KoanText(PASSWORD_NOTE, role = KoanType.Fine, tone = KoanTone.Muted)
-                    KoanField(
-                        current,
-                        { current = it },
-                        Modifier.fillMaxWidth(),
-                        placeholder = "Current password",
-                        keyboardOptions = secret,
-                        visualTransformation = PasswordVisualTransformation(),
-                    )
-                    KoanField(
-                        new,
-                        { new = it },
-                        Modifier.fillMaxWidth(),
-                        placeholder = "New password",
-                        keyboardOptions = secret,
-                        visualTransformation = PasswordVisualTransformation(),
-                    )
-                }
-            },
-            confirmButton = {
-                KoanButton("Change", {
-                    model.changePassword(current, new) {}
-                    close()
-                }, kind = KoanButtonKind.Prominent, enabled = current.isNotEmpty() && new.isNotEmpty())
-            },
-            dismissButton = { KoanButton("Cancel", close) },
-        )
-    }
-}
-
-private const val PASSWORD_NOTE =
-    "This device stays signed in. Your other devices, and other apps using this account, will have to sign in again."
 
 internal fun describe(p: SyncProgress): String {
     val what = when (p.phase) {
