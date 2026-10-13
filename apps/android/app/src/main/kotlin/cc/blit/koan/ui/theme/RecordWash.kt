@@ -129,7 +129,7 @@ class RecordWash internal constructor() {
     }
 }
 
-private val LocalRecordWash = staticCompositionLocalOf<RecordWash?> { null }
+internal val LocalRecordWash = staticCompositionLocalOf<RecordWash?> { null }
 
 /**
  * The wash for everything inside, from the playing record's decoded sleeve.
