@@ -28,7 +28,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberSwipeToDismissBoxState
+import androidx.compose.material3.SwipeToDismissBoxDefaults
+import androidx.compose.material3.SwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -277,9 +278,15 @@ private fun QueuePage() {
 private fun Modifier.systemGround(raised: Boolean) =
     if (!KoanTheme.isOn && raised) background(MaterialTheme.colorScheme.secondaryContainer) else this
 
+/**
+ * A row that a swipe removes. Its state is remembered, not saved: a list
+ * keeps saved state by key, and a row put back by Undo has the same key, so a
+ * saved state would come back dismissed and remove the row again at once.
+ */
 @Composable
-private fun Swipeable(enabled: Boolean, onRemove: () -> Unit, content: @Composable () -> Unit) {
-    val state = rememberSwipeToDismissBoxState()
+internal fun Swipeable(enabled: Boolean, onRemove: () -> Unit, content: @Composable () -> Unit) {
+    val threshold = SwipeToDismissBoxDefaults.positionalThreshold
+    val state = remember { SwipeToDismissBoxState(SwipeToDismissBoxValue.Settled, threshold) }
     SwipeToDismissBox(
         state,
         backgroundContent = {
