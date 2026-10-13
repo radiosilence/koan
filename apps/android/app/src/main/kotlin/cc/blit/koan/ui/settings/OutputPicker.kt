@@ -1,5 +1,9 @@
 package cc.blit.koan.ui.settings
 
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings as SystemSettings
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,8 +12,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.ffi.KoanEngineInterface
@@ -76,27 +82,24 @@ data class OutputPickerState(
 /**
  * The Output half of Play on: UPnP renderers on the network, and this phone's
  * own output, as iOS's `OutputPicker` lists them. Opening the sheet searches,
- * which also holds the Wi-Fi multicast lock for the search's window; while it
- * stays open it searches again now and then, and closing it searches no more.
+ * which also holds the Wi-Fi multicast lock for the search's window and lets
+ * it go by itself; there is nothing to stop when the sheet closes.
  */
 class OutputPicker(private val engine: suspend () -> KoanEngineInterface, private val scope: CoroutineScope) {
     private val _state = MutableStateFlow(OutputPickerState())
     val state: StateFlow<OutputPickerState> = _state.asStateFlow()
 
     /**
-     * Search as the sheet opens, saying so until its answers are in, then
-     * again every `RESEARCH_MS` until the caller is cancelled.
+     * Search, saying so until the answers are in: they are unicast, all back
+     * within the search's window. From then on the list follows renderers'
+     * announcements by itself, so the sheet searches once as it opens, and
+     * again only when asked.
      */
-    suspend fun searchWhileOpen() {
+    suspend fun search() {
         _state.update { it.copy(searching = true) }
         try {
             engine().searchRenderers()
             delay(SEARCH_MS)
-            _state.update { it.copy(searching = false) }
-            while (true) {
-                delay(RESEARCH_MS)
-                engine().searchRenderers()
-            }
         } finally {
             _state.update { it.copy(searching = false) }
         }
@@ -120,15 +123,11 @@ class OutputPicker(private val engine: suspend () -> KoanEngineInterface, privat
     companion object {
         /** How long a search waits for answers: the multicast lock's window. */
         const val SEARCH_MS = 5_000L
-
-        /** How often the sheet, while open, searches again for renderers turned on meanwhile. */
-        const val RESEARCH_MS = 15_000L
     }
 }
 
-/** What the renderers' list says when it has none. */
-internal fun noRenderers(searching: Boolean, blocked: Boolean) = when {
-    blocked -> "Allow nearby devices in Settings to find speakers and streamers on this network."
+/** What the renderers' list says when it has none and discovery is allowed. */
+internal fun noRenderers(searching: Boolean) = when {
     searching -> "Looking for speakers and streamers on this network…"
     else -> "No UPnP speakers or streamers found on this network. Turn one on, and it appears here."
 }
@@ -139,6 +138,7 @@ internal fun noRenderers(searching: Boolean, blocked: Boolean) = when {
  */
 @Composable
 fun OutputSection(picker: OutputPicker, outputs: OutputsInfo?, renderer: RendererOutput?, blocked: Boolean) {
+    val scope = rememberCoroutineScope()
     val state by picker.state.collectAsStateWithLifecycle()
     val output = outputState(outputs, renderer, state.connecting, state.failed)
     // What is ticked is what plays, whatever is opening or was refused.
@@ -165,8 +165,13 @@ fun OutputSection(picker: OutputPicker, outputs: OutputsInfo?, renderer: Rendere
                 onSelect = { picker.choose(r) },
             )
         }
-        if (renderers.isEmpty()) {
-            KoanText(noRenderers(state.searching, blocked), inset.padding(vertical = KoanSpace.s), role = KoanType.Fine, tone = KoanTone.Muted)
+        when {
+            // Discovery is refused: neither devices nor renderers can be found.
+            blocked -> LocalNetworkBlocked()
+            renderers.isEmpty() -> KoanText(noRenderers(state.searching), inset.padding(vertical = KoanSpace.s), role = KoanType.Fine, tone = KoanTone.Muted)
+        }
+        if (!blocked && !state.searching) {
+            ButtonRow { KoanButton("Search again", { scope.launch { picker.search() } }, kind = KoanButtonKind.Link) }
         }
     }
 }
@@ -182,6 +187,20 @@ internal fun rendererDetail(r: OutputInfo, output: OutputState): String {
         else -> what
     }
 }
+
+/** The local network permission refused, with the way to the setting, as the Devices page has it. */
+@Composable
+internal fun LocalNetworkBlocked() {
+    val context = LocalContext.current
+    Row(inset.fillMaxWidth().padding(vertical = KoanSpace.s), horizontalArrangement = Arrangement.spacedBy(KoanSpace.s), verticalAlignment = Alignment.CenterVertically) {
+        KoanText(LOCAL_NETWORK_BLOCKED, Modifier.weight(1f), role = KoanType.Fine, tone = KoanTone.Bad)
+        KoanButton("Settings", {
+            context.startActivity(Intent(SystemSettings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)))
+        }, kind = KoanButtonKind.Compact)
+    }
+}
+
+internal const val LOCAL_NETWORK_BLOCKED = "Allow nearby devices in Settings to find kōan devices on this network."
 
 @Composable
 private fun OutputRow(name: String, detail: String?, selected: Boolean, onSelect: () -> Unit, warning: Boolean = false) {

@@ -34,22 +34,22 @@ class OutputPickerTest {
     private fun outputs(current: OutputChoice, vararg renderers: OutputInfo) =
         OutputsInfo(null, listOf(phone), renderers.toList(), current, null, emptyList(), false)
 
-    @Test fun openingTheSheetSearchesAndSaysSoUntilTheAnswersAreIn() = runTest {
+    @Test fun openingTheSheetSearchesOnceAndSaysSoUntilTheAnswersAreIn() = runTest {
         val picker = OutputPicker({ fake.engine }, backgroundScope)
-        val open = backgroundScope.launch { picker.searchWhileOpen() }
+        backgroundScope.launch { picker.search() }
         runCurrent()
         assertEquals(1, fake.called("searchRenderers").size)
         assertTrue(picker.state.value.searching)
-        assertEquals(noRenderers(searching = true, blocked = false), "Looking for speakers and streamers on this network…")
+        assertEquals("Looking for speakers and streamers on this network…", noRenderers(searching = true))
 
         advanceTimeBy(OutputPicker.SEARCH_MS + 1)
         assertFalse(picker.state.value.searching)
-        advanceTimeBy(OutputPicker.RESEARCH_MS)
-        assertEquals("open a while, it searches again", 2, fake.called("searchRenderers").size)
+        advanceTimeBy(60_000)
+        assertEquals("no timer: the list follows announcements", 1, fake.called("searchRenderers").size)
 
-        open.cancel()
-        advanceTimeBy(OutputPicker.RESEARCH_MS * 3)
-        assertEquals("closed, it searches no more", 2, fake.called("searchRenderers").size)
+        backgroundScope.launch { picker.search() }
+        runCurrent()
+        assertEquals("Search again searches", 2, fake.called("searchRenderers").size)
     }
 
     @Test fun pickingARendererConnectsThenPlaysThere() = runTest {
@@ -95,7 +95,7 @@ class OutputPickerTest {
         assertEquals("In use by something else. Picking it takes over.", rendererDetail(tv, here))
         val skipped = OutputState.Playing("uuid:amp", "Living room amp", "The amp could not play FLAC at 192 kHz")
         assertEquals("The amp could not play FLAC at 192 kHz", rendererDetail(amp, skipped))
-        assertEquals("No UPnP speakers or streamers found on this network. Turn one on, and it appears here.", noRenderers(false, false))
-        assertTrue(noRenderers(true, blocked = true).startsWith("Allow nearby devices"))
+        assertEquals("No UPnP speakers or streamers found on this network. Turn one on, and it appears here.", noRenderers(false))
+        assertEquals("Allow nearby devices in Settings to find kōan devices on this network.", LOCAL_NETWORK_BLOCKED)
     }
 }

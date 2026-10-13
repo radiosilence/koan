@@ -86,9 +86,9 @@ fun PlayOnSheet(onDismiss: () -> Unit) {
     val controlled = devices.devices.firstOrNull { it.id == devices.target }
     val hasQueue = queue.items.isNotEmpty()
     val picker = remember { OutputPicker(mirror::engine, scope) }
-    // Searching for renderers is what holds the Wi-Fi multicast lock, a few
-    // seconds at a time: only while the sheet is open.
-    LaunchedEffect(picker) { picker.searchWhileOpen() }
+    // One search as the sheet opens, as the Mac does: it holds the Wi-Fi
+    // multicast lock for its window, and the list follows announcements after.
+    LaunchedEffect(picker) { picker.search() }
 
     fun attempt(block: suspend () -> Unit) = scope.launch {
         try {
