@@ -16,10 +16,12 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.CacheBitmapLoader
 import androidx.media3.session.CommandButton
+import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import cc.blit.koan.KoanApp
 import cc.blit.koan.MainActivity
+import cc.blit.koan.R
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ffi.RepeatMode
 import kotlinx.coroutines.CoroutineScope
@@ -70,6 +72,7 @@ class PlaybackService : MediaSessionService() {
         private fun restart() = engine.launch { restartOutput() }
     }
 
+    @OptIn(UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
         audio = getSystemService(AudioManager::class.java)
@@ -78,6 +81,10 @@ class PlaybackService : MediaSessionService() {
             0,
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        // The ensō, white on clear: the status bar draws a small icon by its alpha alone.
+        setMediaNotificationProvider(
+            DefaultMediaNotificationProvider.Builder(this).build().apply { setSmallIcon(R.drawable.ic_notification) },
         )
         session = MediaSession.Builder(this, KoanPlayer(engine, scope))
             .setSessionActivity(open)
