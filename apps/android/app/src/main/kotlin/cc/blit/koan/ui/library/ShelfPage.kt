@@ -14,8 +14,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -26,7 +24,15 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import cc.blit.koan.ffi.ShelfSummary
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
+import cc.blit.koan.ui.theme.KoanButton
+import cc.blit.koan.ui.theme.KoanButtonKind
+import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanSpace
+import cc.blit.koan.ui.theme.KoanText
+import cc.blit.koan.ui.theme.KoanType
+import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
+import cc.blit.koan.ui.theme.koanChip
 
 /**
  * A page of artists, records and tracks answering one question: what is
@@ -44,11 +50,11 @@ fun ShelfPage(shelf: Shelf) {
     val model = viewModel { ShelfModel(app.mirror, shelf) }
     val summary by model.summary.collectAsStateWithLifecycle()
     Column {
-        PageBar(shelf.title, summary?.counts())
+        PageBar(shelf.title, summary?.counts(), appText = shelf !is Shelf.Search)
         val held = summary ?: return@Column
         if (held.artists.isEmpty() && held.albums.isEmpty() && held.tracks.isEmpty()) {
             val (title, detail) = shelf.empty
-            EmptyState(title, detail)
+            KoanUnavailable(title, shelf.icon, detail)
         } else {
             ShelfSections(shelf, held)
         }
@@ -61,6 +67,14 @@ private fun ShelfSummary.counts() = listOfNotNull(
     count(albumTotal.toLong(), "album").takeIf { albumTotal > 0u },
     count(trackTotal.toLong(), "track").takeIf { trackTotal > 0u },
 ).joinToString(" · ")
+
+private val Shelf.icon
+    get() = when (this) {
+        Shelf.Favourites -> KoanIcons.favourite
+        Shelf.Recent -> KoanIcons.recentlyPlayed
+        Shelf.Downloaded -> KoanIcons.onDevice
+        is Shelf.Search -> KoanIcons.search
+    }
 
 private val Shelf.empty
     get() = when (this) {
@@ -93,10 +107,13 @@ fun ShelfSections(shelf: Shelf, summary: ShelfSummary, modifier: Modifier = Modi
                 item(key = "artists") {
                     FlowRow(
                         Modifier.padding(horizontal = gutter),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(KoanSpace.s),
+                        verticalArrangement = Arrangement.spacedBy(KoanSpace.s),
                     ) {
                         summary.artists.forEach { artist ->
-                            AssistChip(onClick = { nav.push(ArtistRoute(artist.id)) }, label = { Text(artist.name) })
+                            KoanButton({ nav.push(ArtistRoute(artist.id)) }, Modifier.koanChip(), kind = KoanButtonKind.Card) {
+                                KoanText(artist.name, role = KoanType.Control, maxLines = 1)
+                            }
                         }
                     }
                 }

@@ -1,6 +1,5 @@
-package cc.blit.koan.ui.search
+package cc.blit.koan.ui.library
 
-import cc.blit.koan.ui.library.Playable
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

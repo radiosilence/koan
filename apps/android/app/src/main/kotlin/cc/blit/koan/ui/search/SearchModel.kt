@@ -1,5 +1,6 @@
 package cc.blit.koan.ui.search
 
+import cc.blit.koan.ui.library.Selection
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cc.blit.koan.ffi.ShelfSummary

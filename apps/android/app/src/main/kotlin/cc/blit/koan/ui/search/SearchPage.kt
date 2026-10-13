@@ -50,6 +50,8 @@ import cc.blit.koan.ui.library.AlbumsRoute
 import cc.blit.koan.ui.library.ArtistsRoute
 import cc.blit.koan.ui.library.Playable
 import cc.blit.koan.ui.library.SectionHead
+import cc.blit.koan.ui.library.Selection
+import cc.blit.koan.ui.library.SelectionBar
 import cc.blit.koan.ui.library.Shelf
 import cc.blit.koan.ui.library.TracksRoute
 import cc.blit.koan.ui.library.play

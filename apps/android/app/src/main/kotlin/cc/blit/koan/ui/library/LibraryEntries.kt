@@ -1,27 +1,29 @@
 package cc.blit.koan.ui.library
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material3.Icon
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.EntryProviderScope
 import androidx.navigation3.runtime.NavKey
-import cc.blit.koan.R
 import cc.blit.koan.ui.downloads.DownloadsRoute
 import cc.blit.koan.ui.history.HistoryRoute
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.Tab
 import cc.blit.koan.ui.playlists.PlaylistsRoute
+import cc.blit.koan.ui.theme.KoanButton
+import cc.blit.koan.ui.theme.KoanButtonKind
+import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanNavRow
+import cc.blit.koan.ui.theme.KoanSpace
+import cc.blit.koan.ui.theme.KoanText
+import cc.blit.koan.ui.theme.KoanTone
+import cc.blit.koan.ui.theme.KoanType
+import cc.blit.koan.ui.theme.LocalKoanTokens
 
 fun EntryProviderScope<NavKey>.libraryEntries() {
     entry<Tab.Library> { LibraryPage() }
@@ -36,9 +38,9 @@ fun EntryProviderScope<NavKey>.libraryEntries() {
 /**
  * Everything browsed, behind one tab, as the phone has it: the albums and
  * artists, the shelves (favourites, what was played lately, what is on this
- * device), playlists and downloads. No Tracks: the whole library as one list
- * is tens of thousands of rows to draw and play from at once, so the track
- * browser is reached filtered, from a shelf's.
+ * device), playlists, history and downloads. No Tracks: the whole library as
+ * one list is tens of thousands of rows to draw and play from at once, so the
+ * track browser is reached filtered, from a shelf's.
  */
 @Composable
 private fun LibraryPage() {
@@ -47,51 +49,38 @@ private fun LibraryPage() {
         PageBar("Library", back = false)
         LazyColumn {
             item { LibraryStatus() }
-            item { Link("Albums", R.drawable.ic_album) { nav.push(AlbumsRoute()) } }
-            item { Link("Artists", R.drawable.ic_artist) { nav.push(ArtistsRoute()) } }
-            item { Link("Favourites", R.drawable.ic_heart) { nav.push(ShelfRoute(Shelf.Favourites)) } }
-            item { Link("Playlists", R.drawable.ic_playlist) { nav.push(PlaylistsRoute()) } }
-            item { Link("Recently Played", R.drawable.ic_clock) { nav.push(ShelfRoute(Shelf.Recent)) } }
-            item { Link("Downloaded", R.drawable.ic_drive) { nav.push(ShelfRoute(Shelf.Downloaded)) } }
-            item { Link("History", R.drawable.ic_clock) { nav.push(HistoryRoute()) } }
-            item { Link("Downloads", R.drawable.ic_download) { nav.push(DownloadsRoute()) } }
+            item { KoanNavRow("Albums", KoanIcons.album, false, { nav.push(AlbumsRoute()) }) }
+            item { KoanNavRow("Artists", KoanIcons.artist, false, { nav.push(ArtistsRoute()) }) }
+            item { KoanNavRow("Favourites", KoanIcons.favourite, false, { nav.push(ShelfRoute(Shelf.Favourites)) }) }
+            item { KoanNavRow("Playlists", KoanIcons.playlist, false, { nav.push(PlaylistsRoute()) }) }
+            item { KoanNavRow("Recently Played", KoanIcons.recentlyPlayed, false, { nav.push(ShelfRoute(Shelf.Recent)) }) }
+            item { KoanNavRow("Downloaded", KoanIcons.onDevice, false, { nav.push(ShelfRoute(Shelf.Downloaded)) }) }
+            item { KoanNavRow("History", KoanIcons.history, false, { nav.push(HistoryRoute()) }) }
+            item { KoanNavRow("Downloads", KoanIcons.downloads, false, { nav.push(DownloadsRoute()) }) }
         }
     }
 }
 
-@Composable
-private fun Link(title: String, icon: Int, onClick: () -> Unit) {
-    ListItem(
-        headlineContent = { Text(title) },
-        leadingContent = { Icon(painterResource(icon), null) },
-        trailingContent = { Icon(painterResource(R.drawable.ic_chevron_right), null) },
-        modifier = Modifier.clickable(onClick = onClick),
-    )
-}
-
 /**
- * Why the library shows less than it holds: koan is offline, by hand, with
- * the way back, or because the server is out of reach, which lifts by itself.
+ * Why the library shows less than it holds: the server refused this device's
+ * sign-in, or koan is offline, by hand, with the way back, or because the
+ * server is out of reach, which lifts by itself.
  */
 @Composable
 private fun LibraryStatus() {
     val app = koanApp()
     val connection by app.mirror.connection.collectAsStateWithLifecycle()
     val held = connection ?: return
-    if (held.signInRefused) {
-        return ListItem(
-            headlineContent = { Text("Your server refused this device's sign-in") },
-            supportingContent = { Text("Sign in again in Settings.", color = MaterialTheme.colorScheme.onSurfaceVariant) },
-        )
+    val (title, detail) = when {
+        held.signInRefused -> "Your server refused this device's sign-in" to "Sign in again in Settings."
+        held.offline -> (if (held.offlineManual) "Offline mode is on" else "Can't reach your server") to "Showing what is on this device."
+        else -> return
     }
-    if (!held.offline) return
-    ListItem(
-        headlineContent = { Text(if (held.offlineManual) "Offline mode is on" else "Can't reach your server") },
-        supportingContent = {
-            Text("Showing what is on this device.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        },
-        trailingContent = {
-            if (held.offlineManual) TextButton(onClick = { app.mirror.launch { setOffline(false) } }) { Text("Go Online") }
-        },
-    )
+    Column(Modifier.padding(horizontal = LocalKoanTokens.current.gutter, vertical = KoanSpace.s)) {
+        KoanText(title, tone = if (held.signInRefused) KoanTone.Bad else KoanTone.Ink, appText = true)
+        KoanText(detail, role = KoanType.Meta, tone = KoanTone.Muted, appText = true)
+        if (!held.signInRefused && held.offlineManual) {
+            KoanButton("Go Online", { app.mirror.launch { setOffline(false) } }, kind = KoanButtonKind.Link)
+        }
+    }
 }
