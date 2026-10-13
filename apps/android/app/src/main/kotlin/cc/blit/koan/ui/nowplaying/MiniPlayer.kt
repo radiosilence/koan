@@ -6,6 +6,7 @@ import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,9 +20,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -33,6 +34,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.art.ArtSize
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ui.koanApp
+import cc.blit.koan.ui.library.PlayingBars
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
@@ -51,7 +53,8 @@ import coil3.compose.AsyncImage
 
 /**
  * The transport, phone-sized, above the tabs while something is queued: how
- * far through as an accent line along its top, the sleeve, what is playing,
+ * far through as an accent line along its top, the sleeve, what is playing
+ * beside the music's level,
  * play/pause and next. Tapped or pulled up, it opens Now Playing.
  */
 @Composable
@@ -86,7 +89,10 @@ fun MiniPlayer() {
                 ?: Box(sleeve.background(KoanTheme.color(KoanTone.Rule)))
             Spacer(Modifier.width(KoanSpace.m))
             Column(Modifier.weight(1f)) {
-                KoanText(entry.title, role = KoanType.Meta, tone = KoanTone.Strong, maxLines = 1)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(KoanSpace.s)) {
+                    PlayingBars(playing, size = 10.dp, color = KoanTheme.color(if (playing) KoanTone.Accent else KoanTone.Muted))
+                    KoanText(entry.title, role = KoanType.Meta, tone = KoanTone.Strong, maxLines = 1)
+                }
                 if (entry.artist.isNotEmpty()) KoanText(entry.artist, role = KoanType.Fine, tone = KoanTone.Muted, maxLines = 1)
             }
             KoanButton(app.player::togglePlayPause, kind = KoanButtonKind.Icon) {

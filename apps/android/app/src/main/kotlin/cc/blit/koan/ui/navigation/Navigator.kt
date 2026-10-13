@@ -59,7 +59,9 @@ class Navigator internal constructor(
         }
     }
 
+    /** Open `key` in the open tab. Now Playing gets out of the way of a page opened from it. */
     fun push(key: NavKey) {
+        closeNowPlaying()
         stacks.getValue(tab).add(key)
     }
 

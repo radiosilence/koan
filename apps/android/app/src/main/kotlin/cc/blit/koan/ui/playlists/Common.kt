@@ -15,13 +15,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -95,18 +92,6 @@ fun KoanBar(fraction: Float, modifier: Modifier = Modifier) {
     Box(modifier.fillMaxWidth().height(3.dp).background(KoanTheme.color(KoanTone.Rule))) {
         Box(Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).fillMaxHeight().background(KoanTheme.color(KoanTone.Ink)))
     }
-}
-
-/** An item of a row's or a page's menu, in the app's words. */
-@Composable
-fun MenuItem(title: String, icon: Int? = null, destructive: Boolean = false, onClick: () -> Unit) {
-    val tone = if (destructive) KoanTone.Bad else KoanTone.Ink
-    val colour = KoanTheme.color(tone)
-    DropdownMenuItem(
-        text = { KoanText(title, role = KoanType.Control, tone = tone, appText = true) },
-        leadingIcon = icon?.let { { KoanIcon(it, null, color = colour) } },
-        onClick = onClick,
-    )
 }
 
 /**

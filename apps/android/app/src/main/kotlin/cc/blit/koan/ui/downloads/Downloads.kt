@@ -4,8 +4,8 @@ import androidx.compose.runtime.Composable
 import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.ffi.KoanEngine
 import cc.blit.koan.ui.koanApp
-import cc.blit.koan.ui.playlists.MenuItem
 import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanMenuItem
 
 /**
  * Fetching for offline, and throwing the copies away. Both skip what does not
@@ -32,13 +32,13 @@ object Downloads {
 fun DownloadMenuItems(onDisk: Boolean?, dismiss: () -> Unit, trackIds: suspend KoanEngine.() -> List<Long>) {
     val mirror = koanApp().mirror
     if (onDisk != true) {
-        MenuItem(if (onDisk == null) "Download All" else "Download", KoanIcons.downloads) {
+        KoanMenuItem(if (onDisk == null) "Download All" else "Download", KoanIcons.downloads) {
             dismiss()
             Downloads.fetch(mirror, trackIds)
         }
     }
     if (onDisk != false) {
-        MenuItem(if (onDisk == null) "Remove Downloads" else "Remove Download", KoanIcons.clear) {
+        KoanMenuItem(if (onDisk == null) "Remove Downloads" else "Remove Download", KoanIcons.clear) {
             dismiss()
             Downloads.remove(mirror, trackIds)
         }

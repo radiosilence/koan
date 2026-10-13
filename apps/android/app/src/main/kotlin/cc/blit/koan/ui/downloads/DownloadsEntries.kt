@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,11 +36,12 @@ import cc.blit.koan.ui.navigation.nonce
 import cc.blit.koan.ui.playlists.CollectionRow
 import cc.blit.koan.ui.playlists.ConfirmDialog
 import cc.blit.koan.ui.playlists.KoanBar
-import cc.blit.koan.ui.playlists.MenuItem
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanIcon
 import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanMenu
+import cc.blit.koan.ui.theme.KoanMenuItem
 import cc.blit.koan.ui.theme.KoanSpace
 import cc.blit.koan.ui.theme.KoanText
 import cc.blit.koan.ui.theme.KoanTheme
@@ -191,9 +191,9 @@ private fun TransferRow(transfer: Transfer, modifier: Modifier) {
                 )
             },
         )
-        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+        KoanMenu(expanded = menu, onDismissRequest = { menu = false }) {
             transfer.albumId?.let { albumId ->
-                MenuItem("Show in Library", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId, transfer.trackId)) }
+                KoanMenuItem("Show in Library", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId, transfer.trackId)) }
             }
             if (transfer.state == TransferState.DONE) {
                 DownloadMenuItems(onDisk = true, dismiss = { menu = false }) { listOf(transfer.trackId) }
