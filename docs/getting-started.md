@@ -28,6 +28,16 @@ The Mac switches the output device to each track's sample rate, so playback is b
 
 The format badge shows the rate the hardware runs at, read back from the session, so a route that did not take the track's rate shows as a conversion. The Apple TV app does the same; over HDMI the rate is the one the television or receiver negotiates.
 
+## The Android app (in development)
+
+The Android app is a Kotlin and Compose app that links the same engine as the iOS app, and it is not finished: it has a placeholder screen with a server sign-in and what is playing, and none of the library pages yet. It is built from source (`apps/android`, Android 9 or later, `gradle assembleDebug` with the Android SDK, NDK r27c, `cargo-ndk` and the Rust Android targets installed) and has not been run on a device yet.
+
+Playback belongs to a foreground media service, so it carries on when the app is left, and the lock screen, headset buttons and notification control it. It pauses when another app takes audio focus or the headphones are unplugged.
+
+### Sample rates on Android
+
+Android mixes everything to one rate unless told otherwise. The internal speaker, wired headphones and Bluetooth go through that mixer and are resampled, usually to 48 kHz, so they are never bit-perfect. On Android 14 or later, a USB DAC can be put in a bit-perfect mixing mode at each track's rate before koan opens its stream; support varies by manufacturer, and a DAC that does not offer it is resampled like the rest. The app decides whether the route is bit-perfect from what the system granted the stream, not from what koan asked for.
+
 ## History and Recently played
 
 Both apps keep what you play. **History** lists every play by day, and is where a play is forgotten. **Recently Played**, beside it in the Mac's and the iPad's sidebar and the iPhone's Library tab, answers "what was that record I had on yesterday": the records, artists and tracks of the last 30 days, each once however often it played, newest first. Both follow each play as it is recorded.
