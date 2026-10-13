@@ -4,9 +4,8 @@ import android.net.Uri
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.ffi.Invite
-import cc.blit.koan.ffi.KoanEngine
+import cc.blit.koan.ffi.KoanEngineInterface
 import cc.blit.koan.ffi.KoanException
 import cc.blit.koan.ffi.PairingCode
 import kotlinx.coroutines.Job
@@ -59,7 +58,7 @@ data class AccountState(
  * Scoped to the activity (`accountModel()`), so the sign-in page, Settings
  * and links opened from outside all share one.
  */
-class AccountModel(private val mirror: EngineMirror) : ViewModel() {
+class AccountModel(private val engine: suspend () -> KoanEngineInterface) : ViewModel() {
     private val _state = MutableStateFlow(AccountState())
     val state: StateFlow<AccountState> = _state.asStateFlow()
 
@@ -67,7 +66,7 @@ class AccountModel(private val mirror: EngineMirror) : ViewModel() {
 
     init {
         viewModelScope.launch {
-            val signedIn = mirror.engine().settings().remoteSignedIn
+            val signedIn = engine().settings().remoteSignedIn
             _state.update { it.copy(signedIn = signedIn) }
         }
     }
@@ -84,13 +83,13 @@ class AccountModel(private val mirror: EngineMirror) : ViewModel() {
     }
 
     /** `text` as an invite, if it is one. */
-    suspend fun parseInvite(text: String): Invite? = mirror.engine().parseInvite(text)
+    suspend fun parseInvite(text: String): Invite? = engine().parseInvite(text)
 
     /** Whatever the system opened koan with: an invite or a pairing link. Anything else is ignored. */
     fun open(uri: Uri) {
         val link = uri.toString()
         viewModelScope.launch {
-            val engine = mirror.engine()
+            val engine = engine()
             val pair = engine.parsePairingLink(link)
             if (pair == null) {
                 engine.parseInvite(link)?.let(::offer)
@@ -113,7 +112,7 @@ class AccountModel(private val mirror: EngineMirror) : ViewModel() {
     /** Join with `invite`, asking first when it would replace the account signed in. */
     fun offer(invite: Invite) {
         viewModelScope.launch {
-            val current = mirror.engine().settings()
+            val current = engine().settings()
             val elsewhere = current.remoteUrl != invite.server || current.remoteUsername != invite.username
             if (current.remoteSignedIn && elsewhere) {
                 _state.update { it.copy(pendingInvite = invite) }
@@ -140,7 +139,7 @@ class AccountModel(private val mirror: EngineMirror) : ViewModel() {
         waiting?.cancel()
         waiting = viewModelScope.launch {
             _state.update { it.copy(busy = "Asking ${host(server)}", error = null) }
-            val engine = mirror.engine()
+            val engine = engine()
             try {
                 val code = engine.startPairing(server)
                 _state.update { it.copy(busy = null, pairing = code) }
@@ -158,7 +157,7 @@ class AccountModel(private val mirror: EngineMirror) : ViewModel() {
     fun cancelPairing() {
         waiting?.cancel()
         waiting = null
-        mirror.launch { cancelPairing() }
+        viewModelScope.launch { engine().cancelPairing() }
         _state.update { it.copy(pairing = null, busy = null) }
     }
 
@@ -166,7 +165,7 @@ class AccountModel(private val mirror: EngineMirror) : ViewModel() {
     fun offerPairing(pair: String) {
         val typed = pair.trim()
         viewModelScope.launch {
-            val engine = mirror.engine()
+            val engine = engine()
             val current = engine.settings()
             try {
                 val info = engine.pairingInfo(typed)
@@ -188,7 +187,7 @@ class AccountModel(private val mirror: EngineMirror) : ViewModel() {
     fun settle(request: PairingRequest, approve: Boolean) {
         _state.update { it.copy(pendingPairing = null) }
         viewModelScope.launch {
-            val engine = mirror.engine()
+            val engine = engine()
             try {
                 if (approve) {
                     val device = engine.approvePairing(request.pair)
@@ -209,11 +208,11 @@ class AccountModel(private val mirror: EngineMirror) : ViewModel() {
 
     private fun notice(text: String) = _state.update { it.copy(notice = text) }
 
-    private fun signInThen(label: String, signIn: suspend KoanEngine.() -> Unit) {
+    private fun signInThen(label: String, signIn: suspend KoanEngineInterface.() -> Unit) {
         viewModelScope.launch {
             _state.update { it.copy(busy = label, error = null) }
             try {
-                mirror.engine().signIn()
+                engine().signIn()
                 _state.update { it.copy(busy = "Loading the library") }
                 syncAfterSignIn()
             } catch (e: KoanException) {
@@ -231,7 +230,7 @@ class AccountModel(private val mirror: EngineMirror) : ViewModel() {
     private suspend fun syncAfterSignIn() {
         _state.update { it.copy(signedIn = true) }
         try {
-            mirror.engine().syncRemote()
+            engine().syncRemote()
         } catch (e: KoanException) {
             notice("Signed in, but the library did not load: ${e.describe()}")
         }
