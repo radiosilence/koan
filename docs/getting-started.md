@@ -30,7 +30,7 @@ The format badge shows the rate the hardware runs at, read back from the session
 
 ## The Android app (in development)
 
-The Android app is a Kotlin and Compose app that links the same engine as the iOS app, and it is not finished: it has the kōan theme, the four tabs (queue, library, search, settings) and a server sign-in, and the pages themselves are placeholders. It is built from source (`apps/android`, Android 9 or later, `gradle assembleDebug` with the Android SDK, NDK r27c, `cargo-ndk` and the Rust Android targets installed) and has not been run on a device yet.
+The Android app is a Kotlin and Compose app that links the same engine as the iOS app, and it is not finished: it has the kōan theme, the four tabs (queue, library, search, settings) and a server sign-in, and the pages are filling in: History (plays by day, long-press to pick plays and forget them) and Downloads (what is arriving from the server, with a bar each, and what koan is busy with) are done; the rest are placeholders. It is built from source (`apps/android`, Android 9 or later, `gradle assembleDebug` with the Android SDK, NDK r27c, `cargo-ndk` and the Rust Android targets installed) and has not been run on a device yet.
 
 Playback belongs to a foreground media service, so it carries on when the app is left, and the lock screen, headset buttons and notification control it. It pauses when another app takes audio focus or the headphones are unplugged.
 
