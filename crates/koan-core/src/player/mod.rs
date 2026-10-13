@@ -1125,6 +1125,7 @@ impl Player {
         )?;
 
         let (engine, rate_watch) = self.create_engine_for(&info, consumer)?;
+        self.timeline.set_presentation(engine.presentation());
         // The setup `create_engine_for` chose the rate by.
         let dsp = self
             .dsp
@@ -1638,6 +1639,7 @@ impl Player {
             stream.abandon();
         }
         decode_handle.stop();
+        self.timeline.set_presentation(None);
         drop(engine);
         self.answer_silence();
     }

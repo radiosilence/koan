@@ -164,6 +164,9 @@ pub struct PlaybackTimeline {
     /// of the stream. Set, it is the playhead in place of `samples_played`:
     /// what has been encoded runs seconds ahead of what is heard.
     clock: parking_lot::Mutex<Option<RendererClock>>,
+    /// The engine's reading of `samples_played` between its callbacks, where
+    /// it gives one. See `AudioEngineHandle::presentation`.
+    presentation: parking_lot::Mutex<Option<super::backend::Presentation>>,
 }
 
 impl std::fmt::Debug for PlaybackTimeline {
@@ -182,13 +185,18 @@ impl PlaybackTimeline {
             samples_played: Arc::new(AtomicU64::new(0)),
             queued: parking_lot::Mutex::new(None),
             clock: parking_lot::Mutex::new(None),
+            presentation: parking_lot::Mutex::new(None),
         })
     }
 
     /// Samples played: the engine's count, or the renderer's clock.
     fn played(&self, bounds: &[TrackBoundary]) -> u64 {
         let Some(clock) = *self.clock.lock() else {
-            return self.samples_played.load(Ordering::Acquire);
+            let played = self.samples_played.load(Ordering::Acquire);
+            return match &*self.presentation.lock() {
+                Some(presented) => presented().min(played),
+                None => played,
+            };
         };
         let Some(first) = bounds.first() else {
             return 0;
@@ -310,6 +318,13 @@ impl PlaybackTimeline {
         self.samples_written.store(0, Ordering::Relaxed);
         self.samples_played.store(0, Ordering::Relaxed);
         *self.clock.lock() = None;
+        *self.presentation.lock() = None;
+    }
+
+    /// Read the playhead through `presentation` while the engine that gave it
+    /// plays; `None` when it stops.
+    pub fn set_presentation(&self, presentation: Option<super::backend::Presentation>) {
+        *self.presentation.lock() = presentation;
     }
 
     /// Get a clone of the samples_played Arc for the audio engine.
@@ -1486,6 +1501,24 @@ mod tests {
         assert_eq!(timeline.position_in(0), Some(1000), "the first pass ended");
         assert_eq!(timeline.position_in(1), Some(500));
         assert_eq!(timeline.playhead().map(|p| p.boundary), Some(1));
+    }
+
+    #[test]
+    fn an_engine_presentation_reads_the_playhead_between_callbacks() {
+        let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
+        tl.push_boundary(make_boundary(QueueItemId::new(), 0, 0, 2, 44100));
+        tl.add_written(176_400);
+        timeline.samples_played.store(88_200, Ordering::Relaxed);
+        timeline.set_presentation(Some(Arc::new(|| 66_150)));
+        assert_eq!(timeline.playhead().unwrap().position_ms, 750);
+
+        // Never ahead of what the engine has taken from the ring.
+        timeline.set_presentation(Some(Arc::new(|| 1_000_000)));
+        assert_eq!(timeline.playhead().unwrap().position_ms, 1000);
+
+        timeline.set_presentation(None);
+        assert_eq!(timeline.playhead().unwrap().position_ms, 1000);
     }
 
     #[test]

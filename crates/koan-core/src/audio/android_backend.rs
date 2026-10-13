@@ -209,6 +209,7 @@ impl AudioBackend for AndroidAudioBackend {
             scratch: Vec::new(),
             xruns: Arc::new(AtomicI32::new(0)),
             lead_in: Arc::new(AtomicU64::new(0)),
+            pace: Arc::new(Pace::default()),
         }));
 
         let mut builder = std::ptr::null_mut();
@@ -254,7 +255,11 @@ impl AudioBackend for AndroidAudioBackend {
             let running = (*state).running.clone();
             let xruns = (*state).xruns.clone();
             let lead_in = (*state).lead_in.clone();
+            let pace = (*state).pace.clone();
             Ok(Box::new(AndroidEngine {
+                rate: sample_rate,
+                channels,
+                pace,
                 stream,
                 state,
                 running,
@@ -279,6 +284,85 @@ struct Callback {
     scratch: Vec<f32>,
     xruns: Arc<AtomicI32>,
     lead_in: Arc<AtomicU64>,
+    /// The rate AAudio asks for frames at, against the monotonic clock: the
+    /// first and latest callback's time, and the frames asked for in between.
+    pace: Arc<Pace>,
+}
+
+/// How fast the stream consumes, measured: what the playhead's prediction
+/// assumes is the nominal rate.
+#[derive(Default)]
+struct Pace {
+    first_ns: AtomicU64,
+    last_ns: AtomicU64,
+    frames: AtomicU64,
+    /// The latest callback, for `presentation`: the samples played once it
+    /// had run, the ring samples it took, and when it ended. Written as one
+    /// under `seq`, odd while a write is in progress.
+    seq: AtomicU64,
+    played: AtomicU64,
+    taken: AtomicU64,
+    at_ns: AtomicU64,
+}
+
+impl Pace {
+    fn note(&self, frames: u64) {
+        let now = monotonic_ns();
+        if self.first_ns.load(Ordering::Relaxed) == 0 {
+            self.first_ns.store(now, Ordering::Relaxed);
+        } else {
+            self.frames.fetch_add(frames, Ordering::Relaxed);
+        }
+        self.last_ns.store(now, Ordering::Relaxed);
+    }
+
+    /// Record the callback just run. Wait-free: the reader retries instead.
+    fn record(&self, played: u64, taken: u64) {
+        let seq = self.seq.load(Ordering::Relaxed);
+        self.seq.store(seq + 1, Ordering::Relaxed);
+        std::sync::atomic::fence(Ordering::Release);
+        self.played.store(played, Ordering::Relaxed);
+        self.taken.store(taken, Ordering::Relaxed);
+        self.at_ns.store(monotonic_ns(), Ordering::Relaxed);
+        self.seq.store(seq + 2, Ordering::Release);
+    }
+
+    /// The latest callback's record, whole.
+    fn latest(&self) -> (u64, u64, u64) {
+        loop {
+            let before = self.seq.load(Ordering::Acquire);
+            let record = (
+                self.played.load(Ordering::Relaxed),
+                self.taken.load(Ordering::Relaxed),
+                self.at_ns.load(Ordering::Relaxed),
+            );
+            std::sync::atomic::fence(Ordering::Acquire);
+            if before.is_multiple_of(2) && self.seq.load(Ordering::Relaxed) == before {
+                return record;
+            }
+            std::hint::spin_loop();
+        }
+    }
+
+    /// Frames a second, once the stream has run long enough to say.
+    fn rate(&self) -> Option<f64> {
+        let span = self
+            .last_ns
+            .load(Ordering::Relaxed)
+            .saturating_sub(self.first_ns.load(Ordering::Relaxed));
+        (span > 1_000_000_000)
+            .then(|| self.frames.load(Ordering::Relaxed) as f64 * 1e9 / span as f64)
+    }
+}
+
+fn monotonic_ns() -> u64 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: a valid timespec to write into; CLOCK_MONOTONIC always exists.
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+    ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
 }
 
 unsafe extern "C" fn render(
@@ -294,6 +378,7 @@ unsafe extern "C" fn render(
     let bytes = cb.encoding.bytes();
     let total = frames.max(0) as usize * channels;
     let out = unsafe { std::slice::from_raw_parts_mut(data.cast::<u8>(), total * bytes) };
+    cb.pace.note(frames.max(0) as u64);
     cb.xruns.store(
         unsafe { AAudioStream_getXRunCount(stream) },
         Ordering::Relaxed,
@@ -302,10 +387,12 @@ unsafe extern "C" fn render(
     if !cb.running.load(Ordering::Acquire) || cb.leading_in(frames.max(0) as u64) {
         // Every encoding's zero is all-zero bytes.
         out.fill(0);
+        cb.pace.record(cb.samples_played.load(Ordering::Relaxed), 0);
         return AAUDIO_CALLBACK_RESULT_CONTINUE;
     }
 
     let mut done = 0;
+    let mut taken = 0;
     while done < total {
         let want = (total - done).min(cb.scratch.len() - cb.scratch.len() % channels);
         if want == 0 {
@@ -325,6 +412,7 @@ unsafe extern "C" fn render(
             cb.samples_played.fetch_add(take as u64, Ordering::AcqRel);
             cb.fader.apply(&mut scratch[..take], channels);
             got = take;
+            taken += take;
         }
         // Silence past what the ring had: an underrun, or a fade's end.
         scratch[got..].fill(0.0);
@@ -339,6 +427,8 @@ unsafe extern "C" fn render(
         }
     }
     out[done * bytes..].fill(0);
+    cb.pace
+        .record(cb.samples_played.load(Ordering::Relaxed), taken as u64);
     AAUDIO_CALLBACK_RESULT_CONTINUE
 }
 
@@ -374,6 +464,9 @@ unsafe extern "C" fn stream_error(_: *mut AAudioStream, _: *mut c_void, error: a
 }
 
 struct AndroidEngine {
+    rate: f64,
+    channels: u32,
+    pace: Arc<Pace>,
     stream: *mut AAudioStream,
     state: *mut Callback,
     running: Arc<AtomicBool>,
@@ -397,6 +490,13 @@ impl Drop for AndroidEngine {
         let xruns = self.xruns.load(Ordering::Relaxed);
         if xruns > 0 {
             log::warn!("android output: {xruns} underruns");
+        }
+        if let Some(rate) = self.pace.rate() {
+            log::info!(
+                "android output: consumed {rate:.0} frames/s against {} nominal ({:+.3}%)",
+                self.rate,
+                (rate / self.rate - 1.0) * 100.0
+            );
         }
     }
 }
@@ -460,5 +560,19 @@ impl AudioEngineHandle for AndroidEngine {
 
     fn lead_in(&self, frames: u64) {
         self.lead_in.store(frames, Ordering::Relaxed);
+    }
+
+    /// AAudio takes a burst at a time through the mixer, 2006 frames or so:
+    /// 45 ms at 44.1 kHz, more than a client's tolerance for where the
+    /// playhead is. Between callbacks, the samples the last one took are
+    /// counted out at the stream's rate rather than all at once.
+    fn presentation(&self) -> Option<super::backend::Presentation> {
+        let pace = self.pace.clone();
+        let per_ns = self.rate * self.channels as f64 / 1e9;
+        Some(Arc::new(move || {
+            let (played, taken, at) = pace.latest();
+            let along = ((monotonic_ns().saturating_sub(at) as f64 * per_ns) as u64).min(taken);
+            played.saturating_sub(taken) + along
+        }))
     }
 }

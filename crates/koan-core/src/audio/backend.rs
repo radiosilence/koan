@@ -135,6 +135,10 @@ pub trait AudioBackend: Send + Sync {
     ) -> Result<Box<dyn AudioEngineHandle>, BackendError>;
 }
 
+/// The samples an engine has played as of now, for an output that hands
+/// over samples in chunks too coarse to read the playhead from directly.
+pub type Presentation = Arc<dyn Fn() -> u64 + Send + Sync>;
+
 /// A live sample rate subscription. Unsubscribes on drop.
 pub trait SampleRateWatch: Send + Sync {}
 
@@ -173,6 +177,12 @@ pub trait AudioEngineHandle: Send {
     /// never heard. Nothing reports when the clock has locked, so the wait is
     /// a length of time. Cleared by `fade_in`.
     fn lead_in(&self, _frames: u64) {}
+    /// Where the playhead is between callbacks, when the output's callbacks
+    /// are far enough apart that the count they keep would read as a playhead
+    /// moving in jumps. `None` where the count is fine as it is.
+    fn presentation(&self) -> Option<Presentation> {
+        None
+    }
 }
 
 #[cfg(test)]
