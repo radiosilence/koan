@@ -195,7 +195,7 @@ private fun LibraryRow(
                 .fillMaxWidth()
                 .koanRow(picked || marked)
                 .tap(playable, selection, { menu = true }, onOpen)
-                .padding(start = LocalKoanTokens.current.gutter, end = KoanSpace.xs)
+                .padding(horizontal = LocalKoanTokens.current.gutter)
                 // The heart's touch target, so a favourite's row is no taller than the rest.
                 .heightIn(min = 56.dp),
             verticalAlignment = Alignment.CenterVertically,
