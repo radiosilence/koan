@@ -4,6 +4,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.KoanApp
 import cc.blit.koan.ffi.Album
@@ -13,6 +17,7 @@ import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.Navigator
 import cc.blit.koan.ui.navigation.Tab
+import cc.blit.koan.ui.playlists.AddToPlaylistSheet
 import cc.blit.koan.ui.playlists.MenuItem
 import cc.blit.koan.ui.theme.KoanDivider
 import cc.blit.koan.ui.theme.KoanIcons
@@ -58,6 +63,8 @@ fun KoanApp.play(playable: Playable, shuffled: Boolean = false) = mirror.launch 
 fun PlayableMenu(playable: Playable, expanded: Boolean, onDismiss: () -> Unit) {
     val app = koanApp()
     val nav = LocalNavigator.current
+    val context = LocalContext.current
+    val signedIn = app.mirror.connection.collectAsStateWithLifecycle().value != null
     val store = favourites()
     val favouriteTracks by store.tracks.collectAsStateWithLifecycle()
     val favouriteAlbums by store.albums.collectAsStateWithLifecycle()
@@ -69,12 +76,15 @@ fun PlayableMenu(playable: Playable, expanded: Boolean, onDismiss: () -> Unit) {
             if (ids.isNotEmpty()) block(ids)
         }
     }
+    var adding by remember { mutableStateOf(false) }
+    if (adding) AddToPlaylistSheet({ playable.trackIds(this) }) { adding = false }
     Box {
         DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
             MenuItem("Play", KoanIcons.play) { onDismiss(); app.play(playable) }
             MenuItem("Play Next", KoanIcons.playNext) { act { ids -> app.player.playNext(ids) } }
             MenuItem("Add to Queue", KoanIcons.queue) { act { ids -> addToQueue(ids) } }
             if (playable !is Playable.OfTrack) MenuItem("Shuffle", KoanIcons.shuffle) { onDismiss(); app.play(playable, shuffled = true) }
+            MenuItem("Add to Playlist…", KoanIcons.playlist) { onDismiss(); adding = true }
             KoanDivider()
             when (playable) {
                 is Playable.OfTrack -> {
@@ -90,6 +100,7 @@ fun PlayableMenu(playable: Playable, expanded: Boolean, onDismiss: () -> Unit) {
                     MenuItem(if (on) "Remove Favourite" else "Favourite Artist", if (on) KoanIcons.favourited else KoanIcons.favourite) { onDismiss(); store.toggleArtist(playable.id) }
                 }
             }
+            if (signedIn) MenuItem("Share", KoanIcons.share) { onDismiss(); app.share(context, playable) }
             // A track knows whether its file is here, so it is offered the one
             // verb that does something; a record or an artist is usually part
             // of the way there, and both apply.
@@ -115,7 +126,7 @@ fun PlayableMenu(playable: Playable, expanded: Boolean, onDismiss: () -> Unit) {
             }
             if (albumId != null || artistId != null) KoanDivider()
             if (albumId != null && playable !is Playable.OfAlbum) {
-                MenuItem("Go to Album", KoanIcons.album) { onDismiss(); nav.push(AlbumRoute(albumId)) }
+                MenuItem("Go to Album", KoanIcons.album) { onDismiss(); nav.push(AlbumRoute(albumId, (playable as? Playable.OfTrack)?.track?.id)) }
             }
             if (artistId != null) MenuItem("Go to Artist", KoanIcons.artist) { onDismiss(); nav.push(ArtistRoute(artistId)) }
         }

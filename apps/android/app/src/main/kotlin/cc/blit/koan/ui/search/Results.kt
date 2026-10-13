@@ -55,7 +55,7 @@ internal val TileMinimum = 140.dp
 
 /** An artist among other results: a chip going to the artist. */
 @Composable
-internal fun ArtistPill(id: Long, name: String, selection: Selection) {
+internal fun ArtistPill(id: Long, name: String, selection: Selection<Playable>) {
     val nav = LocalNavigator.current
     val playable = Playable.OfArtist(id, name)
     var menu by remember { mutableStateOf(false) }
@@ -80,7 +80,7 @@ internal fun ArtistPill(id: Long, name: String, selection: Selection) {
  * artist. While picking, any of it ticks the record.
  */
 @Composable
-internal fun AlbumTile(album: Album, selection: Selection, onSleeve: () -> Unit) {
+internal fun AlbumTile(album: Album, selection: Selection<Playable>, onSleeve: () -> Unit) {
     val nav = LocalNavigator.current
     val playable = Playable.OfAlbum(album)
     val picked = selection.contains(playable)
@@ -118,7 +118,7 @@ internal fun AlbumTile(album: Album, selection: Selection, onSleeve: () -> Unit)
 
 /** A track points at its record: that is where it lives, and where it is played from. */
 @Composable
-internal fun TrackRow(track: Track, selection: Selection) {
+internal fun TrackRow(track: Track, selection: Selection<Playable>) {
     val nav = LocalNavigator.current
     val playable = Playable.OfTrack(track)
     val picked = selection.contains(playable)
@@ -128,7 +128,7 @@ internal fun TrackRow(track: Track, selection: Selection) {
             Modifier
                 .fillMaxWidth()
                 .koanRow(picked)
-                .pickable(playable, selection, { menu = true }) { track.albumId?.let { nav.push(AlbumRoute(it)) } }
+                .pickable(playable, selection, { menu = true }) { track.albumId?.let { nav.push(AlbumRoute(it, track.id)) } }
                 .padding(vertical = KoanSpace.xs),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(KoanSpace.m),

@@ -112,7 +112,7 @@ fun Sleeve(art: Art?, modifier: Modifier = Modifier, size: Dp = LocalKoanTokens.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Modifier.tap(playable: Playable, selection: Selection?, onMenu: () -> Unit, open: () -> Unit) =
+private fun Modifier.tap(playable: Playable, selection: Selection<Playable>?, onMenu: () -> Unit, open: () -> Unit) =
     combinedClickable(
         interactionSource = remember { MutableInteractionSource() },
         indication = null,
@@ -126,7 +126,7 @@ private fun Modifier.tap(playable: Playable, selection: Selection?, onMenu: () -
  * the rest.
  */
 @Composable
-fun AlbumTile(album: Album, modifier: Modifier = Modifier, selection: Selection? = null, showArtist: Boolean = true) {
+fun AlbumTile(album: Album, modifier: Modifier = Modifier, selection: Selection<Playable>? = null, showArtist: Boolean = true) {
     val nav = LocalNavigator.current
     val playable = Playable.OfAlbum(album)
     val picked = selection?.contains(playable) == true
@@ -179,9 +179,10 @@ private fun DownloadedBar(fraction: Float, modifier: Modifier = Modifier) {
 @Composable
 private fun LibraryRow(
     playable: Playable,
-    selection: Selection?,
+    selection: Selection<Playable>?,
     onOpen: () -> Unit,
     modifier: Modifier = Modifier,
+    marked: Boolean = false,
     lead: @Composable () -> Unit = {},
     trailing: @Composable RowScope.() -> Unit = {},
     content: @Composable () -> Unit,
@@ -192,7 +193,7 @@ private fun LibraryRow(
         Row(
             Modifier
                 .fillMaxWidth()
-                .koanRow(picked)
+                .koanRow(picked || marked)
                 .tap(playable, selection, { menu = true }, onOpen)
                 .padding(start = LocalKoanTokens.current.gutter, end = KoanSpace.xs)
                 // The heart's touch target, so a favourite's row is no taller than the rest.
@@ -219,7 +220,7 @@ private fun TitleAndDetail(title: String, detail: String?, tone: KoanTone = Koan
 
 /** A record as a row, for the browser's list layout. */
 @Composable
-fun AlbumRow(album: Album, modifier: Modifier = Modifier, selection: Selection? = null) {
+fun AlbumRow(album: Album, modifier: Modifier = Modifier, selection: Selection<Playable>? = null) {
     val nav = LocalNavigator.current
     LibraryRow(
         Playable.OfAlbum(album),
@@ -234,7 +235,7 @@ fun AlbumRow(album: Album, modifier: Modifier = Modifier, selection: Selection? 
 }
 
 @Composable
-fun ArtistRow(artist: Artist, modifier: Modifier = Modifier, selection: Selection? = null) {
+fun ArtistRow(artist: Artist, modifier: Modifier = Modifier, selection: Selection<Playable>? = null) {
     val nav = LocalNavigator.current
     LibraryRow(
         Playable.OfArtist(artist.id, artist.name),
@@ -266,14 +267,16 @@ fun TrackRow(
     playing: Boolean,
     onPlay: () -> Unit,
     modifier: Modifier = Modifier,
-    selection: Selection? = null,
+    selection: Selection<Playable>? = null,
     mixed: Boolean = false,
+    marked: Boolean = false,
 ) {
     LibraryRow(
         Playable.OfTrack(track),
         selection,
         onPlay,
         modifier,
+        marked,
         lead = {
             if (mixed) {
                 Box(contentAlignment = Alignment.Center) {

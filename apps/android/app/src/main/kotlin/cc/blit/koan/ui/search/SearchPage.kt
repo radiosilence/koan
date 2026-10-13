@@ -169,7 +169,7 @@ private fun SearchField(field: TextFieldState, modifier: Modifier) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Found(query: String, shelf: ShelfSummary, selection: Selection, onSleeve: (Album) -> Unit) {
+private fun Found(query: String, shelf: ShelfSummary, selection: Selection<Playable>, onSleeve: (Album) -> Unit) {
     val nav = LocalNavigator.current
     val search = Shelf.Search(query)
     LazyVerticalGrid(

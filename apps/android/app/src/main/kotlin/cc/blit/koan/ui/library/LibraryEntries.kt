@@ -31,7 +31,7 @@ fun EntryProviderScope<NavKey>.libraryEntries() {
     entry<ArtistsRoute> { key -> ArtistsPage(key.shelf) }
     entry<TracksRoute> { key -> TracksPage(key.shelf) }
     entry<ShelfRoute> { key -> ShelfPage(key.shelf) }
-    entry<AlbumRoute> { key -> AlbumPage(key.albumId) }
+    entry<AlbumRoute> { key -> AlbumPage(key.albumId, key.track) }
     entry<ArtistRoute> { key -> ArtistPage(key.artistId) }
 }
 

@@ -325,7 +325,7 @@ private fun EntryRow(
             MenuItem("Add to Playlist…", KoanIcons.playlist) { menu = false; onAdd(listOf(track.id)) }
             DownloadMenuItems(onDisk = track.onDisk, dismiss = { menu = false }) { listOf(track.id) }
             track.albumId?.let { albumId ->
-                MenuItem("Go to Album", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId)) }
+                MenuItem("Go to Album", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId, track.id)) }
             }
             if (playlist.fillable) {
                 MenuItem("Remove from Playlist", KoanIcons.remove, destructive = true) {

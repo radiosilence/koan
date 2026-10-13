@@ -3,3 +3,5 @@
 -keep class * extends com.sun.jna.** { *; }
 -keep class cc.blit.koan.ffi.** { *; }
 -dontwarn java.awt.**
+# The core's certificate verification calls into this over JNI.
+-keep, includedescriptorclasses class org.rustls.platformverifier.** { *; }

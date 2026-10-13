@@ -5,8 +5,9 @@ import cc.blit.koan.ffi.ShelfKind
 import cc.blit.koan.ui.navigation.nonce
 import kotlinx.serialization.Serializable
 
+/** A record; opened from one of its tracks, the page scrolls to that track and marks it. */
 @Serializable
-data class AlbumRoute(val albumId: Long, val nonce: String = nonce()) : NavKey
+data class AlbumRoute(val albumId: Long, val track: Long? = null, val nonce: String = nonce()) : NavKey
 
 @Serializable
 data class ArtistRoute(val artistId: Long, val nonce: String = nonce()) : NavKey

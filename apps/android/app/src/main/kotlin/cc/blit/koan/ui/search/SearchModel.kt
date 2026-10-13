@@ -1,6 +1,7 @@
 package cc.blit.koan.ui.search
 
 import cc.blit.koan.ui.library.Selection
+import cc.blit.koan.ui.library.playableSelection
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cc.blit.koan.ffi.ShelfSummary
@@ -40,7 +41,7 @@ class SearchModel(
     val query: StateFlow<String> = _query.asStateFlow()
 
     /** Survives new queries, so a pick can gather from several; ends with the page. */
-    val selection = Selection()
+    val selection = playableSelection()
 
     /** The last query answered. `null` while there is no query. */
     val results: StateFlow<Results?> = combine(

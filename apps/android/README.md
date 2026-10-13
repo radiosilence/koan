@@ -9,6 +9,14 @@ just android-ffi arm64-v8a    # only the core and the bindings
 
 Gradle finds the SDK through `ANDROID_HOME` or `local.properties`; mise provides the JDK and cargo-ndk.
 
+## Sideloading
+
+`just android-apk` builds the release APK, minified and signed with this machine's debug key, and prints its path. Install it with `adb install -r <path>`, or copy it to the phone and open it there, allowing the file manager or browser to install apps when Android asks.
+
+CI builds the same APK on every pull request and push to main that touches the app or the core, and attaches it to the run as `koan-android-<commit>`; download the artifact from the run's page and unzip it. CI signs with the key in the `ANDROID_DEBUG_KEYSTORE` secret when it is set, so each build installs over the last. Android refuses an update signed with a different key, which is what a local build over a CI one is; uninstall first, which signs the app out and deletes its downloads.
+
+The APK carries arm64-v8a only: phones, and emulators on Apple silicon.
+
 ## Layout
 
 Under `app/src/main/kotlin/cc/blit/koan/`:
@@ -37,3 +45,7 @@ State comes from `koanApp().mirror`, collected with `collectAsStateWithLifecycle
 3. Open it from anywhere with `LocalNavigator.current.push(FooRoute(id))`. A view model inside the entry is scoped to it: `viewModel { FooModel(koanApp().mirror, id) }`.
 
 A new tab is a `Tab` object, its place in `Tab.all`, a label and an icon in `AppShell`, and an `entry<Tab.Foo>` in its package.
+
+## Invite and pairing links
+
+`koan.rocks/join/`, `koan.rocks/pair/` and `koan://join` open the app (`ui/settings/Links.kt`), as they open the iPhone app. The https filters are App Links with `autoVerify`; until `koan.rocks/.well-known/assetlinks.json` lists the release signing key's fingerprint, Android does not hand those links to the app, and only `koan://join` reaches it.

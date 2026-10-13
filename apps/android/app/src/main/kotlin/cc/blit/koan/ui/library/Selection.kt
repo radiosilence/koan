@@ -20,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import cc.blit.koan.ui.koanApp
+import cc.blit.koan.ui.playlists.AddToPlaylistSheet
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanEdge
@@ -42,21 +43,23 @@ val Playable.key
     }
 
 /**
- * Results picked to play or queue together, as `PlayableSelection` is on the
- * Apple apps. A mode: outside it a tap goes somewhere, inside it a tap ticks.
+ * Things picked to act on together, as `PlayableSelection` is on the Apple
+ * apps. A mode: outside it a tap goes somewhere, inside it a tap ticks.
  *
  * Held in the order things were ticked rather than the page's, so a pick can
- * gather from several queries: search, tick, search again, tick more.
+ * gather from several queries: search, tick, search again, tick more. Told
+ * apart by `key`: a playable by what it is, a playlist entry or a play by its
+ * own id, since the same track can be two of them.
  */
-class Selection {
+class Selection<T>(private val key: (T) -> Any) {
     var active by mutableStateOf(false)
         private set
 
     /** What is ticked, in the order it was ticked. */
-    val picked = mutableStateListOf<Playable>()
-    private val members = mutableStateSetOf<String>()
+    val picked = mutableStateListOf<T>()
+    private val members = mutableStateSetOf<Any>()
 
-    fun contains(playable: Playable) = playable.key in members
+    fun contains(item: T) = key(item) in members
 
     fun begin() {
         active = true
@@ -69,17 +72,21 @@ class Selection {
     }
 
     /** A tap on something that goes somewhere outside the mode. Whether the pick took it. */
-    fun take(playable: Playable): Boolean {
+    fun take(item: T): Boolean {
         if (!active) return false
-        if (members.remove(playable.key)) {
-            picked.removeAll { it.key == playable.key }
+        val k = key(item)
+        if (members.remove(k)) {
+            picked.removeAll { key(it) == k }
         } else {
-            members += playable.key
-            picked += playable
+            members += k
+            picked += item
         }
         return true
     }
 }
+
+/** A pick of artists, records and tracks, told apart by what each is. */
+fun playableSelection() = Selection<Playable> { it.key }
 
 /**
  * A pickable thing's taps: inside select mode a tap ticks it, outside it goes where
@@ -88,7 +95,7 @@ class Selection {
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun Modifier.pickable(playable: Playable, selection: Selection, onMenu: () -> Unit, open: () -> Unit) =
+fun Modifier.pickable(playable: Playable, selection: Selection<Playable>, onMenu: () -> Unit, open: () -> Unit) =
     combinedClickable(
         interactionSource = remember { MutableInteractionSource() },
         indication = null,
@@ -112,10 +119,11 @@ fun Tick(picked: Boolean, modifier: Modifier = Modifier) {
  * pick to tracks in the order it was made, acts, and ends the mode.
  */
 @Composable
-fun SelectionBar(selection: Selection) {
+fun SelectionBar(selection: Selection<Playable>) {
     val app = koanApp()
     val store = favourites()
     val count = selection.picked.size
+    var adding by remember { mutableStateOf<List<Playable>?>(null) }
     fun run(action: (List<Long>) -> Unit) {
         val items = selection.picked.toList()
         selection.end()
@@ -145,8 +153,12 @@ fun SelectionBar(selection: Selection) {
             KoanButton("Play", { run(app.player::playTracks) }, kind = KoanButtonKind.Text, icon = KoanIcons.play, enabled = count > 0)
             KoanButton("Next", { run(app.player::playNext) }, kind = KoanButtonKind.Text, icon = KoanIcons.playNext, enabled = count > 0)
             KoanButton("Queue", { run(app.player::enqueue) }, kind = KoanButtonKind.Text, icon = KoanIcons.queue, enabled = count > 0)
+            KoanButton("Playlist", { adding = selection.picked.toList() }, kind = KoanButtonKind.Text, icon = KoanIcons.playlist, enabled = count > 0)
             KoanButton("Favourite", { favourite(store, selection) }, kind = KoanButtonKind.Text, icon = KoanIcons.favourite, enabled = count > 0)
         }
+    }
+    adding?.let { items ->
+        AddToPlaylistSheet({ items.flatMap { it.trackIds(this) } }, onAdded = selection::end) { adding = null }
     }
 }
 
@@ -154,7 +166,7 @@ fun SelectionBar(selection: Selection) {
  * Hearts every one of the pick, or, where all of them are hearted already,
  * takes the hearts off: the things themselves, not the tracks behind them.
  */
-private fun favourite(store: Favourites, selection: Selection) {
+private fun favourite(store: Favourites, selection: Selection<Playable>) {
     val items = selection.picked.toList()
     selection.end()
     fun hearted(item: Playable) = when (item) {
@@ -175,7 +187,7 @@ private fun favourite(store: Favourites, selection: Selection) {
 
 /** The bar button that starts and ends picking. */
 @Composable
-fun SelectButton(selection: Selection) {
+fun SelectButton(selection: Selection<*>) {
     KoanButton({ if (selection.active) selection.end() else selection.begin() }, kind = KoanButtonKind.Icon) {
         KoanIcon(if (selection.active) KoanIcons.selecting else KoanIcons.select, "Select")
     }
@@ -186,7 +198,7 @@ fun SelectButton(selection: Selection) {
  * back ends it before it leaves the page.
  */
 @Composable
-fun SelectMode(selection: Selection) {
+fun SelectMode(selection: Selection<*>) {
     DisposableEffect(selection) { onDispose { selection.end() } }
     // Composed only while picking, so it registers after the shell's own
     // handler for a tab's root and is asked first.
