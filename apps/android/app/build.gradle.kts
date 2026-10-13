@@ -141,11 +141,7 @@ dependencies {
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)
     testImplementation(libs.junit)
-<<<<<<< HEAD
-||||||| 571dae73
-=======
     testImplementation(libs.kotlinx.coroutines.test)
->>>>>>> origin/android-app
     testImplementation(libs.robolectric)
     testImplementation(platform(libs.compose.bom))
     testImplementation(libs.compose.ui.test.junit4)

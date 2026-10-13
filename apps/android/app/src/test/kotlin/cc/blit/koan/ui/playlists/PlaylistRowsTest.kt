@@ -57,4 +57,13 @@ class PlaylistRowsTest {
         assertEquals("3 tracks · read-only", playlist(readonly = true).summary())
         assertEquals(false, playlist(readonly = true).fillable)
     }
+
+    @Test
+    fun aDraggedRowScrollsOnlyNearAnEdgeAndFasterDeeperIn() {
+        // A 1000-px list with a 100-px band at each end.
+        assertEquals(0f, edgeScroll(400f, 500f, 0f, 1000f, 100f))
+        assertEquals(-10f, edgeScroll(50f, 150f, 0f, 1000f, 100f))
+        assertEquals(-20f, edgeScroll(-200f, -100f, 0f, 1000f, 100f))
+        assertEquals(10f, edgeScroll(850f, 950f, 0f, 1000f, 100f))
+    }
 }

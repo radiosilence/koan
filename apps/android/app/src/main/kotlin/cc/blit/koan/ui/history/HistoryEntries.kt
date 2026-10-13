@@ -43,9 +43,11 @@ import cc.blit.koan.ui.playlists.PageBar
 import cc.blit.koan.ui.playlists.Sleeve
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
+import cc.blit.koan.ui.theme.KoanField
 import cc.blit.koan.ui.theme.KoanIcon
 import cc.blit.koan.ui.theme.KoanIcons
 import cc.blit.koan.ui.theme.KoanSectionHeader
+import cc.blit.koan.ui.theme.KoanSpace
 import cc.blit.koan.ui.theme.KoanText
 import cc.blit.koan.ui.theme.KoanTheme
 import cc.blit.koan.ui.theme.KoanTone
@@ -59,6 +61,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -74,13 +77,15 @@ fun EntryProviderScope<NavKey>.historyEntries() {
 }
 
 /**
- * Every play, most recent first. Asked for again when a play is recorded or
- * forgotten (`history`), and when the library moves, since an entry's track
- * can leave it.
+ * Every play, most recent first, narrowed by `query`. Asked for again when a
+ * play is recorded or forgotten (`history`), when the library moves, since an
+ * entry's track can leave it, and as the query is typed.
  */
 class HistoryModel(mirror: EngineMirror) : ViewModel() {
-    val entries: StateFlow<List<PlayHistoryEntry>?> = combine(mirror.history, mirror.library) { h, l -> h to l }
-        .mapLatest { runCatching { mirror.engine().playHistory(null) }.getOrDefault(emptyList()) }
+    val query = MutableStateFlow("")
+
+    val entries: StateFlow<List<PlayHistoryEntry>?> = combine(mirror.history, mirror.library, query) { _, _, q -> q.trim() }
+        .mapLatest { q -> runCatching { mirror.engine().playHistory(q.ifEmpty { null }) }.getOrDefault(emptyList()) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 }
 
@@ -95,6 +100,7 @@ private fun HistoryPage() {
     val app = koanApp()
     val model = viewModel { HistoryModel(app.mirror) }
     val entries by model.entries.collectAsStateWithLifecycle()
+    val query by model.query.collectAsStateWithLifecycle()
     var clearing by remember { mutableStateOf(false) }
     var adding by remember { mutableStateOf<Long?>(null) }
     val zone = ZoneId.systemDefault()
@@ -103,11 +109,18 @@ private fun HistoryPage() {
 
     Column {
         PageBar("History") {
-            KoanButton("Clear…", { clearing = true }, kind = KoanButtonKind.Text, enabled = !entries.isNullOrEmpty())
+            KoanButton("Clear…", { clearing = true }, kind = KoanButtonKind.Text, enabled = !entries.isNullOrEmpty() && query.isBlank())
         }
+        KoanField(
+            query,
+            { model.query.value = it },
+            Modifier.fillMaxWidth().padding(horizontal = gutter, vertical = KoanSpace.xs),
+            placeholder = KoanTheme.label("Filter history"),
+        )
         val shown = entries
         when {
             shown == null -> Unit
+            shown.isEmpty() && query.isNotBlank() -> KoanUnavailable("No matches", KoanIcons.search, null)
             shown.isEmpty() -> KoanUnavailable("Nothing played yet", KoanIcons.history, "Everything you play lands here, most recent first.")
             else -> LazyColumn {
                 byDay(shown, zone) { it.playedAt }.forEach { (day, plays) ->

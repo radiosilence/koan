@@ -1,5 +1,18 @@
 package cc.blit.koan.ui.playlists
 
+import android.graphics.Bitmap
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import cc.blit.koan.ui.theme.KoanRecordAccent
+import coil3.SingletonImageLoader
+import coil3.request.ImageRequest
+import coil3.request.SuccessResult
+import coil3.request.allowHardware
+import coil3.toBitmap
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -77,39 +90,41 @@ fun PlaylistPage(playlistId: Long) {
     var adding by remember { mutableStateOf<List<Long>?>(null) }
     val allTrackIds: suspend KoanEngine.() -> List<Long> = { playlistTracks(playlistId).map { it.track.id } }
 
-    Column {
-        PageBar(playlist?.name ?: "Playlist", appText = playlist == null) {
-            if (fillable && entries.isNotEmpty()) {
-                KoanButton(if (editing) "Done" else "Edit", { editing = !editing }, kind = KoanButtonKind.Text)
-            }
-            Box {
-                KoanButton("More", { menu = true }, kind = KoanButtonKind.Icon, icon = KoanIcons.more)
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    if (playlist?.fromFile == false) MenuItem("Rename…") { menu = false; renaming = true }
-                    if (fillable && entries.size > 1) {
-                        MenuItem("Shuffle Order", KoanIcons.reshuffle) { menu = false; edits.shuffleOrder(playlistId) }
+    PlaylistAccent(contents?.covers?.firstOrNull()) {
+        Column {
+            PageBar(playlist?.name ?: "Playlist", appText = playlist == null) {
+                if (fillable && entries.isNotEmpty()) {
+                    KoanButton(if (editing) "Done" else "Edit", { editing = !editing }, kind = KoanButtonKind.Text)
+                }
+                Box {
+                    KoanButton("More", { menu = true }, kind = KoanButtonKind.Icon, icon = KoanIcons.more)
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        if (playlist?.fromFile == false) MenuItem("Rename…") { menu = false; renaming = true }
+                        if (fillable && entries.size > 1) {
+                            MenuItem("Shuffle Order", KoanIcons.reshuffle) { menu = false; edits.shuffleOrder(playlistId) }
+                        }
+                        if (entries.isNotEmpty()) {
+                            MenuItem("Add to Playlist…", KoanIcons.playlist) { menu = false; adding = entries.map { it.track.id } }
+                            DownloadMenuItems(onDisk = null, dismiss = { menu = false }, trackIds = allTrackIds)
+                        }
+                        MenuItem("Delete Playlist", KoanIcons.clear, destructive = true) { menu = false; deleting = true }
                     }
-                    if (entries.isNotEmpty()) {
-                        MenuItem("Add to Playlist…", KoanIcons.playlist) { menu = false; adding = entries.map { it.track.id } }
-                        DownloadMenuItems(onDisk = null, dismiss = { menu = false }, trackIds = allTrackIds)
-                    }
-                    MenuItem("Delete Playlist", KoanIcons.clear, destructive = true) { menu = false; deleting = true }
                 }
             }
-        }
 
-        when {
-            contents == null -> Unit
-            playlist == null -> KoanUnavailable("Playlist not found", KoanIcons.playlist, "It may have been deleted here or on your server.")
-            else -> PlaylistList(
-                playlist = playlist,
-                entries = entries,
-                covers = contents?.covers.orEmpty(),
-                playingEntry = nowPlaying?.entry?.playlistEntryId,
-                editing = editing && fillable,
-                edits = edits,
-                onAdd = { adding = it },
-            )
+            when {
+                contents == null -> Unit
+                playlist == null -> KoanUnavailable("Playlist not found", KoanIcons.playlist, "It may have been deleted here or on your server.")
+                else -> PlaylistList(
+                    playlist = playlist,
+                    entries = entries,
+                    covers = contents?.covers.orEmpty(),
+                    playingEntry = nowPlaying?.entry?.playlistEntryId,
+                    editing = editing && fillable,
+                    edits = edits,
+                    onAdd = { adding = it },
+                )
+            }
         }
     }
 
@@ -168,6 +183,24 @@ private fun PlaylistList(
         }
         dragging = null
         offset = 0f
+    }
+
+    // Near an edge, a dragged row scrolls the list a frame at a time, and the
+    // list moving under it is a drag like any other.
+    val edge = with(LocalDensity.current) { 64.dp.toPx() }
+    LaunchedEffect(dragging) {
+        if (dragging == null) return@LaunchedEffect
+        while (true) {
+            withFrameNanos {}
+            val info = listState.layoutInfo
+            val current = info.visibleItemsInfo.firstOrNull { it.key == "entry:$dragging" } ?: continue
+            val top = current.offset + offset
+            val step = edgeScroll(top, top + current.size, info.viewportStartOffset.toFloat(), info.viewportEndOffset.toFloat(), edge)
+            if (step == 0f) continue
+            val moved = listState.scrollBy(step)
+            offset += moved
+            dragBy(0f)
+        }
     }
 
     val rows = if (editing) order.map(PlaylistRow::Entry) else playlistRows(entries, grouped)
@@ -249,6 +282,33 @@ private fun PlaylistHeader(
             )
         }
     }
+}
+
+/**
+ * How far to scroll this frame for a row dragged between `top` and `bottom`:
+ * nothing away from the edges, and faster the further into the `edge` band it
+ * reaches, up to a fifth of the band a frame.
+ */
+fun edgeScroll(top: Float, bottom: Float, start: Float, end: Float, edge: Float): Float = when {
+    top < start + edge -> -((start + edge - top).coerceAtMost(edge) / 5f)
+    bottom > end - edge -> (bottom - (end - edge)).coerceAtMost(edge) / 5f
+    else -> 0f
+}
+
+/**
+ * The page in the colour of the playlist's first sleeve, as a record's page is
+ * in its own.
+ */
+@Composable
+private fun PlaylistAccent(albumId: Long?, content: @Composable () -> Unit) {
+    val context = LocalContext.current
+    val sleeve by produceState<Bitmap?>(null, albumId) {
+        value = albumId?.let {
+            val request = ImageRequest.Builder(context).data(Art.album(it)).allowHardware(false).build()
+            (SingletonImageLoader.get(context).execute(request) as? SuccessResult)?.image?.toBitmap()
+        }
+    }
+    KoanRecordAccent(sleeve, content)
 }
 
 /** "12 tracks · 48 min · synced": what it holds, and whether edits reach the server. */
