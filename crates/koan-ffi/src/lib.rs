@@ -3970,6 +3970,15 @@ impl KoanEngine {
         let _ = name;
     }
 
+    /// Whether the system refuses the app the local network: Android 17's
+    /// permission, denied. Shown where Settings explains it on Apple.
+    pub fn nearby_blocked(&self, blocked: bool) {
+        #[cfg(target_os = "android")]
+        koan_core::remote::nearby::nsd::blocked(blocked);
+        #[cfg(not(target_os = "android"))]
+        let _ = blocked;
+    }
+
     /// Hand the engine the platform's Wi-Fi, for UPnP discovery: the address
     /// searches go out of, and the lock that lets multicast in while they run.
     pub fn set_multicast_host(&self, host: Arc<dyn MulticastHost>) {

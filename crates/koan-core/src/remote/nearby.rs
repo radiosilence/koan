@@ -455,7 +455,7 @@ pub fn readvertise() {
 
 /// Whether the system is keeping this app off the local network. The fix is
 /// the person's: Privacy & Security → Local Network, in Settings on iOS and
-/// System Settings on macOS.
+/// System Settings on macOS; the app's Nearby devices permission on Android.
 pub fn local_network_blocked() -> bool {
     BLOCKED.load(Ordering::Relaxed)
 }
@@ -610,11 +610,13 @@ pub fn start(local: Local) {
     }
     reconfigure();
     dial_remembered();
-    #[cfg(any(target_vendor = "apple", target_os = "android"))]
+    #[cfg(target_vendor = "apple")]
     std::thread::Builder::new()
         .name("koan-bonjour".into())
         .spawn(discovery::browse_forever)
         .expect("failed to spawn the Bonjour thread");
+    #[cfg(target_os = "android")]
+    discovery::browse_forever();
 }
 
 /// `devices.nearby`: whether this device takes part in the local network.
@@ -1784,56 +1786,73 @@ use nsd as discovery;
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 pub mod nsd {
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
 
-    use parking_lot::{Mutex, RwLock};
+    use parking_lot::Mutex;
 
     use crate::remote::link::LinkIdentity;
 
-    /// The app's `NsdManager`.
+    /// The app's `NsdManager`. Called with this module's lock held, so calls
+    /// arrive in the order the engine made them; it must not call back into
+    /// the engine before returning.
     pub trait Host: Send + Sync {
         /// Register this device as `name` on `port` with these TXT entries,
         /// replacing any registration before it.
         fn advertise(&self, name: &str, port: u16, txt: Vec<(String, String)>);
         fn withdraw(&self);
-        /// Discover and resolve `_koan._tcp` services until `pause`.
+        /// Discover and resolve `_koan._tcp` services until `pause`, starting
+        /// over if it already is.
         fn browse(&self);
         fn pause(&self);
     }
 
-    static HOST: RwLock<Option<Arc<dyn Host>>> = RwLock::new(None);
-    static WANT_BROWSE: AtomicBool = AtomicBool::new(false);
-    /// Paused before browsing began, as Bonjour's browse can be.
-    static PAUSED: AtomicBool = AtomicBool::new(false);
     /// A registration: the name, the port and the TXT entries.
     type Registration = (String, u16, Vec<(String, String)>);
 
-    /// What this device would announce, while it should.
-    static WANT_ADVERT: Mutex<Option<Registration>> = Mutex::new(None);
+    /// What the engine wants, and the host that does it once there is one.
+    #[derive(Default)]
+    struct State {
+        host: Option<Arc<dyn Host>>,
+        /// This device's announcement while it should be made, and which
+        /// `Advert` asked for it.
+        advert: Option<(u64, Registration)>,
+        adverts: u64,
+        browsing: bool,
+        /// Paused before browsing began, as Bonjour's browse can be.
+        paused: bool,
+    }
+
+    static STATE: Mutex<State> = Mutex::new(State {
+        host: None,
+        advert: None,
+        adverts: 0,
+        browsing: false,
+        paused: false,
+    });
 
     /// Install the app's host, and have it do what is already wanted.
     pub fn set_host(host: Arc<dyn Host>) {
-        if let Some((name, port, txt)) = WANT_ADVERT.lock().clone() {
-            host.advertise(&name, port, txt);
+        let mut state = STATE.lock();
+        if let Some((_, (name, port, txt))) = &state.advert {
+            host.advertise(name, *port, txt.clone());
         }
-        if WANT_BROWSE.load(Ordering::Relaxed) {
+        if state.browsing {
             host.browse();
         }
-        *HOST.write() = Some(host);
+        state.host = Some(host);
     }
 
-    fn host() -> Option<Arc<dyn Host>> {
-        HOST.read().clone()
-    }
-
-    /// This device's registration; withdrawn when dropped.
-    pub struct Advert;
+    /// This device's registration; withdrawn when dropped, unless another has
+    /// replaced it since.
+    pub struct Advert(u64);
 
     impl Drop for Advert {
         fn drop(&mut self) {
-            *WANT_ADVERT.lock() = None;
-            if let Some(h) = host() {
-                h.withdraw();
+            let mut state = STATE.lock();
+            if state.advert.as_ref().is_some_and(|(n, _)| *n == self.0) {
+                state.advert = None;
+                if let Some(h) = &state.host {
+                    h.withdraw();
+                }
             }
         }
     }
@@ -1847,35 +1866,40 @@ pub mod nsd {
         if !server.is_empty() {
             txt.push(("server".to_string(), server.to_string()));
         }
-        let wanted = (identity.name.clone(), port, txt);
-        if let Some(h) = host() {
-            h.advertise(&wanted.0, wanted.1, wanted.2.clone());
+        let mut state = STATE.lock();
+        state.adverts += 1;
+        let n = state.adverts;
+        if let Some(h) = &state.host {
+            h.advertise(&identity.name, port, txt.clone());
         }
-        *WANT_ADVERT.lock() = Some(wanted);
-        Some(Advert)
+        state.advert = Some((n, (identity.name.clone(), port, txt)));
+        Some(Advert(n))
     }
 
-    /// Browse, afresh.
+    /// Browse afresh: what a network change or a return to the foreground
+    /// asks for. Ends a pause.
     pub fn restart() {
-        PAUSED.store(false, Ordering::Relaxed);
-        WANT_BROWSE.store(true, Ordering::Relaxed);
-        if let Some(h) = host() {
+        let mut state = STATE.lock();
+        state.paused = false;
+        state.browsing = true;
+        if let Some(h) = &state.host {
             h.browse();
         }
     }
 
     pub fn pause() {
-        PAUSED.store(true, Ordering::Relaxed);
-        WANT_BROWSE.store(false, Ordering::Relaxed);
-        if let Some(h) = host() {
+        let mut state = STATE.lock();
+        state.paused = true;
+        state.browsing = false;
+        if let Some(h) = &state.host {
             h.pause();
         }
     }
 
-    /// Bonjour's browsing thread: here the app browses, so this only says
-    /// to, unless browsing was paused first.
+    /// Where Bonjour starts its browsing thread: here the app browses, so this
+    /// only says to, unless browsing was paused first.
     pub fn browse_forever() {
-        if !PAUSED.load(Ordering::Relaxed) {
+        if !STATE.lock().paused {
             restart();
         }
     }
@@ -1883,7 +1907,7 @@ pub mod nsd {
     /// A device the app resolved: `host` an address, the TXT entries as read.
     #[cfg(target_os = "android")]
     pub fn found(name: String, host: String, port: u16, txt: Vec<(String, String)>) {
-        if !WANT_BROWSE.load(Ordering::Relaxed) {
+        if !STATE.lock().browsing {
             return;
         }
         let entry = |key: &str| txt.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
@@ -1901,6 +1925,12 @@ pub mod nsd {
     #[cfg(target_os = "android")]
     pub fn gone(name: &str) {
         super::lost(name);
+    }
+
+    /// The system refused the app the local network, or let it back on.
+    #[cfg(target_os = "android")]
+    pub fn blocked(blocked: bool) {
+        super::set_blocked(blocked);
     }
 
     #[cfg(test)]
@@ -1949,11 +1979,19 @@ pub mod nsd {
                 "caught up: announced with id, platform and server, and browsing"
             );
 
+            let replacement = advertise(5626, &identity, "");
             drop(advert);
+            assert_eq!(
+                host.0.lock()[2..],
+                ["advertise Pixel 5626 2"],
+                "dropping a replaced registration leaves its replacement"
+            );
+
+            drop(replacement);
             pause();
             browse_forever();
             assert_eq!(
-                host.0.lock()[2..],
+                host.0.lock()[3..],
                 ["withdraw", "pause"],
                 "a pause before browsing starts holds"
             );
