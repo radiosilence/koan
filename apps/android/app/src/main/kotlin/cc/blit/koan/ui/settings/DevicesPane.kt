@@ -1,5 +1,6 @@
 package cc.blit.koan.ui.settings
 
+import android.content.Context
 import android.text.format.DateUtils
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -176,7 +178,7 @@ private fun LazyListScope.connected(model: SettingsModel, s: Settings, c: Connec
     // nothing else to tell them apart.
     connections.forEachIndexed { i, connection ->
         item("connection-$i") {
-            ActionRow(connection.name, detail(connection)) {
+            ActionRow(connection.name, detail(LocalContext.current, connection)) {
                 if (connection.key != null) {
                     if (!connection.own && connection.owner == null && connection.addr != null) {
                         KoanButton("Refuse", { model.endConnection(connection, refuse = true) }, kind = KoanButtonKind.Compact, destructive = true)
@@ -209,7 +211,7 @@ private fun LazyListScope.connected(model: SettingsModel, s: Settings, c: Connec
 }
 
 /** What a connection is, and since when. */
-private fun detail(c: ConnectedInfo): String {
+private fun detail(context: Context, c: ConnectedInfo): String {
     val who = when {
         c.own -> "your device"
         c.owner != null -> "shared by ${c.owner}"
@@ -223,7 +225,7 @@ private fun detail(c: ConnectedInfo): String {
     }
     val since = c.since ?: return what
     return "$what · since " + DateUtils.formatDateTime(
-        null,
+        context,
         since * 1000,
         if (DateUtils.isToday(since * 1000)) DateUtils.FORMAT_SHOW_TIME else DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_TIME,
     )
