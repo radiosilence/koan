@@ -153,7 +153,7 @@ fun <T> SelectionBar(selection: Selection<T>, playable: (T) -> Playable, remove:
     fun run(action: (List<Long>) -> Unit) {
         val items = selection.picked.map(playable)
         selection.end()
-        app.mirror.command {
+        app.mirror.launch {
             val ids = items.flatMap { it.trackIds(this) }
             if (ids.isNotEmpty()) action(ids)
         }

@@ -15,34 +15,34 @@ import kotlinx.coroutines.withTimeoutOrNull
  * made: koan-ffi sends transport and queue commands down one lane.
  */
 class PlayerModel(private val mirror: EngineMirror) {
-    fun play(queueItemId: String) = mirror.command { play(queueItemId) }
+    fun play(queueItemId: String) = mirror.launch { play(queueItemId) }
 
     /** Replace the queue with `trackIds` and play from `startAt`, in order or shuffled. */
     fun playTracks(trackIds: List<Long>, startAt: Int = 0, shuffled: Boolean = false) =
-        mirror.command { replaceQueue(trackIds, startAt.toUInt(), shuffled) }
+        mirror.launch { replaceQueue(trackIds, startAt.toUInt(), shuffled) }
 
-    fun enqueue(trackIds: List<Long>) = mirror.command { addToQueue(trackIds) }
+    fun enqueue(trackIds: List<Long>) = mirror.launch { addToQueue(trackIds) }
 
     fun playNext(trackIds: List<Long>) {
         val current = mirror.nowPlaying.value?.queueItemId ?: return enqueue(trackIds)
-        mirror.command { insertAfter(trackIds, current) }
+        mirror.launch { insertAfter(trackIds, current) }
     }
 
-    fun remove(queueItemIds: List<String>) = mirror.command { removeFromQueue(queueItemIds) }
+    fun remove(queueItemIds: List<String>) = mirror.launch { removeFromQueue(queueItemIds) }
 
-    fun togglePlayPause() = mirror.command { togglePlayPause() }
+    fun togglePlayPause() = mirror.launch { togglePlayPause() }
 
-    fun pause() = mirror.command { pause() }
+    fun pause() = mirror.launch { pause() }
 
-    fun resume() = mirror.command { resume() }
+    fun resume() = mirror.launch { resume() }
 
-    fun next() = mirror.command { next() }
+    fun next() = mirror.launch { next() }
 
-    fun previous() = mirror.command { previous() }
+    fun previous() = mirror.launch { previous() }
 
-    fun seek(positionMs: Long) = mirror.command { seek(positionMs.coerceAtLeast(0).toULong()) }
+    fun seek(positionMs: Long) = mirror.launch { seek(positionMs.coerceAtLeast(0).toULong()) }
 
-    fun setShuffle(on: Boolean) = mirror.command { setShuffle(on) }
+    fun setShuffle(on: Boolean) = mirror.launch { setShuffle(on) }
 
     /** Rebuild the output where playback is: after the route or an output setting changed. */
     fun restartOutput() = mirror.launch { restartOutput() }

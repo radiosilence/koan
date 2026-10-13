@@ -7011,6 +7011,7 @@ fn connection_info() -> ConnectionInfo {
                 seq: n.seq,
                 device: n.device,
                 queued: n.outcome == AckOutcome::Queued,
+                refused: matches!(n.outcome, AckOutcome::Refused { .. }),
                 detail: match n.outcome {
                     AckOutcome::Refused { reason } => reason,
                     AckOutcome::Failed { error } => error,

@@ -638,6 +638,8 @@ final class PlayerModel {
         guard let notice else { return }
         lastNotice = notice.queued
             ? "Waiting for \(notice.device) to wake"
+            : notice.refused
+            ? "\(notice.device) turned it down: \(notice.detail)"
             : "Couldn't reach \(notice.device): \(notice.detail)"
     }
 

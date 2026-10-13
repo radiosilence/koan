@@ -1634,10 +1634,7 @@ fn ask_server(
     ack: Option<u64>,
 ) -> Result<Option<acks::AckOutcome>, String> {
     let cfg = Config::load().unwrap_or_default();
-    let Some(client) = crate::helpers::subsonic_client(&cfg) else {
-        log::info!("devices: no server to ask for {id}");
-        return Err(out_of_reach(id));
-    };
+    let client = crate::helpers::subsonic_client(&cfg).ok_or("Not signed in to a server.")?;
     let json = serde_json::to_string(cmd).map_err(|e| e.to_string())?;
     client.koan_command(id, &json, ack).map_err(|e| match e {
         // The server's word, an expired key or a refusal: its reason

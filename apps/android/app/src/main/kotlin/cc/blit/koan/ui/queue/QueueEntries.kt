@@ -186,7 +186,7 @@ private fun QueuePage() {
             dragged = null
             return
         }
-        mirror.command { moveInQueue(row.itemIds, target.first, target.second) }
+        mirror.launch { moveInQueue(row.itemIds, target.first, target.second) }
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -198,7 +198,7 @@ private fun QueuePage() {
                     // Already queued, so play next is a move to just after what is playing.
                     playNext = {
                         val ids = QueueRow.itemIds(selection, built).filter { it != current }
-                        if (current != null && ids.isNotEmpty()) mirror.command { moveInQueue(ids, current, true) }
+                        if (current != null && ids.isNotEmpty()) mirror.launch { moveInQueue(ids, current, true) }
                         stopSelecting()
                     },
                     remove = {
@@ -221,7 +221,7 @@ private fun QueuePage() {
                     canFollow = current != null,
                     select = { selecting = true },
                     save = { saving = true },
-                    clear = { mirror.command { clearQueue() } },
+                    clear = { mirror.launch { clearQueue() } },
                 )
             }
             if (queue.items.isEmpty()) {
@@ -273,7 +273,7 @@ private fun QueuePage() {
         removed?.let { removal ->
             UndoBar(removal, Modifier.align(Alignment.BottomCenter), onTimeout = { if (removed === removal) removed = null }) {
                 removed = null
-                mirror.command { undo(null) }
+                mirror.launch { undo(null) }
             }
         }
     }

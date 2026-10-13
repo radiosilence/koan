@@ -159,13 +159,12 @@ class EngineMirror(deviceName: String) {
     /** The engine, once it has opened the library and started the player. */
     suspend fun engine(): KoanEngine = opened.await()
 
-    /** Run `block` against the engine off the main thread, without waiting for it. */
+    /**
+     * Run `block` against the engine off the main thread, without waiting for
+     * it. A failure is told to the person, never dropped: a call that may fail
+     * quietly catches its own.
+     */
     fun launch(block: suspend KoanEngine.() -> Unit) {
-        scope.launch { runCatching { opened.await().block() } }
-    }
-
-    /** `launch` for what the person asked for: a refusal is told to them, not dropped. */
-    fun command(block: suspend KoanEngine.() -> Unit) {
         scope.launch {
             try {
                 opened.await().block()
@@ -226,7 +225,11 @@ class EngineMirror(deviceName: String) {
                 slice.connection.commandNotice?.takeIf { it.seq > noticeSeq }?.let { n ->
                     noticeSeq = n.seq
                     _notices.tryEmit(
-                        if (n.queued) "Waiting for ${n.device} to wake" else "Couldn't reach ${n.device}: ${n.detail}",
+                        when {
+                            n.queued -> "Waiting for ${n.device} to wake"
+                            n.refused -> "${n.device} turned it down: ${n.detail}"
+                            else -> "Couldn't reach ${n.device}: ${n.detail}"
+                        },
                     )
                 }
             }
