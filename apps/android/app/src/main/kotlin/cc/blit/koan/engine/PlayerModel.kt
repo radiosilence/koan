@@ -44,6 +44,9 @@ class PlayerModel(private val mirror: EngineMirror) {
 
     fun setShuffle(on: Boolean) = mirror.launch { setShuffle(on) }
 
+    /** Rebuild the output where playback is: after the route or an output setting changed. */
+    fun restartOutput() = mirror.launch { restartOutput() }
+
     /** The queue version last written whole, so the queue is rewritten only when it is what changed. */
     @Volatile private var savedQueueVersion = -1L
 

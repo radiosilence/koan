@@ -1,6 +1,7 @@
 package cc.blit.koan.ui.settings
 
 import android.content.ClipData
+import android.os.Build
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -30,6 +31,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.ffi.Assistants
 import cc.blit.koan.ffi.KoanException
+import cc.blit.koan.playback.BitPerfectHost
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
@@ -47,9 +49,19 @@ import kotlinx.coroutines.launch
 /** How music sounds: fades and ReplayGain. The route is the phone's to choose. */
 @Composable
 fun PlaybackPane(model: SettingsModel) {
+    val app = koanApp()
+    val context = LocalContext.current
     val state by model.state.collectAsStateWithLifecycle()
+    // This phone's route alone, so kept beside the app rather than in config.toml.
+    var bitPerfect by remember { mutableStateOf(BitPerfectHost.isEnabled(context)) }
     val s = state.settings ?: return SettingsPage(Pane.Playback.title, state) {}
     SettingsPage(Pane.Playback.title, state) {
+        bitPerfect(bitPerfect) { on ->
+            BitPerfectHost.setEnabled(context, on)
+            bitPerfect = on
+            // Applies to what is already playing.
+            app.player.restartOutput()
+        }
         header("Transport")
         item { SwitchRow("Fade on pause", s.fadeOnPause) { on -> model.edit { it.copy(fadeOnPause = on) } } }
         footer("Pause and resume ramp the volume over a moment instead of cutting.")
@@ -88,6 +100,20 @@ fun PlaybackPane(model: SettingsModel) {
         }
         footer("Applies the gain written into the file's tags. Per album keeps the relative loudness within a record.")
     }
+}
+
+/**
+ * Bit-perfect output to a USB DAC, where the system can give it: Android 14
+ * brought the mixer mode that hands a DAC the stream as it is.
+ */
+internal fun LazyListScope.bitPerfect(on: Boolean, onChange: (Boolean) -> Unit) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return
+    header("Output")
+    item { SwitchRow("Bit-perfect over USB", on, onChange = onChange) }
+    footer(
+        "On Android 14 and later, kōan sends music to a USB DAC unchanged when the DAC can take the track's format. " +
+            "Other apps are silent on the DAC while it plays.",
+    )
 }
 
 /**

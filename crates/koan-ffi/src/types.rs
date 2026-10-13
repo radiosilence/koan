@@ -334,6 +334,11 @@ pub struct StreamFormat {
     /// past the device — other clients, the volume stage — is the system's,
     /// and this says nothing about it.
     pub output_sample_rate: Option<u32>,
+    /// Whether the system mixes the output with other apps' on its way to the
+    /// device, where the platform says: on Android, `false` only while koan
+    /// holds a USB DAC bit-perfect. `None` elsewhere, where
+    /// `output_sample_rate` is the whole story.
+    pub output_mixed: Option<bool>,
     /// What DSP is doing to the audio. `None` is the untouched path.
     pub dsp: Option<DspInfo>,
 }
@@ -362,10 +367,12 @@ impl StreamFormat {
     pub(crate) fn of(
         t: &TrackInfo,
         output_sample_rate: Option<u32>,
+        output_mixed: Option<bool>,
         dsp: Option<koan_core::audio::dsp::DspStatus>,
     ) -> Self {
         Self {
             output_sample_rate,
+            output_mixed,
             dsp: dsp.map(Into::into),
             codec: t.codec.clone(),
             sample_rate: t.sample_rate,

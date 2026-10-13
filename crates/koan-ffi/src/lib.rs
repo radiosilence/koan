@@ -119,6 +119,97 @@ pub trait AudioSessionHost: Send + Sync {
     fn release(&self);
 }
 
+/// A sample encoding a USB DAC's mixer can run in.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MixerEncoding {
+    Pcm16,
+    Pcm24Packed,
+    Pcm32,
+    Float,
+}
+
+/// One bit-perfect configuration the USB output offers: an
+/// `AudioMixerAttributes` with `MIXER_BEHAVIOR_BIT_PERFECT`.
+#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MixerFormat {
+    /// `AudioDeviceInfo.getId()`.
+    pub device_id: i32,
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub encoding: MixerEncoding,
+}
+
+/// Android's `AudioManager`, for bit-perfect output to a USB DAC (Android
+/// 14). Called on the player thread before each stream opens. See
+/// `koan_core::audio::bit_perfect`.
+#[uniffi::export(with_foreign)]
+pub trait AndroidOutputHost: Send + Sync {
+    /// `AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE`.
+    fn mixer_rate(&self) -> u32;
+    /// The USB output's bit-perfect formats; empty when the route is not USB,
+    /// the system is older than Android 14, or bit-perfect output is off.
+    fn offers(&self) -> Vec<MixerFormat>;
+    /// `setPreferredMixerAttributes` for media with this format; `false` if
+    /// Android refused.
+    fn hold(&self, format: MixerFormat) -> bool;
+    /// `clearPreferredMixerAttributes`.
+    fn release(&self);
+}
+
+struct OutputBridge(Arc<dyn AndroidOutputHost>);
+
+impl From<MixerFormat> for koan_core::audio::bit_perfect::MixerFormat {
+    fn from(f: MixerFormat) -> Self {
+        use koan_core::audio::bit_perfect::Encoding;
+        Self {
+            device_id: f.device_id,
+            rate: f.sample_rate,
+            channels: f.channels,
+            encoding: match f.encoding {
+                MixerEncoding::Pcm16 => Encoding::I16,
+                MixerEncoding::Pcm24Packed => Encoding::I24Packed,
+                MixerEncoding::Pcm32 => Encoding::I32,
+                MixerEncoding::Float => Encoding::Float,
+            },
+        }
+    }
+}
+
+impl From<koan_core::audio::bit_perfect::MixerFormat> for MixerFormat {
+    fn from(f: koan_core::audio::bit_perfect::MixerFormat) -> Self {
+        use koan_core::audio::bit_perfect::Encoding;
+        Self {
+            device_id: f.device_id,
+            sample_rate: f.rate,
+            channels: f.channels,
+            encoding: match f.encoding {
+                Encoding::I16 => MixerEncoding::Pcm16,
+                Encoding::I24Packed => MixerEncoding::Pcm24Packed,
+                Encoding::I32 => MixerEncoding::Pcm32,
+                Encoding::Float => MixerEncoding::Float,
+            },
+        }
+    }
+}
+
+impl koan_core::audio::bit_perfect::OutputHost for OutputBridge {
+    fn mixer_rate(&self) -> u32 {
+        self.0.mixer_rate()
+    }
+
+    fn offers(&self) -> Vec<koan_core::audio::bit_perfect::MixerFormat> {
+        self.0.offers().into_iter().map(Into::into).collect()
+    }
+
+    fn hold(&self, format: koan_core::audio::bit_perfect::MixerFormat) -> bool {
+        self.0.hold(format.into())
+    }
+
+    fn release(&self) {
+        self.0.release();
+    }
+}
+
 #[cfg(any(target_os = "ios", target_os = "tvos"))]
 struct SessionBridge(Arc<dyn AudioSessionHost>);
 
@@ -374,6 +465,12 @@ pub struct KoanEngine {
 /// told again. Two frames of a 60Hz seek bar: below this there is nothing on
 /// screen to correct.
 const PLAYHEAD_TOLERANCE_MS: u64 = 32;
+
+/// How long a playhead may read the same while playing before it is called
+/// held, when this thread next looks. The player wakes it when output should
+/// have begun to move (`OUTPUT_START_CHECK`); a stall mid-track is seen at the
+/// next wake for anything else.
+const PLAYHEAD_STALL: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// The same, for how far a download reaches. The bar it draws is one bar wide
 /// and a fifth of a second of audio does not move it.
@@ -3773,6 +3870,12 @@ impl KoanEngine {
         let _ = host;
     }
 
+    /// Hand the engine Android's `AudioManager`, for bit-perfect output to a
+    /// USB DAC. Until it is given, output goes through the system mixer.
+    pub fn set_output_host(&self, host: Arc<dyn AndroidOutputHost>) {
+        koan_core::audio::bit_perfect::set_host(Arc::new(OutputBridge(host)));
+    }
+
     /// The name of the port iOS routes audio to, on each route change: what
     /// profiles are chosen by on a phone, and the cue to read the session's
     /// rate again. Does nothing elsewhere.
@@ -4938,6 +5041,8 @@ impl KoanEngine {
                 // makes publishing again unnecessary until it would be wrong.
                 let mut anchor: Option<state::Anchor> = None;
                 let mut last_seekable = u64::MAX;
+                // The playhead's last reading, and when it last moved.
+                let mut advanced = (u64::MAX, Instant::now());
                 // Which transfers were running last pass. A transfer leaving
                 // this set has landed on disk, which wrote a cached path onto a
                 // library row — and nothing else says so, because the download
@@ -5059,10 +5164,22 @@ impl KoanEngine {
                         // client can work out for itself; a seek, a pause, a track
                         // boundary and a stall are not, and each of them breaks the
                         // prediction by more than the tolerance below.
-                        let playing = snapshot.state == types::PlayState::Playing
-                            && engine.state.playhead_moving();
-                        let seekable = engine.state.seekable_ms();
                         let now = Instant::now();
+                        if snapshot.position_ms != advanced.0 {
+                            advanced = (snapshot.position_ms, now);
+                        }
+                        // Playing is a playhead that moves, not a transport
+                        // that says so. Output that has run dry at a track's
+                        // end, or not yet begun, or plays a lead-in, holds the
+                        // playhead still with the transport playing; a client
+                        // counting on from the last anchor would run past it.
+                        // Another device's playhead is that device's to say.
+                        let held =
+                            target.is_none() && now.duration_since(advanced.1) > PLAYHEAD_STALL;
+                        let playing = snapshot.state == types::PlayState::Playing
+                            && engine.state.playhead_moving()
+                            && !held;
+                        let seekable = engine.state.seekable_ms();
                         let adrift = anchor.is_none_or(|held: state::Anchor| {
                             held.stale(snapshot.position_ms, playing, now, PLAYHEAD_TOLERANCE_MS)
                         });
@@ -5748,9 +5865,14 @@ impl KoanEngine {
             duration_ms: self.state.duration_ms(),
             queue_item_id: cursor.map(|c| c.0.to_string()),
             entry,
-            format: info
-                .as_ref()
-                .map(|i| StreamFormat::of(i, self.state.output_sample_rate(), self.state.dsp())),
+            format: info.as_ref().map(|i| {
+                StreamFormat::of(
+                    i,
+                    self.state.output_sample_rate(),
+                    self.state.output_mixed(),
+                    self.state.dsp(),
+                )
+            }),
             playlist_version: self.state.playlist_version(),
             shuffle: self.state.play_mode().shuffle,
             repeat_mode: self.state.play_mode().repeat.into(),
