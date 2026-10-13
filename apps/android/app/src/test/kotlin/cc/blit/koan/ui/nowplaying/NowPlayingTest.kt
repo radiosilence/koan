@@ -9,7 +9,7 @@ import org.junit.Test
 
 class NowPlayingTest {
     private fun format(rate: UInt, depth: UShort?, out: UInt? = null, dsp: DspInfo? = null, codec: String = "flac") =
-        StreamFormat(codec, rate, depth, null, 2u, out, dsp)
+        StreamFormat(codec, rate, depth, null, 2u, out, null, dsp)
 
     @Test
     fun qualityBadge() {

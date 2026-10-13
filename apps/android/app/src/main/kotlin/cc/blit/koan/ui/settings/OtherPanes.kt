@@ -56,21 +56,11 @@ fun PlaybackPane(model: SettingsModel) {
     var bitPerfect by remember { mutableStateOf(BitPerfectHost.isEnabled(context)) }
     val s = state.settings ?: return SettingsPage(Pane.Playback.title, state) {}
     SettingsPage(Pane.Playback.title, state) {
-        // Android 14 brought the mixer mode that hands a USB DAC the stream as it is.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            header("Output")
-            item {
-                SwitchRow("Bit-perfect over USB", bitPerfect) { on ->
-                    BitPerfectHost.setEnabled(context, on)
-                    bitPerfect = on
-                    // Applies to what is already playing.
-                    app.player.restartOutput()
-                }
-            }
-            footer(
-                "On Android 14 and later, kōan sends music to a USB DAC unchanged when the DAC can take the track's format. " +
-                    "Other apps are silent on the DAC while it plays.",
-            )
+        bitPerfect(bitPerfect) { on ->
+            BitPerfectHost.setEnabled(context, on)
+            bitPerfect = on
+            // Applies to what is already playing.
+            app.player.restartOutput()
         }
         header("Transport")
         item { SwitchRow("Fade on pause", s.fadeOnPause) { on -> model.edit { it.copy(fadeOnPause = on) } } }
@@ -110,6 +100,20 @@ fun PlaybackPane(model: SettingsModel) {
         }
         footer("Applies the gain written into the file's tags. Per album keeps the relative loudness within a record.")
     }
+}
+
+/**
+ * Bit-perfect output to a USB DAC, where the system can give it: Android 14
+ * brought the mixer mode that hands a DAC the stream as it is.
+ */
+internal fun LazyListScope.bitPerfect(on: Boolean, onChange: (Boolean) -> Unit) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return
+    header("Output")
+    item { SwitchRow("Bit-perfect over USB", on, onChange = onChange) }
+    footer(
+        "On Android 14 and later, kōan sends music to a USB DAC unchanged when the DAC can take the track's format. " +
+            "Other apps are silent on the DAC while it plays.",
+    )
 }
 
 /**
