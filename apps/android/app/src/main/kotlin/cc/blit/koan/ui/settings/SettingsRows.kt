@@ -32,7 +32,7 @@ import cc.blit.koan.ui.theme.koanSurface
  */
 @Composable
 fun SettingsPage(title: String, state: SettingsState, content: LazyListScope.() -> Unit) {
-    Column(Modifier.fillMaxSize().koanSurface()) {
+    Column(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
             item {
                 KoanText(

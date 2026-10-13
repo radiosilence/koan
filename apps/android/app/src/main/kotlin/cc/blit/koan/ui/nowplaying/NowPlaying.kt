@@ -89,7 +89,7 @@ import cc.blit.koan.ui.theme.KoanText
 import cc.blit.koan.ui.theme.KoanTheme
 import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
-import cc.blit.koan.ui.theme.koanSurface
+import cc.blit.koan.ui.theme.recordWash
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -162,7 +162,8 @@ private fun NowPlayingPage() {
     BoxWithConstraints(
         Modifier.fillMaxSize()
             .graphicsLayer { translationY = drag.value }
-            .koanSurface()
+            // Opaque, as it is dragged down over the page beneath.
+            .recordWash()
             .draggable(
                 orientation = Orientation.Vertical,
                 state = rememberDraggableState { dy -> scope.launch { drag.snapTo((drag.value + dy).coerceAtLeast(0f)) } },

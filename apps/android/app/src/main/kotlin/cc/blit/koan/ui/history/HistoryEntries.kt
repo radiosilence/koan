@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
@@ -185,6 +186,7 @@ private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, selection: Selecti
         enableDismissFromEndToStart = !selection.active,
         onDismiss = { forget() },
         backgroundContent = {
+            if (swipe.dismissDirection == SwipeToDismissBoxValue.Settled) return@SwipeToDismissBox
             Box(
                 Modifier.fillMaxSize().koanSurface().padding(horizontal = LocalKoanTokens.current.gutter),
                 contentAlignment = Alignment.CenterEnd,
@@ -193,7 +195,8 @@ private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, selection: Selecti
             }
         },
     ) {
-        Box(Modifier.koanSurface()) {
+        // On the wash, but for while a swipe uncovers what is behind the row.
+        Box(if (swipe.dismissDirection == SwipeToDismissBoxValue.Settled) Modifier else Modifier.koanSurface()) {
             CollectionRow(
                 track.title,
                 "${timeOf(entry.playedAt, zone)} · ${track.artistName} · ${track.albumTitle}$elsewhere",

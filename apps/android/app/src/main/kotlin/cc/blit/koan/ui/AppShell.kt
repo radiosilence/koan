@@ -14,6 +14,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
 import androidx.navigation3.runtime.NavKey
@@ -42,6 +43,7 @@ import cc.blit.koan.ui.settings.accountModel
 import cc.blit.koan.ui.settings.dspModel
 import cc.blit.koan.ui.settings.settingsEntries
 import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.recordWash
 import cc.blit.koan.ui.theme.KoanTabBar
 import cc.blit.koan.ui.theme.KoanTabItem
 
@@ -76,7 +78,9 @@ private fun Signed() {
     val selected = rememberSaveable { mutableIntStateOf(Tab.all.indexOf(Tab.Library)) }
     val navigator = remember(stacks, root) { Navigator(stacks, selected, root) }
     CompositionLocalProvider(LocalNavigator provides navigator) {
+        // Every page sits on the record's wash: pages leave their ground bare.
         NavDisplay(
+            modifier = Modifier.fillMaxSize().recordWash(),
             backStack = root,
             onBack = { navigator.closeNowPlaying() },
             entryDecorators = listOf(rememberSaveableStateHolderNavEntryDecorator(), rememberViewModelStoreNavEntryDecorator()),
@@ -93,6 +97,7 @@ private fun Tabs(navigator: Navigator, stacks: Map<Tab, List<NavKey>>) {
     val current = navigator.tab
     val stack = stacks.getValue(current)
     Scaffold(
+        containerColor = Color.Transparent,
         bottomBar = {
             Column {
                 MiniPlayer()

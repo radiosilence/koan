@@ -234,9 +234,15 @@ private fun QueuePage() {
                     ReorderableItem(reorder, key = row.key) { isDragging ->
                         val picked = row.key in selection
                         var menu by remember { mutableStateOf<Playable?>(null) }
-                        Swipeable(enabled = !selecting && !isDragging, onRemove = { remove(row.itemIds, row.label) }) {
-                            // A lifted row stands on `surface` rather than a shadow.
-                            Box(Modifier.koanSurface(if (isDragging || picked) KoanSurface.Surface else KoanSurface.Bg).systemGround(isDragging || picked)) {
+                        Swipeable(enabled = !selecting && !isDragging, onRemove = { remove(row.itemIds, row.label) }) { swiping ->
+                            // A lifted row stands on `surface` rather than a shadow; one being
+                            // swiped on `bg`, over what the swipe uncovers. Otherwise on the wash.
+                            val ground = when {
+                                isDragging || picked -> Modifier.koanSurface(KoanSurface.Surface)
+                                swiping -> Modifier.koanSurface()
+                                else -> Modifier
+                            }
+                            Box(ground.systemGround(isDragging || picked)) {
                                 RowContent(
                                     row,
                                     grouped,
@@ -284,12 +290,13 @@ private fun Modifier.systemGround(raised: Boolean) =
  * saved state would come back dismissed and remove the row again at once.
  */
 @Composable
-internal fun Swipeable(enabled: Boolean, onRemove: () -> Unit, content: @Composable () -> Unit) {
+internal fun Swipeable(enabled: Boolean, onRemove: () -> Unit, content: @Composable (swiping: Boolean) -> Unit) {
     val threshold = SwipeToDismissBoxDefaults.positionalThreshold
     val state = remember { SwipeToDismissBoxState(SwipeToDismissBoxValue.Settled, threshold) }
     SwipeToDismissBox(
         state,
         backgroundContent = {
+            if (state.dismissDirection == SwipeToDismissBoxValue.Settled) return@SwipeToDismissBox
             Box(
                 Modifier.fillMaxSize().background(KoanTheme.color(KoanTone.Bad)).padding(horizontal = KoanSpace.xl),
                 contentAlignment = if (state.dismissDirection == SwipeToDismissBoxValue.StartToEnd) Alignment.CenterStart else Alignment.CenterEnd,
@@ -299,7 +306,7 @@ internal fun Swipeable(enabled: Boolean, onRemove: () -> Unit, content: @Composa
         },
         gesturesEnabled = enabled,
         onDismiss = { onRemove() },
-    ) { content() }
+    ) { content(state.dismissDirection != SwipeToDismissBoxValue.Settled) }
 }
 
 @Composable
