@@ -8,7 +8,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import cc.blit.koan.playback.PlaybackService
-import cc.blit.koan.ui.KoanScreen
+import cc.blit.koan.ui.AppShell
 import cc.blit.koan.ui.theme.KoanTheme
 import com.google.common.util.concurrent.ListenableFuture
 
@@ -18,7 +18,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { KoanTheme { KoanScreen() } }
+        setContent { KoanTheme { AppShell() } }
     }
 
     /**

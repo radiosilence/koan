@@ -38,7 +38,7 @@ class PlaybackService : MediaSessionService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var session: MediaSession
     private lateinit var audio: AudioManager
-    private val engine get() = (application as KoanApp).engine
+    private val engine get() = (application as KoanApp).mirror
 
     private var focus: AudioFocusRequest? = null
     /** Paused for a transient loss of focus, so to resume when it comes back. */

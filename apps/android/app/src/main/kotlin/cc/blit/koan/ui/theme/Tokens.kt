@@ -4,7 +4,9 @@ import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.TweenSpec
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
@@ -84,3 +86,18 @@ object KoanMotion {
     fun <T> normal(): TweenSpec<T> = tween(120, easing = quickOut)
     fun <T> settle(): TweenSpec<T> = tween(250, easing = quickOut)
 }
+
+/**
+ * The measures pages lay themselves out by, provided by `KoanTheme`: the page
+ * margin, the gap between rows, a row's sleeve, and the mini player's height,
+ * which the tab bar's matches.
+ */
+@Immutable
+data class KoanTokens(
+    val gutter: Dp = KoanSpace.page,
+    val rowGap: Dp = KoanSpace.s,
+    val thumb: Dp = 48.dp,
+    val miniPlayerHeight: Dp = 64.dp,
+)
+
+val LocalKoanTokens = staticCompositionLocalOf { KoanTokens() }

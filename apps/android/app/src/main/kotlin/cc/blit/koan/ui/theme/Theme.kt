@@ -92,6 +92,7 @@ fun KoanTheme(
     ) {
         CompositionLocalProvider(
             LocalKoanLook provides look,
+            LocalKoanTokens provides KoanTokens(),
             LocalContentColor provides if (koan) colors.ink else scheme.onBackground,
             LocalTextStyle provides if (koan) KoanType.Body.koan else MaterialTheme.typography.bodyLarge,
             content = content,

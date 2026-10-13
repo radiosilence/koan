@@ -4,12 +4,23 @@ import android.app.Application
 import android.content.Context
 import android.os.Build
 import android.provider.Settings
-import cc.blit.koan.engine.Engine
+import cc.blit.koan.art.ArtFetcher
+import cc.blit.koan.art.ArtKeyer
+import cc.blit.koan.art.followArtEvictions
+import coil3.ImageLoader
+import coil3.PlatformContext
+import coil3.SingletonImageLoader
+import coil3.disk.DiskCache
+import okio.Path.Companion.toOkioPath
+import cc.blit.koan.engine.EngineMirror
+import cc.blit.koan.engine.PlayerModel
 import cc.blit.koan.ffi.setConfigDir
 import java.io.File
 
-class KoanApp : Application() {
-    lateinit var engine: Engine
+class KoanApp : Application(), SingletonImageLoader.Factory {
+    lateinit var mirror: EngineMirror
+        private set
+    lateinit var player: PlayerModel
         private set
 
     override fun onCreate() {
@@ -21,7 +32,26 @@ class KoanApp : Application() {
         // rest is rebuilt by signing in.
         setConfigDir(File(filesDir, "koan").path)
         val name = Settings.Global.getString(contentResolver, Settings.Global.DEVICE_NAME) ?: Build.MODEL
-        engine = Engine(name)
+        mirror = EngineMirror(name)
+        player = PlayerModel(mirror)
+    }
+
+    /** Coil, with covers fetched from the engine and their bytes kept in the app's cache directory. */
+    override fun newImageLoader(context: PlatformContext): ImageLoader {
+        val loader = ImageLoader.Builder(context)
+            .components {
+                add(ArtKeyer())
+                add(ArtFetcher.Factory(mirror))
+            }
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve("art").toOkioPath())
+                    .maxSizeBytes(256L * 1024 * 1024)
+                    .build()
+            }
+            .build()
+        followArtEvictions(mirror, loader)
+        return loader
     }
 
     private companion object {

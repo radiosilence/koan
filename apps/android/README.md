@@ -1,0 +1,39 @@
+# kōan for Android
+
+A Compose app over the same engine as the Apple apps: `libkoan_ffi.so`, loaded through uniffi's Kotlin bindings (package `cc.blit.koan.ffi`). Gradle builds the core with cargo-ndk and generates the bindings before every build; neither is checked in. See ARCHITECTURE.md's Android section for the audio path.
+
+```bash
+just android-run              # build, install on the device adb sees, open
+just android-ffi arm64-v8a    # only the core and the bindings
+```
+
+Gradle finds the SDK through `ANDROID_HOME` or `local.properties`; mise provides the JDK and cargo-ndk.
+
+## Layout
+
+Under `app/src/main/kotlin/cc/blit/koan/`:
+
+| Package | Owns |
+|---|---|
+| `KoanApp`, `MainActivity` | The process: config directory, the one engine, Coil's loader, the playback service connection |
+| `engine/` | `EngineMirror`, the engine's state slices as `StateFlow`s; `PlayerModel`, the commands |
+| `playback/` | The Media3 session, background playback, audio focus, routes |
+| `art/` | Covers for Coil: `AsyncImage(model = Art.album(id), …)` |
+| `ui/` | `AppShell` (sign-in, tabs, mini player, Now Playing over the tabs) and small shared pieces |
+| `ui/navigation/` | `Tab`, `Navigator` and `LocalNavigator` |
+| `ui/theme/` | The kōan theme (`docs/design/koan-theme.md`): tokens, type, the record accent, the roles pages draw with, `KoanIcon`, and `ThemeSheet`. The glyphs are compiled from the Swift apps' SVGs by `scripts/icons.py` |
+| `ui/queue/`, `ui/library/`, `ui/search/`, `ui/settings/` | The four tabs |
+| `ui/playlists/`, `ui/downloads/` | Pages the library opens |
+| `ui/nowplaying/` | Now Playing and the mini player |
+
+Each `ui/` package owns its routes, pages and view models, and exposes one `EntryProviderScope<NavKey>.…Entries()` function that `AppShell` calls; nothing else in the shell needs to change when a package grows.
+
+State comes from `koanApp().mirror`, collected with `collectAsStateWithLifecycle()`. A listing reloads when `mirror.library` moves (see `LibraryModel`). The playhead is an anchor rather than a ticking value: use `rememberPosition(playhead)` or `Playhead.positionAt()`. Commands go through `koanApp().player`, or `mirror.launch { … }` for engine calls `PlayerModel` lacks.
+
+## Adding a page
+
+1. In the package that owns it, declare a key: `@Serializable data class FooRoute(val id: Long, val nonce: String = nonce()) : NavKey`. The `nonce` lets the same page be open in two tabs.
+2. Register it in that package's entries function: `entry<FooRoute> { key -> FooPage(key.id) }`.
+3. Open it from anywhere with `LocalNavigator.current.push(FooRoute(id))`. A view model inside the entry is scoped to it: `viewModel { FooModel(koanApp().mirror, id) }`.
+
+A new tab is a `Tab` object, its place in `Tab.all`, a label and an icon in `AppShell`, and an `entry<Tab.Foo>` in its package.

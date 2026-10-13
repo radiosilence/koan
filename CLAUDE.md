@@ -306,11 +306,13 @@ Gradle's `koanFfi` task builds koan-ffi with cargo-ndk into `jniLibs` and genera
 
 | Module | What |
 |--------|------|
-| `KoanApp.kt` | The `Application`: points the core's config directory at `filesDir`, opens the one engine |
-| `engine/Engine.kt` | The `KoanEngine` and its state slices as `StateFlow`s, read by one loop off the main thread |
+| `KoanApp.kt` | The `Application`: points the core's config directory at `filesDir`, hands the core the app's `Context`, opens the one engine, builds Coil's loader |
+| `engine/EngineMirror.kt` | The engine's state slices as `StateFlow`s, read by one loop off the main thread; queue patches applied to their base. `PlayerModel.kt` sends the commands |
 | `playback/KoanPlayer.kt` | The engine as a Media3 `SimpleBasePlayer`: reports queue and playhead, forwards the session's commands. Nothing plays through Media3 |
 | `playback/PlaybackService.kt` | `MediaSessionService`: background playback and the notification, audio focus, pause on becoming noisy, output rebuilt on a route change |
-| `ui/` | Compose screens and their view model |
+| `art/Art.kt` | Covers for Coil, fetched from the engine, bytes kept on disk, dropped on `art_evictions` |
+| `ui/AppShell.kt` | Sign-in, then four tabs (Queue, Library, Search, Settings) on Navigation 3, each with its own back stack; the mini player; Now Playing over the tabs |
+| `ui/<feature>/` | One package per area, each registering its pages through an `…Entries()` function. See `apps/android/README.md` |
 
 ### koan-server (`crates/koan-server/src/`)
 
