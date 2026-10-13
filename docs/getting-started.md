@@ -32,6 +32,8 @@ The format badge shows the rate the hardware runs at, read back from the session
 
 The Android app is a Kotlin and Compose app that links the same engine as the iOS app, and it is not finished: it has the kōan theme, the four tabs (queue, library, search, settings) and a server sign-in, and the pages themselves are placeholders. It is built from source (`apps/android`, Android 9 or later, `gradle assembleDebug` with the Android SDK, NDK r27c, `cargo-ndk` and the Rust Android targets installed) and has not been run on a device yet.
 
+Search finds artists, records and tracks as you type, and favourites, recently played and downloaded are pages of the same shape: artists as pills, records as tiles, tracks as rows, each heading showing how many the library has and opening that list. Long-press anything to pick several, across kinds, and play or queue them together.
+
 Playback belongs to a foreground media service, so it carries on when the app is left, and the lock screen, headset buttons and notification control it. It pauses when another app takes audio focus or the headphones are unplugged.
 
 ### Sample rates on Android
