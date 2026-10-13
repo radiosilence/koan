@@ -215,6 +215,12 @@ macos-bundle: macos-build
         <key>LSMinimumSystemVersion</key><string>26.0</string>
         <key>NSHighResolutionCapable</key><true/>
         <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+        <!-- macOS asks before an app talks to the local network, and an app
+             that gives no reason is never asked: its SSDP and Bonjour traffic
+             is dropped without a word, so no UPnP renderer or nearby koan
+             appears. The iOS bundle declares the same. -->
+        <key>NSLocalNetworkUsageDescription</key><string>koan finds other koan apps and network speakers on your network to play music on, and connects to your music server when it is on it.</string>
+        <key>NSBonjourServices</key><array><string>_koan._tcp</string><string>_airplay._tcp</string><string>_companion-link._tcp</string></array>
         <key>CFBundleURLTypes</key>
         <array>
             <dict>
