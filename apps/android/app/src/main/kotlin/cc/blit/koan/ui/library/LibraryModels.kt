@@ -127,6 +127,9 @@ enum class AlbumLayout { Grid, List }
  * the shelf's.
  */
 class AlbumsModel(private val mirror: EngineMirror, private val shelf: Shelf?, private val prefs: SharedPreferences) : ViewModel() {
+    /** Things picked to play or queue together; ends with the page. */
+    val selection = playableSelection()
+
     val query = MutableStateFlow(
         shelf.albumQuery(prefs.getString(SORT, null)?.let { runCatching { AlbumSort.valueOf(it) }.getOrNull() } ?: AlbumSort.RECENTLY_ADDED),
     )
@@ -168,6 +171,9 @@ class AlbumsModel(private val mirror: EngineMirror, private val shelf: Shelf?, p
 }
 
 class ArtistsModel(private val mirror: EngineMirror, shelf: Shelf?) : ViewModel() {
+    /** Things picked to play or queue together; ends with the page. */
+    val selection = playableSelection()
+
     val query = MutableStateFlow(shelf.albumQuery(AlbumSort.ARTIST))
 
     val artists: StateFlow<List<Artist>?> = held(
@@ -193,6 +199,9 @@ data class TrackPage(val tracks: List<Track>, val total: Long)
  * thousands of tracks. A library change reads again as far as was read.
  */
 class TracksModel(private val mirror: EngineMirror, shelf: Shelf) : ViewModel() {
+    /** Things picked to play or queue together; ends with the page. */
+    val selection = playableSelection()
+
     val query = MutableStateFlow(shelf.trackQuery())
     private val wanted = MutableStateFlow(PAGE)
 
@@ -230,6 +239,9 @@ class ShelfModel(mirror: EngineMirror, shelf: Shelf) : ViewModel() {
 }
 
 class AlbumModel(mirror: EngineMirror, albumId: Long) : ViewModel() {
+    /** Things picked to play or queue together; ends with the page. */
+    val selection = playableSelection()
+
     /** `null` while reading; a page whose `album` is `null` is a record no longer in the library. */
     val page: StateFlow<AlbumPage?> = held(
         mirror.library.mapLatest { runCatching { mirror.engine().albumPage(albumId) }.getOrNull() },
@@ -250,6 +262,9 @@ data class ArtistRecord(
  * once per visit, after the page is up.
  */
 class ArtistModel(mirror: EngineMirror, artistId: Long) : ViewModel() {
+    /** Things picked to play or queue together; ends with the page. */
+    val selection = playableSelection()
+
     val record: StateFlow<ArtistRecord?> = held(
         mirror.library.mapLatest {
             runCatching {

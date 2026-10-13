@@ -2,17 +2,17 @@ package cc.blit.koan.ui.settings
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -22,17 +22,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.NavKey
+import cc.blit.koan.ffi.AutoEqEntry
+import cc.blit.koan.ffi.AutoEqOffer
 import cc.blit.koan.ffi.DspOverview
-import cc.blit.koan.ffi.DspProfileDetail
-import cc.blit.koan.ffi.DspResponse
 import cc.blit.koan.ffi.DspRole
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
@@ -40,23 +36,28 @@ import cc.blit.koan.ui.navigation.nonce
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanField
+import cc.blit.koan.ui.theme.KoanIcons
 import cc.blit.koan.ui.theme.KoanSpace
 import cc.blit.koan.ui.theme.KoanText
-import cc.blit.koan.ui.theme.KoanTheme
 import cc.blit.koan.ui.theme.KoanTone
+import cc.blit.koan.ui.theme.KoanToggle
 import cc.blit.koan.ui.theme.KoanType
-import kotlin.math.log10
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 
-/** One EQ or convolution profile's page. */
+/** AutoEQ's search, open with `query` typed: empty from its button, a model from an offer. */
 @Serializable
-data class DspProfileRoute(val name: String, val nonce: String = nonce()) : NavKey
+data class AutoEqRoute(val query: String = "", val nonce: String = nonce()) : NavKey
+
+/** One maker's results in AutoEQ, by model. */
+@Serializable
+data class AutoEqMakerRoute(val maker: String, val nonce: String = nonce()) : NavKey
 
 /**
  * EQ: what this phone's output plays through, the profiles there are, and
- * importing more. Nothing is chosen at first, and then the music plays
- * untouched: bit-perfect is the default.
+ * getting more. Nothing is chosen at first, and then the music plays
+ * untouched by EQ.
  */
 @Composable
 fun EqPane(model: SettingsModel) {
@@ -69,15 +70,20 @@ fun EqPane(model: SettingsModel) {
     val settings by model.state.collectAsStateWithLifecycle()
     val state by dsp.state.collectAsStateWithLifecycle()
     val library by app.mirror.library.collectAsStateWithLifecycle()
+    var naming by remember { mutableStateOf(false) }
+    var adding by remember { mutableStateOf(false) }
     // Profiles sync from the account's other devices, which the engine
     // reports as the library moving.
-    androidx.compose.runtime.LaunchedEffect(library) { dsp.reload() }
+    LaunchedEffect(library) { dsp.reload() }
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) scope.launch { dsp.importPaths(copyIn(context, uris)) }
     }
     val o = state.overview
 
     SettingsPage(Pane.Eq.title, settings) {
+        state.suggestion?.let { offer ->
+            item { Suggestion(offer, dsp) { query -> nav.push(AutoEqRoute(query)) } }
+        }
         if (o != null) {
             header("This phone")
             o.device?.let { device -> item { ValueRow("Output", o.names[device] ?: device) } }
@@ -89,24 +95,20 @@ fun EqPane(model: SettingsModel) {
                     dsp::use,
                 )
             }
-            item {
-                ChoiceRow(
-                    "Tuning",
-                    o.tuning,
-                    listOf<Pair<String, String?>>("None" to null) + o.profiles.filter { it.role == DspRole.TUNING }.map { it.name to it.name },
-                    dsp::setTuning,
-                )
-            }
             footer(sentence(o))
 
+            chain(o, dsp, open = { nav.push(DspProfileRoute(it)) }, add = { adding = true })
+            presets(o, dsp, save = { naming = true })
+
             header("Profiles")
-            if (o.profiles.isEmpty()) line("None yet. Import one below.", KoanTone.Muted)
+            if (o.profiles.isEmpty()) line("None yet. Find one in AutoEQ, or import one below.", KoanTone.Muted)
             o.profiles.forEach { p ->
                 item("profile-${p.name}") {
                     KoanButton({ nav.push(DspProfileRoute(p.name)) }, inset, kind = KoanButtonKind.Card) {
                         Column(Modifier.fillMaxWidth().padding(vertical = KoanSpace.xs)) {
                             Row(horizontalArrangement = Arrangement.spacedBy(KoanSpace.s), verticalAlignment = Alignment.CenterVertically) {
-                                KoanText(p.name, Modifier.weight(1f), tone = if (p.name == o.active || p.name == o.tuning) KoanTone.Accent else KoanTone.Ink)
+                                val playing = p.name == o.active || o.chain.any { it.name == p.name && it.on }
+                                KoanText(p.name, Modifier.weight(1f), tone = if (playing) KoanTone.Accent else KoanTone.Ink)
                                 KoanText(p.role.label, role = KoanType.Fine, tone = KoanTone.Muted, appText = true)
                             }
                             val about = listOfNotNull(DspModel.describe(p).takeIf { it.isNotEmpty() }, p.problem).joinToString(" · ")
@@ -117,10 +119,15 @@ fun EqPane(model: SettingsModel) {
             }
         }
 
-        header("Import")
+        header("Add")
         item {
             ButtonRow {
+                KoanButton("Find in AutoEQ…", { nav.push(AutoEqRoute()) }, kind = KoanButtonKind.Bordered)
                 KoanButton("Import files…", { pick.launch(arrayOf("*/*")) }, kind = KoanButtonKind.Bordered)
+            }
+        }
+        item {
+            ButtonRow {
                 KoanButton("Paste EQ text", {
                     scope.launch {
                         clipboard.getClipEntry()?.clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString()?.let(dsp::importText)
@@ -131,121 +138,201 @@ fun EqPane(model: SettingsModel) {
         state.summary?.let { line(it, KoanTone.Muted) }
         state.error?.let { line(it, KoanTone.Bad) }
         footer(
-            "Parametric EQ as text (Equalizer APO, AutoEQ, Wavelet), convolution impulses as WAV, or a folder of them " +
-                "zipped. Files shared to kōan, or opened with it, are imported the same way.",
+            "AutoEQ's corrections, parametric EQ as text (Equalizer APO, AutoEQ, Wavelet), convolution impulses as WAV, " +
+                "or a folder of them zipped. Files shared to kōan, or opened with it, are imported the same way.",
         )
+    }
+
+    if (naming) {
+        NameDialog("Save as preset", o?.preset ?: "", "Save", { naming = false }) { name -> dsp.savePreset(name) }
+    }
+    if (adding && o != null) {
+        val choices = o.profiles.filter { p -> p.role == DspRole.TUNING && o.chain.none { it.name == p.name } }
+        AlertDialog(
+            onDismissRequest = { adding = false },
+            title = { KoanText("Add a tuning", role = KoanType.TitleSmall, appText = true) },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    if (choices.isEmpty()) KoanText("Every tuning is in already. Import one, or say an EQ is a tuning on its page.", tone = KoanTone.Muted)
+                    choices.forEach { p ->
+                        KoanButton({
+                            adding = false
+                            dsp.setTunings(o.chain.added(p.name))
+                        }, Modifier.fillMaxWidth(), kind = KoanButtonKind.Card) { KoanText(p.name, Modifier.padding(vertical = KoanSpace.s)) }
+                    }
+                }
+            },
+            confirmButton = { KoanButton("Cancel", { adding = false }) },
+        )
+    }
+}
+
+/**
+ * The EQs the output plays on top of its correction, in order: each switched
+ * on or off where it stands, moved, or taken out.
+ */
+private fun LazyListScope.chain(o: DspOverview, dsp: DspModel, open: (String) -> Unit, add: () -> Unit) {
+    header("Tuning")
+    if (o.chain.isEmpty()) line("None: the correction plays alone.", KoanTone.Muted)
+    o.chain.forEachIndexed { i, entry ->
+        item("chain-${entry.name}") {
+            Row(inset.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                KoanToggle(entry.name, entry.on, { dsp.setTunings(o.chain.toggled(i)) }, Modifier.weight(1f))
+                KoanButton("Move up", { dsp.setTunings(o.chain.moved(i, -1)) }, kind = KoanButtonKind.Icon, icon = KoanIcons.moveUp, enabled = i > 0)
+                KoanButton("Move down", { dsp.setTunings(o.chain.moved(i, 1)) }, kind = KoanButtonKind.Icon, icon = KoanIcons.moveDown, enabled = i < o.chain.lastIndex)
+                KoanButton("Show", { open(entry.name) }, kind = KoanButtonKind.Icon, icon = KoanIcons.disclosure)
+                KoanButton("Remove", { dsp.setTunings(o.chain.removed(i)) }, kind = KoanButtonKind.Icon, icon = KoanIcons.remove)
+            }
+        }
+    }
+    o.leftOut?.let { line(it, KoanTone.Muted) }
+    item { ButtonRow { KoanButton("Add a tuning", add, kind = KoanButtonKind.Bordered) } }
+    footer("Taste on top of the correction, played in order. Switched off, an EQ stays where it is and plays nothing.")
+}
+
+/** What the output was set from: a preset's name, Flat, or Unsaved for EQ no preset holds. */
+internal fun presetSummary(o: DspOverview) = when {
+    o.preset != null && o.presetEdited -> "${o.preset}, edited"
+    o.preset != null -> o.preset!!
+    o.active == null && o.chain.isEmpty() -> "Flat"
+    else -> "Unsaved"
+}
+
+/** The output's presets: set it from one, or flat; save what it plays as one. */
+private fun LazyListScope.presets(o: DspOverview, dsp: DspModel, save: () -> Unit) {
+    val presets = o.profiles.filter { it.preset }.map { it.name }
+    header("Presets")
+    item { ValueRow("Set from", presetSummary(o)) }
+    if (presets.isNotEmpty()) {
+        // Choosing the one it was set from, edited since, goes back to it.
+        item { ChoiceRow("Set to", o.preset, listOf<Pair<String, String?>>("Flat" to null) + presets.map { it to it }, dsp::applyPreset) }
+    }
+    item { ButtonRow { KoanButton("Save as preset…", save, kind = KoanButtonKind.Bordered) } }
+    footer("A preset holds a correction and a tuning, to switch this phone back to, or another device to.")
+}
+
+/** AutoEQ's offer for the output in use: its profile, or a search for the model. Nothing applies until asked. */
+@Composable
+private fun Suggestion(offer: AutoEqOffer, dsp: DspModel, find: (String) -> Unit) {
+    Column(inset.padding(vertical = KoanSpace.s), verticalArrangement = Arrangement.spacedBy(KoanSpace.s)) {
+        when (offer) {
+            is AutoEqOffer.Profile -> {
+                KoanText("AutoEQ has a correction for ${offer.entry.name}. Use it?", tone = KoanTone.Muted)
+                Row(horizontalArrangement = Arrangement.spacedBy(KoanSpace.m), verticalAlignment = Alignment.CenterVertically) {
+                    KoanButton("Use", { dsp.installAutoEq(offer.entry) }, kind = KoanButtonKind.Prominent)
+                    KoanButton("Not for this device", dsp::dismissSuggestion, kind = KoanButtonKind.Link)
+                }
+            }
+            is AutoEqOffer.Search -> Row(horizontalArrangement = Arrangement.spacedBy(KoanSpace.m), verticalAlignment = Alignment.CenterVertically) {
+                KoanButton("Find ${offer.query} in AutoEQ…", { find(offer.query) }, kind = KoanButtonKind.Bordered)
+                KoanButton("Not for this device", dsp::dismissSuggestion, kind = KoanButtonKind.Link)
+            }
+        }
+    }
+}
+
+/**
+ * AutoEQ's results by headphone name; with nothing typed, its makers to
+ * browse. Choosing one installs it and corrects the output in use with it.
+ */
+@Composable
+fun AutoEqPage(initial: String, model: SettingsModel) {
+    val dsp = dspModel()
+    val nav = LocalNavigator.current
+    val settings by model.state.collectAsStateWithLifecycle()
+    val state by dsp.state.collectAsStateWithLifecycle()
+    var query by rememberSaveable { mutableStateOf(initial) }
+    // Debounced: a search runs once typing pauses, not per keystroke.
+    LaunchedEffect(query) {
+        if (query.isBlank()) {
+            dsp.loadAutoEqMakers()
+        } else {
+            delay(250)
+            dsp.searchAutoEq(query)
+        }
+    }
+    SettingsPage("AutoEQ", settings) {
+        item { KoanField(query, { query = it }, inset.fillMaxWidth().padding(vertical = KoanSpace.s), placeholder = "Headphone") }
+        if (query.isBlank()) {
+            state.autoEqMakers.forEach { maker ->
+                item("maker-${maker.name}") {
+                    KoanButton({ nav.push(AutoEqMakerRoute(maker.name)) }, inset, kind = KoanButtonKind.Card) {
+                        Row(Modifier.fillMaxWidth().padding(vertical = KoanSpace.s)) {
+                            KoanText(maker.name, Modifier.weight(1f))
+                            KoanText("${maker.results}", tone = KoanTone.Muted)
+                        }
+                    }
+                }
+            }
+        } else {
+            if (state.autoEqResults.isEmpty()) line("AutoEQ has nothing for “${query.trim()}”.", KoanTone.Muted)
+            state.autoEqResults.forEach { entry ->
+                item("result-${entry.profileName}") {
+                    AutoEqRow(entry) {
+                        dsp.installAutoEq(entry)
+                        nav.pop()
+                    }
+                }
+            }
+        }
+        state.error?.let { line(it, KoanTone.Bad) }
+    }
+}
+
+/** A maker's results, by model; where several people measured one, the one AutoEQ recommends comes first. */
+@Composable
+fun AutoEqMakerPage(maker: String, model: SettingsModel) {
+    val dsp = dspModel()
+    val nav = LocalNavigator.current
+    val settings by model.state.collectAsStateWithLifecycle()
+    val models by produceState(emptyList<AutoEqEntry>(), maker) { value = dsp.autoEqModels(maker) }
+    SettingsPage(maker, settings) {
+        models.forEach { entry ->
+            item("model-${entry.profileName}") {
+                AutoEqRow(entry) {
+                    dsp.installAutoEq(entry)
+                    // Back past the search too: the choice is made.
+                    nav.pop()
+                    nav.pop()
+                }
+            }
+        }
+    }
+}
+
+/** One AutoEQ result: the headphone, and who measured it. */
+@Composable
+private fun AutoEqRow(entry: AutoEqEntry, choose: () -> Unit) {
+    KoanButton(choose, inset, kind = KoanButtonKind.Card) {
+        Column(Modifier.fillMaxWidth().padding(vertical = KoanSpace.xs)) {
+            KoanText(entry.name)
+            KoanText(entry.measuredBy, role = KoanType.Fine, tone = KoanTone.Muted)
+        }
     }
 }
 
 /** What the output plays, in a sentence. */
 internal fun sentence(o: DspOverview): String {
     val device = o.device?.let { o.names[it] ?: it } ?: "This phone"
+    // A correction with a tuning baked in plays alone.
+    val baked = o.profiles.firstOrNull { it.name == o.active }?.role == DspRole.BAKED
+    val eqs = if (baked) emptyList() else o.chain.filter { it.on && it.name !in o.leftOutEqs }.map { it.name }
     val parts = listOfNotNull(
         o.active?.let { active -> o.aim?.let { "corrected by $active to $it" } ?: "corrected by $active" },
-        o.tuning?.takeIf { o.tuningPlays }?.let { "then through $it" },
+        eqs.takeIf { it.isNotEmpty() }?.let { "through " + listed(it) },
     )
-    return if (parts.isEmpty()) "$device is flat: the music plays untouched." else "Music to $device, ${parts.joinToString(", ")}."
+    return if (parts.isEmpty()) "$device is flat: the music plays untouched." else "Music to $device, ${parts.joinToString(", then ")}."
 }
 
-/** A profile: what it does, drawn, and what can be done to it. */
-@Composable
-fun DspProfilePage(name: String, model: SettingsModel) {
-    val dsp = dspModel()
-    val nav = LocalNavigator.current
-    val settings by model.state.collectAsStateWithLifecycle()
-    val state by dsp.state.collectAsStateWithLifecycle()
-    var renaming by remember { mutableStateOf(false) }
-    var copying by remember { mutableStateOf(false) }
-    var deleting by remember { mutableStateOf(false) }
-    // Read again whenever a change lands, here or synced.
-    val detail by produceState<DspProfileDetail?>(null, name, state.version) { value = dsp.detail(name) }
-    val response by produceState<DspResponse?>(null, name, state.version) { value = dsp.response(name) }
-    val summary = state.overview?.profiles?.firstOrNull { it.name == name }
-    val o = state.overview
-
-    SettingsPage(name, settings) {
-        response?.let { r -> item { ResponseGraph(r) } }
-        val d = detail ?: return@SettingsPage
-        d.problem?.let { line(it, KoanTone.Bad) }
-        header("Role")
-        item { ChoiceRow("This EQ is a", d.role, DspRole.entries.map { it.label to it }, { dsp.setRole(name, it) }) }
-        footer(d.role.example)
-
-        if (o != null) {
-            header("On this phone")
-            val playing = name == o.active || name == o.tuning
-            item {
-                ButtonRow {
-                    when {
-                        playing && d.role == DspRole.TUNING -> KoanButton("Stop tuning with it", { dsp.setTuning(null) }, kind = KoanButtonKind.Bordered)
-                        playing -> KoanButton("Stop correcting with it", { dsp.use(null) }, kind = KoanButtonKind.Bordered)
-                        d.role == DspRole.TUNING -> KoanButton("Tune with it", { dsp.setTuning(name) }, kind = KoanButtonKind.Bordered)
-                        else -> KoanButton("Correct with it", { dsp.use(name) }, kind = KoanButtonKind.Bordered)
-                    }
-                }
-            }
-        }
-
-        summary?.members?.takeIf { it.isNotEmpty() }?.let { members ->
-            header("Presets")
-            item { ChoiceRow("Playing", summary.playing, members.map { it to it }, { m -> m?.let { dsp.select(name, it) } }) }
-        }
-
-        header("What it holds")
-        val bands = d.bands.size
-        if (bands > 0) item { ValueRow("Filters", "$bands") }
-        d.impulses.forEach { i ->
-            item("impulse-${i.file}") { ValueRow(i.file, "${DspModel.khz(i.rate)} kHz · ${i.taps} taps") }
-        }
-        if (d.preampSet) item { ValueRow("Pre-amp", "%.1f dB".format(d.preampDb)) }
-        d.source.forEach { file -> line(file, KoanTone.Muted) }
-
-        if (!d.readOnly) {
-            header("Manage")
-            item {
-                ButtonRow {
-                    KoanButton("Rename", { renaming = true }, kind = KoanButtonKind.Bordered)
-                    KoanButton("Save as new", { copying = true }, kind = KoanButtonKind.Bordered)
-                    if (d.canRevert) KoanButton("Revert", { dsp.revert(name) }, kind = KoanButtonKind.Bordered)
-                }
-            }
-            item { ButtonRow { KoanButton("Delete", { deleting = true }, kind = KoanButtonKind.Bordered, destructive = true) } }
-        }
-        state.error?.let { line(it, KoanTone.Bad) }
-    }
-
-    if (renaming) {
-        NameDialog("Rename", name, "Rename", { renaming = false }) { new ->
-            dsp.rename(name, new) { ok ->
-                if (ok) {
-                    nav.pop()
-                    nav.push(DspProfileRoute(new.trim()))
-                }
-            }
-        }
-    }
-    if (copying) {
-        NameDialog("Save as new", "$name copy", "Save", { copying = false }) { new -> dsp.duplicate(name, new) }
-    }
-    if (deleting) {
-        AlertDialog(
-            onDismissRequest = { deleting = false },
-            title = { KoanText("Delete $name?", role = KoanType.TitleSmall) },
-            text = { KoanText("It is taken off every output that plays it.") },
-            confirmButton = {
-                KoanButton("Delete", {
-                    deleting = false
-                    dsp.delete(name)
-                    nav.pop()
-                }, destructive = true)
-            },
-            dismissButton = { KoanButton("Cancel", { deleting = false }) },
-        )
-    }
+/** "a", "a and b", "a, b and c". */
+internal fun listed(items: List<String>) = when (items.size) {
+    0 -> ""
+    1 -> items[0]
+    else -> items.dropLast(1).joinToString(", ") + " and " + items.last()
 }
 
 @Composable
-private fun NameDialog(title: String, initial: String, action: String, dismiss: () -> Unit, done: (String) -> Unit) {
+internal fun NameDialog(title: String, initial: String, action: String, dismiss: () -> Unit, done: (String) -> Unit) {
     var name by rememberSaveable { mutableStateOf(initial) }
     AlertDialog(
         onDismissRequest = dismiss,
@@ -259,29 +346,6 @@ private fun NameDialog(title: String, initial: String, action: String, dismiss: 
         },
         dismissButton = { KoanButton("Cancel", dismiss) },
     )
-}
-
-/**
- * What a profile does to the sound, 20 Hz to 20 kHz on a log scale, ±12 dB
- * or as far as it goes: the total in the accent over a zero line.
- */
-@Composable
-private fun ResponseGraph(r: DspResponse) {
-    val accent = KoanTheme.color(KoanTone.Accent)
-    val rule = KoanTheme.color(KoanTone.Rule)
-    val span = maxOf(12.0, r.total.maxOfOrNull { kotlin.math.abs(it) } ?: 0.0)
-    Canvas(inset.fillMaxWidth().height(160.dp).padding(vertical = KoanSpace.s)) {
-        val lo = log10(20.0)
-        val hi = log10(20_000.0)
-        fun x(f: Double) = ((log10(f.coerceIn(20.0, 20_000.0)) - lo) / (hi - lo) * size.width).toFloat()
-        fun y(db: Double) = (size.height / 2 - db / span * size.height / 2).toFloat()
-        drawLine(rule, Offset(0f, y(0.0)), Offset(size.width, y(0.0)), 1.dp.toPx())
-        val path = Path()
-        r.freqs.zip(r.total).forEachIndexed { i, (f, db) ->
-            if (i == 0) path.moveTo(x(f), y(db)) else path.lineTo(x(f), y(db))
-        }
-        drawPath(path, accent, style = Stroke(1.5.dp.toPx()))
-    }
 }
 
 /**

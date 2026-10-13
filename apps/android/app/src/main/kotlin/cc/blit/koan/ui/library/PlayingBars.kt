@@ -2,11 +2,9 @@ package cc.blit.koan.ui.library
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -15,6 +13,7 @@ import androidx.compose.ui.unit.dp
 import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.ffi.VizLevels
 import cc.blit.koan.ui.koanApp
+import cc.blit.koan.ui.theme.KoanTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -49,7 +48,7 @@ private object Levels {
  * the draw phase, so a frame redraws the bars and recomposes nothing.
  */
 @Composable
-fun PlayingBars(playing: Boolean, modifier: Modifier = Modifier, size: Dp = 14.dp, color: Color = MaterialTheme.colorScheme.primary) {
+fun PlayingBars(playing: Boolean, modifier: Modifier = Modifier, size: Dp = 14.dp, color: Color = KoanTheme.look.accent) {
     val levels = if (playing) Levels.of(koanApp().mirror).collectAsState() else null
     Canvas(modifier.size(size)) {
         val l = levels?.value
@@ -58,11 +57,10 @@ fun PlayingBars(playing: Boolean, modifier: Modifier = Modifier, size: Dp = 14.d
         val bar = (this.size.width - gap * 2) / 3
         heights.forEachIndexed { i, h ->
             val height = this.size.height * h
-            drawRoundRect(
+            drawRect(
                 color,
                 topLeft = Offset(i * (bar + gap), this.size.height - height),
                 size = Size(bar, height),
-                cornerRadius = CornerRadius(bar / 3),
             )
         }
     }

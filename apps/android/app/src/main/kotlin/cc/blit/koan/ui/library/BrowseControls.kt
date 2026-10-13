@@ -1,5 +1,7 @@
 package cc.blit.koan.ui.library
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,22 +12,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,31 +24,41 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.unit.dp
-import cc.blit.koan.R
 import cc.blit.koan.ffi.BrowseChoices
 import cc.blit.koan.ffi.BrowseFilter
+import cc.blit.koan.ui.playlists.MenuItem
+import cc.blit.koan.ui.theme.KoanBadge
+import cc.blit.koan.ui.theme.KoanButton
+import cc.blit.koan.ui.theme.KoanButtonKind
+import cc.blit.koan.ui.theme.KoanEdge
+import cc.blit.koan.ui.theme.KoanField
+import cc.blit.koan.ui.theme.KoanIcon
+import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanSectionHeader
+import cc.blit.koan.ui.theme.KoanSpace
+import cc.blit.koan.ui.theme.KoanText
+import cc.blit.koan.ui.theme.KoanTheme
+import cc.blit.koan.ui.theme.KoanToggle
+import cc.blit.koan.ui.theme.KoanTone
+import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.LocalKoanTokens
+import cc.blit.koan.ui.theme.koanChip
+import cc.blit.koan.ui.theme.koanRule
 
 /** The sort a listing is in, and the others it offers, behind one button. */
 @Composable
 fun <S> SortButton(selected: S, offered: List<S>, label: (S) -> String, onSort: (S) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
-        IconButton(onClick = { open = true }) { Icon(painterResource(R.drawable.ic_sort), "Sort") }
+        KoanButton("Sort", { open = true }, kind = KoanButtonKind.Icon, icon = KoanIcons.sort)
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             offered.forEach { sort ->
-                DropdownMenuItem(
-                    text = { Text(label(sort)) },
-                    trailingIcon = { if (sort == selected) Text("✓") },
-                    onClick = {
-                        open = false
-                        onSort(sort)
-                    },
-                )
+                MenuItem(label(sort), if (sort == selected) KoanIcons.check else null) {
+                    open = false
+                    onSort(sort)
+                }
             }
         }
     }
@@ -72,51 +72,42 @@ fun <S> SortButton(selected: S, offered: List<S>, label: (S) -> String, onSort: 
 @Composable
 fun FilterButton(filter: BrowseFilter, choices: BrowseChoices?, onFilter: (BrowseFilter) -> Unit, lossless: Boolean = true) {
     var open by rememberSaveable { mutableStateOf(false) }
-    IconButton(onClick = { open = true }) {
-        BadgedBox(badge = { if (filter.activeCount > 0) Badge { Text("${filter.activeCount}") } }) {
-            Icon(painterResource(R.drawable.ic_filter), "Filters")
-        }
+    KoanButton({ open = true }, kind = KoanButtonKind.Icon) {
+        KoanIcon(KoanIcons.filters, "Filters")
+        if (filter.activeCount > 0) KoanBadge("${filter.activeCount}", Modifier.padding(start = KoanSpace.xs), accent = true)
     }
     if (open) FilterSheet(filter, choices, onFilter, lossless) { open = false }
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FilterSheet(filter: BrowseFilter, choices: BrowseChoices?, onFilter: (BrowseFilter) -> Unit, lossless: Boolean, onDismiss: () -> Unit) {
     val gutter = LocalKoanTokens.current.gutter
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(onDismissRequest = onDismiss, shape = RectangleShape, containerColor = KoanTheme.colors.bg) {
         Column(
             Modifier
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = gutter)
                 .navigationBarsPadding(),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(KoanSpace.xs),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Filters", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                TextButton(onClick = { onFilter(NoFilter) }, enabled = filter.activeCount > 0) { Text("Clear") }
+                KoanText("Filters", Modifier.weight(1f), role = KoanType.TitleSmall, appText = true)
+                KoanButton("Clear", { onFilter(NoFilter) }, kind = KoanButtonKind.Text, enabled = filter.activeCount > 0)
             }
-            Toggle("Favourites", filter.favourites) { onFilter(filter.copy(favourites = it)) }
-            Toggle("Recently Played", filter.recent) { onFilter(filter.copy(recent = it)) }
-            Toggle("Downloaded", filter.downloaded) { onFilter(filter.copy(downloaded = it)) }
-            if (lossless) Toggle("Lossless", filter.lossless) { onFilter(filter.copy(lossless = it)) }
+            KoanToggle("Favourites", filter.favourites, { onFilter(filter.copy(favourites = it)) })
+            KoanToggle("Recently Played", filter.recent, { onFilter(filter.copy(recent = it)) })
+            KoanToggle("Downloaded", filter.downloaded, { onFilter(filter.copy(downloaded = it)) })
+            if (lossless) KoanToggle("Lossless", filter.lossless, { onFilter(filter.copy(lossless = it)) })
             Choices("Format", choices?.codecs.orEmpty(), filter.codec, { it.uppercase() }) { onFilter(filter.copy(codec = it)) }
             Choices("Genre", choices?.genres.orEmpty(), filter.genre, { it }) { onFilter(filter.copy(genre = it)) }
-            Text("Year", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            KoanSectionHeader("Year")
+            Row(horizontalArrangement = Arrangement.spacedBy(KoanSpace.m)) {
                 YearField("From", filter.yearFrom, Modifier.weight(1f)) { onFilter(filter.copy(yearFrom = it)) }
                 YearField("To", filter.yearTo, Modifier.weight(1f)) { onFilter(filter.copy(yearTo = it)) }
             }
             Box(Modifier.padding(bottom = gutter))
         }
-    }
-}
-
-@Composable
-private fun Toggle(label: String, on: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-        Switch(checked = on, onCheckedChange = onChange)
     }
 }
 
@@ -126,13 +117,24 @@ private fun Toggle(label: String, on: Boolean, onChange: (Boolean) -> Unit) {
 private fun Choices(title: String, values: List<String>, selected: String?, shown: (String) -> String, onChoose: (String?) -> Unit) {
     val all = if (selected != null && selected !in values) listOf(selected) + values else values
     if (all.isEmpty()) return
-    Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp))
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(selected = selected == null, onClick = { onChoose(null) }, label = { Text("Any") })
-        all.forEach { value ->
-            FilterChip(selected = value == selected, onClick = { onChoose(value) }, label = { Text(shown(value)) })
-        }
+    KoanSectionHeader(title)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(KoanSpace.s), verticalArrangement = Arrangement.spacedBy(KoanSpace.s)) {
+        Chip("Any", selected == null, appText = true) { onChoose(null) }
+        all.forEach { value -> Chip(shown(value), value == selected) { onChoose(value) } }
     }
+}
+
+@Composable
+private fun Chip(label: String, on: Boolean, appText: Boolean = false, onClick: () -> Unit) {
+    KoanText(
+        label,
+        Modifier
+            .koanChip()
+            .clickable(remember { MutableInteractionSource() }, indication = null, onClick = onClick),
+        role = KoanType.Control,
+        tone = if (on) KoanTone.Accent else KoanTone.Ink,
+        appText = appText,
+    )
 }
 
 /**
@@ -143,37 +145,33 @@ private fun Choices(title: String, values: List<String>, selected: String?, show
 @Composable
 private fun YearField(label: String, year: Int?, modifier: Modifier, onYear: (Int?) -> Unit) {
     var text by rememberSaveable { mutableStateOf(year?.toString().orEmpty()) }
-    OutlinedTextField(
-        value = text,
-        onValueChange = { typed ->
+    KoanField(
+        text,
+        { typed ->
             text = typed.filter(Char::isDigit).take(4)
             when {
                 text.isEmpty() -> onYear(null)
                 text.length == 4 -> onYear(text.toInt())
             }
         },
-        label = { Text(label) },
-        singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
-        modifier = modifier,
+        modifier,
+        placeholder = label,
     )
 }
 
-/** Narrows a listing by name as it is typed. */
+/** Narrows a listing by name as it is typed: a glyph, the field, and a clear button. */
 @Composable
 fun FilterField(text: String, placeholder: String, onText: (String) -> Unit, modifier: Modifier = Modifier) {
-    val gutter = LocalKoanTokens.current.gutter
-    OutlinedTextField(
-        value = text,
-        onValueChange = onText,
-        placeholder = { Text(placeholder) },
-        leadingIcon = { Icon(painterResource(R.drawable.koan_search), null) },
-        trailingIcon = {
-            if (text.isNotEmpty()) TextButton(onClick = { onText("") }) { Text("Clear") }
-        },
-        singleLine = true,
-        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-        shape = MaterialTheme.shapes.extraLarge,
-        modifier = modifier.fillMaxWidth().padding(horizontal = gutter, vertical = 4.dp),
-    )
+    Row(
+        modifier
+            .fillMaxWidth()
+            .koanRule(KoanEdge.Bottom)
+            .padding(horizontal = LocalKoanTokens.current.gutter, vertical = KoanSpace.xs),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(KoanSpace.s),
+    ) {
+        KoanIcon(KoanIcons.search, null, color = KoanTheme.color(KoanTone.Muted))
+        KoanField(text, onText, Modifier.weight(1f).padding(vertical = 2.dp), placeholder = placeholder, ground = false)
+        if (text.isNotEmpty()) KoanButton("Clear", { onText("") }, kind = KoanButtonKind.Icon, icon = KoanIcons.clearField)
+    }
 }

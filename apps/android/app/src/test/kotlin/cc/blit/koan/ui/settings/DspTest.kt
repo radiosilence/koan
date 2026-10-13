@@ -8,6 +8,7 @@ import cc.blit.koan.ffi.DspImportSummary
 import cc.blit.koan.ffi.DspOverview
 import cc.blit.koan.ffi.DspProfileSummary
 import cc.blit.koan.ffi.DspRole
+import cc.blit.koan.ffi.DspTuningEntry
 import cc.blit.koan.ffi.KoanException
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -124,7 +125,7 @@ class DspTest {
         assertEquals("Phone speaker is flat: the music plays untouched.", sentence(overview()))
         assertEquals(
             "Music to Phone speaker, corrected by HD 600 to Harman, then through Warm.",
-            sentence(overview(active = "HD 600", aim = "Harman", tuning = "Warm")),
+            sentence(overview(active = "HD 600", aim = "Harman", chain = listOf(DspTuningEntry("Warm", true)))),
         )
     }
 
@@ -178,9 +179,9 @@ class DspTest {
         assertTrue(!resolves(Intent(Intent.ACTION_SEND).setType("image/png")))
     }
 
-    private fun overview(active: String? = null, aim: String? = null, tuning: String? = null) = DspOverview(
-        enabled = true, device = "speaker", active = active, tuning = tuning, tuningPlays = tuning != null,
-        leftOut = null, leftOutEqs = emptyList(), outputs = emptyList(), tunings = emptyMap(), chain = emptyList(),
+    private fun overview(active: String? = null, aim: String? = null, chain: List<DspTuningEntry> = emptyList()) = DspOverview(
+        enabled = true, device = "speaker", active = active, tuning = null, tuningPlays = chain.isNotEmpty(),
+        leftOut = null, leftOutEqs = emptyList(), outputs = emptyList(), tunings = emptyMap(), chain = chain,
         joins = emptyList(), aim = aim, inEar = null, preset = null, presetEdited = false, profiles = emptyList(),
         names = mapOf("speaker" to "Phone speaker"), filtersOnly = false,
     )

@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -31,9 +30,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import cc.blit.koan.art.Art
-import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.theme.KoanButton
-import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanField
 import cc.blit.koan.ui.theme.KoanIcon
 import cc.blit.koan.ui.theme.KoanIcons
@@ -45,20 +42,6 @@ import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.LocalKoanTokens
 import cc.blit.koan.ui.theme.koanRow
 import coil3.compose.AsyncImage
-
-/** The bar over a page the library opens: back, the page's name, its actions. */
-@Composable
-fun PageBar(title: String, appText: Boolean = true, actions: @Composable RowScope.() -> Unit = {}) {
-    val nav = LocalNavigator.current
-    Row(
-        Modifier.fillMaxWidth().padding(end = KoanSpace.s),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        KoanButton("Back", { nav.pop() }, kind = KoanButtonKind.Icon, icon = KoanIcons.back)
-        KoanText(title, Modifier.weight(1f), role = KoanType.TitleSmall, appText = appText, maxLines = 1)
-        actions()
-    }
-}
 
 /**
  * A row of one of these pages: a sleeve or a mark, a title over a line of
@@ -104,12 +87,6 @@ fun CollectionRow(
         }
         trailing?.invoke()
     }
-}
-
-/** A row's cover, at the list's sleeve size. */
-@Composable
-fun Sleeve(art: Art, size: Dp = LocalKoanTokens.current.thumb) {
-    AsyncImage(art, null, Modifier.size(size), contentScale = ContentScale.Crop)
 }
 
 /** How far something has got: the whole length in `rule`, what is done in `ink`. */

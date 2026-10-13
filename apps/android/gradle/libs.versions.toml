@@ -16,6 +16,12 @@ jna = "5.19.1"
 rustls-platform-verifier = "0.1.1"
 junit = "4.13.2"
 robolectric = "4.17"
+<<<<<<< HEAD
+||||||| merged common ancestors
+>>>>>>>>> Temporary merge branch 2
+=======
+reorderable = "3.1.0"
+>>>>>>> origin/android-app
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "core-ktx" }
@@ -41,6 +47,7 @@ robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectr
 compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
 compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+reorderable = { module = "sh.calvin.reorderable:reorderable", version.ref = "reorderable" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

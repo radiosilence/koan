@@ -2,13 +2,18 @@ package cc.blit.koan.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import cc.blit.koan.ffi.AutoEqEntry
+import cc.blit.koan.ffi.AutoEqMaker
+import cc.blit.koan.ffi.AutoEqOffer
 import cc.blit.koan.ffi.DspImportPlan
 import cc.blit.koan.ffi.DspImportSummary
 import cc.blit.koan.ffi.DspOverview
+import cc.blit.koan.ffi.DspPoint
 import cc.blit.koan.ffi.DspProfileDetail
 import cc.blit.koan.ffi.DspProfileSummary
 import cc.blit.koan.ffi.DspResponse
 import cc.blit.koan.ffi.DspRole
+import cc.blit.koan.ffi.DspTuningEntry
 import cc.blit.koan.ffi.KoanEngineInterface
 import cc.blit.koan.ffi.KoanException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,6 +45,12 @@ data class DspState(
     val pendingImport: PendingImport? = null,
     val needsRate: NeedsRate? = null,
     val askRole: RoleAsk? = null,
+    /** AutoEQ's profile for the output in use, by its name, while it has none and the offer stands. */
+    val suggestion: AutoEqOffer? = null,
+    /** AutoEQ's results for the last search settled. */
+    val autoEqResults: List<AutoEqEntry> = emptyList(),
+    /** The makers in AutoEQ's index, to browse when nothing is typed. */
+    val autoEqMakers: List<AutoEqMaker> = emptyList(),
 )
 
 /**
@@ -51,7 +62,7 @@ data class DspState(
  *
  * The output is the phone's own route, keyed as the core keys it
  * (`DspOverview.device`). Nothing plays through a profile until one is
- * chosen for it: bit-perfect is the default.
+ * chosen for it.
  *
  * Scoped to the activity, so a share arriving on any page lands here.
  */
@@ -60,7 +71,66 @@ class DspModel(private val engine: suspend () -> KoanEngineInterface) : ViewMode
     val state: StateFlow<DspState> = _state.asStateFlow()
 
     fun reload() {
-        viewModelScope.launch { changed(bump = false) }
+        viewModelScope.launch {
+            changed(bump = false)
+            val suggestion = engine().autoeqSuggestion()
+            _state.update { it.copy(suggestion = suggestion) }
+        }
+    }
+
+    // -- AutoEQ ------------------------------------------------------------
+
+    /** Moves with every search, so one answered after a newer one began is dropped. */
+    private var search = 0
+
+    /** Search AutoEQ by headphone name. The page debounces; this runs once per settled query. */
+    suspend fun searchAutoEq(query: String) {
+        val mine = ++search
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) {
+            _state.update { it.copy(autoEqResults = emptyList()) }
+            return
+        }
+        try {
+            val found = engine().autoeqSearch(trimmed, 40u)
+            if (mine == search) _state.update { it.copy(autoEqResults = found) }
+        } catch (e: KoanException) {
+            if (mine == search) failed(e)
+        }
+    }
+
+    /** The makers to browse, read once and kept: the index changes daily at most. */
+    fun loadAutoEqMakers() {
+        if (_state.value.autoEqMakers.isNotEmpty()) return
+        viewModelScope.launch {
+            try {
+                val makers = engine().autoeqMakers()
+                _state.update { it.copy(autoEqMakers = makers) }
+            } catch (e: KoanException) {
+                failed(e)
+            }
+        }
+    }
+
+    /** `maker`'s results, by model. */
+    suspend fun autoEqModels(maker: String): List<AutoEqEntry> = try {
+        engine().autoeqModels(maker)
+    } catch (e: KoanException) {
+        failed(e)
+        emptyList()
+    }
+
+    /** Install `entry` as a profile and correct the output in use with it. */
+    fun installAutoEq(entry: AutoEqEntry) {
+        val device = _state.value.overview?.device
+        _state.update { it.copy(suggestion = null) }
+        act { autoeqInstall(entry.name, entry.measuredBy, device) }
+    }
+
+    /** Stop offering AutoEQ's profile for the output in use. */
+    fun dismissSuggestion() {
+        _state.update { it.copy(suggestion = null) }
+        act { autoeqDismiss() }
     }
 
     // -- Importing ---------------------------------------------------------
@@ -152,10 +222,33 @@ class DspModel(private val engine: suspend () -> KoanEngineInterface) : ViewMode
     /** Correct the output in use with `profile`, or with `null` play it untouched. */
     fun use(profile: String?) = act { dspAssign(profile) }
 
-    /** Play `tuning` on top of the output's correction, or none. */
-    fun setTuning(tuning: String?) {
+    /** Make the output's tuning these EQs, in the order they play. */
+    fun setTunings(entries: List<DspTuningEntry>) {
         val device = _state.value.overview?.device ?: return
-        act { dspSetTuning(device, tuning) }
+        act { dspSetTunings(device, entries) }
+    }
+
+    /** Set the output from the preset `name`, or flat with `null`. */
+    fun applyPreset(name: String?) {
+        val device = _state.value.overview?.device ?: return
+        act { dspApplyPreset(device, name) }
+    }
+
+    /** Save the output's correction and tuning as the preset `name`, over one of that name. Whether it took. */
+    fun savePreset(name: String, then: (Boolean) -> Unit = {}) {
+        val device = _state.value.overview?.device ?: return
+        viewModelScope.launch {
+            val ok = try {
+                engine().dspSavePreset(device, name.trim())
+                _state.update { it.copy(error = null) }
+                true
+            } catch (e: KoanException) {
+                failed(e)
+                false
+            }
+            changed()
+            then(ok)
+        }
     }
 
     /** Play `member` of the group `group`. */
@@ -169,6 +262,26 @@ class DspModel(private val engine: suspend () -> KoanEngineInterface) : ViewMode
     suspend fun response(name: String): DspResponse? = engine().dspResponse(name, 48_000u)
 
     fun setRole(name: String, role: DspRole) = act { dspSetRole(name, role) }
+
+    /** Set band `index` of `name`; it plays at once. */
+    fun setBand(name: String, index: Int, kind: String, freq: Double, gain: Double, q: Double) =
+        act { dspSetBand(name, index.toUInt(), kind, freq, gain, q) }
+
+    /** What `name` would draw with band `index` set so, nothing saved. */
+    suspend fun previewBand(name: String, index: Int, kind: String, freq: Double, gain: Double, q: Double) =
+        engine().dspPreviewBand(name, index.toUInt(), kind, freq, gain, q, 48_000u)
+
+    /** Set the points of graphic curve `index` of `name`. */
+    fun setCurve(name: String, index: Int, points: List<DspPoint>) = act { dspSetCurve(name, index.toUInt(), points) }
+
+    /** What `name` would draw with curve `index` set to `points`, nothing saved. */
+    suspend fun previewCurve(name: String, index: Int, points: List<DspPoint>) =
+        engine().dspPreviewCurve(name, index.toUInt(), points, 48_000u)
+
+    /** A flat band at 1 kHz, on both channels. */
+    fun addBand(name: String) = act { dspAddBand(name, null) }
+
+    fun removeFilter(name: String, index: Int) = act { dspRemoveFilter(name, index.toUInt()) }
 
     /** Whether it took: a name already in use is refused. */
     fun rename(old: String, new: String, then: (Boolean) -> Unit = {}) {
