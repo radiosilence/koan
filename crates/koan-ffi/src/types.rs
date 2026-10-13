@@ -2030,6 +2030,9 @@ pub struct Settings {
     pub remote_signed_in: bool,
     /// Tracks the server accounts for.
     pub remote_tracks: u64,
+    /// Unix seconds when the library was last known to match the server's.
+    /// Read only.
+    pub remote_last_sync: Option<i64>,
     pub download_workers: u32,
     /// Human-readable, e.g. "50GB". Empty means unlimited.
     pub cache_limit: String,
