@@ -1,0 +1,1 @@
+- **An Android app, in its first form.** It links the same engine as the Apple apps, signs in to a koan server, browses its records and plays them gaplessly, in the background with a media notification. Output goes through AAudio at the system's rate for now; bit-perfect output to USB DACs is to follow.

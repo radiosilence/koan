@@ -19,15 +19,19 @@ crates/
 │                  Depends on koan-core.
 │
 ├── koan-ffi/      staticlib + cdylib. uniffi bindings exposing koan-core
-│                  to Swift. Depends on koan-core only. Not published.
+│                  to Swift and Kotlin. Depends on koan-core only. Not published.
 │
 └── koan-cli/      Binary crate. The `koan` executable.
                    Thin entry point: clap CLI, logger, signal handling.
                    Depends on koan-core, koan-tui and koan-server.
 
 apps/
-└── macos/         SwiftUI app (SwiftPM, Swift 6, macOS 26+).
-                   Links koan-ffi. No Rust of its own.
+├── macos/         SwiftUI app (SwiftPM, Swift 6, macOS 26+), and the iOS and
+│                  tvOS apps built from the same sources.
+│                  Links koan-ffi. No Rust of its own.
+│
+└── android/       Compose app (Gradle, Android 10+). Loads koan-ffi as a
+                   shared library. No Rust of its own.
 ```
 
 Five crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server` and `koan-ffi` are three front doors onto it; `koan-cli` is the binary that ties the first two together. Dependency rule, enforced by Cargo: none of the three front doors can import each other -- all depend only on `koan-core`. If you want a different UI, write against `koan-core` -- the CLI owns zero business logic.
@@ -42,7 +46,7 @@ Five crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server`
 | Audio owned by | The UI's own process | A separate `koan` process |
 | State updates | State slices from `observe()` | GraphQL subscriptions |
 | Auth | None needed | JWT, cookies, CORS |
-| For | macOS and iOS apps | Web UI, jukebox remotes |
+| For | macOS, iOS, tvOS and Android apps | Web UI, jukebox remotes |
 
 **Nothing over the FFI blocks its caller.** koan-core is synchronous — rusqlite has no async form, and the audio path is dedicated threads on purpose — so the boundary is where the hop happens: an exported call that can block is `async` and runs on a worker thread, and the handful that stay synchronous read one atomic. Queue mutations and transport commands go down a single lane so they reach the player in the order the user gave them. See `koan-ffi/src/offload.rs`.
 
@@ -158,6 +162,20 @@ The device rate is not koan's to own — it is one property shared by every clie
 
 **Backpressure:** If the ring buffer is full, decode sleeps 500µs and retries. If the ring buffer is empty (underrun), the render callback zeros the output (silence beats glitches).
 
+## Android
+
+The Android app links the core as the Apple apps do: `libkoan_ffi.so`, loaded by uniffi's Kotlin bindings through JNA, with the same `KoanEngine` surface. Gradle builds the library with cargo-ndk and generates the bindings on every build; the core is always built in release, since a debug build decodes too slowly to keep the ring fed.
+
+**Output is cpal on AAudio**, the Linux backend with one difference: the only device is the system's default output. cpal lists Android devices through `AudioManager` over JNI, which needs an `ndk-context` an app embedding the core never initialises, so enumerating would panic. The default device follows the route, but an open AAudio stream does not move with it, so the app's `PlaybackService` calls `restart_output` when a device is added or removed. The render callback is the cpal one, which neither allocates nor locks; cpal reports AAudio underruns through the stream's error callback, which koan logs to logcat under the tag `koan`.
+
+**Bit-perfect output to a USB DAC is not there yet.** Android mixes everything to the device's rate unless the app asks otherwise. From Android 14, `AudioManager.setPreferredMixerAttributes` with `MIXER_BEHAVIOR_BIT_PERFECT`, for the DAC's `AudioDeviceInfo` at the track's rate, makes the mixer pass a matching stream through untouched. That call belongs to the app, and has to land before the engine opens its stream at the track's rate. The place for it is the backend's `set_device_sample_rate`, calling out to the app through a foreign trait as iOS's `AudioSessionHost` does.
+
+**Media3 sees the engine, it does not play it.** `KoanPlayer` is a `SimpleBasePlayer` that reports the engine's queue and playhead and turns session commands into engine calls; a `MediaSessionService` hosts it, which is what keeps the process in the foreground while music plays and draws the notification. Because the output is not Media3's, the service does what ExoPlayer would otherwise do: it holds audio focus while playing, pauses on a permanent loss and on `ACTION_AUDIO_BECOMING_NOISY`, and resumes after a transient loss.
+
+**State reaches Compose as flows.** One coroutine reads `StateStream.next()` off the main thread and sets a `StateFlow` per slice. uniffi resumes a suspended call on whatever thread the Rust future completes on; a `StateFlow` delivers to each collector on that collector's dispatcher, so Compose and the Media3 player read on the main thread without the engine knowing about it.
+
+Bonjour discovery of nearby devices stays Apple-only, as on Linux; Android's equivalent is NSD, and is not wired up. Devices listed by address still work.
+
 ## Gapless playback
 
 The decode thread doesn't stop between tracks. When Symphonia hits EOF:
@@ -258,7 +276,7 @@ A transfer nothing wants any more stops, mid-transfer included; it asks every 25
 |---|---|
 | `backend.rs` | `AudioBackend` + `AudioEngineHandle` traits — platform-agnostic audio output abstraction |
 | `coreaudio_backend.rs` | macOS: `CoreAudioBackend` impl wrapping `engine.rs` + `device.rs` (`#[cfg(target_os = "macos")]`) |
-| `cpal_backend.rs` | Linux: `CpalBackend` impl using cpal (ALSA/PipeWire/PulseAudio) (`#[cfg(target_os = "linux")]`) |
+| `cpal_backend.rs` | Linux and Android: `CpalBackend` impl using cpal — ALSA/PipeWire/PulseAudio, or AAudio (`#[cfg(any(target_os = "linux", target_os = "android"))]`) |
 | `engine.rs` | CoreAudio AUHAL setup, render callback (unsafe extern "C"), AudioEngine lifecycle (macOS only) |
 | `device.rs` | CoreAudio device enumeration, sample rate get/set/watch (macOS only) |
 | `buffer.rs` | `PlaybackTimeline` — track boundaries, `current_playback()` position query (binary search), decode thread entry points (`start_decode`, `decode_single`, `decode_queue_loop`) |

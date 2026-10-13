@@ -2,21 +2,23 @@
 
 ## What is koan
 
-Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus a native SwiftUI app on macOS. Five crates:
+Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native apps: SwiftUI on macOS, iOS and tvOS, Compose on Android. Five crates:
 
 - **koan-core** — library crate. Audio engine, player, database, indexer, format strings, file organization, remote (Subsonic/Navidrome) client, shared helpers. No UI code, no terminal deps.
 - **koan-tui** — library crate. Ratatui TUI, visualizers, media keys. Exports `run_tui()`. Depends on koan-core.
 - **koan-server** — library crate. GraphQL (async-graphql + axum), Subsonic REST API, MCP server. Depends on koan-core.
-- **koan-ffi** — staticlib/cdylib crate. uniffi bindings exposing koan-core to Swift. Depends on koan-core only. Not published to crates.io.
+- **koan-ffi** — staticlib/cdylib crate. uniffi bindings exposing koan-core to Swift and Kotlin. Depends on koan-core only. Not published to crates.io.
 - **koan-cli** — binary crate (`koan`). Thin entry point: clap CLI, logger, signal handling, command routing. Depends on koan-core + koan-tui + koan-server.
 
 Plus **tools/uniffi-bindgen** — the Swift bindings generator (`just ffi-bindings`). A crate of its own so that running it builds uniffi and nothing else; it reads the bindings from any built koan-ffi library, the iOS one included.
 
 Plus **apps/macos** — SwiftUI app (SwiftPM, Swift 6, macOS 26+). Links koan-ffi.
 
+Plus **apps/android** — Compose app (Gradle, Kotlin, Android 10+). Loads koan-ffi as a shared library through uniffi's Kotlin bindings; Gradle builds it with cargo-ndk.
+
 Dependency rules (compiler-enforced): koan-tui, koan-server and koan-ffi cannot import each other; all three depend only on koan-core. Native clients import koan-core through koan-ffi.
 
-**Local UI goes through FFI, not GraphQL.** The macOS app links the engine in-process — a daemon, a port and an auth surface buy nothing when the UI is sitting on top of the audio engine. GraphQL is the surface for clients that genuinely can't link the core: the web UI, jukebox remotes. The iOS app links the core like the Mac app does. When adding a capability to one, consider whether the other needs it too — both are thin shims over the same koan-core helpers.
+**Local UI goes through FFI, not GraphQL.** The macOS app links the engine in-process — a daemon, a port and an auth surface buy nothing when the UI is sitting on top of the audio engine. GraphQL is the surface for clients that genuinely can't link the core: the web UI, jukebox remotes. The iOS and Android apps link the core like the Mac app does. When adding a capability to one, consider whether the other needs it too — both are thin shims over the same koan-core helpers.
 
 ## Architecture overview
 
@@ -125,6 +127,8 @@ just tv-signin [ROUTES] # each other way onto the TV and its failures, from fres
 just tv-pair-qr     # the same, approved by an iPhone simulator that reads the QR code off the TV
 just tv-discover    # a signed-out TV simulator finds a server the Mac announces as a signed-in device would, and pairs
 just tv-testflight BUILD # archive, sign and upload the tvOS app to TestFlight (needs the ASC key)
+just android-ffi [ABIS] # koan-core for Android via cargo-ndk, and the Kotlin bindings
+just android-run [ABIS] # build, install and open the Android app on the device adb is connected to
 ```
 
 The macOS app needs `just macos-ffi` to have run at least once — it generates the Swift bindings that `swift build` compiles against. `macos-build` does this for you.
@@ -147,7 +151,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `audio/coreaudio_backend.rs` | macOS `CoreAudioBackend` impl (wraps engine.rs + device.rs) |
 | `audio/ios_backend.rs` | iOS and tvOS `IosAudioBackend` impl — the route is the only device; the session belongs to the app |
 | `audio/toolbox.rs` | The AudioToolbox names the engine uses, declared by hand for tvOS: `coreaudio-sys`'s build script knows only macOS and iOS |
-| `audio/cpal_backend.rs` | Linux `CpalBackend` impl (ALSA/PipeWire/PulseAudio via cpal) |
+| `audio/cpal_backend.rs` | Linux and Android `CpalBackend` impl (ALSA/PipeWire/PulseAudio, or AAudio, via cpal). On Android the one device is the system default, which follows the route |
 | `audio/engine.rs` | CoreAudio output setup, render callback. AUHAL on macOS, RemoteIO on iOS — two properties apart |
 | `audio/buffer.rs` | `PlaybackTimeline`, track boundaries, decode thread entry points (`start_decode`, `decode_queue_loop`, `decode_single`) |
 | `audio/device.rs` | CoreAudio device enumeration, sample rate get/set (macOS only) |
@@ -295,6 +299,18 @@ follows the top of the stack in front — see `TabShell`.
 | `Views/OrganizeSheet.swift` | Organize: pattern + destination pickers, preview table with conflicts flagged per row |
 | `Support/DspModel.swift` | EQ and convolution profiles, and the one import flow Settings, "Open in" and the iOS share extension (`apps/ios/Share`, via `KoanIOS/ShareInbox.swift`) all go through. `Views/DspProfilePage.swift` shows what a profile holds |
 | `Support/OrganizeModel.swift` | Organize sheet state — debounced preview, generation-guarded so a slow plan can't land on a newer one |
+
+### apps/android (`apps/android/app/src/main/kotlin/cc/blit/koan/`)
+
+Gradle's `koanFfi` task builds koan-ffi with cargo-ndk into `jniLibs` and generates the Kotlin bindings (package `cc.blit.koan.ffi`, from `crates/koan-ffi/uniffi.toml`) before every build; neither is checked in. The SDK comes from `ANDROID_HOME` or `local.properties`, the JDK and cargo-ndk from mise.
+
+| Module | What |
+|--------|------|
+| `KoanApp.kt` | The `Application`: points the core's config directory at `filesDir`, opens the one engine |
+| `engine/Engine.kt` | The `KoanEngine` and its state slices as `StateFlow`s, read by one loop off the main thread |
+| `playback/KoanPlayer.kt` | The engine as a Media3 `SimpleBasePlayer`: reports queue and playhead, forwards the session's commands. Nothing plays through Media3 |
+| `playback/PlaybackService.kt` | `MediaSessionService`: background playback and the notification, audio focus, pause on becoming noisy, output rebuilt on a route change |
+| `ui/` | Compose screens and their view model |
 
 ### koan-server (`crates/koan-server/src/`)
 
