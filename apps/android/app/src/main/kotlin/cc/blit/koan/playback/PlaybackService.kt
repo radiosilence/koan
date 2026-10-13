@@ -22,6 +22,7 @@ import androidx.media3.session.MediaSessionService
 import cc.blit.koan.KoanApp
 import cc.blit.koan.MainActivity
 import cc.blit.koan.R
+import cc.blit.koan.ffi.KoanEngine
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ffi.RepeatMode
 import cc.blit.koan.ui.nowplaying.nextRepeat
@@ -56,7 +57,7 @@ class PlaybackService : MediaSessionService() {
 
     private val noisy = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) engine.launch { runCatching { pause() } }
+            if (intent.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) focusCommand { pause() }
         }
     }
 
@@ -178,8 +179,18 @@ class PlaybackService : MediaSessionService() {
         if (audio.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
             focus = request
         } else {
-            engine.launch { runCatching { pause() } }
+            focusCommand { pause() }
         }
+    }
+
+    /**
+     * What the phone's own audio asks of the player: a call, a notification,
+     * headphones pulled out. None of it is about a device this phone
+     * controls, so none of it is sent there, nor made to play here instead.
+     */
+    private fun focusCommand(block: suspend KoanEngine.() -> Unit) {
+        if (engine.devices.value.target != null) return
+        engine.launch { runCatching { block() } }
     }
 
     private fun releaseFocus() {
@@ -192,15 +203,15 @@ class PlaybackService : MediaSessionService() {
         when (change) {
             AudioManager.AUDIOFOCUS_LOSS -> {
                 releaseFocus()
-                engine.launch { runCatching { pause() } }
+                focusCommand { pause() }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
                 resumeOnGain = engine.nowPlaying.value?.state == PlayState.PLAYING
-                engine.launch { runCatching { pause() } }
+                focusCommand { pause() }
             }
             AudioManager.AUDIOFOCUS_GAIN -> if (resumeOnGain) {
                 resumeOnGain = false
-                engine.launch { runCatching { resume() } }
+                focusCommand { resume() }
             }
         }
     }

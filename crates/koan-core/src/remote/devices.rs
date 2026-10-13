@@ -1449,18 +1449,49 @@ pub fn send_reaching(id: &str, cmd: LinkCommand) -> Result<(), Missed> {
 
 fn reach(id: &str, cmd: LinkCommand, then: Option<Then>) -> Result<(), Missed> {
     if let Err(why) = choosable(id) {
-        // Asleep and nothing that wakes it is as far away as gone.
-        let gone = list()
+        // Listed asleep with nothing to wake it, perhaps only because the
+        // list is from before the link came up: the ways to it are tried
+        // all the same, and only they say it is out of reach.
+        let asleep = list()
             .into_iter()
             .find(|d| d.id == id)
             .is_some_and(|d| d.asleep && !d.wakeable);
-        return Err(if gone {
-            Missed::OutOfReach(why)
-        } else {
-            Missed::Said(why)
-        });
+        if !asleep {
+            return Err(Missed::Said(why));
+        }
     }
     used(id);
+    match reach_by_any_way(id, cmd.clone(), then) {
+        Err(Missed::OutOfReach(why)) => {
+            // A connection the network dropped a moment ago comes back when
+            // dialled: one more look there before giving the device up.
+            crate::remote::nearby::dial_now();
+            if heard_nearby_within(id, NETWORK_WAIT) {
+                reach_by_any_way(id, cmd, None)
+            } else {
+                Err(Missed::OutOfReach(why))
+            }
+        }
+        reached => reached,
+    }
+}
+
+/// Block until `id` is connected on the local network, or `time` is up.
+fn heard_nearby_within(id: &str, time: Duration) -> bool {
+    let until = Instant::now() + time;
+    let signal = crate::signal::engine_changed();
+    let mut seen = signal.generation();
+    while !with(|s| s.nearby.iter().any(|n| n.hello.id == id)) {
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return false;
+        }
+        seen = signal.wait_until(seen, left);
+    }
+    true
+}
+
+fn reach_by_any_way(id: &str, cmd: LinkCommand, then: Option<Then>) -> Result<(), Missed> {
     let (nearby, own, shared) = with(|s| {
         let listed = s.account.iter().find(|(d, _)| d.id == id);
         (
@@ -1690,11 +1721,11 @@ fn ask_server(
     id: &str,
     cmd: &LinkCommand,
     ack: Option<u64>,
-) -> Result<Option<acks::AckOutcome>, String> {
+) -> Result<Option<acks::AckOutcome>, Missed> {
     let cfg = Config::load().unwrap_or_default();
     // No server and not on this network: nothing could carry it.
     let client = crate::helpers::subsonic_client(&cfg)
-        .ok_or_else(|| Missed::OutOfReach("Not signed in to a server.".into()))?;
+        .ok_or_else(|| Missed::OutOfReach(out_of_reach(id)))?;
     let json = serde_json::to_string(cmd).map_err(|e| e.to_string())?;
     client
         .koan_command(id, &json, ack)
@@ -1719,23 +1750,21 @@ fn relay_error(id: &str, e: crate::remote::client::SubsonicError) -> Missed {
 /// Stop controlling `id`, which a command could not reach, so that this
 /// device plays instead; the app is told why. Only for a command that asks
 /// for music: one that pauses or seeks has nothing here to act on.
-pub fn fall_back(id: &str) {
+pub fn fall_back(id: &str, playing: bool) {
     let name = list()
         .into_iter()
         .find(|d| d.id == id)
         .map_or_else(|| "That device".to_owned(), |d| d.name);
-    log::info!("devices: {id} is out of reach; playing here instead");
+    log::info!("devices: {id} is out of reach; acting here instead");
+    let here = this_word();
+    let error = if playing {
+        format!("{name} is out of reach, so this {here} is playing.")
+    } else {
+        format!("{name} is out of reach, so it is queued on this {here}.")
+    };
+    // Told while the device is still listed, so the notice has its name.
+    notify(id, acks::AckOutcome::Failed { error }, true);
     set_target(None);
-    notify(
-        id,
-        acks::AckOutcome::Failed {
-            error: format!(
-                "{name} is out of reach, so this {} is playing.",
-                this_word()
-            ),
-        },
-        true,
-    );
 }
 
 /// What this device is called in a sentence: its kind, as the person would
@@ -1845,7 +1874,8 @@ pub(crate) mod tests {
 
         assert_eq!(
             send("mac", LinkCommand::Pause).unwrap_err(),
-            "Not signed in to a server.",
+            "Studio Mac is out of reach.",
+            "no server, and not on this network"
         );
         with(|s| *s = Store::default());
     }
@@ -1876,7 +1906,7 @@ pub(crate) mod tests {
             "a miss alone keeps the target"
         );
 
-        fall_back("mac");
+        fall_back("mac", true);
         assert_eq!(target(), None, "this device plays now");
         let notice = notice().expect("the person is told");
         assert!(notice.unreached);

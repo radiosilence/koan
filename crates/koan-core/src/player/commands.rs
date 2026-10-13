@@ -241,10 +241,10 @@ impl PlayerCommand {
     /// This command for this device's own player, when it can stand in for a
     /// controlled device out of reach: one that asks for music, or adds to
     /// what is to come. Pausing or seeking a device that cannot be reached
-    /// has nothing here to act on.
+    /// has nothing here to act on, and playing one of its queue's entries
+    /// names an entry this device does not have.
     pub fn instead_here(&self) -> Option<Self> {
         Some(match self {
-            Self::Play(id) => Self::Play(*id),
             Self::Resume => Self::Resume,
             Self::NextTrack => Self::NextTrack,
             Self::PrevTrack => Self::PrevTrack,
@@ -303,6 +303,12 @@ mod tests {
                 .is_some()
         );
         assert!(PlayerCommand::Pause.instead_here().is_none());
+        assert!(
+            PlayerCommand::Play(QueueItemId::new())
+                .instead_here()
+                .is_none(),
+            "an entry in the other device's queue"
+        );
         assert!(PlayerCommand::Seek(1_000).instead_here().is_none());
         assert!(PlayerCommand::ClearPlaylist.instead_here().is_none());
     }

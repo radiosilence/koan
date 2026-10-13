@@ -6163,7 +6163,7 @@ impl KoanEngine {
             // Asked for music the controlled device cannot be reached to
             // play: this device plays it, and stops controlling that one.
             (Err(Missed::OutOfReach(_)), Some(here)) => {
-                devices::fall_back(to);
+                devices::fall_back(to, here.asks_to_play());
                 self.send_local(here)
             }
             (Err(missed), _) => Err(KoanError::Remote {
