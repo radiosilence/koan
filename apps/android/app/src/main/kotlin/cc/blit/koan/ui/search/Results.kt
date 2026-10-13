@@ -3,6 +3,15 @@ package cc.blit.koan.ui.search
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.role
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,7 +42,6 @@ import cc.blit.koan.ui.library.Sleeve
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.playlists.AddToPlaylistSheet
 import cc.blit.koan.ui.theme.KoanButton
-import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanEdge
 import cc.blit.koan.ui.theme.KoanIcon
 import cc.blit.koan.ui.theme.KoanIcons
@@ -207,16 +215,42 @@ internal fun SelectionBar(selection: Selection) {
             )
             KoanButton("Done", selection::end)
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            KoanButton("Play", { run(app.player::playTracks) }, kind = KoanButtonKind.Text, icon = KoanIcons.play, enabled = count > 0)
-            KoanButton("Next", { run(app.player::playNext) }, kind = KoanButtonKind.Text, icon = KoanIcons.playNext, enabled = count > 0)
-            KoanButton("Queue", { run(app.player::enqueue) }, kind = KoanButtonKind.Text, icon = KoanIcons.queue, enabled = count > 0)
-            KoanButton("Playlist", { adding = selection.picked.toList() }, kind = KoanButtonKind.Text, icon = KoanIcons.playlist, enabled = count > 0)
-            KoanButton("Favourite", { favourite(app, selection) }, kind = KoanButtonKind.Text, icon = KoanIcons.favourite, enabled = count > 0)
+        Row(Modifier.fillMaxWidth()) {
+            BarItem("Play", "play", KoanIcons.play, count > 0) { run(app.player::playTracks) }
+            BarItem("Play Next", "next", KoanIcons.playNext, count > 0) { run(app.player::playNext) }
+            BarItem("Add to Queue", "queue", KoanIcons.queue, count > 0) { run(app.player::enqueue) }
+            BarItem("Add to Playlist", "playlist", KoanIcons.playlist, count > 0) { adding = selection.picked.toList() }
+            BarItem("Favourite", "favourite", KoanIcons.favourite, count > 0) { favourite(app, selection) }
         }
     }
     adding?.let { items ->
         AddToPlaylistSheet({ items.flatMap { it.trackIds(this) } }, onAdded = selection::end) { adding = null }
+    }
+}
+
+/**
+ * One of the selection bar's verbs: its glyph over a short word, an equal
+ * share of the bar each, so five fit a phone. Read out by its full name.
+ */
+@Composable
+private fun RowScope.BarItem(title: String, short: String, icon: Int, enabled: Boolean, onClick: () -> Unit) {
+    Column(
+        Modifier
+            .weight(1f)
+            .heightIn(min = 48.dp)
+            .alpha(if (enabled) 1f else 0.4f)
+            .clickable(enabled = enabled, role = Role.Button, onClickLabel = title, onClick = onClick)
+            .clearAndSetSemantics {
+                contentDescription = title
+                role = Role.Button
+                if (!enabled) disabled()
+            }
+            .padding(vertical = KoanSpace.xs),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(KoanSpace.xs, Alignment.CenterVertically),
+    ) {
+        if (KoanTheme.icons || !KoanTheme.isOn) KoanIcon(icon, null)
+        KoanText(short, role = KoanType.Fine, appText = true, maxLines = 1)
     }
 }
 

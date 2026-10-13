@@ -9,6 +9,14 @@ just android-ffi arm64-v8a    # only the core and the bindings
 
 Gradle finds the SDK through `ANDROID_HOME` or `local.properties`; mise provides the JDK and cargo-ndk.
 
+## Sideloading
+
+`just android-apk` builds the release APK, minified and signed with this machine's debug key, and prints its path. Install it with `adb install -r <path>`, or copy it to the phone and open it there, allowing the file manager or browser to install apps when Android asks.
+
+CI builds the same APK on every pull request and push to main that touches the app or the core, and attaches it to the run as `koan-android-<commit>`; download the artifact from the run's page and unzip it. CI signs with the key in the `ANDROID_DEBUG_KEYSTORE` secret when it is set, so each build installs over the last. Android refuses an update signed with a different key, which is what a local build over a CI one is; uninstall first, which signs the app out and deletes its downloads.
+
+The APK carries arm64-v8a only: phones, and emulators on Apple silicon.
+
 ## Layout
 
 Under `app/src/main/kotlin/cc/blit/koan/`:

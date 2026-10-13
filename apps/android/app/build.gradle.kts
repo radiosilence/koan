@@ -27,6 +27,9 @@ android {
 
     buildTypes {
         release {
+            // The debug key, so a release APK can be sideloaded. A Play upload
+            // needs a key of its own, given to the build from outside the repo.
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
