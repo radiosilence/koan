@@ -14,6 +14,8 @@ jna = "5.18.1"
 navigation3 = "1.0.0"
 # Coil 3 draws the artwork; its fetcher asks the engine for the bytes.
 coil = "3.3.0"
+# Drag reordering of the queue.
+reorderable = "3.0.0"
 junit = "4.13.2"
 robolectric = "4.16"
 # The JVM half of rustls-platform-verifier. Not on Maven Central: the crate
@@ -35,6 +37,7 @@ androidx-media3-session = { module = "androidx.media3:media3-session", version.r
 androidx-media3-common = { module = "androidx.media3:media3-common", version.ref = "media3" }
 androidx-navigation3-runtime = { module = "androidx.navigation3:navigation3-runtime", version.ref = "navigation3" }
 androidx-navigation3-ui = { module = "androidx.navigation3:navigation3-ui", version.ref = "navigation3" }
+reorderable = { module = "sh.calvin.reorderable:reorderable", version.ref = "reorderable" }
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 rustls-platform-verifier = { module = "rustls:rustls-platform-verifier", version.ref = "rustlsPlatformVerifier" }
