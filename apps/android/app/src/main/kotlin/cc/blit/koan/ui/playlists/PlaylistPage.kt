@@ -287,8 +287,8 @@ private fun EntryRow(
     editing: Boolean,
     edits: PlaylistEdits,
     onAdd: (List<Long>) -> Unit,
-    handle: Modifier,
     modifier: Modifier,
+    handle: Modifier,
 ) {
     val app = koanApp()
     val nav = LocalNavigator.current
