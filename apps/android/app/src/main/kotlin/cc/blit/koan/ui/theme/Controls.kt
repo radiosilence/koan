@@ -359,7 +359,14 @@ fun KoanSlider(
         if (KoanTheme.isOn) {
             KoanTrack(value, onValueChange, Modifier.weight(1f), range, onValueChangeFinished, enabled)
         } else {
-            Slider(value, onValueChange, Modifier.weight(1f), enabled, range, onValueChangeFinished = onValueChangeFinished)
+            Slider(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier.weight(1f),
+                enabled = enabled,
+                valueRange = range,
+                onValueChangeFinished = onValueChangeFinished,
+            )
         }
         ProvideKoanType(KoanType.Fine, KoanTheme.color(KoanTone.Muted)) { high?.invoke() }
     }
