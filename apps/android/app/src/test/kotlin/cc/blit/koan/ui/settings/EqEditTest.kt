@@ -5,6 +5,8 @@ import cc.blit.koan.ffi.AutoEqOffer
 import cc.blit.koan.ffi.DspBand
 import cc.blit.koan.ffi.DspOverview
 import cc.blit.koan.ffi.DspPoint
+import cc.blit.koan.ffi.DspProfileSummary
+import cc.blit.koan.ffi.DspRole
 import cc.blit.koan.ffi.DspTuningEntry
 import kotlin.math.abs
 import kotlinx.coroutines.CompletableDeferred
@@ -80,6 +82,24 @@ class EqEditTest {
         assertTrue(wide[2] > 0 && wide[2] < wide[1])
         // Kept to a hundredth of a dB.
         assertTrue(wide.all { abs(it * 100 - Math.rint(it * 100)) < 1e-9 })
+    }
+
+    @Test fun theCorrectionPlayingIsAlwaysAChoice() {
+        fun profile(name: String, role: DspRole) = DspProfileSummary(
+            name = name, devices = emptyList(), bands = 10u, layers = 0u, rates = emptyList(), problem = null, members = emptyList(),
+            playing = null, role = role, measured = false, preset = false, edited = false, usedOn = emptyList(),
+            everywhere = false, heldBy = emptyList(), scopeLocked = null, graphics = 0u, points = 0u, madeFor = null, join = null,
+        )
+        val hd650 = "Sennheiser HD 650 (AutoEQ, oratory1990)"
+        fun choices(active: String?, vararg profiles: DspProfileSummary) =
+            correctionOptions(overview().copy(active = active, profiles = profiles.toList())).map { it.second }
+        // Said to be a tuning, yet correcting: still shown as the choice made.
+        assertEquals(listOf(null, hd650), choices(hd650, profile(hd650, DspRole.TUNING)))
+        // Not listed at all.
+        assertEquals(listOf(null, "Other", hd650), choices(hd650, profile("Other", DspRole.CORRECTION)))
+        // Listed as a correction: once.
+        assertEquals(listOf(null, hd650), choices(hd650, profile(hd650, DspRole.CORRECTION)))
+        assertEquals(listOf<String?>(null), choices(null, profile("Warm", DspRole.TUNING)))
     }
 
     @Test fun aChainIsReorderedSwitchedAndTrimmed() {

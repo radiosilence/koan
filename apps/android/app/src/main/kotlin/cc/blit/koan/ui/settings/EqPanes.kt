@@ -95,12 +95,7 @@ fun EqPane(model: SettingsModel) {
             o.device?.let { device -> item { ValueRow("Output", o.names[device] ?: device) } }
             item { OutputGraph(o, state.output) }
             item {
-                ChoiceRow(
-                    "Correction",
-                    o.active,
-                    listOf<Pair<String, String?>>("Off" to null) + o.profiles.filter { it.role != DspRole.TUNING }.map { it.name to it.name },
-                    dsp::use,
-                )
+                ChoiceRow("Correction", o.active, correctionOptions(o), dsp::use)
             }
             footer(sentence(o))
 
@@ -195,6 +190,17 @@ private fun LazyListScope.chain(o: DspOverview, dsp: DspModel, open: (String) ->
     o.leftOut?.let { line(it, KoanTone.Muted) }
     item { ButtonRow { KoanButton("Add a tuning", add, kind = KoanButtonKind.Bordered) } }
     footer("Taste on top of the correction, played in order. Switched off, an EQ stays where it is and plays nothing.")
+}
+
+/**
+ * What the Correction picker offers: Off, and the profiles that correct. The
+ * one correcting now is always among them, whatever its role says or
+ * whether it is listed at all, so the picker never shows a blank.
+ */
+internal fun correctionOptions(o: DspOverview): List<Pair<String, String?>> {
+    val corrections = o.profiles.filter { it.role != DspRole.TUNING }.map { it.name }
+    val active = o.active?.takeIf { it !in corrections }
+    return listOf<Pair<String, String?>>("Off" to null) + (corrections + listOfNotNull(active)).map { it to it }
 }
 
 /** What the output was set from: a preset's name, Flat, or Unsaved for EQ no preset holds. */
