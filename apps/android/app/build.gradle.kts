@@ -40,6 +40,12 @@ android {
         compose = true
     }
 
+    // Lint cannot read the ABIs through the `abis` property, so it reports
+    // x86_64 missing even in the default build, which carries it.
+    lint {
+        disable += "ChromeOsAbiSupport"
+    }
+
     // Robolectric renders composables in unit tests, which needs the app's resources.
     testOptions {
         unitTests.isIncludeAndroidResources = true
