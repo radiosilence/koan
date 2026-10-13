@@ -34,10 +34,12 @@ import cc.blit.koan.ui.playlists.playlistsEntries
 import cc.blit.koan.ui.queue.queueEntries
 import cc.blit.koan.ui.search.searchEntries
 import cc.blit.koan.ui.settings.AccountPrompts
+import cc.blit.koan.ui.settings.DspPrompts
 import cc.blit.koan.ui.settings.AskForNotificationsOnFirstPlay
 import cc.blit.koan.ui.settings.OpenedLinks
 import cc.blit.koan.ui.settings.SignInPage
 import cc.blit.koan.ui.settings.accountModel
+import cc.blit.koan.ui.settings.dspModel
 import cc.blit.koan.ui.settings.settingsEntries
 import cc.blit.koan.ui.theme.KoanIcons
 import cc.blit.koan.ui.theme.KoanTabBar
@@ -60,8 +62,10 @@ fun AppShell() {
         false -> SignInPage(account)
         true -> Signed()
     }
-    OpenedLinks(account)
+    val dsp = dspModel()
+    OpenedLinks(account, dsp)
     AccountPrompts(account)
+    DspPrompts(dsp)
     AskForNotificationsOnFirstPlay()
 }
 

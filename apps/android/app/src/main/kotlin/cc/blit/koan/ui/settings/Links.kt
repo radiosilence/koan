@@ -8,32 +8,44 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.core.util.Consumer
+import kotlinx.coroutines.launch
 
 /**
- * Invite and pairing links (`koan.rocks/join/`, `koan.rocks/pair/`,
- * `koan://join`) the app was opened with, or handed while open, given to the
- * account. The manifest's intent filters decide which links arrive.
+ * What the app was opened with or handed while open. Invite and pairing
+ * links (`koan.rocks/join/`, `koan.rocks/pair/`, `koan://join`) go to the
+ * account, as does an invite shared as text. EQ files shared or opened with
+ * the app, and other shared text, go to the import Settings' file picker
+ * runs. The manifest's intent filters decide what arrives.
  */
 @Composable
-fun OpenedLinks(account: AccountModel) {
+fun OpenedLinks(account: AccountModel, dsp: DspModel) {
     val activity = LocalActivity.current as ComponentActivity
-    // The link the activity was started with, once: not again when it is
+    val scope = rememberCoroutineScope()
+    val take: (Intent) -> Unit = { intent ->
+        val files = sharedFiles(intent)
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT).takeIf { intent.action == Intent.ACTION_SEND }
+        when {
+            files.isNotEmpty() -> scope.launch { dsp.importPaths(copyIn(activity, files)) }
+            text != null -> scope.launch { account.parseInvite(text)?.let(account::offer) ?: dsp.importText(text) }
+            intent.action == Intent.ACTION_VIEW -> intent.data?.let(account::open)
+        }
+    }
+    // The intent the activity was started with, once: not again when it is
     // recreated holding the same intent.
     var launchHandled by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(activity) {
         if (!launchHandled) {
             launchHandled = true
-            activity.intent?.viewed()?.let(account::open)
+            activity.intent?.let(take)
         }
     }
     DisposableEffect(activity) {
-        val listener = Consumer<Intent> { intent -> intent.viewed()?.let(account::open) }
+        val listener = Consumer<Intent> { take(it) }
         activity.addOnNewIntentListener(listener)
         onDispose { activity.removeOnNewIntentListener(listener) }
     }
 }
-
-private fun Intent.viewed() = data?.takeIf { action == Intent.ACTION_VIEW }

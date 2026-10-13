@@ -1,26 +1,35 @@
 package cc.blit.koan.ui.settings
 
+import android.content.ClipData
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import cc.blit.koan.ffi.Assistants
+import cc.blit.koan.ffi.KoanException
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
@@ -32,6 +41,8 @@ import cc.blit.koan.ui.theme.KoanSpace
 import cc.blit.koan.ui.theme.KoanText
 import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /** How music sounds: fades and ReplayGain. The route is the phone's to choose. */
 @Composable
@@ -95,7 +106,14 @@ fun IntegrationsPane(model: SettingsModel) {
     val busy = SettingsModel.SCROBBLING in state.running
     val connect = { if (token.isNotBlank() && !busy) model.connectScrobbling(token) { token = "" } }
 
+    // Read once per page: the address only changes with the server.
+    val assistants by produceState<Result<Assistants>?>(null, connection.offers(ASSISTANTS)) {
+        if (connection.offers(ASSISTANTS)) value = runCatching { app.mirror.engine().assistants() }
+    }
+
     SettingsPage(Pane.Integrations.title, state) {
+        assistants?.let { assistantsSection(it, uri::openUri) }
+        if (!offered) return@SettingsPage
         header("Scrobbling")
         when (val scrobbling = state.scrobbling) {
             Scrobbling.Checking -> line("Checking…", KoanTone.Muted)
@@ -148,6 +166,40 @@ fun IntegrationsPane(model: SettingsModel) {
                 "when you connect. The token is kept on the server.",
         )
     }
+}
+
+/**
+ * Where an AI assistant connects to the server: its MCP address, and the
+ * server's own page on adding it. Signing the assistant in happens there.
+ */
+private fun LazyListScope.assistantsSection(found: Result<Assistants>, open: (String) -> Unit) {
+    header("Assistants")
+    val a = found.getOrNull()
+    if (a != null) {
+        item { ValueRow("Address", a.mcpUrl) { CopyButton("Address", a.mcpUrl) } }
+        item { ButtonRow { KoanButton("How to connect an assistant", { open(a.connectUrl) }, kind = KoanButtonKind.Link) } }
+    }
+    footer(
+        (found.exceptionOrNull() as? KoanException)?.describe()
+            ?: ("Add the address to Claude or another assistant that speaks MCP as a custom connector. It signs in " +
+                "through your server, and can then search your library, make playlists and play music on your devices, as you."),
+    )
+}
+
+/** Copies `text`, and says so for a moment. */
+@Composable
+internal fun CopyButton(what: String, text: String) {
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
+    var copied by remember { mutableStateOf(false) }
+    KoanButton(if (copied) "Copied" else "Copy", {
+        scope.launch {
+            clipboard.setClipEntry(ClipEntry(ClipData.newPlainText(what, text)))
+            copied = true
+            delay(1_500)
+            copied = false
+        }
+    }, kind = KoanButtonKind.Bordered)
 }
 
 /**
