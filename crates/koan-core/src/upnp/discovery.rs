@@ -90,6 +90,11 @@ fn open_window_for(network: &std::sync::Arc<dyn Network>, length: Duration) {
         .name("koan-ssdp-window".into())
         .spawn(move || {
             thread::sleep(length);
+            log::info!(
+                "upnp: {} renderers known {}s after a search",
+                renderers().len(),
+                length.as_secs()
+            );
             let latest = WINDOW.lock();
             if *latest == window {
                 network.hold_multicast(false);
@@ -252,6 +257,10 @@ pub fn search() {
         }
     }
     rejoin(interface);
+    log::info!(
+        "upnp: searching from {interface}, {} renderers known",
+        renderers().len()
+    );
     check_busy();
     let msg = format!(
         "M-SEARCH * HTTP/1.1\r\nHOST: {GROUP}:{PORT}\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: {SEARCH_TARGET}\r\nUSER-AGENT: koan/{} UPnP/1.0\r\n\r\n",
