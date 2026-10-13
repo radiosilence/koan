@@ -13,11 +13,12 @@ import cc.blit.koan.engine.EngineMirror
  */
 class NetworkWatch(context: Context, private val mirror: EngineMirror) {
     private val lock = Any()
-    private var current: Network? = null
-    private var started = false
+    private val connectivity = context.getSystemService(ConnectivityManager::class.java)
+    /** The network the app started on: answered again at registration, which is no change. */
+    private var current: Network? = connectivity.activeNetwork
 
     init {
-        context.getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(
+        connectivity.registerDefaultNetworkCallback(
             object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) = moved(network)
                 override fun onLost(network: Network) {
@@ -28,12 +29,10 @@ class NetworkWatch(context: Context, private val mirror: EngineMirror) {
         )
     }
 
-    /** The first answer is the network the app started on, not a change. */
     private fun moved(network: Network?) {
         val changed = synchronized(lock) {
-            val changed = started && current != network
+            val changed = current != network
             current = network
-            started = true
             changed
         }
         if (changed) mirror.launch { networkChanged() }

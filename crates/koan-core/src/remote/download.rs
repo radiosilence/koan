@@ -106,11 +106,6 @@ impl DownloadError {
         }
     }
 
-    /// Whether this says the server is not answering at all, rather than that
-    /// this track cannot be had. Every other download would get the same
-    /// answer, so it is waited out instead of counted against the track.
-    ///
-    /// A 500, a 404, a body cut short or an error document are about the track.
     /// Why the server is out of reach, in words for the person and without
     /// the request's URL, which carries the credentials.
     fn unavailable_reason(&self) -> String {
@@ -121,6 +116,11 @@ impl DownloadError {
         }
     }
 
+    /// Whether this says the server is not answering at all, rather than that
+    /// this track cannot be had. Every other download would get the same
+    /// answer, so it is waited out instead of counted against the track.
+    ///
+    /// A 500, a 404, a body cut short or an error document are about the track.
     pub fn is_unavailable(&self) -> bool {
         use reqwest::StatusCode;
         match self {
