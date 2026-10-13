@@ -646,7 +646,8 @@ impl QueueItem {
             status,
             failure_reason: match &load {
                 LoadState::Failed(reason) => Some(reason.clone()),
-                _ => None,
+                LoadState::Ready => None,
+                _ => koan_core::helpers::server_unreachable(),
             },
             // The transport polls this and there is no connection here to ask.
             // Nothing it draws needs them; the queue's own rows carry the real

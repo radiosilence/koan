@@ -705,6 +705,13 @@ impl KoanEngine {
         koan_core::remote::devices::resume();
     }
 
+    /// The device's network changed: Android's default network came or went.
+    /// Connections to the server start afresh and an unanswered server is
+    /// tried now. See `koan_core::helpers::network_changed`.
+    pub fn network_changed(&self) {
+        koan_core::helpers::network_changed();
+    }
+
     /// The app went to the background, or came back. In the background
     /// nothing runs that nobody asked for — see `koan_core::quiet`.
     pub fn set_background(&self, background: bool) {

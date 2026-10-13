@@ -16,6 +16,7 @@ import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.engine.PlayerModel
 import cc.blit.koan.ffi.setConfigDir
 import cc.blit.koan.net.NearbyNsd
+import cc.blit.koan.net.NetworkWatch
 import cc.blit.koan.net.WifiMulticast
 import cc.blit.koan.playback.BitPerfectHost
 import java.io.File
@@ -43,6 +44,7 @@ class KoanApp : Application(), SingletonImageLoader.Factory {
         // opens its output through it.
         nearby = NearbyNsd(this, mirror)
         val multicast = WifiMulticast(this)
+        NetworkWatch(this, mirror)
         mirror.launch {
             setNearbyHost(nearby)
             setMulticastHost(multicast)

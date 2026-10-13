@@ -136,11 +136,12 @@ impl SubsonicAuth {
 /// Holds two HTTP clients with different timeout semantics: `http` bounds a
 /// whole JSON request, which is right for small API responses read in one go;
 /// `downloader` bounds only connect and per-read stalls, so a large track on a
-/// slow link is never cut off for taking too long overall.
+/// slow link is never cut off for taking too long overall. Both are replaced
+/// when the network changes (`renew`): their pooled connections and resolved
+/// addresses belong to the network they were made on.
 pub struct SubsonicClient {
     auth: SubsonicAuth,
-    http: reqwest::blocking::Client,
-    downloader: reqwest::blocking::Client,
+    connections: parking_lot::RwLock<Connections>,
     /// Whether the server is answering downloads, as the last of them found.
     outage: download::Outage,
     /// Whether the server offers `reportPlayback`, once it has said.
@@ -165,14 +166,14 @@ impl PlaybackReportState {
     }
 }
 
-impl SubsonicClient {
-    pub fn new(base_url: &str, username: &str, password: &str) -> Self {
-        Self::from_auth(SubsonicAuth::new(base_url, username, password))
-    }
+struct Connections {
+    http: reqwest::blocking::Client,
+    downloader: reqwest::blocking::Client,
+}
 
-    pub fn from_auth(auth: SubsonicAuth) -> Self {
+impl Connections {
+    fn new() -> Self {
         Self {
-            auth,
             http: download::api_client().unwrap_or_else(|e| {
                 log::warn!("falling back to default HTTP client: {}", e);
                 reqwest::blocking::Client::new()
@@ -181,6 +182,19 @@ impl SubsonicClient {
                 log::warn!("falling back to default download client: {}", e);
                 reqwest::blocking::Client::new()
             }),
+        }
+    }
+}
+
+impl SubsonicClient {
+    pub fn new(base_url: &str, username: &str, password: &str) -> Self {
+        Self::from_auth(SubsonicAuth::new(base_url, username, password))
+    }
+
+    pub fn from_auth(auth: SubsonicAuth) -> Self {
+        Self {
+            auth,
+            connections: parking_lot::RwLock::new(Connections::new()),
             outage: download::Outage::default(),
             playback_report: OnceLock::new(),
         }
@@ -189,6 +203,25 @@ impl SubsonicClient {
     /// Whether downloads from this server are waiting out an outage.
     pub fn outage(&self) -> &download::Outage {
         &self.outage
+    }
+
+    /// The network changed: start over with no pooled connections or cached
+    /// addresses, and try the server now if it was not answering. A request
+    /// already under way finishes on the connection it has.
+    pub fn renew(&self) {
+        let stale = std::mem::replace(&mut *self.connections.write(), Connections::new());
+        // Each blocking client stops its own runtime as it goes: not under
+        // the lock.
+        drop(stale);
+        self.outage.retry_now();
+    }
+
+    fn http(&self) -> reqwest::blocking::Client {
+        self.connections.read().http.clone()
+    }
+
+    fn downloader(&self) -> reqwest::blocking::Client {
+        self.connections.read().downloader.clone()
     }
 
     fn auth_params(&self) -> Result<HashMap<String, String>, SubsonicError> {
@@ -211,7 +244,7 @@ impl SubsonicClient {
             params.insert((*k).to_string(), (*v).to_string());
         }
 
-        let resp: SubsonicResponseWrapper = self.http.get(&url).query(&params).send()?.json()?;
+        let resp: SubsonicResponseWrapper = self.http().get(&url).query(&params).send()?.json()?;
         resp.subsonic_response.ok()
     }
 
@@ -228,7 +261,7 @@ impl SubsonicClient {
         for (k, v) in extra {
             params.insert((*k).to_string(), (*v).to_string());
         }
-        let resp: SubsonicResponseWrapper = self.http.post(&url).form(&params).send()?.json()?;
+        let resp: SubsonicResponseWrapper = self.http().post(&url).form(&params).send()?.json()?;
         resp.subsonic_response.ok()
     }
 
@@ -285,7 +318,7 @@ impl SubsonicClient {
             params.insert("size".into(), px.to_string());
         }
 
-        let resp = self.http.get(&url).query(&params).send()?;
+        let resp = self.http().get(&url).query(&params).send()?;
         Self::reject_error_body(&resp)?;
         Ok(resp.bytes()?.to_vec())
     }
@@ -432,7 +465,7 @@ impl SubsonicClient {
                     .auth_params()
                     .map_err(|e| download::DownloadError::Request(e.to_string()))?;
                 params.insert("id".into(), track_id.to_string());
-                Ok(self.downloader.get(&url).query(&params))
+                Ok(self.downloader().get(&url).query(&params))
             },
             on_progress,
         )?;
@@ -632,7 +665,7 @@ impl SubsonicClient {
             query.push(("id".into(), (*id).to_string()));
         }
 
-        let resp: SubsonicResponseWrapper = self.http.get(&url).query(&query).send()?.json()?;
+        let resp: SubsonicResponseWrapper = self.http().get(&url).query(&query).send()?.json()?;
 
         let inner = resp.subsonic_response;
         if inner.status != "ok" {
@@ -714,7 +747,7 @@ impl SubsonicClient {
             query.push(("songId".into(), id.clone()));
         }
 
-        let resp: SubsonicResponseWrapper = self.http.get(&url).query(&query).send()?.json()?;
+        let resp: SubsonicResponseWrapper = self.http().get(&url).query(&query).send()?.json()?;
         let inner = resp.subsonic_response;
         if inner.status != "ok" {
             if let Some(err) = inner.error {
@@ -1144,7 +1177,7 @@ impl SubsonicClient {
             let body = url::form_urlencoded::Serializer::new(String::new())
                 .extend_pairs(&form_pairs)
                 .finish();
-            self.http
+            self.http()
                 .post(&url)
                 .header(
                     reqwest::header::CONTENT_TYPE,
@@ -1152,7 +1185,7 @@ impl SubsonicClient {
                 )
                 .body(body)
         } else {
-            self.http.get(&url).query(&form_pairs)
+            self.http().get(&url).query(&form_pairs)
         };
         let resp: SubsonicResponseWrapper = request.send()?.json()?;
         resp.subsonic_response.ok().map(|_| ())
@@ -1795,6 +1828,39 @@ fn random_salt() -> Result<String, getrandom::Error> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::*;
+
+    #[test]
+    fn a_network_change_tries_a_server_that_was_not_answering_now() {
+        let client = SubsonicClient::new("http://192.168.1.10:4533", "koan", "pw");
+        client
+            .outage()
+            .down(Some(Duration::from_secs(60)), "Can't reach the server".into());
+
+        let started = Instant::now();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(100));
+                client.renew();
+            });
+            client.outage().hold();
+        });
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "renewed: the next try is due now, not in a minute"
+        );
+        assert_eq!(
+            client.outage().reason().as_deref(),
+            Some("Can't reach the server"),
+            "still down until a try answers"
+        );
+        assert_eq!(
+            client.auth.base_url, "http://192.168.1.10:4533",
+            "the address is the one signed in with, on every network"
+        );
+    }
 
     #[test]
     fn a_saved_play_queue_reads_by_index_or_by_id() {
@@ -1823,8 +1889,6 @@ mod tests {
         ));
         assert_eq!(gone.play_queue.unwrap().current_at(), None);
     }
-
-    use super::*;
 
     fn response(json: &str) -> SubsonicResponse {
         serde_json::from_str::<SubsonicResponseWrapper>(json)
