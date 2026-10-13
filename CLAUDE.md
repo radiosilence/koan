@@ -339,6 +339,9 @@ The Kotlin counterparts of the Swift modules above, with the Swift doc comments 
 | `theme/KoanSlider.kt` | The seek bar: flat, progress read in the draw block |
 | `ui/pages/PlayHistoryPage.kt`, `HistoryDays.kt` | `HistoryView.swift`: plays grouped by local day (`java.time`, so DST days group as the wall clock does), long-press to pick plays and forget them, the filter, clear with a confirmation |
 | `ui/pages/DownloadsPage.kt`, `TransferMeter.kt`, `TransferText.kt` | `DownloadsView.swift` and `TransferMeter.swift`: transfers keyed by track, the running tasks above them. `mirror.figures` is collected only by a transfer's bar (an `Animatable` read in the draw phase, so no recomposition) and its two text lines (strings, distinct until changed); nothing that holds the list collects it |
+| `ui/pages/AlbumPage.kt`, `ui/pages/ArtistPage.kt` | A record (disc headings, tap to play from a track, long-press to pick, scrolls to the track search matched) and an artist (photo, cut-down biography, grid of records, or the tracks on others' records). The pick is a mode, as `PlayableSelection` is |
+| `ui/pages/RecordHeader.kt` | The head of a record, artist or playlist: the cover as wide as the grid's first column, text from the second, actions wrapping below |
+| `ui/pages/RecordSupport.kt`, `RecordActions.kt`, `TrackRows.kt` | What the two pages decide with no Compose (disc lines, highlight index, availability, `Pick`, bio and artist states, grid geometry); their verbs (ids resolved off the main thread, then the Queue tab once the engine has the new queue); the track row, selection bar and messages |
 
 ### koan-server (`crates/koan-server/src/`)
 
