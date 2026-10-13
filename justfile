@@ -1658,3 +1658,9 @@ android-ffi abis="arm64-v8a,x86_64":
 android-run abis="arm64-v8a":
     cd apps/android && ./gradlew -q :app:installDebug -Pabis={{abis}}
     adb shell am start -n cc.blit.koan/.MainActivity
+
+# Build the release APK CI builds: minified, signed with this machine's debug
+# key, for sideloading (`adb install`, or open it on the phone).
+android-apk abis="arm64-v8a":
+    cd apps/android && ./gradlew -q :app:assembleRelease -Pabis={{abis}}
+    @echo "$PWD/apps/android/app/build/outputs/apk/release/app-release.apk"

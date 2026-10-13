@@ -129,6 +129,7 @@ just tv-discover    # a signed-out TV simulator finds a server the Mac announces
 just tv-testflight BUILD # archive, sign and upload the tvOS app to TestFlight (needs the ASC key)
 just android-ffi [ABIS] # koan-core for Android via cargo-ndk, and the Kotlin bindings
 just android-run [ABIS] # build, install and open the Android app on the device adb is connected to
+just android-apk [ABIS] # the sideloadable release APK CI builds, signed with the debug key
 ```
 
 The macOS app needs `just macos-ffi` to have run at least once — it generates the Swift bindings that `swift build` compiles against. `macos-build` does this for you.
