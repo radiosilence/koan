@@ -141,6 +141,14 @@ class AccountModelsTest {
         assertFalse(accountShown(offering(APP_PASSWORDS, offline = true)))
     }
 
+    @Test fun integrationsAreThereOnlyWhereTheServerOffersOne() {
+        // A koan server lists assistants only once it knows its public address.
+        assertFalse(integrationsShown(connection(listOf("koanLink", "koanApiKeys"), offline = false)))
+        assertTrue(integrationsShown(connection(listOf(ASSISTANTS), offline = false)))
+        assertTrue(integrationsShown(connection(emptyList(), offline = false).copy(scrobbling = true)))
+        assertFalse(integrationsShown(null))
+    }
+
     @Test fun aCredentialSaysWhenItWasUsed() {
         assertEquals("never used", used(Credential(1, "x", null, null)))
         assertTrue(used(Credential(1, "x", 1_700_000_000, 1_760_000_000)).matches(Regex("Made .+ · last used .+")))

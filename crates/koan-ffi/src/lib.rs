@@ -4514,20 +4514,9 @@ impl KoanEngine {
     /// still real, they just cannot be fetched until you sign in again.
     pub async fn sign_out_remote(self: Arc<Self>) -> Result<(), KoanError> {
         offload::offload(move || {
-            koan_core::remote::devices::forget_shares();
-            Config::persist(|cfg| {
-                cfg.remote.enabled = false;
-                cfg.remote.password = String::new();
-                cfg.remote.api_key = String::new();
-                cfg.remote.device_key = String::new();
-            })
-            .map_err(|e| KoanError::BadArgument {
+            koan_core::helpers::sign_out().map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
-            })?;
-            koan_core::remote::proof::forget();
-            koan_core::remote::link::relink();
-            koan_core::remote::nearby::readvertise();
-            Ok(())
+            })
         })
         .await
     }

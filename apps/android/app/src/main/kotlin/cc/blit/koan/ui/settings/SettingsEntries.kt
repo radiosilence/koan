@@ -129,7 +129,7 @@ private fun SettingsRoot() {
         when (it) {
             Pane.Account -> signedIn && accountShown(connection)
             Pane.People -> signedIn && admin
-            Pane.Integrations -> signedIn && (connection?.scrobbling == true || connection.offers(ASSISTANTS))
+            Pane.Integrations -> signedIn && integrationsShown(connection)
             else -> true
         }
     }
@@ -197,6 +197,13 @@ internal const val PASSWORDS = "koanPasswords"
 
 /** The extension a koan server lists when it serves assistants over MCP. */
 internal const val ASSISTANTS = "koanMcp"
+
+/**
+ * Whether the Integrations page has anything on it: scrobbling, or
+ * assistants, which a koan server lists only once it knows the public address
+ * it is reached at (`sharing.public_url`), since MCP's sign-in goes through it.
+ */
+internal fun integrationsShown(c: ConnectionInfo?) = c?.scrobbling == true || c.offers(ASSISTANTS)
 
 /** Whether the Account page has anything on it: a password to change, or keys to manage. */
 internal fun accountShown(c: ConnectionInfo?) =

@@ -632,7 +632,11 @@ fun RowScope.KoanTabItem(title: String, selected: Boolean, onClick: () -> Unit, 
     }
 }
 
-/** A form row whose label leads in `body`, `ink`, lowercase, and whose value trails in `control`, `muted`. */
+/**
+ * A form row whose label leads in `body`, `ink`, lowercase, and whose value
+ * trails in `control`, `muted`. A label too long for its column wraps rather
+ * than losing its end.
+ */
 @Composable
 fun KoanFormRow(label: String, modifier: Modifier = Modifier, value: @Composable () -> Unit) {
     Row(
@@ -640,7 +644,7 @@ fun KoanFormRow(label: String, modifier: Modifier = Modifier, value: @Composable
         horizontalArrangement = Arrangement.spacedBy(KoanSpace.m),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.width(120.dp)) { KoanText(label, appText = true, maxLines = 1) }
+        Box(Modifier.width(120.dp)) { KoanText(label, appText = true) }
         Box(Modifier.weight(1f)) {
             ProvideKoanType(KoanType.Control, KoanTheme.color(KoanTone.Muted), value)
         }
