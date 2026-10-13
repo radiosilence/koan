@@ -1,6 +1,7 @@
 package cc.blit.koan.engine
 
 import android.os.SystemClock
+import cc.blit.koan.ffi.Appearance
 import cc.blit.koan.ffi.ConnectionInfo
 import cc.blit.koan.ffi.DeviceInfo
 import cc.blit.koan.ffi.KoanEngine
@@ -113,11 +114,19 @@ class EngineMirror(deviceName: String) {
     private val _outputs = MutableStateFlow<OutputsInfo?>(null)
     val outputs: StateFlow<OutputsInfo?> = _outputs.asStateFlow()
 
+    private val _appearance = MutableStateFlow<Appearance?>(null)
+    /**
+     * How the app is drawn, from `[appearance]`. Not a slice: read as the
+     * engine opens, and again by `setAppearance` after each change.
+     */
+    val appearance: StateFlow<Appearance?> = _appearance.asStateFlow()
+
     /** The queue as last sent whole, and where each row sits in it. */
     private var base = QueueState(emptyList(), 0)
     private var baseIndex = emptyMap<String, Int>()
 
     init {
+        scope.launch { _appearance.value = opened.await().appearance() }
         scope.launch {
             val stream = opened.await().observe()
             while (true) {
@@ -133,6 +142,15 @@ class EngineMirror(deviceName: String) {
     /** Run `block` against the engine off the main thread, without waiting for it. */
     fun launch(block: suspend KoanEngine.() -> Unit) {
         scope.launch { runCatching { opened.await().block() } }
+    }
+
+    /** Change an appearance setting (`setTheme`, `setThemeIcons`, `setRecordColours`), and redraw in it. */
+    fun setAppearance(change: KoanEngine.() -> Unit) {
+        scope.launch {
+            val engine = opened.await()
+            engine.change()
+            _appearance.value = engine.appearance()
+        }
     }
 
     private fun apply(slice: StateSlice) {
