@@ -82,7 +82,9 @@ fun SearchPage() {
 
     // A pick belongs to the page it was made on.
     DisposableEffect(Unit) { onDispose { selection.end() } }
-    BackHandler(enabled = selection.active) { selection.end() }
+    // Composed only while picking, so it registers after the shell's own
+    // handler for a tab's root and is asked first.
+    if (selection.active) BackHandler { selection.end() }
 
     var replacing by remember { mutableStateOf<Album?>(null) }
     val shown = results?.takeIf { query.isNotBlank() }
