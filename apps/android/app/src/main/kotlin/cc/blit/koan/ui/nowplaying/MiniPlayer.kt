@@ -113,7 +113,7 @@ fun MiniPlayer() {
 @Composable
 private fun Progress(durationMs: Long) {
     val playhead by koanApp().mirror.playhead.collectAsStateWithLifecycle()
-    val position = rememberPosition(playhead)
+    val position = rememberPosition(playhead, durationMs)
     val fraction = if (durationMs > 0) (position.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
     Box(Modifier.fillMaxWidth().height(2.dp)) {
         Box(Modifier.fillMaxWidth(fraction).height(2.dp).background(KoanTheme.look.accent))

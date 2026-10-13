@@ -115,13 +115,13 @@ fun EntryProviderScope<NavKey>.nowPlayingEntries() {
  * waking once a second, on the second, to redraw the clock.
  */
 @Composable
-fun rememberPosition(playhead: Playhead): Long {
-    var position by remember { mutableLongStateOf(playhead.positionAt()) }
-    LaunchedEffect(playhead) {
-        position = playhead.positionAt()
-        while (playhead.playing) {
+fun rememberPosition(playhead: Playhead, durationMs: Long = 0): Long {
+    var position by remember { mutableLongStateOf(playhead.positionAt(durationMs = durationMs)) }
+    LaunchedEffect(playhead, durationMs) {
+        position = playhead.positionAt(durationMs = durationMs)
+        while (playhead.playing && (durationMs <= 0 || position < durationMs)) {
             delay(1000 - position % 1000)
-            position = playhead.positionAt()
+            position = playhead.positionAt(durationMs = durationMs)
         }
     }
     return position
@@ -278,8 +278,8 @@ private fun Modifier.link(enabled: Boolean, onClick: () -> Unit) =
 private fun SeekBar(now: NowPlaying?) {
     val app = koanApp()
     val playhead by app.mirror.playhead.collectAsStateWithLifecycle()
-    val position = rememberPosition(playhead)
     val duration = now.length()
+    val position = rememberPosition(playhead, duration)
     var dragging by remember { mutableStateOf<Float?>(null) }
     var landing by remember { mutableStateOf<Float?>(null) }
     LaunchedEffect(playhead) { landing = null }

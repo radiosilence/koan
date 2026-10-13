@@ -16,6 +16,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import cc.blit.koan.ui.theme.KoanMenuItem
 
 /** The collection pages' pieces that need no engine, drawn in the kōan theme (the default look). */
 @RunWith(RobolectricTestRunner::class)
@@ -78,7 +79,7 @@ class CollectionsUiTest {
     fun libraryTextKeepsItsCaseAndTheAppsWordsAreLowercased() {
         compose.setContent {
             CollectionRow("Evening Tones", null)
-            MenuItem("Remove from Playlist") {}
+            KoanMenuItem("Remove from Playlist") {}
         }
         compose.onNodeWithText("Evening Tones").assertExists()
         compose.onNodeWithText("remove from playlist").assertExists()

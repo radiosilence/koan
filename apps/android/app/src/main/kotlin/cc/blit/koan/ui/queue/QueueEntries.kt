@@ -24,12 +24,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Snackbar
-import androidx.compose.material3.SnackbarDefaults
-import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
@@ -93,6 +87,7 @@ import cc.blit.koan.ui.theme.LocalKoanTokens
 import cc.blit.koan.ui.theme.koanRule
 import cc.blit.koan.ui.theme.koanSurface
 import coil3.compose.AsyncImage
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import sh.calvin.reorderable.ReorderableCollectionItemScope
 import sh.calvin.reorderable.ReorderableItem
@@ -147,16 +142,12 @@ private fun QueuePage() {
     BackHandler(selecting) { stopSelecting() }
     LaunchedEffect(built) { selection = selection.filterTo(mutableSetOf()) { key -> built.any { it.key == key } } }
 
-    val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    // What the last removal took, offered back for a few seconds.
+    var removed by remember { mutableStateOf<Removal?>(null) }
     fun remove(ids: List<String>, what: String) {
         app.player.remove(ids)
-        scope.launch {
-            snackbar.currentSnackbarData?.dismiss()
-            if (snackbar.showSnackbar("Removed $what", "Undo", duration = SnackbarDuration.Short) == SnackbarResult.ActionPerformed) {
-                mirror.launch { undo(null) }
-            }
-        }
+        removed = Removal(what)
     }
 
     // Following: the playing row kept in view as it moves on, until the
@@ -272,14 +263,11 @@ private fun QueuePage() {
                 }
             }
         }
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter)) { data ->
-            Snackbar(
-                data,
-                shape = if (KoanTheme.isOn) RectangleShape else SnackbarDefaults.shape,
-                containerColor = if (KoanTheme.isOn) KoanTheme.colors.surface else SnackbarDefaults.color,
-                contentColor = if (KoanTheme.isOn) KoanTheme.colors.ink else SnackbarDefaults.contentColor,
-                actionColor = if (KoanTheme.isOn) KoanTheme.textColor(KoanTone.Accent) else SnackbarDefaults.actionColor,
-            )
+        removed?.let { removal ->
+            UndoBar(removal, Modifier.align(Alignment.BottomCenter), onTimeout = { if (removed === removal) removed = null }) {
+                removed = null
+                mirror.launch { undo(null) }
+            }
         }
     }
 }
@@ -547,3 +535,26 @@ private suspend fun EngineMirror.playable(row: QueueRow): Playable? = runCatchin
     }
 }.getOrNull()
 
+/** One removal, by identity, so a second one restarts the bar's time. */
+class Removal(val what: String)
+
+/**
+ * "Removed X · Undo" along the foot of the queue for a few seconds after a
+ * removal, taking it back through the engine's undo stack. Square on
+ * `surface` with a top rule in the theme, no shadow.
+ */
+@Composable
+fun UndoBar(removal: Removal, modifier: Modifier = Modifier, onTimeout: () -> Unit, onUndo: () -> Unit) {
+    LaunchedEffect(removal) {
+        delay(5_000)
+        onTimeout()
+    }
+    Row(
+        modifier.fillMaxWidth().koanSurface(KoanSurface.Surface).systemGround(true).koanRule(KoanEdge.Top)
+            .padding(start = KoanSpace.l, end = KoanSpace.xs),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        KoanText("Removed ${removal.what}", Modifier.weight(1f), role = KoanType.Meta, maxLines = 1)
+        KoanButton("Undo", onUndo)
+    }
+}
