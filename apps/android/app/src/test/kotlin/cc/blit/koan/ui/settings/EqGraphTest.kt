@@ -1,9 +1,13 @@
 package cc.blit.koan.ui.settings
 
 import android.app.Application
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -12,15 +16,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
+import cc.blit.koan.ffi.DspLayerCurve
 import cc.blit.koan.ffi.DspOverview
 import cc.blit.koan.ffi.DspResponse
+import cc.blit.koan.ffi.DspRole
 import cc.blit.koan.ffi.DspTuningEntry
-import cc.blit.koan.ffi.DspLayerCurve
 import kotlin.math.abs
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -66,6 +71,37 @@ class EqGraphTest {
         gain = 6.0
         frame()
         assertEquals("new data builds again", 2, builds)
+    }
+
+    @Test
+    fun scrollingPastTheGraphBuildsNothing() {
+        var builds = 0
+        val list = LazyListState()
+        compose.setContent {
+            val curves = remember { listOf(Curve(freqs.map { 3.0 }, Color.Red)) }
+            LazyColumn(Modifier.width(320.dp).height(400.dp), state = list) {
+                items(2) { Text("Row $it", Modifier.height(80.dp)) }
+                item { ResponseGraph(freqs, curves, style, Modifier.width(320.dp).height(200.dp), onBuild = { builds++ }) }
+                items(20) { Text("Row ${it + 2}", Modifier.height(80.dp)) }
+            }
+        }
+        val frame = { compose.onRoot().captureToImage() }
+        frame()
+        assertEquals(1, builds)
+        for (by in listOf(40f, 40f, 40f, -40f)) {
+            compose.runOnIdle { kotlinx.coroutines.runBlocking { list.scrollBy(by) } }
+            frame()
+        }
+        assertEquals("each frame copies the graph it drew", 1, builds)
+    }
+
+    @Test
+    fun aTuningCorrectingIsOfferedAsATuning() {
+        assertEquals(PhoneAction.MoveToTuning, phoneAction("Warm", DspRole.TUNING, active = "Warm", inChain = false))
+        assertEquals(PhoneAction.StopCorrecting, phoneAction("HD 650", DspRole.CORRECTION, active = "HD 650", inChain = false))
+        assertEquals(PhoneAction.TakeOutOfTuning, phoneAction("Warm", DspRole.TUNING, active = null, inChain = true))
+        assertEquals(PhoneAction.AddToTuning, phoneAction("Warm", DspRole.TUNING, active = null, inChain = false))
+        assertEquals(PhoneAction.Correct, phoneAction("HD 650", DspRole.BAKED, active = null, inChain = false))
     }
 
     @Test

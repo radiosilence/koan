@@ -88,15 +88,21 @@ fun DspProfilePage(name: String, model: SettingsModel) {
 
         if (o != null) {
             header("On this phone")
-            val inChain = o.chain.any { it.name == name }
             item {
+                val action = phoneAction(name, d.role, o.active, o.chain.any { it.name == name })
                 ButtonRow {
-                    when {
-                        name == o.active -> KoanButton("Stop correcting with it", { dsp.use(null) }, kind = KoanButtonKind.Bordered)
-                        inChain -> KoanButton("Take out of the tuning", { dsp.setTunings(o.chain.filter { it.name != name }) }, kind = KoanButtonKind.Bordered)
-                        d.role == DspRole.TUNING -> KoanButton("Add to the tuning", { dsp.setTunings(o.chain.added(name)) }, kind = KoanButtonKind.Bordered)
-                        else -> KoanButton("Correct with it", { dsp.use(name) }, kind = KoanButtonKind.Bordered)
-                    }
+                    KoanButton(action.label, {
+                        when (action) {
+                            PhoneAction.StopCorrecting -> dsp.use(null)
+                            PhoneAction.MoveToTuning -> {
+                                dsp.use(null)
+                                dsp.setTunings(o.chain.added(name))
+                            }
+                            PhoneAction.TakeOutOfTuning -> dsp.setTunings(o.chain.filter { it.name != name })
+                            PhoneAction.AddToTuning -> dsp.setTunings(o.chain.added(name))
+                            PhoneAction.Correct -> dsp.use(name)
+                        }
+                    }, kind = KoanButtonKind.Bordered)
                 }
             }
         }
@@ -165,6 +171,25 @@ fun DspProfilePage(name: String, model: SettingsModel) {
             dismissButton = { KoanButton("Cancel", { deleting = false }) },
         )
     }
+}
+
+/** What a profile's page offers to do with it on this phone. */
+enum class PhoneAction(val label: String) {
+    StopCorrecting("Stop correcting with it"),
+    /** Correcting with it, though it is now said to be a tuning: play it as one. */
+    MoveToTuning("Play it as a tuning instead"),
+    TakeOutOfTuning("Take out of the tuning"),
+    AddToTuning("Add to the tuning"),
+    Correct("Correct with it"),
+}
+
+/** The one thing `name`'s page offers on this phone, by what it is and what the output plays. */
+fun phoneAction(name: String, role: DspRole, active: String?, inChain: Boolean) = when {
+    name == active && role == DspRole.TUNING -> PhoneAction.MoveToTuning
+    name == active -> PhoneAction.StopCorrecting
+    inChain -> PhoneAction.TakeOutOfTuning
+    role == DspRole.TUNING -> PhoneAction.AddToTuning
+    else -> PhoneAction.Correct
 }
 
 /**

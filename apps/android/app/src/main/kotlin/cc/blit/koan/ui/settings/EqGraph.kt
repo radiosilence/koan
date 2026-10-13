@@ -10,9 +10,12 @@ import androidx.compose.ui.draw.CacheDrawScope
 import androidx.compose.ui.draw.DrawResult
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
@@ -86,9 +89,9 @@ data class GraphStyle(val grid: Color, val zero: Color, val label: Color, val te
 /**
  * A response drawn on a log-frequency axis from 20 Hz to 20 kHz, with
  * frequency and dB gridlines, their labels, and a heavier 0 dB line. The
- * curves are resampled to `POINTS` points and their paths built once for
- * each size and set of curves, not on each frame or recomposition;
- * `onBuild` is told each time they are.
+ * curves are resampled to `POINTS` points, and the whole is drawn into a
+ * bitmap once for each size and set of curves, not on each frame or
+ * recomposition; `onBuild` is told each time it is.
  */
 @Composable
 fun ResponseGraph(
@@ -162,13 +165,18 @@ private fun CacheDrawScope.graph(
         Stroke(c.width.dp.toPx(), pathEffect = if (c.dashed) PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx())) else null)
     }
     val hair = 1.dp.toPx()
-    return onDrawBehind {
+    val label = 2.dp.toPx()
+    if (size.width < 1 || size.height < 1) return onDrawBehind {}
+    // Drawn once into a bitmap, which each frame then only copies: a page
+    // scrolling past the graph strokes no paths and lays out no text.
+    val image = ImageBitmap(size.width.toInt(), size.height.toInt())
+    CanvasDrawScope().draw(this, layoutDirection, Canvas(image), size) {
         hzTicks.forEachIndexed { i, hz ->
             val x = plot.x(hz)
             drawLine(style.grid, Offset(x, plot.top), Offset(x, plot.foot), hair)
             val text = hzText[i]
             val at = (x - text.size.width / 2f).coerceIn(plot.left, plot.right - text.size.width)
-            drawText(text, style.label, Offset(at, plot.foot + 2.dp.toPx()))
+            drawText(text, style.label, Offset(at, plot.foot + label))
         }
         dbTicks(half).forEachIndexed { i, db ->
             val y = plot.y(db)
@@ -179,6 +187,7 @@ private fun CacheDrawScope.graph(
         }
         paths.forEachIndexed { i, path -> drawPath(path, curves[i].color, style = strokes[i]) }
     }
+    return onDrawBehind { drawImage(image) }
 }
 
 /** The graph's frame in the theme: gridlines in `rule`, labels in `fine`, `muted`, 0 dB in `muted`. */
