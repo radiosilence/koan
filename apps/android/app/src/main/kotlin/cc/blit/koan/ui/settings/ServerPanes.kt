@@ -321,5 +321,8 @@ private fun describe(p: SyncProgress): String {
 }
 
 /** "5 minutes ago", from Unix seconds. */
-private fun ago(seconds: Long) =
-    DateUtils.getRelativeTimeSpanString(seconds * 1000, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString()
+private fun ago(seconds: Long): String {
+    val now = System.currentTimeMillis()
+    if (now - seconds * 1000 < DateUtils.MINUTE_IN_MILLIS) return "Just now"
+    return DateUtils.getRelativeTimeSpanString(seconds * 1000, now, DateUtils.MINUTE_IN_MILLIS).toString()
+}
