@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.graphics.ColorUtils
+import androidx.core.graphics.get
 import androidx.core.graphics.scale
 import cc.blit.koan.art.Art
 import coil3.SingletonImageLoader
@@ -54,7 +55,7 @@ private fun accent(sleeve: Bitmap, dark: Boolean): Color? {
     var weight = 0.0
     val hsl = FloatArray(3)
     for (px in 0 until 24) for (py in 0 until 24) {
-        ColorUtils.colorToHSL(small.getPixel(px, py), hsl)
+        ColorUtils.colorToHSL(small[px, py], hsl)
         val w = (hsl[1] * (1 - kotlin.math.abs(2 * hsl[2] - 1))).toDouble()
         val angle = Math.toRadians(hsl[0].toDouble())
         x += kotlin.math.cos(angle) * w
