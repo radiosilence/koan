@@ -51,7 +51,7 @@ data class Controlled(val name: String, val reach: Reach) {
     val headline
         get() = when (reach) {
             Reach.Connected -> "Playing on $name"
-            is Reach.Waking -> if (reach.stage == RECONNECTING) "Reconnecting to $name…" else "Waking $name…"
+            is Reach.Waking -> "Waking $name…"
             Reach.Asleep -> "Playing on $name, asleep"
             is Reach.OutOfReach -> "$name is out of reach"
         }
@@ -62,11 +62,10 @@ data class Controlled(val name: String, val reach: Reach) {
             Reach.Connected -> null
             is Reach.Waking -> null
             Reach.Asleep -> "A command wakes it."
-            is Reach.OutOfReach -> listOfNotNull(reach.why, "Commands can't reach it.").joinToString(" ")
+            // The engine's reason, unless it only repeats the headline.
+            is Reach.OutOfReach -> listOfNotNull(reach.why?.takeUnless { it.equals("Out of reach", ignoreCase = true) }, "Commands can't reach it.").joinToString(" ")
         }
 }
-
-internal const val RECONNECTING = "reconnecting"
 
 /**
  * The device being controlled, if one is: `null` while this phone plays. A
@@ -80,8 +79,8 @@ fun controlled(devices: Devices): Controlled? {
         d.problem != null -> Reach.OutOfReach(d.problem)
         d.waking != null -> Reach.Waking(d.waking!!)
         d.awake -> Reach.Connected
-        // Dropped for less than a heartbeat: the link is coming back.
-        !d.asleep -> Reach.Waking(RECONNECTING)
+        // A phone asleep that a push wakes; anything else not awake, a
+        // departed Mac among them, is out of reach.
         d.wakeable -> Reach.Asleep
         else -> Reach.OutOfReach(d.wakeFailed)
     }

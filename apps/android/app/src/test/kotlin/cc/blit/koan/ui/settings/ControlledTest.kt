@@ -56,7 +56,11 @@ class ControlledTest {
         val asleep = controlled(Devices(listOf(mac(awake = false, asleep = true, wakeable = true)), "mac"))!!
         assertEquals(Reach.Asleep, asleep.reach)
         assertEquals("A command wakes it.", asleep.detail)
-        assertEquals("Reconnecting to Studio Mac…", controlled(Devices(listOf(mac(awake = false, asleep = false)), "mac"))!!.headline)
+        // Departed but not yet asleep, and nothing can wake it: out of reach, not "reconnecting".
+        assertEquals("Studio Mac is out of reach", controlled(Devices(listOf(mac(awake = false, asleep = false)), "mac"))!!.headline)
+        val plain = controlled(Devices(listOf(mac(awake = false, problem = "Out of reach")), "mac"))!!
+        assertEquals(Reach.OutOfReach("Out of reach"), plain.reach)
+        assertEquals("Commands can't reach it.", plain.detail)
     }
 
     @Test fun oneTapGoesBackToThisPhone() {
