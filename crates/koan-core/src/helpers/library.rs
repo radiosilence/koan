@@ -365,6 +365,64 @@ mod rebuild_tests {
         );
     }
 
+    #[test]
+    fn a_queue_finds_its_tracks_again_by_uid_after_a_forget_and_a_sync() {
+        let db = test_db();
+        let night = remote_track(&db, "Night Wire", "Glass Fire");
+        let morning = remote_track(&db, "Morning", "Station");
+        let uid =
+            |id| queries::uids_for(&db.conn, queries::UidKind::Track, [id]).unwrap()[&id].clone();
+        let (night_uid, morning_uid) = (uid(night), uid(morning));
+        let rows = queries::tracks_by_ids(&db.conn, &[night, morning]).unwrap();
+        let state = crate::player::state::SharedPlayerState::new();
+        state.add_items(playlist_items_for_tracks(&db, &rows));
+        let queued = |title: &str| {
+            state
+                .queue_uids()
+                .into_iter()
+                .find(|(id, _, _)| state.get_item(*id).is_some_and(|i| i.title == title))
+                .unwrap()
+        };
+        let night_item = queued("Night Wire").0;
+        assert_eq!(queued("Night Wire").2, night_uid, "queued under its uid");
+        assert!(
+            queue_relinks(&db, &state).is_empty(),
+            "nothing to do while rows last"
+        );
+
+        forget_remote(&db).unwrap();
+        let links = queue_relinks(&db, &state);
+        assert_eq!(links.len(), 2);
+        assert!(
+            links.iter().all(|(_, row)| row.is_none()),
+            "unlinked, not left naming nothing"
+        );
+        state.relink(&links);
+        assert_eq!(state.get_item(night_item).unwrap().db_id, None);
+
+        // Synced again in another order: the morning track takes the row id
+        // the night one had, and each adopts the server's uid it had before.
+        let morning_again = remote_track(&db, "Morning", "Station");
+        let night_again = remote_track(&db, "Night Wire", "Glass Fire");
+        assert_eq!(morning_again, night, "SQLite reused the row id");
+        for (id, uid) in [(morning_again, &morning_uid), (night_again, &night_uid)] {
+            db.conn
+                .execute(
+                    "UPDATE tracks SET uid = ?1 WHERE id = ?2",
+                    rusqlite::params![uid, id],
+                )
+                .unwrap();
+        }
+        state.relink(&queue_relinks(&db, &state));
+        let item = state.get_item(night_item).unwrap();
+        assert_eq!(
+            item.db_id,
+            Some(night_again),
+            "the night track, not its old row id"
+        );
+        assert!(queue_relinks(&db, &state).is_empty(), "settled");
+    }
+
     fn remote_track(db: &Database, title: &str, album: &str) -> i64 {
         let mut meta = sample_meta(title, "Technical Itch", album);
         meta.source = "remote".into();

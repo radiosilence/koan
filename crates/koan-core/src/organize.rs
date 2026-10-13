@@ -2769,6 +2769,7 @@ mod tests {
             .unwrap();
         queries::add_favourite(&db.conn, crate::db::queries::LOCAL_USER, track).unwrap();
         let item = PersistedQueueItem {
+            uid: None,
             path: source_str.clone(),
             title: "Airbag".into(),
             artist: "Radiohead".into(),

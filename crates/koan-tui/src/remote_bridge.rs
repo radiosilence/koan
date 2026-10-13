@@ -118,6 +118,7 @@ fn poll_loop(client: GraphQLClient, state: Arc<SharedPlayerState>) {
                             .map(QueueItemId)
                             .unwrap_or_else(|_| QueueItemId::new());
                         PlaylistItem {
+                            uid: None,
                             playlist_entry_id: None,
                             id: qid,
                             db_id: None,
@@ -231,6 +232,7 @@ fn command_loop(client: GraphQLClient, rx: Receiver<PlayerCommand>) {
             // catches new variants. The output device is the server's.
             PlayerCommand::SetOutputDevice(_)
             | PlayerCommand::RestartOutput
+            | PlayerCommand::Relink(_)
             | PlayerCommand::ClearOutputDevice
             | PlayerCommand::ReloadDsp
             | PlayerCommand::RouteChanged

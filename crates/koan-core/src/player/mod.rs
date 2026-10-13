@@ -2463,6 +2463,7 @@ impl Player {
                 }
             }
             PlayerCommand::SetOutputDevice(name) => self.set_output_device(name),
+            PlayerCommand::Relink(links) => self.shared_state.relink(&links),
             PlayerCommand::RestartOutput => {
                 log::info!("restarting audio output");
                 self.restart_on_current_track();
@@ -2916,6 +2917,7 @@ mod tests {
 
     fn make_item(title: &str) -> PlaylistItem {
         PlaylistItem {
+            uid: None,
             playlist_entry_id: None,
             id: QueueItemId::new(),
             db_id: None,
@@ -3195,6 +3197,39 @@ mod tests {
             assert!(!player.session_release_due(playing, true, later));
         }
         assert_eq!(player.session_release_at, None);
+    }
+
+    #[test]
+    fn an_item_unlinked_from_its_row_plays_from_its_own_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.wav");
+        crate::test_utils::generate_wav(&path, 8_000, 1, 1.0, 16);
+
+        let mut player = Player::new();
+        player.backend = Box::new(StuckBackend {
+            rate: 8_000.0,
+            asked: Default::default(),
+            starts: Default::default(),
+        });
+        let item = PlaylistItem {
+            path,
+            db_id: Some(7),
+            uid: Some("0190a000-0000-7000-8000-000000000001".into()),
+            ..make_item("t")
+        };
+        let id = item.id;
+        player.process_command(PlayerCommand::AddToPlaylist(vec![item]));
+        // Its track forgotten: the row it named is gone.
+        player.process_command(PlayerCommand::Relink(vec![(id, None)]));
+        assert_eq!(player.shared_state.item_db_id(id), None);
+
+        player.process_command(PlayerCommand::Play(id));
+        assert_eq!(player.shared_state.playback_state(), PlaybackState::Playing);
+        assert_eq!(
+            player.shared_state.get_item(id).unwrap().title,
+            "t",
+            "drawn from what it was queued with"
+        );
     }
 
     #[test]

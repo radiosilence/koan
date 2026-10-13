@@ -5105,6 +5105,17 @@ impl KoanEngine {
                     let queue_version = engine.state.playlist_version();
                     let queue_moved = queue_version != last_queue;
                     let library_moved = library != last_library;
+                    // Rows lost or regained: the queue finds its tracks
+                    // again by uid, a reused row id naming another track.
+                    if library_moved
+                        && target.is_none()
+                        && let Ok(db) = engine.db()
+                    {
+                        let links = koan_core::helpers::queue_relinks(&db, &engine.state);
+                        if !links.is_empty() {
+                            let _ = engine.send_local(PlayerCommand::Relink(links));
+                        }
+                    }
                     last_queue = queue_version;
                     last_library = library;
                     if (queue_moved || library_moved) && target.is_none() {
@@ -5858,6 +5869,7 @@ impl KoanEngine {
             | PlayerCommand::ReloadDsp
             | PlayerCommand::RouteChanged
             | PlayerCommand::RestartOutput
+            | PlayerCommand::Relink(_)
             | PlayerCommand::UseRenderer(_)
             | PlayerCommand::ResumeRenderer(_)
             | PlayerCommand::ResumeRendererMissed
@@ -6440,10 +6452,18 @@ impl KoanEngine {
 /// are correct; anything that has since gone keeps the copy stored in the
 /// snapshot, so a restore never silently drops tracks.
 fn restore_items(db: &Database, saved: &[PersistedQueueItem]) -> Vec<PlaylistItem> {
-    // By id first: a saved path names the container it was written in, which
-    // iOS moves on every update, and a track still downloading when the session
-    // was saved has no row with its path at all. The title guards against an
-    // id SQLite has since reused for another track.
+    // By uid first, which no other track can have taken. Then, for a session
+    // saved before uids were, by id: a saved path names the container it was
+    // written in, which iOS moves on every update, and a track still
+    // downloading when the session was saved has no row with its path at all.
+    // The title guards against an id SQLite has since reused for another
+    // track.
+    let by_uid = queries::uids::ids_for_uids(
+        &db.conn,
+        queries::uids::UidKind::Track,
+        saved.iter().filter_map(|i| i.uid.as_deref()),
+    )
+    .unwrap_or_default();
     let saved_ids: Vec<i64> = saved.iter().filter_map(|i| i.db_id).collect();
     let titles: HashMap<i64, String> = queries::tracks_by_ids(&db.conn, &saved_ids)
         .unwrap_or_default()
@@ -6453,6 +6473,11 @@ fn restore_items(db: &Database, saved: &[PersistedQueueItem]) -> Vec<PlaylistIte
     let ids: Vec<Option<i64>> = saved
         .iter()
         .map(|item| {
+            if let Some(uid) = &item.uid {
+                // A uid no row holds is a track forgotten since: restored
+                // from what was saved, unlinked, until a sync brings it back.
+                return by_uid.get(uid).copied();
+            }
             item.db_id
                 .filter(|id| titles.get(id) == Some(&item.title))
                 .or_else(|| {
@@ -6475,7 +6500,10 @@ fn restore_items(db: &Database, saved: &[PersistedQueueItem]) -> Vec<PlaylistIte
                 played: saved_item.played.unwrap_or(false),
                 ..item
             },
-            None => saved_item.to_playlist_item(),
+            None => PlaylistItem {
+                db_id: None,
+                ..saved_item.to_playlist_item()
+            },
         })
         .collect()
 }
@@ -7112,6 +7140,7 @@ mod restore_tests {
             disc: None,
             duration_ms: None,
             db_id,
+            uid: None,
             played: None,
         }
     }
@@ -7148,6 +7177,36 @@ mod restore_tests {
             PathBuf::from(stale),
             "unknown id: kept as saved"
         );
+        assert_eq!(items[2].db_id, None, "and linked to no track");
+    }
+
+    #[test]
+    fn a_saved_queue_restores_by_uid_whatever_its_row_id_now_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let (a, b) = (dir.path().join("a.flac"), dir.path().join("b.flac"));
+        std::fs::write(&a, b"audio").unwrap();
+        std::fs::write(&b, b"audio").unwrap();
+        // Two tracks of one title: the title guard cannot tell them apart.
+        let first = track(&db, "Intro", &a);
+        let second = track(&db, "Intro", &b);
+        let uid_of =
+            |id| queries::uids_for(&db.conn, queries::UidKind::Track, [id]).unwrap()[&id].clone();
+
+        let mut item = saved("Intro", "/gone/b.flac", Some(first));
+        item.uid = Some(uid_of(second));
+        let mut forgotten = saved("Intro", "/gone/c.flac", Some(first));
+        forgotten.uid = Some("01900000-0000-7000-8000-000000000000".into());
+        let items = restore_items(&db, &[item, forgotten]);
+
+        assert_eq!(
+            items[0].db_id,
+            Some(second),
+            "the uid's track, not the row id's"
+        );
+        assert_eq!(items[0].path, b);
+        assert_eq!(items[1].db_id, None, "a uid no row holds is unlinked");
+        assert_eq!(items[1].title, "Intro", "and plays from what was saved");
     }
 }
 

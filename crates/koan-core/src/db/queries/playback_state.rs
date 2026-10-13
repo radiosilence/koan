@@ -22,6 +22,11 @@ pub struct PersistedQueueItem {
     /// Absent in pre-v0.18.2 persisted state; serde default covers migration.
     #[serde(default)]
     pub db_id: Option<i64>,
+    /// The track's uid: what the item is found by on restore, its row id
+    /// having perhaps been given to another track since. Absent in a session
+    /// saved before it was recorded.
+    #[serde(default)]
+    pub uid: Option<String>,
     /// Whether the item has played this pass. Always written; absent in a
     /// session saved before it was recorded, where `load_playback_state`
     /// works it out from the cursor as the queue then showed it.
@@ -209,6 +214,7 @@ impl PersistedQueueItem {
             disc: item.disc,
             duration_ms: item.duration_ms,
             db_id: item.db_id,
+            uid: item.uid.clone(),
             played: Some(item.played),
         }
     }
@@ -230,6 +236,7 @@ impl PersistedQueueItem {
         crate::player::state::PlaylistItem {
             id: crate::player::state::QueueItemId::new(),
             db_id: self.db_id,
+            uid: self.uid.clone(),
             // A restored session is a queue, not a view onto a playlist: the
             // playlist it may once have come from has been free to change since.
             playlist_entry_id: None,
@@ -265,6 +272,7 @@ mod tests {
         let conn = test_conn();
         let items = vec![
             PersistedQueueItem {
+                uid: None,
                 path: "/music/track1.flac".into(),
                 title: "Track 1".into(),
                 artist: "Artist".into(),
@@ -279,6 +287,7 @@ mod tests {
                 played: None,
             },
             PersistedQueueItem {
+                uid: None,
                 path: "/music/track2.flac".into(),
                 title: "Track 2".into(),
                 artist: "Artist".into(),
@@ -317,6 +326,7 @@ mod tests {
     fn a_paused_session_does_not_resume() {
         let conn = test_conn();
         let items = vec![PersistedQueueItem {
+            uid: None,
             path: "/music/track.flac".into(),
             title: "Track".into(),
             artist: "Artist".into(),
@@ -338,6 +348,7 @@ mod tests {
     fn a_position_save_leaves_the_queue_row_alone() {
         let conn = test_conn();
         let items = vec![PersistedQueueItem {
+            uid: None,
             path: "/music/track.flac".into(),
             title: "Track".into(),
             artist: "Artist".into(),
@@ -398,6 +409,7 @@ mod tests {
     fn test_clear_playback_state() {
         let conn = test_conn();
         let items = vec![PersistedQueueItem {
+            uid: None,
             path: "/music/track.flac".into(),
             title: "Track".into(),
             artist: "Artist".into(),
@@ -440,6 +452,7 @@ mod tests {
     #[test]
     fn test_to_playlist_item_marks_missing_path_as_pending() {
         let item = PersistedQueueItem {
+            uid: None,
             path: "/nonexistent/path/track.flac".into(),
             title: "Ghost".into(),
             artist: "Nobody".into(),
@@ -471,6 +484,7 @@ mod tests {
         let manifest = env!("CARGO_MANIFEST_DIR");
         let existing_path = format!("{}/Cargo.toml", manifest);
         let item = PersistedQueueItem {
+            uid: None,
             path: existing_path,
             title: "Real".into(),
             artist: "Someone".into(),
@@ -496,6 +510,7 @@ mod tests {
     fn test_save_overwrites_previous_state() {
         let conn = test_conn();
         let items1 = vec![PersistedQueueItem {
+            uid: None,
             path: "/music/old.flac".into(),
             title: "Old".into(),
             artist: "A".into(),
@@ -512,6 +527,7 @@ mod tests {
         save_playback_state(&conn, &items1, PlayMode::default(), None, 100, false).unwrap();
 
         let items2 = vec![PersistedQueueItem {
+            uid: None,
             path: "/music/new.flac".into(),
             title: "New".into(),
             artist: "X".into(),
@@ -546,6 +562,7 @@ mod tests {
         let conn = test_conn();
         let items = vec![
             PersistedQueueItem {
+                uid: None,
                 path: "/music/local.flac".into(),
                 title: "Local".into(),
                 artist: "A".into(),
@@ -560,6 +577,7 @@ mod tests {
                 played: None,
             },
             PersistedQueueItem {
+                uid: None,
                 path: "/cache/remote.flac".into(),
                 title: "Remote".into(),
                 artist: "C".into(),
@@ -616,6 +634,7 @@ mod tests {
 
         let items = vec![
             PersistedQueueItem {
+                uid: None,
                 path: "/music/alpha.flac".into(),
                 title: "Alpha".into(),
                 artist: "Band".into(),
@@ -630,6 +649,7 @@ mod tests {
                 played: None,
             },
             PersistedQueueItem {
+                uid: None,
                 path: "/music/beta.flac".into(),
                 title: "Beta".into(),
                 artist: "Band".into(),
@@ -644,6 +664,7 @@ mod tests {
                 played: None,
             },
             PersistedQueueItem {
+                uid: None,
                 path: "/music/gamma.flac".into(),
                 title: "Gamma".into(),
                 artist: "Other".into(),

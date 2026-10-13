@@ -936,6 +936,7 @@ mod tests {
     ) {
         crate::config::isolate_config_for_tests();
         let item = |db_id: i64| PlaylistItem {
+            uid: None,
             playlist_entry_id: None,
             id: qid(),
             db_id: Some(db_id),
