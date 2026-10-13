@@ -13,7 +13,7 @@ coil = "3.6.3"
 # uniffi's Kotlin bindings call the core through JNA.
 jna = "5.19.1"
 junit = "4.13.2"
-robolectric = "4.16"
+robolectric = "4.17"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "core-ktx" }
