@@ -331,6 +331,11 @@ The Kotlin counterparts of the Swift modules above, with the Swift doc comments 
 | `ui/pages/AlbumsPage.kt`, `ArtistsPage.kt`, `TracksPage.kt` | `AlbumBrowser`, `ArtistBrowser` and `TrackBrowser`: a `LazyVerticalGrid` of `Sleeve`s and two `LazyColumn`s over `library.visible*`, keyed by id with a `contentType`; sorts offered by `BrowseSupport` and set through the model |
 | `ui/pages/BrowseChrome.kt`, `BrowseLayout.kt` | What the three share: header with the name filter and browse filters, `ChoiceStrip`, scroll position kept per tab and section (`ScrollStore`) and sent to the top on `navigator.rewinds`; and the pure parts (tile columns, labels, year typing) the JVM tests run |
 | `theme/KoanField.kt` | `KoanFilterField`: the minimal themed text field the filters use, until the theme's general field replaces it |
+| `ui/pages/QueuePage.kt`, `ui/queue/QueueRows.kt`, `QueueLayout.kt` | `QueueView.swift`/`QueueRow.swift`: the album-grouped `LazyColumn` keyed by queue item id with a `contentType` per row shape, drag reorder (`sh.calvin.reorderable`), selection, following what is playing. `QueueLayout` is the pure part (runs into headings, a drop into one `moveInQueue`, selection) and is tested on the JVM; a row reads its own entry through `derivedStateOf` so a track change does not regroup the list |
+| `state/PlayingLevels.kt`, `ui/queue/PlayingBars.kt` | `PlayingLevels.swift`: one `vizStream` subscription for every playing indicator, opened by the first and closed by the last (so the analyser parks), the three bands snapshot state read only in `drawBehind`. Attached from a started lifecycle |
+| `ui/pages/MiniPlayer.kt`, `NowPlayingSheet.kt`, `ui/queue/PlayerBits.kt` | `TransportBar.swift`: the mini player above the tab bar and the full-screen now-playing dialog. Seek holds through `PlayerModel` (`beginScrub`, `seek`); the format badge names the source and the route's verdict from `KoanProcess.bitPerfect` |
+| `state/LyricsModel.kt`, `ui/queue/LyricsView.kt` | `LyricsPanel.swift`: cache then LRCLIB, off Main and only while the lyrics are shown; the line sung found by sleeping to the next timestamp. `engine/QueueSession.kt` holds the per-runtime levels and lyrics objects so no composable reaches the engine |
+| `theme/KoanSlider.kt` | The seek bar: flat, progress read in the draw block |
 
 ### koan-server (`crates/koan-server/src/`)
 
