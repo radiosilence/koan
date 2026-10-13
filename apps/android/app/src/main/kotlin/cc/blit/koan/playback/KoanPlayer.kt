@@ -18,6 +18,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 /**
@@ -38,7 +39,12 @@ class KoanPlayer(
 
     init {
         scope.launch {
-            combine(engine.nowPlaying, engine.queue, engine.playhead) { _, _, _ -> }
+            // A session publishes a new state for every invalidation, and
+            // controllers extrapolate the position themselves: an anchor that
+            // only restates the last one (clock drift, a longer seekable
+            // range) is no news to them.
+            val moved = engine.playhead.distinctUntilChanged { old, new -> new.continues(old) }
+            combine(engine.nowPlaying, engine.queue, moved) { _, _, _ -> }
                 .collect { invalidateState() }
         }
     }
@@ -64,7 +70,7 @@ class KoanPlayer(
             .setShuffleModeEnabled(now?.shuffle == true)
             .setRepeatMode(mediaRepeat(now?.repeatMode ?: RepeatMode.OFF))
             .setContentPositionMs(
-                PositionSupplier.getExtrapolating(playhead.positionAt(), if (playhead.playing) 1f else 0f),
+                PositionSupplier { playhead.positionAt(durationMs = now?.durationMs?.toLong() ?: 0) },
             )
             .build()
     }

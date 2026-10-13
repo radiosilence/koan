@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -57,6 +56,8 @@ import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanIcon
 import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanMenu
+import cc.blit.koan.ui.theme.KoanMenuItem
 import cc.blit.koan.ui.theme.KoanRecordAccent
 import cc.blit.koan.ui.theme.KoanSegmented
 import cc.blit.koan.ui.theme.KoanSpace
@@ -111,16 +112,16 @@ fun PlaylistPage(playlistId: Long) {
                 }
                 Box {
                     KoanButton("More", { menu = true }, kind = KoanButtonKind.Icon, icon = KoanIcons.more)
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        if (playlist?.fromFile == false) MenuItem("Rename…") { menu = false; renaming = true }
+                    KoanMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        if (playlist?.fromFile == false) KoanMenuItem("Rename…") { menu = false; renaming = true }
                         if (fillable && entries.size > 1) {
-                            MenuItem("Shuffle Order", KoanIcons.reshuffle) { menu = false; edits.shuffleOrder(playlistId) }
+                            KoanMenuItem("Shuffle Order", KoanIcons.reshuffle) { menu = false; edits.shuffleOrder(playlistId) }
                         }
                         if (entries.isNotEmpty()) {
-                            MenuItem("Add to Playlist…", KoanIcons.playlist) { menu = false; adding = entries.map { it.track.id } }
+                            KoanMenuItem("Add to Playlist…", KoanIcons.playlist) { menu = false; adding = entries.map { it.track.id } }
                             DownloadMenuItems(onDisk = null, dismiss = { menu = false }, trackIds = allTrackIds)
                         }
-                        MenuItem("Delete Playlist", KoanIcons.clear, destructive = true) { menu = false; deleting = true }
+                        KoanMenuItem("Delete Playlist", KoanIcons.clear, destructive = true) { menu = false; deleting = true }
                     }
                 }
             }
@@ -415,17 +416,17 @@ private fun EntryRow(
                 }
             },
         )
-        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-            MenuItem("Play", KoanIcons.play) { menu = false; edits.play(playlist.id, entry.entryId) }
-            MenuItem("Play Next", KoanIcons.playNext) { menu = false; app.player.playNext(listOf(track.id)) }
-            MenuItem("Add to Queue", KoanIcons.queue) { menu = false; app.player.enqueue(listOf(track.id)) }
-            MenuItem("Add to Playlist…", KoanIcons.playlist) { menu = false; onAdd(listOf(track.id)) }
+        KoanMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            KoanMenuItem("Play", KoanIcons.play) { menu = false; edits.play(playlist.id, entry.entryId) }
+            KoanMenuItem("Play Next", KoanIcons.playNext) { menu = false; app.player.playNext(listOf(track.id)) }
+            KoanMenuItem("Add to Queue", KoanIcons.queue) { menu = false; app.player.enqueue(listOf(track.id)) }
+            KoanMenuItem("Add to Playlist…", KoanIcons.playlist) { menu = false; onAdd(listOf(track.id)) }
             DownloadMenuItems(onDisk = track.onDisk, dismiss = { menu = false }) { listOf(track.id) }
             track.albumId?.let { albumId ->
-                MenuItem("Go to Album", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId, track.id)) }
+                KoanMenuItem("Go to Album", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId, track.id)) }
             }
             if (playlist.fillable) {
-                MenuItem("Remove from Playlist", KoanIcons.remove, destructive = true) {
+                KoanMenuItem("Remove from Playlist", KoanIcons.remove, destructive = true) {
                     menu = false
                     edits.remove(playlist.id, listOf(entry.entryId))
                 }

@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -24,6 +23,8 @@ import cc.blit.koan.ui.navigation.nonce
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanMenu
+import cc.blit.koan.ui.theme.KoanMenuItem
 import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
 import kotlinx.coroutines.launch
@@ -95,11 +96,11 @@ private fun PlaylistListRow(playlist: Playlist, edits: PlaylistEdits, open: () -
             onLongClick = { menu = true },
             leading = { PlaylistMosaic(covers, thumb) },
         )
-        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-            MenuItem("Play", KoanIcons.play) { menu = false; edits.play(playlist.id) }
-            MenuItem("Shuffle", KoanIcons.shuffle) { menu = false; edits.play(playlist.id, shuffled = true) }
-            if (!playlist.fromFile) MenuItem("Rename…") { menu = false; renaming = true }
-            MenuItem("Delete Playlist", KoanIcons.clear, destructive = true) { menu = false; deleting = true }
+        KoanMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            KoanMenuItem("Play", KoanIcons.play) { menu = false; edits.play(playlist.id) }
+            KoanMenuItem("Shuffle", KoanIcons.shuffle) { menu = false; edits.play(playlist.id, shuffled = true) }
+            if (!playlist.fromFile) KoanMenuItem("Rename…") { menu = false; renaming = true }
+            KoanMenuItem("Delete Playlist", KoanIcons.clear, destructive = true) { menu = false; deleting = true }
         }
     }
     if (renaming) {

@@ -1,4 +1,4 @@
-package cc.blit.koan.ui.nowplaying
+package cc.blit.koan.ui.theme
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.ColumnScope
@@ -7,22 +7,21 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.unit.dp
-import cc.blit.koan.ui.theme.KoanHairline
-import cc.blit.koan.ui.theme.KoanIcon
-import cc.blit.koan.ui.theme.KoanText
-import cc.blit.koan.ui.theme.KoanTheme
-import cc.blit.koan.ui.theme.KoanTone
-import cc.blit.koan.ui.theme.KoanType
 
-/** A menu as `KoanPicker` draws its own: square, on `bg`, a hairline edge, no shadow. Material's otherwise. */
+/**
+ * A menu as the theme draws one: square, on `bg`, with a hairline edge and
+ * no shadow. Material's in the platform's look.
+ */
 @Composable
-fun KoanMenu(open: Boolean, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+fun KoanMenu(expanded: Boolean, onDismissRequest: () -> Unit, modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     val on = KoanTheme.isOn
     DropdownMenu(
-        expanded = open,
-        onDismissRequest = onDismiss,
+        expanded = expanded,
+        onDismissRequest = onDismissRequest,
+        modifier = modifier,
         shape = if (on) RectangleShape else MaterialTheme.shapes.extraSmall,
         containerColor = if (on) KoanTheme.colors.bg else MaterialTheme.colorScheme.surfaceContainer,
         tonalElevation = if (on) 0.dp else 3.dp,
@@ -32,16 +31,15 @@ fun KoanMenu(open: Boolean, onDismiss: () -> Unit, content: @Composable ColumnSc
     )
 }
 
-/** One choice in a `KoanMenu`: the app's words, lowercased in the theme. */
+/** An item of a `KoanMenu`, in the app's words: lowercased in the theme, its glyph before it. */
 @Composable
-fun KoanMenuItem(label: String, onClick: () -> Unit, icon: Int? = null, destructive: Boolean = false, enabled: Boolean = true) {
+fun KoanMenuItem(title: String, icon: Int? = null, destructive: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
     val tone = if (destructive) KoanTone.Bad else KoanTone.Ink
+    val colour = KoanTheme.color(tone)
     DropdownMenuItem(
-        text = {
-            if (KoanTheme.isOn) KoanText(label, role = KoanType.Control, tone = tone, appText = true) else Text(label)
-        },
+        text = { if (KoanTheme.isOn) KoanText(title, role = KoanType.Control, tone = tone, appText = true) else Text(title) },
+        leadingIcon = icon?.let { { KoanIcon(it, null, color = colour) } },
         onClick = onClick,
         enabled = enabled,
-        leadingIcon = icon?.let { { KoanIcon(it, contentDescription = null, color = KoanTheme.color(tone)) } },
     )
 }

@@ -22,6 +22,10 @@ import cc.blit.koan.ffi.MixerFormat
  * While held, Android silences other apps' sound on the DAC, which is what
  * bit-perfect means there. The choice of format is the engine's
  * (`koan_core::audio::bit_perfect`); this only answers for the Java APIs.
+ *
+ * Called on the engine's player thread, where an exception would end
+ * playback: each answer falls back to the mixer when Android throws, as it
+ * may while a USB device is coming or going.
  */
 class BitPerfectHost(context: Context) : AndroidOutputHost {
     private val context = context.applicationContext
@@ -31,29 +35,35 @@ class BitPerfectHost(context: Context) : AndroidOutputHost {
     private var offered = emptyMap<MixerFormat, Pair<AudioDeviceInfo, Any>>()
     private var held: AudioDeviceInfo? = null
 
-    override fun mixerRate(): UInt =
-        audio.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)?.toUIntOrNull() ?: 48_000u
+    override fun mixerRate(): UInt = runCatching {
+        audio.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)?.toUIntOrNull()
+    }.getOrNull() ?: 48_000u
 
     override fun offers(): List<MixerFormat> {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE || !isEnabled(context)) {
-            offered = emptyMap()
-            return emptyList()
+        offered = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && isEnabled(context)) {
+            runCatching { bitPerfectFormats() }.getOrDefault(emptyMap())
+        } else {
+            emptyMap()
         }
-        offered = bitPerfectFormats()
         return offered.keys.toList()
     }
 
     override fun hold(format: MixerFormat): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return false
         val (device, attributes) = offered[format] ?: return false
-        val ok = audio.setPreferredMixerAttributes(MEDIA, device, attributes as AudioMixerAttributes)
+        // Another DAC's preference would otherwise outlive the switch.
+        if (held != null && held?.id != device.id) release()
+        val ok = runCatching {
+            audio.setPreferredMixerAttributes(MEDIA, device, attributes as AudioMixerAttributes)
+        }.getOrDefault(false)
         if (ok) held = device
         return ok
     }
 
     override fun release() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return
-        held?.let { audio.clearPreferredMixerAttributes(MEDIA, it) }
+        // The device may already be gone, which is often why this is called.
+        held?.let { runCatching { audio.clearPreferredMixerAttributes(MEDIA, it) } }
         held = null
     }
 

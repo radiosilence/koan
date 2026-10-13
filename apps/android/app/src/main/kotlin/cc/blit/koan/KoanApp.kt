@@ -36,7 +36,12 @@ class KoanApp : Application(), SingletonImageLoader.Factory {
         mirror = EngineMirror(name)
         player = PlayerModel(mirror)
         val output = BitPerfectHost(this)
-        mirror.launch { setOutputHost(output) }
+        // The host first: a restored session that was playing resumes, and
+        // opens its output through it.
+        mirror.launch {
+            setOutputHost(output)
+            player.followSession()
+        }
     }
 
     /** Coil, with covers fetched from the engine and their bytes kept in the app's cache directory. */

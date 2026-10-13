@@ -1,0 +1,1 @@
+- **Playlists refill after signing out and back in.** Forgetting a server's tracks emptied its playlists, and the next sync read them as unchanged and never pulled them again; they are now pulled whole once the library is back.

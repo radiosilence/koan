@@ -1,5 +1,14 @@
 package cc.blit.koan.engine
 
+import cc.blit.koan.ffi.KoanEngine
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withTimeoutOrNull
+
 /**
  * What the app does to the player. State is read from `EngineMirror`; this
  * only sends. Each call returns at once and reaches the engine in the order
@@ -37,4 +46,49 @@ class PlayerModel(private val mirror: EngineMirror) {
 
     /** Rebuild the output where playback is: after the route or an output setting changed. */
     fun restartOutput() = mirror.launch { restartOutput() }
+
+    /** The queue version last written whole, so the queue is rewritten only when it is what changed. */
+    @Volatile private var savedQueueVersion = -1L
+
+    /**
+     * Bring back the last session's queue without playing it, then keep it
+     * saved: every second while the music plays, so a killed process costs a
+     * second, and at each pause or stop. A queue the size of a library is
+     * only rewritten when it changed; otherwise only the position is.
+     */
+    fun followSession() = mirror.launch {
+        val restored = runCatching { restoreSession() }.getOrDefault(0u)
+        // The player thread applies the restored rows; saving before they
+        // arrive would write the empty queue over the one just read.
+        if (restored > 0u) withTimeoutOrNull(500) { mirror.queue.first { it.items.size >= restored.toInt() } }
+        savedQueueVersion = mirror.queue.value.version
+        mirror.playhead.map { it.playing }.distinctUntilChanged().drop(1).collectLatest { playing ->
+            if (playing) {
+                while (true) {
+                    delay(1_000)
+                    save()
+                }
+            } else {
+                save()
+            }
+        }
+    }
+
+    /** The app is leaving the screen: the session here, and the queue on the server when this device keeps it there. */
+    fun saveOnLeaving() = mirror.launch {
+        runCatching { saveSession() }.onSuccess { savedQueueVersion = mirror.queue.value.version }
+        saveServerQueueNow()
+    }
+
+    private suspend fun KoanEngine.save() {
+        val version = mirror.queue.value.version
+        runCatching {
+            if (version != savedQueueVersion) {
+                saveSession()
+                savedQueueVersion = version
+            } else if (mirror.nowPlaying.value != null) {
+                savePosition()
+            }
+        }
+    }
 }

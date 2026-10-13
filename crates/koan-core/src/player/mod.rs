@@ -38,6 +38,12 @@ const SEEK_END_GUARD_MS: u64 = 500;
 /// playhead already in it rather than a hair short.
 const BOUNDARY_SLACK: std::time::Duration = std::time::Duration::from_millis(5);
 
+/// How long after output starts to look whether it has: a stream that has not
+/// begun to play by then holds the playhead while clients count on from it,
+/// and saying so is what stops them. Looked at again, as long, until it moves.
+/// Longer than the state watcher's `PLAYHEAD_STALL` in koan-ffi.
+const OUTPUT_START_CHECK: std::time::Duration = std::time::Duration::from_millis(400);
+
 /// How often to look at a fading pause, for the few checks it takes to reach
 /// silence.
 const FADE_CHECK: std::time::Duration = std::time::Duration::from_millis(50);
@@ -160,6 +166,9 @@ pub struct Player {
     in_flight: Option<InFlight>,
     /// When the silence after a rate switch runs out and the track is heard.
     lead_in_ends: Option<std::time::Instant>,
+    /// When to look whether output that started has begun to play, and the
+    /// samples played when it started.
+    output_check: Option<(std::time::Instant, u64)>,
     /// When the audio session goes back to the system, output having stopped:
     /// see `audio::ios_backend::AudioSession`.
     session_release_at: Option<std::time::Instant>,
@@ -380,6 +389,7 @@ impl Player {
             commands,
             transport: Transport::Idle,
             lead_in_ends: None,
+            output_check: None,
             session_release_at: None,
             dsp: None,
             dsp_restart: None,
@@ -472,9 +482,15 @@ impl Player {
         // instant. Say nothing instead.
         self.shared_state.clear_output_sample_rate();
 
-        // DSP hands the output floats of its own making: no source bit depth
-        // survives it.
-        let bit_depth = if dsp.is_some() { None } else { info.bit_depth };
+        // DSP and ReplayGain hand the output floats of their own making: no
+        // source bit depth survives them.
+        let gained = crate::config::Config::cached().playback.replaygain
+            != crate::config::ReplayGainMode::Off;
+        let bit_depth = if dsp.is_some() || gained {
+            None
+        } else {
+            info.bit_depth
+        };
         if (device_rate - source_rate).abs() > 0.1 {
             log::info!(
                 "switching device sample rate: {}Hz → {}Hz",
@@ -495,9 +511,6 @@ impl Player {
                 device_rate
             }
         };
-        self.shared_state
-            .set_output_mixed(self.backend.output_mixed());
-
         if (settled - source_rate).abs() > 0.1 {
             log::warn!(
                 "device stayed at {}Hz (wanted {}Hz) — output is resampled, not bit-perfect",
@@ -531,6 +544,16 @@ impl Player {
             consumer,
             self.timeline.samples_played_counter(),
         )?;
+        // Said of the stream as it opened, which may have fallen back to the
+        // system mixer after asking for more: then the rate is the mixer's.
+        let mixed = self.backend.output_mixed();
+        self.shared_state.set_output_mixed(mixed);
+        if mixed == Some(true)
+            && let Ok(rate) = self.backend.get_device_sample_rate(&device)
+        {
+            self.shared_state
+                .set_output_sample_rate(rate.round() as u32);
+        }
         // iOS answers 0 until its session has first been activated, and no
         // switch from an unknown rate is one to wait out. A new engine inside the
         // silence, a seek, still has the rest of the relock ahead of it.
@@ -667,6 +690,7 @@ impl Player {
             rg_mode: cfg.playback.replaygain,
             pre_amp_db: cfg.playback.pre_amp_db,
             dsp,
+            depth_limit: Arc::default(),
         }
     }
 
@@ -1101,6 +1125,14 @@ impl Player {
         // Files and downloads in progress open here alike, so both get the
         // output's processing.
         let processing = self.processing();
+        let depth_limit = processing.depth_limit.clone();
+        // The decoder starts before the output opens and runs far ahead of
+        // it, past a short track's end within the first moments. Until the
+        // output says what it keeps, a deeper track than this one ends the run.
+        depth_limit.store(
+            self.assumed_depth(&info),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         self.session += 1;
         let session = self.session;
         let finish_tx = self.commands.tx.clone();
@@ -1125,6 +1157,11 @@ impl Player {
         )?;
 
         let (engine, rate_watch) = self.create_engine_for(&info, consumer)?;
+        self.timeline.set_presentation(engine.presentation());
+        depth_limit.store(
+            self.backend.output_depth().unwrap_or(0),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         // The setup `create_engine_for` chose the rate by.
         let dsp = self
             .dsp
@@ -1139,6 +1176,7 @@ impl Player {
             } else {
                 engine.start()?;
             }
+            self.check_output_started();
         }
         self.transport = Transport::Loaded(Session {
             track,
@@ -1578,6 +1616,7 @@ impl Player {
             return;
         }
         session.run = Run::Playing;
+        self.check_output_started();
         self.wake_analyzer();
         self.report(PlaybackReportState::Playing);
     }
@@ -1603,7 +1642,28 @@ impl Player {
     /// Output stops first, then the decode thread is joined, then the engine
     /// drops: tearing CoreAudio down under a live producer is the end-of-queue
     /// crash (#89).
+    /// The depth limit a session starts with, before its output is open: the
+    /// first track's own where the output may narrow, none otherwise.
+    fn assumed_depth(&self, info: &buffer::StreamInfo) -> u16 {
+        if self.backend.narrows_depth() {
+            info.bit_depth.unwrap_or(24)
+        } else {
+            0
+        }
+    }
+
+    /// Look, shortly, whether the output just started has begun to play.
+    fn check_output_started(&mut self) {
+        self.output_check = Some((
+            std::time::Instant::now() + OUTPUT_START_CHECK,
+            self.timeline
+                .samples_played_counter()
+                .load(std::sync::atomic::Ordering::Relaxed),
+        ));
+    }
+
     fn stop_engine(&mut self) {
+        self.output_check = None;
         let playback = match std::mem::replace(&mut self.transport, Transport::Idle) {
             Transport::Loaded(playback) => playback,
             other => {
@@ -1638,6 +1698,7 @@ impl Player {
             stream.abandon();
         }
         decode_handle.stop();
+        self.timeline.set_presentation(None);
         drop(engine);
         self.answer_silence();
     }
@@ -1919,6 +1980,21 @@ impl Player {
             // it move.
             self.lead_in_ends = None;
             self.shared_state.changed();
+        }
+
+        if let Some((at, from)) = self.output_check
+            && std::time::Instant::now() >= at
+        {
+            // Wakes the state watcher, which tells clients where the playhead
+            // is: held still if output has not begun, moving if it has.
+            self.shared_state.changed();
+            let moved = self
+                .timeline
+                .samples_played_counter()
+                .load(std::sync::atomic::Ordering::Relaxed)
+                > from;
+            self.output_check = (!moved && self.intent() == Some(Run::Playing))
+                .then(|| (std::time::Instant::now() + OUTPUT_START_CHECK, from));
         }
 
         if let Some(session) = self.session()
@@ -2765,10 +2841,14 @@ impl Player {
                     .timeline
                     .until_next_track()
                     .map(|left| now + left + BOUNDARY_SLACK);
-                match (next_track, self.lead_in_ends) {
-                    (Some(a), Some(b)) => Some(a.min(b)),
-                    (a, b) => a.or(b),
-                }
+                [
+                    next_track,
+                    self.lead_in_ends,
+                    self.output_check.map(|(at, _)| at),
+                ]
+                .into_iter()
+                .flatten()
+                .min()
             }
             Run::Paused if local.engine.is_running() => Some(now + FADE_CHECK),
             Run::Paused => None,
@@ -2842,6 +2922,12 @@ impl Player {
         let timeline = player.timeline();
         let viz_snapshot = player.viz_snapshot();
         let tx = player.command_sender();
+        {
+            let tx = tx.clone();
+            player.backend.on_disconnect(Arc::new(move || {
+                let _ = tx.try_send(PlayerCommand::RestartOutput);
+            }));
+        }
         // Downloads follow the playlist, so they come with the player rather
         // than being something each front end has to remember to ask for.
         player.downloads = Some(crate::remote::queue::DownloadQueue::spawn(
@@ -3228,6 +3314,15 @@ mod tests {
 
         player.process_command(PlayerCommand::Play(id));
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Playing);
+        // Once, to see that output began to move: clients count from it.
+        let check = player.next_wake().expect("a look at the output starting");
+        assert!(check <= std::time::Instant::now() + OUTPUT_START_CHECK);
+        player
+            .timeline
+            .samples_played_counter()
+            .store(800, std::sync::atomic::Ordering::Relaxed);
+        player.output_check = Some((std::time::Instant::now(), 0));
+        player.update_playback_state();
         assert_eq!(
             player.next_wake(),
             None,
@@ -5916,6 +6011,136 @@ mod tests {
                 lead_in: Default::default(),
             }))
         }
+    }
+
+    /// Android's shape of output: the device takes a format bit-perfect when
+    /// asked, but the stream opens through the mixer, at the mixer's rate.
+    struct FallbackBackend {
+        asked_depth: Arc<std::sync::Mutex<Option<Option<u16>>>>,
+        mixed: std::sync::atomic::AtomicBool,
+    }
+
+    impl AudioBackend for FallbackBackend {
+        fn list_devices(&self) -> Result<Vec<backend::DeviceInfo>, BackendError> {
+            Ok(vec![self.default_device()?])
+        }
+        fn default_device(&self) -> Result<backend::DeviceInfo, BackendError> {
+            Ok(backend::DeviceInfo {
+                name: "Android".into(),
+                sample_rates: vec![],
+                platform_id: 0,
+                kind: Default::default(),
+            })
+        }
+        fn supported_sample_rates(
+            &self,
+            _device: &backend::DeviceInfo,
+        ) -> Result<Vec<f64>, BackendError> {
+            Ok(vec![])
+        }
+        fn get_device_sample_rate(
+            &self,
+            _device: &backend::DeviceInfo,
+        ) -> Result<f64, BackendError> {
+            Ok(if self.mixed.load(std::sync::atomic::Ordering::Relaxed) {
+                48000.0
+            } else {
+                44100.0
+            })
+        }
+        fn set_device_sample_rate(
+            &self,
+            _device: &backend::DeviceInfo,
+            rate: f64,
+        ) -> Result<f64, BackendError> {
+            Ok(rate)
+        }
+        fn prepare_output(
+            &self,
+            _device: &backend::DeviceInfo,
+            _current: f64,
+            rate: f64,
+            _channels: u16,
+            bit_depth: Option<u16>,
+        ) -> Result<f64, BackendError> {
+            *self.asked_depth.lock().unwrap() = Some(bit_depth);
+            Ok(rate)
+        }
+        fn output_mixed(&self) -> Option<bool> {
+            Some(self.mixed.load(std::sync::atomic::Ordering::Relaxed))
+        }
+        fn narrows_depth(&self) -> bool {
+            true
+        }
+        fn create_engine(
+            &self,
+            _device: &backend::DeviceInfo,
+            _sample_rate: f64,
+            _channels: u32,
+            _consumer: rtrb::Consumer<f32>,
+            _samples_played: Arc<AtomicU64>,
+        ) -> Result<Box<dyn AudioEngineHandle>, BackendError> {
+            self.mixed.store(true, std::sync::atomic::Ordering::Relaxed);
+            Ok(Box::new(NullEngine {
+                starts: Default::default(),
+                running: Default::default(),
+                lead_in: Default::default(),
+            }))
+        }
+    }
+
+    #[test]
+    fn a_session_assumes_its_first_tracks_depth_until_a_narrowing_output_opens() {
+        let info = |bit_depth| buffer::StreamInfo {
+            codec: "FLAC".into(),
+            sample_rate: 44100,
+            channels: 2,
+            bit_depth,
+            bitrate_kbps: None,
+            duration_ms: 1000,
+        };
+        let mut player = Player::new();
+        player.backend = Box::new(FallbackBackend {
+            asked_depth: Default::default(),
+            mixed: Default::default(),
+        });
+        assert_eq!(player.assumed_depth(&info(Some(16))), 16);
+        assert_eq!(player.assumed_depth(&info(None)), 24);
+
+        player.backend = Box::new(StuckBackend {
+            rate: 44100.0,
+            asked: Default::default(),
+            starts: Default::default(),
+        });
+        assert_eq!(player.assumed_depth(&info(Some(16))), 0, "nothing narrows");
+    }
+
+    #[test]
+    fn a_stream_that_opens_through_the_mixer_is_reported_mixed_at_its_rate() {
+        let mut player = Player::new();
+        let asked_depth = Arc::new(std::sync::Mutex::new(None));
+        player.backend = Box::new(FallbackBackend {
+            asked_depth: asked_depth.clone(),
+            mixed: Default::default(),
+        });
+        let state = player.shared_state.clone();
+        let info = buffer::StreamInfo {
+            codec: "FLAC".into(),
+            sample_rate: 44100,
+            channels: 2,
+            bit_depth: Some(16),
+            bitrate_kbps: None,
+            duration_ms: 1000,
+        };
+        let (_producer, consumer) = rtrb::RingBuffer::new(16);
+        player.create_engine_for(&info, consumer).unwrap();
+        assert_eq!(*asked_depth.lock().unwrap(), Some(Some(16)));
+        assert_eq!(
+            state.output_mixed(),
+            Some(true),
+            "said of the stream as it opened"
+        );
+        assert_eq!(state.output_sample_rate(), Some(48000));
     }
 
     /// Hands the test every ring buffer an engine is made with, so what

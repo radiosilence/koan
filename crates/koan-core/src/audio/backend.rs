@@ -108,6 +108,24 @@ pub trait AudioBackend: Send + Sync {
         None
     }
 
+    /// The most integer bits a sample keeps on its way to the device, where
+    /// the output narrows them: a gapless run cannot carry a deeper track
+    /// through it. `None` where nothing is narrowed.
+    fn output_depth(&self) -> Option<u16> {
+        None
+    }
+
+    /// Whether `output_depth` may narrow, so a session must assume it does
+    /// until the output is open: the decoder runs ahead of it.
+    fn narrows_depth(&self) -> bool {
+        false
+    }
+
+    /// Be told when the output stops for good underneath the player, so it
+    /// can be rebuilt: Android disconnects every stream when its audio server
+    /// restarts. Called on a thread of the platform's; it must only send.
+    fn on_disconnect(&self, _rebuild: Arc<dyn Fn() + Send + Sync>) {}
+
     /// Subscribe to nominal sample rate changes on a device.
     ///
     /// The rate is device-wide and anyone can move it — another app, Audio MIDI
@@ -134,6 +152,10 @@ pub trait AudioBackend: Send + Sync {
         samples_played: Arc<AtomicU64>,
     ) -> Result<Box<dyn AudioEngineHandle>, BackendError>;
 }
+
+/// The samples an engine has played as of now, for an output that hands
+/// over samples in chunks too coarse to read the playhead from directly.
+pub type Presentation = Arc<dyn Fn() -> u64 + Send + Sync>;
 
 /// A live sample rate subscription. Unsubscribes on drop.
 pub trait SampleRateWatch: Send + Sync {}
@@ -173,6 +195,12 @@ pub trait AudioEngineHandle: Send {
     /// never heard. Nothing reports when the clock has locked, so the wait is
     /// a length of time. Cleared by `fade_in`.
     fn lead_in(&self, _frames: u64) {}
+    /// Where the playhead is between callbacks, when the output's callbacks
+    /// are far enough apart that the count they keep would read as a playhead
+    /// moving in jumps. `None` where the count is fine as it is.
+    fn presentation(&self) -> Option<Presentation> {
+        None
+    }
 }
 
 #[cfg(test)]

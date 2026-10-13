@@ -466,6 +466,12 @@ pub struct KoanEngine {
 /// screen to correct.
 const PLAYHEAD_TOLERANCE_MS: u64 = 32;
 
+/// How long a playhead may read the same while playing before it is called
+/// held, when this thread next looks. The player wakes it when output should
+/// have begun to move (`OUTPUT_START_CHECK`); a stall mid-track is seen at the
+/// next wake for anything else.
+const PLAYHEAD_STALL: std::time::Duration = std::time::Duration::from_millis(250);
+
 /// The same, for how far a download reaches. The bar it draws is one bar wide
 /// and a fifth of a second of audio does not move it.
 const SEEKABLE_TOLERANCE_MS: u64 = 200;
@@ -5035,6 +5041,8 @@ impl KoanEngine {
                 // makes publishing again unnecessary until it would be wrong.
                 let mut anchor: Option<state::Anchor> = None;
                 let mut last_seekable = u64::MAX;
+                // The playhead's last reading, and when it last moved.
+                let mut advanced = (u64::MAX, Instant::now());
                 // Which transfers were running last pass. A transfer leaving
                 // this set has landed on disk, which wrote a cached path onto a
                 // library row — and nothing else says so, because the download
@@ -5156,10 +5164,22 @@ impl KoanEngine {
                         // client can work out for itself; a seek, a pause, a track
                         // boundary and a stall are not, and each of them breaks the
                         // prediction by more than the tolerance below.
-                        let playing = snapshot.state == types::PlayState::Playing
-                            && engine.state.playhead_moving();
-                        let seekable = engine.state.seekable_ms();
                         let now = Instant::now();
+                        if snapshot.position_ms != advanced.0 {
+                            advanced = (snapshot.position_ms, now);
+                        }
+                        // Playing is a playhead that moves, not a transport
+                        // that says so. Output that has run dry at a track's
+                        // end, or not yet begun, or plays a lead-in, holds the
+                        // playhead still with the transport playing; a client
+                        // counting on from the last anchor would run past it.
+                        // Another device's playhead is that device's to say.
+                        let held =
+                            target.is_none() && now.duration_since(advanced.1) > PLAYHEAD_STALL;
+                        let playing = snapshot.state == types::PlayState::Playing
+                            && engine.state.playhead_moving()
+                            && !held;
+                        let seekable = engine.state.seekable_ms();
                         let adrift = anchor.is_none_or(|held: state::Anchor| {
                             held.stale(snapshot.position_ms, playing, now, PLAYHEAD_TOLERANCE_MS)
                         });
