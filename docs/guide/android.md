@@ -52,10 +52,20 @@ listing. Until then they open in the browser, and the code is typed by hand.
 
 ## Sound
 
-Output goes through AAudio at the rate Android's mixer runs at, so playback is
-gapless but not bit-perfect: Android resamples a track whose rate differs from
-the device's. Bit-perfect output to a USB DAC, through Android 14's
-bit-perfect mixer mode, is planned. Bluetooth is lossy whatever the app does.
+Output goes through AAudio. On Android 14 and later, kōan sends music to a USB
+DAC exactly as it is in the file, with no resampling, volume or mixing, when
+the DAC can play the track's sample rate and channel count as they are; Android
+calls this a bit-perfect mixer. The format badge on Now Playing shows which path
+the music takes: **bit-perfect** when the samples reach the DAC unchanged, or
+the rate Android's mixer resamples to when it handles the output, because the
+DAC does not offer the track's format, the phone is playing through something
+other than USB, or the setting is off. Bluetooth is lossy whatever the app does.
+
+While kōan plays bit-perfect, Android keeps other apps' sounds, notifications
+included, off the DAC, and the phone's volume buttons may do nothing, since
+volume is applied in the mixer; use the DAC's or the headphones' own volume.
+**Settings → Playback → Bit-perfect over USB** turns it off, and the system
+mixer then handles everything as it does for any other app.
 
 ## Devices
 
