@@ -63,8 +63,9 @@ unsafe fn nix_close(fd: i32) -> i32 {
 /// remainder, increment `samples_played`.
 ///
 /// On Android the one device is the system's default output, which follows the
-/// route. Enumerating devices goes through `AudioManager` over JNI, which needs
-/// the `ndk-context` an app embedding koan through uniffi never initialises.
+/// route; choosing a device is for the app to offer. cpal reaches
+/// `AudioManager` over JNI as it opens a stream, through the `ndk-context` the
+/// app initialises (`koan-ffi`'s `attachContext`) before the engine opens.
 /// Bit-perfect output to a USB DAC is a matter for the app rather than this
 /// stream: from Android 14, `AudioManager.setPreferredMixerAttributes` with
 /// `MIXER_BEHAVIOR_BIT_PERFECT` on the DAC's device, at the track's rate,

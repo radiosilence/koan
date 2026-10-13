@@ -36,6 +36,8 @@ use uuid::Uuid;
 
 use koan_core::db::queries::RECENT_LIMIT;
 
+#[cfg(target_os = "android")]
+mod android;
 mod offload;
 mod queue_slice;
 mod server_queue;
@@ -180,6 +182,10 @@ fn init_logging() {
     // A second engine in one process is not an error worth failing over.
     if log::set_logger(logger).is_ok() {
         log::set_max_level(log::LevelFilter::Info);
+        // The default hook writes to stderr, which Android discards: a thread
+        // that panicked would otherwise vanish without a word.
+        #[cfg(target_os = "android")]
+        std::panic::set_hook(Box::new(|info| log::error!("{info}")));
     }
 }
 
