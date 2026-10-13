@@ -1,57 +1,100 @@
 package cc.blit.koan.ui.nowplaying
 
-import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.clickable
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.EntryProviderScope
 import androidx.navigation3.runtime.NavKey
-import cc.blit.koan.R
+import androidx.navigation3.ui.NavDisplay
 import cc.blit.koan.art.Art
 import cc.blit.koan.art.ArtSize
 import cc.blit.koan.engine.Playhead
+import cc.blit.koan.ffi.NowPlaying
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ffi.QueueItem
+import cc.blit.koan.ffi.RepeatMode
+import cc.blit.koan.ffi.SleepState
+import cc.blit.koan.ffi.SleepTimer
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
-import cc.blit.koan.ui.theme.LocalKoanTokens
+import cc.blit.koan.ui.theme.KoanBadge
+import cc.blit.koan.ui.theme.KoanButton
+import cc.blit.koan.ui.theme.KoanButtonKind
+import cc.blit.koan.ui.theme.KoanDivider
+import cc.blit.koan.ui.theme.KoanIcon
+import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanSlider
+import cc.blit.koan.ui.theme.KoanSpace
+import cc.blit.koan.ui.theme.KoanText
+import cc.blit.koan.ui.theme.KoanTheme
+import cc.blit.koan.ui.theme.KoanTone
+import cc.blit.koan.ui.theme.KoanType
+import cc.blit.koan.ui.theme.koanSurface
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 
 /** What is playing, over the tabs. */
 @Serializable
 data object NowPlayingRoute : NavKey
 
+/**
+ * Now Playing rises over the tabs and sinks back into them. Back, predictive
+ * or not, is the root `NavDisplay`'s, which runs the sink against the gesture.
+ */
 fun EntryProviderScope<NavKey>.nowPlayingEntries() {
-    entry<NowPlayingRoute> { NowPlayingPage() }
+    entry<NowPlayingRoute>(
+        metadata = NavDisplay.transitionSpec { slideInVertically { it } togetherWith ExitTransition.KeepUntilTransitionsFinished } +
+            NavDisplay.popTransitionSpec { EnterTransition.None togetherWith slideOutVertically { it } } +
+            NavDisplay.predictivePopTransitionSpec { EnterTransition.None togetherWith slideOutVertically { it } },
+    ) { NowPlayingPage() }
 }
 
 /**
@@ -75,81 +118,291 @@ fun rememberPosition(playhead: Playhead): Long {
 /** A queue row's cover: its record's, which lists already hold, else its own. */
 fun QueueItem.art(size: ArtSize) = albumId?.let { Art.album(it, size) } ?: trackId?.let { Art.track(it, size) }
 
+/** The track's length. The engine's reads 0 once playback stops, so then the queue row's. */
+fun NowPlaying?.length() = this?.durationMs?.toLong()?.takeIf { it > 0 } ?: this?.entry?.durationMs?.toLong() ?: 0
+
 fun clock(ms: Long): String {
     val s = ms.coerceAtLeast(0) / 1000
-    return "%d:%02d".format(s / 60, s % 60)
+    return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
 }
 
+/**
+ * The record, full screen: the sleeve (or its words), what is playing, the
+ * seek bar, the transport, and what is switched on for listening. The page
+ * is in the record's colour already: `KoanRoot` tints the app with it.
+ */
 @Composable
 private fun NowPlayingPage() {
     val app = koanApp()
     val nav = LocalNavigator.current
     val now by app.mirror.nowPlaying.collectAsStateWithLifecycle()
+    val entry = now?.entry
+    var lyrics by remember { mutableStateOf(false) }
+
+    // Pulled down past a threshold, or flung, it goes; otherwise it springs
+    // back. The pop transition carries on from wherever it was let go.
+    val drag = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    val dismissAt = with(LocalDensity.current) { 160.dp.toPx() }
+
+    Column(
+        Modifier.fillMaxSize()
+            .graphicsLayer { translationY = drag.value }
+            .koanSurface()
+            .draggable(
+                orientation = Orientation.Vertical,
+                state = rememberDraggableState { dy -> scope.launch { drag.snapTo((drag.value + dy).coerceAtLeast(0f)) } },
+                onDragStopped = { velocity ->
+                    if (drag.value > dismissAt || velocity > 2500f) nav.closeNowPlaying() else drag.animateTo(0f)
+                },
+            )
+            .safeDrawingPadding()
+            .padding(horizontal = KoanSpace.page),
+        verticalArrangement = Arrangement.spacedBy(KoanSpace.m),
+    ) {
+        GlyphButton(KoanIcons.expand, "Close", nav::closeNowPlaying, Modifier.padding(top = KoanSpace.xs))
+        AnimatedContent(
+            lyrics,
+            Modifier.weight(1f).fillMaxWidth(),
+            transitionSpec = { fadeIn() togetherWith fadeOut() },
+            label = "stage",
+        ) { showLyrics ->
+            if (showLyrics) {
+                LyricsPanel(entry?.trackId, now.length(), Modifier.fillMaxSize())
+            } else {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Sleeve(entry) }
+            }
+        }
+        Titles(entry)
+        SeekBar(now)
+        Transport(now)
+        Toggles(now, lyrics) { lyrics = !lyrics }
+        Spacer(Modifier.size(KoanSpace.s))
+    }
+}
+
+/** A glyph in the theme's icon button, coloured by `tone`: the accent for a mode that is on. */
+@Composable
+private fun GlyphButton(
+    icon: Int,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    tone: KoanTone = KoanTone.Ink,
+    size: TextUnit = 18.sp,
+    enabled: Boolean = true,
+) {
+    KoanButton(onClick, modifier, kind = KoanButtonKind.Icon, enabled = enabled) {
+        KoanIcon(icon, label, size = size, color = KoanTheme.color(tone))
+    }
+}
+
+/** Square in the theme, as every sleeve is; rounded in the platform's look. */
+@Composable
+private fun Sleeve(entry: QueueItem?) {
+    val shape = if (KoanTheme.isOn) RectangleShape else RoundedCornerShape(12.dp)
+    val modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth().aspectRatio(1f).clip(shape)
+    val art = entry?.art(ArtSize.Full)
+    if (art != null) {
+        AsyncImage(art, entry.album, modifier, contentScale = ContentScale.Crop)
+    } else {
+        Box(modifier.background(KoanTheme.color(KoanTone.Rule)))
+    }
+}
+
+/** Title, artist and record, with the heart beside them. */
+@Composable
+private fun Titles(entry: QueueItem?) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            KoanText(entry?.title ?: "Nothing playing", role = KoanType.TitleSmall, tone = KoanTone.Strong, maxLines = 1)
+            entry?.let {
+                KoanText(it.artist, tone = KoanTone.Ink, maxLines = 1)
+                if (it.album.isNotEmpty()) KoanText(it.album, role = KoanType.Meta, tone = KoanTone.Muted, maxLines = 1)
+            }
+        }
+        entry?.trackId?.let { TrackHeart(it) }
+    }
+}
+
+/**
+ * The heart for the playing track. Read from the engine when the track or
+ * the library changes, and set from what the toggle answers.
+ */
+@Composable
+private fun TrackHeart(trackId: Long) {
+    val mirror = koanApp().mirror
+    val library by mirror.library.collectAsStateWithLifecycle()
+    var favourite by remember(trackId) { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(trackId, library) {
+        favourite = runCatching { trackId in mirror.engine().favouriteTrackIds() }.getOrNull()
+    }
+    val scope = rememberCoroutineScope()
+    val on = favourite == true
+    GlyphButton(
+        if (on) KoanIcons.favourited else KoanIcons.favourite,
+        if (on) "Remove favourite" else "Favourite",
+        onClick = { scope.launch { runCatching { mirror.engine().toggleFavourite(trackId) }.onSuccess { favourite = it } } },
+        tone = if (on) KoanTone.Accent else KoanTone.Muted,
+        enabled = favourite != null,
+    )
+}
+
+/**
+ * The seek bar. Counts on from the playhead's anchor; a drag holds the thumb
+ * where it was let go until the engine sends the next anchor, so it does not
+ * jump back to the old place and forward again.
+ */
+@Composable
+private fun SeekBar(now: NowPlaying?) {
+    val app = koanApp()
     val playhead by app.mirror.playhead.collectAsStateWithLifecycle()
     val position = rememberPosition(playhead)
-    val entry = now?.entry
-    BackHandler { nav.closeNowPlaying() }
-    Surface(Modifier.fillMaxSize()) {
-        Column(
-            Modifier.safeDrawingPadding().padding(LocalKoanTokens.current.gutter),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            entry?.art(ArtSize.Full)?.let { AsyncImage(it, null, Modifier.fillMaxWidth().aspectRatio(1f)) }
-            Text(entry?.title ?: "Nothing playing", style = MaterialTheme.typography.titleLarge)
-            entry?.let { Text("${it.artist} · ${it.album}") }
-            Text("${clock(position)} / ${clock(now?.durationMs?.toLong() ?: 0)}")
-            Transport(now?.state == PlayState.PLAYING)
-        }
-    }
+    val duration = now.length()
+    var dragging by remember { mutableStateOf<Float?>(null) }
+    var landing by remember { mutableStateOf<Float?>(null) }
+    LaunchedEffect(playhead) { landing = null }
+    val held = dragging ?: landing
+    val fraction = held ?: if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
+    val shown = if (held != null) (held * duration).toLong() else position
+    KoanSlider(
+        value = fraction,
+        onValueChange = { dragging = it },
+        onValueChangeFinished = {
+            dragging?.let {
+                landing = it
+                app.player.seek((it * duration).toLong())
+            }
+            dragging = null
+        },
+        enabled = duration > 0,
+        low = { KoanText(clock(shown), role = KoanType.Fine, tone = KoanTone.Muted) },
+        high = { KoanText("-" + clock(duration - shown), role = KoanType.Fine, tone = KoanTone.Muted) },
+    )
 }
 
+/** Shuffle and repeat flank the three that move: they set how the queue plays rather than moving it. */
 @Composable
-private fun Transport(playing: Boolean) {
-    val player = koanApp().player
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = player::previous) { Icon(painterResource(R.drawable.ic_previous), "Previous") }
-        IconButton(onClick = player::togglePlayPause) {
-            Icon(
-                painterResource(if (playing) R.drawable.ic_pause else R.drawable.ic_play),
-                if (playing) "Pause" else "Play",
-            )
-        }
-        IconButton(onClick = player::next) { Icon(painterResource(R.drawable.ic_next), "Next") }
-    }
-}
-
-/** The bar above the tabs while something is queued; opens Now Playing. */
-@Composable
-fun MiniPlayer() {
+private fun Transport(now: NowPlaying?) {
     val app = koanApp()
-    val nav = LocalNavigator.current
-    val now by app.mirror.nowPlaying.collectAsStateWithLifecycle()
-    val entry = now?.entry ?: return
+    val player = app.player
     val playing = now?.state == PlayState.PLAYING
-    val tokens = LocalKoanTokens.current
-    Surface(tonalElevation = 3.dp) {
-        Column {
-            HorizontalDivider()
-            Row(
-                Modifier.fillMaxWidth().height(tokens.miniPlayerHeight).clickable { nav.openNowPlaying() }
-                    .padding(horizontal = tokens.gutter),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                entry.art(ArtSize.Thumb)?.let { AsyncImage(it, null, Modifier.size(tokens.thumb)) }
-                Spacer(Modifier.size(tokens.rowGap))
-                Column(Modifier.weight(1f)) {
-                    Text(entry.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(entry.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    val enabled = now?.entry != null
+    val shuffle = now?.shuffle == true
+    val repeat = now?.repeatMode ?: RepeatMode.OFF
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        GlyphButton(
+            KoanIcons.shuffle,
+            "Shuffle",
+            { player.setShuffle(!shuffle) },
+            Modifier.semantics { stateDescription = if (shuffle) "On" else "Off" },
+            tone = if (shuffle) KoanTone.Accent else KoanTone.Muted,
+            enabled = enabled,
+        )
+        GlyphButton(KoanIcons.previous, "Previous", player::previous, size = 24.sp, enabled = enabled)
+        KoanButton(player::togglePlayPause, kind = KoanButtonKind.IconOutlined, enabled = enabled) {
+            Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+                if (now?.waiting == true) {
+                    CircularProgressIndicator(Modifier.size(24.dp), color = KoanTheme.color(KoanTone.Ink), strokeWidth = 2.dp)
+                } else {
+                    KoanIcon(if (playing) KoanIcons.pause else KoanIcons.play, if (playing) "Pause" else "Play", size = 28.sp)
                 }
-                IconButton(onClick = app.player::togglePlayPause) {
-                    Icon(
-                        painterResource(if (playing) R.drawable.ic_pause else R.drawable.ic_play),
-                        if (playing) "Pause" else "Play",
-                    )
+            }
+        }
+        GlyphButton(KoanIcons.next, "Next", player::next, size = 24.sp, enabled = enabled)
+        GlyphButton(
+            if (repeat == RepeatMode.ONE) KoanIcons.repeatOne else KoanIcons.repeatQueue,
+            "Repeat",
+            { app.mirror.launch { setRepeat(nextRepeat(repeat)) } },
+            Modifier.semantics {
+                stateDescription = when (repeat) {
+                    RepeatMode.OFF -> "Off"
+                    RepeatMode.QUEUE -> "Queue"
+                    RepeatMode.ONE -> "One track"
                 }
-                IconButton(onClick = app.player::next) { Icon(painterResource(R.drawable.ic_next), "Next") }
+            },
+            tone = if (repeat != RepeatMode.OFF) KoanTone.Accent else KoanTone.Muted,
+            enabled = enabled,
+        )
+    }
+}
+
+/** Off, the queue, one track: one press steps to the next. */
+internal fun nextRepeat(mode: RepeatMode) = when (mode) {
+    RepeatMode.OFF -> RepeatMode.QUEUE
+    RepeatMode.QUEUE -> RepeatMode.ONE
+    RepeatMode.ONE -> RepeatMode.OFF
+}
+
+/** The lyrics, the format and the sleep timer: what is switched on for listening, and what the output is fed. */
+@Composable
+private fun Toggles(now: NowPlaying?, lyrics: Boolean, toggleLyrics: () -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        GlyphButton(
+            KoanIcons.lyrics,
+            if (lyrics) "Show artwork" else "Show lyrics",
+            toggleLyrics,
+            tone = if (lyrics) KoanTone.Accent else KoanTone.Muted,
+        )
+        Spacer(Modifier.weight(1f))
+        now?.format?.let { KoanBadge(quality(it)) }
+        Spacer(Modifier.weight(1f))
+        SleepButton(now?.sleep, now?.sleepFading == true)
+    }
+}
+
+/**
+ * The sleep timer: the fixed choices, and while one is set what is left
+ * beside the moon. The engine says when it goes off rather than what is left,
+ * so the countdown is worked out here, once a second while it shows.
+ */
+@Composable
+private fun SleepButton(sleep: SleepState?, fading: Boolean) {
+    val mirror = koanApp().mirror
+    var open by remember { mutableStateOf(false) }
+    Box {
+        KoanButton({ open = true }, Modifier.semantics { contentDescription = "Sleep timer" }, kind = KoanButtonKind.Text) {
+            val tone = if (sleep == null) KoanTone.Muted else KoanTone.Accent
+            KoanIcon(if (sleep == null) KoanIcons.sleep else KoanIcons.sleepSet, null, color = KoanTheme.color(tone))
+            val label = when {
+                fading -> KoanTheme.label("Fading")
+                sleep is SleepState.At -> countdown(sleep.unixMs.toLong())
+                sleep is SleepState.EndOfTrack -> KoanTheme.label("Track")
+                sleep is SleepState.EndOfRecord -> KoanTheme.label("Record")
+                else -> null
+            }
+            label?.let { KoanText(it, role = KoanType.Control, tone = tone) }
+        }
+        KoanMenu(open, onDismiss = { open = false }) {
+            fun set(timer: SleepTimer) {
+                open = false
+                mirror.launch { setSleepTimer(timer) }
+            }
+            listOf(15, 30, 45, 60).forEach { minutes ->
+                KoanMenuItem("$minutes minutes", { set(SleepTimer.After(minutes.toUInt())) })
+            }
+            KoanDivider()
+            KoanMenuItem("End of track", { set(SleepTimer.EndOfTrack) })
+            KoanMenuItem("End of record", { set(SleepTimer.EndOfRecord) })
+            if (sleep != null) {
+                KoanDivider()
+                KoanMenuItem("Cancel sleep timer", {
+                    open = false
+                    mirror.launch { cancelSleepTimer() }
+                }, destructive = true)
             }
         }
     }
+}
+
+@Composable
+private fun countdown(atUnixMs: Long): String {
+    var left by remember(atUnixMs) { mutableLongStateOf(atUnixMs - System.currentTimeMillis()) }
+    LaunchedEffect(atUnixMs) {
+        while (left > 0) {
+            delay(left % 1000 + 1)
+            left = atUnixMs - System.currentTimeMillis()
+        }
+    }
+    return clock(left + 999)
 }

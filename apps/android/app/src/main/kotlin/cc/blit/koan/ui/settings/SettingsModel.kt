@@ -3,10 +3,9 @@ package cc.blit.koan.ui.settings
 import android.text.format.Formatter
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.ffi.ConnectedInfo
 import cc.blit.koan.ffi.HeldInfo
-import cc.blit.koan.ffi.KoanEngine
+import cc.blit.koan.ffi.KoanEngineInterface
 import cc.blit.koan.ffi.KoanException
 import cc.blit.koan.ffi.ScrobblingConnection
 import cc.blit.koan.ffi.ServerQueue
@@ -51,7 +50,7 @@ data class SettingsState(
  * written whole through `KoanEngine.updateSettings` as each control changes:
  * the engine routes each key to the file that owns it.
  */
-class SettingsModel(private val mirror: EngineMirror) : ViewModel() {
+class SettingsModel(private val engine: suspend () -> KoanEngineInterface) : ViewModel() {
     private val _state = MutableStateFlow(SettingsState())
     val state: StateFlow<SettingsState> = _state.asStateFlow()
 
@@ -63,7 +62,7 @@ class SettingsModel(private val mirror: EngineMirror) : ViewModel() {
 
     fun reload() {
         viewModelScope.launch {
-            val settings = mirror.engine().settings()
+            val settings = engine().settings()
             _state.update { it.copy(settings = settings) }
         }
     }
@@ -75,7 +74,7 @@ class SettingsModel(private val mirror: EngineMirror) : ViewModel() {
         _state.update { it.copy(settings = next) }
         viewModelScope.launch {
             try {
-                mirror.engine().updateSettings(next)
+                engine().updateSettings(next)
                 _state.update { it.copy(error = null) }
             } catch (e: KoanException) {
                 failed(e)
@@ -98,7 +97,7 @@ class SettingsModel(private val mirror: EngineMirror) : ViewModel() {
 
     fun signOut(forgetTracks: Boolean, then: () -> Unit) {
         viewModelScope.launch {
-            val engine = mirror.engine()
+            val engine = engine()
             try {
                 engine.signOutRemote()
             } catch (e: KoanException) {
@@ -124,13 +123,15 @@ class SettingsModel(private val mirror: EngineMirror) : ViewModel() {
         "Freed ${Formatter.formatShortFileSize(context, c.bytes.toLong())} across ${c.files} files"
     }
 
-    fun setOffline(on: Boolean) = mirror.launch { setOffline(on) }
+    fun setOffline(on: Boolean) {
+        viewModelScope.launch { engine().setOffline(on) }
+    }
 
     /** Change the signed-in account's password. This device stays signed in. */
     fun changePassword(current: String, new: String, then: (Boolean) -> Unit) {
         viewModelScope.launch {
             try {
-                mirror.engine().changeOwnPassword(current, new)
+                engine().changeOwnPassword(current, new)
                 done("Password changed. Your other devices will have to sign in again.")
                 then(true)
             } catch (e: KoanException) {
@@ -143,7 +144,7 @@ class SettingsModel(private val mirror: EngineMirror) : ViewModel() {
     /** Keep this device's queue on the server: asked first when the server already holds one. */
     fun setServerQueue(on: Boolean) {
         viewModelScope.launch {
-            val engine = mirror.engine()
+            val engine = engine()
             try {
                 if (on) {
                     val saved = engine.serverQueue()
@@ -166,7 +167,7 @@ class SettingsModel(private val mirror: EngineMirror) : ViewModel() {
         if (!replace) return
         viewModelScope.launch {
             try {
-                mirror.engine().setServerQueue(true)
+                engine().setServerQueue(true)
             } catch (e: KoanException) {
                 failed(e)
             }
@@ -180,7 +181,7 @@ class SettingsModel(private val mirror: EngineMirror) : ViewModel() {
     fun shareDevice(account: String, allow: Boolean) {
         viewModelScope.launch {
             try {
-                mirror.engine().shareDevice(account.trim(), allow)
+                engine().shareDevice(account.trim(), allow)
             } catch (e: KoanException) {
                 failed(e)
             }
@@ -193,17 +194,19 @@ class SettingsModel(private val mirror: EngineMirror) : ViewModel() {
         if (refuse && addr != null) {
             edit { s -> if (addr in s.devicesRefused) s else s.copy(devicesRefused = s.devicesRefused + addr) }
         }
-        connection.key?.let { key -> mirror.launch { endConnection(key) } }
+        connection.key?.let { key -> viewModelScope.launch { engine().endConnection(key) } }
     }
 
-    fun allowHeld(held: HeldInfo) = mirror.launch { allowHeld(held.addr) }
+    fun allowHeld(held: HeldInfo) {
+        viewModelScope.launch { engine().allowHeld(held.addr) }
+    }
 
     // -- Scrobbling ------------------------------------------------------
 
     fun loadScrobbling() {
         viewModelScope.launch {
             try {
-                val c = mirror.engine().scrobblingStatus()
+                val c = engine().scrobblingStatus()
                 _state.update { it.copy(scrobbling = Scrobbling.Known(c)) }
             } catch (e: KoanException) {
                 _state.update { it.copy(scrobbling = Scrobbling.Unknown) }
@@ -230,12 +233,12 @@ class SettingsModel(private val mirror: EngineMirror) : ViewModel() {
     fun isRunning(holds: String) = holds in _state.value.running
 
     /** Run `block` unless something holding the same thing is; say what it came to. */
-    private fun run(holds: String, block: suspend KoanEngine.() -> String?) {
+    private fun run(holds: String, block: suspend KoanEngineInterface.() -> String?) {
         if (holds in _state.value.running) return
         _state.update { it.copy(running = it.running + holds, error = null) }
         viewModelScope.launch {
             try {
-                mirror.engine().block()?.let(::done)
+                engine().block()?.let(::done)
             } catch (e: KoanException) {
                 failed(e)
             } finally {

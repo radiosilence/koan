@@ -2,7 +2,6 @@
 
 package cc.blit.koan.ui.history
 
-import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
@@ -32,6 +32,15 @@ import cc.blit.koan.ffi.PlayHistoryEntry
 import cc.blit.koan.ui.downloads.DownloadMenuItems
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
+import cc.blit.koan.ui.library.PageBar
+import cc.blit.koan.ui.library.Playable
+import cc.blit.koan.ui.library.Removal
+import cc.blit.koan.ui.library.SelectButton
+import cc.blit.koan.ui.library.SelectMode
+import cc.blit.koan.ui.library.Selection
+import cc.blit.koan.ui.library.SelectionBar
+import cc.blit.koan.ui.library.Sleeve
+import cc.blit.koan.ui.library.Tick
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.nonce
 import cc.blit.koan.ui.nowplaying.clock
@@ -39,13 +48,13 @@ import cc.blit.koan.ui.playlists.AddToPlaylistSheet
 import cc.blit.koan.ui.playlists.CollectionRow
 import cc.blit.koan.ui.playlists.ConfirmDialog
 import cc.blit.koan.ui.playlists.MenuItem
-import cc.blit.koan.ui.playlists.PageBar
-import cc.blit.koan.ui.playlists.Sleeve
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
+import cc.blit.koan.ui.theme.KoanField
 import cc.blit.koan.ui.theme.KoanIcon
 import cc.blit.koan.ui.theme.KoanIcons
 import cc.blit.koan.ui.theme.KoanSectionHeader
+import cc.blit.koan.ui.theme.KoanSpace
 import cc.blit.koan.ui.theme.KoanText
 import cc.blit.koan.ui.theme.KoanTheme
 import cc.blit.koan.ui.theme.KoanTone
@@ -59,6 +68,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -74,13 +84,15 @@ fun EntryProviderScope<NavKey>.historyEntries() {
 }
 
 /**
- * Every play, most recent first. Asked for again when a play is recorded or
- * forgotten (`history`), and when the library moves, since an entry's track
- * can leave it.
+ * Every play, most recent first, narrowed by `query`. Asked for again when a
+ * play is recorded or forgotten (`history`), when the library moves, since an
+ * entry's track can leave it, and as the query is typed.
  */
 class HistoryModel(mirror: EngineMirror) : ViewModel() {
-    val entries: StateFlow<List<PlayHistoryEntry>?> = combine(mirror.history, mirror.library) { h, l -> h to l }
-        .mapLatest { runCatching { mirror.engine().playHistory(null) }.getOrDefault(emptyList()) }
+    val query = MutableStateFlow("")
+
+    val entries: StateFlow<List<PlayHistoryEntry>?> = combine(mirror.history, mirror.library, query) { _, _, q -> q.trim() }
+        .mapLatest { q -> runCatching { mirror.engine().playHistory(q.ifEmpty { null }) }.getOrDefault(emptyList()) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 }
 
@@ -95,21 +107,33 @@ private fun HistoryPage() {
     val app = koanApp()
     val model = viewModel { HistoryModel(app.mirror) }
     val entries by model.entries.collectAsStateWithLifecycle()
+    val query by model.query.collectAsStateWithLifecycle()
     var clearing by remember { mutableStateOf(false) }
     var adding by remember { mutableStateOf<Long?>(null) }
     val zone = ZoneId.systemDefault()
     val today = LocalDate.now(zone)
     val gutter = LocalKoanTokens.current.gutter
+    // Plays, not tracks: a track played twice is two rows to pick.
+    val selection = remember { Selection<PlayHistoryEntry> { it.id } }
+    SelectMode(selection)
 
     Column {
         PageBar("History") {
-            KoanButton("Clear…", { clearing = true }, kind = KoanButtonKind.Text, enabled = !entries.isNullOrEmpty())
+            if (!entries.isNullOrEmpty()) SelectButton(selection)
+            KoanButton("Clear…", { clearing = true }, kind = KoanButtonKind.Text, enabled = !entries.isNullOrEmpty() && query.isBlank())
         }
+        KoanField(
+            query,
+            { model.query.value = it },
+            Modifier.fillMaxWidth().padding(horizontal = gutter, vertical = KoanSpace.xs),
+            placeholder = KoanTheme.label("Filter history"),
+        )
         val shown = entries
         when {
             shown == null -> Unit
+            shown.isEmpty() && query.isNotBlank() -> KoanUnavailable("No matches", KoanIcons.search, null)
             shown.isEmpty() -> KoanUnavailable("Nothing played yet", KoanIcons.history, "Everything you play lands here, most recent first.")
-            else -> LazyColumn {
+            else -> LazyColumn(Modifier.weight(1f)) {
                 byDay(shown, zone) { it.playedAt }.forEach { (day, plays) ->
                     stickyHeader(key = "day:$day") {
                         KoanSectionHeader(
@@ -118,10 +142,17 @@ private fun HistoryPage() {
                         )
                     }
                     items(plays, key = { it.id }) { entry ->
-                        HistoryRow(entry, zone, onAdd = { adding = it }, modifier = Modifier.animateItem())
+                        HistoryRow(entry, zone, selection, onAdd = { adding = it }, modifier = Modifier.animateItem())
                     }
                 }
             }
+        }
+        if (selection.active) {
+            SelectionBar(
+                selection,
+                { Playable.OfTrack(it.track) },
+                Removal("Forget") { picked -> app.mirror.launch { deletePlays(picked.map { it.id }) } },
+            )
         }
     }
 
@@ -137,7 +168,7 @@ private fun HistoryPage() {
 }
 
 @Composable
-private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, onAdd: (Long) -> Unit, modifier: Modifier) {
+private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, selection: Selection<PlayHistoryEntry>, onAdd: (Long) -> Unit, modifier: Modifier) {
     val app = koanApp()
     val nav = LocalNavigator.current
     val track = entry.track
@@ -151,6 +182,7 @@ private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, onAdd: (Long) -> U
         state = swipe,
         modifier = modifier,
         enableDismissFromStartToEnd = false,
+        enableDismissFromEndToStart = !selection.active,
         onDismiss = { forget() },
         backgroundContent = {
             Box(
@@ -165,9 +197,11 @@ private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, onAdd: (Long) -> U
             CollectionRow(
                 track.title,
                 "${timeOf(entry.playedAt, zone)} · ${track.artistName} · ${track.albumTitle}$elsewhere",
-                onClick = { app.player.playTracks(listOf(track.id)) },
-                onLongClick = { menu = true },
-                leading = { Sleeve(track.albumId?.let { Art.album(it) } ?: Art.track(track.id)) },
+                onClick = { if (!selection.take(entry)) app.player.playTracks(listOf(track.id)) },
+                onLongClick = if (selection.active) null else ({ menu = true }),
+                leading = {
+                    if (selection.active) Tick(selection.contains(entry)) else Sleeve(track.albumId?.let { Art.album(it) } ?: Art.track(track.id))
+                },
                 trailing = { KoanText(track.durationMs?.let(::clock).orEmpty(), role = KoanType.Meta, tone = KoanTone.Muted) },
             )
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -177,7 +211,7 @@ private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, onAdd: (Long) -> U
                 MenuItem("Add to Playlist…", KoanIcons.playlist) { menu = false; onAdd(track.id) }
                 DownloadMenuItems(onDisk = track.onDisk, dismiss = { menu = false }) { listOf(track.id) }
                 track.albumId?.let { albumId ->
-                    MenuItem("Go to Album", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId)) }
+                    MenuItem("Go to Album", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId, track.id)) }
                 }
                 MenuItem("Remove from History", KoanIcons.remove, destructive = true) { menu = false; forget() }
             }

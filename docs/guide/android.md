@@ -63,3 +63,16 @@ The phone is one of your devices, as the others are: it can play on another
 device through **Play on** in Now Playing, and the others see it through the
 server. Finding devices on the local network by Bonjour is not there yet on
 Android; a device added by address under Settings → Devices works.
+
+## EQ
+
+Settings → EQ corrects the phone's output with a profile and plays tunings on
+top of it, as the iPhone does: AutoEQ's corrections by headphone, offered for
+the output in use when its name is one AutoEQ knows; profiles imported from
+Equalizer APO, AutoEQ or Wavelet text, WAV impulse responses or a zip of them,
+from the file picker, pasted, or shared to kōan from another app; and presets
+that hold a correction and a tuning to switch between. A profile's page draws
+what it does; a tuning's bands are edited in its table or dragged on the graph,
+and a graphic curve is painted there. Nothing is applied until a profile is
+chosen. Measurements and squig.link, splitting a combined EQ, targets, and
+choosing profiles for other outputs are on the Mac and iPhone only for now.
