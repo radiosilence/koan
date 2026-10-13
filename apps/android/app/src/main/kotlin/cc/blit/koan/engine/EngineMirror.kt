@@ -34,8 +34,19 @@ import kotlinx.coroutines.launch
  * where it is now, for whatever draws a moving playhead at its own rate.
  */
 data class Playhead(val positionMs: Long, val seekableMs: Long, val playing: Boolean, val atMs: Long) {
-    fun positionAt(nowMs: Long = SystemClock.elapsedRealtime()) =
-        if (playing) positionMs + (nowMs - atMs) else positionMs
+    /**
+     * Where it is at `nowMs`, kept within `durationMs` when that is known: the
+     * reckoning runs on past a track's end until the anchor for the next one
+     * arrives, and a clock reading longer than the track is never right.
+     */
+    fun positionAt(nowMs: Long = SystemClock.elapsedRealtime(), durationMs: Long = 0): Long {
+        val at = if (playing) positionMs + (nowMs - atMs) else positionMs
+        return if (durationMs > 0) at.coerceAtMost(durationMs) else at
+    }
+
+    /** Whether this anchor only restates `previous`: the same motion, the same place give or take `toleranceMs`. */
+    fun continues(previous: Playhead, toleranceMs: Long = 500) =
+        playing == previous.playing && Math.abs(previous.positionAt(atMs) - positionMs) <= toleranceMs
 }
 
 /** The queue as the engine last sent it, with the latest row patch applied. */

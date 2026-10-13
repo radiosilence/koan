@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
@@ -47,12 +46,13 @@ import cc.blit.koan.ui.nowplaying.clock
 import cc.blit.koan.ui.playlists.AddToPlaylistSheet
 import cc.blit.koan.ui.playlists.CollectionRow
 import cc.blit.koan.ui.playlists.ConfirmDialog
-import cc.blit.koan.ui.playlists.MenuItem
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanField
 import cc.blit.koan.ui.theme.KoanIcon
 import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanMenu
+import cc.blit.koan.ui.theme.KoanMenuItem
 import cc.blit.koan.ui.theme.KoanSectionHeader
 import cc.blit.koan.ui.theme.KoanSpace
 import cc.blit.koan.ui.theme.KoanText
@@ -204,16 +204,16 @@ private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, selection: Selecti
                 },
                 trailing = { KoanText(track.durationMs?.let(::clock).orEmpty(), role = KoanType.Meta, tone = KoanTone.Muted) },
             )
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                MenuItem("Play", KoanIcons.play) { menu = false; app.player.playTracks(listOf(track.id)) }
-                MenuItem("Play Next", KoanIcons.playNext) { menu = false; app.player.playNext(listOf(track.id)) }
-                MenuItem("Add to Queue", KoanIcons.queue) { menu = false; app.player.enqueue(listOf(track.id)) }
-                MenuItem("Add to Playlist…", KoanIcons.playlist) { menu = false; onAdd(track.id) }
+            KoanMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                KoanMenuItem("Play", KoanIcons.play) { menu = false; app.player.playTracks(listOf(track.id)) }
+                KoanMenuItem("Play Next", KoanIcons.playNext) { menu = false; app.player.playNext(listOf(track.id)) }
+                KoanMenuItem("Add to Queue", KoanIcons.queue) { menu = false; app.player.enqueue(listOf(track.id)) }
+                KoanMenuItem("Add to Playlist…", KoanIcons.playlist) { menu = false; onAdd(track.id) }
                 DownloadMenuItems(onDisk = track.onDisk, dismiss = { menu = false }) { listOf(track.id) }
                 track.albumId?.let { albumId ->
-                    MenuItem("Go to Album", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId, track.id)) }
+                    KoanMenuItem("Go to Album", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId, track.id)) }
                 }
-                MenuItem("Remove from History", KoanIcons.remove, destructive = true) { menu = false; forget() }
+                KoanMenuItem("Remove from History", KoanIcons.remove, destructive = true) { menu = false; forget() }
             }
         }
     }

@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.runtime.Composable
@@ -28,7 +27,6 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.unit.dp
 import cc.blit.koan.ffi.BrowseChoices
 import cc.blit.koan.ffi.BrowseFilter
-import cc.blit.koan.ui.playlists.MenuItem
 import cc.blit.koan.ui.theme.KoanBadge
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
@@ -36,6 +34,8 @@ import cc.blit.koan.ui.theme.KoanEdge
 import cc.blit.koan.ui.theme.KoanField
 import cc.blit.koan.ui.theme.KoanIcon
 import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanMenu
+import cc.blit.koan.ui.theme.KoanMenuItem
 import cc.blit.koan.ui.theme.KoanSectionHeader
 import cc.blit.koan.ui.theme.KoanSpace
 import cc.blit.koan.ui.theme.KoanText
@@ -53,9 +53,9 @@ fun <S> SortButton(selected: S, offered: List<S>, label: (S) -> String, onSort: 
     var open by remember { mutableStateOf(false) }
     Box {
         KoanButton("Sort", { open = true }, kind = KoanButtonKind.Icon, icon = KoanIcons.sort)
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        KoanMenu(expanded = open, onDismissRequest = { open = false }) {
             offered.forEach { sort ->
-                MenuItem(label(sort), if (sort == selected) KoanIcons.check else null) {
+                KoanMenuItem(label(sort), if (sort == selected) KoanIcons.check else null) {
                     open = false
                     onSort(sort)
                 }
