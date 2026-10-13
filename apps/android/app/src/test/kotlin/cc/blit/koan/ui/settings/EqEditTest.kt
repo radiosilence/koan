@@ -37,6 +37,7 @@ class EqEditTest {
     @Before fun setUp() {
         Dispatchers.setMain(dispatcher)
         fake.answers["dspOverview"] = { overview() }
+        fake.answers["dspOutputResponseFor"] = { null }
         fake.answers["autoeqSuggestion"] = { null }
     }
 
@@ -79,14 +80,6 @@ class EqEditTest {
         assertTrue(wide[2] > 0 && wide[2] < wide[1])
         // Kept to a hundredth of a dB.
         assertTrue(wide.all { abs(it * 100 - Math.rint(it * 100)) < 1e-9 })
-    }
-
-    @Test fun theGraphsScaleTurnsBothWays() {
-        val scale = GraphScale(1000f, 200f, 12.0)
-        for (hz in listOf(20.0, 100.0, 1000.0, 20_000.0)) assertEquals(hz, scale.hz(scale.x(hz)), hz * 1e-4)
-        for (db in listOf(-12.0, 0.0, 6.0)) assertEquals(db, scale.db(scale.y(db)), 1e-4)
-        assertEquals(30.0, GraphScale(1000f, 200f, 60.0).db(0f), 0.0)
-        assertEquals(13.5, span(listOf(-3.0, 12.5)), 0.0)
     }
 
     @Test fun aChainIsReorderedSwitchedAndTrimmed() {

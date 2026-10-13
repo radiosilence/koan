@@ -41,6 +41,7 @@ class DspTest {
     @Before fun setUp() {
         Dispatchers.setMain(dispatcher)
         fake.answers["dspOverview"] = { overview() }
+        fake.answers["dspOutputResponseFor"] = { null }
     }
 
     @After fun tearDown() = Dispatchers.resetMain()

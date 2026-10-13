@@ -37,6 +37,8 @@ data class RoleAsk(val names: List<String>)
 
 data class DspState(
     val overview: DspOverview? = null,
+    /** What the output in use plays, drawn: its correction and tuning together. */
+    val output: DspResponse? = null,
     /** Moves on every change made here, for a profile's page to read again. */
     val version: Int = 0,
     val error: String? = null,
@@ -323,7 +325,10 @@ class DspModel(private val engine: suspend () -> KoanEngineInterface) : ViewMode
 
     private suspend fun changed(bump: Boolean = true) {
         val overview = engine().dspOverview()
-        _state.update { it.copy(overview = overview, version = if (bump) it.version + 1 else it.version) }
+        // The old curve stays until the new one is drawn, so the graph never
+        // empties between changes.
+        val output = overview.device?.let { engine().dspOutputResponseFor(it, 48_000u) } ?: _state.value.output
+        _state.update { it.copy(overview = overview, output = output, version = if (bump) it.version + 1 else it.version) }
     }
 
     private fun failed(e: KoanException) = _state.update { it.copy(error = e.describe()) }

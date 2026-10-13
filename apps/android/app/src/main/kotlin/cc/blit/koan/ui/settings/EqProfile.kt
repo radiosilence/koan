@@ -6,6 +6,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -27,7 +28,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.input.ImeAction
@@ -187,63 +187,59 @@ private fun EqEditor(dsp: DspModel, name: String, detail: DspProfileDetail, resp
     val curve = if (editable) curveIndex(detail.bands) else null
     val shown = live ?: response
     val accent = KoanTheme.color(KoanTone.Accent)
-    val rule = KoanTheme.color(KoanTone.Rule)
     val ink = KoanTheme.color(KoanTone.Ink)
     // The scale holds still while a drag goes on: drawn from what was saved.
-    val span = span(response.total)
+    val half = halfRange(listOf(response.total))
+    val curves = remember(shown.total, accent) { listOf(Curve(shown.total, accent, 1.5f)) }
 
     Column(inset.padding(vertical = KoanSpace.s), verticalArrangement = Arrangement.spacedBy(KoanSpace.s)) {
-        Canvas(
-            Modifier
-                .fillMaxWidth()
-                .height(200.dp)
-                .pointerInput(handles, curve, brush) {
-                    if (handles.isEmpty() && curve == null) return@pointerInput
-                    val scale = GraphScale(size.width.toFloat(), size.height.toFloat(), span)
-                    var dragging: Handle? = null
-                    fun move(at: Offset, done: Boolean) {
-                        val hz = scale.hz(at.x)
-                        val db = scale.db(at.y)
-                        val h = dragging
-                        if (h != null) {
-                            val kind = detail.bands[h.index].kind
-                            stepper.step(done, { dsp.previewBand(name, h.index, kind, hz, db, h.q) }) {
-                                dsp.setBand(name, h.index, kind, hz, db, h.q)
+        ResponseGraph(shown.freqs, curves, graphStyle(), Modifier.fillMaxWidth().height(220.dp), fixedHalf = half) {
+            Canvas(
+                Modifier
+                    .fillMaxSize()
+                    .pointerInput(handles, curve, brush, half) {
+                        if (handles.isEmpty() && curve == null) return@pointerInput
+                        val plot = Plot(size.width.toFloat(), size.height.toFloat(), half, LABEL_LEFT.toPx(), LABEL_BOTTOM.toPx())
+                        var dragging: Handle? = null
+                        var last = Offset.Zero
+                        fun move(at: Offset, done: Boolean) {
+                            val hz = plot.hz(at.x)
+                            val db = plot.db(at.y)
+                            val h = dragging
+                            if (h != null) {
+                                val kind = detail.bands[h.index].kind
+                                stepper.step(done, { dsp.previewBand(name, h.index, kind, hz, db, h.q) }) {
+                                    dsp.setBand(name, h.index, kind, hz, db, h.q)
+                                }
+                            } else if (curve != null) {
+                                val points = paint(painted ?: detail.bands[curve].curve, hz, db, brush)
+                                painted = points
+                                stepper.step(done, { dsp.previewCurve(name, curve, points) }) { dsp.setCurve(name, curve, points) }
                             }
-                        } else if (curve != null) {
-                            val points = paint(painted ?: detail.bands[curve].curve, hz, db, brush)
-                            painted = points
-                            stepper.step(done, { dsp.previewCurve(name, curve, points) }) { dsp.setCurve(name, curve, points) }
                         }
-                    }
-                    var last = Offset.Zero
-                    detectDragGestures(
-                        onDragStart = { at ->
-                            last = at
-                            val reach = 28.dp.toPx()
-                            dragging = handles
-                                .minByOrNull { hypot(scale.x(it.hz) - at.x, scale.y(it.db) - at.y) }
-                                ?.takeIf { hypot(scale.x(it.hz) - at.x, scale.y(it.db) - at.y) < reach }
-                        },
-                        onDrag = { change, _ ->
-                            last = change.position
-                            move(last, done = false)
-                        },
-                        onDragEnd = { move(last, done = true) },
-                        onDragCancel = { move(last, done = true) },
-                    )
-                },
-        ) {
-            val scale = GraphScale(size.width, size.height, span)
-            drawLine(rule, Offset(0f, scale.y(0.0)), Offset(size.width, scale.y(0.0)), 1.dp.toPx())
-            val path = Path()
-            shown.freqs.zip(shown.total).forEachIndexed { i, (f, db) ->
-                if (i == 0) path.moveTo(scale.x(f), scale.y(db)) else path.lineTo(scale.x(f), scale.y(db))
-            }
-            drawPath(path, accent, style = Stroke(1.5.dp.toPx()))
-            val side = 10.dp.toPx()
-            handles.forEach { h ->
-                drawRect(ink, Offset(scale.x(h.hz) - side / 2, scale.y(h.db) - side / 2), Size(side, side), style = Stroke(1.dp.toPx()))
+                        detectDragGestures(
+                            onDragStart = { at ->
+                                last = at
+                                val reach = 28.dp.toPx()
+                                dragging = handles
+                                    .minByOrNull { hypot(plot.x(it.hz) - at.x, plot.y(it.db) - at.y) }
+                                    ?.takeIf { hypot(plot.x(it.hz) - at.x, plot.y(it.db) - at.y) < reach }
+                            },
+                            onDrag = { change, _ ->
+                                last = change.position
+                                move(last, done = false)
+                            },
+                            onDragEnd = { move(last, done = true) },
+                            onDragCancel = { move(last, done = true) },
+                        )
+                    },
+            ) {
+                if (handles.isEmpty()) return@Canvas
+                val plot = Plot(size.width, size.height, half, LABEL_LEFT.toPx(), LABEL_BOTTOM.toPx())
+                val side = 10.dp.toPx()
+                handles.forEach { h ->
+                    drawRect(ink, Offset(plot.x(h.hz) - side / 2, plot.y(h.db) - side / 2), Size(side, side), style = Stroke(1.dp.toPx()))
+                }
             }
         }
         if (curve != null) {

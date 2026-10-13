@@ -6,8 +6,6 @@ import cc.blit.koan.ffi.DspTuningEntry
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
-import kotlin.math.log10
-import kotlin.math.pow
 import kotlin.math.roundToLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -65,26 +63,6 @@ fun paint(points: List<DspPoint>, hz: Double, db: Double, brush: Brush): List<Ds
         if (reach <= 0.01) p else DspPoint(p.hz, ((p.db + reach * (db - p.db)) * 100).roundToLong() / 100.0)
     }
 }
-
-/**
- * The graph's scale: 20 Hz to 20 kHz across on a log scale, ±`span` dB up
- * and down about the middle. Held to what a band takes: 10 Hz–22 kHz, ±30 dB.
- */
-data class GraphScale(val width: Float, val height: Float, val span: Double) {
-    private val lo = log10(20.0)
-    private val hi = log10(20_000.0)
-
-    fun x(hz: Double) = ((log10(hz.coerceIn(20.0, 20_000.0)) - lo) / (hi - lo) * width).toFloat()
-
-    fun y(db: Double) = (height / 2 - db / span * height / 2).toFloat()
-
-    fun hz(x: Float) = 10.0.pow(lo + (x / width).coerceIn(0f, 1f) * (hi - lo)).coerceIn(10.0, 22_000.0)
-
-    fun db(y: Float) = ((height / 2 - y) / (height / 2) * span).coerceIn(-30.0, 30.0)
-}
-
-/** The span a response is drawn at: ±12 dB, or as far as it goes. */
-fun span(db: List<Double>) = maxOf(12.0, (db.maxOfOrNull { abs(it) } ?: 0.0) + 1)
 
 // -- A tuning chain: the EQs an output plays on top of its correction, in order.
 

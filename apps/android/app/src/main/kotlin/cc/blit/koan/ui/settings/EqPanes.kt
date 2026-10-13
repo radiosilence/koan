@@ -3,9 +3,11 @@ package cc.blit.koan.ui.settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.rememberScrollState
@@ -22,13 +24,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.NavKey
 import cc.blit.koan.ffi.AutoEqEntry
 import cc.blit.koan.ffi.AutoEqOffer
 import cc.blit.koan.ffi.DspOverview
+import cc.blit.koan.ffi.DspResponse
 import cc.blit.koan.ffi.DspRole
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
@@ -39,8 +44,9 @@ import cc.blit.koan.ui.theme.KoanField
 import cc.blit.koan.ui.theme.KoanIcons
 import cc.blit.koan.ui.theme.KoanSpace
 import cc.blit.koan.ui.theme.KoanText
-import cc.blit.koan.ui.theme.KoanTone
+import cc.blit.koan.ui.theme.KoanTheme
 import cc.blit.koan.ui.theme.KoanToggle
+import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -87,6 +93,7 @@ fun EqPane(model: SettingsModel) {
         if (o != null) {
             header("This phone")
             o.device?.let { device -> item { ValueRow("Output", o.names[device] ?: device) } }
+            item { OutputGraph(o, state.output) }
             item {
                 ChoiceRow(
                     "Correction",
@@ -309,6 +316,42 @@ private fun AutoEqRow(entry: AutoEqEntry, choose: () -> Unit) {
             KoanText(entry.measuredBy, role = KoanType.Fine, tone = KoanTone.Muted)
         }
     }
+}
+
+/**
+ * What the output plays, drawn: the whole of it in the strongest ink, the
+ * correction in the accent, and each EQ of the tuning dashed. A flat output
+ * is a line at 0 dB, and says so.
+ */
+@Composable
+private fun OutputGraph(o: DspOverview, response: DspResponse?) {
+    val strong = KoanTheme.color(KoanTone.Strong)
+    val accent = KoanTheme.color(KoanTone.Accent)
+    val muted = KoanTheme.color(KoanTone.Muted)
+    val flat = o.active == null && o.chain.none { it.on } || response == null
+    val curves = remember(response, o.active, o.chain, flat, strong, accent, muted) {
+        if (flat || response == null) emptyList() else outputCurves(o, response, strong, accent, muted)
+    }
+    val freqs = response?.freqs ?: flatFreqs
+    ResponseGraph(freqs, curves, graphStyle(), inset.fillMaxWidth().height(200.dp).padding(vertical = KoanSpace.s)) {
+        if (flat) {
+            Box(Modifier.fillMaxWidth().padding(top = KoanSpace.l), contentAlignment = Alignment.TopCenter) {
+                KoanText("Flat: plays untouched", role = KoanType.Meta, tone = KoanTone.Muted, appText = true)
+            }
+        }
+    }
+}
+
+/** A flat output's axis: nothing to draw on it but the frame. */
+private val flatFreqs = listOf(20.0, 20_000.0)
+
+/** The curves the output's graph draws: each stage playing, then the whole. */
+internal fun outputCurves(o: DspOverview, r: DspResponse, strong: Color, accent: Color, muted: Color): List<Curve> {
+    val eqs = o.chain.filter { it.on }.mapNotNull { entry -> r.layers.firstOrNull { it.name == entry.name } }
+    val correction = o.active?.let { r.correction ?: r.total.takeIf { eqs.isEmpty() } }
+    return listOfNotNull(correction?.let { Curve(it, accent, 1.5f) }) +
+        eqs.map { Curve(it.db, muted, 1f, dashed = true) } +
+        Curve(r.total, strong, 2f)
 }
 
 /** What the output plays, in a sentence. */
