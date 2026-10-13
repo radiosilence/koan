@@ -275,7 +275,7 @@ impl SubsonicClient {
         let url = format!("{}/rest/{}", self.auth.base_url, endpoint);
         let params = self.auth_params()?;
         let resp: SubsonicResponseWrapper = self
-            .http
+            .http()
             .get(&url)
             .query(&params)
             .query(pairs)
@@ -1089,7 +1089,7 @@ impl SubsonicClient {
         let mut params = self.auth_params()?;
         params.insert("sha256".into(), sha256.into());
         let resp = self
-            .http
+            .http()
             .get(&url)
             .query(&params)
             .timeout(DSP_FILE_TIMEOUT)
@@ -1112,7 +1112,7 @@ impl SubsonicClient {
         let mut params = self.auth_params()?;
         params.insert("sha256".into(), sha256.into());
         let resp: SubsonicResponseWrapper = self
-            .http
+            .http()
             .post(&url)
             .query(&params)
             .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
@@ -1835,9 +1835,10 @@ mod tests {
     #[test]
     fn a_network_change_tries_a_server_that_was_not_answering_now() {
         let client = SubsonicClient::new("http://192.168.1.10:4533", "koan", "pw");
-        client
-            .outage()
-            .down(Some(Duration::from_secs(60)), "Can't reach the server".into());
+        client.outage().down(
+            Some(Duration::from_secs(60)),
+            "Can't reach the server".into(),
+        );
 
         let started = Instant::now();
         std::thread::scope(|scope| {
