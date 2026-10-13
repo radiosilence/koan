@@ -17,6 +17,7 @@ import androidx.navigation3.runtime.EntryProviderScope
 import androidx.navigation3.runtime.NavKey
 import cc.blit.koan.R
 import cc.blit.koan.ui.downloads.DownloadsRoute
+import cc.blit.koan.ui.history.HistoryRoute
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.Tab
@@ -52,6 +53,7 @@ private fun LibraryPage() {
             item { Link("Playlists", R.drawable.ic_playlist) { nav.push(PlaylistsRoute()) } }
             item { Link("Recently Played", R.drawable.ic_clock) { nav.push(ShelfRoute(Shelf.Recent)) } }
             item { Link("Downloaded", R.drawable.ic_drive) { nav.push(ShelfRoute(Shelf.Downloaded)) } }
+            item { Link("History", R.drawable.ic_clock) { nav.push(HistoryRoute()) } }
             item { Link("Downloads", R.drawable.ic_download) { nav.push(DownloadsRoute()) } }
         }
     }

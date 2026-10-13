@@ -4476,6 +4476,13 @@ impl KoanEngine {
         .await
     }
 
+    /// The download cache's limit in bytes, as koan reads `cache_limit`, or
+    /// `None` when there is none. For drawing usage against it without a
+    /// second parser of the setting on each platform.
+    pub async fn cache_limit_bytes(self: Arc<Self>) -> Option<u64> {
+        offload::offload(|| Config::cached().cache_limit_bytes()).await
+    }
+
     /// Delete every downloaded remote track. The library rows stay.
     pub async fn clear_download_cache(self: Arc<Self>) -> Result<CacheCleared, KoanError> {
         offload::offload(move || {

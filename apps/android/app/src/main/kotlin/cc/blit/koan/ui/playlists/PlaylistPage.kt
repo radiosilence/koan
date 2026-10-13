@@ -1,0 +1,338 @@
+package cc.blit.koan.ui.playlists
+
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import cc.blit.koan.art.Art
+import cc.blit.koan.ffi.KoanEngine
+import cc.blit.koan.ffi.Playlist
+import cc.blit.koan.ffi.PlaylistEntry
+import cc.blit.koan.ui.downloads.DownloadMenuItems
+import cc.blit.koan.ui.koanApp
+import cc.blit.koan.ui.library.AlbumRoute
+import cc.blit.koan.ui.navigation.LocalNavigator
+import cc.blit.koan.ui.nowplaying.clock
+import cc.blit.koan.ui.theme.KoanButton
+import cc.blit.koan.ui.theme.KoanButtonKind
+import cc.blit.koan.ui.theme.KoanIcon
+import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanSegmented
+import cc.blit.koan.ui.theme.KoanSpace
+import cc.blit.koan.ui.theme.KoanText
+import cc.blit.koan.ui.theme.KoanTone
+import cc.blit.koan.ui.theme.KoanType
+import cc.blit.koan.ui.theme.KoanUnavailable
+import cc.blit.koan.ui.theme.LocalKoanTokens
+
+/**
+ * A playlist, laid out the way the queue is: grouped under its records or one
+ * row per track, the choice remembered per playlist and ungrouped by default,
+ * since a playlist is a sequence someone chose rather than a shelf of records.
+ *
+ * Playback is mirrored onto it: a row is lit because its entry is what is
+ * playing. Editing (drag to reorder, remove) is for playlists that take it; a
+ * smart playlist's rules and a playlist file decide their own contents.
+ */
+@Composable
+fun PlaylistPage(playlistId: Long) {
+    val app = koanApp()
+    val model = viewModel { PlaylistModel(app.mirror, playlistId) }
+    val contents by model.contents.collectAsStateWithLifecycle()
+    val nowPlaying by app.mirror.nowPlaying.collectAsStateWithLifecycle()
+    val edits = remember { PlaylistEdits(app.mirror) }
+    val nav = LocalNavigator.current
+
+    val playlist = contents?.playlist
+    val entries = contents?.entries.orEmpty()
+    val fillable = playlist?.fillable == true
+    var editing by rememberSaveable { mutableStateOf(false) }
+    var menu by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf(false) }
+    var adding by remember { mutableStateOf<List<Long>?>(null) }
+    val allTrackIds: suspend KoanEngine.() -> List<Long> = { playlistTracks(playlistId).map { it.track.id } }
+
+    Column {
+        PageBar(playlist?.name ?: "Playlist", appText = playlist == null) {
+            if (fillable && entries.isNotEmpty()) {
+                KoanButton(if (editing) "Done" else "Edit", { editing = !editing }, kind = KoanButtonKind.Text)
+            }
+            Box {
+                KoanButton("More", { menu = true }, kind = KoanButtonKind.Icon, icon = KoanIcons.more)
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    if (playlist?.fromFile == false) MenuItem("Rename…") { menu = false; renaming = true }
+                    if (fillable && entries.size > 1) {
+                        MenuItem("Shuffle Order", KoanIcons.reshuffle) { menu = false; edits.shuffleOrder(playlistId) }
+                    }
+                    if (entries.isNotEmpty()) {
+                        MenuItem("Add to Playlist…", KoanIcons.playlist) { menu = false; adding = entries.map { it.track.id } }
+                        DownloadMenuItems(onDisk = null, dismiss = { menu = false }, trackIds = allTrackIds)
+                    }
+                    MenuItem("Delete Playlist", KoanIcons.clear, destructive = true) { menu = false; deleting = true }
+                }
+            }
+        }
+
+        when {
+            contents == null -> Unit
+            playlist == null -> KoanUnavailable("Playlist not found", KoanIcons.playlist, "It may have been deleted here or on your server.")
+            else -> PlaylistList(
+                playlist = playlist,
+                entries = entries,
+                covers = contents?.covers.orEmpty(),
+                playingEntry = nowPlaying?.entry?.playlistEntryId,
+                editing = editing && fillable,
+                edits = edits,
+                onAdd = { adding = it },
+            )
+        }
+    }
+
+    adding?.let { ids -> AddToPlaylistSheet({ ids }) { adding = null } }
+    if (renaming && playlist != null) {
+        NameDialog("Rename Playlist", "Rename", playlist.name, onDismiss = { renaming = false }) {
+            renaming = false
+            edits.rename(playlist, it)
+        }
+    }
+    if (deleting && playlist != null) {
+        DeletePlaylistDialog(playlist, onDismiss = { deleting = false }) {
+            edits.delete(playlistId)
+            nav.pop()
+        }
+    }
+}
+
+@Composable
+private fun PlaylistList(
+    playlist: Playlist,
+    entries: List<PlaylistEntry>,
+    covers: List<Long>,
+    playingEntry: Long?,
+    editing: Boolean,
+    edits: PlaylistEdits,
+    onAdd: (List<Long>) -> Unit,
+) {
+    val grouped = playlist.grouped ?: false
+    val listState = rememberLazyListState()
+    // The order shown while a row is dragged; the engine's again once the drop lands and the library moves.
+    var order by remember(entries) { mutableStateOf(entries) }
+    var dragging by remember { mutableStateOf<Long?>(null) }
+    var offset by remember { mutableFloatStateOf(0f) }
+
+    fun dragBy(delta: Float) {
+        offset += delta
+        val visible = listState.layoutInfo.visibleItemsInfo
+        val current = visible.firstOrNull { it.key == "entry:$dragging" } ?: return
+        val middle = current.offset + offset + current.size / 2
+        val target = visible.firstOrNull {
+            it.key != current.key && (it.key as? String)?.startsWith("entry:") == true &&
+                middle >= it.offset && middle < it.offset + it.size
+        } ?: return
+        val from = order.indexOfFirst { it.entryId == dragging }
+        val to = order.indexOfFirst { "entry:${it.entryId}" == target.key }
+        if (from < 0 || to < 0) return
+        order = order.toMutableList().apply { add(to, removeAt(from)) }
+        // The row is laid out at its new place next frame; keep it under the finger.
+        offset += current.offset - target.offset
+    }
+
+    fun drop() {
+        if (dragging != null && order.map { it.entryId } != entries.map { it.entryId }) {
+            edits.reorder(playlist.id, order.map { it.entryId })
+        }
+        dragging = null
+        offset = 0f
+    }
+
+    val rows = if (editing) order.map(PlaylistRow::Entry) else playlistRows(entries, grouped)
+    LazyColumn(state = listState) {
+        item(key = "header") {
+            PlaylistHeader(playlist, entries, covers, grouped, showLayout = !editing, edits)
+        }
+        if (entries.isEmpty()) {
+            item(key = "empty") {
+                KoanUnavailable(
+                    "Nothing in here yet",
+                    KoanIcons.playlist,
+                    if (playlist.fillable) "Add tracks from a record, a search or the queue." else null,
+                    Modifier.height(200.dp),
+                )
+            }
+        }
+        items(rows, key = { it.key }) { row ->
+            when (row) {
+                is PlaylistRow.Heading -> RecordHeading(row)
+                is PlaylistRow.Entry -> {
+                    val id = row.entry.entryId
+                    EntryRow(
+                        entry = row.entry,
+                        playlist = playlist,
+                        artwork = !grouped || editing,
+                        playing = playingEntry == id,
+                        editing = editing,
+                        edits = edits,
+                        onAdd = onAdd,
+                        handle = Modifier.pointerInput(id) {
+                            detectDragGestures(
+                                onDragStart = { dragging = id; offset = 0f },
+                                onDragEnd = { drop() },
+                                onDragCancel = { drop() },
+                                onDrag = { change, amount -> change.consume(); dragBy(amount.y) },
+                            )
+                        },
+                        modifier = if (dragging == id) {
+                            Modifier.zIndex(1f).graphicsLayer { translationY = offset }
+                        } else {
+                            Modifier.animateItem()
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaylistHeader(
+    playlist: Playlist,
+    entries: List<PlaylistEntry>,
+    covers: List<Long>,
+    grouped: Boolean,
+    showLayout: Boolean,
+    edits: PlaylistEdits,
+) {
+    val gutter = LocalKoanTokens.current.gutter
+    Column(Modifier.padding(horizontal = gutter, vertical = KoanSpace.s), verticalArrangement = Arrangement.spacedBy(KoanSpace.l)) {
+        Row(verticalAlignment = Alignment.Top) {
+            PlaylistMosaic(covers, 112.dp)
+            Spacer(Modifier.width(KoanSpace.l))
+            Column(verticalArrangement = Arrangement.spacedBy(KoanSpace.xs)) {
+                KoanText(playlist.name, role = KoanType.Title, tone = KoanTone.Strong, maxLines = 2)
+                KoanText(contentsSummary(playlist, entries), role = KoanType.Meta, tone = KoanTone.Muted)
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(KoanSpace.l), verticalAlignment = Alignment.CenterVertically) {
+            KoanButton("Play", { edits.play(playlist.id) }, kind = KoanButtonKind.Prominent, icon = KoanIcons.play, enabled = entries.isNotEmpty())
+            KoanButton("Shuffle", { edits.play(playlist.id, shuffled = true) }, icon = KoanIcons.shuffle, enabled = entries.isNotEmpty())
+        }
+        if (showLayout && entries.isNotEmpty()) {
+            KoanSegmented(
+                options = listOf("By album" to true, "By track" to false),
+                selected = grouped,
+                onSelect = { edits.setGrouped(playlist.id, it) },
+            )
+        }
+    }
+}
+
+/** "12 tracks · 48 min · synced": what it holds, and whether edits reach the server. */
+private fun contentsSummary(playlist: Playlist, entries: List<PlaylistEntry>): String {
+    val parts = mutableListOf(trackCount(entries.size.toUInt()))
+    val total = entries.sumOf { it.track.durationMs ?: 0L }
+    if (total > 0) parts += duration(total)
+    if (playlist.remoteId != null) parts += "synced"
+    when {
+        playlist.smart -> parts += "smart"
+        playlist.fromFile -> parts += "from a file"
+        playlist.readonly -> parts += "read-only"
+    }
+    return parts.joinToString(" · ")
+}
+
+@Composable
+private fun RecordHeading(heading: PlaylistRow.Heading) {
+    val nav = LocalNavigator.current
+    CollectionRow(
+        heading.album,
+        heading.artist,
+        modifier = Modifier.padding(top = KoanSpace.m),
+        titleTone = KoanTone.Strong,
+        onClick = heading.albumId?.let { id -> { nav.push(AlbumRoute(id)) } },
+        leading = heading.albumId?.let { id -> { Sleeve(Art.album(id)) } },
+    )
+}
+
+@Composable
+private fun EntryRow(
+    entry: PlaylistEntry,
+    playlist: Playlist,
+    artwork: Boolean,
+    playing: Boolean,
+    editing: Boolean,
+    edits: PlaylistEdits,
+    onAdd: (List<Long>) -> Unit,
+    modifier: Modifier,
+    handle: Modifier,
+) {
+    val app = koanApp()
+    val nav = LocalNavigator.current
+    val track = entry.track
+    var menu by remember { mutableStateOf(false) }
+
+    Box(modifier) {
+        CollectionRow(
+            track.title,
+            track.artistName,
+            titleTone = if (playing) KoanTone.Accent else KoanTone.Ink,
+            selected = playing,
+            onClick = if (editing) null else ({ edits.play(playlist.id, entry.entryId) }),
+            onLongClick = if (editing) null else ({ menu = true }),
+            leading = {
+                when {
+                    editing -> KoanButton("Remove", { edits.remove(playlist.id, listOf(entry.entryId)) }, kind = KoanButtonKind.Icon, icon = KoanIcons.subtract, destructive = true)
+                    artwork -> Sleeve(track.albumId?.let { Art.album(it) } ?: Art.track(track.id))
+                    else -> KoanText(track.trackNumber?.toString().orEmpty(), Modifier.width(24.dp), role = KoanType.Meta, tone = KoanTone.Muted)
+                }
+            },
+            trailing = {
+                if (editing) {
+                    KoanIcon(KoanIcons.choose, "Reorder", handle.padding(KoanSpace.m))
+                } else {
+                    KoanText(track.durationMs?.let(::clock).orEmpty(), role = KoanType.Meta, tone = KoanTone.Muted)
+                }
+            },
+        )
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            MenuItem("Play", KoanIcons.play) { menu = false; edits.play(playlist.id, entry.entryId) }
+            MenuItem("Play Next", KoanIcons.playNext) { menu = false; app.player.playNext(listOf(track.id)) }
+            MenuItem("Add to Queue", KoanIcons.queue) { menu = false; app.player.enqueue(listOf(track.id)) }
+            MenuItem("Add to Playlist…", KoanIcons.playlist) { menu = false; onAdd(listOf(track.id)) }
+            DownloadMenuItems(onDisk = track.onDisk, dismiss = { menu = false }) { listOf(track.id) }
+            track.albumId?.let { albumId ->
+                MenuItem("Go to Album", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId)) }
+            }
+            if (playlist.fillable) {
+                MenuItem("Remove from Playlist", KoanIcons.remove, destructive = true) {
+                    menu = false
+                    edits.remove(playlist.id, listOf(entry.entryId))
+                }
+            }
+        }
+    }
+}

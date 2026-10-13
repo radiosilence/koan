@@ -134,6 +134,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.core)
     implementation(libs.coil.compose)
     implementation(libs.jna) { artifact { type = "aar" } }
+    implementation(libs.rustls.platform.verifier)
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.tooling.preview)
@@ -141,8 +142,8 @@ dependencies {
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.robolectric)
     testImplementation(platform(libs.compose.bom))
     testImplementation(libs.compose.ui.test.junit4)
-    testImplementation(libs.kotlinx.coroutines.test)
 }

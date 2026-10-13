@@ -30,6 +30,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -73,8 +74,10 @@ fun ArtistPage(artistId: Long) {
     val list = rememberLazyListState()
     val (current, playing) = nowPlayingTrack()
     val held = record
+    // The name moves into the bar once the header has scrolled away.
+    val scrolled by remember { derivedStateOf { grid.firstVisibleItemIndex > 0 || list.firstVisibleItemIndex > 0 } }
     Column {
-        PageBar(held?.artist?.name.orEmpty())
+        PageBar(if (scrolled) held?.artist?.name.orEmpty() else "")
         if (held == null) return@Column
         val artist = held.artist ?: return@Column EmptyState("This artist isn't in the library any more")
         if (held.albums.isEmpty() && held.appearances.isNotEmpty()) {

@@ -5,8 +5,10 @@ use std::ffi::c_void;
 use jni_sys::{JNIEnv, JavaVM, jclass, jobject};
 
 /// Hand the core the app's `Context`, for the Android APIs it reaches over
-/// JNI: cpal asks `AudioManager` how many bursts the mixer buffers when it
-/// opens a stream, and panics without a context to ask through.
+/// JNI, each of which panics without one: cpal asks `AudioManager` how many
+/// bursts the mixer buffers when it opens a stream, and reqwest verifies every
+/// HTTPS certificate through the platform's trust store, user-installed
+/// authorities included.
 ///
 /// Called once by `KoanApp` before the engine opens, with the application
 /// context, which lives as long as the process; the global reference taken
@@ -30,7 +32,18 @@ pub unsafe extern "system" fn Java_cc_blit_koan_KoanApp_attachContext(
             log::error!("android: no JavaVM to hand the core");
             return;
         }
-        let context = (functions.v1_1.NewGlobalRef)(env, context);
-        ndk_context::initialize_android_context(vm.cast::<c_void>(), context.cast::<c_void>());
+        let global = (functions.v1_1.NewGlobalRef)(env, context);
+        ndk_context::initialize_android_context(vm.cast::<c_void>(), global.cast::<c_void>());
+
+        let mut unowned = jni::EnvUnowned::from_raw(env);
+        let outcome = unowned
+            .with_env(|env| {
+                let context = jni::objects::JObject::from_raw(env, context);
+                rustls_platform_verifier::android::init_with_env(env, context)
+            })
+            .into_outcome();
+        if !matches!(outcome, jni::Outcome::Ok(())) {
+            log::error!("android: certificate verification not initialised; HTTPS will fail");
+        }
     }
 }
