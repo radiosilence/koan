@@ -3297,6 +3297,15 @@ mod tests {
 
         player.process_command(PlayerCommand::Play(id));
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Playing);
+        // Once, to see that output began to move: clients count from it.
+        let check = player.next_wake().expect("a look at the output starting");
+        assert!(check <= std::time::Instant::now() + OUTPUT_START_CHECK);
+        player
+            .timeline
+            .samples_played_counter()
+            .store(800, std::sync::atomic::Ordering::Relaxed);
+        player.output_check = Some((std::time::Instant::now(), 0));
+        player.update_playback_state();
         assert_eq!(
             player.next_wake(),
             None,
