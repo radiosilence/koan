@@ -830,6 +830,11 @@ pub struct SharedPlayerState {
     /// the system's, and not ours to claim.
     output_sample_rate: AtomicU64,
 
+    /// Whether the system mixes the output on its way to the device: 0 where
+    /// the platform does not say, 1 mixed, 2 passed through. See
+    /// `AudioBackend::output_mixed`.
+    output_mixed: std::sync::atomic::AtomicU8,
+
     /// What DSP is doing to the current session's audio. `None` is the
     /// bit-perfect path.
     dsp: parking_lot::RwLock<Option<crate::audio::dsp::DspStatus>>,
@@ -882,6 +887,7 @@ impl SharedPlayerState {
             quit_requested: AtomicBool::new(false),
             metadata_refresh_pending: AtomicBool::new(false),
             output_sample_rate: AtomicU64::new(0),
+            output_mixed: std::sync::atomic::AtomicU8::new(0),
             dsp: parking_lot::RwLock::new(None),
             renderer_clock: parking_lot::Mutex::new(None),
             renderer: parking_lot::RwLock::new(None),
@@ -1193,6 +1199,25 @@ impl SharedPlayerState {
     /// an answer for this one.
     pub fn clear_output_sample_rate(&self) {
         self.output_sample_rate.store(0, Ordering::Release);
+    }
+
+    pub fn output_mixed(&self) -> Option<bool> {
+        match self.output_mixed.load(Ordering::Acquire) {
+            1 => Some(true),
+            2 => Some(false),
+            _ => None,
+        }
+    }
+
+    pub fn set_output_mixed(&self, mixed: Option<bool>) {
+        let v = match mixed {
+            None => 0,
+            Some(true) => 1,
+            Some(false) => 2,
+        };
+        if self.output_mixed.swap(v, Ordering::AcqRel) != v {
+            self.changed();
+        }
     }
 
     // --- DSP ---
