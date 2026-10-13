@@ -6,11 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -18,7 +14,6 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
@@ -27,7 +22,6 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
-import cc.blit.koan.R
 import cc.blit.koan.ui.downloads.downloadsEntries
 import cc.blit.koan.ui.library.libraryEntries
 import cc.blit.koan.ui.navigation.LocalNavigator
@@ -42,6 +36,9 @@ import cc.blit.koan.ui.search.searchEntries
 import cc.blit.koan.ui.settings.AccountModel
 import cc.blit.koan.ui.settings.SignInPage
 import cc.blit.koan.ui.settings.settingsEntries
+import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanTabBar
+import cc.blit.koan.ui.theme.KoanTabItem
 
 /**
  * The app's frame: sign-in until a server is signed in to, then the tabs, each
@@ -90,14 +87,9 @@ private fun Tabs(navigator: Navigator, stacks: Map<Tab, List<NavKey>>) {
         bottomBar = {
             Column {
                 MiniPlayer()
-                NavigationBar {
+                KoanTabBar {
                     Tab.all.forEach { tab ->
-                        NavigationBarItem(
-                            selected = tab == current,
-                            onClick = { navigator.select(tab) },
-                            icon = { Icon(painterResource(tab.icon), null) },
-                            label = { Text(tab.label) },
-                        )
+                        KoanTabItem(tab.label, selected = tab == current, onClick = { navigator.select(tab) }, icon = tab.icon)
                     }
                 }
             }
@@ -137,8 +129,8 @@ private val Tab.label
 
 private val Tab.icon
     get() = when (this) {
-        Tab.Queue -> R.drawable.ic_queue
-        Tab.Library -> R.drawable.ic_library
-        Tab.Search -> R.drawable.ic_search
-        Tab.Settings -> R.drawable.ic_settings
+        Tab.Queue -> KoanIcons.queueSection
+        Tab.Library -> KoanIcons.library
+        Tab.Search -> KoanIcons.search
+        Tab.Settings -> KoanIcons.settings
     }

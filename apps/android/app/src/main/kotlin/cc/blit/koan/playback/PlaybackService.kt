@@ -11,10 +11,12 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import androidx.core.content.ContextCompat
+import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import cc.blit.koan.KoanApp
 import cc.blit.koan.MainActivity
+import cc.blit.koan.R
 import cc.blit.koan.ffi.PlayState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -71,6 +73,10 @@ class PlaybackService : MediaSessionService() {
             0,
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        // The ensō, white on clear: the status bar draws a small icon by its alpha alone.
+        setMediaNotificationProvider(
+            DefaultMediaNotificationProvider.Builder(this).build().apply { setSmallIcon(R.drawable.ic_notification) },
         )
         session = MediaSession.Builder(this, KoanPlayer(engine, scope))
             .setSessionActivity(open)

@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
@@ -553,14 +554,15 @@ fun KoanNavRow(label: String, icon: Int, selected: Boolean, onClick: () -> Unit,
 
 /**
  * The phone's tab bar: in the theme flat and full-width, `bg` beneath and a
- * hairline `rule` along its top, 64 dp tall, its items words alone. Material's
+ * hairline `rule` along its top, 64 dp tall above the system's navigation
+ * bar, its ground running beneath that, and its items words alone. Material's
  * navigation bar otherwise.
  */
 @Composable
 fun KoanTabBar(modifier: Modifier = Modifier, content: @Composable RowScope.() -> Unit) {
     if (KoanTheme.isOn) {
         Row(
-            modifier.fillMaxWidth().height(64.dp).koanSurface().koanRule(KoanEdge.Top),
+            modifier.fillMaxWidth().koanSurface().koanRule(KoanEdge.Top).navigationBarsPadding().height(64.dp),
             verticalAlignment = Alignment.CenterVertically,
             content = content,
         )
