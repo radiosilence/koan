@@ -1,1 +1,1 @@
-Signing out ends offline mode, so the next account signs in online rather than showing only what is on the device.
+- **Signing out ends offline mode.** It stayed on, so the next account signed in showing only what was on the device.
