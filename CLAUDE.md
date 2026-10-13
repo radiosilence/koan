@@ -152,7 +152,9 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `audio/coreaudio_backend.rs` | macOS `CoreAudioBackend` impl (wraps engine.rs + device.rs) |
 | `audio/ios_backend.rs` | iOS and tvOS `IosAudioBackend` impl — the route is the only device; the session belongs to the app |
 | `audio/toolbox.rs` | The AudioToolbox names the engine uses, declared by hand for tvOS: `coreaudio-sys`'s build script knows only macOS and iOS |
-| `audio/cpal_backend.rs` | Linux and Android `CpalBackend` impl (ALSA/PipeWire/PulseAudio, or AAudio, via cpal). On Android the one device is the system default, which follows the route |
+| `audio/cpal_backend.rs` | Linux `CpalBackend` impl (ALSA/PipeWire/PulseAudio via cpal) |
+| `audio/android_backend.rs` | Android `AndroidAudioBackend`: AAudio declared by hand, the stream opened in the encoding `bit_perfect` chose |
+| `audio/bit_perfect.rs` | Bit-perfect USB output on Android 14+: which of the DAC's mixer formats to hold for a stream (`choose`), the exact float-to-integer conversion, and the app's `OutputHost` |
 | `audio/engine.rs` | CoreAudio output setup, render callback. AUHAL on macOS, RemoteIO on iOS — two properties apart |
 | `audio/buffer.rs` | `PlaybackTimeline`, track boundaries, decode thread entry points (`start_decode`, `decode_queue_loop`, `decode_single`) |
 | `audio/device.rs` | CoreAudio device enumeration, sample rate get/set (macOS only) |
@@ -311,6 +313,7 @@ Gradle's `koanFfi` task builds koan-ffi with cargo-ndk into `jniLibs` and genera
 | `engine/EngineMirror.kt` | The engine's state slices as `StateFlow`s, read by one loop off the main thread; queue patches applied to their base. `PlayerModel.kt` sends the commands |
 | `playback/KoanPlayer.kt` | The engine as a Media3 `SimpleBasePlayer`: reports queue and playhead, forwards the session's commands. Nothing plays through Media3 |
 | `playback/PlaybackService.kt` | `MediaSessionService`: background playback and the notification, audio focus, pause on becoming noisy, output rebuilt on a route change |
+| `playback/BitPerfect.kt` | `BitPerfectHost`: a USB DAC's bit-perfect mixer attributes for the engine to choose from, held and released through `AudioManager`; the person's on/off preference |
 | `art/Art.kt` | Covers for Coil, fetched from the engine, bytes kept on disk, dropped on `art_evictions` |
 | `ui/AppShell.kt` | Sign-in, then four tabs (Queue, Library, Search, Settings) on Navigation 3, each with its own back stack; the mini player; Now Playing over the tabs |
 | `ui/<feature>/` | One package per area, each registering its pages through an `…Entries()` function. See `apps/android/README.md` |

@@ -472,22 +472,31 @@ impl Player {
         // instant. Say nothing instead.
         self.shared_state.clear_output_sample_rate();
 
-        let settled = if (device_rate - source_rate).abs() > 0.1 {
+        // DSP hands the output floats of its own making: no source bit depth
+        // survives it.
+        let bit_depth = if dsp.is_some() { None } else { info.bit_depth };
+        if (device_rate - source_rate).abs() > 0.1 {
             log::info!(
                 "switching device sample rate: {}Hz → {}Hz",
                 device_rate,
                 source_rate
             );
-            match self.backend.set_device_sample_rate(&device, source_rate) {
-                Ok(rate) => rate,
-                Err(e) => {
-                    log::warn!("failed to set device sample rate: {}", e);
-                    device_rate
-                }
+        }
+        let settled = match self.backend.prepare_output(
+            &device,
+            device_rate,
+            source_rate,
+            info.channels,
+            bit_depth,
+        ) {
+            Ok(rate) => rate,
+            Err(e) => {
+                log::warn!("failed to set device sample rate: {}", e);
+                device_rate
             }
-        } else {
-            device_rate
         };
+        self.shared_state
+            .set_output_mixed(self.backend.output_mixed());
 
         if (settled - source_rate).abs() > 0.1 {
             log::warn!(

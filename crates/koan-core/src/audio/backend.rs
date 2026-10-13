@@ -58,7 +58,8 @@ impl OutputKind {
 
 /// Trait abstracting platform audio output.
 ///
-/// Implementations exist for CoreAudio (macOS), RemoteIO (iOS) and cpal (Linux).
+/// Implementations exist for CoreAudio (macOS), RemoteIO (iOS), cpal (Linux)
+/// and AAudio (Android).
 /// The decode pipeline (rtrb ring buffer, Symphonia, `PlaybackTimeline`) is
 /// completely decoupled — backends are dumb consumers that drain the ring buffer.
 pub trait AudioBackend: Send + Sync {
@@ -78,6 +79,34 @@ pub trait AudioBackend: Send + Sync {
     /// Returns the actual device rate after the switch (may differ if unsupported).
     /// On Linux/cpal this is a no-op — the rate is set at stream creation.
     fn set_device_sample_rate(&self, device: &DeviceInfo, rate: f64) -> Result<f64, BackendError>;
+
+    /// Prepare the device, now at `current`, for a stream of this format, and
+    /// answer the rate it will run at. Most platforms switch only the rate,
+    /// and only when it differs; Android also chooses the sample encoding and
+    /// whether its mixer is bypassed, which depends on the channels and the
+    /// source's bit depth, whatever the rate.
+    fn prepare_output(
+        &self,
+        device: &DeviceInfo,
+        current: f64,
+        rate: f64,
+        _channels: u16,
+        _bit_depth: Option<u16>,
+    ) -> Result<f64, BackendError> {
+        if (current - rate).abs() > 0.1 {
+            self.set_device_sample_rate(device, rate)
+        } else {
+            Ok(current)
+        }
+    }
+
+    /// Whether the system mixes this output with other apps' on its way to
+    /// the device, where the platform can say: Android's mixer converts and
+    /// applies volume unless koan holds a USB DAC bit-perfect. `None` where
+    /// the device rate is the whole story.
+    fn output_mixed(&self) -> Option<bool> {
+        None
+    }
 
     /// Subscribe to nominal sample rate changes on a device.
     ///

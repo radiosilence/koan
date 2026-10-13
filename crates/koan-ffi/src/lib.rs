@@ -119,6 +119,97 @@ pub trait AudioSessionHost: Send + Sync {
     fn release(&self);
 }
 
+/// A sample encoding a USB DAC's mixer can run in.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MixerEncoding {
+    Pcm16,
+    Pcm24Packed,
+    Pcm32,
+    Float,
+}
+
+/// One bit-perfect configuration the USB output offers: an
+/// `AudioMixerAttributes` with `MIXER_BEHAVIOR_BIT_PERFECT`.
+#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MixerFormat {
+    /// `AudioDeviceInfo.getId()`.
+    pub device_id: i32,
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub encoding: MixerEncoding,
+}
+
+/// Android's `AudioManager`, for bit-perfect output to a USB DAC (Android
+/// 14). Called on the player thread before each stream opens. See
+/// `koan_core::audio::bit_perfect`.
+#[uniffi::export(with_foreign)]
+pub trait AndroidOutputHost: Send + Sync {
+    /// `AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE`.
+    fn mixer_rate(&self) -> u32;
+    /// The USB output's bit-perfect formats; empty when the route is not USB,
+    /// the system is older than Android 14, or bit-perfect output is off.
+    fn offers(&self) -> Vec<MixerFormat>;
+    /// `setPreferredMixerAttributes` for media with this format; `false` if
+    /// Android refused.
+    fn hold(&self, format: MixerFormat) -> bool;
+    /// `clearPreferredMixerAttributes`.
+    fn release(&self);
+}
+
+struct OutputBridge(Arc<dyn AndroidOutputHost>);
+
+impl From<MixerFormat> for koan_core::audio::bit_perfect::MixerFormat {
+    fn from(f: MixerFormat) -> Self {
+        use koan_core::audio::bit_perfect::Encoding;
+        Self {
+            device_id: f.device_id,
+            rate: f.sample_rate,
+            channels: f.channels,
+            encoding: match f.encoding {
+                MixerEncoding::Pcm16 => Encoding::I16,
+                MixerEncoding::Pcm24Packed => Encoding::I24Packed,
+                MixerEncoding::Pcm32 => Encoding::I32,
+                MixerEncoding::Float => Encoding::Float,
+            },
+        }
+    }
+}
+
+impl From<koan_core::audio::bit_perfect::MixerFormat> for MixerFormat {
+    fn from(f: koan_core::audio::bit_perfect::MixerFormat) -> Self {
+        use koan_core::audio::bit_perfect::Encoding;
+        Self {
+            device_id: f.device_id,
+            sample_rate: f.rate,
+            channels: f.channels,
+            encoding: match f.encoding {
+                Encoding::I16 => MixerEncoding::Pcm16,
+                Encoding::I24Packed => MixerEncoding::Pcm24Packed,
+                Encoding::I32 => MixerEncoding::Pcm32,
+                Encoding::Float => MixerEncoding::Float,
+            },
+        }
+    }
+}
+
+impl koan_core::audio::bit_perfect::OutputHost for OutputBridge {
+    fn mixer_rate(&self) -> u32 {
+        self.0.mixer_rate()
+    }
+
+    fn offers(&self) -> Vec<koan_core::audio::bit_perfect::MixerFormat> {
+        self.0.offers().into_iter().map(Into::into).collect()
+    }
+
+    fn hold(&self, format: koan_core::audio::bit_perfect::MixerFormat) -> bool {
+        self.0.hold(format.into())
+    }
+
+    fn release(&self) {
+        self.0.release();
+    }
+}
+
 #[cfg(any(target_os = "ios", target_os = "tvos"))]
 struct SessionBridge(Arc<dyn AudioSessionHost>);
 
@@ -3773,6 +3864,12 @@ impl KoanEngine {
         let _ = host;
     }
 
+    /// Hand the engine Android's `AudioManager`, for bit-perfect output to a
+    /// USB DAC. Until it is given, output goes through the system mixer.
+    pub fn set_output_host(&self, host: Arc<dyn AndroidOutputHost>) {
+        koan_core::audio::bit_perfect::set_host(Arc::new(OutputBridge(host)));
+    }
+
     /// The name of the port iOS routes audio to, on each route change: what
     /// profiles are chosen by on a phone, and the cue to read the session's
     /// rate again. Does nothing elsewhere.
@@ -5748,9 +5845,14 @@ impl KoanEngine {
             duration_ms: self.state.duration_ms(),
             queue_item_id: cursor.map(|c| c.0.to_string()),
             entry,
-            format: info
-                .as_ref()
-                .map(|i| StreamFormat::of(i, self.state.output_sample_rate(), self.state.dsp())),
+            format: info.as_ref().map(|i| {
+                StreamFormat::of(
+                    i,
+                    self.state.output_sample_rate(),
+                    self.state.output_mixed(),
+                    self.state.dsp(),
+                )
+            }),
             playlist_version: self.state.playlist_version(),
             shuffle: self.state.play_mode().shuffle,
             repeat_mode: self.state.play_mode().repeat.into(),

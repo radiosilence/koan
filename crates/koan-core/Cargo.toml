@@ -102,8 +102,7 @@ security-framework = "3"
 core-foundation = "0.10"
 core-foundation-sys = "0.8"
 
-# ALSA, PipeWire and PulseAudio on Linux; AAudio on Android.
-[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
 cpal = "0.18"
 
 [dev-dependencies]

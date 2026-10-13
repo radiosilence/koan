@@ -1,9 +1,14 @@
 pub mod analyzer;
+#[cfg(target_os = "android")]
+pub mod android_backend;
 pub mod backend;
+// Built everywhere for its tests: the choice is plain logic.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub mod bit_perfect;
 pub mod buffer;
 #[cfg(target_os = "macos")]
 pub mod coreaudio_backend;
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(target_os = "linux")]
 pub mod cpal_backend;
 #[cfg(target_os = "macos")]
 pub mod device;
@@ -32,9 +37,13 @@ pub fn platform_backend() -> Box<dyn AudioBackend> {
     {
         Box::new(coreaudio_backend::CoreAudioBackend)
     }
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(target_os = "linux")]
     {
         Box::new(cpal_backend::CpalBackend::new())
+    }
+    #[cfg(target_os = "android")]
+    {
+        Box::new(android_backend::AndroidAudioBackend::default())
     }
     #[cfg(any(target_os = "ios", target_os = "tvos"))]
     {
