@@ -71,8 +71,13 @@ mixer then handles everything as it does for any other app.
 
 The phone is one of your devices, as the others are: it can play on another
 device through **Play on** in Now Playing, and the others see it through the
-server. Finding devices on the local network by Bonjour is not there yet on
-Android; a device added by address under Settings → Devices works.
+server. On the same Wi-Fi, the phone also finds kōan devices directly and is
+found by them, as the Apple apps do over Bonjour, and finds UPnP/DLNA
+renderers to play to. Android 17 asks, on first launch, whether kōan may find
+devices on the local network; without it neither kind is found, and the
+permission can be granted later under the app's Nearby devices permission. A
+device added by address under Settings → Devices works where discovery cannot
+reach, across subnets or networks that block multicast.
 
 ## EQ
 

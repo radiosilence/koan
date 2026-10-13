@@ -15,11 +15,14 @@ import okio.Path.Companion.toOkioPath
 import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.engine.PlayerModel
 import cc.blit.koan.ffi.setConfigDir
+import cc.blit.koan.net.NearbyNsd
+import cc.blit.koan.net.WifiMulticast
 import cc.blit.koan.playback.BitPerfectHost
 import java.io.File
 
 class KoanApp : Application(), SingletonImageLoader.Factory {
     lateinit var mirror: EngineMirror
+    lateinit var nearby: NearbyNsd
         private set
     lateinit var player: PlayerModel
         private set
@@ -38,7 +41,11 @@ class KoanApp : Application(), SingletonImageLoader.Factory {
         val output = BitPerfectHost(this)
         // The host first: a restored session that was playing resumes, and
         // opens its output through it.
+        nearby = NearbyNsd(this, mirror)
+        val multicast = WifiMulticast(this)
         mirror.launch {
+            setNearbyHost(nearby)
+            setMulticastHost(multicast)
             setOutputHost(output)
             player.followSession()
         }

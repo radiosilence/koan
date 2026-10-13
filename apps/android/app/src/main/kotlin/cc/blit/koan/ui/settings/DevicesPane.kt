@@ -1,6 +1,9 @@
 package cc.blit.koan.ui.settings
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings as SystemSettings
 import android.text.format.DateUtils
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -86,6 +89,18 @@ fun DevicesPane(model: SettingsModel) {
             ) { v -> model.edit { it.copy(devicesNearbyControl = v) } }
         }
         c?.listeningPort?.let { port -> item { ValueRow("Port", port.toString()) } }
+        if (c?.localNetworkBlocked == true) {
+            item {
+                val context = LocalContext.current
+                ActionRow("Allow nearby devices in Settings to find kōan devices on this network.", null) {
+                    KoanButton("Settings", {
+                        context.startActivity(
+                            Intent(SystemSettings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)),
+                        )
+                    }, kind = KoanButtonKind.Compact)
+                }
+            }
+        }
         footer(
             "Other kōan apps on this network can see and control what plays here. Full control adds the output, " +
                 "preset, volume and moving the music; Playback only is play and the queue. Neither reaches your library. " +
