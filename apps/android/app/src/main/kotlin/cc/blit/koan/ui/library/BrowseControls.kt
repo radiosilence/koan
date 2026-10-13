@@ -167,7 +167,7 @@ fun FilterField(text: String, placeholder: String, onText: (String) -> Unit, mod
         value = text,
         onValueChange = onText,
         placeholder = { Text(placeholder) },
-        leadingIcon = { Icon(painterResource(R.drawable.ic_search), null) },
+        leadingIcon = { Icon(painterResource(R.drawable.koan_search), null) },
         trailingIcon = {
             if (text.isNotEmpty()) TextButton(onClick = { onText("") }) { Text("Clear") }
         },
