@@ -134,6 +134,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.core)
     implementation(libs.coil.compose)
     implementation(libs.jna) { artifact { type = "aar" } }
+    implementation(libs.rustls.platform.verifier)
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.tooling.preview)
