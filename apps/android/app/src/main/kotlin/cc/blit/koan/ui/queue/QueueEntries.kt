@@ -21,10 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -34,16 +31,15 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -53,8 +49,6 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -66,7 +60,6 @@ import cc.blit.koan.ffi.EntryStatus
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ffi.QueueItem
 import cc.blit.koan.ffi.QueueLock
-import cc.blit.koan.ui.StubPage
 import cc.blit.koan.ui.koanApp
 import androidx.compose.ui.unit.sp
 import cc.blit.koan.ui.theme.KoanIcons
@@ -79,6 +72,24 @@ import kotlinx.coroutines.launch
 import sh.calvin.reorderable.ReorderableCollectionItemScope
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarDefaults
+import androidx.compose.ui.graphics.RectangleShape
+import cc.blit.koan.ui.nowplaying.KoanMenu
+import cc.blit.koan.ui.nowplaying.KoanMenuItem
+import cc.blit.koan.ui.theme.KoanButton
+import cc.blit.koan.ui.theme.KoanButtonKind
+import cc.blit.koan.ui.theme.KoanEdge
+import cc.blit.koan.ui.theme.KoanSpace
+import cc.blit.koan.ui.theme.KoanSurface
+import cc.blit.koan.ui.theme.KoanText
+import cc.blit.koan.ui.theme.KoanTheme
+import cc.blit.koan.ui.theme.KoanTone
+import cc.blit.koan.ui.theme.KoanType
+import cc.blit.koan.ui.theme.KoanUnavailable
+import cc.blit.koan.ui.theme.koanRule
+import cc.blit.koan.ui.theme.koanSurface
 
 fun EntryProviderScope<NavKey>.queueEntries() {
     entry<Tab.Queue> { QueuePage() }
@@ -205,7 +216,7 @@ private fun QueuePage() {
                 )
             }
             if (queue.items.isEmpty()) {
-                StubPage("Queue is empty")
+                KoanUnavailable("Queue is empty", KoanIcons.queueSection, "Find something to play from the library.")
                 return@Column
             }
             val playing = now?.state == PlayState.PLAYING
@@ -214,10 +225,8 @@ private fun QueuePage() {
                     ReorderableItem(reorder, key = row.key) { isDragging ->
                         val picked = row.key in selection
                         Swipeable(enabled = !selecting && !isDragging, onRemove = { remove(row.itemIds, row.label) }) {
-                            Surface(
-                                shadowElevation = if (isDragging) 6.dp else 0.dp,
-                                color = if (picked) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
-                            ) {
+                            // A lifted row stands on `surface` rather than a shadow.
+                            Box(Modifier.koanSurface(if (isDragging || picked) KoanSurface.Surface else KoanSurface.Bg).systemGround(isDragging || picked)) {
                                 RowContent(
                                     row,
                                     grouped,
@@ -244,9 +253,22 @@ private fun QueuePage() {
                 }
             }
         }
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter)) { data ->
+            Snackbar(
+                data,
+                shape = if (KoanTheme.isOn) RectangleShape else SnackbarDefaults.shape,
+                containerColor = if (KoanTheme.isOn) KoanTheme.colors.surface else SnackbarDefaults.color,
+                contentColor = if (KoanTheme.isOn) KoanTheme.colors.ink else SnackbarDefaults.contentColor,
+                actionColor = if (KoanTheme.isOn) KoanTheme.textColor(KoanTone.Accent) else SnackbarDefaults.actionColor,
+            )
+        }
     }
 }
+
+/** The platform look's ground for a lifted or picked row; the theme's is `koanSurface`. */
+@Composable
+private fun Modifier.systemGround(raised: Boolean) =
+    if (!KoanTheme.isOn && raised) background(MaterialTheme.colorScheme.secondaryContainer) else this
 
 @Composable
 private fun Swipeable(enabled: Boolean, onRemove: () -> Unit, content: @Composable () -> Unit) {
@@ -255,10 +277,10 @@ private fun Swipeable(enabled: Boolean, onRemove: () -> Unit, content: @Composab
         state,
         backgroundContent = {
             Box(
-                Modifier.fillMaxSize().background(MaterialTheme.colorScheme.errorContainer).padding(horizontal = 24.dp),
+                Modifier.fillMaxSize().background(KoanTheme.color(KoanTone.Bad)).padding(horizontal = KoanSpace.xl),
                 contentAlignment = if (state.dismissDirection == SwipeToDismissBoxValue.StartToEnd) Alignment.CenterStart else Alignment.CenterEnd,
             ) {
-                KoanIcon(KoanIcons.remove, "Remove", color = MaterialTheme.colorScheme.onErrorContainer)
+                KoanIcon(KoanIcons.remove, "Remove", color = KoanTheme.colors.bg)
             }
         },
         gesturesEnabled = enabled,
@@ -278,20 +300,19 @@ private fun ReorderableCollectionItemScope.RowContent(
     onDrag: () -> Unit,
     onDrop: () -> Unit,
 ) {
-    val tokens = LocalKoanTokens.current
     Row(
         Modifier.fillMaxWidth()
-            .combinedClickable(onClick = tap, onLongClick = press)
+            .combinedClickable(remember { MutableInteractionSource() }, indication = null, onClick = tap, onLongClick = press)
             .semantics { selected = picked }
-            .padding(start = tokens.gutter),
+            .padding(start = KoanSpace.l),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (selecting) {
             KoanIcon(
                 if (picked) KoanIcons.picked else KoanIcons.unpicked,
                 null,
-                Modifier.padding(end = tokens.rowGap),
-                color = if (picked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                Modifier.padding(end = KoanSpace.s),
+                color = KoanTheme.color(if (picked) KoanTone.Accent else KoanTone.Muted),
             )
         }
         Box(Modifier.weight(1f)) {
@@ -307,32 +328,28 @@ private fun ReorderableCollectionItemScope.RowContent(
                 )
             }
         }
-        IconButton(onClick = {}, Modifier.draggableHandle(onDragStarted = { onDrag() }, onDragStopped = onDrop)) {
-            Icon(painterResource(R.drawable.ic_drag), "Reorder", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        KoanButton({}, Modifier.draggableHandle(onDragStarted = { onDrag() }, onDragStopped = onDrop), kind = KoanButtonKind.Icon) {
+            Icon(painterResource(R.drawable.ic_drag), "Reorder", tint = KoanTheme.color(KoanTone.Muted))
         }
     }
 }
 
 @Composable
+private fun sleeveShape(radius: Int) = if (KoanTheme.isOn) RectangleShape else RoundedCornerShape(radius.dp)
+
+@Composable
 private fun AlbumHeading(group: QueueGroup) {
-    val tokens = LocalKoanTokens.current
-    Row(Modifier.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        val sleeve = Modifier.size(52.dp).clip(RoundedCornerShape(5.dp))
+    Row(Modifier.padding(vertical = KoanSpace.s), verticalAlignment = Alignment.CenterVertically) {
+        val sleeve = Modifier.size(52.dp).clip(sleeveShape(5))
         group.items.first().art(ArtSize.Thumb)?.let { AsyncImage(it, null, sleeve) }
-            ?: Box(sleeve.background(MaterialTheme.colorScheme.surfaceVariant))
-        Spacer(Modifier.width(tokens.rowGap * 1.5f))
+            ?: Box(sleeve.background(KoanTheme.color(KoanTone.Rule)))
+        Spacer(Modifier.width(KoanSpace.m))
         Column {
-            Text(group.title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            KoanText(group.title, role = KoanType.Body, tone = KoanTone.Strong, maxLines = 2)
             if (group.album.isNotEmpty()) {
-                Text(
-                    group.albumArtist.ifEmpty { "Unknown Artist" },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                KoanText(group.albumArtist.ifEmpty { "Unknown Artist" }, role = KoanType.Meta, tone = KoanTone.Muted, maxLines = 1)
             }
-            Text(group.detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, maxLines = 1)
+            KoanText(group.detail, role = KoanType.Fine, tone = KoanTone.Muted, maxLines = 1)
         }
     }
 }
@@ -342,7 +359,6 @@ private fun TrackRow(item: QueueItem, playing: Boolean, sleeve: Boolean, showArt
     val tokens = LocalKoanTokens.current
     val played = item.status == EntryStatus.PLAYED
     val current = item.status == EntryStatus.PLAYING
-    val muted = MaterialTheme.colorScheme.onSurfaceVariant
     Row(
         Modifier.heightIn(min = if (sleeve) 60.dp else 48.dp).padding(vertical = if (sleeve) 6.dp else 0.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -350,44 +366,35 @@ private fun TrackRow(item: QueueItem, playing: Boolean, sleeve: Boolean, showArt
         Box(Modifier.width(20.dp), contentAlignment = Alignment.CenterEnd) { StatusMark(item, playing) }
         Spacer(Modifier.width(if (sleeve) 10.dp else 6.dp))
         if (sleeve) {
-            val shape = Modifier.size(tokens.thumb).clip(RoundedCornerShape(4.dp))
+            val shape = Modifier.size(tokens.thumb).clip(sleeveShape(4))
             item.art(ArtSize.Thumb)?.let { AsyncImage(it, null, shape, alpha = if (played) 0.5f else 1f) }
-                ?: Box(shape.background(MaterialTheme.colorScheme.surfaceVariant))
+                ?: Box(shape.background(KoanTheme.color(KoanTone.Rule)))
         } else {
-            Text(
-                item.trackNumber?.toString() ?: "",
-                Modifier.width(22.dp),
-                style = MaterialTheme.typography.labelMedium,
-                color = if (played) MaterialTheme.colorScheme.outlineVariant else MaterialTheme.colorScheme.outline,
-            )
+            KoanText(item.trackNumber?.toString() ?: "", Modifier.width(22.dp), role = KoanType.Fine, tone = KoanTone.Muted)
         }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(
+            KoanText(
                 item.title,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = if (current) FontWeight.SemiBold else null,
-                color = when {
-                    current -> MaterialTheme.colorScheme.primary
-                    played -> muted
-                    else -> MaterialTheme.colorScheme.onSurface
+                tone = when {
+                    current -> KoanTone.Accent
+                    played -> KoanTone.Muted
+                    else -> KoanTone.Ink
                 },
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
             if (showArtist && item.artist.isNotEmpty()) {
-                Text(
+                KoanText(
                     if (sleeve && item.album.isNotEmpty()) "${item.artist} — ${item.album}" else item.artist,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = muted,
+                    role = KoanType.Fine,
+                    tone = KoanTone.Muted,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
         Availability(item)
         item.durationMs?.let {
-            Text(duration(it.toLong()), Modifier.padding(start = 8.dp), style = MaterialTheme.typography.labelMedium, color = muted)
+            KoanText(duration(it.toLong()), Modifier.padding(start = KoanSpace.s), role = KoanType.Fine, tone = KoanTone.Muted)
         }
     }
 }
@@ -395,18 +402,20 @@ private fun TrackRow(item: QueueItem, playing: Boolean, sleeve: Boolean, showArt
 /** What the queue is doing about this track: playing, done, waiting, failed. Arrival is `Availability`'s. */
 @Composable
 private fun StatusMark(item: QueueItem, playing: Boolean) {
-    val size = 13.sp
-    val colours = MaterialTheme.colorScheme
+    val size = 12.sp
     when (item.status) {
-        EntryStatus.PLAYING -> KoanIcon(KoanIcons.playMark,
+        EntryStatus.PLAYING -> KoanIcon(
+            KoanIcons.playMark,
             if (playing) "Playing" else "Paused",
             size = size,
-            color = if (playing) colours.primary else colours.onSurfaceVariant,
+            color = KoanTheme.color(if (playing) KoanTone.Accent else KoanTone.Muted),
         )
-        EntryStatus.PLAYED -> KoanIcon(KoanIcons.check, "Played", size = size, color = colours.outline)
-        EntryStatus.PRIORITY_PENDING -> KoanIcon(KoanIcons.downloads, "Queued for download", size = size, color = colours.primary)
-        EntryStatus.FAILED -> KoanIcon(KoanIcons.warningFilled, item.failureReason ?: "Couldn't be fetched", size = size, color = colours.error)
-        EntryStatus.QUEUED -> KoanIcon(KoanIcons.pending, null, size = size, color = colours.outlineVariant)
+        EntryStatus.PLAYED -> KoanIcon(KoanIcons.check, "Played", size = size, color = KoanTheme.color(KoanTone.Muted))
+        EntryStatus.PRIORITY_PENDING ->
+            KoanIcon(KoanIcons.downloads, "Queued for download", size = size, color = KoanTheme.color(KoanTone.Accent))
+        EntryStatus.FAILED ->
+            KoanIcon(KoanIcons.warningFilled, item.failureReason ?: "Couldn't be fetched", size = size, color = KoanTheme.color(KoanTone.Bad))
+        EntryStatus.QUEUED -> KoanIcon(KoanIcons.pending, null, size = size, color = KoanTheme.color(KoanTone.Rule))
         EntryStatus.DOWNLOADING -> Unit
     }
 }
@@ -424,19 +433,16 @@ private fun Availability(item: QueueItem) {
         item.status == EntryStatus.DOWNLOADING && trackId != null -> {
             val figures by koanApp().mirror.figures.collectAsStateWithLifecycle()
             val progress = figures.firstOrNull { it.trackId == trackId }?.progress
+            val colour = KoanTheme.look.accent
             Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
                 if (progress != null) {
-                    CircularProgressIndicator(progress = { progress.toFloat() }, Modifier.size(16.dp), strokeWidth = 2.dp)
+                    CircularProgressIndicator(progress = { progress.toFloat() }, Modifier.size(14.dp), color = colour, strokeWidth = 2.dp)
                 } else {
-                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    CircularProgressIndicator(Modifier.size(14.dp), color = colour, strokeWidth = 2.dp)
                 }
             }
         }
-        item.onServer && !item.onDisk -> KoanIcon(KoanIcons.cloud,
-            "On the server",
-            size = 13.sp,
-            color = MaterialTheme.colorScheme.outline,
-        )
+        item.onServer && !item.onDisk -> KoanIcon(KoanIcons.cloud, "On the server", size = 12.sp, color = KoanTheme.color(KoanTone.Muted))
     }
 }
 
@@ -451,50 +457,41 @@ private fun Header(
     canFollow: Boolean,
     clear: () -> Unit,
 ) {
-    val tokens = LocalKoanTokens.current
-    Row(Modifier.fillMaxWidth().padding(start = tokens.gutter, top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().padding(start = KoanSpace.l, top = KoanSpace.s, bottom = KoanSpace.xs), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             // What the queue still is, when it came from a playlist or a record and has not been edited since.
-            val name = when (lock) {
-                is QueueLock.Playlist -> lock.playlist.name
-                is QueueLock.Album -> lock.album.title
-                null -> "Queue"
+            when (lock) {
+                is QueueLock.Playlist -> KoanText(lock.playlist.name, role = KoanType.Body, tone = KoanTone.Strong, maxLines = 1)
+                is QueueLock.Album -> KoanText(lock.album.title, role = KoanType.Body, tone = KoanTone.Strong, maxLines = 1)
+                null -> KoanText("Queue", role = KoanType.Body, tone = KoanTone.Strong, appText = true)
             }
-            Text(name, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (items.isNotEmpty()) {
                 val total = items.sumOf { it.durationMs?.toLong() ?: 0 }
-                Text(
-                    count(items.size, "track") + if (total > 0) " · ${duration(total)}" else "",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                KoanText(count(items.size, "track") + if (total > 0) " · ${duration(total)}" else "", role = KoanType.Fine, tone = KoanTone.Muted)
             }
         }
-        IconButton(onClick = follow, enabled = canFollow) {
-            KoanIcon(KoanIcons.jumpToPlaying,
+        KoanButton(follow, kind = KoanButtonKind.Icon, enabled = canFollow) {
+            KoanIcon(
+                KoanIcons.jumpToPlaying,
                 if (following) "Stop following what's playing" else "Jump to what's playing",
-                color = if (following) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = KoanTheme.color(if (following) KoanTone.Accent else KoanTone.Ink),
             )
         }
-        IconButton(onClick = { setGrouped(!grouped) }) {
-            KoanIcon(
-                if (grouped) KoanIcons.album else KoanIcons.queueSection,
-                if (grouped) "Grouped by record; show one row per track" else "One row per track; group by record",
-            )
+        // Both layouts shown, the one in force lit.
+        KoanButton({ setGrouped(true) }, kind = KoanButtonKind.Icon) {
+            KoanIcon(KoanIcons.album, "Group by record", color = KoanTheme.color(if (grouped) KoanTone.Ink else KoanTone.Muted))
+        }
+        KoanButton({ setGrouped(false) }, kind = KoanButtonKind.Icon) {
+            KoanIcon(KoanIcons.queueSection, "One row per track", color = KoanTheme.color(if (grouped) KoanTone.Muted else KoanTone.Ink))
         }
         var menu by remember { mutableStateOf(false) }
         Box {
-            IconButton(onClick = { menu = true }) { KoanIcon(KoanIcons.more, "More") }
-            DropdownMenu(menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(
-                    text = { Text("Clear queue") },
-                    leadingIcon = { KoanIcon(KoanIcons.remove, null) },
-                    enabled = items.isNotEmpty(),
-                    onClick = {
-                        menu = false
-                        clear()
-                    },
-                )
+            KoanButton("More", { menu = true }, kind = KoanButtonKind.Icon, icon = KoanIcons.more)
+            KoanMenu(menu, onDismiss = { menu = false }) {
+                KoanMenuItem("Clear queue", {
+                    menu = false
+                    clear()
+                }, icon = KoanIcons.clear, destructive = true, enabled = items.isNotEmpty())
             }
         }
     }
@@ -502,24 +499,14 @@ private fun Header(
 
 @Composable
 private fun SelectionBar(count: Int, clear: () -> Unit, playNext: () -> Unit, remove: () -> Unit) {
-    Surface(tonalElevation = 3.dp) {
-        Row(
-            Modifier.fillMaxWidth().padding(4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            IconButton(onClick = clear) { KoanIcon(KoanIcons.close, "Clear selection") }
-            Text("$count selected", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-            TextButton(onClick = playNext) {
-                KoanIcon(KoanIcons.playNext, null, size = 15.sp)
-                Spacer(Modifier.width(6.dp))
-                Text("Play next")
-            }
-            TextButton(onClick = remove) {
-                KoanIcon(KoanIcons.remove, null, size = 15.sp)
-                Spacer(Modifier.width(6.dp))
-                Text("Remove")
-            }
-        }
+    Row(
+        Modifier.fillMaxWidth().koanSurface(KoanSurface.Surface).koanRule(KoanEdge.Bottom).padding(horizontal = KoanSpace.xs),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(KoanSpace.xs),
+    ) {
+        KoanButton("Clear selection", clear, kind = KoanButtonKind.Icon, icon = KoanIcons.deselect)
+        KoanText("$count selected", Modifier.weight(1f), role = KoanType.Meta, tone = KoanTone.Strong)
+        KoanButton("Play next", playNext, kind = KoanButtonKind.Text, icon = KoanIcons.playNext)
+        KoanButton("Remove", remove, kind = KoanButtonKind.Text, icon = KoanIcons.remove)
     }
 }
