@@ -8,7 +8,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.SimpleBasePlayer
 import androidx.media3.common.util.UnstableApi
-import cc.blit.koan.engine.Engine
+import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.ffi.KoanEngine
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ffi.QueueItem
@@ -30,7 +30,7 @@ import kotlinx.coroutines.launch
  */
 @OptIn(UnstableApi::class)
 class KoanPlayer(
-    private val engine: Engine,
+    private val engine: EngineMirror,
     private val scope: CoroutineScope,
 ) : SimpleBasePlayer(Looper.getMainLooper()) {
     private var mapped: Pair<List<QueueItem>, List<MediaItemData>> = emptyList<QueueItem>() to emptyList()
@@ -44,7 +44,7 @@ class KoanPlayer(
 
     override fun getState(): State {
         val now = engine.nowPlaying.value
-        val queue = engine.queue.value
+        val queue = engine.queue.value.items
         val playhead = engine.playhead.value
         val items = playlist(queue)
         val current = queue.indexOfFirst { it.queueItemId == now?.queueItemId }
@@ -61,7 +61,7 @@ class KoanPlayer(
             .setPlaybackState(state)
             .setPlayWhenReady(now?.state == PlayState.PLAYING, PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
             .setContentPositionMs(
-                PositionSupplier.getExtrapolating(playhead.positionMs, if (playhead.playing) 1f else 0f),
+                PositionSupplier.getExtrapolating(playhead.positionAt(), if (playhead.playing) 1f else 0f),
             )
             .build()
     }
@@ -97,7 +97,7 @@ class KoanPlayer(
             COMMAND_SEEK_TO_NEXT, COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> next()
             COMMAND_SEEK_TO_PREVIOUS, COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> previous()
             COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM -> seek(positionMs.coerceAtLeast(0).toULong())
-            else -> engine.queue.value.getOrNull(mediaItemIndex)?.let { play(it.queueItemId) }
+            else -> engine.queue.value.items.getOrNull(mediaItemIndex)?.let { play(it.queueItemId) }
         }
     }
 
@@ -109,7 +109,7 @@ class KoanPlayer(
     private fun call(block: suspend KoanEngine.() -> Unit): ListenableFuture<*> {
         val done = SettableFuture.create<Unit>()
         scope.launch {
-            runCatching { engine.get().block() }
+            runCatching { engine.engine().block() }
             done.set(Unit)
         }
         return done
