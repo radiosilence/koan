@@ -204,7 +204,7 @@ private fun TransferRow(transfer: Transfer, modifier: Modifier) {
         )
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             transfer.albumId?.let { albumId ->
-                MenuItem("Show in Library", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId)) }
+                MenuItem("Show in Library", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId, transfer.trackId)) }
             }
             if (transfer.state == TransferState.DONE) {
                 DownloadMenuItems(onDisk = true, dismiss = { menu = false }) { listOf(transfer.trackId) }

@@ -177,7 +177,7 @@ private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, onAdd: (Long) -> U
                 MenuItem("Add to Playlist…", KoanIcons.playlist) { menu = false; onAdd(track.id) }
                 DownloadMenuItems(onDisk = track.onDisk, dismiss = { menu = false }) { listOf(track.id) }
                 track.albumId?.let { albumId ->
-                    MenuItem("Go to Album", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId)) }
+                    MenuItem("Go to Album", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId, track.id)) }
                 }
                 MenuItem("Remove from History", KoanIcons.remove, destructive = true) { menu = false; forget() }
             }

@@ -1,26 +1,21 @@
 package cc.blit.koan.ui.library
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.foundation.layout.size
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.KoanApp
-import cc.blit.koan.R
 import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.ffi.KoanEngine
 import cc.blit.koan.ui.koanApp
+import cc.blit.koan.ui.theme.KoanButton
+import cc.blit.koan.ui.theme.KoanButtonKind
+import cc.blit.koan.ui.theme.KoanIcon
+import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanTheme
+import cc.blit.koan.ui.theme.KoanTone
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -94,10 +89,10 @@ class Favourites(private val mirror: EngineMirror) {
 fun favourites() = Favourites.of(koanApp())
 
 /**
- * The heart, wherever something can be favourited: filled in the error role
- * when on, outlined and muted when off. A row that would otherwise show a
- * column of empty hearts passes `showing = false`, and then only a
- * favourite's heart is drawn.
+ * The heart, wherever something can be favourited: filled in `bad` when on,
+ * an outline in `muted` when off. A row that would otherwise show a column of
+ * empty hearts passes `showing = false`, and then only a favourite's heart is
+ * drawn.
  */
 @Composable
 fun FavouriteButton(
@@ -105,23 +100,21 @@ fun FavouriteButton(
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
     showing: Boolean = true,
-    size: Dp = 20.dp,
 ) {
     if (!isOn && !showing) return
     val haptics = LocalHapticFeedback.current
-    val pop by animateFloatAsState(if (isOn) 1f else 0.9f, spring(dampingRatio = 0.4f), label = "heart")
-    IconButton(
-        onClick = {
+    KoanButton(
+        {
             if (!isOn) haptics.performHapticFeedback(HapticFeedbackType.ToggleOn)
             onToggle()
         },
-        modifier = modifier,
+        modifier,
+        kind = KoanButtonKind.Icon,
     ) {
-        Icon(
-            painterResource(if (isOn) R.drawable.ic_heart_filled else R.drawable.ic_heart),
-            contentDescription = if (isOn) "Remove favourite" else "Favourite",
-            tint = if (isOn) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(size).scale(pop),
+        KoanIcon(
+            if (isOn) KoanIcons.favourited else KoanIcons.favourite,
+            if (isOn) "Remove favourite" else "Favourite",
+            color = KoanTheme.color(if (isOn) KoanTone.Bad else KoanTone.Muted),
         )
     }
 }
