@@ -56,7 +56,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -66,7 +65,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.EntryProviderScope
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.ui.NavDisplay
-import cc.blit.koan.R
 import cc.blit.koan.art.Art
 import cc.blit.koan.art.ArtSize
 import cc.blit.koan.engine.Playhead
@@ -77,7 +75,11 @@ import cc.blit.koan.ffi.RepeatMode
 import cc.blit.koan.ffi.SleepState
 import cc.blit.koan.ffi.SleepTimer
 import cc.blit.koan.ui.koanApp
+import androidx.compose.ui.unit.sp
+import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanIcon
 import cc.blit.koan.ui.navigation.LocalNavigator
+import cc.blit.koan.ui.theme.KoanTheme
 import cc.blit.koan.ui.theme.LocalKoanTokens
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
@@ -134,8 +136,6 @@ private fun NowPlayingPage() {
     val entry = now?.entry
     var lyrics by remember { mutableStateOf(false) }
     val accent = rememberRecordAccent(entry?.art(ArtSize.Thumb))
-    val scheme = MaterialTheme.colorScheme
-    val colours = accent?.let { scheme.copy(primary = it, secondary = it, onPrimary = if (isLight(it)) Color.Black else Color.White) } ?: scheme
 
     // Pulled down past a threshold, or flung, it goes; otherwise it springs
     // back. The pop transition carries on from wherever it was let go.
@@ -143,7 +143,8 @@ private fun NowPlayingPage() {
     val scope = rememberCoroutineScope()
     val dismissAt = with(LocalDensity.current) { 160.dp.toPx() }
 
-    MaterialTheme(colorScheme = colours) {
+    // The one page that is only about the record playing, so in its colour.
+    KoanTheme(koan = KoanTheme.isOn, icons = KoanTheme.icons, accent = accent) {
         Surface(
             Modifier.fillMaxSize()
                 .graphicsLayer { translationY = drag.value }
@@ -157,13 +158,13 @@ private fun NowPlayingPage() {
         ) {
             Column(
                 Modifier.fillMaxSize()
-                    .background(Brush.verticalGradient(listOf((accent ?: scheme.surface).copy(alpha = 0.32f), scheme.surface)))
+                    .background(Brush.verticalGradient(listOf(KoanTheme.look.accent.copy(alpha = 0.32f), MaterialTheme.colorScheme.surface)))
                     .safeDrawingPadding()
                     .padding(horizontal = LocalKoanTokens.current.gutter * 1.5f),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 IconButton(onClick = nav::closeNowPlaying, Modifier.padding(top = 4.dp)) {
-                    Icon(painterResource(R.drawable.ic_expand_more), "Close")
+                    KoanIcon(KoanIcons.expand, "Close")
                 }
                 AnimatedContent(
                     lyrics,
@@ -172,7 +173,7 @@ private fun NowPlayingPage() {
                     label = "stage",
                 ) { showLyrics ->
                     if (showLyrics) {
-                        LyricsPanel(entry?.trackId, now?.durationMs?.toLong() ?: 0, Modifier.fillMaxSize())
+                        LyricsPanel(entry?.trackId, duration(now), Modifier.fillMaxSize())
                     } else {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Sleeve(entry) }
                     }
@@ -187,7 +188,9 @@ private fun NowPlayingPage() {
     }
 }
 
-private fun isLight(c: Color) = 0.299 * c.red + 0.587 * c.green + 0.114 * c.blue > 0.6
+/** The track's length; the engine's reads 0 once playback stops, so then the queue row's. */
+private fun duration(now: NowPlaying?) =
+    now?.durationMs?.toLong()?.takeIf { it > 0 } ?: now?.entry?.durationMs?.toLong() ?: 0
 
 @Composable
 private fun Sleeve(entry: QueueItem?) {
@@ -248,10 +251,10 @@ private fun TrackHeart(trackId: Long) {
             scope.launch { runCatching { mirror.engine().toggleFavourite(trackId) }.onSuccess { favourite = it } }
         },
     ) {
-        Icon(
-            painterResource(if (favourite == true) R.drawable.ic_favourite_filled else R.drawable.ic_favourite),
+        KoanIcon(
+            if (favourite == true) KoanIcons.favourited else KoanIcons.favourite,
             if (favourite == true) "Remove favourite" else "Favourite",
-            tint = modeTint(favourite == true),
+            color = modeTint(favourite == true),
         )
     }
 }
@@ -266,7 +269,7 @@ private fun SeekBar(now: NowPlaying?) {
     val app = koanApp()
     val playhead by app.mirror.playhead.collectAsStateWithLifecycle()
     val position = rememberPosition(playhead)
-    val duration = now?.durationMs?.toLong() ?: 0
+    val duration = duration(now)
     var dragging by remember { mutableStateOf<Float?>(null) }
     var landing by remember { mutableStateOf<Float?>(null) }
     LaunchedEffect(playhead) { landing = null }
@@ -313,24 +316,25 @@ private fun Transport(now: NowPlaying?) {
             Modifier.semantics { stateDescription = if (shuffle) "On" else "Off" },
             enabled = enabled,
         ) {
-            Icon(painterResource(R.drawable.ic_shuffle), "Shuffle", tint = modeTint(shuffle))
+            KoanIcon(KoanIcons.shuffle, "Shuffle", color = modeTint(shuffle))
         }
         IconButton(onClick = player::previous, enabled = enabled) {
-            Icon(painterResource(R.drawable.ic_previous), "Previous", Modifier.size(36.dp))
+            KoanIcon(KoanIcons.previous, "Previous", size = 30.sp)
         }
         FilledIconButton(onClick = player::togglePlayPause, Modifier.size(72.dp), enabled = enabled) {
             if (now?.waiting == true) {
                 CircularProgressIndicator(Modifier.size(32.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 3.dp)
             } else {
-                Icon(
-                    painterResource(if (playing) R.drawable.ic_pause else R.drawable.ic_play),
+                KoanIcon(
+                    if (playing) KoanIcons.pause else KoanIcons.play,
                     if (playing) "Pause" else "Play",
-                    Modifier.size(40.dp),
+                    size = 34.sp,
+                    color = MaterialTheme.colorScheme.onPrimary,
                 )
             }
         }
         IconButton(onClick = player::next, enabled = enabled) {
-            Icon(painterResource(R.drawable.ic_next), "Next", Modifier.size(36.dp))
+            KoanIcon(KoanIcons.next, "Next", size = 30.sp)
         }
         IconButton(
             onClick = { app.mirror.launch { setRepeat(nextRepeat(repeat)) } },
@@ -343,10 +347,10 @@ private fun Transport(now: NowPlaying?) {
             },
             enabled = enabled,
         ) {
-            Icon(
-                painterResource(if (repeat == RepeatMode.ONE) R.drawable.ic_repeat_one else R.drawable.ic_repeat),
+            KoanIcon(
+                if (repeat == RepeatMode.ONE) KoanIcons.repeatOne else KoanIcons.repeatQueue,
                 "Repeat",
-                tint = modeTint(repeat != RepeatMode.OFF),
+                color = modeTint(repeat != RepeatMode.OFF),
             )
         }
     }
@@ -367,7 +371,7 @@ private fun modeTint(on: Boolean) = if (on) MaterialTheme.colorScheme.primary el
 private fun Toggles(now: NowPlaying?, lyrics: Boolean, toggleLyrics: () -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = toggleLyrics, Modifier.semantics { stateDescription = if (lyrics) "Shown" else "Hidden" }) {
-            Icon(painterResource(R.drawable.ic_lyrics), if (lyrics) "Show artwork" else "Show lyrics", tint = modeTint(lyrics))
+            KoanIcon(KoanIcons.lyrics, if (lyrics) "Show artwork" else "Show lyrics", color = modeTint(lyrics))
         }
         Spacer(Modifier.weight(1f))
         now?.format?.let { format ->
@@ -400,7 +404,7 @@ private fun SleepButton(sleep: SleepState?, fading: Boolean) {
     var open by remember { mutableStateOf(false) }
     Box {
         TextButton(onClick = { open = true }, Modifier.semantics { contentDescription = "Sleep timer" }) {
-            Icon(painterResource(R.drawable.ic_sleep), null, Modifier.size(20.dp), tint = modeTint(sleep != null))
+            KoanIcon(if (sleep == null) KoanIcons.sleep else KoanIcons.sleepSet, null, size = 16.sp, color = modeTint(sleep != null))
             val label = when {
                 fading -> "Fading"
                 sleep is SleepState.At -> countdown(sleep.unixMs.toLong())

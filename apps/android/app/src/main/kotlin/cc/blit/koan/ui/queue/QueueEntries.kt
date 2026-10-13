@@ -68,6 +68,9 @@ import cc.blit.koan.ffi.QueueItem
 import cc.blit.koan.ffi.QueueLock
 import cc.blit.koan.ui.StubPage
 import cc.blit.koan.ui.koanApp
+import androidx.compose.ui.unit.sp
+import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanIcon
 import cc.blit.koan.ui.navigation.Tab
 import cc.blit.koan.ui.nowplaying.art
 import cc.blit.koan.ui.theme.LocalKoanTokens
@@ -255,7 +258,7 @@ private fun Swipeable(enabled: Boolean, onRemove: () -> Unit, content: @Composab
                 Modifier.fillMaxSize().background(MaterialTheme.colorScheme.errorContainer).padding(horizontal = 24.dp),
                 contentAlignment = if (state.dismissDirection == SwipeToDismissBoxValue.StartToEnd) Alignment.CenterStart else Alignment.CenterEnd,
             ) {
-                Icon(painterResource(R.drawable.ic_delete), "Remove", tint = MaterialTheme.colorScheme.onErrorContainer)
+                KoanIcon(KoanIcons.remove, "Remove", color = MaterialTheme.colorScheme.onErrorContainer)
             }
         },
         gesturesEnabled = enabled,
@@ -284,11 +287,11 @@ private fun ReorderableCollectionItemScope.RowContent(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (selecting) {
-            Icon(
-                painterResource(if (picked) R.drawable.ic_select else R.drawable.ic_unselected),
+            KoanIcon(
+                if (picked) KoanIcons.picked else KoanIcons.unpicked,
                 null,
                 Modifier.padding(end = tokens.rowGap),
-                tint = if (picked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                color = if (picked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
             )
         }
         Box(Modifier.weight(1f)) {
@@ -392,19 +395,18 @@ private fun TrackRow(item: QueueItem, playing: Boolean, sleeve: Boolean, showArt
 /** What the queue is doing about this track: playing, done, waiting, failed. Arrival is `Availability`'s. */
 @Composable
 private fun StatusMark(item: QueueItem, playing: Boolean) {
-    val size = Modifier.size(16.dp)
+    val size = 13.sp
     val colours = MaterialTheme.colorScheme
     when (item.status) {
-        EntryStatus.PLAYING -> Icon(
-            painterResource(R.drawable.ic_playing),
+        EntryStatus.PLAYING -> KoanIcon(KoanIcons.playMark,
             if (playing) "Playing" else "Paused",
-            size,
-            tint = if (playing) colours.primary else colours.onSurfaceVariant,
+            size = size,
+            color = if (playing) colours.primary else colours.onSurfaceVariant,
         )
-        EntryStatus.PLAYED -> Icon(painterResource(R.drawable.ic_check), "Played", size, tint = colours.outline)
-        EntryStatus.PRIORITY_PENDING -> Icon(painterResource(R.drawable.ic_download), "Queued for download", size, tint = colours.primary)
-        EntryStatus.FAILED -> Icon(painterResource(R.drawable.ic_warning), item.failureReason ?: "Couldn't be fetched", size, tint = colours.error)
-        EntryStatus.QUEUED -> Icon(painterResource(R.drawable.ic_pending), null, size, tint = colours.outlineVariant)
+        EntryStatus.PLAYED -> KoanIcon(KoanIcons.check, "Played", size = size, color = colours.outline)
+        EntryStatus.PRIORITY_PENDING -> KoanIcon(KoanIcons.downloads, "Queued for download", size = size, color = colours.primary)
+        EntryStatus.FAILED -> KoanIcon(KoanIcons.warningFilled, item.failureReason ?: "Couldn't be fetched", size = size, color = colours.error)
+        EntryStatus.QUEUED -> KoanIcon(KoanIcons.pending, null, size = size, color = colours.outlineVariant)
         EntryStatus.DOWNLOADING -> Unit
     }
 }
@@ -430,11 +432,10 @@ private fun Availability(item: QueueItem) {
                 }
             }
         }
-        item.onServer && !item.onDisk -> Icon(
-            painterResource(R.drawable.ic_cloud),
+        item.onServer && !item.onDisk -> KoanIcon(KoanIcons.cloud,
             "On the server",
-            Modifier.size(16.dp),
-            tint = MaterialTheme.colorScheme.outline,
+            size = 13.sp,
+            color = MaterialTheme.colorScheme.outline,
         )
     }
 }
@@ -470,25 +471,24 @@ private fun Header(
             }
         }
         IconButton(onClick = follow, enabled = canFollow) {
-            Icon(
-                painterResource(R.drawable.ic_jump),
+            KoanIcon(KoanIcons.jumpToPlaying,
                 if (following) "Stop following what's playing" else "Jump to what's playing",
-                tint = if (following) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (following) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         IconButton(onClick = { setGrouped(!grouped) }) {
-            Icon(
-                painterResource(if (grouped) R.drawable.ic_album else R.drawable.ic_list),
+            KoanIcon(
+                if (grouped) KoanIcons.album else KoanIcons.queueSection,
                 if (grouped) "Grouped by record; show one row per track" else "One row per track; group by record",
             )
         }
         var menu by remember { mutableStateOf(false) }
         Box {
-            IconButton(onClick = { menu = true }) { Icon(painterResource(R.drawable.ic_more), "More") }
+            IconButton(onClick = { menu = true }) { KoanIcon(KoanIcons.more, "More") }
             DropdownMenu(menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(
                     text = { Text("Clear queue") },
-                    leadingIcon = { Icon(painterResource(R.drawable.ic_delete), null) },
+                    leadingIcon = { KoanIcon(KoanIcons.remove, null) },
                     enabled = items.isNotEmpty(),
                     onClick = {
                         menu = false
@@ -508,15 +508,15 @@ private fun SelectionBar(count: Int, clear: () -> Unit, playNext: () -> Unit, re
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            IconButton(onClick = clear) { Icon(painterResource(R.drawable.ic_close), "Clear selection") }
+            IconButton(onClick = clear) { KoanIcon(KoanIcons.close, "Clear selection") }
             Text("$count selected", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
             TextButton(onClick = playNext) {
-                Icon(painterResource(R.drawable.ic_play_next), null, Modifier.size(18.dp))
+                KoanIcon(KoanIcons.playNext, null, size = 15.sp)
                 Spacer(Modifier.width(6.dp))
                 Text("Play next")
             }
             TextButton(onClick = remove) {
-                Icon(painterResource(R.drawable.ic_delete), null, Modifier.size(18.dp))
+                KoanIcon(KoanIcons.remove, null, size = 15.sp)
                 Spacer(Modifier.width(6.dp))
                 Text("Remove")
             }

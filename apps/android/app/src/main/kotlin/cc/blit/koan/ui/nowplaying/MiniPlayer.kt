@@ -30,14 +30,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import cc.blit.koan.R
 import cc.blit.koan.art.ArtSize
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ui.koanApp
+import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanIcon
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.theme.LocalKoanTokens
 import coil3.compose.AsyncImage
@@ -68,7 +68,7 @@ fun MiniPlayer() {
                     onDragStopped = { velocity -> if (pulled < -openAt || velocity < -1500f) nav.openNowPlaying() },
                 ),
         ) {
-            Progress(now?.durationMs?.toLong() ?: 0)
+            Progress(now?.durationMs?.toLong()?.takeIf { it > 0 } ?: entry.durationMs?.toLong() ?: 0)
             Row(
                 Modifier.fillMaxWidth().height(tokens.miniPlayerHeight).padding(start = tokens.gutter, end = tokens.rowGap),
                 verticalAlignment = Alignment.CenterVertically,
@@ -93,14 +93,14 @@ fun MiniPlayer() {
                     if (now?.waiting == true) {
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                     } else {
-                        Icon(
-                            painterResource(if (playing) R.drawable.ic_pause else R.drawable.ic_play),
+                        KoanIcon(
+                            if (playing) KoanIcons.pause else KoanIcons.play,
                             if (playing) "Pause" else "Play",
                         )
                     }
                 }
                 IconButton(onClick = app.player::next, Modifier.size(48.dp)) {
-                    Icon(painterResource(R.drawable.ic_next), "Next")
+                    KoanIcon(KoanIcons.next, "Next")
                 }
             }
         }
