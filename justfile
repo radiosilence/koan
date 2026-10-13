@@ -616,6 +616,36 @@ ios-ffi platform="iphonesimulator":
     just ffi-bindings "target/ios-link/{{platform}}/libkoan_ffi.a"
     echo "koan-ffi ready for {{platform}}"
 
+# The Android NDK the build is pinned to, and the platform level it links at.
+# Install with `sdkmanager "ndk;{{android_ndk}}"` under $ANDROID_HOME.
+# 28 because AAudio's Usage and ContentType need it.
+android_ndk := "27.2.12479018"
+android_api := "28"
+
+# Build the Rust engine for Android and generate the Kotlin bindings.
+#
+# `arm64-v8a` for devices, `x86_64` for the emulator; the 32-bit ABIs are not
+# built. Needs the NDK (`ANDROID_NDK_HOME`, or `ANDROID_HOME` with the pinned
+# version under it), `cargo-ndk`, and `rustup target add aarch64-linux-android
+# x86_64-linux-android`. Neither output is checked in: the libraries go where
+# Gradle packages them, and the bindings are generated from the metadata
+# embedded in a built library, as `ffi-bindings` does for Swift.
+android-ffi:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    : "${ANDROID_NDK_HOME:=${ANDROID_HOME:?set ANDROID_HOME or ANDROID_NDK_HOME}/ndk/{{android_ndk}}}"
+    export ANDROID_NDK_HOME
+    jni=apps/android/app/src/main/jniLibs
+    # `rustc --crate-type cdylib`: the crate also declares a staticlib for
+    # Apple's linker, which Android has no use for and which doubles the link.
+    cargo ndk -t arm64-v8a -t x86_64 -P {{android_api}} -o "$jni" \
+        rustc --release -p koan-ffi --lib --crate-type cdylib
+    rm -rf target/uniffi-kotlin
+    cargo run -q -p uniffi-bindgen -- generate \
+        --library "$jni/arm64-v8a/libkoan_ffi.so" \
+        --language kotlin --out-dir target/uniffi-kotlin
+    echo "koan-ffi ready for Android: $jni, target/uniffi-kotlin"
+
 # Assemble koan.app for the iOS simulator.
 #
 # By hand, exactly as `macos-bundle` does, and for the same reason: SwiftPM has

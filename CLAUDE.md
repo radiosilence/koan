@@ -146,6 +146,8 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `audio/backend.rs` | `AudioBackend` + `AudioEngineHandle` traits — platform-agnostic audio output |
 | `audio/coreaudio_backend.rs` | macOS `CoreAudioBackend` impl (wraps engine.rs + device.rs) |
 | `audio/ios_backend.rs` | iOS and tvOS `IosAudioBackend` impl — the route is the only device; the session belongs to the app |
+| `audio/android_backend.rs` | Android `AndroidAudioBackend` impl over AAudio (`ndk` crate): exclusive then shared, error callback reopens on a route change |
+| `audio/android_policy.rs` | The Android backend's decisions and its data callback body, without AAudio, so desktop tests cover them |
 | `audio/toolbox.rs` | The AudioToolbox names the engine uses, declared by hand for tvOS: `coreaudio-sys`'s build script knows only macOS and iOS |
 | `audio/cpal_backend.rs` | Linux `CpalBackend` impl (ALSA/PipeWire/PulseAudio via cpal) |
 | `audio/engine.rs` | CoreAudio output setup, render callback. AUHAL on macOS, RemoteIO on iOS — two properties apart |
@@ -340,7 +342,7 @@ follows the top of the stack in front — see `TabShell`.
 
 - **TUI→Player communication:** always via `PlayerCommand` through the crossbeam channel. Never reach into player internals from the TUI thread.
 - **Player→TUI communication:** via `SharedPlayerState` (atomics + RwLock). The player thread sleeps until a command or a known event — the playhead reaching a queued track, a fade reaching silence — and `position_ms()` reads the playhead live. The TUI redraws on its own tick.
-- **Audio thread (CoreAudio/cpal):** atomics and rtrb only. No allocations, no locks, no channels.
+- **Audio thread (CoreAudio/cpal/AAudio):** atomics and rtrb only. No allocations, no locks, no channels.
 - **Decode thread:** owns the Symphonia decoder. Communicates via rtrb producer + `PlaybackTimeline` (RwLock for boundaries, atomics for counters).
 - **Background work** (downloads, lyrics fetch, organize): spawn named threads, communicate results via crossbeam one-shot channels or `Arc<Mutex<Option<T>>>` polling.
 - **Parallel iteration** (scan, remote sync): rayon. Don't hand-roll thread pools.
@@ -353,6 +355,7 @@ follows the top of the stack in front — see `TabShell`.
 | `rtrb` | Lock-free SPSC ring buffer for audio — the only bridge between decode and audio output |
 | `coreaudio-sys` | Raw CoreAudio AUHAL bindings for bit-perfect output (macOS) |
 | `cpal` | Cross-platform audio I/O — ALSA/PipeWire/PulseAudio (Linux) |
+| `ndk` | AAudio bindings for the Android output (Android) |
 | `crossbeam-channel` | Bounded MPSC with timeout recv — command channel + one-shots |
 | `parking_lot` | Faster RwLock/Mutex, no poisoning |
 | `rusqlite` (bundled) | SQLite with FTS5 for full-text search |

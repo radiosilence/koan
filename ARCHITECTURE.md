@@ -118,7 +118,7 @@ Five threads at steady state during playback:
 | Viz samples | Decode | Analyzer | `VizBuffer` (`parking_lot::Mutex` ring) |
 | Analysis output | Analyzer | TUI, FFI clients, link sessions watched for levels | `VizSnapshot` (`parking_lot::RwLock` + `signal::Wake`: a watch channel for tasks, a condvar for threads) |
 
-**The golden rule: nothing on the audio render thread may allocate or lock.** It only touches atomics and the ring buffer consumer. This applies to both the CoreAudio callback (macOS) and the cpal callback (Linux).
+**The golden rule: nothing on the audio render thread may allocate or lock.** It only touches atomics and the ring buffer consumer. This applies to the CoreAudio callback (macOS, iOS), the cpal callback (Linux) and the AAudio data callback (Android). On Android the body of that callback is `android_policy::render`, a function of the ring and atomics that the desktop tests run.
 
 ## Audio data flow
 
@@ -157,6 +157,24 @@ DAC → Speakers
 The device rate is not koan's to own — it is one property shared by every client, and Audio MIDI Setup, a vendor control panel or any other app can move it back at any moment, after which the HAL resamples koan to reach it. So the rate the front ends report is not the one read at engine creation: a `SampleRateWatch` (`audio/device.rs`) stays registered on `kAudioDevicePropertyNominalSampleRate` for as long as the engine lives and writes every change into `SharedPlayerState`. koan does not take hog mode, so losing the rate is possible by design — saying so is not.
 
 **Backpressure:** If the ring buffer is full, decode sleeps 500µs and retries. If the ring buffer is empty (underrun), the render callback zeros the output (silence beats glitches).
+
+## Android
+
+The core and `koan-ffi` build for Android (`arm64-v8a` for devices, `x86_64` for the emulator; the 32-bit ABIs are not built). There is no app yet; this is the engine side that one links.
+
+**Toolchain.** NDK r27c (`27.2.12479018`) installed with `sdkmanager "ndk;27.2.12479018"`, `cargo-ndk`, and the two Rust targets (`rustup target add aarch64-linux-android x86_64-linux-android`). The platform level is 28: `ndk`'s AAudio `Usage` and `ContentType` need it, and the symbols are linked at load. `just android-ffi` builds both ABIs and generates the Kotlin bindings.
+
+**Output.** `audio/android_backend.rs` drives AAudio directly rather than through cpal, for the controls cpal does not expose: exclusive sharing with a shared fallback, `Usage::Media` and `ContentType::Music`, low-latency performance mode, and the error callback. The stream is always opened at the source's rate and channel count, so the ring's samples play at the right speed; a route that cannot run that rate has the system mixer convert it, which is a shared stream, and the rate reported to the player is the one the hardware runs at, not the one asked for. Whether a route is bit-perfect is the app's to say, from `KoanEngine::audio_output_grant()`.
+
+A route change (headphones out, Bluetooth in, a USB DAC attached) arrives as a disconnect in the stream's error callback. That callback may not close or reopen a stream, so it wakes a worker thread (`koan-aaudio`), which closes the dead stream, opens another on whatever the system now routes to, and starts it if playback was running. The ring consumer and the fader live in a cell shared by consecutive streams' callbacks: only one stream is ever started, and the one it replaces is closed first, which waits for its callback thread to exit.
+
+**Sandbox.** An Android app has no home directory. `KoanEngine::with_app_dirs(deviceName, filesDir, cacheDir)` is the only constructor the Kotlin bindings have (uniffi cannot generate an async primary constructor, which `new` is, so `new` is compiled out on Android). Configuration, the library database and logs go in `filesDir/koan`; downloads go in `cacheDir/koan`, which the system may reclaim.
+
+**TLS.** reqwest verifies certificates with `rustls-platform-verifier`, which on Android needs the application context over JNI and its Kotlin component (`rustls:rustls-platform-verifier`, found through the crate's `maven` directory) on the app's classpath. `koan-ffi` exports `Java_cc_blit_koan_Native_initTls`; the app declares `object Native { external fun initTls(context: Context) }` in package `cc.blit.koan`, loads `koan_ffi`, and calls it once with the application context before the engine starts.
+
+**Logging.** Warnings and errors go to logcat as well as `koan.log`.
+
+**What does not run yet.** UPnP discovery is skipped (it needs a `MulticastLock`), and the offline mode that narrows the library when the server is out of reach is iOS and tvOS only.
 
 ## Gapless playback
 
@@ -259,6 +277,8 @@ A transfer nothing wants any more stops, mid-transfer included; it asks every 25
 | `backend.rs` | `AudioBackend` + `AudioEngineHandle` traits — platform-agnostic audio output abstraction |
 | `coreaudio_backend.rs` | macOS: `CoreAudioBackend` impl wrapping `engine.rs` + `device.rs` (`#[cfg(target_os = "macos")]`) |
 | `cpal_backend.rs` | Linux: `CpalBackend` impl using cpal (ALSA/PipeWire/PulseAudio) (`#[cfg(target_os = "linux")]`) |
+| `android_backend.rs` | Android: `AndroidAudioBackend` over AAudio through the `ndk` crate (`#[cfg(target_os = "android")]`). The route is the only device. Opens exclusive, then shared, at the source rate; an error callback signals a worker thread that reopens the stream on the new route, handing it the same ring and fader |
+| `android_policy.rs` | What the Android backend decides, free of AAudio so it is tested on a desktop: the open ladder, when a fault means a route change, the reopen back-off, the hardware rate to report, and the data callback's body (`render`) |
 | `engine.rs` | CoreAudio AUHAL setup, render callback (unsafe extern "C"), AudioEngine lifecycle (macOS only) |
 | `device.rs` | CoreAudio device enumeration, sample rate get/set/watch (macOS only) |
 | `buffer.rs` | `PlaybackTimeline` — track boundaries, `current_playback()` position query (binary search), decode thread entry points (`start_decode`, `decode_single`, `decode_queue_loop`) |
@@ -482,6 +502,7 @@ Mouse works in every mode — modality is keyboard-only. Double-click a queue tr
 | `rtrb` | Lock-free SPSC ring buffer. The only thing connecting decode → audio output. |
 | `coreaudio-sys` | Raw CoreAudio bindings for AUHAL output unit (macOS only). |
 | `cpal` | Cross-platform audio I/O — ALSA/PipeWire/PulseAudio backend (Linux only). |
+| `ndk` | Safe AAudio bindings for the Android backend (`audio` feature, API level 28 for `Usage` and `ContentType`). |
 | `rusqlite` | SQLite via `bundled` (portable, includes FTS5). |
 | `lofty` | Tag reading/writing across ID3, Vorbis, MP4, APE. |
 | `ratatui` + `crossterm` | TUI framework + terminal backend. |
