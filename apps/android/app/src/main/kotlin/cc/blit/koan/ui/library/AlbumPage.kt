@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -27,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -115,7 +117,12 @@ private fun Header(album: Album, tracks: List<Track>) {
         AsyncImage(
             Art.album(album.id, ArtSize.Full),
             null,
-            Modifier.widthIn(max = 320.dp).fillMaxWidth(0.72f).aspectRatio(1f).padding(bottom = 16.dp),
+            Modifier
+                .padding(bottom = 16.dp)
+                .widthIn(max = 320.dp)
+                .fillMaxWidth(0.72f)
+                .aspectRatio(1f)
+                .clip(RoundedCornerShape(10.dp)),
         )
         Text(album.title, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis)
         Text(

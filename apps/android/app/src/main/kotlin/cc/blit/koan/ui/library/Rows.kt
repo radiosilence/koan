@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -52,10 +53,14 @@ fun duration(ms: Long): String {
     return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
 }
 
-/** `42 min`, or `1 h 12 min`: a record's length. */
+/** `42 min`, or `1 h 12 min`: a record's length. Under a minute, as a track's. */
 fun length(ms: Long): String {
     val m = (ms + 30_000) / 60_000
-    return if (m >= 60) "${m / 60} h ${m % 60} min" else "$m min"
+    return when {
+        m == 0L -> duration(ms)
+        m >= 60 -> "${m / 60} h ${m % 60} min"
+        else -> "$m min"
+    }
 }
 
 fun count(n: Long, noun: String) = "$n ${if (n == 1L) noun else "${noun}s"}"
@@ -83,9 +88,9 @@ fun PageBar(title: String, subtitle: String? = null, back: Boolean = true, actio
 
 /** What an empty page says, centred. */
 @Composable
-fun EmptyState(title: String, detail: String? = null, modifier: Modifier = Modifier) {
+fun EmptyState(title: String, detail: String? = null) {
     Column(
-        modifier.fillMaxSize().padding(LocalKoanTokens.current.gutter * 2),
+        Modifier.fillMaxSize().padding(LocalKoanTokens.current.gutter * 2),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -264,7 +269,9 @@ fun TrackRow(
         modifier
             .fillMaxWidth()
             .combinedClickable(onClick = onPlay, onLongClick = { menu = true })
-            .padding(start = tokens.gutter, end = 4.dp, top = tokens.rowGap / 2, bottom = tokens.rowGap / 2),
+            .padding(start = tokens.gutter, end = 4.dp, top = tokens.rowGap / 2, bottom = tokens.rowGap / 2)
+            // The heart's touch target, so a favourite's row is no taller than the rest.
+            .heightIn(min = 48.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (mixed) {
