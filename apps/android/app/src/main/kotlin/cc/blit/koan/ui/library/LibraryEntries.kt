@@ -16,7 +16,9 @@ import androidx.navigation3.runtime.EntryProviderScope
 import androidx.navigation3.runtime.NavKey
 import cc.blit.koan.art.Art
 import cc.blit.koan.ui.StubPage
+import cc.blit.koan.ui.downloads.DownloadedRoute
 import cc.blit.koan.ui.downloads.DownloadsRoute
+import cc.blit.koan.ui.history.HistoryRoute
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.Tab
@@ -39,6 +41,8 @@ private fun LibraryPage() {
     val thumb = LocalKoanTokens.current.thumb
     LazyColumn {
         item { ListItem(headlineContent = { Text("Playlists") }, modifier = Modifier.clickable { nav.push(PlaylistsRoute()) }) }
+        item { ListItem(headlineContent = { Text("Downloaded") }, modifier = Modifier.clickable { nav.push(DownloadedRoute()) }) }
+        item { ListItem(headlineContent = { Text("History") }, modifier = Modifier.clickable { nav.push(HistoryRoute()) }) }
         item { ListItem(headlineContent = { Text("Downloads") }, modifier = Modifier.clickable { nav.push(DownloadsRoute()) }) }
         items(albums, key = { it.id }) { album ->
             ListItem(

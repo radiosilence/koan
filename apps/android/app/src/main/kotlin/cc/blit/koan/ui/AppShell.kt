@@ -29,6 +29,7 @@ import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
 import cc.blit.koan.R
 import cc.blit.koan.ui.downloads.downloadsEntries
+import cc.blit.koan.ui.history.historyEntries
 import cc.blit.koan.ui.library.libraryEntries
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.Navigator
@@ -118,6 +119,7 @@ private fun Tabs(navigator: Navigator, stacks: Map<Tab, List<NavKey>>) {
                     settingsEntries()
                     playlistsEntries()
                     downloadsEntries()
+                    historyEntries()
                 },
             )
             // After NavDisplay, so it takes back first at a tab's root rather
