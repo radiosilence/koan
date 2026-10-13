@@ -9,6 +9,7 @@ import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import cc.blit.koan.ffi.MulticastHost
 import java.net.Inet4Address
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * The Wi-Fi network, as UPnP discovery needs it.
@@ -26,7 +27,7 @@ class WifiMulticast(context: Context) : MulticastHost {
         .apply { setReferenceCounted(false) }
 
     /** Each Wi-Fi network's IPv4 address, internet or not: a LAN is enough. */
-    private val addresses = java.util.concurrent.ConcurrentHashMap<Network, String>()
+    private val addresses = ConcurrentHashMap<Network, String>()
 
     init {
         val connectivity = context.getSystemService(ConnectivityManager::class.java)

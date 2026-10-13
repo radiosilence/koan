@@ -86,6 +86,9 @@ fun DevicesPane(model: SettingsModel) {
             ) { v -> model.edit { it.copy(devicesNearbyControl = v) } }
         }
         c?.listeningPort?.let { port -> item { ValueRow("Port", port.toString()) } }
+        if (c?.localNetworkBlocked == true) {
+            line("Android is keeping kōan off the local network. Allow Nearby devices in the app's permissions.", KoanTone.Bad)
+        }
         footer(
             "Other kōan apps on this network can see and control what plays here. Full control adds the output, " +
                 "preset, volume and moving the music; Playback only is play and the queue. Neither reaches your library. " +

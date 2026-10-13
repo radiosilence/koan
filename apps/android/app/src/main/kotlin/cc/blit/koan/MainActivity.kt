@@ -37,10 +37,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun localNetworkAnswered(granted: Boolean) {
-        (application as KoanApp).mirror.launch {
-            nearbyBlocked(!granted)
-            if (granted) linkNudge()
-        }
+        (application as KoanApp).nearby.permitted(granted)
     }
 
     /**
@@ -50,6 +47,13 @@ class MainActivity : ComponentActivity() {
      */
     override fun onStart() {
         super.onStart()
+        // A grant made in system Settings since the engine was told otherwise.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.CINNAMON_BUN &&
+            checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) == PackageManager.PERMISSION_GRANTED &&
+            (application as KoanApp).mirror.connection.value?.localNetworkBlocked == true
+        ) {
+            localNetworkAnswered(true)
+        }
         controller = MediaController.Builder(
             this,
             SessionToken(this, ComponentName(this, PlaybackService::class.java)),

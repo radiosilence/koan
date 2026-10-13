@@ -64,8 +64,9 @@ pub trait Network: Send + Sync {
 static NETWORK: Mutex<Option<std::sync::Arc<dyn Network>>> = Mutex::new(None);
 /// Moves with each search, so only the latest one's window lets go.
 static WINDOW: Mutex<u64> = Mutex::new(0);
-/// The announcement listener, and the interface it joined the group on.
-static NOTIFY: Mutex<Option<(UdpSocket, Ipv4Addr)>> = Mutex::new(None);
+/// The announcement listener, and the interface it joined the group on, if
+/// it could.
+static NOTIFY: Mutex<Option<(UdpSocket, Option<Ipv4Addr>)>> = Mutex::new(None);
 
 /// Install the platform's network host.
 pub fn set_network(network: std::sync::Arc<dyn Network>) {
@@ -242,14 +243,15 @@ pub fn search() {
     };
     *SEARCHED.lock() = Some(Instant::now());
     let network = NETWORK.lock().clone();
+    let mut interface = Ipv4Addr::UNSPECIFIED;
     if let Some(network) = &network {
         open_window(network);
-        let interface = network.wifi_address().unwrap_or(Ipv4Addr::UNSPECIFIED);
+        interface = network.wifi_address().unwrap_or(Ipv4Addr::UNSPECIFIED);
         if let Err(e) = socket2::SockRef::from(socket).set_multicast_if_v4(&interface) {
             log::warn!("upnp: cannot search from {interface}: {e}");
         }
-        rejoin(interface);
     }
+    rejoin(interface);
     check_busy();
     let msg = format!(
         "M-SEARCH * HTTP/1.1\r\nHOST: {GROUP}:{PORT}\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: {SEARCH_TARGET}\r\nUSER-AGENT: koan/{} UPnP/1.0\r\n\r\n",
@@ -295,48 +297,51 @@ fn start() -> Option<UdpSocket> {
         spawn_reader("koan-ssdp-search", reader);
     }
     match notify_socket() {
-        Ok((socket, interface)) => {
+        Ok(socket) => {
             if let Ok(kept) = socket.try_clone() {
-                *NOTIFY.lock() = Some((kept, interface));
+                *NOTIFY.lock() = Some((kept, None));
             }
             spawn_reader("koan-ssdp-notify", socket);
+            let interface = NETWORK
+                .lock()
+                .as_ref()
+                .and_then(|n| n.wifi_address())
+                .unwrap_or(Ipv4Addr::UNSPECIFIED);
+            rejoin(interface);
         }
         Err(e) => log::info!("upnp: not listening for announcements: {e}"),
     }
     Some(search)
 }
 
-/// Move the announcement listener's membership to `interface`, when Wi-Fi has
-/// come, gone or changed address since it joined.
+/// Join the announcement listener to the group on `interface`, moving it when
+/// Wi-Fi has come, gone or changed address since, or when no join has worked
+/// yet: with no network up, none can.
 fn rejoin(interface: Ipv4Addr) {
     let mut notify = NOTIFY.lock();
     let Some((socket, joined)) = notify.as_mut() else {
         return;
     };
-    if *joined == interface {
+    if *joined == Some(interface) {
         return;
     }
-    let _ = socket.leave_multicast_v4(&GROUP, joined);
+    if let Some(old) = joined.take() {
+        let _ = socket.leave_multicast_v4(&GROUP, &old);
+    }
     match socket.join_multicast_v4(&GROUP, &interface) {
-        Ok(()) => *joined = interface,
-        Err(e) => log::warn!("upnp: cannot listen for announcements on {interface}: {e}"),
+        Ok(()) => *joined = Some(interface),
+        Err(e) => log::info!("upnp: cannot listen for announcements on {interface}: {e}"),
     }
 }
 
-fn notify_socket() -> std::io::Result<(UdpSocket, Ipv4Addr)> {
+fn notify_socket() -> std::io::Result<UdpSocket> {
     use socket2::{Domain, Protocol, Socket, Type};
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     socket.set_reuse_address(true)?;
     #[cfg(unix)]
     socket.set_reuse_port(true)?;
     socket.bind(&SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, PORT)).into())?;
-    let interface = NETWORK
-        .lock()
-        .as_ref()
-        .and_then(|n| n.wifi_address())
-        .unwrap_or(Ipv4Addr::UNSPECIFIED);
-    socket.join_multicast_v4(&GROUP, &interface)?;
-    Ok((socket.into(), interface))
+    Ok(socket.into())
 }
 
 fn spawn_reader(name: &str, socket: UdpSocket) {

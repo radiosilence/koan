@@ -66,7 +66,10 @@ class NearbyNsd(context: Context, private val mirror: EngineMirror) : NearbyHost
         }
         synchronized(lock) { registration = listener }
         runCatching { nsd.registerService(info, NsdManager.PROTOCOL_DNS_SD, listener) }
-            .onFailure { log("cannot announce this device: $it") }
+            .onFailure {
+                log("cannot announce this device: $it")
+                if (it is SecurityException) refused(FAILURE_PERMISSION_DENIED)
+            }
     }
 
     override fun withdraw() {
@@ -75,8 +78,8 @@ class NearbyNsd(context: Context, private val mirror: EngineMirror) : NearbyHost
     }
 
     override fun browse() {
+        pause()
         val listener = synchronized(lock) {
-            if (discovery != null) return
             object : NsdManager.DiscoveryListener {
                 private fun current() = synchronized(lock) { discovery === this }
                 override fun onDiscoveryStarted(type: String) = log("browsing")
@@ -98,6 +101,7 @@ class NearbyNsd(context: Context, private val mirror: EngineMirror) : NearbyHost
         runCatching { nsd.discoverServices(SERVICE, NsdManager.PROTOCOL_DNS_SD, listener) }
             .onFailure {
                 log("cannot browse: $it")
+                if (it is SecurityException) refused(FAILURE_PERMISSION_DENIED)
                 synchronized(lock) { if (discovery === listener) discovery = null }
             }
     }
@@ -178,23 +182,31 @@ class NearbyNsd(context: Context, private val mirror: EngineMirror) : NearbyHost
         events.trySend { nearbyFound(name, host, port, txt) }
     }
 
-    /** Gone: `callback` is the watch that saw it go, if one did. */
+    /** Gone: `callback` is the watch that saw it go, if one did; a stale watch's word is ignored. */
     private fun lost(name: String, callback: NsdManager.ServiceInfoCallback? = null) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             val ended = synchronized(lock) {
                 if (callback == null) watching.remove(name)
-                else callback.takeIf { watching.remove(name, it) }
+                else callback.takeIf { watching.remove(name, it) } ?: return
             }
             ended?.let { runCatching { nsd.unregisterServiceInfoCallback(it) } }
+        } else {
+            synchronized(lock) { waiting.removeAll { it.serviceName == name } }
         }
         events.trySend { nearbyLost(name) }
     }
 
+    /** What the system decided about the local network permission, in order with what was found. */
+    fun permitted(granted: Boolean) {
+        events.trySend {
+            nearbyBlocked(!granted)
+            if (granted) linkNudge()
+        }
+    }
+
     /** Android 17 keeps an app without the local network permission off it. */
     private fun refused(error: Int) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.CINNAMON_BUN &&
-            error == NsdManager.FAILURE_PERMISSION_DENIED
-        ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.CINNAMON_BUN && error == FAILURE_PERMISSION_DENIED) {
             events.trySend { nearbyBlocked(true) }
         }
     }
@@ -205,5 +217,6 @@ class NearbyNsd(context: Context, private val mirror: EngineMirror) : NearbyHost
 
     private companion object {
         const val SERVICE = "_koan._tcp"
+        const val FAILURE_PERMISSION_DENIED = NsdManager.FAILURE_PERMISSION_DENIED
     }
 }
