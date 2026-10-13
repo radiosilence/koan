@@ -750,7 +750,8 @@ pub struct QueueEntry {
     pub duration_ms: Option<u64>,
     pub status: QueueEntryStatus,
     pub download_progress: Option<(u64, u64)>,
-    /// Why this entry cannot play, when `status` is `Failed`.
+    /// Why this entry cannot play, when `status` is `Failed`; or, under the
+    /// cursor and still to come, why it has not arrived yet.
     pub error: Option<String>,
 }
 
@@ -2157,6 +2158,7 @@ impl SharedPlayerState {
             .into_iter()
             .map(|r| (r.track_id, (r.written, r.total)))
             .collect();
+        let unreachable = crate::helpers::server_unreachable();
         let pl = self.playlist.read();
 
         for item in &pl.items {
@@ -2204,8 +2206,12 @@ impl SharedPlayerState {
                     status,
                     duration_ms,
                     download_progress,
-                    error: match &item.state {
-                        ItemState::Failed(reason) => Some(reason.clone()),
+                    error: match (place, &item.state) {
+                        (_, ItemState::Failed(reason)) => Some(reason.clone()),
+                        // Waiting for a server that is not answering: why it
+                        // has not started, though it will once the server is
+                        // back.
+                        (Place::Cursor, ItemState::Pending) => unreachable.clone(),
                         _ => None,
                     },
                 },

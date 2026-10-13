@@ -862,6 +862,7 @@ fn listen_once(local: &Local, port: u16, stop: &Arc<Stop>) -> Result<(), String>
                 log::info!("nearby: {addr} is refused or held off; hung up");
             }
             Ok((stream, addr)) => {
+                log::info!("nearby: {addr} connected");
                 let (local, stop) = (local.clone(), stop.clone());
                 let _ = std::thread::Builder::new()
                     .name("koan-nearby-peer".into())
@@ -1857,8 +1858,9 @@ pub mod nsd {
         }
     }
 
-    /// Announce this device, as Bonjour's `advertise` does.
-    pub fn advertise(port: u16, identity: &LinkIdentity, server: &str) -> Option<Advert> {
+    /// The TXT entries this device is announced with: what Bonjour's
+    /// announcement carries, entry for entry.
+    pub(crate) fn txt(identity: &LinkIdentity, server: &str) -> Vec<(String, String)> {
         let mut txt = vec![
             ("id".to_string(), identity.device_id.clone()),
             ("platform".to_string(), identity.platform.clone()),
@@ -1866,6 +1868,12 @@ pub mod nsd {
         if !server.is_empty() {
             txt.push(("server".to_string(), server.to_string()));
         }
+        txt
+    }
+
+    /// Announce this device, as Bonjour's `advertise` does.
+    pub fn advertise(port: u16, identity: &LinkIdentity, server: &str) -> Option<Advert> {
+        let txt = txt(identity, server);
         let mut state = STATE.lock();
         state.adverts += 1;
         let n = state.adverts;
@@ -2587,6 +2595,38 @@ pub(crate) mod bonjour {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        /// What Android's `NsdManager` puts on the wire for this device, read
+        /// as a Mac reads it: each attribute one `key=value` string, length
+        /// first (RFC 6763 §6), on the same service type.
+        #[test]
+        fn an_android_announcement_reads_as_an_apple_one() {
+            let identity = LinkIdentity {
+                name: "Pixel 9".into(),
+                platform: "android".into(),
+                device_id: "0199c1d2-android".into(),
+            };
+            let server = "https://music.example.net";
+            let mut wire = Vec::new();
+            for (key, value) in super::super::nsd::txt(&identity, server) {
+                let entry = format!("{key}={value}");
+                wire.push(entry.len() as u8);
+                wire.extend_from_slice(entry.as_bytes());
+            }
+            assert_eq!(
+                wire,
+                txt_record(&[
+                    ("id", "0199c1d2-android"),
+                    ("platform", "android"),
+                    ("server", server),
+                ]),
+                "the same record Bonjour registers for an Apple device"
+            );
+            assert_eq!(txt_value(&wire, "id").as_deref(), Some("0199c1d2-android"));
+            assert_eq!(txt_value(&wire, "platform").as_deref(), Some("android"));
+            assert_eq!(txt_value(&wire, "server").as_deref(), Some(server));
+            assert_eq!(super::super::SERVICE, "_koan._tcp");
+        }
 
         #[test]
         fn a_browse_error_lands_in_its_own_browse() {

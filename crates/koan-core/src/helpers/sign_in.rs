@@ -246,6 +246,25 @@ pub fn subsonic_client(cfg: &Config) -> Option<Arc<SubsonicClient>> {
     Some(client)
 }
 
+/// Why the signed-in server is not answering downloads, while it is not. Reads
+/// only the client already made.
+pub fn server_unreachable() -> Option<String> {
+    let client = SUBSONIC_CLIENT.lock().as_ref().map(|(_, c)| c.clone())?;
+    client.outage().reason()
+}
+
+/// The device moved to another network, or lost or regained one: what was
+/// learnt about reaching the server belongs to the last one. Connections are
+/// made afresh, a server that was not answering is tried now, and the other
+/// devices are looked for again.
+pub fn network_changed() {
+    let client = SUBSONIC_CLIENT.lock().as_ref().map(|(_, c)| c.clone());
+    if let Some(client) = client {
+        client.renew();
+    }
+    crate::remote::devices::resume();
+}
+
 type CachedClient = Option<(SubsonicAuth, Arc<SubsonicClient>)>;
 
 static SUBSONIC_CLIENT: std::sync::LazyLock<parking_lot::Mutex<CachedClient>> =

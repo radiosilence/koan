@@ -424,6 +424,12 @@ private fun TrackRow(item: QueueItem, playing: Boolean, sleeve: Boolean, showArt
 @Composable
 private fun StatusMark(item: QueueItem, playing: Boolean) {
     val size = 12.sp
+    // Still to come but held up, the server out of reach: said, not left a
+    // silent wait.
+    val heldUp = item.failureReason.takeIf { item.status != EntryStatus.FAILED && item.status != EntryStatus.PLAYING }
+    if (heldUp != null) {
+        return KoanIcon(KoanIcons.warningFilled, heldUp, size = size, color = KoanTheme.color(KoanTone.Bad))
+    }
     when (item.status) {
         EntryStatus.PLAYING -> PlayingBars(
             playing,

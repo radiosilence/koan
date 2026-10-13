@@ -705,6 +705,13 @@ impl KoanEngine {
         koan_core::remote::devices::resume();
     }
 
+    /// The device's network changed: Android's default network came or went.
+    /// Connections to the server start afresh and an unanswered server is
+    /// tried now. See `koan_core::helpers::network_changed`.
+    pub fn network_changed(&self) {
+        koan_core::helpers::network_changed();
+    }
+
     /// The app went to the background, or came back. In the background
     /// nothing runs that nobody asked for — see `koan_core::quiet`.
     pub fn set_background(&self, background: bool) {
@@ -5135,6 +5142,7 @@ impl KoanEngine {
             .name("koan-state".into())
             .spawn(move || {
                 let mut last_queue = u64::MAX;
+                let mut last_unreachable: Option<String> = None;
                 let mut last_store = u64::MAX;
                 let mut last_library = u64::MAX;
                 let mut last_devices = u64::MAX;
@@ -5375,7 +5383,12 @@ impl KoanEngine {
                     // indexed reads. Neither can change without one of these
                     // two versions moving.
                     let queue_version = engine.state.playlist_version();
-                    let queue_moved = queue_version != last_queue;
+                    // The entry under the cursor carries the server's outage,
+                    // which moves no version.
+                    let unreachable = koan_core::helpers::server_unreachable();
+                    let queue_moved =
+                        queue_version != last_queue || unreachable != last_unreachable;
+                    last_unreachable = unreachable;
                     let library_moved = library != last_library;
                     last_queue = queue_version;
                     last_library = library;
