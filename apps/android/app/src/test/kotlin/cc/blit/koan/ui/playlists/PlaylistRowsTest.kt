@@ -3,6 +3,7 @@ package cc.blit.koan.ui.playlists
 import cc.blit.koan.ffi.Playlist
 import cc.blit.koan.ffi.PlaylistEntry
 import cc.blit.koan.ffi.Track
+import cc.blit.koan.ui.library.Selection
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -65,5 +66,24 @@ class PlaylistRowsTest {
         assertEquals(-10f, edgeScroll(50f, 150f, 0f, 1000f, 100f))
         assertEquals(-20f, edgeScroll(-200f, -100f, 0f, 1000f, 100f))
         assertEquals(10f, edgeScroll(850f, 950f, 0f, 1000f, 100f))
+    }
+
+    @Test
+    fun aHeadingPicksItsRunThenLetsItGo() {
+        val run = listOf(entry(1, "A", 1), entry(2, "A", 1))
+        val selection = Selection<PlaylistEntry> { it.entryId }.apply { begin() }
+        selection.take(run[1])
+        pickRun(selection, run)
+        assertEquals(listOf(2L, 1L), selection.picked.map { it.entryId })
+        pickRun(selection, run)
+        assertEquals(emptyList<Long>(), selection.picked.map { it.entryId })
+    }
+
+    @Test
+    fun theSameTrackTwiceIsTwoPicks() {
+        val twice = listOf(entry(1, "A", 1), entry(2, "A", 1).let { it.copy(track = it.track.copy(id = 10)) })
+        val selection = Selection<PlaylistEntry> { it.entryId }.apply { begin() }
+        twice.forEach { selection.take(it) }
+        assertEquals(2, selection.picked.size)
     }
 }

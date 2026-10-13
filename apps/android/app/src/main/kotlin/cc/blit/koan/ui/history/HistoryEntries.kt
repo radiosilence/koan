@@ -32,6 +32,13 @@ import cc.blit.koan.ffi.PlayHistoryEntry
 import cc.blit.koan.ui.downloads.DownloadMenuItems
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
+import cc.blit.koan.ui.library.Playable
+import cc.blit.koan.ui.library.Removal
+import cc.blit.koan.ui.library.SelectButton
+import cc.blit.koan.ui.library.SelectMode
+import cc.blit.koan.ui.library.Selection
+import cc.blit.koan.ui.library.SelectionBar
+import cc.blit.koan.ui.library.Tick
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.nonce
 import cc.blit.koan.ui.nowplaying.clock
@@ -106,9 +113,13 @@ private fun HistoryPage() {
     val zone = ZoneId.systemDefault()
     val today = LocalDate.now(zone)
     val gutter = LocalKoanTokens.current.gutter
+    // Plays, not tracks: a track played twice is two rows to pick.
+    val selection = remember { Selection<PlayHistoryEntry> { it.id } }
+    SelectMode(selection)
 
     Column {
         PageBar("History") {
+            if (!entries.isNullOrEmpty()) SelectButton(selection)
             KoanButton("Clear…", { clearing = true }, kind = KoanButtonKind.Text, enabled = !entries.isNullOrEmpty() && query.isBlank())
         }
         KoanField(
@@ -122,7 +133,7 @@ private fun HistoryPage() {
             shown == null -> Unit
             shown.isEmpty() && query.isNotBlank() -> KoanUnavailable("No matches", KoanIcons.search, null)
             shown.isEmpty() -> KoanUnavailable("Nothing played yet", KoanIcons.history, "Everything you play lands here, most recent first.")
-            else -> LazyColumn {
+            else -> LazyColumn(Modifier.weight(1f)) {
                 byDay(shown, zone) { it.playedAt }.forEach { (day, plays) ->
                     stickyHeader(key = "day:$day") {
                         KoanSectionHeader(
@@ -131,10 +142,17 @@ private fun HistoryPage() {
                         )
                     }
                     items(plays, key = { it.id }) { entry ->
-                        HistoryRow(entry, zone, onAdd = { adding = it }, modifier = Modifier.animateItem())
+                        HistoryRow(entry, zone, selection, onAdd = { adding = it }, modifier = Modifier.animateItem())
                     }
                 }
             }
+        }
+        if (selection.active) {
+            SelectionBar(
+                selection,
+                { Playable.OfTrack(it.track) },
+                Removal("Forget") { picked -> app.mirror.launch { deletePlays(picked.map { it.id }) } },
+            )
         }
     }
 
@@ -150,7 +168,7 @@ private fun HistoryPage() {
 }
 
 @Composable
-private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, onAdd: (Long) -> Unit, modifier: Modifier) {
+private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, selection: Selection<PlayHistoryEntry>, onAdd: (Long) -> Unit, modifier: Modifier) {
     val app = koanApp()
     val nav = LocalNavigator.current
     val track = entry.track
@@ -164,6 +182,7 @@ private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, onAdd: (Long) -> U
         state = swipe,
         modifier = modifier,
         enableDismissFromStartToEnd = false,
+        enableDismissFromEndToStart = !selection.active,
         onDismiss = { forget() },
         backgroundContent = {
             Box(
@@ -178,9 +197,11 @@ private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, onAdd: (Long) -> U
             CollectionRow(
                 track.title,
                 "${timeOf(entry.playedAt, zone)} · ${track.artistName} · ${track.albumTitle}$elsewhere",
-                onClick = { app.player.playTracks(listOf(track.id)) },
-                onLongClick = { menu = true },
-                leading = { Sleeve(track.albumId?.let { Art.album(it) } ?: Art.track(track.id)) },
+                onClick = { if (!selection.take(entry)) app.player.playTracks(listOf(track.id)) },
+                onLongClick = if (selection.active) null else ({ menu = true }),
+                leading = {
+                    if (selection.active) Tick(selection.contains(entry)) else Sleeve(track.albumId?.let { Art.album(it) } ?: Art.track(track.id))
+                },
                 trailing = { KoanText(track.durationMs?.let(::clock).orEmpty(), role = KoanType.Meta, tone = KoanTone.Muted) },
             )
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {

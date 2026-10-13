@@ -119,13 +119,27 @@ fun Tick(picked: Boolean, modifier: Modifier = Modifier) {
  * pick to tracks in the order it was made, acts, and ends the mode.
  */
 @Composable
-fun SelectionBar(selection: Selection<Playable>) {
+fun SelectionBar(selection: Selection<Playable>) = SelectionBar(selection, { it })
+
+/**
+ * Taking the pick out of what the page shows: a playlist's entries, or plays
+ * from the history. `title` names the verb ("Remove", "Forget").
+ */
+class Removal<T>(val title: String, val act: (List<T>) -> Unit)
+
+/**
+ * The bar over a pick of things that are not playables themselves (a
+ * playlist's entries, the history's plays): each stands for one, by
+ * `playable`, and `remove`, when given, takes the pick off the page.
+ */
+@Composable
+fun <T> SelectionBar(selection: Selection<T>, playable: (T) -> Playable, remove: Removal<T>? = null) {
     val app = koanApp()
     val store = favourites()
     val count = selection.picked.size
     var adding by remember { mutableStateOf<List<Playable>?>(null) }
     fun run(action: (List<Long>) -> Unit) {
-        val items = selection.picked.toList()
+        val items = selection.picked.map(playable)
         selection.end()
         app.mirror.launch {
             val ids = items.flatMap { it.trackIds(this) }
@@ -153,8 +167,18 @@ fun SelectionBar(selection: Selection<Playable>) {
             KoanButton("Play", { run(app.player::playTracks) }, kind = KoanButtonKind.Text, icon = KoanIcons.play, enabled = count > 0)
             KoanButton("Next", { run(app.player::playNext) }, kind = KoanButtonKind.Text, icon = KoanIcons.playNext, enabled = count > 0)
             KoanButton("Queue", { run(app.player::enqueue) }, kind = KoanButtonKind.Text, icon = KoanIcons.queue, enabled = count > 0)
-            KoanButton("Playlist", { adding = selection.picked.toList() }, kind = KoanButtonKind.Text, icon = KoanIcons.playlist, enabled = count > 0)
-            KoanButton("Favourite", { favourite(store, selection) }, kind = KoanButtonKind.Text, icon = KoanIcons.favourite, enabled = count > 0)
+            KoanButton("Playlist", { adding = selection.picked.map(playable) }, kind = KoanButtonKind.Text, icon = KoanIcons.playlist, enabled = count > 0)
+            KoanButton("Favourite", { favourite(store, selection.picked.map(playable)); selection.end() }, kind = KoanButtonKind.Text, icon = KoanIcons.favourite, enabled = count > 0)
+            remove?.let { removal ->
+                KoanButton(
+                    removal.title,
+                    { removal.act(selection.picked.toList()); selection.end() },
+                    kind = KoanButtonKind.Text,
+                    icon = KoanIcons.remove,
+                    enabled = count > 0,
+                    destructive = true,
+                )
+            }
         }
     }
     adding?.let { items ->
@@ -166,9 +190,7 @@ fun SelectionBar(selection: Selection<Playable>) {
  * Hearts every one of the pick, or, where all of them are hearted already,
  * takes the hearts off: the things themselves, not the tracks behind them.
  */
-private fun favourite(store: Favourites, selection: Selection<Playable>) {
-    val items = selection.picked.toList()
-    selection.end()
+private fun favourite(store: Favourites, items: List<Playable>) {
     fun hearted(item: Playable) = when (item) {
         is Playable.OfTrack -> item.track.id in store.tracks.value
         is Playable.OfAlbum -> item.album.id in store.albums.value

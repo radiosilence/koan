@@ -48,6 +48,13 @@ import cc.blit.koan.ffi.PlaylistEntry
 import cc.blit.koan.ui.downloads.DownloadMenuItems
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
+import cc.blit.koan.ui.library.Playable
+import cc.blit.koan.ui.library.Removal
+import cc.blit.koan.ui.library.SelectButton
+import cc.blit.koan.ui.library.SelectMode
+import cc.blit.koan.ui.library.Selection
+import cc.blit.koan.ui.library.SelectionBar
+import cc.blit.koan.ui.library.Tick
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.nowplaying.clock
 import cc.blit.koan.ui.theme.KoanButton
@@ -89,11 +96,15 @@ fun PlaylistPage(playlistId: Long) {
     var deleting by remember { mutableStateOf(false) }
     var adding by remember { mutableStateOf<List<Long>?>(null) }
     val allTrackIds: suspend KoanEngine.() -> List<Long> = { playlistTracks(playlistId).map { it.track.id } }
+    // Entries, not tracks: the same song twice is two rows to pick.
+    val selection = remember { Selection<PlaylistEntry> { it.entryId } }
+    SelectMode(selection)
 
     PlaylistAccent(contents?.covers?.firstOrNull()) {
         Column {
             PageBar(playlist?.name ?: "Playlist", appText = playlist == null) {
-                if (fillable && entries.isNotEmpty()) {
+                if (entries.isNotEmpty() && !editing) SelectButton(selection)
+                if (fillable && entries.isNotEmpty() && !selection.active) {
                     KoanButton(if (editing) "Done" else "Edit", { editing = !editing }, kind = KoanButtonKind.Text)
                 }
                 Box {
@@ -112,17 +123,27 @@ fun PlaylistPage(playlistId: Long) {
                 }
             }
 
-            when {
-                contents == null -> Unit
-                playlist == null -> KoanUnavailable("Playlist not found", KoanIcons.playlist, "It may have been deleted here or on your server.")
-                else -> PlaylistList(
-                    playlist = playlist,
-                    entries = entries,
-                    covers = contents?.covers.orEmpty(),
-                    playingEntry = nowPlaying?.entry?.playlistEntryId,
-                    editing = editing && fillable,
-                    edits = edits,
-                    onAdd = { adding = it },
+            Box(Modifier.weight(1f)) {
+                when {
+                    contents == null -> Unit
+                    playlist == null -> KoanUnavailable("Playlist not found", KoanIcons.playlist, "It may have been deleted here or on your server.")
+                    else -> PlaylistList(
+                        playlist = playlist,
+                        entries = entries,
+                        covers = contents?.covers.orEmpty(),
+                        playingEntry = nowPlaying?.entry?.playlistEntryId,
+                        editing = editing && fillable,
+                        selection = selection,
+                        edits = edits,
+                        onAdd = { adding = it },
+                    )
+                }
+            }
+            if (selection.active) {
+                SelectionBar(
+                    selection,
+                    { Playable.OfTrack(it.track) },
+                    if (fillable) Removal("Remove") { picked -> edits.remove(playlistId, picked.map { it.entryId }) } else null,
                 )
             }
         }
@@ -150,6 +171,7 @@ private fun PlaylistList(
     covers: List<Long>,
     playingEntry: Long?,
     editing: Boolean,
+    selection: Selection<PlaylistEntry>,
     edits: PlaylistEdits,
     onAdd: (List<Long>) -> Unit,
 ) {
@@ -220,7 +242,7 @@ private fun PlaylistList(
         }
         items(rows, key = { it.key }) { row ->
             when (row) {
-                is PlaylistRow.Heading -> RecordHeading(row)
+                is PlaylistRow.Heading -> RecordHeading(row, selection)
                 is PlaylistRow.Entry -> {
                     val id = row.entry.entryId
                     EntryRow(
@@ -229,6 +251,7 @@ private fun PlaylistList(
                         artwork = !grouped || editing,
                         playing = playingEntry == id,
                         editing = editing,
+                        selection = selection,
                         edits = edits,
                         onAdd = onAdd,
                         handle = Modifier.pointerInput(id) {
@@ -326,16 +349,26 @@ private fun contentsSummary(playlist: Playlist, entries: List<PlaylistEntry>): S
 }
 
 @Composable
-private fun RecordHeading(heading: PlaylistRow.Heading) {
+private fun RecordHeading(heading: PlaylistRow.Heading, selection: Selection<PlaylistEntry>) {
     val nav = LocalNavigator.current
     CollectionRow(
         heading.album,
         heading.artist,
         modifier = Modifier.padding(top = KoanSpace.m),
         titleTone = KoanTone.Strong,
-        onClick = heading.albumId?.let { id -> { nav.push(AlbumRoute(id)) } },
+        // While picking, a heading picks its run, or lets it go when the whole run is picked.
+        onClick = when {
+            selection.active -> ({ pickRun(selection, heading.entries) })
+            else -> heading.albumId?.let { id -> { nav.push(AlbumRoute(id)) } }
+        },
         leading = heading.albumId?.let { id -> { Sleeve(Art.album(id)) } },
     )
+}
+
+/** Tick every entry of a run, or untick them all when every one is ticked already. */
+fun pickRun(selection: Selection<PlaylistEntry>, run: List<PlaylistEntry>) {
+    val all = run.all(selection::contains)
+    run.filter { selection.contains(it) == all }.forEach { selection.take(it) }
 }
 
 @Composable
@@ -345,6 +378,7 @@ private fun EntryRow(
     artwork: Boolean,
     playing: Boolean,
     editing: Boolean,
+    selection: Selection<PlaylistEntry>,
     edits: PlaylistEdits,
     onAdd: (List<Long>) -> Unit,
     modifier: Modifier,
@@ -361,10 +395,11 @@ private fun EntryRow(
             track.artistName,
             titleTone = if (playing) KoanTone.Accent else KoanTone.Ink,
             selected = playing,
-            onClick = if (editing) null else ({ edits.play(playlist.id, entry.entryId) }),
-            onLongClick = if (editing) null else ({ menu = true }),
+            onClick = if (editing) null else ({ if (!selection.take(entry)) edits.play(playlist.id, entry.entryId) }),
+            onLongClick = if (editing || selection.active) null else ({ menu = true }),
             leading = {
                 when {
+                    selection.active -> Tick(selection.contains(entry))
                     editing -> KoanButton("Remove", { edits.remove(playlist.id, listOf(entry.entryId)) }, kind = KoanButtonKind.Icon, icon = KoanIcons.subtract, destructive = true)
                     artwork -> Sleeve(track.albumId?.let { Art.album(it) } ?: Art.track(track.id))
                     else -> KoanText(track.trackNumber?.toString().orEmpty(), Modifier.width(24.dp), role = KoanType.Meta, tone = KoanTone.Muted)
