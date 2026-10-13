@@ -155,6 +155,8 @@ fn init_logging() {
             if !self.enabled(record.metadata()) {
                 return;
             }
+            #[cfg(target_os = "android")]
+            logcat(record);
             let Ok(mut file) = self.0.lock() else { return };
             let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
             file.write(format_args!(
@@ -179,6 +181,36 @@ fn init_logging() {
     if log::set_logger(logger).is_ok() {
         log::set_max_level(log::LevelFilter::Info);
     }
+}
+
+/// Android discards a process's stderr: logcat is where its log is read.
+#[cfg(target_os = "android")]
+fn logcat(record: &log::Record) {
+    use std::ffi::{CString, c_char, c_int};
+
+    #[link(name = "log")]
+    unsafe extern "C" {
+        fn __android_log_write(prio: c_int, tag: *const c_char, text: *const c_char) -> c_int;
+    }
+    // android/log.h: INFO 4, WARN 5, ERROR 6.
+    let prio = match record.level() {
+        log::Level::Error => 6,
+        log::Level::Warn => 5,
+        _ => 4,
+    };
+    let Ok(text) = CString::new(format!("{}", record.args())) else {
+        return;
+    };
+    // SAFETY: both strings are NUL-terminated and outlive the call.
+    unsafe { __android_log_write(prio, c"koan".as_ptr(), text.as_ptr()) };
+}
+
+/// Where configuration, the library database and downloads live, for a
+/// platform whose app directories only the app can name: Android's
+/// `Context.filesDir`. Called once, before `KoanEngine::open`.
+#[uniffi::export]
+pub fn set_config_dir(path: String) {
+    config::set_config_dir(path);
 }
 
 impl Drop for KoanEngine {
@@ -480,9 +512,10 @@ const HAND_OFF_TAKEN: std::time::Duration = std::time::Duration::from_secs(8);
 impl KoanEngine {
     /// Spawns the player thread and opens the library. One per process.
     /// `device_name` is what this device calls itself to the account's other
-    /// devices; without one, the hostname.
+    /// devices; without one, the hostname. Named rather than primary: Kotlin
+    /// has no async primary constructors.
     #[uniffi::constructor]
-    pub async fn new(device_name: Option<String>) -> Result<Arc<Self>, KoanError> {
+    pub async fn open(device_name: Option<String>) -> Result<Arc<Self>, KoanError> {
         offload::offload(move || Self::build(device_name)).await
     }
     // --- Transport ---------------------------------------------------------

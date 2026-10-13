@@ -32,7 +32,14 @@ const USER_AGENT: &str = concat!("koan/", env!("CARGO_PKG_VERSION"), " (Macintos
 const USER_AGENT: &str = concat!("koan/", env!("CARGO_PKG_VERSION"), " (iOS)");
 #[cfg(target_os = "tvos")]
 const USER_AGENT: &str = concat!("koan/", env!("CARGO_PKG_VERSION"), " (tvOS)");
-#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "tvos")))]
+#[cfg(target_os = "android")]
+const USER_AGENT: &str = concat!("koan/", env!("CARGO_PKG_VERSION"), " (Android)");
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "android"
+)))]
 const USER_AGENT: &str = concat!("koan/", env!("CARGO_PKG_VERSION"), " (Linux)");
 
 /// Attempts a download gets before giving up.

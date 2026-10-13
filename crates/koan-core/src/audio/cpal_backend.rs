@@ -55,11 +55,20 @@ unsafe fn nix_close(fd: i32) -> i32 {
     unsafe { close(fd) }
 }
 
-/// cpal-based audio backend for Linux (ALSA / PipeWire / PulseAudio).
+/// cpal-based audio backend: ALSA, PipeWire or PulseAudio on Linux, AAudio on
+/// Android.
 ///
 /// The callback drains the rtrb consumer identically to the CoreAudio
 /// render callback: read available samples, copy to output, zero-pad
 /// remainder, increment `samples_played`.
+///
+/// On Android the one device is the system's default output, which follows the
+/// route. Enumerating devices goes through `AudioManager` over JNI, which needs
+/// the `ndk-context` an app embedding koan through uniffi never initialises.
+/// Bit-perfect output to a USB DAC is a matter for the app rather than this
+/// stream: from Android 14, `AudioManager.setPreferredMixerAttributes` with
+/// `MIXER_BEHAVIOR_BIT_PERFECT` on the DAC's device, at the track's rate,
+/// before `create_engine` opens a stream at that rate.
 pub struct CpalBackend {
     host: cpal::Host,
 }
@@ -82,10 +91,7 @@ impl CpalBackend {
 
     /// Resolve a `DeviceInfo` back to a cpal `Device` by matching name.
     fn resolve_device(&self, info: &DeviceInfo) -> Result<cpal::Device, BackendError> {
-        let devices = self
-            .host
-            .output_devices()
-            .map_err(|e| BackendError::Platform(e.to_string()))?;
+        let devices = self.output_devices()?;
 
         for dev in devices {
             if let Ok(desc) = dev.description()
@@ -96,6 +102,19 @@ impl CpalBackend {
         }
 
         Err(BackendError::DeviceNotFound(info.name.clone()))
+    }
+
+    fn output_devices(&self) -> Result<Vec<cpal::Device>, BackendError> {
+        #[cfg(target_os = "android")]
+        {
+            Ok(self.host.default_output_device().into_iter().collect())
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            suppress_stderr(|| self.host.output_devices())
+                .map(Iterator::collect)
+                .map_err(|e| BackendError::Platform(e.to_string()))
+        }
     }
 
     fn device_info_from_cpal(dev: &cpal::Device, index: u64) -> Option<DeviceInfo> {
@@ -133,12 +152,9 @@ impl CpalBackend {
 
 impl AudioBackend for CpalBackend {
     fn list_devices(&self) -> Result<Vec<DeviceInfo>, BackendError> {
-        let devices = suppress_stderr(|| self.host.output_devices())
-            .map_err(|e| BackendError::Platform(e.to_string()))?;
-
         let mut result = Vec::new();
-        for (i, dev) in devices.enumerate() {
-            if let Some(info) = Self::device_info_from_cpal(&dev, i as u64) {
+        for (i, dev) in self.output_devices()?.iter().enumerate() {
+            if let Some(info) = Self::device_info_from_cpal(dev, i as u64) {
                 result.push(info);
             }
         }

@@ -3,7 +3,7 @@ pub mod backend;
 pub mod buffer;
 #[cfg(target_os = "macos")]
 pub mod coreaudio_backend;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub mod cpal_backend;
 #[cfg(target_os = "macos")]
 pub mod device;
@@ -32,7 +32,7 @@ pub fn platform_backend() -> Box<dyn AudioBackend> {
     {
         Box::new(coreaudio_backend::CoreAudioBackend)
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         Box::new(cpal_backend::CpalBackend::new())
     }
