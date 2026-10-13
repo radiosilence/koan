@@ -32,12 +32,10 @@ uniffi = "0.32"
 uuid = { version = "1", features = ["v7"] }
 chrono = "0.4"
 
-# The app's Context, handed to the core for cpal's AAudio host and for
-# reqwest's certificate verification: see `android.rs`.
+# The app's Context, handed to reqwest's certificate verification: see
+# `android.rs`.
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.22"
-jni-sys = "0.4"
-ndk-context = "0.1"
 rustls-platform-verifier = "0.7"
 
 [dev-dependencies]

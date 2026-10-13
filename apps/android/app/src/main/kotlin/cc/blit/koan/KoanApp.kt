@@ -15,6 +15,7 @@ import okio.Path.Companion.toOkioPath
 import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.engine.PlayerModel
 import cc.blit.koan.ffi.setConfigDir
+import cc.blit.koan.playback.BitPerfectHost
 import java.io.File
 
 class KoanApp : Application(), SingletonImageLoader.Factory {
@@ -34,6 +35,8 @@ class KoanApp : Application(), SingletonImageLoader.Factory {
         val name = Settings.Global.getString(contentResolver, Settings.Global.DEVICE_NAME) ?: Build.MODEL
         mirror = EngineMirror(name)
         player = PlayerModel(mirror)
+        val output = BitPerfectHost(this)
+        mirror.launch { setOutputHost(output) }
     }
 
     /** Coil, with covers fetched from the engine and their bytes kept in the app's cache directory. */

@@ -34,4 +34,7 @@ class PlayerModel(private val mirror: EngineMirror) {
     fun seek(positionMs: Long) = mirror.launch { seek(positionMs.coerceAtLeast(0).toULong()) }
 
     fun setShuffle(on: Boolean) = mirror.launch { setShuffle(on) }
+
+    /** Rebuild the output where playback is: after the route or an output setting changed. */
+    fun restartOutput() = mirror.launch { restartOutput() }
 }

@@ -1,0 +1,1 @@
+- **Bit-perfect output to USB DACs on Android 14 and later.** When the DAC offers the track's rate and channels unmixed, kōan takes it, opens the stream in an encoding that keeps every bit and shows the playback as bit-perfect; otherwise it plays through Android's mixer and says so. It can be turned off in Playback settings.
