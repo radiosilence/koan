@@ -1,6 +1,7 @@
 package cc.blit.koan
 
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import uniffi.koan_ffi.EntryStatus
 import uniffi.koan_ffi.KoanEngineInterface
 import uniffi.koan_ffi.NowPlaying
@@ -81,4 +82,34 @@ class FakeEngine(private val answer: (String, List<Any?>) -> Any? = { _, _ -> Un
         "track" -> null
         else -> null
     }
+}
+
+fun album(id: Long, title: String = "Album $id", artist: Long = 1) = uniffi.koan_ffi.Album(
+    id = id, title = title, artistId = artist, artistName = "Artist $artist", year = 2000, codec = "FLAC",
+    label = null, totalDiscs = 1, totalTracks = 10, addedAt = null, onDevice = null,
+)
+
+fun artist(id: Long) = uniffi.koan_ffi.Artist(id = id, name = "Artist $id", sortName = null, albumCount = 1, trackCount = 10)
+
+fun track(id: Long, album: Long? = 1) = uniffi.koan_ffi.Track(
+    id = id, title = "Track $id", artistName = "Artist 1", albumArtistName = "Artist 1", albumTitle = "Album 1",
+    albumId = album, artistId = 1, disc = 1, trackNumber = id.toInt(), durationMs = 180_000, codec = "FLAC",
+    sampleRate = 44100, bitDepth = 16, channels = 2, bitrate = null, genre = null, source = "local",
+    onServer = false, onDisk = true, path = null, isFavourite = false,
+)
+
+fun playlist(id: Long, readonly: Boolean = false, changedAt: String = "t0", fromFile: Boolean = false) = uniffi.koan_ffi.Playlist(
+    id = id, name = "Playlist $id", comment = null, remoteId = null, public = false, owner = null, trackCount = 0u,
+    durationMs = 0, createdAt = "t0", changedAt = changedAt, grouped = null, readonly = readonly, smart = false,
+    fromFile = fromFile,
+)
+
+/**
+ * Starts collecting [this] eagerly into a list: every value the flow delivers
+ * from now on, the one it holds first. Cancel with the scope.
+ */
+fun <T> kotlinx.coroutines.flow.StateFlow<T>.record(scope: kotlinx.coroutines.CoroutineScope): List<T> {
+    val seen = java.util.concurrent.CopyOnWriteArrayList<T>()
+    scope.launch(kotlinx.coroutines.Dispatchers.Unconfined) { collect { seen += it } }
+    return seen
 }

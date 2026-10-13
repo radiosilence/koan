@@ -58,6 +58,8 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // Robolectric runs the few Compose tests that draw a control on the JVM.
+        unitTests.isIncludeAndroidResources = true
     }
 }
 
@@ -129,6 +131,9 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.navigation3.runtime)
+    implementation(libs.androidx.navigation3.ui)
+    implementation(libs.coil.compose)
     implementation(libs.androidx.media3.session)
     implementation(libs.androidx.media3.common)
     // uniffi's generated Kotlin crosses into the engine through JNA; on
@@ -139,6 +144,10 @@ dependencies {
     implementation(libs.rustls.platform.verifier)
 
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
     testImplementation(libs.kotlinx.coroutines.test)
     // The JVM jar, so the generated bindings load in a unit test.
     testImplementation(libs.jna)

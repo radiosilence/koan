@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
@@ -13,12 +14,11 @@ import androidx.core.content.ContextCompat
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import cc.blit.koan.service.KoanPlaybackService
-import cc.blit.koan.ui.PlaceholderScreen
+import cc.blit.koan.ui.AppShell
 
 /**
- * A single screen that shows the engine is up and what it is playing. The
- * real pages are phase 3; this exists so the service, the mirror and the
- * models have something to be seen through.
+ * The one activity: the app shell (theme, tabs, pages) over the engine the
+ * playback service starts. See `ui/AppPages.kt` for where a page plugs in.
  *
  * It does not own anything: the engine is the playback service's. Connecting
  * a [MediaController] is how this activity starts and binds the service.
@@ -28,6 +28,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         setContent {
             val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
             LaunchedEffect(Unit) {
@@ -35,7 +36,7 @@ class MainActivity : ComponentActivity() {
                     askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
                 }
             }
-            PlaceholderScreen()
+            AppShell()
         }
     }
 
