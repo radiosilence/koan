@@ -31,6 +31,7 @@ import cc.blit.koan.ui.library.Playable
 import cc.blit.koan.ui.library.PlayableMenu
 import cc.blit.koan.ui.library.Sleeve
 import cc.blit.koan.ui.navigation.LocalNavigator
+import cc.blit.koan.ui.playlists.AddToPlaylistSheet
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanEdge
@@ -180,6 +181,7 @@ private fun duration(ms: Long): String {
 internal fun SelectionBar(selection: Selection) {
     val app = koanApp()
     val count = selection.picked.size
+    var adding by remember { mutableStateOf<List<Playable>?>(null) }
     fun run(action: (List<Long>) -> Unit) {
         val items = selection.picked.toList()
         selection.end()
@@ -209,8 +211,12 @@ internal fun SelectionBar(selection: Selection) {
             KoanButton("Play", { run(app.player::playTracks) }, kind = KoanButtonKind.Text, icon = KoanIcons.play, enabled = count > 0)
             KoanButton("Next", { run(app.player::playNext) }, kind = KoanButtonKind.Text, icon = KoanIcons.playNext, enabled = count > 0)
             KoanButton("Queue", { run(app.player::enqueue) }, kind = KoanButtonKind.Text, icon = KoanIcons.queue, enabled = count > 0)
+            KoanButton("Playlist", { adding = selection.picked.toList() }, kind = KoanButtonKind.Text, icon = KoanIcons.playlist, enabled = count > 0)
             KoanButton("Favourite", { favourite(app, selection) }, kind = KoanButtonKind.Text, icon = KoanIcons.favourite, enabled = count > 0)
         }
+    }
+    adding?.let { items ->
+        AddToPlaylistSheet({ items.flatMap { it.trackIds(this) } }, onAdded = selection::end) { adding = null }
     }
 }
 

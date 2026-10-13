@@ -35,11 +35,12 @@ import kotlinx.coroutines.withContext
  *
  * `trackIds` resolves what is being added against the engine, off the main
  * thread, once a playlist is chosen: an album or an artist is a query, and
- * nothing is asked if the sheet is dismissed.
+ * nothing is asked if the sheet is dismissed. `onAdded` follows `onDismiss`
+ * when a playlist was chosen or made.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AddToPlaylistSheet(trackIds: suspend KoanEngine.() -> List<Long>, onDismiss: () -> Unit) {
+fun AddToPlaylistSheet(trackIds: suspend KoanEngine.() -> List<Long>, onAdded: () -> Unit = {}, onDismiss: () -> Unit) {
     val app = koanApp()
     val edits = remember { PlaylistEdits(app.mirror) }
     val playlists by produceState<List<Playlist>?>(null) {
@@ -61,6 +62,7 @@ fun AddToPlaylistSheet(trackIds: suspend KoanEngine.() -> List<Long>, onDismiss:
                 added(ids.size.toUInt(), made.name)
             }
             onDismiss()
+            onAdded()
         }
         return
     }
@@ -87,6 +89,7 @@ fun AddToPlaylistSheet(trackIds: suspend KoanEngine.() -> List<Long>, onDismiss:
                     onClick = {
                         app.mirror.launch { added(addToPlaylist(playlist.id, trackIds()), playlist.name) }
                         onDismiss()
+                        onAdded()
                     },
                     leading = { PlaylistMosaic(covers, thumb) },
                 )

@@ -7,6 +7,9 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.KoanApp
 import cc.blit.koan.ffi.Album
@@ -16,6 +19,7 @@ import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.Navigator
 import cc.blit.koan.ui.navigation.Tab
+import cc.blit.koan.ui.playlists.AddToPlaylistSheet
 
 /**
  * Anything that can go in the queue. Tracks, records and artists differ only
@@ -69,12 +73,15 @@ fun PlayableMenu(playable: Playable, expanded: Boolean, onDismiss: () -> Unit) {
             if (ids.isNotEmpty()) block(ids)
         }
     }
+    var adding by remember { mutableStateOf(false) }
+    if (adding) AddToPlaylistSheet({ playable.trackIds(this) }) { adding = false }
     Box {
         DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
             Item("Play") { onDismiss(); app.play(playable) }
             Item("Play Next") { act { ids -> app.player.playNext(ids) } }
             Item("Add to Queue") { act { ids -> addToQueue(ids) } }
             if (playable !is Playable.OfTrack) Item("Shuffle") { onDismiss(); app.play(playable, shuffled = true) }
+            Item("Add to Playlist…") { onDismiss(); adding = true }
             HorizontalDivider()
             when (playable) {
                 is Playable.OfTrack -> {
