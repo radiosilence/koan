@@ -1387,6 +1387,32 @@ mod tests {
         assert!(walks() > asked, "moved, so walked");
     }
 
+    /// A sync that finds the library unchanged still says when it was last
+    /// known to match the server's.
+    #[test]
+    fn an_unchanged_library_is_still_synced_as_of_now() {
+        use crate::helpers::{Walk, sync_remote};
+        let (db, _dir) = test_db();
+        let state = Arc::new(StubState {
+            albums: Mutex::new(stub_albums(3)),
+            library_modified: Mutex::new(Some(1_000)),
+            ..Default::default()
+        });
+        let server = StubServer::start(state.clone());
+        let client = SubsonicClient::new(&server.url(), "u", "p");
+        sync_remote(&db, &client, Walk::IfChanged, &server.url(), "u", &|_| {}).unwrap();
+        let walks = state.list_types.lock().unwrap().len();
+
+        update_last_sync(&db, &server.url(), "u", 1).unwrap();
+        sync_remote(&db, &client, Walk::IfChanged, &server.url(), "u", &|_| {}).unwrap();
+        assert_eq!(
+            state.list_types.lock().unwrap().len(),
+            walks,
+            "unchanged, so not walked"
+        );
+        assert!(get_last_sync(&db, &server.url()).unwrap().unwrap() > 1);
+    }
+
     /// A server that gives no version is walked every time.
     #[test]
     fn a_server_without_a_library_version_is_always_walked() {
