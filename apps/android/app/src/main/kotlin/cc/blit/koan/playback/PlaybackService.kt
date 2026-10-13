@@ -10,7 +10,9 @@ import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -65,6 +67,7 @@ class PlaybackService : MediaSessionService() {
         private fun restart() = engine.launch { restartOutput() }
     }
 
+    @OptIn(UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
         audio = getSystemService(AudioManager::class.java)
