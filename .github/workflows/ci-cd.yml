@@ -425,19 +425,16 @@ jobs:
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
+      # Rust, the JDK and cargo-ndk as mise.toml pins them, as a contributor's
+      # terminal has them; cargo-ndk is built with mise's Rust.
+      - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
         with:
-          toolchain: stable
-          targets: aarch64-linux-android
+          install_args: rust java cargo:cargo-ndk just
+      - run: rustup target add aarch64-linux-android
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: android-app
-      # The JDK and cargo-ndk at the versions mise.toml pins, as a
-      # contributor's terminal has them.
-      - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
-        with:
-          install_args: java cargo:cargo-ndk just
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
