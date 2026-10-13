@@ -21,7 +21,7 @@ Under `app/src/main/kotlin/cc/blit/koan/`:
 | `art/` | Covers for Coil: `AsyncImage(model = Art.album(id), …)` |
 | `ui/` | `AppShell` (sign-in, tabs, mini player, Now Playing over the tabs) and small shared pieces |
 | `ui/navigation/` | `Tab`, `Navigator` and `LocalNavigator` |
-| `ui/theme/` | `KoanTheme` and its tokens |
+| `ui/theme/` | The kōan theme (`docs/design/koan-theme.md`): tokens, type, the record accent, the roles pages draw with, `KoanIcon`, and `ThemeSheet`. The glyphs are compiled from the Swift apps' SVGs by `scripts/icons.py` |
 | `ui/queue/`, `ui/library/`, `ui/search/`, `ui/settings/` | The four tabs |
 | `ui/playlists/`, `ui/downloads/` | Pages the library opens |
 | `ui/nowplaying/` | Now Playing and the mini player |
