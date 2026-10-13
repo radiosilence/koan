@@ -355,7 +355,7 @@ private fun Transport(now: NowPlaying?) {
         GlyphButton(
             if (repeat == RepeatMode.ONE) KoanIcons.repeatOne else KoanIcons.repeatQueue,
             "Repeat",
-            { app.mirror.launch { setRepeat(nextRepeat(repeat)) } },
+            { app.mirror.command { setRepeat(nextRepeat(repeat)) } },
             Modifier.semantics {
                 stateDescription = when (repeat) {
                     RepeatMode.OFF -> "Off"
@@ -427,7 +427,7 @@ private fun SleepButton(sleep: SleepState?, fading: Boolean) {
         KoanMenu(open, onDismissRequest = { open = false }) {
             fun set(timer: SleepTimer) {
                 open = false
-                mirror.launch { setSleepTimer(timer) }
+                mirror.command { setSleepTimer(timer) }
             }
             listOf(15, 30, 45, 60).forEach { minutes ->
                 KoanMenuItem("$minutes minutes") { set(SleepTimer.After(minutes.toUInt())) }
@@ -439,7 +439,7 @@ private fun SleepButton(sleep: SleepState?, fading: Boolean) {
                 KoanDivider()
                 KoanMenuItem("Cancel sleep timer", destructive = true) {
                     open = false
-                    mirror.launch { cancelSleepTimer() }
+                    mirror.command { cancelSleepTimer() }
                 }
             }
         }

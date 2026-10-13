@@ -16,7 +16,7 @@ import cc.blit.koan.ffi.StateSlice
 import cc.blit.koan.ffi.SyncProgress
 import cc.blit.koan.ffi.Transfer
 import cc.blit.koan.ffi.TransferFigure
-import cc.blit.koan.ui.settings.describe
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -169,10 +169,17 @@ class EngineMirror(deviceName: String) {
         scope.launch {
             try {
                 opened.await().block()
-            } catch (e: KoanException) {
-                _notices.tryEmit(e.describe())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                report(e)
             }
         }
+    }
+
+    /** Tell the person why something they asked for did not happen. */
+    fun report(e: Exception) {
+        _notices.tryEmit((e as? KoanException)?.describe() ?: "Something went wrong: ${e.message ?: e}")
     }
 
     /** Change an appearance setting (`setTheme`, `setThemeIcons`, `setRecordColours`), and redraw in it. */
@@ -227,4 +234,15 @@ class EngineMirror(deviceName: String) {
             is StateSlice.Outputs -> _outputs.value = slice.outputs
         }
     }
+}
+
+/** The engine's own words for what went wrong. */
+fun KoanException.describe() = when (this) {
+    is KoanException.Database -> detail
+    is KoanException.Audio -> detail
+    is KoanException.Player -> detail
+    is KoanException.NotFound -> detail
+    is KoanException.BadArgument -> detail
+    is KoanException.Remote -> detail
+    is KoanException.NeedsSampleRate -> detail
 }

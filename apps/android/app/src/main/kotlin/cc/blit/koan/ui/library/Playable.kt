@@ -48,9 +48,9 @@ sealed interface Playable {
 }
 
 /** Replace the queue with `playable`, in order or shuffled from a track at random. */
-fun KoanApp.play(playable: Playable, shuffled: Boolean = false) = mirror.launch {
+fun KoanApp.play(playable: Playable, shuffled: Boolean = false) = mirror.command {
     val ids = playable.trackIds(this)
-    if (ids.isEmpty()) return@launch
+    if (ids.isEmpty()) return@command
     replaceQueue(ids, (if (shuffled) ids.indices.random() else 0).toUInt(), shuffled)
 }
 
@@ -71,7 +71,7 @@ fun PlayableMenu(playable: Playable, expanded: Boolean, onDismiss: () -> Unit) {
     val favouriteArtists by store.artists.collectAsStateWithLifecycle()
     fun act(block: suspend KoanEngine.(List<Long>) -> Unit) {
         onDismiss()
-        app.mirror.launch {
+        app.mirror.command {
             val ids = playable.trackIds(this)
             if (ids.isNotEmpty()) block(ids)
         }

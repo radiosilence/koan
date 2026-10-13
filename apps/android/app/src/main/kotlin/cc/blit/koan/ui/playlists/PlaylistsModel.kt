@@ -76,7 +76,7 @@ class PlaylistEdits(private val mirror: EngineMirror) {
 
     /** Replace the queue with the playlist and play it from `startEntry`, or the top. */
     fun play(playlistId: Long, startEntry: Long? = null, shuffled: Boolean = false) =
-        mirror.launch { playPlaylist(playlistId, startEntry, shuffled) }
+        mirror.command { playPlaylist(playlistId, startEntry, shuffled) }
 }
 
 /** Whether the playlist takes adds, removals and reorders: rules or a file decide a read-only one's contents. */

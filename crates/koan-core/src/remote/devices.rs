@@ -1464,22 +1464,20 @@ pub fn send_then(id: &str, cmd: LinkCommand, then: Option<Then>) -> Result<(), S
         log::info!("devices: {id} is not listed; asking the server");
     }
     acks::forget(ack);
-    let outcome = ask_server(id, &cmd, Some(ack)).map_err(|e| {
-        log::warn!("devices: {cmd:?} reached {id} by no way; the server: {e}");
-        out_of_reach(id)
-    })?;
+    let outcome = ask_server(id, &cmd, Some(ack))?;
     told(id, &cmd, outcome, then);
     Ok(())
 }
 
 /// What the person is told when neither the network nor the server reaches
-/// `id`: the server's own error says nothing about the device.
+/// `id`: a transport error, or a server that relays nothing, says nothing
+/// about the device.
 fn out_of_reach(id: &str) -> String {
     let name = list()
         .into_iter()
         .find(|d| d.id == id)
         .map_or_else(|| "That device".to_owned(), |d| d.name);
-    format!("{name} is out of reach. Choose this device in Play on to play here.")
+    format!("{name} is out of reach.")
 }
 
 /// The ways a command can reach a device, and which of them bring an answer.
@@ -1636,11 +1634,20 @@ fn ask_server(
     ack: Option<u64>,
 ) -> Result<Option<acks::AckOutcome>, String> {
     let cfg = Config::load().unwrap_or_default();
-    let client = crate::helpers::subsonic_client(&cfg).ok_or("not signed in to a server")?;
+    let Some(client) = crate::helpers::subsonic_client(&cfg) else {
+        log::info!("devices: no server to ask for {id}");
+        return Err(out_of_reach(id));
+    };
     let json = serde_json::to_string(cmd).map_err(|e| e.to_string())?;
-    client
-        .koan_command(id, &json, ack)
-        .map_err(|e| e.to_string())
+    client.koan_command(id, &json, ack).map_err(|e| match e {
+        // The server's word, an expired key or a refusal: its reason
+        // stands. Not found is a server with nothing to relay through.
+        crate::remote::client::SubsonicError::Api { code, message } if code != 70 => message,
+        e => {
+            log::warn!("devices: the server cannot relay to {id}: {e}");
+            out_of_reach(id)
+        }
+    })
 }
 
 /// `send`, by the server first: for the lock screen's buttons. iOS runs
@@ -1711,10 +1718,7 @@ pub(crate) mod tests {
         });
 
         let err = send("mac", LinkCommand::Pause).unwrap_err();
-        assert_eq!(
-            err,
-            "Studio Mac is out of reach. Choose this device in Play on to play here."
-        );
+        assert_eq!(err, "Studio Mac is out of reach.");
         with(|s| *s = Store::default());
     }
 

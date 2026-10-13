@@ -324,6 +324,8 @@ final class SettingsModel {
         case let KoanError.Database(message): message
         case let KoanError.NotFound(message): message
         case let KoanError.Audio(message): message
+        case let KoanError.Player(message): message
+        case let KoanError.Remote(message): message
         default: error.localizedDescription
         }
     }

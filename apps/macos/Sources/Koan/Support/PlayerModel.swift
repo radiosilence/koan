@@ -370,7 +370,7 @@ final class PlayerModel {
                 do {
                     _ = try await engine.replaceQueue(trackIds: ids, startAt: 0, shuffled: shuffled)
                 } catch {
-                    self.lastError = String(describing: error)
+                    self.lastError = SettingsModel.describe(error)
                 }
             }
             self.resolving = nil
@@ -827,7 +827,7 @@ final class PlayerModel {
             do {
                 try await body()
             } catch {
-                lastError = String(describing: error)
+                lastError = SettingsModel.describe(error)
             }
         }
     }
@@ -847,7 +847,7 @@ final class PlayerModel {
             do {
                 try await body(engine)
             } catch {
-                lastError = String(describing: error)
+                lastError = SettingsModel.describe(error)
             }
             if let job { activity?.end(job) }
             pendingMutations -= 1
