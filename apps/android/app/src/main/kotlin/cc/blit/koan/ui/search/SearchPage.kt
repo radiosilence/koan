@@ -1,34 +1,29 @@
 package cc.blit.koan.ui.search
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.clearText
 import androidx.compose.foundation.text.input.rememberTextFieldState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconToggleButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -39,29 +34,46 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cc.blit.koan.KoanApp
-import cc.blit.koan.R
 import cc.blit.koan.ffi.Album
 import cc.blit.koan.ffi.ShelfKind
 import cc.blit.koan.ffi.ShelfSummary
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
+import cc.blit.koan.ui.library.AlbumsRoute
+import cc.blit.koan.ui.library.ArtistsRoute
+import cc.blit.koan.ui.library.Playable
+import cc.blit.koan.ui.library.SectionHead
+import cc.blit.koan.ui.library.Shelf
+import cc.blit.koan.ui.library.TracksRoute
+import cc.blit.koan.ui.library.play
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.Navigator
-import cc.blit.koan.ui.theme.LocalKoanTokens
+import cc.blit.koan.ui.theme.KoanButton
+import cc.blit.koan.ui.theme.KoanButtonKind
+import cc.blit.koan.ui.theme.KoanEdge
+import cc.blit.koan.ui.theme.KoanIcon
+import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanSpace
+import cc.blit.koan.ui.theme.KoanText
+import cc.blit.koan.ui.theme.KoanTheme
+import cc.blit.koan.ui.theme.KoanTone
+import cc.blit.koan.ui.theme.KoanType
+import cc.blit.koan.ui.theme.KoanUnavailable
+import cc.blit.koan.ui.theme.koanRule
 
 /**
  * Search, as its own tab: the field always showing at the top, and what it
- * finds as artists, records and tracks beneath, each section's heading opening
- * the whole listing. A result goes where it lives in the library; a record's
- * sleeve plays it. Long-press, or the select button, picks several to play or
- * queue together.
+ * finds as artists, records and tracks beneath, each heading opening the
+ * library's browser on the search. A result goes where it lives in the
+ * library; a record's sleeve plays it. The select button picks several to
+ * play or queue together.
  */
 @Composable
 fun SearchPage() {
@@ -72,7 +84,6 @@ fun SearchPage() {
     val query by model.query.collectAsStateWithLifecycle()
     val results by model.results.collectAsStateWithLifecycle()
     val selection = model.selection
-    val tokens = LocalKoanTokens.current
     val nav = LocalNavigator.current
 
     // The field's own state, which the model follows; seeded from the model so
@@ -92,25 +103,23 @@ fun SearchPage() {
 
     Column(Modifier.fillMaxSize()) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = tokens.gutter, vertical = tokens.rowGap),
+            Modifier.fillMaxWidth().koanRule(KoanEdge.Bottom).padding(horizontal = KoanSpace.l, vertical = KoanSpace.xs),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SearchField(field, Modifier.weight(1f))
             if (shown?.isEmpty == false || selection.active) {
-                IconToggleButton(
-                    checked = selection.active,
-                    onCheckedChange = { if (it) selection.begin() else selection.end() },
-                ) {
-                    Icon(painterResource(R.drawable.ic_checklist), "Select")
+                KoanButton({ if (selection.active) selection.end() else selection.begin() }, kind = KoanButtonKind.Icon) {
+                    KoanIcon(if (selection.active) KoanIcons.selecting else KoanIcons.select, "Select")
                 }
             }
         }
         Box(Modifier.weight(1f)) {
             val shelf = shown?.shelf
             when {
-                query.isBlank() -> Empty("Search your library", null)
+                query.isBlank() -> KoanUnavailable("Search your library", KoanIcons.search, null)
                 shown == null || (shown.isEmpty && searching) -> Unit
-                shelf == null || shown.isEmpty -> Empty("Nothing found", "No artists, albums or tracks match “${shown.query}”.")
+                shelf == null || shown.isEmpty ->
+                    KoanUnavailable("Nothing found", KoanIcons.search, "No artists, albums or tracks match “${shown.query}”.")
                 else -> Found(shown.query, shelf, selection, onSleeve = { album ->
                     if (app.mirror.queue.value.items.isEmpty()) playRecord(app, nav, album) else replacing = album
                 })
@@ -119,84 +128,73 @@ fun SearchPage() {
         if (selection.active) SelectionBar(selection)
     }
 
-    replacing?.let { album ->
-        ReplaceQueueDialog(album, onDismiss = { replacing = null })
-    }
+    replacing?.let { album -> ReplaceQueueDialog(album, onDismiss = { replacing = null }) }
 }
 
+/**
+ * The query: no box in the theme, a glyph before it and a clear button after.
+ * The keyboard's search key only puts the keyboard away, since results arrive
+ * as the query is typed.
+ */
 @Composable
 private fun SearchField(field: TextFieldState, modifier: Modifier) {
     val keyboard = LocalSoftwareKeyboardController.current
-    TextField(
-        state = field,
-        modifier = modifier,
-        placeholder = { Text("Artists, albums, tracks") },
-        leadingIcon = { Icon(painterResource(R.drawable.ic_search), null) },
-        trailingIcon = {
-            if (field.text.isNotEmpty()) {
-                IconButton(onClick = { field.clearText() }) {
-                    Icon(painterResource(R.drawable.ic_clear), "Clear")
+    val ink = KoanTheme.color(KoanTone.Ink)
+    Row(modifier.heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+        KoanIcon(KoanIcons.search, null, color = KoanTheme.color(KoanTone.Muted))
+        BasicTextField(
+            state = field,
+            modifier = Modifier.weight(1f).padding(horizontal = KoanSpace.m),
+            textStyle = KoanType.Body.koan.copy(color = ink),
+            cursorBrush = SolidColor(KoanTheme.color(KoanTone.Accent)),
+            lineLimits = TextFieldLineLimits.SingleLine,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            onKeyboardAction = { keyboard?.hide() },
+            decorator = { inner ->
+                Box(contentAlignment = Alignment.CenterStart) {
+                    if (field.text.isEmpty()) KoanText("Artists, albums, tracks", tone = KoanTone.Muted, appText = true, maxLines = 1)
+                    inner()
                 }
+            },
+        )
+        if (field.text.isNotEmpty()) {
+            KoanButton({ field.clearText() }, kind = KoanButtonKind.Icon) {
+                KoanIcon(KoanIcons.clearField, "Clear")
             }
-        },
-        lineLimits = TextFieldLineLimits.SingleLine,
-        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-        // Results arrive as you type; the search key only puts the keyboard
-        // away so they can be seen.
-        onKeyboardAction = { keyboard?.hide() },
-    )
-}
-
-@Composable
-private fun Empty(title: String, detail: String?) {
-    Column(
-        Modifier.fillMaxSize().padding(LocalKoanTokens.current.gutter),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(painterResource(R.drawable.ic_search), null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(title, style = MaterialTheme.typography.titleMedium)
-        detail?.let {
-            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         }
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Found(
-    query: String,
-    shelf: ShelfSummary,
-    selection: Selection,
-    onSleeve: (Album) -> Unit,
-) {
+private fun Found(query: String, shelf: ShelfSummary, selection: Selection, onSleeve: (Album) -> Unit) {
     val nav = LocalNavigator.current
-    val tokens = LocalKoanTokens.current
+    val search = Shelf.Search(query)
     LazyVerticalGrid(
         columns = GridCells.Adaptive(TileMinimum),
-        contentPadding = PaddingValues(tokens.gutter),
-        horizontalArrangement = Arrangement.spacedBy(tokens.gutter),
-        verticalArrangement = Arrangement.spacedBy(tokens.rowGap),
+        contentPadding = PaddingValues(horizontal = KoanSpace.page, vertical = KoanSpace.l),
+        horizontalArrangement = Arrangement.spacedBy(KoanSpace.l),
+        verticalArrangement = Arrangement.spacedBy(KoanSpace.s),
     ) {
         if (shelf.artists.isNotEmpty()) {
-            heading("Artists", shelf.artistTotal) { nav.push(SearchListRoute(SearchList.Artists, query)) }
+            heading("Artists", shelf.artistTotal) { nav.push(ArtistsRoute(search)) }
             item(key = "artists", span = { GridItemSpan(maxLineSpan) }) {
                 FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(tokens.rowGap),
-                    verticalArrangement = Arrangement.spacedBy(tokens.rowGap),
+                    horizontalArrangement = Arrangement.spacedBy(KoanSpace.s),
+                    verticalArrangement = Arrangement.spacedBy(KoanSpace.s),
                 ) {
-                    shelf.artists.forEach { artist -> ArtistPill(Playable.Artist(artist.id, artist.name), selection) }
+                    shelf.artists.forEach { ArtistPill(it.id, it.name, selection) }
                 }
             }
         }
         if (shelf.albums.isNotEmpty()) {
-            heading("Albums", shelf.albumTotal) { nav.push(SearchListRoute(SearchList.Albums, query)) }
+            heading("Albums", shelf.albumTotal) { nav.push(AlbumsRoute(search)) }
             items(shelf.albums, key = { "album:${it.id}" }) { album ->
                 AlbumTile(album, selection, onSleeve = { onSleeve(album) })
             }
         }
         if (shelf.tracks.isNotEmpty()) {
-            heading("Tracks", shelf.trackTotal) { nav.push(SearchListRoute(SearchList.Tracks, query)) }
+            heading("Tracks", shelf.trackTotal) { nav.push(TracksRoute(search)) }
             items(shelf.tracks, key = { "track:${it.id}" }, span = { GridItemSpan(maxLineSpan) }) { track ->
                 TrackRow(track, selection)
             }
@@ -204,16 +202,17 @@ private fun Found(
     }
 }
 
+/** A section's heading, the library's own, opening the browser on the whole set. */
 private fun LazyGridScope.heading(title: String, total: ULong, open: () -> Unit) {
     item(key = "heading:$title", span = { GridItemSpan(maxLineSpan) }) {
-        SectionHeading(title, total, open)
+        SectionHead(title, total.toLong(), open)
     }
 }
 
 /** Opens the record and plays it, in place of whatever was queued. */
-internal fun playRecord(app: KoanApp, nav: Navigator, album: Album) {
+private fun playRecord(app: KoanApp, nav: Navigator, album: Album) {
     nav.push(AlbumRoute(album.id))
-    app.mirror.launch { app.player.playTracks(trackIds(album.id, null)) }
+    app.play(Playable.OfAlbum(album))
 }
 
 /**
@@ -221,28 +220,28 @@ internal fun playRecord(app: KoanApp, nav: Navigator, album: Album) {
  * not go to a tap meant to open it: with anything queued, ask first.
  */
 @Composable
-internal fun ReplaceQueueDialog(album: Album, onDismiss: () -> Unit) {
+private fun ReplaceQueueDialog(album: Album, onDismiss: () -> Unit) {
     val app = koanApp()
     val nav = LocalNavigator.current
     val queued by app.mirror.queue.collectAsStateWithLifecycle()
     val count = queued.items.size
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Replace the queue?") },
-        text = { Text("Playing this record takes the $count ${if (count == 1) "track" else "tracks"} queued off.") },
+        title = { KoanText("Replace the queue?", role = KoanType.TitleSmall, appText = true) },
+        text = { KoanText("Playing this record takes the $count ${if (count == 1) "track" else "tracks"} queued off.") },
         confirmButton = {
-            TextButton(onClick = {
+            KoanButton("Play", {
                 onDismiss()
                 playRecord(app, nav, album)
-            }) { Text("Play") }
+            })
         },
         dismissButton = {
-            Row {
-                TextButton(onClick = onDismiss) { Text("Cancel") }
-                TextButton(onClick = {
+            Row(horizontalArrangement = Arrangement.spacedBy(KoanSpace.m)) {
+                KoanButton("Cancel", onDismiss)
+                KoanButton("Add to Queue", {
                     onDismiss()
-                    app.mirror.launch { app.player.enqueue(trackIds(album.id, null)) }
-                }) { Text("Add to Queue") }
+                    app.mirror.launch { app.player.enqueue(Playable.OfAlbum(album).trackIds(this)) }
+                })
             }
         },
     )

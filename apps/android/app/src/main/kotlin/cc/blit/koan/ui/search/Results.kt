@@ -1,10 +1,9 @@
 package cc.blit.koan.ui.search
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,117 +13,127 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import cc.blit.koan.R
-import cc.blit.koan.art.Art
+import cc.blit.koan.KoanApp
 import cc.blit.koan.ffi.Album
 import cc.blit.koan.ffi.Track
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
 import cc.blit.koan.ui.library.ArtistRoute
+import cc.blit.koan.ui.library.Playable
+import cc.blit.koan.ui.library.PlayableMenu
+import cc.blit.koan.ui.library.Sleeve
 import cc.blit.koan.ui.navigation.LocalNavigator
-import cc.blit.koan.ui.theme.LocalKoanTokens
-import coil3.compose.AsyncImage
+import cc.blit.koan.ui.theme.KoanButton
+import cc.blit.koan.ui.theme.KoanButtonKind
+import cc.blit.koan.ui.theme.KoanEdge
+import cc.blit.koan.ui.theme.KoanIcon
+import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanSpace
+import cc.blit.koan.ui.theme.KoanText
+import cc.blit.koan.ui.theme.KoanTheme
+import cc.blit.koan.ui.theme.KoanTone
+import cc.blit.koan.ui.theme.KoanType
+import cc.blit.koan.ui.theme.koanChip
+import cc.blit.koan.ui.theme.koanRow
+import cc.blit.koan.ui.theme.koanRule
+import cc.blit.koan.ui.theme.koanSurface
 
 /** The narrowest a record tile goes, as the Apple apps' result grid. */
 internal val TileMinimum = 140.dp
 
-/** A long press starts picking with the thing pressed in the pick, as Android lists do. */
+/**
+ * A result's taps: inside select mode a tap ticks it, outside it goes where
+ * `open` says. A long press opens the library's menu for it, as everywhere
+ * else in the app.
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Modifier.pickable(playable: Playable, selection: Selection, open: () -> Unit): Modifier {
-    val haptics = LocalHapticFeedback.current
-    return combinedClickable(
+private fun Modifier.result(playable: Playable, selection: Selection, onMenu: () -> Unit, open: () -> Unit) =
+    combinedClickable(
+        interactionSource = remember { MutableInteractionSource() },
+        indication = null,
         onClick = { if (!selection.take(playable)) open() },
-        onLongClick = {
-            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-            if (selection.active) selection.toggle(playable) else selection.begin(playable)
-        },
+        onLongClick = { if (!selection.active) onMenu() },
+    )
+
+/** A tick, while picking: the empty box or the filled one. */
+@Composable
+private fun Tick(picked: Boolean, modifier: Modifier = Modifier) {
+    KoanIcon(
+        if (picked) KoanIcons.picked else KoanIcons.unpicked,
+        if (picked) "Selected" else "Not selected",
+        modifier,
+        color = KoanTheme.color(if (picked) KoanTone.Accent else KoanTone.Muted),
     )
 }
 
-/** A section's name, how many the library has, and a chevron: the whole of it opens the listing. */
+/** An artist among other results: a chip going to the artist. */
 @Composable
-internal fun SectionHeading(title: String, total: ULong, open: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clickable(onClick = open).padding(vertical = LocalKoanTokens.current.rowGap),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(LocalKoanTokens.current.rowGap),
-    ) {
-        Text(title, style = MaterialTheme.typography.titleMedium)
-        Text("$total", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Icon(painterResource(R.drawable.ic_chevron_right), "See all", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-internal fun ArtistPill(artist: Playable.Artist, selection: Selection) {
+internal fun ArtistPill(id: Long, name: String, selection: Selection) {
     val nav = LocalNavigator.current
-    // A chip draws its own click; the pick's long press goes on a box over it.
+    val playable = Playable.OfArtist(id, name)
+    var menu by remember { mutableStateOf(false) }
     Box {
-        FilterChip(
-            selected = selection.contains(artist),
-            onClick = {},
-            label = { Text(artist.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            modifier = Modifier.widthIn(max = 260.dp),
-        )
-        Box(Modifier.matchParentSize().pickable(artist, selection) { nav.push(ArtistRoute(artist.id)) })
+        Row(
+            Modifier
+                .widthIn(max = 260.dp)
+                .koanChip()
+                .result(playable, selection, { menu = true }) { nav.push(ArtistRoute(id)) },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(KoanSpace.xs),
+        ) {
+            if (selection.active) Tick(selection.contains(playable))
+            KoanText(name, role = KoanType.Control, maxLines = 1)
+        }
+        PlayableMenu(playable, menu) { menu = false }
     }
 }
 
 /**
  * A record: the sleeve plays it, the title opens it, the artist goes to the
- * artist. While picking, the whole tile ticks.
+ * artist. While picking, any of it ticks the record.
  */
 @Composable
 internal fun AlbumTile(album: Album, selection: Selection, onSleeve: () -> Unit) {
     val nav = LocalNavigator.current
-    val playable = Playable.Record(album)
+    val playable = Playable.OfAlbum(album)
     val picked = selection.contains(playable)
-    val shape = MaterialTheme.shapes.small
-    Column {
+    var menu by remember { mutableStateOf(false) }
+    val showMenu = { menu = true }
+    Column(verticalArrangement = Arrangement.spacedBy(KoanSpace.xs)) {
         Box(
-            Modifier.fillMaxWidth().aspectRatio(1f).clip(shape)
-                .then(if (picked) Modifier.border(BorderStroke(3.dp, MaterialTheme.colorScheme.primary), shape) else Modifier)
-                .pickable(playable, selection, onSleeve),
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .result(playable, selection, showMenu, onSleeve),
         ) {
-            AsyncImage(Art.album(album.id), album.title, Modifier.matchParentSize(), contentScale = ContentScale.Crop)
+            Sleeve(album.id, Modifier.matchParentSize(), corner = 0)
             if (selection.active) {
-                Checkbox(checked = picked, onCheckedChange = null, modifier = Modifier.align(Alignment.TopStart).padding(4.dp))
+                if (picked) Box(Modifier.matchParentSize().border(3.dp, KoanTheme.color(KoanTone.Accent)))
+                Tick(picked, Modifier.align(Alignment.TopStart).padding(KoanSpace.s))
             }
+            PlayableMenu(playable, menu) { menu = false }
         }
-        Text(
+        KoanText(
             album.title,
-            style = MaterialTheme.typography.bodyMedium,
+            Modifier.fillMaxWidth().result(playable, selection, showMenu) { nav.push(AlbumRoute(album.id)) },
+            role = KoanType.Control,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth().pickable(playable, selection) { nav.push(AlbumRoute(album.id)) },
         )
-        Text(
+        KoanText(
             listOfNotNull(album.artistName, album.year?.toString()).joinToString(" · "),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Modifier.fillMaxWidth().result(playable, selection, showMenu) { nav.push(ArtistRoute(album.artistId)) },
+            role = KoanType.Fine,
+            tone = KoanTone.Muted,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth().pickable(playable, selection) { nav.push(ArtistRoute(album.artistId)) },
         )
     }
 }
@@ -133,26 +142,29 @@ internal fun AlbumTile(album: Album, selection: Selection, onSleeve: () -> Unit)
 @Composable
 internal fun TrackRow(track: Track, selection: Selection) {
     val nav = LocalNavigator.current
-    val playable = Playable.Song(track)
-    ListItem(
-        headlineContent = { Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-        supportingContent = {
-            Text("${track.artistName} — ${track.albumTitle}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-        },
-        leadingContent = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (selection.active) Checkbox(checked = selection.contains(playable), onCheckedChange = null)
-                AsyncImage(
-                    track.albumId?.let { Art.album(it) } ?: Art.track(track.id),
-                    null,
-                    Modifier.size(LocalKoanTokens.current.thumb).clip(MaterialTheme.shapes.extraSmall),
-                )
+    val playable = Playable.OfTrack(track)
+    val picked = selection.contains(playable)
+    var menu by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .koanRow(picked)
+                .result(playable, selection, { menu = true }) { track.albumId?.let { nav.push(AlbumRoute(it)) } }
+                .padding(vertical = KoanSpace.xs),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(KoanSpace.m),
+        ) {
+            if (selection.active) Tick(picked)
+            Sleeve(track.albumId, Modifier.size(40.dp), corner = 0)
+            Column(Modifier.weight(1f)) {
+                KoanText(track.title, maxLines = 1)
+                KoanText("${track.artistName} — ${track.albumTitle}", role = KoanType.Fine, tone = KoanTone.Muted, maxLines = 1)
             }
-        },
-        trailingContent = { track.durationMs?.let { Text(duration(it), style = MaterialTheme.typography.labelMedium) } },
-        colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
-        modifier = Modifier.pickable(playable, selection) { track.albumId?.let { nav.push(AlbumRoute(it)) } },
-    )
+            track.durationMs?.let { KoanText(duration(it), role = KoanType.Fine, tone = KoanTone.Muted) }
+        }
+        PlayableMenu(playable, menu) { menu = false }
+    }
 }
 
 private fun duration(ms: Long): String {
@@ -168,7 +180,7 @@ private fun duration(ms: Long): String {
 internal fun SelectionBar(selection: Selection) {
     val app = koanApp()
     val count = selection.picked.size
-    fun run(action: suspend (List<Long>) -> Unit) {
+    fun run(action: (List<Long>) -> Unit) {
         val items = selection.picked.toList()
         selection.end()
         app.mirror.launch {
@@ -176,23 +188,28 @@ internal fun SelectionBar(selection: Selection) {
             if (ids.isNotEmpty()) action(ids)
         }
     }
-    Surface(tonalElevation = 3.dp) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = LocalKoanTokens.current.gutter)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    if (count == 0) "Select items" else "$count selected",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(onClick = selection::end) { Text("Done") }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                TextButton(enabled = count > 0, onClick = { run { app.player.playTracks(it) } }) { Text("Play") }
-                TextButton(enabled = count > 0, onClick = { run { app.player.playNext(it) } }) { Text("Next") }
-                TextButton(enabled = count > 0, onClick = { run { app.player.enqueue(it) } }) { Text("Queue") }
-                TextButton(enabled = count > 0, onClick = { favourite(app, selection) }) { Text("Favourite") }
-            }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .koanSurface()
+            .koanRule(KoanEdge.Top)
+            .padding(horizontal = KoanSpace.l, vertical = KoanSpace.xs),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            KoanText(
+                if (count == 0) "Select items" else "$count selected",
+                Modifier.weight(1f),
+                role = KoanType.Fine,
+                tone = KoanTone.Muted,
+                appText = true,
+            )
+            KoanButton("Done", selection::end)
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+            KoanButton("Play", { run(app.player::playTracks) }, kind = KoanButtonKind.Text, icon = KoanIcons.play, enabled = count > 0)
+            KoanButton("Next", { run(app.player::playNext) }, kind = KoanButtonKind.Text, icon = KoanIcons.playNext, enabled = count > 0)
+            KoanButton("Queue", { run(app.player::enqueue) }, kind = KoanButtonKind.Text, icon = KoanIcons.queue, enabled = count > 0)
+            KoanButton("Favourite", { favourite(app, selection) }, kind = KoanButtonKind.Text, icon = KoanIcons.favourite, enabled = count > 0)
         }
     }
 }
@@ -201,7 +218,7 @@ internal fun SelectionBar(selection: Selection) {
  * Hearts every one of the pick, or, where all of them are hearted already,
  * takes the hearts off: the things themselves, not the tracks behind them.
  */
-private fun favourite(app: cc.blit.koan.KoanApp, selection: Selection) {
+private fun favourite(app: KoanApp, selection: Selection) {
     val items = selection.picked.toList()
     selection.end()
     app.mirror.launch {
@@ -209,17 +226,17 @@ private fun favourite(app: cc.blit.koan.KoanApp, selection: Selection) {
         val albums = favouriteAlbumIds().toSet()
         val artists = favouriteArtistIds().toSet()
         fun hearted(item: Playable) = when (item) {
-            is Playable.Song -> item.track.id in tracks
-            is Playable.Record -> item.album.id in albums
-            is Playable.Artist -> item.id in artists
+            is Playable.OfTrack -> item.track.id in tracks
+            is Playable.OfAlbum -> item.album.id in albums
+            is Playable.OfArtist -> item.id in artists
         }
         val all = items.all(::hearted)
         for (item in items) {
             if (hearted(item) != all) continue
             when (item) {
-                is Playable.Song -> toggleFavourite(item.track.id)
-                is Playable.Record -> toggleFavouriteAlbum(item.album.id)
-                is Playable.Artist -> toggleFavouriteArtist(item.id)
+                is Playable.OfTrack -> toggleFavourite(item.track.id)
+                is Playable.OfAlbum -> toggleFavouriteAlbum(item.album.id)
+                is Playable.OfArtist -> toggleFavouriteArtist(item.id)
             }
         }
     }
