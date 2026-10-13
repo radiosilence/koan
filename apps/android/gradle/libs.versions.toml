@@ -16,12 +16,7 @@ jna = "5.19.1"
 rustls-platform-verifier = "0.1.1"
 junit = "4.13.2"
 robolectric = "4.17"
-<<<<<<< HEAD
-||||||| merged common ancestors
->>>>>>>>> Temporary merge branch 2
-=======
 reorderable = "3.1.0"
->>>>>>> origin/android-app
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "core-ktx" }
