@@ -28,6 +28,10 @@ The Mac switches the output device to each track's sample rate, so playback is b
 
 The format badge shows the rate the hardware runs at, read back from the session, so a route that did not take the track's rate shows as a conversion. The Apple TV app does the same; over HDMI the rate is the one the television or receiver negotiates.
 
+
+## The Android app
+
+The Android app plays from a server, as the iOS app does, and needs Android 10 or later on a 64-bit ARM phone. It is installed from an APK until it is on Google Play; see [Android](guide/android.md) for where to get one and what it does not do yet.
 ## History and Recently played
 
 Both apps keep what you play. **History** lists every play by day, and is where a play is forgotten. **Recently Played**, beside it in the Mac's and the iPad's sidebar and the iPhone's Library tab, answers "what was that record I had on yesterday": the records, artists and tracks of the last 30 days, each once however often it played, newest first. Both follow each play as it is recorded.
