@@ -640,7 +640,9 @@ final class PlayerModel {
             ? "Waiting for \(notice.device) to wake"
             : notice.refused
             ? "\(notice.device) turned it down: \(notice.detail)"
-            : "Couldn't reach \(notice.device): \(notice.detail)"
+            : notice.unreached
+            ? notice.detail
+            : "\(notice.device) couldn't do it: \(notice.detail)"
     }
 
     /// Whether `destination` (this device for `nil`) can take the music the

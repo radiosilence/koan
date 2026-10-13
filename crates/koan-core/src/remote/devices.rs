@@ -135,6 +135,8 @@ pub struct Notice {
     /// The device's name, as listed.
     pub device: String,
     pub outcome: acks::AckOutcome,
+    /// No way got it there: `outcome` is a failure with only the reason.
+    pub unreached: bool,
 }
 
 /// The last command that did not simply arrive.
@@ -1576,7 +1578,10 @@ fn unanswered(id: &str, cmd: &LinkCommand, error: String, then: Option<Then>) {
             log::warn!("devices: no answer from {id} for {cmd:?}, and the server: {error}");
             then(None);
         }
-        None => told(id, cmd, Some(acks::AckOutcome::Failed { error }), None),
+        None => {
+            log::warn!("devices: {cmd:?} did not reach {id}: {error}");
+            notify(id, acks::AckOutcome::Failed { error }, true);
+        }
     }
 }
 
@@ -1599,6 +1604,11 @@ fn told(id: &str, cmd: &LinkCommand, outcome: Option<acks::AckOutcome>, then: Op
     let Some(outcome) = outcome.filter(|o| *o != acks::AckOutcome::Done) else {
         return;
     };
+    notify(id, outcome, false);
+}
+
+/// Make `outcome` the app's notice about `id`.
+fn notify(id: &str, outcome: acks::AckOutcome, unreached: bool) {
     let device = list()
         .into_iter()
         .find(|d| d.id == id)
@@ -1609,6 +1619,7 @@ fn told(id: &str, cmd: &LinkCommand, outcome: Option<acks::AckOutcome>, then: Op
             seq,
             device,
             outcome,
+            unreached,
         });
     });
 }
@@ -1636,15 +1647,22 @@ fn ask_server(
     let cfg = Config::load().unwrap_or_default();
     let client = crate::helpers::subsonic_client(&cfg).ok_or("Not signed in to a server.")?;
     let json = serde_json::to_string(cmd).map_err(|e| e.to_string())?;
-    client.koan_command(id, &json, ack).map_err(|e| match e {
-        // The server's word, an expired key or a refusal: its reason
-        // stands. Not found is a server with nothing to relay through.
+    client
+        .koan_command(id, &json, ack)
+        .map_err(|e| relay_error(id, e))
+}
+
+/// Why the server did not get a command to `id`. Its word, an expired key or
+/// a refusal, stands; not found, or no answer at all, is a server with nothing
+/// to relay through.
+fn relay_error(id: &str, e: crate::remote::client::SubsonicError) -> String {
+    match e {
         crate::remote::client::SubsonicError::Api { code, message } if code != 70 => message,
         e => {
             log::warn!("devices: the server cannot relay to {id}: {e}");
             out_of_reach(id)
         }
-    })
+    }
 }
 
 /// `send`, by the server first: for the lock screen's buttons. iOS runs
@@ -1698,11 +1716,12 @@ pub fn this_id() -> Option<String> {
 pub(crate) mod tests {
     use super::*;
 
-    /// The device controlled, restored on a network it is not on, with no
-    /// server that relays to it: the command fails, and says which device and
-    /// what to do.
+    /// The device controlled, restored on a network it is not on: a server
+    /// that cannot relay to it says so by the device's name, and one that
+    /// answers keeps its own words.
     #[test]
     fn a_command_to_a_device_out_of_reach_names_it() {
+        use crate::remote::client::SubsonicError;
         let _held = STORE_LOCK.lock();
         crate::config::isolate_config_for_tests();
         with(|s| *s = Store::default());
@@ -1714,8 +1733,30 @@ pub(crate) mod tests {
             })
         });
 
-        let err = send("mac", LinkCommand::Pause).unwrap_err();
-        assert_eq!(err, "Studio Mac is out of reach.");
+        let refused = reqwest::blocking::Client::new()
+            .get("http://127.0.0.1:1/rest/koanCommand")
+            .send()
+            .unwrap_err();
+        assert_eq!(
+            relay_error("mac", SubsonicError::from(refused)),
+            "Studio Mac is out of reach."
+        );
+        let unknown = SubsonicError::Api {
+            code: 70,
+            message: "not found".into(),
+        };
+        assert_eq!(relay_error("mac", unknown), "Studio Mac is out of reach.");
+        let revoked = SubsonicError::Api {
+            code: 44,
+            message: "The key has been revoked.".into(),
+        };
+        assert_eq!(relay_error("mac", revoked), "The key has been revoked.");
+
+        assert_eq!(
+            send("mac", LinkCommand::Pause).unwrap_err(),
+            "Not signed in to a server.",
+            "no server at all is not the device's fault"
+        );
         with(|s| *s = Store::default());
     }
 

@@ -228,7 +228,8 @@ class EngineMirror(deviceName: String) {
                         when {
                             n.queued -> "Waiting for ${n.device} to wake"
                             n.refused -> "${n.device} turned it down: ${n.detail}"
-                            else -> "Couldn't reach ${n.device}: ${n.detail}"
+                            n.unreached -> n.detail
+                            else -> "${n.device} couldn't do it: ${n.detail}"
                         },
                     )
                 }

@@ -56,7 +56,7 @@ class PlaybackService : MediaSessionService() {
 
     private val noisy = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) engine.launch { pause() }
+            if (intent.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) engine.launch { runCatching { pause() } }
         }
     }
 
@@ -178,7 +178,7 @@ class PlaybackService : MediaSessionService() {
         if (audio.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
             focus = request
         } else {
-            engine.launch { pause() }
+            engine.launch { runCatching { pause() } }
         }
     }
 
@@ -192,15 +192,15 @@ class PlaybackService : MediaSessionService() {
         when (change) {
             AudioManager.AUDIOFOCUS_LOSS -> {
                 releaseFocus()
-                engine.launch { pause() }
+                engine.launch { runCatching { pause() } }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
                 resumeOnGain = engine.nowPlaying.value?.state == PlayState.PLAYING
-                engine.launch { pause() }
+                engine.launch { runCatching { pause() } }
             }
             AudioManager.AUDIOFOCUS_GAIN -> if (resumeOnGain) {
                 resumeOnGain = false
-                engine.launch { resume() }
+                engine.launch { runCatching { resume() } }
             }
         }
     }

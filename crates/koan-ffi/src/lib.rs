@@ -7012,6 +7012,7 @@ fn connection_info() -> ConnectionInfo {
                 device: n.device,
                 queued: n.outcome == AckOutcome::Queued,
                 refused: matches!(n.outcome, AckOutcome::Refused { .. }),
+                unreached: n.unreached,
                 detail: match n.outcome {
                     AckOutcome::Refused { reason } => reason,
                     AckOutcome::Failed { error } => error,
