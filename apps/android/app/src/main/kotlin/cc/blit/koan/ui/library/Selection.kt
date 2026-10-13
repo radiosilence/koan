@@ -129,13 +129,27 @@ fun Tick(picked: Boolean, modifier: Modifier = Modifier) {
  * pick to tracks in the order it was made, acts, and ends the mode.
  */
 @Composable
-fun SelectionBar(selection: Selection<Playable>) {
+fun SelectionBar(selection: Selection<Playable>) = SelectionBar(selection, { it })
+
+/**
+ * Taking the pick out of what the page shows: a playlist's entries, or plays
+ * from the history. `title` names the verb ("Remove", "Forget").
+ */
+class Removal<T>(val title: String, val act: (List<T>) -> Unit)
+
+/**
+ * The bar over a pick of things that are not playables themselves (a
+ * playlist's entries, the history's plays): each stands for one, by
+ * `playable`, and `remove`, when given, takes the pick off the page.
+ */
+@Composable
+fun <T> SelectionBar(selection: Selection<T>, playable: (T) -> Playable, remove: Removal<T>? = null) {
     val app = koanApp()
     val store = favourites()
     val count = selection.picked.size
     var adding by remember { mutableStateOf<List<Playable>?>(null) }
     fun run(action: (List<Long>) -> Unit) {
-        val items = selection.picked.toList()
+        val items = selection.picked.map(playable)
         selection.end()
         app.mirror.launch {
             val ids = items.flatMap { it.trackIds(this) }
@@ -163,8 +177,14 @@ fun SelectionBar(selection: Selection<Playable>) {
             BarItem("Play", "play", KoanIcons.play, count > 0) { run(app.player::playTracks) }
             BarItem("Play Next", "next", KoanIcons.playNext, count > 0) { run(app.player::playNext) }
             BarItem("Add to Queue", "queue", KoanIcons.queue, count > 0) { run(app.player::enqueue) }
-            BarItem("Add to Playlist", "playlist", KoanIcons.playlist, count > 0) { adding = selection.picked.toList() }
-            BarItem("Favourite", "favourite", KoanIcons.favourite, count > 0) { favourite(store, selection) }
+            BarItem("Add to Playlist", "playlist", KoanIcons.playlist, count > 0) { adding = selection.picked.map(playable) }
+            BarItem("Favourite", "favourite", KoanIcons.favourite, count > 0) { favourite(store, selection.picked.map(playable)); selection.end() }
+            remove?.let { removal ->
+                BarItem(removal.title, removal.title, KoanIcons.remove, count > 0, destructive = true) {
+                    removal.act(selection.picked.toList())
+                    selection.end()
+                }
+            }
         }
     }
     adding?.let { items ->
@@ -177,7 +197,8 @@ fun SelectionBar(selection: Selection<Playable>) {
  * share of the bar each, so five fit a phone. Read out by its full name.
  */
 @Composable
-private fun RowScope.BarItem(title: String, short: String, icon: Int, enabled: Boolean, onClick: () -> Unit) {
+private fun RowScope.BarItem(title: String, short: String, icon: Int, enabled: Boolean, destructive: Boolean = false, onClick: () -> Unit) {
+    val tone = if (destructive) KoanTone.Bad else KoanTone.Ink
     Column(
         Modifier
             .weight(1f)
@@ -193,8 +214,8 @@ private fun RowScope.BarItem(title: String, short: String, icon: Int, enabled: B
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(KoanSpace.xs, Alignment.CenterVertically),
     ) {
-        if (KoanTheme.icons || !KoanTheme.isOn) KoanIcon(icon, null)
-        KoanText(short, role = KoanType.Fine, appText = true, maxLines = 1)
+        if (KoanTheme.icons || !KoanTheme.isOn) KoanIcon(icon, null, color = KoanTheme.color(tone))
+        KoanText(short, role = KoanType.Fine, tone = tone, appText = true, maxLines = 1)
     }
 }
 
@@ -202,9 +223,7 @@ private fun RowScope.BarItem(title: String, short: String, icon: Int, enabled: B
  * Hearts every one of the pick, or, where all of them are hearted already,
  * takes the hearts off: the things themselves, not the tracks behind them.
  */
-private fun favourite(store: Favourites, selection: Selection<Playable>) {
-    val items = selection.picked.toList()
-    selection.end()
+private fun favourite(store: Favourites, items: List<Playable>) {
     fun hearted(item: Playable) = when (item) {
         is Playable.OfTrack -> item.track.id in store.tracks.value
         is Playable.OfAlbum -> item.album.id in store.albums.value

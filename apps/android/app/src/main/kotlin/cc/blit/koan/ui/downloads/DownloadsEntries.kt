@@ -20,31 +20,24 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewModelScope
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation3.runtime.EntryProviderScope
 import androidx.navigation3.runtime.NavKey
 import cc.blit.koan.art.Art
-import cc.blit.koan.engine.EngineMirror
-import cc.blit.koan.ffi.Album
-import cc.blit.koan.ffi.AlbumSort
-import cc.blit.koan.ffi.KoanEngine
 import cc.blit.koan.ffi.Transfer
 import cc.blit.koan.ffi.TransferState
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
+import cc.blit.koan.ui.library.PageBar
 import cc.blit.koan.ui.library.Shelf
 import cc.blit.koan.ui.library.ShelfRoute
+import cc.blit.koan.ui.library.Sleeve
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.nonce
 import cc.blit.koan.ui.playlists.CollectionRow
 import cc.blit.koan.ui.playlists.ConfirmDialog
 import cc.blit.koan.ui.playlists.KoanBar
 import cc.blit.koan.ui.playlists.MenuItem
-import cc.blit.koan.ui.playlists.PageBar
-import cc.blit.koan.ui.playlists.Sleeve
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanIcon
@@ -56,12 +49,8 @@ import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.mapLatest
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.serialization.Serializable
 
 /** What is arriving from the server, and what just did. */

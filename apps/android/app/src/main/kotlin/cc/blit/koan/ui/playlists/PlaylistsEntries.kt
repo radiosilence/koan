@@ -18,6 +18,7 @@ import androidx.navigation3.runtime.EntryProviderScope
 import androidx.navigation3.runtime.NavKey
 import cc.blit.koan.ffi.Playlist
 import cc.blit.koan.ui.koanApp
+import cc.blit.koan.ui.library.PageBar
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.nonce
 import cc.blit.koan.ui.theme.KoanButton
