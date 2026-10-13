@@ -1852,18 +1852,24 @@ pub(crate) mod tests {
             .unwrap_err();
         assert_eq!(
             relay_error("mac", SubsonicError::from(refused)),
-            "Studio Mac is out of reach."
+            Missed::OutOfReach("Studio Mac is out of reach.".into())
         );
         let unknown = SubsonicError::Api {
             code: 70,
             message: "not found".into(),
         };
-        assert_eq!(relay_error("mac", unknown), "Studio Mac is out of reach.");
+        assert_eq!(
+            relay_error("mac", unknown),
+            Missed::OutOfReach("Studio Mac is out of reach.".into())
+        );
         let revoked = SubsonicError::Api {
             code: 44,
             message: "The key has been revoked.".into(),
         };
-        assert_eq!(relay_error("mac", revoked), "The key has been revoked.");
+        assert_eq!(
+            relay_error("mac", revoked),
+            Missed::Said("The key has been revoked.".into())
+        );
 
         assert_eq!(
             send("mac", LinkCommand::Pause).unwrap_err(),
