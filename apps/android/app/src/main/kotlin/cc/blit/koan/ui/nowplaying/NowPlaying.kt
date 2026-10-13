@@ -386,7 +386,15 @@ private fun Toggles(now: NowPlaying?, lyrics: Boolean, toggleLyrics: () -> Unit)
             tone = if (lyrics) KoanTone.Accent else KoanTone.Muted,
         )
         Spacer(Modifier.weight(1f))
-        now?.format?.let { KoanBadge(quality(it)) }
+        now?.format?.let { format ->
+            // In the accent while the device gets the samples untouched.
+            val perfect = bitPerfect(format)
+            KoanBadge(
+                quality(format),
+                Modifier.semantics { if (perfect) stateDescription = "Bit-perfect" },
+                accent = perfect,
+            )
+        }
         Spacer(Modifier.weight(1f))
         PlayOnButton()
         SleepButton(now?.sleep, now?.sleepFading == true)
