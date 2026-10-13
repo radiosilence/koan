@@ -79,14 +79,14 @@ fun EntryProviderScope<NavKey>.settingsEntries() {
 fun accountModel(): AccountModel {
     val app = koanApp()
     val activity = LocalActivity.current as ComponentActivity
-    return viewModel(viewModelStoreOwner = activity) { AccountModel(app.mirror) }
+    return viewModel(viewModelStoreOwner = activity) { AccountModel(app.mirror::engine) }
 }
 
 /** The page's own copy of the settings, read again whenever the app comes back to the front. */
 @Composable
 private fun settingsModel(): SettingsModel {
     val app = koanApp()
-    val model = viewModel { SettingsModel(app.mirror) }
+    val model = viewModel { SettingsModel(app.mirror::engine) }
     LifecycleResumeEffect(model) {
         model.reload()
         onPauseOrDispose {}
