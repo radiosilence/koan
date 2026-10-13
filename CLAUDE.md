@@ -346,6 +346,7 @@ The Kotlin counterparts of the Swift modules above, with the Swift doc comments 
 | `state/PlayableSelection.kt` | `PlayableSelection.swift`: a pick across artists, records and tracks, held in tick order and keyed by kind and id; `PlayableResolver` turns it into track ids on the engine's dispatcher. Touch has no shift-range: a long press starts picking, a tap ticks |
 | `state/ShelfSupport.kt` | `ShelfTotals` (a heading's count and the page's counts line, from the shelf's own totals), and the grid's column and row cutting |
 | `ui/pages/ShelfSections.kt`, `ShelfPage.kt` | `MixedCollection.swift` and `ShelfView.swift`: artists as pills, records as tiles (a row of them one lazy item) and tracks as rows in one `LazyColumn`; headings open `library.browse(list, shelf)`. `FavouritesPage`, `RecentlyPlayedPage`, `OnDevicePage` are one call each; `SearchPage` adds the field |
+| `ui/pages/PlaylistsPage.kt`, `PlaylistPage.kt`, `ui/playlists/` | `PlaylistsList.swift` and `PlaylistView.swift`: the playlists with a 2 by 2 mosaic each and drag reorder; one playlist laid out like the queue (grouped by contiguous run or flat, selection, drag reorder). `PlaylistLayout` is the pure part (rows, selection to positions, a drag to the order sent); read-only playlists get no edit affordances. `PlaylistDialogs.kt` hosts the new-playlist request (`PlaylistsModel.naming`), rename and delete |
 
 ### koan-server (`crates/koan-server/src/`)
 

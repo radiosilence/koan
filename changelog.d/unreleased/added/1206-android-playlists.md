@@ -1,0 +1,1 @@
+- **The Android app has playlists.** The playlist list shows each playlist as a 2 by 2 mosaic and can be reordered by dragging; a playlist opens laid out like the queue, grouped by album or one row per track, with selection and drag reorder. Smart and read-only playlists offer no edits. It has not been run on a device.
