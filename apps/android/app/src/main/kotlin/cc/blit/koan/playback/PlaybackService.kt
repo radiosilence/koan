@@ -1,0 +1,153 @@
+package cc.blit.koan.playback
+
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioAttributes
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import androidx.core.content.ContextCompat
+import androidx.media3.session.MediaSession
+import androidx.media3.session.MediaSessionService
+import cc.blit.koan.KoanApp
+import cc.blit.koan.MainActivity
+import cc.blit.koan.ffi.PlayState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+
+/**
+ * Keeps playback alive in the background and shows it to the system: the
+ * media notification, the lock screen, headsets and cars.
+ *
+ * Media3 makes this a foreground service while `KoanPlayer` reports playing.
+ * The service also does what an output owned outside Media3 must do for
+ * itself: hold audio focus while playing, pause when headphones are unplugged,
+ * and rebuild the engine's output when the route changes, since an AAudio
+ * stream does not follow the device it was opened on to the next one.
+ */
+class PlaybackService : MediaSessionService() {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private lateinit var session: MediaSession
+    private lateinit var audio: AudioManager
+    private val engine get() = (application as KoanApp).engine
+
+    private var focus: AudioFocusRequest? = null
+    /** Paused for a transient loss of focus, so to resume when it comes back. */
+    private var resumeOnGain = false
+
+    private val noisy = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) engine.launch { pause() }
+        }
+    }
+
+    private val routes = object : AudioDeviceCallback() {
+        // Registering reports every device present; only changes after that matter.
+        private var settled = false
+
+        override fun onAudioDevicesAdded(added: Array<out AudioDeviceInfo>) {
+            if (settled) restart() else settled = true
+        }
+
+        override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>) = restart()
+
+        private fun restart() = engine.launch { restartOutput() }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        audio = getSystemService(AudioManager::class.java)
+        val open = PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        session = MediaSession.Builder(this, KoanPlayer(engine, scope))
+            .setSessionActivity(open)
+            .build()
+        ContextCompat.registerReceiver(
+            this,
+            noisy,
+            IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        audio.registerAudioDeviceCallback(routes, null)
+        scope.launch {
+            engine.nowPlaying
+                .map { it?.state == PlayState.PLAYING }
+                .distinctUntilChanged()
+                .collect { playing -> if (playing) holdFocus() else if (!resumeOnGain) releaseFocus() }
+        }
+    }
+
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = session
+
+    /** Stop with the app's task when nothing is playing, as Media3 recommends. */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        if (!session.player.playWhenReady) stopSelf()
+    }
+
+    override fun onDestroy() {
+        audio.unregisterAudioDeviceCallback(routes)
+        unregisterReceiver(noisy)
+        releaseFocus()
+        session.player.release()
+        session.release()
+        scope.cancel()
+        super.onDestroy()
+    }
+
+    private fun holdFocus() {
+        resumeOnGain = false
+        if (focus != null) return
+        val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build(),
+            )
+            // Ducking is left to the system: koan's output has no volume of its own to lower.
+            .setWillPauseWhenDucked(false)
+            .setOnAudioFocusChangeListener(::onFocusChange)
+            .build()
+        if (audio.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+            focus = request
+        } else {
+            engine.launch { pause() }
+        }
+    }
+
+    private fun releaseFocus() {
+        focus?.let(audio::abandonAudioFocusRequest)
+        focus = null
+        resumeOnGain = false
+    }
+
+    private fun onFocusChange(change: Int) {
+        when (change) {
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                releaseFocus()
+                engine.launch { pause() }
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                resumeOnGain = engine.nowPlaying.value?.state == PlayState.PLAYING
+                engine.launch { pause() }
+            }
+            AudioManager.AUDIOFOCUS_GAIN -> if (resumeOnGain) {
+                resumeOnGain = false
+                engine.launch { resume() }
+            }
+        }
+    }
+}

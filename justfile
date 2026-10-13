@@ -1644,3 +1644,17 @@ ios-store-shots src out captions="captions":
 # Needs the same APPLE_API_* environment as ios-testflight.
 ios-store *screenshots:
     uv run apps/ios/store/push.py {{screenshots}}
+
+# Build koan-core for Android with cargo-ndk and generate the Kotlin bindings,
+# into the app's build directory, where Gradle packages them. Gradle runs the
+# same task before every build of the app. `abis` as Gradle takes them;
+# arm64-v8a alone serves a phone or an emulator on Apple silicon. Gradle
+# finds the SDK through ANDROID_HOME or apps/android/local.properties.
+android-ffi abis="arm64-v8a,x86_64":
+    cd apps/android && ./gradlew -q :app:koanFfi -Pabis={{abis}}
+
+# Build the debug app, install it on the device or emulator adb is connected
+# to, and open it.
+android-run abis="arm64-v8a":
+    cd apps/android && ./gradlew -q :app:installDebug -Pabis={{abis}}
+    adb shell am start -n cc.blit.koan/.MainActivity

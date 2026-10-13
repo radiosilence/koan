@@ -1,2 +1,12 @@
 [bindings.kotlin]
 package_name = "cc.blit.koan.ffi"
+
+# A Kotlin exception already has a `message`; the variants' own is `detail`.
+[bindings.kotlin.rename]
+"KoanError.Database.message" = "detail"
+"KoanError.Audio.message" = "detail"
+"KoanError.Player.message" = "detail"
+"KoanError.NotFound.message" = "detail"
+"KoanError.BadArgument.message" = "detail"
+"KoanError.Remote.message" = "detail"
+"KoanError.NeedsSampleRate.message" = "detail"
