@@ -2,33 +2,31 @@ package cc.blit.koan.ui.settings
 
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.LocalActivity
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Icon
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation3.runtime.EntryProviderScope
 import androidx.navigation3.runtime.NavKey
-import cc.blit.koan.R
 import cc.blit.koan.ffi.ConnectionInfo
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.Tab
 import cc.blit.koan.ui.navigation.nonce
-import cc.blit.koan.ui.theme.LocalKoanTokens
+import cc.blit.koan.ui.theme.KoanButton
+import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanNavRow
+import cc.blit.koan.ui.theme.KoanSpace
+import cc.blit.koan.ui.theme.KoanText
+import cc.blit.koan.ui.theme.KoanTone
+import cc.blit.koan.ui.theme.KoanType
 import kotlinx.serialization.Serializable
 
 /** The pages Settings goes into, as the iPhone's are. */
@@ -46,14 +44,14 @@ enum class Pane(val title: String) {
 
 private val Pane.icon
     get() = when (this) {
-        Pane.Server -> R.drawable.ic_pane_server
-        Pane.Account -> R.drawable.ic_pane_account
-        Pane.Playback -> R.drawable.ic_pane_speaker
-        Pane.Downloads -> R.drawable.ic_pane_download
-        Pane.Devices -> R.drawable.ic_play_on
-        Pane.Integrations -> R.drawable.ic_pane_extensions
-        Pane.Appearance -> R.drawable.ic_pane_appearance
-        Pane.About -> R.drawable.ic_pane_info
+        Pane.Server -> KoanIcons.server
+        Pane.Account -> KoanIcons.account
+        Pane.Playback -> KoanIcons.speaker
+        Pane.Downloads -> KoanIcons.downloads
+        Pane.Devices -> KoanIcons.devices
+        Pane.Integrations -> KoanIcons.extensions
+        Pane.Appearance -> KoanIcons.appearance
+        Pane.About -> KoanIcons.info
     }
 
 @Serializable
@@ -114,21 +112,10 @@ private fun SettingsRoot() {
     val version = appVersion(LocalContext.current)
     SettingsPage("Settings", state) {
         panes.forEach { pane ->
-            item(pane.name) {
-                ListItem(
-                    headlineContent = { Text(pane.title) },
-                    leadingContent = { Icon(painterResource(pane.icon), null) },
-                    modifier = Modifier.clickable { nav.push(SettingsPaneRoute(pane)) },
-                )
-            }
+            item(pane.name) { KoanNavRow(pane.title, pane.icon, selected = false, onClick = { nav.push(SettingsPaneRoute(pane)) }) }
         }
         item {
-            Text(
-                version,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(LocalKoanTokens.current.gutter),
-            )
+            KoanText(version, Modifier.padding(KoanSpace.page), role = KoanType.Fine, tone = KoanTone.Muted)
         }
     }
 }
@@ -144,40 +131,39 @@ fun AccountPrompts(model: AccountModel) {
     state.pendingInvite?.let { invite ->
         AlertDialog(
             onDismissRequest = model::dismissInvite,
-            title = { Text("Switch accounts?") },
+            title = { KoanText("Switch accounts?", role = KoanType.TitleSmall, appText = true) },
             text = {
-                Text(
+                KoanText(
                     "kōan is signed in to another account. This invite signs in as ${invite.username} on " +
                         "${host(invite.server)}; tracks already synced stay in the library.",
                 )
             },
-            confirmButton = { TextButton({ model.join(invite) }) { Text("Switch") } },
-            dismissButton = { TextButton(model::dismissInvite) { Text("Cancel") } },
+            confirmButton = { KoanButton("Switch", { model.join(invite) }) },
+            dismissButton = { KoanButton("Cancel", model::dismissInvite) },
         )
     }
     state.pendingPairing?.let { request ->
         AlertDialog(
             onDismissRequest = { model.settle(request, approve = false) },
-            title = { Text("Sign in ${request.device}?") },
+            title = { KoanText("Sign in ${request.device}?", role = KoanType.TitleSmall) },
             text = {
-                Column {
-                    Text(request.origin)
-                    Text(
+                Column(verticalArrangement = Arrangement.spacedBy(KoanSpace.m)) {
+                    KoanText(request.origin)
+                    KoanText(
                         "It will be signed in as ${request.username} on ${request.host}. Allow only a device you are " +
                             "setting up yourself: anyone can give a device any name.",
-                        modifier = Modifier.padding(top = 12.dp),
                     )
                 }
             },
-            confirmButton = { TextButton({ model.settle(request, approve = true) }) { Text("Allow") } },
-            dismissButton = { TextButton({ model.settle(request, approve = false) }) { Text("Decline") } },
+            confirmButton = { KoanButton("Allow", { model.settle(request, approve = true) }) },
+            dismissButton = { KoanButton("Decline", { model.settle(request, approve = false) }) },
         )
     }
     state.notice?.let { notice ->
         AlertDialog(
             onDismissRequest = model::dismissNotice,
-            text = { Text(notice) },
-            confirmButton = { TextButton(model::dismissNotice) { Text("OK") } },
+            text = { KoanText(notice) },
+            confirmButton = { KoanButton("OK", model::dismissNotice) },
         )
     }
 }

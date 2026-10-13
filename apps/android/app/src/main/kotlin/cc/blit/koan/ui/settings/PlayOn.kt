@@ -1,54 +1,59 @@
 package cc.blit.koan.ui.settings
 
 import android.text.format.DateUtils
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import cc.blit.koan.R
 import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.ffi.DeviceInfo
 import cc.blit.koan.ffi.KoanException
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ui.koanApp
-import cc.blit.koan.ui.theme.LocalKoanTokens
+import cc.blit.koan.ui.theme.KoanButton
+import cc.blit.koan.ui.theme.KoanButtonKind
+import cc.blit.koan.ui.theme.KoanIcon
+import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanSpace
+import cc.blit.koan.ui.theme.KoanText
+import cc.blit.koan.ui.theme.KoanTheme
+import cc.blit.koan.ui.theme.KoanTone
+import cc.blit.koan.ui.theme.KoanType
 import kotlinx.coroutines.launch
 
 /**
- * Play on: a button for Now Playing that opens the device picker. Its icon
- * fills while another device is controlled.
+ * Play on: a button for Now Playing that opens the device picker. Its glyph
+ * takes the accent while another device is controlled.
  */
 @Composable
 fun PlayOnButton(modifier: Modifier = Modifier) {
     val devices by koanApp().mirror.devices.collectAsStateWithLifecycle()
     var open by remember { mutableStateOf(false) }
-    IconButton({ open = true }, modifier) {
-        Icon(
-            painterResource(R.drawable.ic_play_on),
+    KoanButton({ open = true }, modifier, kind = KoanButtonKind.Icon) {
+        KoanIcon(
+            KoanIcons.devices,
             contentDescription = "Play on",
-            tint = if (devices.target != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            color = KoanTheme.color(if (devices.target != null) KoanTone.Accent else KoanTone.Ink),
         )
     }
     if (open) PlayOnSheet(onDismiss = { open = false })
@@ -71,17 +76,7 @@ fun PlayOnSheet(onDismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
     var notice by remember { mutableStateOf<String?>(null) }
     val controlled = devices.devices.firstOrNull { it.id == devices.target }
-
-    /** Whether `to` (this phone for `null`) can take the music the device in view has. */
-    fun canMove(to: DeviceInfo?): Boolean {
-        if (to?.id == devices.target || to?.problem != null) return false
-        if (controlled != null) {
-            if (!controlled.sameLibrary || controlled.state == PlayState.STOPPED || controlled.problem != null) return false
-        } else if (queue.items.isEmpty()) {
-            return false
-        }
-        return to?.sameLibrary ?: true
-    }
+    val hasQueue = queue.items.isNotEmpty()
 
     fun attempt(block: suspend () -> Unit) = scope.launch {
         try {
@@ -91,60 +86,66 @@ fun PlayOnSheet(onDismiss: () -> Unit) {
         }
     }
 
-    fun move(to: DeviceInfo?) = attempt {
-        notice = moved(mirror, to, controlled)
-    }
-
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
-            Text(
-                "Play on",
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.padding(horizontal = LocalKoanTokens.current.gutter),
-            )
-            notice?.let {
-                Text(
-                    it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = LocalKoanTokens.current.gutter, vertical = 8.dp),
-                )
-            }
+    val on = KoanTheme.isOn
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        shape = if (on) RectangleShape else BottomSheetDefaults.ExpandedShape,
+        containerColor = if (on) KoanTheme.colors.bg else BottomSheetDefaults.ContainerColor,
+        tonalElevation = 0.dp,
+    ) {
+        Column(Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = KoanSpace.l)) {
+            KoanText("Play on", inset, role = KoanType.TitleSmall, tone = KoanTone.Strong, appText = true)
+            notice?.let { KoanText(it, inset.padding(vertical = KoanSpace.s), role = KoanType.Fine, tone = KoanTone.Muted) }
             DeviceRow(
                 name = "This phone",
                 detail = if (controlled != null) "Paused while you control another device" else null,
                 selected = controlled == null,
-                canMove = controlled != null && canMove(null),
+                canMove = controlled != null && canMoveMusic(null, devices.target, controlled, hasQueue),
                 onSelect = { attempt { mirror.engine().controlDevice(null) } },
-                onMove = { move(null) },
+                onMove = { attempt { notice = moved(mirror, null, controlled) } },
             )
             devices.devices.forEach { device ->
                 DeviceRow(
                     name = device.name,
                     detail = detail(device),
                     selected = device.id == devices.target,
-                    canMove = canMove(device),
+                    canMove = canMoveMusic(device, devices.target, controlled, hasQueue),
                     // Out of reach with nothing able to wake it: a command would go nowhere.
                     unreachable = device.problem != null || (!device.awake && !device.wakeable),
                     onSelect = { attempt { mirror.engine().controlDevice(device.id) } },
-                    onMove = { move(device) },
+                    onMove = { attempt { notice = moved(mirror, device, controlled) } },
                     onForget = if (!device.awake) ({ attempt { mirror.engine().forgetDevice(device.id) } }) else null,
                 )
             }
             if (devices.devices.isEmpty()) {
-                Text(
+                KoanText(
                     if (connection?.devices == true) {
                         "No other kōan devices. Open kōan on another device signed in to this server, or on this network."
                     } else {
                         "No other kōan devices on this network. Devices signed in to one kōan server reach each other through it, on any network."
                     },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(LocalKoanTokens.current.gutter),
+                    inset.padding(vertical = KoanSpace.s),
+                    role = KoanType.Fine,
+                    tone = KoanTone.Muted,
                 )
             }
         }
     }
+}
+
+/**
+ * Whether `to` (this phone for `null`) can take the music the device in view
+ * has: both must play from the same library, and there must be something to
+ * move.
+ */
+internal fun canMoveMusic(to: DeviceInfo?, target: String?, controlled: DeviceInfo?, hasQueue: Boolean): Boolean {
+    if (to?.id == target || to?.problem != null) return false
+    if (controlled != null) {
+        if (!controlled.sameLibrary || controlled.state == PlayState.STOPPED || controlled.problem != null) return false
+    } else if (!hasQueue) {
+        return false
+    }
+    return to?.sameLibrary ?: true
 }
 
 @Composable
@@ -158,26 +159,27 @@ private fun DeviceRow(
     unreachable: Boolean = false,
     onForget: (() -> Unit)? = null,
 ) {
-    ListItem(
-        headlineContent = { Text(name) },
-        supportingContent = detail?.takeIf { it.isNotEmpty() }?.let { { Text(it) } },
-        leadingContent = { RadioButton(selected, onClick = onSelect, enabled = !unreachable) },
-        trailingContent = when {
-            canMove -> ({ TextButton(onMove) { Text("Move here") } })
-            onForget != null -> ({ TextButton(onForget) { Text("Forget") } })
-            else -> null
-        },
-        colors = if (unreachable) {
-            ListItemDefaults.colors(headlineColor = MaterialTheme.colorScheme.onSurfaceVariant)
-        } else {
-            ListItemDefaults.colors()
-        },
-        modifier = Modifier.clickable(enabled = !unreachable, onClick = onSelect),
-    )
+    Row(inset.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(KoanSpace.s), verticalAlignment = Alignment.CenterVertically) {
+        KoanButton(onSelect, Modifier.weight(1f), kind = KoanButtonKind.Card, enabled = !unreachable) {
+            Row(Modifier.padding(vertical = KoanSpace.s), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.width(28.dp)) {
+                    if (selected) KoanIcon(KoanIcons.check, contentDescription = "Controlling", color = KoanTheme.color(KoanTone.Accent))
+                }
+                Column {
+                    KoanText(name, tone = if (selected) KoanTone.Accent else KoanTone.Ink)
+                    detail?.takeIf { it.isNotEmpty() }?.let { KoanText(it, role = KoanType.Fine, tone = KoanTone.Muted) }
+                }
+            }
+        }
+        when {
+            canMove -> KoanButton("Move here", onMove, kind = KoanButtonKind.Compact)
+            onForget != null -> KoanButton("Forget", onForget, kind = KoanButtonKind.Compact, destructive = true)
+        }
+    }
 }
 
 /** What a device is doing, or why it cannot be reached. */
-private fun detail(device: DeviceInfo): String {
+internal fun detail(device: DeviceInfo, now: Long = System.currentTimeMillis()): String {
     device.problem?.let { return it }
     device.waking?.let { stage ->
         return when (stage) {
@@ -189,7 +191,7 @@ private fun detail(device: DeviceInfo): String {
     if (!device.awake && !device.asleep) return "Reconnecting…"
     if (!device.awake) {
         val seen = device.lastSeen?.let {
-            " · seen " + DateUtils.getRelativeTimeSpanString(it * 1000, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS)
+            " · seen " + DateUtils.getRelativeTimeSpanString(it * 1000, now, DateUtils.MINUTE_IN_MILLIS)
         } ?: ""
         device.wakeFailed?.let { return "$it Asleep$seen." }
         if (device.wakeable) return "Asleep$seen. Choosing it wakes it; music sent here arrives as a notification to tap."

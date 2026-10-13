@@ -37,3 +37,7 @@ State comes from `koanApp().mirror`, collected with `collectAsStateWithLifecycle
 3. Open it from anywhere with `LocalNavigator.current.push(FooRoute(id))`. A view model inside the entry is scoped to it: `viewModel { FooModel(koanApp().mirror, id) }`.
 
 A new tab is a `Tab` object, its place in `Tab.all`, a label and an icon in `AppShell`, and an `entry<Tab.Foo>` in its package.
+
+## Invite and pairing links
+
+`koan.rocks/join/`, `koan.rocks/pair/` and `koan://join` open the app (`ui/settings/Links.kt`), as they open the iPhone app. The https filters are App Links with `autoVerify`; until `koan.rocks/.well-known/assetlinks.json` lists the release signing key's fingerprint, Android does not hand those links to the app, and only `koan://join` reaches it.

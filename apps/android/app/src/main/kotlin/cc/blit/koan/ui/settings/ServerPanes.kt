@@ -7,17 +7,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,13 +27,21 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.ffi.ConnectionInfo
 import cc.blit.koan.ffi.SyncPhase
 import cc.blit.koan.ffi.SyncProgress
 import cc.blit.koan.ui.koanApp
-import cc.blit.koan.ui.theme.LocalKoanTokens
+import cc.blit.koan.ui.theme.KoanButton
+import cc.blit.koan.ui.theme.KoanButtonKind
+import cc.blit.koan.ui.theme.KoanField
+import cc.blit.koan.ui.theme.KoanFormRow
+import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanSpace
+import cc.blit.koan.ui.theme.KoanText
+import cc.blit.koan.ui.theme.KoanTone
+import cc.blit.koan.ui.theme.KoanType
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** The server signed in to, syncing it, signing out, and what it offers. */
@@ -55,43 +56,47 @@ fun ServerPane(model: SettingsModel) {
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     var signingOut by remember { mutableStateOf(false) }
+    var copied by remember { mutableStateOf(false) }
     val s = state.settings ?: return SettingsPage(Pane.Server.title, state) {}
 
     SettingsPage(Pane.Server.title, state) {
         if (!s.remoteSignedIn) {
-            item { Text("Not signed in.", Modifier.padding(LocalKoanTokens.current.gutter)) }
+            line("Not signed in.", KoanTone.Muted)
             return@SettingsPage
         }
         header("Signed in")
         item {
-            // The address is what another device or app asks for, so a tap copies it.
+            // The address is what another device or app asks for.
             ValueRow("Server", s.remoteUrl) {
-                scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("Server", s.remoteUrl))) }
+                KoanButton(if (copied) "Copied" else "Copy", {
+                    scope.launch {
+                        clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("Server", s.remoteUrl)))
+                        copied = true
+                        delay(1_500)
+                        copied = false
+                    }
+                }, kind = KoanButtonKind.Bordered)
             }
         }
         item { ValueRow("User", s.remoteUsername) }
         item { ValueRow("Tracks", "%,d".format(s.remoteTracks.toLong())) }
         item { ValueRow("Last synced", s.remoteLastSync?.let(::ago) ?: "Never") }
-        if (connection?.signInRefused == true) {
-            item {
-                Text(
-                    "Your server refused kōan's sign-in. Sign out and sign in again.",
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(horizontal = LocalKoanTokens.current.gutter),
-                )
-            }
-        }
         progress?.let { p -> item { ValueRow("Syncing", describe(p)) } }
+        if (connection?.signInRefused == true) {
+            line("Your server refused kōan's sign-in. Sign out and sign in again.", KoanTone.Bad)
+        }
         item {
             ButtonRow {
                 // Only syncs wait on each other. Signing out is a config write,
                 // and greying it out while a sync runs strands you on a server
                 // you are trying to leave.
-                OutlinedButton(
+                KoanButton(
+                    "Sync",
                     model::syncNow,
+                    kind = KoanButtonKind.Bordered,
                     enabled = SettingsModel.REMOTE !in state.running && !tasks.syncing,
-                ) { Text("Sync") }
-                OutlinedButton({ signingOut = true }) { Text("Sign out") }
+                )
+                KoanButton("Sign out", { signingOut = true }, kind = KoanButtonKind.Bordered, destructive = true)
             }
         }
 
@@ -120,23 +125,21 @@ fun ServerPane(model: SettingsModel) {
     if (signingOut) {
         AlertDialog(
             onDismissRequest = { signingOut = false },
-            title = { Text("Sign out of ${host(s.remoteUrl)}?") },
+            title = { KoanText("Sign out of ${host(s.remoteUrl)}?", role = KoanType.TitleSmall) },
             text = {
-                Text(
-                    "Keeping its tracks leaves records in the library that cannot be played until you sign in again.",
-                )
+                KoanText("Keeping its tracks leaves records in the library that cannot be played until you sign in again.")
             },
             confirmButton = {
-                Column {
-                    TextButton({
+                Column(horizontalAlignment = Alignment.End) {
+                    KoanButton("Sign out and forget its tracks", {
                         signingOut = false
                         model.signOut(forgetTracks = true, then = account::signedOut)
-                    }) { Text("Sign out and forget its tracks") }
-                    TextButton({
+                    }, destructive = true)
+                    KoanButton("Sign out and keep its tracks", {
                         signingOut = false
                         model.signOut(forgetTracks = false, then = account::signedOut)
-                    }) { Text("Sign out and keep its tracks") }
-                    TextButton({ signingOut = false }) { Text("Cancel") }
+                    })
+                    KoanButton("Cancel", { signingOut = false })
                 }
             },
         )
@@ -144,10 +147,10 @@ fun ServerPane(model: SettingsModel) {
 }
 
 /** What the server said it is when koan signed in, and what that turns on. */
-private fun androidx.compose.foundation.lazy.LazyListScope.serverOffers(c: ConnectionInfo?) {
+private fun LazyListScope.serverOffers(c: ConnectionInfo?) {
     header("What the server offers")
     if (c == null || (c.serverKind == null && !c.openSubsonic)) {
-        item { ListItem(headlineContent = { Text("Not reached yet") }) }
+        line("Not reached yet", KoanTone.Muted)
     } else {
         val name = when (val kind = c.serverKind) {
             "koan" -> "kōan"
@@ -167,7 +170,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.serverOffers(c: Conne
             )
         }
         c.extensions.forEach { e ->
-            item { ValueRow(e.name, e.versions.joinToString(", ") { "v$it" }) }
+            item("extension-${e.name}") {
+                Row(inset.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    KoanText(e.name, role = KoanType.Meta)
+                    KoanText(e.versions.joinToString(", ") { "v$it" }, role = KoanType.Meta, tone = KoanTone.Muted)
+                }
+            }
         }
     }
     footer(
@@ -195,9 +203,7 @@ fun DownloadsPane(model: SettingsModel) {
 
     SettingsPage(Pane.Downloads.title, state) {
         if (s.remoteSignedIn) {
-            item {
-                SwitchRow("Offline mode", connection?.offlineManual == true, onChange = model::setOffline)
-            }
+            item { SwitchRow("Offline mode", connection?.offlineManual == true, onChange = model::setOffline) }
             footer(
                 "Shows only what is on this phone. It turns on by itself when your server cannot be reached, and off " +
                     "again when it can.",
@@ -205,48 +211,49 @@ fun DownloadsPane(model: SettingsModel) {
         }
         header("Downloads")
         item {
-            ListItem(
-                headlineContent = { Text("Parallel downloads") },
-                trailingContent = {
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        val n = s.downloadWorkers.toInt()
-                        OutlinedButton({ model.edit { it.copy(downloadWorkers = (n - 1).coerceAtLeast(1).toUInt()) } }, enabled = n > 1) {
-                            Text("−")
-                        }
-                        Text("$n")
-                        OutlinedButton({ model.edit { it.copy(downloadWorkers = (n + 1).coerceAtMost(16).toUInt()) } }, enabled = n < 16) {
-                            Text("+")
-                        }
-                    }
-                },
-            )
+            KoanFormRow("Parallel", inset) {
+                Row(horizontalArrangement = Arrangement.spacedBy(KoanSpace.m), verticalAlignment = Alignment.CenterVertically) {
+                    val n = s.downloadWorkers.toInt()
+                    KoanButton(
+                        "Fewer",
+                        { model.edit { it.copy(downloadWorkers = (n - 1).coerceAtLeast(1).toUInt()) } },
+                        kind = KoanButtonKind.Icon,
+                        icon = KoanIcons.subtract,
+                        enabled = n > 1,
+                    )
+                    KoanText("$n", role = KoanType.Control)
+                    KoanButton(
+                        "More",
+                        { model.edit { it.copy(downloadWorkers = (n + 1).coerceAtMost(16).toUInt()) } },
+                        kind = KoanButtonKind.Icon,
+                        icon = KoanIcons.add,
+                        enabled = n < 16,
+                    )
+                }
+            }
         }
         item {
-            OutlinedTextField(
-                draft ?: s.cacheLimit,
-                { draft = it },
-                label = { Text("Cache limit") },
-                placeholder = { Text("e.g. 50GB, blank for no limit") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { commit() }),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = LocalKoanTokens.current.gutter, vertical = 4.dp)
-                    .onFocusChanged { if (!it.isFocused) commit() },
-            )
+            KoanFormRow("Cache limit", inset) {
+                KoanField(
+                    draft ?: s.cacheLimit,
+                    { draft = it },
+                    Modifier.fillMaxWidth().onFocusChanged { if (!it.isFocused) commit() },
+                    placeholder = "e.g. 50GB, blank for none",
+                    keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { commit() }),
+                )
+            }
         }
         item {
-            ListItem(
-                headlineContent = { Text("Using") },
-                supportingContent = { Text(Formatter.formatShortFileSize(context, cacheBytes)) },
-                trailingContent = {
-                    OutlinedButton(
-                        { model.clearCache(context) },
-                        enabled = SettingsModel.DOWNLOADS !in state.running,
-                    ) { Text("Clear") }
-                },
-            )
+            ValueRow("Using", Formatter.formatShortFileSize(context, cacheBytes)) {
+                KoanButton(
+                    "Clear",
+                    { model.clearCache(context) },
+                    kind = KoanButtonKind.Bordered,
+                    enabled = SettingsModel.DOWNLOADS !in state.running,
+                    destructive = true,
+                )
+            }
         }
     }
 }
@@ -262,7 +269,7 @@ fun AccountPane(model: SettingsModel) {
     SettingsPage(Pane.Account.title, state) {
         header("Password")
         item { ValueRow("User", s.remoteUsername) }
-        item { ButtonRow { OutlinedButton({ changing = true }) { Text("Change password") } } }
+        item { ButtonRow { KoanButton("Change password", { changing = true }, kind = KoanButtonKind.Bordered) } }
         footer(PASSWORD_NOTE)
     }
     if (changing) {
@@ -271,37 +278,38 @@ fun AccountPane(model: SettingsModel) {
             current = ""
             new = ""
         }
+        val secret = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false)
         AlertDialog(
             onDismissRequest = close,
-            title = { Text("Change your password") },
+            title = { KoanText("Change your password", role = KoanType.TitleSmall, appText = true) },
             text = {
-                Column {
-                    Text(PASSWORD_NOTE, style = MaterialTheme.typography.bodySmall)
-                    OutlinedTextField(
+                Column(verticalArrangement = Arrangement.spacedBy(KoanSpace.s)) {
+                    KoanText(PASSWORD_NOTE, role = KoanType.Fine, tone = KoanTone.Muted)
+                    KoanField(
                         current,
                         { current = it },
-                        label = { Text("Current password") },
-                        singleLine = true,
+                        Modifier.fillMaxWidth(),
+                        placeholder = "Current password",
+                        keyboardOptions = secret,
                         visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     )
-                    OutlinedTextField(
+                    KoanField(
                         new,
                         { new = it },
-                        label = { Text("New password") },
-                        singleLine = true,
+                        Modifier.fillMaxWidth(),
+                        placeholder = "New password",
+                        keyboardOptions = secret,
                         visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     )
                 }
             },
             confirmButton = {
-                Button({
+                KoanButton("Change", {
                     model.changePassword(current, new) {}
                     close()
-                }, enabled = current.isNotEmpty() && new.isNotEmpty()) { Text("Change") }
+                }, kind = KoanButtonKind.Prominent, enabled = current.isNotEmpty() && new.isNotEmpty())
             },
-            dismissButton = { TextButton(close) { Text("Cancel") } },
+            dismissButton = { KoanButton("Cancel", close) },
         )
     }
 }
@@ -309,7 +317,7 @@ fun AccountPane(model: SettingsModel) {
 private const val PASSWORD_NOTE =
     "This device stays signed in. Your other devices, and other apps using this account, will have to sign in again."
 
-private fun describe(p: SyncProgress): String {
+internal fun describe(p: SyncProgress): String {
     val what = when (p.phase) {
         SyncPhase.ALBUMS -> "records"
         SyncPhase.TRACKS -> "tracks"
@@ -321,8 +329,7 @@ private fun describe(p: SyncProgress): String {
 }
 
 /** "5 minutes ago", from Unix seconds. */
-private fun ago(seconds: Long): String {
-    val now = System.currentTimeMillis()
+internal fun ago(seconds: Long, now: Long = System.currentTimeMillis()): String {
     if (now - seconds * 1000 < DateUtils.MINUTE_IN_MILLIS) return "Just now"
     return DateUtils.getRelativeTimeSpanString(seconds * 1000, now, DateUtils.MINUTE_IN_MILLIS).toString()
 }

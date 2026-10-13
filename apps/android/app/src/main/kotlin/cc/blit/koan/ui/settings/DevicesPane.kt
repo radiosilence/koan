@@ -1,7 +1,8 @@
 package cc.blit.koan.ui.settings
 
 import android.text.format.DateUtils
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -9,20 +10,13 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -31,7 +25,13 @@ import cc.blit.koan.ffi.ConnectedInfo
 import cc.blit.koan.ffi.ConnectionInfo
 import cc.blit.koan.ffi.Settings
 import cc.blit.koan.ui.koanApp
-import cc.blit.koan.ui.theme.LocalKoanTokens
+import cc.blit.koan.ui.theme.KoanButton
+import cc.blit.koan.ui.theme.KoanButtonKind
+import cc.blit.koan.ui.theme.KoanField
+import cc.blit.koan.ui.theme.KoanSpace
+import cc.blit.koan.ui.theme.KoanText
+import cc.blit.koan.ui.theme.KoanTone
+import cc.blit.koan.ui.theme.KoanType
 
 /**
  * Being found and controlled by koan apps on the same network, reaching
@@ -55,11 +55,10 @@ fun DevicesPane(model: SettingsModel) {
         if (s.remoteSignedIn && c?.pairing == true) {
             header("Pair a device")
             item {
-                val approve = {
+                InlineField(code, { code = it }, "XXXX-XXXX", "Approve", capitals = true) {
                     if (code.isNotBlank()) account.offerPairing(code)
                     code = ""
                 }
-                InlineField(code, { code = it }, "XXXX-XXXX", "Approve", approve, capitals = true)
             }
             footer(
                 "A television or another device without a keyboard shows a code while it waits. Enter it here to sign " +
@@ -79,12 +78,12 @@ fun DevicesPane(model: SettingsModel) {
         item { SwitchRow("Discoverable on this network", s.devicesDiscoverable) { on -> model.edit { it.copy(devicesDiscoverable = on) } } }
         item {
             ChoiceRow(
-                "Devices on this network",
+                "Nearby devices",
                 s.devicesNearbyControl,
                 listOf("Full control" to "full", "Playback only" to "playback"),
             ) { v -> model.edit { it.copy(devicesNearbyControl = v) } }
         }
-        c?.listeningPort?.let { port -> item { ValueRow("Listening on port", port.toString()) } }
+        c?.listeningPort?.let { port -> item { ValueRow("Port", port.toString()) } }
         footer(
             "Other kōan apps on this network can see and control what plays here. Full control adds the output, " +
                 "preset, volume and moving the music; Playback only is play and the queue. Neither reaches your library. " +
@@ -95,22 +94,18 @@ fun DevicesPane(model: SettingsModel) {
 
         header("Devices by address")
         s.devicesAddresses.forEach { addr ->
-            item(addr) {
-                ListItem(
-                    headlineContent = { Text(addr, fontFamily = FontFamily.Monospace) },
-                    trailingContent = {
-                        TextButton({ model.edit { it.copy(devicesAddresses = it.devicesAddresses - addr) } }) { Text("Remove") }
-                    },
-                )
+            item("address-$addr") {
+                ActionRow(addr, null) {
+                    KoanButton("Remove", { model.edit { it.copy(devicesAddresses = it.devicesAddresses - addr) } }, kind = KoanButtonKind.Compact, destructive = true)
+                }
             }
         }
         item {
-            val add = {
+            InlineField(address, { address = it }, "host or host:port", "Add", uri = true) {
                 val a = address.trim()
                 if (a.isNotEmpty() && a !in s.devicesAddresses) model.edit { it.copy(devicesAddresses = it.devicesAddresses + a) }
                 address = ""
             }
-            InlineField(address, { address = it }, "host or host:port", "Add", add, uri = true)
         }
         footer("For networks that do not announce devices, such as a tailnet. The port is 5626 unless the other device says otherwise.")
 
@@ -118,18 +113,16 @@ fun DevicesPane(model: SettingsModel) {
             header("Shared with other accounts")
             c.sharedWith.forEach { name ->
                 item("shared-$name") {
-                    ListItem(
-                        headlineContent = { Text(name) },
-                        trailingContent = { TextButton({ model.shareDevice(name, allow = false) }) { Text("Stop sharing") } },
-                    )
+                    ActionRow(name, null) {
+                        KoanButton("Stop sharing", { model.shareDevice(name, allow = false) }, kind = KoanButtonKind.Compact, destructive = true)
+                    }
                 }
             }
             item {
-                val share = {
+                InlineField(grantee, { grantee = it }, "Their username on this server", "Share") {
                     if (grantee.isNotBlank()) model.shareDevice(grantee, allow = true)
                     grantee = ""
                 }
-                InlineField(grantee, { grantee = it }, "Their username on this server", "Share", share)
             }
             // The server's accounts matching what is typed, not shared with yet.
             val typed = grantee.trim().lowercase()
@@ -139,13 +132,11 @@ fun DevicesPane(model: SettingsModel) {
                     .take(5)
                     .forEach { name ->
                         item("suggest-$name") {
-                            ListItem(headlineContent = { Text(name) }, modifier = Modifier.clickable { grantee = name })
+                            KoanButton({ grantee = name }, inset, kind = KoanButtonKind.Card) { KoanText(name) }
                         }
                     }
             }
-            c.shareError?.let { error ->
-                item { Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = LocalKoanTokens.current.gutter)) }
-            }
+            c.shareError?.let { line(it, KoanTone.Bad) }
             footer(
                 "From any network, as their own account, they can see and control what this device plays, including the " +
                     "output, preset and volume. Nothing of your library, playlists, history or settings.",
@@ -156,16 +147,18 @@ fun DevicesPane(model: SettingsModel) {
     state.replacingQueue?.let { saved ->
         AlertDialog(
             onDismissRequest = { model.confirmServerQueue(replace = false) },
-            title = { Text("Replace this queue?") },
+            title = { KoanText("Replace this queue?", role = KoanType.TitleSmall, appText = true) },
             text = {
                 val tracks = if (saved.savedTracks == 1u) "track" else "tracks"
-                Text(
+                KoanText(
                     "Your server has a queue of ${saved.savedTracks} $tracks saved by ${saved.savedBy}. Keeping the queue on " +
                         "the server replaces the one on this device with it.",
                 )
             },
-            confirmButton = { TextButton({ model.confirmServerQueue(replace = true) }) { Text("Replace with the server's queue") } },
-            dismissButton = { TextButton({ model.confirmServerQueue(replace = false) }) { Text("Cancel") } },
+            confirmButton = {
+                KoanButton("Replace with the server's queue", { model.confirmServerQueue(replace = true) }, destructive = true)
+            },
+            dismissButton = { KoanButton("Cancel", { model.confirmServerQueue(replace = false) }) },
         )
     }
 }
@@ -183,40 +176,28 @@ private fun LazyListScope.connected(model: SettingsModel, s: Settings, c: Connec
     // nothing else to tell them apart.
     connections.forEachIndexed { i, connection ->
         item("connection-$i") {
-            ListItem(
-                headlineContent = { Text(connection.name) },
-                supportingContent = { Text(detail(connection)) },
-                trailingContent = connection.key?.let {
-                    {
-                        Row {
-                            if (!connection.own && connection.owner == null && connection.addr != null) {
-                                TextButton({ model.endConnection(connection, refuse = true) }) { Text("Refuse") }
-                            }
-                            TextButton({ model.endConnection(connection, refuse = false) }) { Text("Disconnect") }
-                        }
+            ActionRow(connection.name, detail(connection)) {
+                if (connection.key != null) {
+                    if (!connection.own && connection.owner == null && connection.addr != null) {
+                        KoanButton("Refuse", { model.endConnection(connection, refuse = true) }, kind = KoanButtonKind.Compact, destructive = true)
                     }
-                },
-            )
+                    KoanButton("Disconnect", { model.endConnection(connection, refuse = false) }, kind = KoanButtonKind.Compact)
+                }
+            }
         }
     }
     held.forEach { h ->
         item("held-${h.addr}") {
-            ListItem(
-                headlineContent = { Text(h.name ?: h.addr) },
-                supportingContent = { Text("Disconnected until allowed back") },
-                trailingContent = { TextButton({ model.allowHeld(h) }) { Text("Allow") } },
-            )
+            ActionRow(h.name ?: h.addr, "Disconnected until allowed back") {
+                KoanButton("Allow", { model.allowHeld(h) }, kind = KoanButtonKind.Compact)
+            }
         }
     }
     s.devicesRefused.forEach { addr ->
         item("refused-$addr") {
-            ListItem(
-                headlineContent = { Text(addr, fontFamily = FontFamily.Monospace) },
-                supportingContent = { Text("Refused") },
-                trailingContent = {
-                    TextButton({ model.edit { it.copy(devicesRefused = it.devicesRefused - addr) } }) { Text("Allow") }
-                },
-            )
+            ActionRow(addr, "Refused") {
+                KoanButton("Allow", { model.edit { it.copy(devicesRefused = it.devicesRefused - addr) } }, kind = KoanButtonKind.Compact)
+            }
         }
     }
     footer(
@@ -248,6 +229,22 @@ private fun detail(c: ConnectedInfo): String {
     )
 }
 
+/** A thing named, with a line about it and the actions beside it. Names are data and keep their case. */
+@Composable
+private fun ActionRow(name: String, detail: String?, actions: @Composable () -> Unit) {
+    Row(
+        inset.fillMaxWidth().padding(vertical = KoanSpace.xs),
+        horizontalArrangement = Arrangement.spacedBy(KoanSpace.s),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            KoanText(name)
+            detail?.let { KoanText(it, role = KoanType.Fine, tone = KoanTone.Muted) }
+        }
+        actions()
+    }
+}
+
 /** A field with its one action beside it, run on the keyboard's action key too. */
 @Composable
 internal fun InlineField(
@@ -255,16 +252,16 @@ internal fun InlineField(
     onChange: (String) -> Unit,
     placeholder: String,
     action: String,
-    onAction: () -> Unit,
     uri: Boolean = false,
     capitals: Boolean = false,
+    onAction: () -> Unit,
 ) {
     ButtonRow {
-        OutlinedTextField(
+        KoanField(
             value,
             onChange,
-            placeholder = { Text(placeholder) },
-            singleLine = true,
+            Modifier.weight(1f),
+            placeholder = placeholder,
             keyboardOptions = KeyboardOptions(
                 keyboardType = if (uri) KeyboardType.Uri else KeyboardType.Text,
                 capitalization = if (capitals) KeyboardCapitalization.Characters else KeyboardCapitalization.None,
@@ -272,8 +269,7 @@ internal fun InlineField(
                 imeAction = ImeAction.Done,
             ),
             keyboardActions = KeyboardActions(onDone = { onAction() }),
-            modifier = Modifier.weight(1f).fillMaxWidth(),
         )
-        Button(onAction, enabled = value.isNotBlank()) { Text(action) }
+        KoanButton(action, onAction, kind = KoanButtonKind.Bordered, enabled = value.isNotBlank())
     }
 }

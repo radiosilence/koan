@@ -4,7 +4,6 @@ import android.text.format.Formatter
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cc.blit.koan.engine.EngineMirror
-import cc.blit.koan.ffi.Appearance
 import cc.blit.koan.ffi.ConnectedInfo
 import cc.blit.koan.ffi.HeldInfo
 import cc.blit.koan.ffi.KoanEngine
@@ -33,7 +32,6 @@ sealed interface Scrobbling {
 data class SettingsState(
     /** `null` until the engine has answered. */
     val settings: Settings? = null,
-    val appearance: Appearance? = null,
     /** What the last thing done here came to. Gone after a few seconds. */
     val result: String? = null,
     /** Why the last thing done here failed. Stays until the next action. */
@@ -65,9 +63,8 @@ class SettingsModel(private val mirror: EngineMirror) : ViewModel() {
 
     fun reload() {
         viewModelScope.launch {
-            val engine = mirror.engine()
-            val settings = engine.settings()
-            _state.update { it.copy(settings = settings, appearance = engine.appearance()) }
+            val settings = mirror.engine().settings()
+            _state.update { it.copy(settings = settings) }
         }
     }
 
@@ -226,20 +223,6 @@ class SettingsModel(private val mirror: EngineMirror) : ViewModel() {
         disconnectScrobbling()
         _state.update { it.copy(scrobbling = Scrobbling.Known(null)) }
         null
-    }
-
-    // -- Appearance ------------------------------------------------------
-
-    /** The kōan theme or the platform's look. Takes effect when kōan next opens. */
-    fun setTheme(koan: Boolean) = appearance({ copy(koan = koan) }) { setTheme(koan) }
-
-    fun setIcons(on: Boolean) = appearance({ copy(icons = on) }) { setThemeIcons(on) }
-
-    fun setRecordColours(on: Boolean) = appearance({ copy(recordColours = on) }) { setRecordColours(on) }
-
-    private fun appearance(change: Appearance.() -> Appearance, write: KoanEngine.() -> Unit) {
-        _state.update { it.copy(appearance = it.appearance?.change()) }
-        mirror.launch { write() }
     }
 
     // -- Running ---------------------------------------------------------

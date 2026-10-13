@@ -28,6 +28,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -67,12 +69,13 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
-import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -448,9 +451,21 @@ fun KoanField(
     placeholder: String = "",
     ground: Boolean = true,
     singleLine: Boolean = true,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
 ) {
     if (!KoanTheme.isOn) {
-        OutlinedTextField(value, onValueChange, modifier, singleLine = singleLine, placeholder = { Text(placeholder) })
+        OutlinedTextField(
+            value,
+            onValueChange,
+            modifier,
+            singleLine = singleLine,
+            placeholder = { Text(placeholder) },
+            keyboardOptions = keyboardOptions,
+            keyboardActions = keyboardActions,
+            visualTransformation = visualTransformation,
+        )
         return
     }
     val c = KoanTheme.colors
@@ -462,6 +477,9 @@ fun KoanField(
             .then(if (ground) Modifier.background(c.surface) else Modifier),
         textStyle = KoanType.Body.koan.copy(color = c.ink),
         singleLine = singleLine,
+        keyboardOptions = keyboardOptions,
+        keyboardActions = keyboardActions,
+        visualTransformation = visualTransformation,
         cursorBrush = SolidColor(KoanTheme.look.accent),
         decorationBox = { field ->
             Box(Modifier.padding(horizontal = KoanSpace.m, vertical = KoanSpace.s), contentAlignment = Alignment.CenterStart) {

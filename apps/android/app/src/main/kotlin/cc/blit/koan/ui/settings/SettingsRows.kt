@@ -1,32 +1,30 @@
 package cc.blit.koan.ui.settings
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import cc.blit.koan.ui.theme.LocalKoanTokens
+import cc.blit.koan.ui.theme.KoanEdge
+import cc.blit.koan.ui.theme.KoanFormRow
+import cc.blit.koan.ui.theme.KoanPicker
+import cc.blit.koan.ui.theme.KoanSectionHeader
+import cc.blit.koan.ui.theme.KoanSpace
+import cc.blit.koan.ui.theme.KoanText
+import cc.blit.koan.ui.theme.KoanToggle
+import cc.blit.koan.ui.theme.KoanTone
+import cc.blit.koan.ui.theme.KoanType
+import cc.blit.koan.ui.theme.koanRule
+import cc.blit.koan.ui.theme.koanSurface
 
 /**
  * A settings page: its title, its sections, and the status line beneath them
@@ -34,17 +32,19 @@ import cc.blit.koan.ui.theme.LocalKoanTokens
  */
 @Composable
 fun SettingsPage(title: String, state: SettingsState, content: LazyListScope.() -> Unit) {
-    val gutter = LocalKoanTokens.current.gutter
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().koanSurface()) {
         LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
             item {
-                Text(
+                KoanText(
                     title,
-                    style = MaterialTheme.typography.headlineMedium,
-                    modifier = Modifier.padding(horizontal = gutter, vertical = 12.dp),
+                    Modifier.padding(horizontal = KoanSpace.page, vertical = KoanSpace.m),
+                    role = KoanType.Title,
+                    tone = KoanTone.Strong,
+                    appText = true,
                 )
             }
             content()
+            item { Spacer(Modifier.height(KoanSpace.xl)) }
         }
         StatusLine(state)
     }
@@ -52,92 +52,69 @@ fun SettingsPage(title: String, state: SettingsState, content: LazyListScope.() 
 
 /**
  * The result of the last action, or the reason it failed. Takes no room until
- * there is something to say: an action that reports nothing looks like it did
- * nothing.
+ * there is something to say, then sits on the ground under a rule: an action
+ * that reports nothing looks like it did nothing.
  */
 @Composable
 private fun StatusLine(state: SettingsState) {
     val text = state.error ?: state.result ?: return
-    Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
-        Text(
-            text,
-            color = if (state.error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.bodySmall,
-            maxLines = 3,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = LocalKoanTokens.current.gutter, vertical = 8.dp),
-        )
-    }
-}
-
-/** A section's heading. */
-fun LazyListScope.header(text: String) = item {
-    Text(
+    KoanText(
         text,
-        style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(start = LocalKoanTokens.current.gutter, end = LocalKoanTokens.current.gutter, top = 20.dp, bottom = 4.dp),
+        Modifier
+            .fillMaxWidth()
+            .koanSurface()
+            .koanRule(KoanEdge.Top)
+            .padding(horizontal = KoanSpace.page, vertical = KoanSpace.s),
+        role = KoanType.Fine,
+        tone = if (state.error != null) KoanTone.Bad else KoanTone.Muted,
+        maxLines = 3,
     )
 }
+
+/** Rows inside a section keep the page margin. */
+internal val inset = Modifier.padding(horizontal = KoanSpace.page)
+
+/** A section's heading. */
+fun LazyListScope.header(text: String) = item { KoanSectionHeader(text, inset) }
 
 /** What a section is for, under it. */
 fun LazyListScope.footer(text: String) = item {
-    Text(
-        text,
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = LocalKoanTokens.current.gutter, vertical = 4.dp),
-    )
+    KoanText(text, inset.padding(vertical = KoanSpace.xs), role = KoanType.Fine, tone = KoanTone.Muted)
 }
 
-/** A value with its label, read only. */
-@Composable
-fun ValueRow(label: String, value: String, onClick: (() -> Unit)? = null) {
-    ListItem(
-        headlineContent = { Text(label) },
-        trailingContent = { Text(value, color = MaterialTheme.colorScheme.onSurfaceVariant) },
-        modifier = if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier,
-    )
+/** A line of words in a section, in `tone`. */
+fun LazyListScope.line(text: String, tone: KoanTone = KoanTone.Ink) = item {
+    KoanText(text, inset.padding(vertical = KoanSpace.s), tone = tone)
 }
 
+/** A value with its label, read only. Values are data, so they keep their case. */
 @Composable
-fun SwitchRow(label: String, checked: Boolean, enabled: Boolean = true, detail: String? = null, onChange: (Boolean) -> Unit) {
-    ListItem(
-        headlineContent = { Text(label) },
-        supportingContent = detail?.let { { Text(it) } },
-        trailingContent = { Switch(checked, onChange, enabled = enabled) },
-        modifier = Modifier.clickable(enabled = enabled) { onChange(!checked) },
-    )
-}
-
-/** One of a few choices, shown as the chosen one's label and picked from a menu. */
-@Composable
-fun <T> ChoiceRow(label: String, selected: T, options: List<Pair<String, T>>, onChange: (T) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        ListItem(
-            headlineContent = { Text(label) },
-            trailingContent = {
-                Text(options.firstOrNull { it.second == selected }?.first ?: "", color = MaterialTheme.colorScheme.primary)
-            },
-            modifier = Modifier.clickable { open = true },
-        )
-        DropdownMenu(open, { open = false }, Modifier.align(Alignment.TopEnd)) {
-            options.forEach { (name, value) ->
-                DropdownMenuItem(text = { Text(name) }, onClick = {
-                    open = false
-                    onChange(value)
-                })
-            }
+fun ValueRow(label: String, value: String, trailing: (@Composable () -> Unit)? = null) {
+    KoanFormRow(label, inset) {
+        Row(horizontalArrangement = Arrangement.spacedBy(KoanSpace.m), verticalAlignment = Alignment.CenterVertically) {
+            KoanText(value, Modifier.weight(1f), role = KoanType.Control, tone = KoanTone.Muted, maxLines = 2)
+            trailing?.invoke()
         }
     }
+}
+
+@Composable
+fun SwitchRow(label: String, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
+    KoanToggle(label, checked, onChange, inset, enabled)
+}
+
+/** One of a few choices, picked from a menu. */
+@Composable
+fun <T> ChoiceRow(label: String, selected: T, options: List<Pair<String, T>>, onChange: (T) -> Unit) {
+    KoanFormRow(label, inset) { KoanPicker(options, selected, onChange) }
 }
 
 /** A row of buttons inside a section, laid out from the start. */
 @Composable
 fun ButtonRow(content: @Composable RowScope.() -> Unit) {
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = LocalKoanTokens.current.gutter, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        inset.fillMaxWidth().padding(vertical = KoanSpace.s),
+        horizontalArrangement = Arrangement.spacedBy(KoanSpace.m),
         verticalAlignment = Alignment.CenterVertically,
         content = content,
     )
