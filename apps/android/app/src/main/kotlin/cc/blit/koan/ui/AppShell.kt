@@ -35,6 +35,7 @@ import cc.blit.koan.ui.playlists.playlistsEntries
 import cc.blit.koan.ui.queue.queueEntries
 import cc.blit.koan.ui.search.searchEntries
 import cc.blit.koan.ui.settings.AccountPrompts
+import cc.blit.koan.ui.settings.ControlledStrip
 import cc.blit.koan.ui.settings.DspPrompts
 import cc.blit.koan.ui.settings.AskForNotificationsOnFirstPlay
 import cc.blit.koan.ui.settings.OpenedLinks
@@ -100,6 +101,7 @@ private fun Tabs(navigator: Navigator, stacks: Map<Tab, List<NavKey>>) {
         containerColor = Color.Transparent,
         bottomBar = {
             Column {
+                ControlledStrip()
                 MiniPlayer()
                 KoanTabBar {
                     Tab.all.forEach { tab ->
