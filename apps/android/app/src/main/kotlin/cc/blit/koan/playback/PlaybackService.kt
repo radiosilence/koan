@@ -10,12 +10,18 @@ import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.session.CacheBitmapLoader
+import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import cc.blit.koan.KoanApp
 import cc.blit.koan.MainActivity
 import cc.blit.koan.ffi.PlayState
+import cc.blit.koan.ffi.RepeatMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -34,6 +40,7 @@ import kotlinx.coroutines.launch
  * and rebuild the engine's output when the route changes, since an AAudio
  * stream does not follow the device it was opened on to the next one.
  */
+@OptIn(UnstableApi::class)
 class PlaybackService : MediaSessionService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var session: MediaSession
@@ -74,6 +81,7 @@ class PlaybackService : MediaSessionService() {
         )
         session = MediaSession.Builder(this, KoanPlayer(engine, scope))
             .setSessionActivity(open)
+            .setBitmapLoader(CacheBitmapLoader(ArtBitmapLoader(this, scope)))
             .build()
         ContextCompat.registerReceiver(
             this,
@@ -87,6 +95,12 @@ class PlaybackService : MediaSessionService() {
                 .map { it?.state == PlayState.PLAYING }
                 .distinctUntilChanged()
                 .collect { playing -> if (playing) holdFocus() else if (!resumeOnGain) releaseFocus() }
+        }
+        scope.launch {
+            engine.nowPlaying
+                .map { (it?.shuffle == true) to (it?.repeatMode ?: RepeatMode.OFF) }
+                .distinctUntilChanged()
+                .collect { (shuffle, repeat) -> session.setMediaButtonPreferences(modeButtons(shuffle, repeat)) }
         }
     }
 
@@ -106,6 +120,42 @@ class PlaybackService : MediaSessionService() {
         scope.cancel()
         super.onDestroy()
     }
+
+    /**
+     * Shuffle and repeat beside the transport in the notification and on the
+     * lock screen, each showing its state and setting the next one.
+     */
+    private fun modeButtons(shuffle: Boolean, repeat: RepeatMode) = listOf(
+        CommandButton.Builder(if (shuffle) CommandButton.ICON_SHUFFLE_ON else CommandButton.ICON_SHUFFLE_OFF)
+            .setDisplayName(if (shuffle) "Shuffle off" else "Shuffle")
+            .setPlayerCommand(Player.COMMAND_SET_SHUFFLE_MODE, !shuffle)
+            .setSlots(CommandButton.SLOT_OVERFLOW)
+            .build(),
+        CommandButton.Builder(
+            when (repeat) {
+                RepeatMode.OFF -> CommandButton.ICON_REPEAT_OFF
+                RepeatMode.QUEUE -> CommandButton.ICON_REPEAT_ALL
+                RepeatMode.ONE -> CommandButton.ICON_REPEAT_ONE
+            },
+        )
+            .setDisplayName(
+                when (repeat) {
+                    RepeatMode.OFF -> "Repeat the queue"
+                    RepeatMode.QUEUE -> "Repeat this track"
+                    RepeatMode.ONE -> "Repeat off"
+                },
+            )
+            .setPlayerCommand(
+                Player.COMMAND_SET_REPEAT_MODE,
+                when (repeat) {
+                    RepeatMode.OFF -> Player.REPEAT_MODE_ALL
+                    RepeatMode.QUEUE -> Player.REPEAT_MODE_ONE
+                    RepeatMode.ONE -> Player.REPEAT_MODE_OFF
+                },
+            )
+            .setSlots(CommandButton.SLOT_OVERFLOW)
+            .build(),
+    )
 
     private fun holdFocus() {
         resumeOnGain = false

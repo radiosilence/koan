@@ -12,6 +12,7 @@ import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.ffi.KoanEngine
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ffi.QueueItem
+import cc.blit.koan.ffi.RepeatMode
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
@@ -60,6 +61,14 @@ class KoanPlayer(
             .setCurrentMediaItemIndex(current.coerceAtLeast(0))
             .setPlaybackState(state)
             .setPlayWhenReady(now?.state == PlayState.PLAYING, PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
+            .setShuffleModeEnabled(now?.shuffle == true)
+            .setRepeatMode(
+                when (now?.repeatMode) {
+                    RepeatMode.QUEUE -> REPEAT_MODE_ALL
+                    RepeatMode.ONE -> REPEAT_MODE_ONE
+                    else -> REPEAT_MODE_OFF
+                },
+            )
             .setContentPositionMs(
                 PositionSupplier.getExtrapolating(playhead.positionAt(), if (playhead.playing) 1f else 0f),
             )
@@ -82,6 +91,11 @@ class KoanPlayer(
                         .setArtist(item.artist)
                         .setAlbumTitle(item.album)
                         .setAlbumArtist(item.albumArtist)
+                        .setArtworkUri(ArtBitmapLoader.artUri(item.albumId, item.trackId))
+                        .setTrackNumber(item.trackNumber?.toInt())
+                        .setDiscNumber(item.disc?.toInt())
+                        .setIsPlayable(true)
+                        .setIsBrowsable(false)
                         .build(),
                 )
                 .build(),
@@ -103,6 +117,18 @@ class KoanPlayer(
 
     override fun handleStop() = call { pause() }
 
+    override fun handleSetShuffleModeEnabled(shuffleModeEnabled: Boolean) = call { setShuffle(shuffleModeEnabled) }
+
+    override fun handleSetRepeatMode(repeatMode: Int) = call {
+        setRepeat(
+            when (repeatMode) {
+                REPEAT_MODE_ALL -> RepeatMode.QUEUE
+                REPEAT_MODE_ONE -> RepeatMode.ONE
+                else -> RepeatMode.OFF
+            },
+        )
+    }
+
     override fun handleRelease(): ListenableFuture<*> = Futures.immediateVoidFuture()
 
     /** Run an engine call, settling the future once the engine has taken it. */
@@ -120,6 +146,8 @@ class KoanPlayer(
             .addAll(
                 COMMAND_PLAY_PAUSE,
                 COMMAND_STOP,
+                COMMAND_SET_SHUFFLE_MODE,
+                COMMAND_SET_REPEAT_MODE,
                 COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
                 COMMAND_SEEK_TO_NEXT,
                 COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
