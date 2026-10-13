@@ -330,7 +330,7 @@ private fun OutputGraph(o: DspOverview, response: DspResponse?) {
     val muted = KoanTheme.color(KoanTone.Muted)
     val flat = o.active == null && o.chain.none { it.on } || response == null
     val curves = remember(response, o.active, o.chain, flat, strong, accent, muted) {
-        if (flat || response == null) emptyList() else outputCurves(o, response, strong, accent, muted)
+        response?.takeUnless { flat }?.let { outputCurves(o, it, strong, accent, muted) }.orEmpty()
     }
     val freqs = response?.freqs ?: flatFreqs
     ResponseGraph(freqs, curves, graphStyle(), inset.fillMaxWidth().height(200.dp).padding(vertical = KoanSpace.s)) {
