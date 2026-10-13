@@ -24,6 +24,7 @@ import cc.blit.koan.MainActivity
 import cc.blit.koan.R
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ffi.RepeatMode
+import cc.blit.koan.ui.nowplaying.nextRepeat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -154,11 +155,7 @@ class PlaybackService : MediaSessionService() {
             )
             .setPlayerCommand(
                 Player.COMMAND_SET_REPEAT_MODE,
-                when (repeat) {
-                    RepeatMode.OFF -> Player.REPEAT_MODE_ALL
-                    RepeatMode.QUEUE -> Player.REPEAT_MODE_ONE
-                    RepeatMode.ONE -> Player.REPEAT_MODE_OFF
-                },
+                mediaRepeat(nextRepeat(repeat)),
             )
             .setSlots(CommandButton.SLOT_OVERFLOW)
             .build(),

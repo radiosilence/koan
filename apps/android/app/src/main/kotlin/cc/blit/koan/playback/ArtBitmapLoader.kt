@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.annotation.OptIn
+import androidx.core.net.toUri
 import androidx.media3.common.util.BitmapLoader
 import androidx.media3.common.util.UnstableApi
 import cc.blit.koan.art.Art
@@ -49,8 +50,8 @@ class ArtBitmapLoader(private val context: Context, private val scope: Coroutine
         private const val SCHEME = "koan-art"
 
         fun artUri(albumId: Long?, trackId: Long?): Uri? = when {
-            albumId != null -> Uri.parse("$SCHEME://album/$albumId")
-            trackId != null -> Uri.parse("$SCHEME://track/$trackId")
+            albumId != null -> "$SCHEME://album/$albumId".toUri()
+            trackId != null -> "$SCHEME://track/$trackId".toUri()
             else -> null
         }
 

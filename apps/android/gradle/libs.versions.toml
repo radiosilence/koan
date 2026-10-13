@@ -12,7 +12,7 @@ serialization = "1.11.0"
 coil = "3.6.3"
 # uniffi's Kotlin bindings call the core through JNA.
 jna = "5.19.1"
-reorderable = "2.4.3"
+reorderable = "3.1.0"
 junit = "4.13.2"
 
 [libraries]

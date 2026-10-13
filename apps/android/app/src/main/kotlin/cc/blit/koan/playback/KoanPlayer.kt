@@ -62,13 +62,7 @@ class KoanPlayer(
             .setPlaybackState(state)
             .setPlayWhenReady(now?.state == PlayState.PLAYING, PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
             .setShuffleModeEnabled(now?.shuffle == true)
-            .setRepeatMode(
-                when (now?.repeatMode) {
-                    RepeatMode.QUEUE -> REPEAT_MODE_ALL
-                    RepeatMode.ONE -> REPEAT_MODE_ONE
-                    else -> REPEAT_MODE_OFF
-                },
-            )
+            .setRepeatMode(mediaRepeat(now?.repeatMode ?: RepeatMode.OFF))
             .setContentPositionMs(
                 PositionSupplier.getExtrapolating(playhead.positionAt(), if (playhead.playing) 1f else 0f),
             )
@@ -119,15 +113,7 @@ class KoanPlayer(
 
     override fun handleSetShuffleModeEnabled(shuffleModeEnabled: Boolean) = call { setShuffle(shuffleModeEnabled) }
 
-    override fun handleSetRepeatMode(repeatMode: Int) = call {
-        setRepeat(
-            when (repeatMode) {
-                REPEAT_MODE_ALL -> RepeatMode.QUEUE
-                REPEAT_MODE_ONE -> RepeatMode.ONE
-                else -> RepeatMode.OFF
-            },
-        )
-    }
+    override fun handleSetRepeatMode(repeatMode: Int) = call { setRepeat(koanRepeat(repeatMode)) }
 
     override fun handleRelease(): ListenableFuture<*> = Futures.immediateVoidFuture()
 
@@ -161,4 +147,17 @@ class KoanPlayer(
             )
             .build()
     }
+}
+
+/** The engine's repeat as Media3 names it: the queue is Media3's "all". */
+internal fun mediaRepeat(mode: RepeatMode) = when (mode) {
+    RepeatMode.OFF -> Player.REPEAT_MODE_OFF
+    RepeatMode.QUEUE -> Player.REPEAT_MODE_ALL
+    RepeatMode.ONE -> Player.REPEAT_MODE_ONE
+}
+
+internal fun koanRepeat(@Player.RepeatMode mode: Int) = when (mode) {
+    Player.REPEAT_MODE_ALL -> RepeatMode.QUEUE
+    Player.REPEAT_MODE_ONE -> RepeatMode.ONE
+    else -> RepeatMode.OFF
 }

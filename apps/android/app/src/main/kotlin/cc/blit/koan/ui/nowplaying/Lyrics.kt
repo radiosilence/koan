@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -83,7 +84,7 @@ internal fun lineAt(lines: List<LyricLine>, positionSecs: Double) = lines.indexO
 private fun SyncedLyrics(lines: List<LyricLine>, durationMs: Long) {
     val app = koanApp()
     val playhead by app.mirror.playhead.collectAsStateWithLifecycle()
-    var active by remember { mutableStateOf(-1) }
+    var active by remember { mutableIntStateOf(-1) }
     val list = rememberLazyListState()
     // A line changes when a timestamp passes, and every timestamp is known:
     // sleep until the next one rather than asking where the playhead is.
