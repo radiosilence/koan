@@ -30,7 +30,19 @@ The format badge shows the rate the hardware runs at, read back from the session
 
 ## The Android app (in development)
 
-The Android app is a Kotlin and Compose app that links the same engine as the iOS app, and it is not finished: it has the kōan theme, the four tabs (queue, library, search, settings) and a server sign-in, and the pages themselves are placeholders. It is built from source (`apps/android`, Android 9 or later, `gradle assembleDebug` with the Android SDK, NDK r27c, `cargo-ndk` and the Rust Android targets installed) and has not been run on a device yet.
+The Android app is a Kotlin and Compose app that links the same engine as the iOS app, and it is not finished: it has the kōan theme, the four tabs (queue, library, search, settings), server sign-in and Settings, and the other pages are placeholders. It is built from source (`apps/android`, Android 9 or later, `gradle assembleDebug` with the Android SDK, NDK r27c, `cargo-ndk` and the Rust Android targets installed) and has not been run on a device yet.
+
+### Settings and signing in on Android
+
+A phone that is not signed in opens on the sign-in page. It takes a server address, a username and a password, or an API key made in the web UI (one that can be revoked on its own). An invite pasted into the address field signs in by itself and loads the library; if the app is already signed in to another account it asks first. **Show a code** signs the phone in from a device that is already signed in: the phone shows a code, and you type it under Settings → Devices → Pair a device on the other (a koan server and a device signed in to it are needed).
+
+Settings has five panes, and each change is saved as you make it, to the same configuration the other apps and the command line use; it is read again whenever the page comes back to the front.
+
+- **Library** lists any scanned folders and what the library holds, and clears the library index. Scanning folders on the phone itself is not part of the Android app yet.
+- **Server** shows the signed-in server and its link, syncs, signs out (keeping or forgetting its tracks), and sets offline mode, automatic sync, parallel downloads and the cache limit (`50GB`, blank for none).
+- **Playback** says whether the current output is bit-perfect, chooses the output (including a UPnP renderer found on the network), and sets fade on pause and ReplayGain.
+- **Devices** makes the phone discoverable to other koan apps on the network, sets whether they get full control or playback only, lists who is connected (disconnect or refuse them), adds devices by address, and approves a device that is waiting for a code.
+- **Appearance** sets whether the accent follows the record playing.
 
 Playback belongs to a foreground media service, so it carries on when the app is left, and the lock screen, headset buttons and notification control it. It pauses when another app takes audio focus or the headphones are unplugged.
 

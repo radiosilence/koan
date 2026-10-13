@@ -311,7 +311,8 @@ The Kotlin counterparts of the Swift modules above, with the Swift doc comments 
 | `engine/EngineDispatcher.kt` | The single thread every engine call is issued from, so commands are issued in the order they were asked |
 | `state/EngineMirror.kt` | `EngineMirror.swift`: one `StateFlow` per slice, fed by following `observe()`; a value equal to the one held wakes nobody. Big lists (`QueueRows`, `QueueState`) are compared by identity |
 | `state/PlayerModel.kt` | `PlayerModel.swift`: commands, the seek hold, the session autosave. Leaves out devices, renderers, the pasteboard and drops |
-| `state/SettingsModel.kt` | The server sign-in state, for now; the Settings pages grow it |
+| `state/SettingsModel.kt`, `SettingsRules.kt` | `SettingsModel.swift` and `Pairing.swift`: the configuration read on open and on resume and written whole when a field is committed (writes serialised, last edit wins); sign-in by password, API key or invite; pairing both ways (this device's code, and approving another's). `SettingsRules` decides what a cache limit, an address or a pairing code may be |
+| `ui/pages/SettingsPage.kt`, `SignInPage.kt` | Settings in five panes (library, server, playback, devices, appearance) and the sign-in gate (account, invite, code), on the theme's form controls: `KoanSegmented`, `KoanField`, `KoanPicker`, `KoanStepper`, `KoanFormRow` |
 | `service/KoanPlaybackService.kt` | A Media3 `MediaSessionService` (foreground type `mediaPlayback`). Starts the engine; audio focus, becoming noisy, route changes and USB bit-perfect are wired here |
 | `service/KoanPlayer.kt` | A `SimpleBasePlayer` that reports the mirror and forwards commands. Its timeline is the current track only; `KoanPlayerState` is the pure mapping, tested on the JVM |
 | `service/AudioFocusPolicy.kt`, `AudioFocusController.kt` | Pause on loss, pause until gain on transient loss, duck by the system on a transient loss that allows it |
