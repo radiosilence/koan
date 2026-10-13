@@ -39,6 +39,7 @@ class BrowseQueryTest {
     fun lengthsRead() {
         assertEquals("3:07", duration(187_000))
         assertEquals("1:02:45", duration(3_765_000))
+        assertEquals("0:06", length(6_000))
         assertEquals("42 min", length(42 * 60_000))
         assertEquals("1 h 12 min", length(72 * 60_000))
         assertEquals("1 album", count(1, "album"))
