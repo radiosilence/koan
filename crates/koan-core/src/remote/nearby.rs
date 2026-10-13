@@ -522,8 +522,6 @@ pub fn refresh() {
     discovery::restart();
 }
 
-/// Dial every device now, rather than when its backoff runs out: the first
-/// thing tried when waking one, which may not be suspended yet.
 /// Whether a dialer here could reach `id`: nearby is running and the device
 /// was announced on this network or is dialled by a remembered address.
 pub fn dials(id: &str) -> bool {
@@ -539,6 +537,8 @@ pub fn dials(id: &str) -> bool {
             && RUNNING.lock().is_some()
 }
 
+/// Dial every device now, rather than when its backoff runs out: the first
+/// thing tried when waking one, which may not be suspended yet.
 pub fn dial_now() {
     redial_all();
 }
