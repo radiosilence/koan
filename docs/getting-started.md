@@ -44,6 +44,8 @@ Settings has five panes, and each change is saved as you make it, to the same co
 - **Devices** makes the phone discoverable to other koan apps on the network, sets whether they get full control or playback only, lists who is connected (disconnect or refuse them), adds devices by address, and approves a device that is waiting for a code.
 - **Appearance** sets whether the accent follows the record playing.
 
+Search finds artists, records and tracks as you type, and favourites, recently played and downloaded are pages of the same shape: artists as pills, records as tiles, tracks as rows, each heading showing how many the library has and opening that list. Long-press anything to pick several, across kinds, and play or queue them together.
+
 Playback belongs to a foreground media service, so it carries on when the app is left, and the lock screen, headset buttons and notification control it. It pauses when another app takes audio focus or the headphones are unplugged.
 
 ### Sample rates on Android

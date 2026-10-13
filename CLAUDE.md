@@ -342,6 +342,10 @@ The Kotlin counterparts of the Swift modules above, with the Swift doc comments 
 | `ui/pages/AlbumPage.kt`, `ui/pages/ArtistPage.kt` | A record (disc headings, tap to play from a track, long-press to pick, scrolls to the track search matched) and an artist (photo, cut-down biography, grid of records, or the tracks on others' records). The pick is a mode, as `PlayableSelection` is |
 | `ui/pages/RecordHeader.kt` | The head of a record, artist or playlist: the cover as wide as the grid's first column, text from the second, actions wrapping below |
 | `ui/pages/RecordSupport.kt`, `RecordActions.kt`, `TrackRows.kt` | What the two pages decide with no Compose (disc lines, highlight index, availability, `Pick`, bio and artist states, grid geometry); their verbs (ids resolved off the main thread, then the Queue tab once the engine has the new queue); the track row, selection bar and messages |
+| `state/SearchModel.kt` | `SearchModel.swift`: the query, debounced and generation-guarded so a slow answer to an old query never lands over a newer one; the results are the search shelf's (`shelfSummary(Search)`), with the listings' totals. Also plays or queues a pick and plays a shelf from a track. Leaves out the Mac's completion tokens: the field is on the page |
+| `state/PlayableSelection.kt` | `PlayableSelection.swift`: a pick across artists, records and tracks, held in tick order and keyed by kind and id; `PlayableResolver` turns it into track ids on the engine's dispatcher. Touch has no shift-range: a long press starts picking, a tap ticks |
+| `state/ShelfSupport.kt` | `ShelfTotals` (a heading's count and the page's counts line, from the shelf's own totals), and the grid's column and row cutting |
+| `ui/pages/ShelfSections.kt`, `ShelfPage.kt` | `MixedCollection.swift` and `ShelfView.swift`: artists as pills, records as tiles (a row of them one lazy item) and tracks as rows in one `LazyColumn`; headings open `library.browse(list, shelf)`. `FavouritesPage`, `RecentlyPlayedPage`, `OnDevicePage` are one call each; `SearchPage` adds the field |
 
 ### koan-server (`crates/koan-server/src/`)
 
