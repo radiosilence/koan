@@ -29,7 +29,7 @@ enum class ArtSize(val px: UInt?) {
  * by `key`, so the engine is asked once per cover and size.
  */
 data class Art(val kind: Kind, val id: Long, val size: ArtSize) {
-    enum class Kind { Album, Track }
+    enum class Kind { Album, Track, Artist }
 
     val key get() = "${kind.name.lowercase()}:$id:${size.name.lowercase()}"
 
@@ -37,6 +37,9 @@ data class Art(val kind: Kind, val id: Long, val size: ArtSize) {
         fun album(id: Long, size: ArtSize = ArtSize.Thumb) = Art(Kind.Album, id, size)
 
         fun track(id: Long, size: ArtSize = ArtSize.Thumb) = Art(Kind.Track, id, size)
+
+        /** The artist's photograph, from Wikimedia Commons: one size, the network on a miss. */
+        fun artist(id: Long) = Art(Kind.Artist, id, ArtSize.Full)
     }
 }
 
@@ -85,6 +88,7 @@ class ArtFetcher(
         when (art.kind) {
             Art.Kind.Album -> albumCoverArt(art.id, art.size.px)
             Art.Kind.Track -> coverArt(art.id, art.size.px)
+            Art.Kind.Artist -> artistImage(art.id)
         }
     }
 
