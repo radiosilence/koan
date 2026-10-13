@@ -78,7 +78,7 @@ object HistorySelection {
 }
 
 /** "3:07", or "1:02:03" past an hour. */
-fun formatDuration(ms: Long): String {
+fun historyDuration(ms: Long): String {
     val total = (ms.coerceAtLeast(0) / 1000)
     val h = total / 3600
     val m = (total % 3600) / 60

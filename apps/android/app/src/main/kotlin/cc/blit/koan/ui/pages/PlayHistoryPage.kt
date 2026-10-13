@@ -237,7 +237,7 @@ private fun HistoryRow(
         if (entry.source != "local") {
             KoanIcon("renderer", tone = KoanTone.Muted, textSizeDp = 12f, description = "Scrobbled by another client")
         }
-        track.durationMs?.let { KoanText(formatDuration(it), KoanRole.Fine, KoanTone.Muted, data = true) }
+        track.durationMs?.let { KoanText(historyDuration(it), KoanRole.Fine, KoanTone.Muted, data = true) }
     }
 }
 

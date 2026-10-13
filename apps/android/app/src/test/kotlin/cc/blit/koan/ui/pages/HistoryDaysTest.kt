@@ -90,8 +90,8 @@ class HistoryDaysTest {
 
     @Test
     fun `durations read m colon ss and past an hour h colon mm colon ss`() {
-        assertEquals("0:00", formatDuration(-5))
-        assertEquals("3:07", formatDuration(187_400))
-        assertEquals("1:02:03", formatDuration(3_723_000))
+        assertEquals("0:00", historyDuration(-5))
+        assertEquals("3:07", historyDuration(187_400))
+        assertEquals("1:02:03", historyDuration(3_723_000))
     }
 }
