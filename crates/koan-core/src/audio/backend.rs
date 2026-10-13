@@ -108,6 +108,18 @@ pub trait AudioBackend: Send + Sync {
         None
     }
 
+    /// The most integer bits a sample keeps on its way to the device, where
+    /// the output narrows them: a gapless run cannot carry a deeper track
+    /// through it. `None` where nothing is narrowed.
+    fn output_depth(&self) -> Option<u16> {
+        None
+    }
+
+    /// Be told when the output stops for good underneath the player, so it
+    /// can be rebuilt: Android disconnects every stream when its audio server
+    /// restarts. Called on a thread of the platform's; it must only send.
+    fn on_disconnect(&self, _rebuild: Arc<dyn Fn() + Send + Sync>) {}
+
     /// Subscribe to nominal sample rate changes on a device.
     ///
     /// The rate is device-wide and anyone can move it — another app, Audio MIDI

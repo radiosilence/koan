@@ -614,6 +614,7 @@ impl Player {
             rg_mode: cfg.playback.replaygain,
             pre_amp_db: cfg.playback.pre_amp_db,
             dsp: Some(setup.clone()),
+            depth_limit: Default::default(),
         };
         self.session += 1;
         let session = self.session;

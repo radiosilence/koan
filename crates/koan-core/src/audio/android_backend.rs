@@ -35,6 +35,7 @@ type DataCallback = unsafe extern "C" fn(*mut AAudioStream, *mut c_void, *mut c_
 type ErrorCallback = unsafe extern "C" fn(*mut AAudioStream, *mut c_void, aaudio_result_t);
 
 const AAUDIO_OK: aaudio_result_t = 0;
+const AAUDIO_ERROR_DISCONNECTED: aaudio_result_t = -899;
 const AAUDIO_UNSPECIFIED: i32 = 0;
 const AAUDIO_SHARING_MODE_SHARED: i32 = 1;
 const AAUDIO_PERFORMANCE_MODE_NONE: i32 = 10;
@@ -100,6 +101,7 @@ fn check(result: aaudio_result_t, what: &str) -> Result<(), BackendError> {
 #[derive(Default)]
 pub struct AndroidAudioBackend {
     held: Mutex<Option<MixerFormat>>,
+    disconnect: Mutex<Option<Disconnect>>,
 }
 
 impl AndroidAudioBackend {
@@ -131,7 +133,7 @@ impl AudioBackend for AndroidAudioBackend {
     }
 
     fn get_device_sample_rate(&self, _device: &DeviceInfo) -> Result<f64, BackendError> {
-        Ok(self.held.lock().map_or(Self::mixer_rate(), |f| f.rate) as f64)
+        Ok(self.held.lock().map_or_else(Self::mixer_rate, |f| f.rate) as f64)
     }
 
     fn set_device_sample_rate(&self, device: &DeviceInfo, rate: f64) -> Result<f64, BackendError> {
@@ -188,6 +190,14 @@ impl AudioBackend for AndroidAudioBackend {
         Some(self.held.lock().is_none())
     }
 
+    fn output_depth(&self) -> Option<u16> {
+        self.held.lock().map(|f| f.encoding.bits())
+    }
+
+    fn on_disconnect(&self, rebuild: Arc<dyn Fn() + Send + Sync>) {
+        *self.disconnect.lock() = Some(rebuild);
+    }
+
     fn create_engine(
         &self,
         _device: &DeviceInfo,
@@ -196,8 +206,6 @@ impl AudioBackend for AndroidAudioBackend {
         consumer: rtrb::Consumer<f32>,
         samples_played: Arc<AtomicU64>,
     ) -> Result<Box<dyn AudioEngineHandle>, BackendError> {
-        let held = *self.held.lock();
-        let encoding = held.map_or(Encoding::Float, |f| f.encoding);
         let fade = FadeControl::for_output();
         let state = Box::into_raw(Box::new(Callback {
             consumer,
@@ -205,71 +213,134 @@ impl AudioBackend for AndroidAudioBackend {
             samples_played,
             running: Arc::new(AtomicBool::new(false)),
             channels: channels as usize,
-            encoding,
+            encoding: Encoding::Float,
             scratch: Vec::new(),
             xruns: Arc::new(AtomicI32::new(0)),
             lead_in: Arc::new(AtomicU64::new(0)),
             pace: Arc::new(Pace::default()),
         }));
+        let disconnect = Box::into_raw(Box::new(self.disconnect.lock().clone()));
 
-        let mut builder = std::ptr::null_mut();
-        // SAFETY: AAudio's builder and stream calls, on pointers it returned;
-        // `state` outlives the stream, which is closed before it is freed.
-        unsafe {
-            if let Err(e) = check(AAudio_createStreamBuilder(&mut builder), "builder") {
-                drop(Box::from_raw(state));
-                return Err(e);
+        let mut held = self.held.lock();
+        let mut opened = Err(BackendError::NoDevices);
+        if let Some(format) = *held {
+            // SAFETY: `state` and `disconnect` outlive any stream opened on them.
+            opened = unsafe {
+                open(
+                    sample_rate,
+                    channels,
+                    format.encoding,
+                    format.device_id,
+                    state,
+                    disconnect,
+                )
+            };
+            if let Err(e) = &opened {
+                // Android took the attributes but will not open a stream to
+                // them: play through the mixer rather than not at all.
+                log::warn!("android output: bit-perfect stream refused ({e}); through the mixer");
+                if let Some(host) = bit_perfect::host() {
+                    host.release();
+                }
+                *held = None;
             }
-            AAudioStreamBuilder_setDeviceId(
-                builder,
-                held.map_or(AAUDIO_UNSPECIFIED, |f| f.device_id),
-            );
-            AAudioStreamBuilder_setSampleRate(builder, sample_rate as i32);
-            AAudioStreamBuilder_setChannelCount(builder, channels as i32);
-            AAudioStreamBuilder_setFormat(builder, encoding.aaudio());
-            AAudioStreamBuilder_setSharingMode(builder, AAUDIO_SHARING_MODE_SHARED);
-            AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_NONE);
-            AAudioStreamBuilder_setUsage(builder, AAUDIO_USAGE_MEDIA);
-            AAudioStreamBuilder_setContentType(builder, AAUDIO_CONTENT_TYPE_MUSIC);
-            AAudioStreamBuilder_setDataCallback(builder, render, state.cast());
-            AAudioStreamBuilder_setErrorCallback(builder, stream_error, std::ptr::null_mut());
-            let mut stream = std::ptr::null_mut();
-            let opened = AAudioStreamBuilder_openStream(builder, &mut stream);
-            AAudioStreamBuilder_delete(builder);
-            if let Err(e) = check(opened, "open") {
-                drop(Box::from_raw(state));
-                return Err(e);
-            }
-            // A callback is never asked for more frames than the buffer holds,
-            // so this is the most the callback converts at once.
-            let capacity = AAudioStream_getBufferCapacityInFrames(stream).max(1) as usize;
-            (*state).scratch = vec![0.0; capacity * channels as usize];
-            let rate = AAudioStream_getSampleRate(stream);
-            let format = AAudioStream_getFormat(stream);
-            if rate != sample_rate as i32 || format != encoding.aaudio() {
-                log::warn!(
-                    "android output: asked for {sample_rate} Hz format {}, got {rate} Hz format {format}",
-                    encoding.aaudio()
-                );
-            }
-            let running = (*state).running.clone();
-            let xruns = (*state).xruns.clone();
-            let lead_in = (*state).lead_in.clone();
-            let pace = (*state).pace.clone();
-            Ok(Box::new(AndroidEngine {
-                rate: sample_rate,
-                channels,
-                pace,
-                stream,
-                state,
-                running,
-                fade,
-                xruns,
-                lead_in,
-            }))
         }
+        if held.is_none() {
+            // SAFETY: as above.
+            opened = unsafe {
+                open(
+                    sample_rate,
+                    channels,
+                    Encoding::Float,
+                    AAUDIO_UNSPECIFIED,
+                    state,
+                    disconnect,
+                )
+            };
+        }
+        let stream = match opened {
+            Ok(stream) => stream,
+            Err(e) => {
+                // SAFETY: no stream holds them.
+                unsafe {
+                    drop(Box::from_raw(state));
+                    drop(Box::from_raw(disconnect));
+                }
+                return Err(e);
+            }
+        };
+        // SAFETY: the stream is open but not started, so no callback runs.
+        let callback = unsafe { &mut *state };
+        callback.encoding = held.map_or(Encoding::Float, |f| f.encoding);
+        // A callback is never asked for more frames than the buffer holds,
+        // so this is the most it converts at once.
+        let capacity = unsafe { AAudioStream_getBufferCapacityInFrames(stream) }.max(1) as usize;
+        callback.scratch = vec![0.0; capacity * channels as usize];
+        Ok(Box::new(AndroidEngine {
+            rate: sample_rate,
+            channels,
+            pace: callback.pace.clone(),
+            stream,
+            state,
+            disconnect,
+            running: callback.running.clone(),
+            fade,
+            xruns: callback.xruns.clone(),
+            lead_in: callback.lead_in.clone(),
+        }))
     }
 }
+
+/// Open a stream in `encoding` on `device`, or fail if AAudio would open it in
+/// anything else: the callback writes that encoding, and a stream of another
+/// would play it as noise.
+///
+/// # Safety
+///
+/// `state` and `disconnect` must outlive the stream.
+unsafe fn open(
+    rate: f64,
+    channels: u32,
+    encoding: Encoding,
+    device: i32,
+    state: *mut Callback,
+    disconnect: *mut Option<Disconnect>,
+) -> Result<*mut AAudioStream, BackendError> {
+    let mut builder = std::ptr::null_mut();
+    // SAFETY: AAudio's builder and stream calls, on pointers it returned.
+    unsafe {
+        check(AAudio_createStreamBuilder(&mut builder), "builder")?;
+        AAudioStreamBuilder_setDeviceId(builder, device);
+        AAudioStreamBuilder_setSampleRate(builder, rate as i32);
+        AAudioStreamBuilder_setChannelCount(builder, channels as i32);
+        AAudioStreamBuilder_setFormat(builder, encoding.aaudio());
+        AAudioStreamBuilder_setSharingMode(builder, AAUDIO_SHARING_MODE_SHARED);
+        AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_NONE);
+        AAudioStreamBuilder_setUsage(builder, AAUDIO_USAGE_MEDIA);
+        AAudioStreamBuilder_setContentType(builder, AAUDIO_CONTENT_TYPE_MUSIC);
+        AAudioStreamBuilder_setDataCallback(builder, render, state.cast());
+        AAudioStreamBuilder_setErrorCallback(builder, stream_error, disconnect.cast());
+        let mut stream = std::ptr::null_mut();
+        let opened = AAudioStreamBuilder_openStream(builder, &mut stream);
+        AAudioStreamBuilder_delete(builder);
+        check(opened, "open")?;
+        let (got_rate, got_format) = (
+            AAudioStream_getSampleRate(stream),
+            AAudioStream_getFormat(stream),
+        );
+        if got_rate != rate as i32 || got_format != encoding.aaudio() {
+            AAudioStream_close(stream);
+            return Err(BackendError::StreamCreation(format!(
+                "asked for {rate} Hz format {}, AAudio offered {got_rate} Hz format {got_format}",
+                encoding.aaudio()
+            )));
+        }
+        Ok(stream)
+    }
+}
+
+/// What the app gave to be told when a stream is disconnected.
+type Disconnect = Arc<dyn Fn() + Send + Sync>;
 
 /// What the render callback owns. Allocated before the stream opens and
 /// freed after it closes; the callback itself neither allocates nor locks.
@@ -457,10 +528,21 @@ impl Callback {
     }
 }
 
-/// AAudio's stream errors, on a thread of its own. A disconnect (the device
-/// went) is answered by the app rebuilding the output.
-unsafe extern "C" fn stream_error(_: *mut AAudioStream, _: *mut c_void, error: aaudio_result_t) {
+/// AAudio's stream errors, on a thread of its own rather than the render
+/// callback's. A disconnected stream never plays again: the device went, or
+/// the audio server restarted, which disconnects every stream at once. The
+/// player is asked to rebuild the output; closing the stream here would
+/// deadlock AAudio.
+unsafe extern "C" fn stream_error(_: *mut AAudioStream, user: *mut c_void, error: aaudio_result_t) {
     log::warn!("android output: stream error: {}", result_text(error));
+    // SAFETY: the `Option<Disconnect>` the stream was opened with, which
+    // outlives it and is not written while it is open.
+    let disconnect = unsafe { &*user.cast::<Option<Disconnect>>() };
+    if error == AAUDIO_ERROR_DISCONNECTED
+        && let Some(rebuild) = disconnect
+    {
+        rebuild();
+    }
 }
 
 struct AndroidEngine {
@@ -469,6 +551,7 @@ struct AndroidEngine {
     pace: Arc<Pace>,
     stream: *mut AAudioStream,
     state: *mut Callback,
+    disconnect: *mut Option<Disconnect>,
     running: Arc<AtomicBool>,
     fade: Arc<FadeControl>,
     xruns: Arc<AtomicI32>,
@@ -481,11 +564,14 @@ unsafe impl Send for AndroidEngine {}
 
 impl Drop for AndroidEngine {
     fn drop(&mut self) {
-        // SAFETY: closing stops the callback before returning, after which
-        // nothing else holds `state`.
+        // SAFETY: stopping first, as Oboe does: on older releases a close
+        // could race a callback still in flight. Closing ends the callbacks,
+        // after which nothing else holds `state` or `disconnect`.
         unsafe {
+            AAudioStream_requestStop(self.stream);
             AAudioStream_close(self.stream);
             drop(Box::from_raw(self.state));
+            drop(Box::from_raw(self.disconnect));
         }
         let xruns = self.xruns.load(Ordering::Relaxed);
         if xruns > 0 {

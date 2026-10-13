@@ -24,13 +24,13 @@ pub enum Encoding {
 }
 
 impl Encoding {
-    /// The integer bits a sample keeps through this encoding. A float holds a
-    /// 24-bit integer exactly, and no more.
-    fn bits(self) -> u16 {
+    /// The integer bits a sample keeps on its way out in this encoding. The
+    /// engine's samples are floats, which hold a 24-bit integer exactly and
+    /// no more, so a 32-bit integer carries 24 of them.
+    pub fn bits(self) -> u16 {
         match self {
             Self::I16 => 16,
-            Self::I24Packed | Self::Float => 24,
-            Self::I32 => 32,
+            Self::I24Packed | Self::I32 | Self::Float => 24,
         }
     }
 
@@ -94,13 +94,16 @@ pub(crate) fn host() -> Option<Arc<dyn OutputHost>> {
 }
 
 /// The format to hold for a stream at `rate` with `channels`, whose samples
-/// carry `bit_depth` integer bits (`None` for a lossy source, or one DSP has
-/// processed, which is treated as 24).
+/// carry `bit_depth` integer bits (`None` for a lossy source, or one a gain or
+/// DSP has processed, which needs 24).
 ///
 /// Only an exact rate and channel count will do: anything else is the mixer's
-/// work again. Of the encodings that keep every bit, the narrowest integer one
-/// is preferred, since it is what the DAC is sent; a float leaves the last
-/// conversion to the device's driver.
+/// work again. Of the encodings that keep every bit, the widest integer one is
+/// preferred: a 16-bit sample zero-padded to 24 or 32 bits reaches the DAC
+/// unchanged, and the next track of a gapless run, perhaps of more bits, still
+/// fits. A float comes last, leaving the final conversion to the driver.
+/// Nothing above 24 bits survives the engine's floats, so a 32-bit source is
+/// never bit-perfect.
 pub fn choose(
     offers: &[MixerFormat],
     rate: u32,
@@ -108,9 +111,14 @@ pub fn choose(
     bit_depth: Option<u16>,
 ) -> Option<MixerFormat> {
     let needed = bit_depth.unwrap_or(24);
+    if needed > 24 {
+        return None;
+    }
     let rank = |e: Encoding| match e {
-        Encoding::Float => u16::MAX,
-        e => e.bits(),
+        Encoding::I32 => 0,
+        Encoding::I24Packed => 1,
+        Encoding::I16 => 2,
+        Encoding::Float => 3,
     };
     offers
         .iter()
@@ -182,25 +190,23 @@ mod tests {
     }
 
     #[test]
-    fn the_narrowest_encoding_that_keeps_every_bit() {
-        let offers = [
-            offer(44100, 2, Encoding::I32),
+    fn the_widest_integer_encoding_so_a_deeper_track_still_fits() {
+        let all = [
+            offer(44100, 2, Encoding::I16),
             offer(44100, 2, Encoding::Float),
             offer(44100, 2, Encoding::I24Packed),
-            offer(44100, 2, Encoding::I16),
+            offer(44100, 2, Encoding::I32),
         ];
-        assert_eq!(
-            choose(&offers, 44100, 2, Some(16)).unwrap().encoding,
-            Encoding::I16
-        );
-        assert_eq!(
-            choose(&offers, 44100, 2, Some(24)).unwrap().encoding,
-            Encoding::I24Packed
-        );
-        assert_eq!(
-            choose(&offers, 44100, 2, Some(32)).unwrap().encoding,
-            Encoding::I32
-        );
+        let chosen = |offers: &[MixerFormat]| choose(offers, 44100, 2, Some(16)).unwrap().encoding;
+        assert_eq!(chosen(&all), Encoding::I32);
+        assert_eq!(chosen(&all[..3]), Encoding::I24Packed);
+        assert_eq!(chosen(&all[..1]), Encoding::I16);
+    }
+
+    #[test]
+    fn a_32_bit_source_is_never_bit_perfect() {
+        let offers = [offer(44100, 2, Encoding::I32)];
+        assert_eq!(choose(&offers, 44100, 2, Some(32)), None);
     }
 
     #[test]
@@ -231,6 +237,7 @@ mod tests {
             choose(&offers, 48000, 2, None).unwrap().encoding,
             Encoding::I24Packed
         );
+        assert_eq!(choose(&offers[..1], 48000, 2, None), None);
     }
 
     #[test]

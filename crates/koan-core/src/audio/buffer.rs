@@ -551,6 +551,9 @@ pub struct Processing {
     pub pre_amp_db: f64,
     /// The output device's DSP profile. `None` leaves the samples untouched.
     pub dsp: Option<Arc<Setup>>,
+    /// The most integer bits the output keeps, set once it is open; 0 for no
+    /// limit. A deeper track ends the gapless run, as a rate change does.
+    pub depth_limit: Arc<std::sync::atomic::AtomicU16>,
 }
 
 impl Default for Processing {
@@ -559,6 +562,7 @@ impl Default for Processing {
             rg_mode: ReplayGainMode::Off,
             pre_amp_db: 0.0,
             dsp: None,
+            depth_limit: Arc::default(),
         }
     }
 }
@@ -936,6 +940,15 @@ fn decode_single(
             expected.1,
             out_rate,
             channels
+        );
+        return Ok(Decoded::FormatMismatch);
+    }
+    let limit = processing.depth_limit.load(Ordering::Relaxed);
+    if expected.is_some() && limit > 0 && info.bit_depth.unwrap_or(24) > limit {
+        log::info!(
+            "bit depth change at {}: {} bits through an output of {limit}, restarting audio engine",
+            path.display(),
+            info.bit_depth.unwrap_or(24)
         );
         return Ok(Decoded::FormatMismatch);
     }
@@ -1774,6 +1787,24 @@ mod tests {
             "a 48kHz track must not join a 44.1kHz ring buffer"
         );
         assert_eq!(bounds[0].info.sample_rate, 44100);
+    }
+
+    #[test]
+    fn a_track_deeper_than_the_output_ends_the_gapless_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.wav");
+        let b = dir.path().join("b.wav");
+        crate::test_utils::generate_wav(&a, 44100, 2, 0.1, 16);
+        crate::test_utils::generate_wav(&b, 44100, 2, 0.1, 24);
+
+        let narrow = Processing::default();
+        narrow.depth_limit.store(16, Ordering::Relaxed);
+        let bounds = run_queue_with(&[a.clone(), b.clone()], &narrow).0;
+        assert_eq!(bounds.len(), 1, "24 bits must not join a 16-bit output");
+
+        let wide = Processing::default();
+        wide.depth_limit.store(24, Ordering::Relaxed);
+        assert_eq!(run_queue_with(&[a, b], &wide).0.len(), 2);
     }
 
     #[test]

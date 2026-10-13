@@ -466,14 +466,10 @@ pub struct KoanEngine {
 /// screen to correct.
 const PLAYHEAD_TOLERANCE_MS: u64 = 32;
 
-/// How often a moving playhead's anchor is checked against the engine, so a
-/// stall is said within this long. A check publishes nothing when the anchor
-/// still holds.
-const PLAYHEAD_CHECK: std::time::Duration = std::time::Duration::from_millis(500);
-
 /// How long a playhead may read the same while playing before it is called
-/// held. Longer than an output callback's interval, which is how often it
-/// moves at all.
+/// held, when this thread next looks. The player wakes it when output should
+/// have begun to move (`OUTPUT_START_CHECK`); a stall mid-track is seen at the
+/// next wake for anything else.
 const PLAYHEAD_STALL: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// The same, for how far a download reaches. The bar it draws is one bar wide
@@ -5299,14 +5295,7 @@ impl KoanEngine {
                     // only for as long as it is reading it, so parking here
                     // cannot be what keeps koan open.
                     drop(engine);
-                    // While a client is counting on from an anchor, check now
-                    // and then that it is still right: nothing else wakes this
-                    // thread when output stalls. Quiet otherwise.
-                    seen = if anchor.is_some_and(|a| a.playing) {
-                        wake.wait_until(seen, PLAYHEAD_CHECK)
-                    } else {
-                        wake.wait(seen)
-                    };
+                    seen = wake.wait(seen);
                 }
             })
             .ok();
