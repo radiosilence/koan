@@ -206,7 +206,7 @@ class PlaybackService : MediaSessionService() {
                 focusCommand { pause() }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                resumeOnGain = engine.nowPlaying.value?.state == PlayState.PLAYING
+                resumeOnGain = engine.devices.value.target == null && engine.nowPlaying.value?.state == PlayState.PLAYING
                 focusCommand { pause() }
             }
             AudioManager.AUDIOFOCUS_GAIN -> if (resumeOnGain) {

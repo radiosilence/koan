@@ -1447,51 +1447,11 @@ pub fn send_reaching(id: &str, cmd: LinkCommand) -> Result<(), Missed> {
     reach(id, cmd, None)
 }
 
+/// Every way to `id` in turn. A device listed asleep or reconnecting is
+/// tried all the same, since the list may be from before the link came up:
+/// only the ways themselves say it is out of reach.
 fn reach(id: &str, cmd: LinkCommand, then: Option<Then>) -> Result<(), Missed> {
-    if let Err(why) = choosable(id) {
-        // Listed asleep with nothing to wake it, perhaps only because the
-        // list is from before the link came up: the ways to it are tried
-        // all the same, and only they say it is out of reach.
-        let asleep = list()
-            .into_iter()
-            .find(|d| d.id == id)
-            .is_some_and(|d| d.asleep && !d.wakeable);
-        if !asleep {
-            return Err(Missed::Said(why));
-        }
-    }
     used(id);
-    match reach_by_any_way(id, cmd.clone(), then) {
-        Err(Missed::OutOfReach(why)) => {
-            // A connection the network dropped a moment ago comes back when
-            // dialled: one more look there before giving the device up.
-            crate::remote::nearby::dial_now();
-            if heard_nearby_within(id, NETWORK_WAIT) {
-                reach_by_any_way(id, cmd, None)
-            } else {
-                Err(Missed::OutOfReach(why))
-            }
-        }
-        reached => reached,
-    }
-}
-
-/// Block until `id` is connected on the local network, or `time` is up.
-fn heard_nearby_within(id: &str, time: Duration) -> bool {
-    let until = Instant::now() + time;
-    let signal = crate::signal::engine_changed();
-    let mut seen = signal.generation();
-    while !with(|s| s.nearby.iter().any(|n| n.hello.id == id)) {
-        let left = until.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return false;
-        }
-        seen = signal.wait_until(seen, left);
-    }
-    true
-}
-
-fn reach_by_any_way(id: &str, cmd: LinkCommand, then: Option<Then>) -> Result<(), Missed> {
     let (nearby, own, shared) = with(|s| {
         let listed = s.account.iter().find(|(d, _)| d.id == id);
         (
@@ -1543,8 +1503,41 @@ fn reach_by_any_way(id: &str, cmd: LinkCommand, then: Option<Then>) -> Result<()
         // Activity outlives this process's list of devices.
         log::info!("devices: {id} is not listed; asking the server");
     }
+    let outcome = match ask_server(id, &cmd, Some(ack)) {
+        Ok(outcome) => outcome,
+        // A connection the network dropped a moment ago comes back when
+        // dialled: one more look there, under the same ack, before giving
+        // the device up.
+        Err(Missed::OutOfReach(why)) if crate::remote::nearby::dials(id) => {
+            crate::remote::nearby::dial_now();
+            let back = await_until(
+                || with(|s| s.nearby.iter().any(|n| n.hello.id == id)),
+                NETWORK_WAIT,
+            );
+            let sent = back
+                && if answers_on_network(id) {
+                    crate::remote::nearby::send_acked(id, cmd.clone(), ack)
+                } else {
+                    crate::remote::nearby::send(id, cmd.clone())
+                };
+            if !sent {
+                acks::forget(ack);
+                return Err(Missed::OutOfReach(why));
+            }
+            let routes = Routes {
+                lan: true,
+                lan_answers: answers_on_network(id),
+                ..routes
+            };
+            follow(id, cmd, ack, answer, Route::Network, routes, then);
+            return Ok(());
+        }
+        Err(missed) => {
+            acks::forget(ack);
+            return Err(missed);
+        }
+    };
     acks::forget(ack);
-    let outcome = ask_server(id, &cmd, Some(ack))?;
     told(id, &cmd, outcome, then);
     Ok(())
 }
