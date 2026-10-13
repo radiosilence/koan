@@ -17,6 +17,7 @@ import cc.blit.koan.state.KeyValueStore
 import cc.blit.koan.state.LibraryModel
 import cc.blit.koan.state.PlayerModel
 import cc.blit.koan.state.PlaylistsModel
+import cc.blit.koan.state.SearchModel
 import cc.blit.koan.state.SettingsModel
 import cc.blit.koan.theme.KoanAccent
 import kotlinx.coroutines.CoroutineScope
@@ -38,6 +39,7 @@ class KoanRuntime(
     val playlists: PlaylistsModel,
     val activity: ActivityModel,
     val navigator: Navigator,
+    val search: SearchModel,
     val artwork: ArtworkStore,
     /** The accent of the record playing; see [ModelWiring.accent]. */
     val accent: StateFlow<KoanAccent>,
@@ -103,13 +105,14 @@ object KoanProcess {
                 val library = LibraryModel(engine, mirror, scope, store, activity, artwork)
                 val playlists = PlaylistsModel(engine, mirror, scope)
                 val navigator = Navigator(scope, AppPageLoader(library, playlists))
+                val search = SearchModel(engine, mirror, player, navigator, scope)
                 val wiring = ModelWiring(scope, mirror, library, playlists, activity, artwork)
                 scope.launch { mirror.follow(engine.observe()) }
                 player.start()
                 settings.refresh()
                 wiring.start()
                 _runtime.value = KoanRuntime(
-                    engine, mirror, player, settings, library, playlists, activity, navigator, artwork, wiring.accent,
+                    engine, mirror, player, settings, library, playlists, activity, navigator, search, artwork, wiring.accent,
                 )
                 route?.let { announce(engine, it, 0) }
                 player.restoreSession()

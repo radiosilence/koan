@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,7 +17,26 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Text
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -26,6 +46,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -260,5 +281,210 @@ fun <T> KoanTabBar(
                 }
             }
         }
+    }
+}
+
+/**
+ * A row of text options, `control` type, 18 apart. Unselected `muted`;
+ * selected `ink`, underlined with a one-point `accent` line below the text. No
+ * track and no background. [scrollable] lets a row wider than the screen scroll
+ * rather than wrap or clip. Option labels are the app's words and lowercase;
+ * [data] keeps their case.
+ */
+@Composable
+fun <T> KoanSegmented(
+    options: List<Pair<String, T>>,
+    selected: T,
+    onSelect: (T) -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    scrollable: Boolean = false,
+    data: Boolean = false,
+) {
+    var m = modifier.alpha(if (enabled) 1f else 0.4f)
+    if (scrollable) m = m.horizontalScroll(rememberScrollState())
+    Row(m, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+        for ((label, value) in options) {
+            val isSelected = value == selected
+            Column(
+                Modifier
+                    // As wide as the text: the underline fills the column, and an
+                    // unbounded fill would make the first option take the whole row.
+                    .width(IntrinsicSize.Max)
+                    .sizeIn(minHeight = KoanShape.hit)
+                    .selectable(
+                        isSelected, enabled = enabled, role = Role.RadioButton,
+                        indication = null, interactionSource = remember { MutableInteractionSource() },
+                    ) { onSelect(value) },
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                KoanText(label, KoanRole.Control, if (isSelected) KoanTone.Ink else KoanTone.Muted, data = data)
+                Box(Modifier.padding(top = 4.dp).height(KoanShape.hairline).fillMaxWidth()
+                    .background(if (isSelected) KoanTheme.colors.accent else Color.Transparent))
+            }
+        }
+    }
+}
+
+/**
+ * A text field in `surface`: the text in `control`, `ink`, the placeholder
+ * `muted`, a caret in `accent`, 44 points tall at least. No outline, no
+ * floating label: the form row that holds it carries the label. [secure] hides
+ * what is typed and asks the keyboard not to learn it or correct it; a "show"
+ * link beside it uncovers the text on request.
+ *
+ * Commit policy is the caller's: [onDone] fires on the keyboard's action and
+ * [onFocusLost] when focus leaves, so a page can write a value once typing ends.
+ */
+@Composable
+fun KoanField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    placeholder: String = "",
+    secure: Boolean = false,
+    keyboard: KeyboardType = KeyboardType.Text,
+    ime: ImeAction = ImeAction.Done,
+    enabled: Boolean = true,
+    onDone: (() -> Unit)? = null,
+    onFocusLost: (() -> Unit)? = null,
+) {
+    val colors = KoanTheme.colors
+    var shown by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
+    val style = KoanTheme.style(KoanRole.Control).copy(color = colors.ink)
+    Row(
+        modifier.fillMaxWidth().sizeIn(minHeight = KoanShape.hit).alpha(if (enabled) 1f else 0.4f)
+            .background(colors.surface, RectangleShape)
+            .then(if (focused) Modifier.border(BorderStroke(KoanShape.hairline, colors.accent), RectangleShape) else Modifier)
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+            if (value.isEmpty()) {
+                KoanText(placeholder, KoanRole.Control, KoanTone.Muted, data = true)
+            }
+            BasicTextField(
+                value, onValueChange,
+                Modifier.fillMaxWidth().onFocusChanged {
+                    if (focused && !it.isFocused) onFocusLost?.invoke()
+                    focused = it.isFocused
+                },
+                enabled = enabled,
+                singleLine = true,
+                textStyle = style,
+                cursorBrush = SolidColor(colors.accent),
+                visualTransformation = if (secure && !shown) PasswordVisualTransformation() else VisualTransformation.None,
+                keyboardOptions = KeyboardOptions(
+                    capitalization = KeyboardCapitalization.None,
+                    autoCorrectEnabled = false,
+                    keyboardType = if (secure) KeyboardType.Password else keyboard,
+                    imeAction = ime,
+                ),
+                keyboardActions = KeyboardActions(onAny = { onDone?.invoke() }),
+            )
+        }
+        if (secure && value.isNotEmpty()) {
+            KoanButton(if (shown) "hide" else "show", { shown = !shown }, kind = KoanButtonKind.Link)
+        }
+    }
+}
+
+/**
+ * A form row: the label leads in `body`, `ink`, lowercase; a value it shows
+ * trails in `control`, `muted`. A label that is data keeps its case. [trailing]
+ * puts a control where the value would be.
+ */
+@Composable
+fun KoanFormRow(
+    label: String,
+    modifier: Modifier = Modifier,
+    value: String? = null,
+    data: Boolean = false,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    Row(
+        modifier.fillMaxWidth().sizeIn(minHeight = KoanShape.hit),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(KoanSpace.m),
+    ) {
+        KoanText(label, KoanRole.Body, KoanTone.Ink, data = data, modifier = Modifier.weight(1f))
+        if (value != null) KoanText(value, KoanRole.Control, KoanTone.Muted, data = true)
+        trailing?.invoke()
+    }
+}
+
+/** A section heading: `fine`, `ink`, with 16 points above. */
+@Composable
+fun KoanSectionHeader(text: String, modifier: Modifier = Modifier) {
+    KoanText(text, KoanRole.Fine, KoanTone.Ink, modifier.padding(top = KoanSpace.l).semantics { heading() })
+}
+
+/** The words beneath a section, `fine`, `muted`, wrapping. */
+@Composable
+fun KoanFootnote(text: String, modifier: Modifier = Modifier, tone: KoanTone = KoanTone.Muted) {
+    KoanText(text, KoanRole.Fine, tone, modifier, maxLines = 12)
+}
+
+/**
+ * A pop-up picker: the chosen option in `control`, `ink`, with a chevron and no
+ * bezel; the options open as a square `surface` menu. [keepsCase] is for
+ * options that are data, such as a device's name.
+ */
+@Composable
+fun <T> KoanPicker(
+    label: String,
+    options: List<Pair<String, T>>,
+    selected: T,
+    onSelect: (T) -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    keepsCase: Boolean = false,
+) {
+    var open by remember { mutableStateOf(false) }
+    val current = options.firstOrNull { it.second == selected }?.first.orEmpty()
+    Box(modifier.alpha(if (enabled) 1f else 0.4f)) {
+        Row(
+            Modifier.fillMaxWidth().sizeIn(minHeight = KoanShape.hit)
+                .clickable(enabled = enabled, role = Role.DropdownList, indication = null, interactionSource = remember { MutableInteractionSource() }) { open = true }
+                .semantics { stateDescription = current },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(KoanSpace.s),
+        ) {
+            KoanText(label, KoanRole.Body, modifier = Modifier.weight(1f))
+            KoanText(current, KoanRole.Control, KoanTone.Ink, data = keepsCase)
+            KoanIcon("chevron-down", tone = KoanTone.Muted, textSizeDp = 12f)
+        }
+        DropdownMenu(open, { open = false }, containerColor = KoanTheme.colors.surface, shadowElevation = 0.dp, tonalElevation = 0.dp) {
+            for ((text, value) in options) {
+                DropdownMenuItem(
+                    text = { KoanText(text, KoanRole.Control, if (value == selected) KoanTone.Accent else KoanTone.Ink, data = keepsCase) },
+                    onClick = { open = false; onSelect(value) },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * A stepper: the label leads, then minus, the value and plus, as bordered
+ * compact buttons. The page owns the range, so it says when either end is
+ * reached.
+ */
+@Composable
+fun KoanStepper(
+    label: String,
+    valueText: String,
+    onDecrement: () -> Unit,
+    onIncrement: () -> Unit,
+    modifier: Modifier = Modifier,
+    canDecrement: Boolean = true,
+    canIncrement: Boolean = true,
+) {
+    KoanFormRow(label, modifier) {
+        KoanButton("-", onDecrement, Modifier.semantics { contentDescription = "Decrease $label" }, KoanButtonKind.Bordered, enabled = canDecrement)
+        KoanText(valueText, KoanRole.Control, KoanTone.Ink, data = true, modifier = Modifier.widthIn(min = 56.dp), maxLines = 1)
+        KoanButton("+", onIncrement, Modifier.semantics { contentDescription = "Increase $label" }, KoanButtonKind.Bordered, enabled = canIncrement)
     }
 }
