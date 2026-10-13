@@ -1,6 +1,7 @@
 package cc.blit.koan.ui.settings
 
 import android.net.Uri
+import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cc.blit.koan.engine.EngineMirror
@@ -249,7 +250,7 @@ class AccountModel(private val mirror: EngineMirror) : ViewModel() {
 }
 
 /** A server's host, for naming it in a sentence. */
-fun host(url: String): String = Uri.parse(url).host ?: url
+fun host(url: String): String = url.toUri().host ?: url
 
 /** The engine's own words for what went wrong. */
 fun KoanException.describe() = when (this) {

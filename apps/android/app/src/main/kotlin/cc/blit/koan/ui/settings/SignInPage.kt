@@ -23,6 +23,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -55,27 +56,30 @@ import kotlinx.coroutines.launch
 fun SignInPage(model: AccountModel) {
     val state by model.state.collectAsStateWithLifecycle()
     var withCode by rememberSaveable { mutableStateOf(false) }
-    Box(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
-        Column(
-            Modifier
-                .align(Alignment.TopCenter)
-                .widthIn(max = 480.dp)
-                .verticalScroll(rememberScrollState())
-                .padding(LocalKoanTokens.current.gutter),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text("kōan", style = MaterialTheme.typography.displaySmall, modifier = Modifier.padding(top = 32.dp))
-            val pairing = state.pairing
-            when {
-                pairing != null -> WaitingForApproval(pairing.code, pairing.link, onCancel = model::cancelPairing)
-                withCode -> CodeForm(model, enabled = state.busy == null, onBack = { withCode = false })
-                else -> PasswordForm(model, enabled = state.busy == null, onCode = { withCode = true })
-            }
-            state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            state.busy?.let { label ->
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(Modifier.padding(4.dp))
-                    Text(label)
+    // A page of its own, on the theme's surface: nothing beneath it draws one.
+    Surface(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
+            Column(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .widthIn(max = 480.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(LocalKoanTokens.current.gutter),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text("kōan", style = MaterialTheme.typography.displaySmall, modifier = Modifier.padding(top = 32.dp))
+                val pairing = state.pairing
+                when {
+                    pairing != null -> WaitingForApproval(pairing.code, pairing.link, onCancel = model::cancelPairing)
+                    withCode -> CodeForm(model, enabled = state.busy == null, onBack = { withCode = false })
+                    else -> PasswordForm(model, enabled = state.busy == null, onCode = { withCode = true })
+                }
+                state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                state.busy?.let { label ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.padding(4.dp))
+                        Text(label)
+                    }
                 }
             }
         }
