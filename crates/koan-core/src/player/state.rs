@@ -360,6 +360,17 @@ pub enum ItemState {
     Failed(String),
 }
 
+/// What an item relinked to a row, or to none, can now say about itself.
+pub fn relinked_state(state: &ItemState, linked: bool, path: &std::path::Path) -> ItemState {
+    match (linked, state) {
+        (false, ItemState::Pending) if !path.exists() => {
+            ItemState::Failed("no longer in the library".into())
+        }
+        (true, ItemState::Failed(_)) if !path.exists() => ItemState::Pending,
+        (_, state) => state.clone(),
+    }
+}
+
 /// An item's state, and any transfer against it, as one answer.
 ///
 /// Derived rather than stored. `Downloading` carries the store's own figures —
@@ -2005,19 +2016,24 @@ impl SharedPlayerState {
         self.bump_content();
     }
 
-    /// The uids of the queue's items, by item: what `helpers::queue_relinks`
-    /// finds each track again by.
-    pub fn queue_uids(&self) -> Vec<(QueueItemId, Option<i64>, String)> {
+    /// The queue's items with uids, by item, with their row and file: what
+    /// `helpers::queue_relinks` finds each track again by.
+    pub fn queue_uids(&self) -> Vec<(QueueItemId, Option<i64>, String, PathBuf)> {
         self.playlist
             .read()
             .items
             .iter()
-            .filter_map(|i| Some((i.id, i.db_id, i.uid.clone()?)))
+            .filter_map(|i| Some((i.id, i.db_id, i.uid.clone()?, i.path.clone())))
             .collect()
     }
 
     /// Point items at the rows their tracks now hold, or at none. The queue's
     /// content changes only if an item's row does.
+    ///
+    /// An item left with no row and no file has nothing to fetch it by: it
+    /// fails, rather than waiting for a download nothing will start. One that
+    /// failed for want of its file goes back to waiting when its track
+    /// returns, so the download queue takes it up again.
     pub fn relink(&self, links: &[(QueueItemId, Option<i64>)]) {
         let mut changed = false;
         {
@@ -2027,6 +2043,7 @@ impl SharedPlayerState {
                     && item.db_id != db_id
                 {
                     item.db_id = db_id;
+                    item.state = relinked_state(&item.state, db_id.is_some(), &item.path);
                     changed = true;
                 }
             }

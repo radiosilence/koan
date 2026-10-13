@@ -5105,19 +5105,20 @@ impl KoanEngine {
                     let queue_version = engine.state.playlist_version();
                     let queue_moved = queue_version != last_queue;
                     let library_moved = library != last_library;
-                    // Rows lost or regained: the queue finds its tracks
-                    // again by uid, a reused row id naming another track.
-                    if library_moved
-                        && target.is_none()
-                        && let Ok(db) = engine.db()
-                    {
-                        let links = koan_core::helpers::queue_relinks(&db, &engine.state);
-                        if !links.is_empty() {
-                            let _ = engine.send_local(PlayerCommand::Relink(links));
-                        }
-                    }
                     last_queue = queue_version;
                     last_library = library;
+                    // Rows lost or regained, or items put back as they were
+                    // (an undo): the queue finds its tracks again by uid, a
+                    // reused row id naming another track. Before the queue
+                    // goes out, so no pass joins it against the wrong rows.
+                    // This device's own queue, whichever device is in view.
+                    if (queue_moved || library_moved)
+                        && let Ok(db) = engine.db()
+                    {
+                        engine
+                            .state
+                            .relink(&koan_core::helpers::queue_relinks(&db, &engine.state));
+                    }
                     if (queue_moved || library_moved) && target.is_none() {
                         let slices = queue
                             .update(&engine.state, library_moved, |ids| engine.queue_joins(ids));
@@ -5869,7 +5870,6 @@ impl KoanEngine {
             | PlayerCommand::ReloadDsp
             | PlayerCommand::RouteChanged
             | PlayerCommand::RestartOutput
-            | PlayerCommand::Relink(_)
             | PlayerCommand::UseRenderer(_)
             | PlayerCommand::ResumeRenderer(_)
             | PlayerCommand::ResumeRendererMissed
@@ -6474,9 +6474,15 @@ fn restore_items(db: &Database, saved: &[PersistedQueueItem]) -> Vec<PlaylistIte
         .iter()
         .map(|item| {
             if let Some(uid) = &item.uid {
-                // A uid no row holds is a track forgotten since: restored
-                // from what was saved, unlinked, until a sync brings it back.
-                return by_uid.get(uid).copied();
+                // A uid no row holds is a track forgotten since, or a local
+                // one indexed again under another: its file finds the latter.
+                // The title guard below cannot tell a reused id from the
+                // right one, so it is not tried.
+                return by_uid.get(uid).copied().or_else(|| {
+                    queries::track_id_by_path(&db.conn, &item.path)
+                        .ok()
+                        .flatten()
+                });
             }
             item.db_id
                 .filter(|id| titles.get(id) == Some(&item.title))
@@ -6500,10 +6506,14 @@ fn restore_items(db: &Database, saved: &[PersistedQueueItem]) -> Vec<PlaylistIte
                 played: saved_item.played.unwrap_or(false),
                 ..item
             },
-            None => PlaylistItem {
-                db_id: None,
-                ..saved_item.to_playlist_item()
-            },
+            None => {
+                let item = saved_item.to_playlist_item();
+                PlaylistItem {
+                    db_id: None,
+                    state: koan_core::player::state::relinked_state(&item.state, false, &item.path),
+                    ..item
+                }
+            }
         })
         .collect()
 }
@@ -7207,6 +7217,28 @@ mod restore_tests {
         assert_eq!(items[0].path, b);
         assert_eq!(items[1].db_id, None, "a uid no row holds is unlinked");
         assert_eq!(items[1].title, "Intro", "and plays from what was saved");
+        assert!(
+            matches!(
+                items[1].state,
+                koan_core::player::state::ItemState::Failed(_)
+            ),
+            "its file gone too, it fails rather than waiting on nothing"
+        );
+    }
+
+    #[test]
+    fn a_saved_item_whose_uid_is_gone_is_found_by_its_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let file = dir.path().join("song.flac");
+        std::fs::write(&file, b"audio").unwrap();
+        // Indexed again since the session was saved, under a new uid.
+        let id = track(&db, "Song", &file);
+        let mut item = saved("Song", &file.to_string_lossy(), Some(id + 50));
+        item.uid = Some("01900000-0000-7000-8000-00000000abcd".into());
+
+        let items = restore_items(&db, &[item]);
+        assert_eq!(items[0].db_id, Some(id));
     }
 }
 

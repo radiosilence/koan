@@ -60,7 +60,7 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 ### Key design decisions
 
 - **QueueItemId (UUIDv7)** — all queue ops use IDs, not indices. Survives reordering, handles duplicate tracks.
-- **Queue items carry the track's uid** — a row id is reused once its row is deleted, so after the library loses rows the queue finds its tracks again by uid (`helpers::queue_relinks`, `PlayerCommand::Relink`). An item whose track is gone is unlinked and plays from its own path and metadata.
+- **Queue items carry the track's uid** — a row id is reused once its row is deleted, so after the library loses rows the queue finds its tracks again by uid (`helpers::queue_relinks`, `SharedPlayerState::relink`). An item whose track is gone is unlinked and plays from its own path and metadata.
 - **Status is derived** — `QueueEntryStatus` computed from the cursor, the row's `played` mark and its load state. Played is recorded when a track plays, never inferred from position.
 - **Shuffle never moves the queue** — it is a play order beside it (`PlayOrder` in `player/state.rs`) that the advance and the decoder's lookahead both read.
 - **Decode cursor ≠ UI cursor** — decode thread peeks ahead for gapless without moving the playlist cursor.

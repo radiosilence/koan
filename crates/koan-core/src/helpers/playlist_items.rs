@@ -88,9 +88,11 @@ pub fn playlist_item_from_track(
 
 /// Where the queue's tracks are in the library now, for the items whose row
 /// is not the one their uid names: a row deleted, or its id since given to
-/// another track. An item whose uid no row holds is unlinked, and plays and
-/// is drawn from its own metadata until a sync brings the track back. One
-/// query, for a library that has just lost or gained rows.
+/// another track. A uid no row holds is looked for by the item's file, which
+/// finds a local track merged into another or indexed again under a new uid;
+/// failing that the item is unlinked, and plays and is drawn from its own
+/// metadata until a sync brings the track back. One query for the uids, and
+/// one per item no uid finds.
 pub fn queue_relinks(
     db: &Database,
     state: &crate::player::state::SharedPlayerState,
@@ -102,14 +104,18 @@ pub fn queue_relinks(
     let Ok(rows) = queries::uids::ids_for_uids(
         &db.conn,
         queries::uids::UidKind::Track,
-        items.iter().map(|(_, _, uid)| uid.as_str()),
+        items.iter().map(|(_, _, uid, _)| uid.as_str()),
     ) else {
         return Vec::new();
     };
     items
         .into_iter()
-        .filter_map(|(id, held, uid)| {
-            let now = rows.get(&uid).copied();
+        .filter_map(|(id, held, uid, path)| {
+            let now = rows.get(&uid).copied().or_else(|| {
+                queries::track_id_by_path(&db.conn, &path.to_string_lossy())
+                    .ok()
+                    .flatten()
+            });
             (now != held).then_some((id, now))
         })
         .collect()
@@ -133,7 +139,7 @@ pub(super) fn playlist_items_with(
     let ids: Vec<i64> = tracks.iter().map(|t| t.id).collect();
     let extras = queries::queue_item_extras(&db.conn, &ids).unwrap_or_default();
 
-    let mut uids =
+    let uids =
         queries::uids::uids_for(&db.conn, queries::uids::UidKind::Track, ids.iter().copied())
             .unwrap_or_default();
 
@@ -146,7 +152,7 @@ pub(super) fn playlist_items_with(
             let album_date = extra.and_then(|e| e.album_date.as_deref());
             let (path, state) = resolve_item_path(&mut found, cfg, track, remote_url, album_date);
             PlaylistItem {
-                uid: uids.remove(&track.id),
+                uid: uids.get(&track.id).cloned(),
                 ..playlist_item_from_track(track, album_date, path, state)
             }
         })

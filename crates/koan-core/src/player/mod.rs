@@ -2463,7 +2463,6 @@ impl Player {
                 }
             }
             PlayerCommand::SetOutputDevice(name) => self.set_output_device(name),
-            PlayerCommand::Relink(links) => self.shared_state.relink(&links),
             PlayerCommand::RestartOutput => {
                 log::info!("restarting audio output");
                 self.restart_on_current_track();
@@ -3211,24 +3210,42 @@ mod tests {
             asked: Default::default(),
             starts: Default::default(),
         });
-        let item = PlaylistItem {
+        let on_disk = PlaylistItem {
             path,
             db_id: Some(7),
             uid: Some("0190a000-0000-7000-8000-000000000001".into()),
             ..make_item("t")
         };
-        let id = item.id;
-        player.process_command(PlayerCommand::AddToPlaylist(vec![item]));
-        // Its track forgotten: the row it named is gone.
-        player.process_command(PlayerCommand::Relink(vec![(id, None)]));
-        assert_eq!(player.shared_state.item_db_id(id), None);
+        let arriving = PlaylistItem {
+            path: dir.path().join("not yet.flac"),
+            db_id: Some(8),
+            uid: Some("0190a000-0000-7000-8000-000000000002".into()),
+            state: ItemState::Pending,
+            ..make_item("u")
+        };
+        let (kept, stranded) = (on_disk.id, arriving.id);
+        player.process_command(PlayerCommand::AddToPlaylist(vec![on_disk, arriving]));
+        // Their tracks forgotten: the rows they named are gone.
+        player
+            .shared_state
+            .relink(&[(kept, None), (stranded, None)]);
+        assert_eq!(player.shared_state.item_db_id(kept), None);
+        assert!(
+            matches!(
+                player.shared_state.item_state(stranded),
+                Some(ItemState::Failed(_))
+            ),
+            "nothing would ever fetch it: failed, not waited on"
+        );
 
-        player.process_command(PlayerCommand::Play(id));
+        player.process_command(PlayerCommand::Play(kept));
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Playing);
+
+        // Its track back: waiting for its download again.
+        player.shared_state.relink(&[(stranded, Some(9))]);
         assert_eq!(
-            player.shared_state.get_item(id).unwrap().title,
-            "t",
-            "drawn from what it was queued with"
+            player.shared_state.item_state(stranded),
+            Some(ItemState::Pending)
         );
     }
 

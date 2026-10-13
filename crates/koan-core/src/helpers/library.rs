@@ -373,14 +373,15 @@ mod rebuild_tests {
         let uid =
             |id| queries::uids_for(&db.conn, queries::UidKind::Track, [id]).unwrap()[&id].clone();
         let (night_uid, morning_uid) = (uid(night), uid(morning));
-        let rows = queries::tracks_by_ids(&db.conn, &[night, morning]).unwrap();
+        // The night track queued twice: both copies are found again.
+        let rows = queries::tracks_by_ids(&db.conn, &[night, morning, night]).unwrap();
         let state = crate::player::state::SharedPlayerState::new();
         state.add_items(playlist_items_for_tracks(&db, &rows));
         let queued = |title: &str| {
             state
                 .queue_uids()
                 .into_iter()
-                .find(|(id, _, _)| state.get_item(*id).is_some_and(|i| i.title == title))
+                .find(|(id, ..)| state.get_item(*id).is_some_and(|i| i.title == title))
                 .unwrap()
         };
         let night_item = queued("Night Wire").0;
@@ -389,10 +390,11 @@ mod rebuild_tests {
             queue_relinks(&db, &state).is_empty(),
             "nothing to do while rows last"
         );
+        assert_eq!(state.queue_uids().len(), 3, "every copy carries its uid");
 
         forget_remote(&db).unwrap();
         let links = queue_relinks(&db, &state);
-        assert_eq!(links.len(), 2);
+        assert_eq!(links.len(), 3);
         assert!(
             links.iter().all(|(_, row)| row.is_none()),
             "unlinked, not left naming nothing"
@@ -419,6 +421,14 @@ mod rebuild_tests {
             item.db_id,
             Some(night_again),
             "the night track, not its old row id"
+        );
+        let (copies, _) = state.snapshot_playlist();
+        assert!(
+            copies
+                .iter()
+                .filter(|i| i.title == "Night Wire")
+                .all(|i| i.db_id == Some(night_again)),
+            "both copies"
         );
         assert!(queue_relinks(&db, &state).is_empty(), "settled");
     }

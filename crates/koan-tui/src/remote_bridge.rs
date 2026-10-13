@@ -232,7 +232,6 @@ fn command_loop(client: GraphQLClient, rx: Receiver<PlayerCommand>) {
             // catches new variants. The output device is the server's.
             PlayerCommand::SetOutputDevice(_)
             | PlayerCommand::RestartOutput
-            | PlayerCommand::Relink(_)
             | PlayerCommand::ClearOutputDevice
             | PlayerCommand::ReloadDsp
             | PlayerCommand::RouteChanged
