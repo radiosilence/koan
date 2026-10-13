@@ -15,7 +15,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
@@ -34,8 +33,11 @@ import cc.blit.koan.ui.nowplaying.nowPlayingEntries
 import cc.blit.koan.ui.playlists.playlistsEntries
 import cc.blit.koan.ui.queue.queueEntries
 import cc.blit.koan.ui.search.searchEntries
-import cc.blit.koan.ui.settings.AccountModel
+import cc.blit.koan.ui.settings.AccountPrompts
+import cc.blit.koan.ui.settings.AskForNotificationsOnFirstPlay
+import cc.blit.koan.ui.settings.OpenedLinks
 import cc.blit.koan.ui.settings.SignInPage
+import cc.blit.koan.ui.settings.accountModel
 import cc.blit.koan.ui.settings.settingsEntries
 import cc.blit.koan.ui.theme.KoanIcons
 import cc.blit.koan.ui.theme.KoanTabBar
@@ -51,14 +53,16 @@ import cc.blit.koan.ui.theme.KoanTabItem
  */
 @Composable
 fun AppShell() {
-    val app = koanApp()
-    val account = viewModel { AccountModel(app.mirror) }
+    val account = accountModel()
     val state by account.state.collectAsStateWithLifecycle()
     when (state.signedIn) {
         null -> Unit
         false -> SignInPage(account)
         true -> Signed()
     }
+    OpenedLinks(account)
+    AccountPrompts(account)
+    AskForNotificationsOnFirstPlay()
 }
 
 @Composable
