@@ -77,7 +77,7 @@ fun SearchPage() {
 
     // The field's own state, which the model follows; seeded from the model so
     // the query survives the page leaving and coming back.
-    val field = rememberTextFieldState(model.query.value)
+    val field = rememberTextFieldState(query)
     LaunchedEffect(field) { snapshotFlow { field.text.toString() }.collect(model::setQuery) }
 
     // A pick belongs to the page it was made on.

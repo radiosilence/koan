@@ -38,6 +38,7 @@ import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.NoFilter
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.theme.LocalKoanTokens
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -61,6 +62,7 @@ data class Listing(
  * search, as the library's browsers are. Tracks come a page at a time, since a
  * library has tens of thousands.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class SearchListModel(mirror: EngineMirror, list: SearchList, query: String) : ViewModel() {
     /** How many tracks to have read; raised as the list scrolls towards its end. */
     private val wanted = MutableStateFlow(PAGE)

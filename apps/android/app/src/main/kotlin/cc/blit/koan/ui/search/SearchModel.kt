@@ -3,6 +3,7 @@ package cc.blit.koan.ui.search
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cc.blit.koan.ffi.ShelfSummary
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,7 +30,7 @@ data class Results(val query: String, val shelf: ShelfSummary?) {
  * new one cancels the one in flight, so a slow answer never lands over a newer
  * query's. The library moving asks again.
  */
-@OptIn(FlowPreview::class)
+@OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
 class SearchModel(
     search: suspend (String) -> ShelfSummary,
     library: Flow<Long>,
