@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import cc.blit.koan.engine.describe
 import cc.blit.koan.ffi.KoanEngineInterface
 import cc.blit.koan.ffi.KoanException
 import cc.blit.koan.ffi.OutputChoice

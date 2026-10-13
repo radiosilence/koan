@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.engine.EngineMirror
+import cc.blit.koan.engine.describe
 import cc.blit.koan.ffi.DeviceInfo
 import cc.blit.koan.ffi.KoanException
 import cc.blit.koan.ffi.PlayState

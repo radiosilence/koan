@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import cc.blit.koan.engine.describe
 import cc.blit.koan.ffi.Invite
 import cc.blit.koan.ffi.KoanEngineInterface
 import cc.blit.koan.ffi.KoanException
@@ -250,14 +251,3 @@ class AccountModel(private val engine: suspend () -> KoanEngineInterface) : View
 
 /** A server's host, for naming it in a sentence. */
 fun host(url: String): String = url.toUri().host ?: url
-
-/** The engine's own words for what went wrong. */
-fun KoanException.describe() = when (this) {
-    is KoanException.Database -> detail
-    is KoanException.Audio -> detail
-    is KoanException.Player -> detail
-    is KoanException.NotFound -> detail
-    is KoanException.BadArgument -> detail
-    is KoanException.Remote -> detail
-    is KoanException.NeedsSampleRate -> detail
-}

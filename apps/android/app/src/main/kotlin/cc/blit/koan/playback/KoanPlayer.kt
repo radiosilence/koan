@@ -16,6 +16,7 @@ import cc.blit.koan.ffi.RepeatMode
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -127,8 +128,15 @@ class KoanPlayer(
     private fun call(block: suspend KoanEngine.() -> Unit): ListenableFuture<*> {
         val done = SettableFuture.create<Unit>()
         scope.launch {
-            runCatching { engine.engine().block() }
-            done.set(Unit)
+            try {
+                engine.engine().block()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                engine.report(e)
+            } finally {
+                done.set(Unit)
+            }
         }
         return done
     }

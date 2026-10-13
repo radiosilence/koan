@@ -2314,6 +2314,11 @@ pub struct CommandNotice {
     pub device: String,
     /// Waiting for the device to wake, rather than not taken.
     pub queued: bool,
+    /// Reached, and turned down: `detail` is the device's reason.
+    pub refused: bool,
+    /// Never got there: `detail` says why, naming the device. Otherwise, not
+    /// queued or refused, the device took it and failed.
+    pub unreached: bool,
     /// Why it was not taken.
     pub detail: String,
 }

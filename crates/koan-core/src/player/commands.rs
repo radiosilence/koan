@@ -237,6 +237,38 @@ impl PlayerCommand {
                 | Self::ReplacePlaylist { play: true, .. }
         )
     }
+
+    /// This command for this device's own player, when it can stand in for a
+    /// controlled device out of reach: one that asks for music, or adds to
+    /// what is to come. Pausing or seeking a device that cannot be reached
+    /// has nothing here to act on, and playing one of its queue's entries
+    /// names an entry this device does not have.
+    pub fn instead_here(&self) -> Option<Self> {
+        Some(match self {
+            Self::Resume => Self::Resume,
+            Self::NextTrack => Self::NextTrack,
+            Self::PrevTrack => Self::PrevTrack,
+            Self::AddToPlaylist(items) => Self::AddToPlaylist(items.clone()),
+            Self::InsertInPlaylist { items, after } => Self::InsertInPlaylist {
+                items: items.clone(),
+                after: *after,
+            },
+            Self::ReplacePlaylist {
+                items,
+                start,
+                position_ms,
+                play,
+                mode,
+            } => Self::ReplacePlaylist {
+                items: items.clone(),
+                start: *start,
+                position_ms: *position_ms,
+                play: *play,
+                mode: *mode,
+            },
+            _ => return None,
+        })
+    }
 }
 
 /// Stop the renderer playing, if one is, before the app quits, waiting at
@@ -257,6 +289,29 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::*;
+
+    #[test]
+    fn only_a_call_for_music_plays_here_instead() {
+        assert!(matches!(
+            PlayerCommand::Resume.instead_here(),
+            Some(PlayerCommand::Resume)
+        ));
+        assert!(PlayerCommand::NextTrack.instead_here().is_some());
+        assert!(
+            PlayerCommand::AddToPlaylist(Vec::new())
+                .instead_here()
+                .is_some()
+        );
+        assert!(PlayerCommand::Pause.instead_here().is_none());
+        assert!(
+            PlayerCommand::Play(QueueItemId::new())
+                .instead_here()
+                .is_none(),
+            "an entry in the other device's queue"
+        );
+        assert!(PlayerCommand::Seek(1_000).instead_here().is_none());
+        assert!(PlayerCommand::ClearPlaylist.instead_here().is_none());
+    }
     use crate::audio::buffer::{self, PlaybackTimeline, Processing, SourceEntry};
 
     #[test]

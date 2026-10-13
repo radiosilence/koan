@@ -5,6 +5,7 @@ import cc.blit.koan.ffi.Appearance
 import cc.blit.koan.ffi.ConnectionInfo
 import cc.blit.koan.ffi.DeviceInfo
 import cc.blit.koan.ffi.KoanEngine
+import cc.blit.koan.ffi.KoanException
 import cc.blit.koan.ffi.NowPlaying
 import cc.blit.koan.ffi.OutputsInfo
 import cc.blit.koan.ffi.QueueItem
@@ -15,12 +16,15 @@ import cc.blit.koan.ffi.StateSlice
 import cc.blit.koan.ffi.SyncProgress
 import cc.blit.koan.ffi.Transfer
 import cc.blit.koan.ffi.TransferFigure
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -119,6 +123,11 @@ class EngineMirror(deviceName: String) {
     private val _connection = MutableStateFlow<ConnectionInfo?>(null)
     val connection: StateFlow<ConnectionInfo?> = _connection.asStateFlow()
 
+    private val _notices = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    /** What the person is told once and then not again: a command that went nowhere, and why. */
+    val notices: SharedFlow<String> = _notices
+    private var noticeSeq = 0uL
+
     private val _renderers = MutableStateFlow(Renderers(emptyList(), null))
     val renderers: StateFlow<Renderers> = _renderers.asStateFlow()
 
@@ -150,9 +159,26 @@ class EngineMirror(deviceName: String) {
     /** The engine, once it has opened the library and started the player. */
     suspend fun engine(): KoanEngine = opened.await()
 
-    /** Run `block` against the engine off the main thread, without waiting for it. */
+    /**
+     * Run `block` against the engine off the main thread, without waiting for
+     * it. A failure is told to the person, never dropped: a call that may fail
+     * quietly catches its own.
+     */
     fun launch(block: suspend KoanEngine.() -> Unit) {
-        scope.launch { runCatching { opened.await().block() } }
+        scope.launch {
+            try {
+                opened.await().block()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                report(e)
+            }
+        }
+    }
+
+    /** Tell the person why something they asked for did not happen. */
+    fun report(e: Exception) {
+        _notices.tryEmit((e as? KoanException)?.describe() ?: "Something went wrong: ${e.message ?: e}")
     }
 
     /** Change an appearance setting (`setTheme`, `setThemeIcons`, `setRecordColours`), and redraw in it. */
@@ -193,9 +219,34 @@ class EngineMirror(deviceName: String) {
             is StateSlice.Tasks -> _tasks.value = Tasks(slice.scanning, slice.syncing)
             is StateSlice.Sync -> _sync.value = slice.progress
             is StateSlice.Devices -> _devices.value = Devices(slice.devices, slice.target)
-            is StateSlice.Connection -> _connection.value = slice.connection
+            is StateSlice.Connection -> {
+                _connection.value = slice.connection
+                // A command already on its way that then did not arrive.
+                slice.connection.commandNotice?.takeIf { it.seq > noticeSeq }?.let { n ->
+                    noticeSeq = n.seq
+                    _notices.tryEmit(
+                        when {
+                            n.queued -> "Waiting for ${n.device} to wake"
+                            n.refused -> "${n.device} turned it down: ${n.detail}"
+                            n.unreached -> n.detail
+                            else -> "${n.device} couldn't do it: ${n.detail}"
+                        },
+                    )
+                }
+            }
             is StateSlice.Renderers -> _renderers.value = Renderers(slice.renderers, slice.output)
             is StateSlice.Outputs -> _outputs.value = slice.outputs
         }
     }
+}
+
+/** The engine's own words for what went wrong. */
+fun KoanException.describe() = when (this) {
+    is KoanException.Database -> detail
+    is KoanException.Audio -> detail
+    is KoanException.Player -> detail
+    is KoanException.NotFound -> detail
+    is KoanException.BadArgument -> detail
+    is KoanException.Remote -> detail
+    is KoanException.NeedsSampleRate -> detail
 }

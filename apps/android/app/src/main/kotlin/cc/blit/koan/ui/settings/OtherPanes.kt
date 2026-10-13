@@ -29,6 +29,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import cc.blit.koan.engine.describe
 import cc.blit.koan.ffi.Assistants
 import cc.blit.koan.ffi.KoanException
 import cc.blit.koan.playback.BitPerfectHost

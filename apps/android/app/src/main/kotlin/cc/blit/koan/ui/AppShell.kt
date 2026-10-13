@@ -1,5 +1,6 @@
 package cc.blit.koan.ui
 
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,12 +10,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
 import androidx.navigation3.runtime.NavKey
@@ -70,6 +73,17 @@ fun AppShell() {
     AccountPrompts(account)
     DspPrompts(dsp)
     AskForNotificationsOnFirstPlay()
+    Notices()
+}
+
+/** What a command came to when it did not simply work, said once. */
+@Composable
+private fun Notices() {
+    val app = koanApp()
+    val context = LocalContext.current
+    LaunchedEffect(app) {
+        app.mirror.notices.collect { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
+    }
 }
 
 @Composable

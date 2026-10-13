@@ -3,6 +3,7 @@ package cc.blit.koan.ui.settings
 import android.text.format.Formatter
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import cc.blit.koan.engine.describe
 import cc.blit.koan.ffi.ConnectedInfo
 import cc.blit.koan.ffi.HeldInfo
 import cc.blit.koan.ffi.KoanEngineInterface

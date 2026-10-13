@@ -2,6 +2,7 @@ package cc.blit.koan.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import cc.blit.koan.engine.describe
 import cc.blit.koan.ffi.AutoEqEntry
 import cc.blit.koan.ffi.AutoEqMaker
 import cc.blit.koan.ffi.AutoEqOffer
