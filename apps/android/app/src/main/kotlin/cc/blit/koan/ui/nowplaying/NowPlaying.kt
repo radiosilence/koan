@@ -16,10 +16,12 @@ import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -157,7 +159,7 @@ private fun NowPlayingPage() {
     val scope = rememberCoroutineScope()
     val dismissAt = with(LocalDensity.current) { 160.dp.toPx() }
 
-    Column(
+    BoxWithConstraints(
         Modifier.fillMaxSize()
             .graphicsLayer { translationY = drag.value }
             .koanSurface()
@@ -170,26 +172,43 @@ private fun NowPlayingPage() {
             )
             .safeDrawingPadding()
             .padding(horizontal = KoanSpace.page),
-        verticalArrangement = Arrangement.spacedBy(KoanSpace.m),
     ) {
-        GlyphButton(KoanIcons.expand, "Close", nav::closeNowPlaying, Modifier.padding(top = KoanSpace.xs))
-        AnimatedContent(
-            lyrics,
-            Modifier.weight(1f).fillMaxWidth(),
-            transitionSpec = { fadeIn() togetherWith fadeOut() },
-            label = "stage",
-        ) { showLyrics ->
-            if (showLyrics) {
-                LyricsPanel(entry?.trackId, now.length(), Modifier.fillMaxSize())
-            } else {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Sleeve(entry) }
+        val stage = @Composable { modifier: Modifier ->
+            AnimatedContent(lyrics, modifier, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "stage") { showLyrics ->
+                if (showLyrics) {
+                    LyricsPanel(entry?.trackId, now.length(), Modifier.fillMaxSize())
+                } else {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Sleeve(entry) }
+                }
             }
         }
-        Titles(entry)
-        SeekBar(now)
-        Transport(now)
-        Toggles(now, lyrics) { lyrics = !lyrics }
-        Spacer(Modifier.size(KoanSpace.s))
+        val controls = @Composable {
+            Titles(entry)
+            SeekBar(now)
+            Transport(now)
+            Toggles(now, lyrics) { lyrics = !lyrics }
+        }
+        // Wider than tall, the sleeve takes the left and the controls the
+        // right, as on an iPad: stacked, the sleeve would have no height left.
+        if (maxWidth > maxHeight) {
+            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(KoanSpace.xl)) {
+                stage(Modifier.weight(1f).fillMaxHeight().padding(vertical = KoanSpace.m))
+                Column(
+                    Modifier.weight(1f).fillMaxHeight(),
+                    verticalArrangement = Arrangement.spacedBy(KoanSpace.m, Alignment.CenterVertically),
+                ) {
+                    GlyphButton(KoanIcons.expand, "Close", nav::closeNowPlaying)
+                    controls()
+                }
+            }
+        } else {
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(KoanSpace.m)) {
+                GlyphButton(KoanIcons.expand, "Close", nav::closeNowPlaying, Modifier.padding(top = KoanSpace.xs))
+                stage(Modifier.weight(1f).fillMaxWidth())
+                controls()
+                Spacer(Modifier.size(KoanSpace.s))
+            }
+        }
     }
 }
 
@@ -213,7 +232,8 @@ private fun GlyphButton(
 @Composable
 private fun Sleeve(entry: QueueItem?) {
     val shape = if (KoanTheme.isOn) RectangleShape else RoundedCornerShape(12.dp)
-    val modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth().aspectRatio(1f).clip(shape)
+    // Square, as large as fits either way.
+    val modifier = Modifier.widthIn(max = 520.dp).aspectRatio(1f, matchHeightConstraintsFirst = true).clip(shape)
     val art = entry?.art(ArtSize.Full)
     if (art != null) {
         AsyncImage(art, entry.album, modifier, contentScale = ContentScale.Crop)
