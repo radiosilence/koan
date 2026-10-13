@@ -15,6 +15,7 @@ import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,11 +61,16 @@ fun PlayOnButton(modifier: Modifier = Modifier) {
 }
 
 /**
- * Which kōan the transport, the queue and Now Playing show and command: this
+ * Where the music plays, as two choices, as iOS's `DevicePicker` has them.
+ *
+ * Control: which kōan the transport, the queue and Now Playing show and command: this
  * phone, or another of the account's or the network's. Picking another pauses
  * this one and turns everything into that device's until another is picked.
  * Nothing moves until "Move here", which sends what the device controlled is
  * playing to that row's device.
+ *
+ * Output: where this phone's music comes out, its own output or a UPnP
+ * renderer on the network (`OutputSection`).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,8 +81,14 @@ fun PlayOnSheet(onDismiss: () -> Unit) {
     val queue by mirror.queue.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var notice by remember { mutableStateOf<String?>(null) }
+    val outputs by mirror.outputs.collectAsStateWithLifecycle()
+    val renderers by mirror.renderers.collectAsStateWithLifecycle()
     val controlled = devices.devices.firstOrNull { it.id == devices.target }
     val hasQueue = queue.items.isNotEmpty()
+    val picker = remember { OutputPicker(mirror::engine, scope) }
+    // Searching for renderers is what holds the Wi-Fi multicast lock, a few
+    // seconds at a time: only while the sheet is open.
+    LaunchedEffect(picker) { picker.searchWhileOpen() }
 
     fun attempt(block: suspend () -> Unit) = scope.launch {
         try {
@@ -129,6 +141,7 @@ fun PlayOnSheet(onDismiss: () -> Unit) {
                     tone = KoanTone.Muted,
                 )
             }
+            OutputSection(picker, outputs, renderers.output, blocked = connection?.localNetworkBlocked == true)
         }
     }
 }

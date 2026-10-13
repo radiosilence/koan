@@ -1,0 +1,1 @@
+- **Android plays to UPnP/DLNA speakers.** Play on lists the renderers on the network beside this phone's own output, searching while it is open, and says when one is connecting, playing or would not take the music.
