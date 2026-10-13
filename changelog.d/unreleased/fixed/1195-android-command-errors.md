@@ -1,0 +1,1 @@
+- **A command that cannot reach the device being controlled says so.** Playing while another device is controlled and out of reach used to do nothing; the app now names the device and points to Play on, and Android shows such failures where it showed none.

@@ -5,6 +5,7 @@ import cc.blit.koan.ffi.Appearance
 import cc.blit.koan.ffi.ConnectionInfo
 import cc.blit.koan.ffi.DeviceInfo
 import cc.blit.koan.ffi.KoanEngine
+import cc.blit.koan.ffi.KoanException
 import cc.blit.koan.ffi.NowPlaying
 import cc.blit.koan.ffi.OutputsInfo
 import cc.blit.koan.ffi.QueueItem
@@ -15,12 +16,15 @@ import cc.blit.koan.ffi.StateSlice
 import cc.blit.koan.ffi.SyncProgress
 import cc.blit.koan.ffi.Transfer
 import cc.blit.koan.ffi.TransferFigure
+import cc.blit.koan.ui.settings.describe
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -119,6 +123,11 @@ class EngineMirror(deviceName: String) {
     private val _connection = MutableStateFlow<ConnectionInfo?>(null)
     val connection: StateFlow<ConnectionInfo?> = _connection.asStateFlow()
 
+    private val _notices = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    /** What the person is told once and then not again: a command that went nowhere, and why. */
+    val notices: SharedFlow<String> = _notices
+    private var noticeSeq = 0uL
+
     private val _renderers = MutableStateFlow(Renderers(emptyList(), null))
     val renderers: StateFlow<Renderers> = _renderers.asStateFlow()
 
@@ -153,6 +162,17 @@ class EngineMirror(deviceName: String) {
     /** Run `block` against the engine off the main thread, without waiting for it. */
     fun launch(block: suspend KoanEngine.() -> Unit) {
         scope.launch { runCatching { opened.await().block() } }
+    }
+
+    /** `launch` for what the person asked for: a refusal is told to them, not dropped. */
+    fun command(block: suspend KoanEngine.() -> Unit) {
+        scope.launch {
+            try {
+                opened.await().block()
+            } catch (e: KoanException) {
+                _notices.tryEmit(e.describe())
+            }
+        }
     }
 
     /** Change an appearance setting (`setTheme`, `setThemeIcons`, `setRecordColours`), and redraw in it. */
@@ -193,7 +213,16 @@ class EngineMirror(deviceName: String) {
             is StateSlice.Tasks -> _tasks.value = Tasks(slice.scanning, slice.syncing)
             is StateSlice.Sync -> _sync.value = slice.progress
             is StateSlice.Devices -> _devices.value = Devices(slice.devices, slice.target)
-            is StateSlice.Connection -> _connection.value = slice.connection
+            is StateSlice.Connection -> {
+                _connection.value = slice.connection
+                // A command already on its way that then did not arrive.
+                slice.connection.commandNotice?.takeIf { it.seq > noticeSeq }?.let { n ->
+                    noticeSeq = n.seq
+                    _notices.tryEmit(
+                        if (n.queued) "Waiting for ${n.device} to wake" else "Couldn't reach ${n.device}: ${n.detail}",
+                    )
+                }
+            }
             is StateSlice.Renderers -> _renderers.value = Renderers(slice.renderers, slice.output)
             is StateSlice.Outputs -> _outputs.value = slice.outputs
         }

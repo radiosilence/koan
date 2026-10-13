@@ -1464,9 +1464,22 @@ pub fn send_then(id: &str, cmd: LinkCommand, then: Option<Then>) -> Result<(), S
         log::info!("devices: {id} is not listed; asking the server");
     }
     acks::forget(ack);
-    let outcome = ask_server(id, &cmd, Some(ack))?;
+    let outcome = ask_server(id, &cmd, Some(ack)).map_err(|e| {
+        log::warn!("devices: {cmd:?} reached {id} by no way; the server: {e}");
+        out_of_reach(id)
+    })?;
     told(id, &cmd, outcome, then);
     Ok(())
+}
+
+/// What the person is told when neither the network nor the server reaches
+/// `id`: the server's own error says nothing about the device.
+fn out_of_reach(id: &str) -> String {
+    let name = list()
+        .into_iter()
+        .find(|d| d.id == id)
+        .map_or_else(|| "That device".to_owned(), |d| d.name);
+    format!("{name} is out of reach. Choose this device in Play on to play here.")
 }
 
 /// The ways a command can reach a device, and which of them bring an answer.
@@ -1680,6 +1693,30 @@ pub fn this_id() -> Option<String> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// The device controlled, restored on a network it is not on, with no
+    /// server that relays to it: the command fails, and says which device and
+    /// what to do.
+    #[test]
+    fn a_command_to_a_device_out_of_reach_names_it() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        with(|s| {
+            s.target = Some(Remembered {
+                id: "mac".into(),
+                name: "Studio Mac".into(),
+                platform: "macos".into(),
+            })
+        });
+
+        let err = send("mac", LinkCommand::Pause).unwrap_err();
+        assert_eq!(
+            err,
+            "Studio Mac is out of reach. Choose this device in Play on to play here."
+        );
+        with(|s| *s = Store::default());
+    }
 
     /// A TV dialled by address whose AirPlay record was matched by name, at
     /// its `.local.` host: a second hello inside the window, which does not
