@@ -1804,7 +1804,15 @@ mod tests {
 
         let wide = Processing::default();
         wide.depth_limit.store(24, Ordering::Relaxed);
-        assert_eq!(run_queue_with(&[a, b], &wide).0.len(), 2);
+        assert_eq!(run_queue_with(&[a.clone(), b.clone()], &wide).0.len(), 2);
+
+        // A session seeded with the first track's depth: a short 16-bit track,
+        // decoded long before any output opens, does not carry 24 bits on.
+        let seeded = Processing::default();
+        seeded.depth_limit.store(16, Ordering::Relaxed);
+        let short = dir.path().join("short.wav");
+        crate::test_utils::generate_wav(&short, 44100, 2, 0.01, 16);
+        assert_eq!(run_queue_with(&[short, b], &seeded).0.len(), 1);
     }
 
     #[test]

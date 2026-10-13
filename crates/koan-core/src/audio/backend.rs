@@ -115,6 +115,12 @@ pub trait AudioBackend: Send + Sync {
         None
     }
 
+    /// Whether `output_depth` may narrow, so a session must assume it does
+    /// until the output is open: the decoder runs ahead of it.
+    fn narrows_depth(&self) -> bool {
+        false
+    }
+
     /// Be told when the output stops for good underneath the player, so it
     /// can be rebuilt: Android disconnects every stream when its audio server
     /// restarts. Called on a thread of the platform's; it must only send.

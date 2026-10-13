@@ -1126,6 +1126,13 @@ impl Player {
         // output's processing.
         let processing = self.processing();
         let depth_limit = processing.depth_limit.clone();
+        // The decoder starts before the output opens and runs far ahead of
+        // it, past a short track's end within the first moments. Until the
+        // output says what it keeps, a deeper track than this one ends the run.
+        depth_limit.store(
+            self.assumed_depth(&info),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         self.session += 1;
         let session = self.session;
         let finish_tx = self.commands.tx.clone();
@@ -1635,6 +1642,16 @@ impl Player {
     /// Output stops first, then the decode thread is joined, then the engine
     /// drops: tearing CoreAudio down under a live producer is the end-of-queue
     /// crash (#89).
+    /// The depth limit a session starts with, before its output is open: the
+    /// first track's own where the output may narrow, none otherwise.
+    fn assumed_depth(&self, info: &buffer::StreamInfo) -> u16 {
+        if self.backend.narrows_depth() {
+            info.bit_depth.unwrap_or(24)
+        } else {
+            0
+        }
+    }
+
     /// Look, shortly, whether the output just started has begun to play.
     fn check_output_started(&mut self) {
         self.output_check = Some((
@@ -6052,6 +6069,9 @@ mod tests {
         fn output_mixed(&self) -> Option<bool> {
             Some(self.mixed.load(std::sync::atomic::Ordering::Relaxed))
         }
+        fn narrows_depth(&self) -> bool {
+            true
+        }
         fn create_engine(
             &self,
             _device: &backend::DeviceInfo,
@@ -6067,6 +6087,32 @@ mod tests {
                 lead_in: Default::default(),
             }))
         }
+    }
+
+    #[test]
+    fn a_session_assumes_its_first_tracks_depth_until_a_narrowing_output_opens() {
+        let info = |bit_depth| buffer::StreamInfo {
+            codec: "FLAC".into(),
+            sample_rate: 44100,
+            channels: 2,
+            bit_depth,
+            bitrate_kbps: None,
+            duration_ms: 1000,
+        };
+        let mut player = Player::new();
+        player.backend = Box::new(FallbackBackend {
+            asked_depth: Default::default(),
+            mixed: Default::default(),
+        });
+        assert_eq!(player.assumed_depth(&info(Some(16))), 16);
+        assert_eq!(player.assumed_depth(&info(None)), 24);
+
+        player.backend = Box::new(StuckBackend {
+            rate: 44100.0,
+            asked: Default::default(),
+            starts: Default::default(),
+        });
+        assert_eq!(player.assumed_depth(&info(Some(16))), 0, "nothing narrows");
     }
 
     #[test]

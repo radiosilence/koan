@@ -101,8 +101,12 @@ fn check(result: aaudio_result_t, what: &str) -> Result<(), BackendError> {
 #[derive(Default)]
 pub struct AndroidAudioBackend {
     held: Mutex<Option<MixerFormat>>,
-    disconnect: Mutex<Option<Disconnect>>,
 }
+
+/// What the player gave to be told a stream was disconnected. Static, so the
+/// error callback, which AAudio may still be running as a stream closes,
+/// reads nothing a stream owns.
+static DISCONNECT: std::sync::OnceLock<Disconnect> = std::sync::OnceLock::new();
 
 impl AndroidAudioBackend {
     fn device() -> DeviceInfo {
@@ -190,12 +194,16 @@ impl AudioBackend for AndroidAudioBackend {
         Some(self.held.lock().is_none())
     }
 
+    fn narrows_depth(&self) -> bool {
+        true
+    }
+
     fn output_depth(&self) -> Option<u16> {
         self.held.lock().map(|f| f.encoding.bits())
     }
 
     fn on_disconnect(&self, rebuild: Arc<dyn Fn() + Send + Sync>) {
-        *self.disconnect.lock() = Some(rebuild);
+        let _ = DISCONNECT.set(rebuild);
     }
 
     fn create_engine(
@@ -219,12 +227,11 @@ impl AudioBackend for AndroidAudioBackend {
             lead_in: Arc::new(AtomicU64::new(0)),
             pace: Arc::new(Pace::default()),
         }));
-        let disconnect = Box::into_raw(Box::new(self.disconnect.lock().clone()));
 
         let mut held = self.held.lock();
         let mut opened = Err(BackendError::NoDevices);
         if let Some(format) = *held {
-            // SAFETY: `state` and `disconnect` outlive any stream opened on them.
+            // SAFETY: `state` outlives any stream opened on it.
             opened = unsafe {
                 open(
                     sample_rate,
@@ -232,7 +239,6 @@ impl AudioBackend for AndroidAudioBackend {
                     format.encoding,
                     format.device_id,
                     state,
-                    disconnect,
                 )
             };
             if let Err(e) = &opened {
@@ -254,7 +260,6 @@ impl AudioBackend for AndroidAudioBackend {
                     Encoding::Float,
                     AAUDIO_UNSPECIFIED,
                     state,
-                    disconnect,
                 )
             };
         }
@@ -262,10 +267,7 @@ impl AudioBackend for AndroidAudioBackend {
             Ok(stream) => stream,
             Err(e) => {
                 // SAFETY: no stream holds them.
-                unsafe {
-                    drop(Box::from_raw(state));
-                    drop(Box::from_raw(disconnect));
-                }
+                unsafe { drop(Box::from_raw(state)) };
                 return Err(e);
             }
         };
@@ -282,7 +284,6 @@ impl AudioBackend for AndroidAudioBackend {
             pace: callback.pace.clone(),
             stream,
             state,
-            disconnect,
             running: callback.running.clone(),
             fade,
             xruns: callback.xruns.clone(),
@@ -297,14 +298,13 @@ impl AudioBackend for AndroidAudioBackend {
 ///
 /// # Safety
 ///
-/// `state` and `disconnect` must outlive the stream.
+/// `state` must outlive the stream.
 unsafe fn open(
     rate: f64,
     channels: u32,
     encoding: Encoding,
     device: i32,
     state: *mut Callback,
-    disconnect: *mut Option<Disconnect>,
 ) -> Result<*mut AAudioStream, BackendError> {
     let mut builder = std::ptr::null_mut();
     // SAFETY: AAudio's builder and stream calls, on pointers it returned.
@@ -319,7 +319,7 @@ unsafe fn open(
         AAudioStreamBuilder_setUsage(builder, AAUDIO_USAGE_MEDIA);
         AAudioStreamBuilder_setContentType(builder, AAUDIO_CONTENT_TYPE_MUSIC);
         AAudioStreamBuilder_setDataCallback(builder, render, state.cast());
-        AAudioStreamBuilder_setErrorCallback(builder, stream_error, disconnect.cast());
+        AAudioStreamBuilder_setErrorCallback(builder, stream_error, std::ptr::null_mut());
         let mut stream = std::ptr::null_mut();
         let opened = AAudioStreamBuilder_openStream(builder, &mut stream);
         AAudioStreamBuilder_delete(builder);
@@ -533,13 +533,10 @@ impl Callback {
 /// the audio server restarted, which disconnects every stream at once. The
 /// player is asked to rebuild the output; closing the stream here would
 /// deadlock AAudio.
-unsafe extern "C" fn stream_error(_: *mut AAudioStream, user: *mut c_void, error: aaudio_result_t) {
+unsafe extern "C" fn stream_error(_: *mut AAudioStream, _: *mut c_void, error: aaudio_result_t) {
     log::warn!("android output: stream error: {}", result_text(error));
-    // SAFETY: the `Option<Disconnect>` the stream was opened with, which
-    // outlives it and is not written while it is open.
-    let disconnect = unsafe { &*user.cast::<Option<Disconnect>>() };
     if error == AAUDIO_ERROR_DISCONNECTED
-        && let Some(rebuild) = disconnect
+        && let Some(rebuild) = DISCONNECT.get()
     {
         rebuild();
     }
@@ -551,7 +548,6 @@ struct AndroidEngine {
     pace: Arc<Pace>,
     stream: *mut AAudioStream,
     state: *mut Callback,
-    disconnect: *mut Option<Disconnect>,
     running: Arc<AtomicBool>,
     fade: Arc<FadeControl>,
     xruns: Arc<AtomicI32>,
@@ -566,12 +562,11 @@ impl Drop for AndroidEngine {
     fn drop(&mut self) {
         // SAFETY: stopping first, as Oboe does: on older releases a close
         // could race a callback still in flight. Closing ends the callbacks,
-        // after which nothing else holds `state` or `disconnect`.
+        // after which nothing else holds `state`.
         unsafe {
             AAudioStream_requestStop(self.stream);
             AAudioStream_close(self.stream);
             drop(Box::from_raw(self.state));
-            drop(Box::from_raw(self.disconnect));
         }
         let xruns = self.xruns.load(Ordering::Relaxed);
         if xruns > 0 {
