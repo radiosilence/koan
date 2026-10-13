@@ -1,5 +1,6 @@
 package cc.blit.koan.ui.theme
 
+import android.graphics.Bitmap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -49,23 +51,54 @@ private val sleeves = listOf<Pair<String, Color?>>(
 fun ThemeSheet() {
     var koan by remember { mutableStateOf(true) }
     var dark by remember { mutableStateOf(true) }
-    var sleeve by remember { mutableIntStateOf(0) }
-    KoanTheme(koan = koan, dark = dark, accent = sleeves[sleeve].second?.let(KoanAccent::of)) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .background(if (koan) KoanTheme.colors.bg else androidx.compose.material3.MaterialTheme.colorScheme.background)
-                .safeDrawingPadding()
-                .verticalScroll(rememberScrollState())
-                .padding(KoanSpace.page),
-            verticalArrangement = Arrangement.spacedBy(KoanSpace.m),
-        ) {
-            KoanSegmented(listOf("Kōan" to true, "System" to false), koan, { koan = it })
-            KoanSegmented(listOf("Dark" to true, "Light" to false), dark, { dark = it })
-            KoanSegmented(sleeves.mapIndexed { i, (name, _) -> name to i }, sleeve, { sleeve = it })
-            Sheet()
+    var sleeve by remember { mutableIntStateOf(1) }
+    var wash by remember { mutableStateOf(WashDemo.Drift) }
+    val record = sleeves[sleeve].second
+    val cover = remember(record) { record?.let(::cover) }
+    KoanTheme(koan = koan, dark = dark, accent = record?.let(KoanAccent::of)) {
+        ProvideRecordWash(cover, pending = false, playing = wash == WashDemo.Drift, recordColours = wash != WashDemo.Off) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .recordWash()
+                    .safeDrawingPadding()
+                    .verticalScroll(rememberScrollState())
+                    .padding(KoanSpace.page),
+                verticalArrangement = Arrangement.spacedBy(KoanSpace.m),
+            ) {
+                KoanSegmented(listOf("Kōan" to true, "System" to false), koan, { koan = it })
+                KoanSegmented(listOf("Dark" to true, "Light" to false), dark, { dark = it })
+                KoanSegmented(sleeves.mapIndexed { i, (name, _) -> name to i }, sleeve, { sleeve = it })
+                KoanSegmented(WashDemo.entries.map { it.name to it }, wash, { wash = it })
+                Sheet()
+            }
         }
     }
+}
+
+/** The wash as the sheet shows it: drifting as while a record plays, held still, or off. */
+private enum class WashDemo { Drift, Still, Off }
+
+/**
+ * A stand-in sleeve for a colour: its own field, a darker band, and a patch
+ * of a neighbouring hue, so the wash has something to move.
+ */
+private fun cover(colour: Color): Bitmap {
+    val side = 64
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(colour.toArgb(), hsv)
+    val neighbour = android.graphics.Color.HSVToColor(floatArrayOf((hsv[0] + 40) % 360, hsv[1], hsv[2]))
+    val dark = android.graphics.Color.HSVToColor(floatArrayOf(hsv[0], hsv[1], hsv[2] * 0.35f))
+    val pixels = IntArray(side * side) { i ->
+        val x = i % side
+        val y = i / side
+        when {
+            y > side * 2 / 3 -> dark
+            x > side / 2 && y < side / 2 -> neighbour
+            else -> colour.toArgb()
+        }
+    }
+    return Bitmap.createBitmap(pixels, side, side, Bitmap.Config.ARGB_8888)
 }
 
 @OptIn(ExperimentalLayoutApi::class)
