@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -23,6 +24,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import cc.blit.koan.ffi.Album
 import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
@@ -64,7 +66,6 @@ fun AlbumsPage(shelf: Shelf?) {
     val selection = model.selection
     SelectMode(selection)
     val narrowed = query.filter.activeCount > 0 || query.search.isNotBlank()
-    val gutter = LocalKoanTokens.current.gutter
     val grid = rememberLazyGridState()
     val list = rememberLazyListState()
     Column {
@@ -92,20 +93,31 @@ fun AlbumsPage(shelf: Shelf?) {
                     KoanIcons.album,
                     if (narrowed) "Try a different filter." else "Sign in to a server in Settings to see its library.",
                 )
-                layout == AlbumLayout.Grid -> LazyVerticalGrid(
-                    columns = GridCells.Adaptive(TileMinimum),
-                    state = grid,
-                    contentPadding = PaddingValues(horizontal = gutter - 4.dp, vertical = 8.dp),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    items(shown, key = { it.id }, contentType = { "album" }) { AlbumTile(it, selection = selection) }
-                }
+                layout == AlbumLayout.Grid -> AlbumGrid(shown, grid) { AlbumTile(it, selection = selection) }
                 else -> LazyColumn(state = list, modifier = Modifier.fillMaxSize()) {
                     items(shown, key = { it.id }, contentType = { "album" }) { AlbumRow(it, selection = selection) }
                 }
             }
         }
         if (selection.active) SelectionBar(selection)
+    }
+}
+
+/**
+ * Records as a lazy grid, keyed by album: only the tiles on screen are
+ * composed, and the place it is scrolled to follows the record at the top
+ * when the listing changes around it.
+ */
+@Composable
+fun AlbumGrid(albums: List<Album>, state: LazyGridState, modifier: Modifier = Modifier, tile: @Composable (Album) -> Unit) {
+    val gutter = LocalKoanTokens.current.gutter
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(TileMinimum),
+        state = state,
+        contentPadding = PaddingValues(horizontal = gutter - 4.dp, vertical = 8.dp),
+        modifier = modifier.fillMaxSize(),
+    ) {
+        items(albums, key = { it.id }, contentType = { "album" }) { tile(it) }
     }
 }
 
