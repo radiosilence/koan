@@ -337,6 +337,8 @@ The Kotlin counterparts of the Swift modules above, with the Swift doc comments 
 | `ui/pages/MiniPlayer.kt`, `NowPlayingSheet.kt`, `ui/queue/PlayerBits.kt` | `TransportBar.swift`: the mini player above the tab bar and the full-screen now-playing dialog. Seek holds through `PlayerModel` (`beginScrub`, `seek`); the format badge names the source and the route's verdict from `KoanProcess.bitPerfect` |
 | `state/LyricsModel.kt`, `ui/queue/LyricsView.kt` | `LyricsPanel.swift`: cache then LRCLIB, off Main and only while the lyrics are shown; the line sung found by sleeping to the next timestamp. `engine/QueueSession.kt` holds the per-runtime levels and lyrics objects so no composable reaches the engine |
 | `theme/KoanSlider.kt` | The seek bar: flat, progress read in the draw block |
+| `ui/pages/PlayHistoryPage.kt`, `HistoryDays.kt` | `HistoryView.swift`: plays grouped by local day (`java.time`, so DST days group as the wall clock does), long-press to pick plays and forget them, the filter, clear with a confirmation |
+| `ui/pages/DownloadsPage.kt`, `TransferMeter.kt`, `TransferText.kt` | `DownloadsView.swift` and `TransferMeter.swift`: transfers keyed by track, the running tasks above them. `mirror.figures` is collected only by a transfer's bar (an `Animatable` read in the draw phase, so no recomposition) and its two text lines (strings, distinct until changed); nothing that holds the list collects it |
 
 ### koan-server (`crates/koan-server/src/`)
 

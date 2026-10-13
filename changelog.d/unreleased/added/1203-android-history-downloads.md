@@ -1,0 +1,1 @@
+- **The Android app has History and Downloads pages.** History lists plays by day, with a filter, long-press to pick plays and forget them, and clear. Downloads shows each transfer with a bar that follows its progress, the tasks koan is busy with, and a link to the record. Neither has been run on a device.
