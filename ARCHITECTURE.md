@@ -176,7 +176,9 @@ The Android app links the core as the Apple apps do: `libkoan_ffi.so`, loaded by
 
 **State reaches Compose as flows.** One coroutine reads `StateStream.next()` off the main thread and sets a `StateFlow` per slice. uniffi resumes a suspended call on whatever thread the Rust future completes on; a `StateFlow` delivers to each collector on that collector's dispatcher, so Compose and the Media3 player read on the main thread without the engine knowing about it.
 
-Bonjour discovery of nearby devices stays Apple-only, as on Linux; Android's equivalent is NSD, and is not wired up. Devices listed by address still work.
+**Nearby devices are found through `NsdManager`.** `remote/nearby.rs` reaches discovery through one name, `discovery`: the `bonjour` module on Apple platforms, `nearby::nsd` on Android. `nsd` keeps what the engine wants (this device announced on its port with its TXT entries, browsing on or off) and has the app's `NearbyHost` (Kotlin `NearbyNsd`) do it; the app reports each resolved service through `nearby_found` and `nearby_lost`, which go where Bonjour's answers go, into the same dialers. Wanted state is held so a host given after the engine started catches up. Android 14 resolves through `registerServiceInfoCallback`; older releases resolve one service at a time. NSD needs no permission.
+
+**UPnP discovery holds Android's multicast lock only while a search runs.** Android drops multicast to the phone unless an app holds a `WifiManager.MulticastLock`. `upnp::discovery::Network` (Kotlin `WifiMulticast`) is told to hold it for `SEARCH_WINDOW` after each `M-SEARCH`, a later search extending the window, and sends searches and joins the SSDP group on the Wi-Fi address it follows through a `NetworkCallback`, so a phone on mobile data too does not search out of the wrong interface. Outside a window, renderers' own announcements are not heard; the list stands on the last search until `search_if_stale` runs another. This needs `CHANGE_WIFI_MULTICAST_STATE` and `ACCESS_NETWORK_STATE`.
 
 ## Gapless playback
 

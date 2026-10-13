@@ -1,0 +1,1 @@
+- **Android finds devices on the local network.** kōan devices are found and announced over Android's network service discovery, as the Apple apps do over Bonjour, and UPnP/DLNA renderers are searched for with the Wi-Fi multicast lock held while the search runs.

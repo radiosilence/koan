@@ -310,7 +310,10 @@ struct Dialer {
     stop: Arc<Stop>,
     /// Where it is dialled; moved by a fresh announcement, which only
     /// Bonjour makes.
-    #[cfg_attr(not(target_vendor = "apple"), allow(dead_code))]
+    #[cfg_attr(
+        not(any(target_vendor = "apple", target_os = "android")),
+        allow(dead_code)
+    )]
     addr: Arc<Mutex<String>>,
     /// Set to have this dialer try again at once, its backoff started over.
     redial: Arc<AtomicBool>,
@@ -395,13 +398,13 @@ fn is_server(s: &str) -> bool {
 
 /// The longest a TXT entry can be. An address that does not fit is not
 /// announced: cut short, it could still read as a different, valid address.
-#[cfg(any(target_vendor = "apple", test))]
+#[cfg(any(target_vendor = "apple", target_os = "android", test))]
 const TXT_ENTRY_MAX: usize = 255;
 
 /// What this device would announce for the server it is signed in to: the
 /// address if it is one to offer and fits whole in the announcement, and
 /// nothing otherwise.
-#[cfg(any(target_vendor = "apple", test))]
+#[cfg(any(target_vendor = "apple", target_os = "android", test))]
 fn announceable(url: &str) -> Option<String> {
     let url = url.trim().trim_end_matches('/');
     (is_server(url) && "server=".len() + url.len() <= TXT_ENTRY_MAX).then(|| url.to_string())
@@ -409,7 +412,7 @@ fn announceable(url: &str) -> Option<String> {
 
 /// The server this device announces: the one it is signed in to, without the
 /// account, or nothing while it is signed out.
-#[cfg(target_vendor = "apple")]
+#[cfg(any(target_vendor = "apple", target_os = "android"))]
 fn announced_server() -> String {
     let cfg = Config::cached();
     if crate::helpers::remote_credential(&cfg).is_none() {
@@ -419,13 +422,13 @@ fn announced_server() -> String {
 }
 
 /// This device's announcement, while it is listening.
-#[cfg(target_vendor = "apple")]
-static ADVERT: Mutex<Option<bonjour::Advert>> = Mutex::new(None);
+#[cfg(any(target_vendor = "apple", target_os = "android"))]
+static ADVERT: Mutex<Option<discovery::Advert>> = Mutex::new(None);
 
 /// Announce this device again, after it signed in or out: its announcement
 /// names the server it is signed in to.
 pub fn readvertise() {
-    #[cfg(target_vendor = "apple")]
+    #[cfg(any(target_vendor = "apple", target_os = "android"))]
     {
         let Some(port) = *PORT.lock() else { return };
         let identity = match RUNNING.lock().as_ref() {
@@ -440,12 +443,12 @@ pub fn readvertise() {
         // under the same name rather than replace the first.
         *advert = None;
         let server = announced_server();
-        *advert = bonjour::advertise(port, &identity, &server);
+        *advert = discovery::advertise(port, &identity, &server);
         // Silent until the next launch would be worse than announcing without
         // the server.
         if advert.is_none() && !server.is_empty() {
             log::warn!("nearby: cannot announce the server; announcing this device without it");
-            *advert = bonjour::advertise(port, &identity, "");
+            *advert = discovery::advertise(port, &identity, "");
         }
     }
 }
@@ -515,8 +518,8 @@ pub fn refresh() {
     }
     reconfigure();
     redial_all();
-    #[cfg(target_vendor = "apple")]
-    bonjour::restart();
+    #[cfg(any(target_vendor = "apple", target_os = "android"))]
+    discovery::restart();
 }
 
 /// Dial every device now, rather than when its backoff runs out: the first
@@ -601,16 +604,16 @@ pub fn start(local: Local) {
         off: false,
     });
     // Paused before it starts when the network is off, so it never browses.
-    #[cfg(target_vendor = "apple")]
+    #[cfg(any(target_vendor = "apple", target_os = "android"))]
     if !enabled() {
-        bonjour::pause();
+        discovery::pause();
     }
     reconfigure();
     dial_remembered();
-    #[cfg(target_vendor = "apple")]
+    #[cfg(any(target_vendor = "apple", target_os = "android"))]
     std::thread::Builder::new()
         .name("koan-bonjour".into())
-        .spawn(bonjour::browse_forever)
+        .spawn(discovery::browse_forever)
         .expect("failed to spawn the Bonjour thread");
 }
 
@@ -630,8 +633,8 @@ pub fn suspend() {
     }
     FOUND.lock().clear();
     devices::touch();
-    #[cfg(target_vendor = "apple")]
-    bonjour::pause();
+    #[cfg(any(target_vendor = "apple", target_os = "android"))]
+    discovery::pause();
 }
 
 /// Look for other devices again, as at startup.
@@ -641,8 +644,8 @@ pub fn wake() {
     }
     reconfigure();
     dial_remembered();
-    #[cfg(target_vendor = "apple")]
-    bonjour::restart();
+    #[cfg(any(target_vendor = "apple", target_os = "android"))]
+    discovery::restart();
 }
 
 /// Dial the devices reached before, at the addresses they were reached at,
@@ -692,8 +695,8 @@ pub fn reconfigure() {
             log::info!("nearby: off (devices.nearby = false)");
             r.off = true;
             devices::touch();
-            #[cfg(target_vendor = "apple")]
-            bonjour::pause();
+            #[cfg(any(target_vendor = "apple", target_os = "android"))]
+            discovery::pause();
         }
         return;
     }
@@ -745,8 +748,8 @@ pub fn reconfigure() {
         log::info!("nearby: on");
         drop(running);
         dial_remembered();
-        #[cfg(target_vendor = "apple")]
-        bonjour::restart();
+        #[cfg(any(target_vendor = "apple", target_os = "android"))]
+        discovery::restart();
     }
 }
 
@@ -848,7 +851,7 @@ fn listen_once(local: &Local, port: u16, stop: &Arc<Stop>) -> Result<(), String>
     *PORT.lock() = Some(port);
     devices::touch();
     log::info!("nearby: listening on {port}");
-    #[cfg(target_vendor = "apple")]
+    #[cfg(any(target_vendor = "apple", target_os = "android"))]
     let _advert = Announced::new(port, &local.identity);
 
     while !stop.stopped() {
@@ -1669,25 +1672,25 @@ fn proven_as_listed(listed: Option<Option<String>>, proven: Option<&proof::Peer>
 }
 
 /// This device's announcement for as long as the listener holds it.
-#[cfg(target_vendor = "apple")]
+#[cfg(any(target_vendor = "apple", target_os = "android"))]
 struct Announced;
 
-#[cfg(target_vendor = "apple")]
+#[cfg(any(target_vendor = "apple", target_os = "android"))]
 impl Announced {
     fn new(port: u16, identity: &crate::remote::link::LinkIdentity) -> Self {
-        *ADVERT.lock() = bonjour::advertise(port, identity, &announced_server());
+        *ADVERT.lock() = discovery::advertise(port, identity, &announced_server());
         Self
     }
 }
 
-#[cfg(target_vendor = "apple")]
+#[cfg(any(target_vendor = "apple", target_os = "android"))]
 impl Drop for Announced {
     fn drop(&mut self) {
         *ADVERT.lock() = None;
     }
 }
 
-#[cfg(target_vendor = "apple")]
+#[cfg(any(target_vendor = "apple", target_os = "android"))]
 fn announced(
     name: String,
     host: String,
@@ -1740,7 +1743,7 @@ fn announced(
     }
 }
 
-#[cfg(target_vendor = "apple")]
+#[cfg(any(target_vendor = "apple", target_os = "android"))]
 fn lost(name: &str) {
     let key = {
         let mut found = FOUND.lock();
@@ -1759,6 +1762,202 @@ fn lost(name: &str) {
         && let Some(d) = r.dialers.remove(&key)
     {
         d.stop.stop();
+    }
+}
+
+/// How this device announces itself and finds others: Bonjour through the
+/// system's responder on Apple platforms, Android's `NsdManager` through the
+/// app (`nsd`).
+#[cfg(target_vendor = "apple")]
+use bonjour as discovery;
+#[cfg(target_os = "android")]
+use nsd as discovery;
+
+/// Android's half of discovery: `NsdManager`, which only the app can reach.
+///
+/// The engine says what it wants (announce this device, browse or not) and
+/// the app's [`Host`] does it; what the app finds comes back through `found`
+/// and `gone`, which go where Bonjour's answers go on Apple platforms. Wanted
+/// state is kept here, so a host given after the engine started catches up.
+// Built everywhere for its tests: what it keeps wanted is plain logic.
+#[cfg(any(target_os = "android", test))]
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub mod nsd {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use parking_lot::{Mutex, RwLock};
+
+    use crate::remote::link::LinkIdentity;
+
+    /// The app's `NsdManager`.
+    pub trait Host: Send + Sync {
+        /// Register this device as `name` on `port` with these TXT entries,
+        /// replacing any registration before it.
+        fn advertise(&self, name: &str, port: u16, txt: Vec<(String, String)>);
+        fn withdraw(&self);
+        /// Discover and resolve `_koan._tcp` services until `pause`.
+        fn browse(&self);
+        fn pause(&self);
+    }
+
+    static HOST: RwLock<Option<Arc<dyn Host>>> = RwLock::new(None);
+    static WANT_BROWSE: AtomicBool = AtomicBool::new(false);
+    /// Paused before browsing began, as Bonjour's browse can be.
+    static PAUSED: AtomicBool = AtomicBool::new(false);
+    /// A registration: the name, the port and the TXT entries.
+    type Registration = (String, u16, Vec<(String, String)>);
+
+    /// What this device would announce, while it should.
+    static WANT_ADVERT: Mutex<Option<Registration>> = Mutex::new(None);
+
+    /// Install the app's host, and have it do what is already wanted.
+    pub fn set_host(host: Arc<dyn Host>) {
+        if let Some((name, port, txt)) = WANT_ADVERT.lock().clone() {
+            host.advertise(&name, port, txt);
+        }
+        if WANT_BROWSE.load(Ordering::Relaxed) {
+            host.browse();
+        }
+        *HOST.write() = Some(host);
+    }
+
+    fn host() -> Option<Arc<dyn Host>> {
+        HOST.read().clone()
+    }
+
+    /// This device's registration; withdrawn when dropped.
+    pub struct Advert;
+
+    impl Drop for Advert {
+        fn drop(&mut self) {
+            *WANT_ADVERT.lock() = None;
+            if let Some(h) = host() {
+                h.withdraw();
+            }
+        }
+    }
+
+    /// Announce this device, as Bonjour's `advertise` does.
+    pub fn advertise(port: u16, identity: &LinkIdentity, server: &str) -> Option<Advert> {
+        let mut txt = vec![
+            ("id".to_string(), identity.device_id.clone()),
+            ("platform".to_string(), identity.platform.clone()),
+        ];
+        if !server.is_empty() {
+            txt.push(("server".to_string(), server.to_string()));
+        }
+        let wanted = (identity.name.clone(), port, txt);
+        if let Some(h) = host() {
+            h.advertise(&wanted.0, wanted.1, wanted.2.clone());
+        }
+        *WANT_ADVERT.lock() = Some(wanted);
+        Some(Advert)
+    }
+
+    /// Browse, afresh.
+    pub fn restart() {
+        PAUSED.store(false, Ordering::Relaxed);
+        WANT_BROWSE.store(true, Ordering::Relaxed);
+        if let Some(h) = host() {
+            h.browse();
+        }
+    }
+
+    pub fn pause() {
+        PAUSED.store(true, Ordering::Relaxed);
+        WANT_BROWSE.store(false, Ordering::Relaxed);
+        if let Some(h) = host() {
+            h.pause();
+        }
+    }
+
+    /// Bonjour's browsing thread: here the app browses, so this only says
+    /// to, unless browsing was paused first.
+    pub fn browse_forever() {
+        if !PAUSED.load(Ordering::Relaxed) {
+            restart();
+        }
+    }
+
+    /// A device the app resolved: `host` an address, the TXT entries as read.
+    #[cfg(target_os = "android")]
+    pub fn found(name: String, host: String, port: u16, txt: Vec<(String, String)>) {
+        if !WANT_BROWSE.load(Ordering::Relaxed) {
+            return;
+        }
+        let entry = |key: &str| txt.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
+        super::announced(
+            name,
+            host,
+            port,
+            entry("id"),
+            entry("platform"),
+            entry("server"),
+        );
+    }
+
+    /// A device whose service the app saw go.
+    #[cfg(target_os = "android")]
+    pub fn gone(name: &str) {
+        super::lost(name);
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[derive(Default)]
+        struct Recording(Mutex<Vec<String>>);
+
+        impl Host for Recording {
+            fn advertise(&self, name: &str, port: u16, txt: Vec<(String, String)>) {
+                self.0
+                    .lock()
+                    .push(format!("advertise {name} {port} {}", txt.len()));
+            }
+            fn withdraw(&self) {
+                self.0.lock().push("withdraw".into());
+            }
+            fn browse(&self) {
+                self.0.lock().push("browse".into());
+            }
+            fn pause(&self) {
+                self.0.lock().push("pause".into());
+            }
+        }
+
+        #[test]
+        fn a_host_given_late_does_what_was_wanted_before_it() {
+            let identity = LinkIdentity {
+                name: "Pixel".into(),
+                platform: "android".into(),
+                device_id: "d1".into(),
+            };
+            // The engine starts, paused, then announces and browses, all
+            // before the app has given its host.
+            pause();
+            browse_forever();
+            let advert = advertise(5626, &identity, "https://koan.example");
+            restart();
+
+            let host = Arc::new(Recording::default());
+            set_host(host.clone());
+            assert_eq!(
+                *host.0.lock(),
+                ["advertise Pixel 5626 3", "browse"],
+                "caught up: announced with id, platform and server, and browsing"
+            );
+
+            drop(advert);
+            pause();
+            browse_forever();
+            assert_eq!(
+                host.0.lock()[2..],
+                ["withdraw", "pause"],
+                "a pause before browsing starts holds"
+            );
+        }
     }
 }
 

@@ -156,6 +156,75 @@ pub trait AndroidOutputHost: Send + Sync {
     fn release(&self);
 }
 
+/// One entry of a DNS-SD TXT record.
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct TxtEntry {
+    pub key: String,
+    pub value: String,
+}
+
+/// Android's `NsdManager`, for finding koan devices on the network and being
+/// found: what Bonjour does on Apple platforms. See
+/// `koan_core::remote::nearby::nsd`.
+#[uniffi::export(with_foreign)]
+pub trait NearbyHost: Send + Sync {
+    /// Register this device as `name` on `port`, replacing any registration.
+    fn advertise(&self, name: String, port: u16, txt: Vec<TxtEntry>);
+    fn withdraw(&self);
+    /// Discover and resolve `_koan._tcp` services, reporting each through
+    /// `nearby_found` and `nearby_lost`, until `pause`.
+    fn browse(&self);
+    fn pause(&self);
+}
+
+/// Android's Wi-Fi, for finding UPnP renderers: the address to search from,
+/// and the `MulticastLock` without which Android drops multicast. See
+/// `koan_core::upnp::discovery::Network`.
+#[uniffi::export(with_foreign)]
+pub trait MulticastHost: Send + Sync {
+    /// The Wi-Fi interface's IPv4 address, dotted.
+    fn wifi_address(&self) -> Option<String>;
+    fn hold_multicast(&self, on: bool);
+}
+
+struct MulticastBridge(Arc<dyn MulticastHost>);
+
+impl koan_core::upnp::discovery::Network for MulticastBridge {
+    fn wifi_address(&self) -> Option<std::net::Ipv4Addr> {
+        self.0.wifi_address()?.parse().ok()
+    }
+
+    fn hold_multicast(&self, on: bool) {
+        self.0.hold_multicast(on);
+    }
+}
+
+#[cfg(target_os = "android")]
+struct NearbyBridge(Arc<dyn NearbyHost>);
+
+#[cfg(target_os = "android")]
+impl koan_core::remote::nearby::nsd::Host for NearbyBridge {
+    fn advertise(&self, name: &str, port: u16, txt: Vec<(String, String)>) {
+        let txt = txt
+            .into_iter()
+            .map(|(key, value)| TxtEntry { key, value })
+            .collect();
+        self.0.advertise(name.to_string(), port, txt);
+    }
+
+    fn withdraw(&self) {
+        self.0.withdraw();
+    }
+
+    fn browse(&self) {
+        self.0.browse();
+    }
+
+    fn pause(&self) {
+        self.0.pause();
+    }
+}
+
 struct OutputBridge(Arc<dyn AndroidOutputHost>);
 
 impl From<MixerFormat> for koan_core::audio::bit_perfect::MixerFormat {
@@ -3868,6 +3937,43 @@ impl KoanEngine {
         koan_core::audio::ios_backend::set_session(Arc::new(SessionBridge(host)));
         #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
         let _ = host;
+    }
+
+    /// Hand the engine Android's `NsdManager`, to find koan devices on the
+    /// network and be found. Does nothing off Android.
+    pub fn set_nearby_host(&self, host: Arc<dyn NearbyHost>) {
+        #[cfg(target_os = "android")]
+        koan_core::remote::nearby::nsd::set_host(Arc::new(NearbyBridge(host)));
+        #[cfg(not(target_os = "android"))]
+        let _ = host;
+    }
+
+    /// A koan device the app's `NsdManager` resolved. Does nothing off
+    /// Android.
+    pub fn nearby_found(&self, name: String, host: String, port: u16, txt: Vec<TxtEntry>) {
+        #[cfg(target_os = "android")]
+        koan_core::remote::nearby::nsd::found(
+            name,
+            host,
+            port,
+            txt.into_iter().map(|e| (e.key, e.value)).collect(),
+        );
+        #[cfg(not(target_os = "android"))]
+        let _ = (name, host, port, txt);
+    }
+
+    /// A koan device's service gone from the network.
+    pub fn nearby_lost(&self, name: String) {
+        #[cfg(target_os = "android")]
+        koan_core::remote::nearby::nsd::gone(&name);
+        #[cfg(not(target_os = "android"))]
+        let _ = name;
+    }
+
+    /// Hand the engine the platform's Wi-Fi, for UPnP discovery: the address
+    /// searches go out of, and the lock that lets multicast in while they run.
+    pub fn set_multicast_host(&self, host: Arc<dyn MulticastHost>) {
+        koan_core::upnp::discovery::set_network(Arc::new(MulticastBridge(host)));
     }
 
     /// Hand the engine Android's `AudioManager`, for bit-perfect output to a

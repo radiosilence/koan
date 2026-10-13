@@ -4,7 +4,8 @@
 //! opens. After that the list follows `ssdp:alive` and `ssdp:byebye` as
 //! renderers send them, and an entry whose `max-age` runs out without being
 //! renewed is left out of the list when it is next read. Nothing here runs on
-//! a timer.
+//! a timer, but for the window a search lets multicast in on a platform that
+//! keeps it out otherwise (`Network`).
 
 use std::collections::{HashMap, HashSet};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
@@ -41,6 +42,56 @@ static STORE: Mutex<Option<Store>> = Mutex::new(None);
 static SEARCH: OnceLock<Option<UdpSocket>> = OnceLock::new();
 /// When `search` last ran.
 static SEARCHED: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// How long after a search its answers and the announcements around it are
+/// listened for with multicast let in: the `MX` renderers spread their
+/// answers over, and as long again.
+const SEARCH_WINDOW: Duration = Duration::from_secs(5);
+
+/// Where the platform decides what reaches the sockets. Android drops
+/// multicast unless the app holds a lock for it, and a phone with mobile data
+/// may send a search out of the wrong interface.
+pub trait Network: Send + Sync {
+    /// The Wi-Fi interface's IPv4 address, to send searches and join the group
+    /// on; `None` leaves it to the routing table.
+    fn wifi_address(&self) -> Option<Ipv4Addr>;
+    /// Let multicast in, or stop letting it in.
+    fn hold_multicast(&self, on: bool);
+}
+
+static NETWORK: Mutex<Option<std::sync::Arc<dyn Network>>> = Mutex::new(None);
+/// Moves with each search, so only the latest one's window lets go.
+static WINDOW: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Install the platform's network host.
+pub fn set_network(network: std::sync::Arc<dyn Network>) {
+    *NETWORK.lock() = Some(network);
+}
+
+/// Let multicast in for one search's window, from now.
+fn open_window(network: &std::sync::Arc<dyn Network>) {
+    open_window_for(network, SEARCH_WINDOW);
+}
+
+fn open_window_for(network: &std::sync::Arc<dyn Network>, length: Duration) {
+    use std::sync::atomic::Ordering;
+    let window = WINDOW.fetch_add(1, Ordering::AcqRel) + 1;
+    network.hold_multicast(true);
+    let network = network.clone();
+    let closing = thread::Builder::new()
+        .name("koan-ssdp-window".into())
+        .spawn(move || {
+            thread::sleep(length);
+            if WINDOW.load(Ordering::Acquire) == window {
+                network.hold_multicast(false);
+            }
+        });
+    if closing.is_err() {
+        // Held until the next search's window closes, rather than dropped
+        // before this one's answers arrive.
+        log::warn!("upnp: could not time the multicast window");
+    }
+}
 
 fn with<R>(f: impl FnOnce(&mut Store) -> R) -> R {
     f(STORE.lock().get_or_insert_with(Store::default))
@@ -182,6 +233,15 @@ pub fn search() {
         return;
     };
     *SEARCHED.lock() = Some(Instant::now());
+    let network = NETWORK.lock().clone();
+    if let Some(network) = &network {
+        open_window(network);
+        if let Some(wifi) = network.wifi_address()
+            && let Err(e) = socket2::SockRef::from(socket).set_multicast_if_v4(&wifi)
+        {
+            log::warn!("upnp: cannot search from {wifi}: {e}");
+        }
+    }
     check_busy();
     let msg = format!(
         "M-SEARCH * HTTP/1.1\r\nHOST: {GROUP}:{PORT}\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: {SEARCH_TARGET}\r\nUSER-AGENT: koan/{} UPnP/1.0\r\n\r\n",
@@ -240,7 +300,12 @@ fn notify_socket() -> std::io::Result<UdpSocket> {
     #[cfg(unix)]
     socket.set_reuse_port(true)?;
     socket.bind(&SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, PORT)).into())?;
-    socket.join_multicast_v4(&GROUP, &Ipv4Addr::UNSPECIFIED)?;
+    let interface = NETWORK
+        .lock()
+        .as_ref()
+        .and_then(|n| n.wifi_address())
+        .unwrap_or(Ipv4Addr::UNSPECIFIED);
+    socket.join_multicast_v4(&GROUP, &interface)?;
     Ok(socket.into())
 }
 
@@ -407,6 +472,38 @@ pub fn fetch(location: &Url) -> Result<Option<Renderer>, String> {
 
 #[cfg(test)]
 mod tests {
+    struct Counting {
+        holds: Mutex<Vec<bool>>,
+    }
+
+    impl Network for Counting {
+        fn wifi_address(&self) -> Option<Ipv4Addr> {
+            None
+        }
+        fn hold_multicast(&self, on: bool) {
+            self.holds.lock().push(on);
+        }
+    }
+
+    #[test]
+    fn multicast_is_let_in_for_the_latest_searchs_window_only() {
+        let counting = std::sync::Arc::new(Counting {
+            holds: Mutex::new(Vec::new()),
+        });
+        let network: std::sync::Arc<dyn Network> = counting.clone();
+        open_window_for(&network, Duration::from_millis(100));
+        // A second search before the first window closes keeps it open.
+        open_window_for(&network, Duration::from_millis(1000));
+        thread::sleep(Duration::from_millis(400));
+        assert_eq!(
+            *counting.holds.lock(),
+            [true, true],
+            "the first window's end is not the second's"
+        );
+        thread::sleep(Duration::from_millis(1000));
+        assert_eq!(*counting.holds.lock(), [true, true, false]);
+    }
+
     use super::*;
 
     #[test]
