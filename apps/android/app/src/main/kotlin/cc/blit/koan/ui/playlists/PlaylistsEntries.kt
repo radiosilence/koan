@@ -1,18 +1,10 @@
 package cc.blit.koan.ui.playlists
 
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -20,18 +12,18 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation3.runtime.EntryProviderScope
 import androidx.navigation3.runtime.NavKey
-import cc.blit.koan.R
 import cc.blit.koan.ffi.Playlist
-import cc.blit.koan.ui.StubPage
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.nonce
+import cc.blit.koan.ui.theme.KoanButton
+import cc.blit.koan.ui.theme.KoanButtonKind
+import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
@@ -60,12 +52,12 @@ private fun PlaylistsPage() {
 
     Column {
         PageBar("Playlists") {
-            IconButton(onClick = { naming = true }) { Icon(painterResource(R.drawable.koan_plus), "New Playlist") }
+            KoanButton("New Playlist", { naming = true }, kind = KoanButtonKind.Icon, icon = KoanIcons.add)
         }
         val shown = playlists
         when {
             shown == null -> Unit
-            shown.isEmpty() -> StubPage("No playlists")
+            shown.isEmpty() -> KoanUnavailable("No playlists", KoanIcons.playlist, "Made here or on your server, they show up in both.")
             else -> LazyColumn {
                 items(shown, key = { it.id }) { playlist ->
                     PlaylistListRow(playlist, edits) { nav.push(PlaylistRoute(playlist.id)) }
@@ -82,7 +74,6 @@ private fun PlaylistsPage() {
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PlaylistListRow(playlist: Playlist, edits: PlaylistEdits, open: () -> Unit) {
     val app = koanApp()
@@ -96,19 +87,18 @@ private fun PlaylistListRow(playlist: Playlist, edits: PlaylistEdits, open: () -
     var deleting by remember { mutableStateOf(false) }
 
     Box {
-        ListItem(
-            headlineContent = { Text(playlist.name) },
-            supportingContent = { Text(playlist.summary(), color = MaterialTheme.colorScheme.onSurfaceVariant) },
-            leadingContent = { PlaylistMosaic(covers, thumb) },
-            modifier = Modifier.combinedClickable(onClick = open, onLongClick = { menu = true }),
+        CollectionRow(
+            playlist.name,
+            playlist.summary(),
+            onClick = open,
+            onLongClick = { menu = true },
+            leading = { PlaylistMosaic(covers, thumb) },
         )
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-            DropdownMenuItem(text = { Text("Play") }, onClick = { menu = false; edits.play(playlist.id) })
-            DropdownMenuItem(text = { Text("Shuffle") }, onClick = { menu = false; edits.play(playlist.id, shuffled = true) })
-            if (!playlist.fromFile) {
-                DropdownMenuItem(text = { Text("Rename…") }, onClick = { menu = false; renaming = true })
-            }
-            DropdownMenuItem(text = { Text("Delete Playlist") }, onClick = { menu = false; deleting = true })
+            MenuItem("Play", KoanIcons.play) { menu = false; edits.play(playlist.id) }
+            MenuItem("Shuffle", KoanIcons.shuffle) { menu = false; edits.play(playlist.id, shuffled = true) }
+            if (!playlist.fromFile) MenuItem("Rename…") { menu = false; renaming = true }
+            MenuItem("Delete Playlist", KoanIcons.clear, destructive = true) { menu = false; deleting = true }
         }
     }
     if (renaming) {
@@ -117,26 +107,27 @@ private fun PlaylistListRow(playlist: Playlist, edits: PlaylistEdits, open: () -
             edits.rename(playlist, it)
         }
     }
-    if (deleting) {
-        ConfirmDialog(
-            "Delete “${playlist.name}”?",
-            if (playlist.remoteId != null) "It is deleted on your server too." else "This cannot be undone.",
-            "Delete",
-            onDismiss = { deleting = false },
-        ) { edits.delete(playlist.id) }
-    }
+    if (deleting) DeletePlaylistDialog(playlist, onDismiss = { deleting = false }) { edits.delete(playlist.id) }
 }
 
-/**
- * "12 tracks · Smart", saying what the list needs to: how much is in it, and
- * whether it is one to edit.
- */
+@Composable
+fun DeletePlaylistDialog(playlist: Playlist, onDismiss: () -> Unit, onDelete: () -> Unit) {
+    ConfirmDialog(
+        "Delete Playlist?",
+        "“${playlist.name}” is deleted" + if (playlist.remoteId != null) " here and on your server." else ". This cannot be undone.",
+        "Delete",
+        onDismiss = onDismiss,
+        onConfirm = onDelete,
+    )
+}
+
+/** "12 tracks · smart", saying what the list needs to: how much is in it, and whether it is one to edit. */
 fun Playlist.summary(): String {
     val parts = mutableListOf(trackCount(trackCount))
     when {
-        smart -> parts += "Smart"
-        fromFile -> parts += "From a file"
-        readonly -> parts += "Read-only"
+        smart -> parts += "smart"
+        fromFile -> parts += "from a file"
+        readonly -> parts += "read-only"
     }
     return parts.joinToString(" · ")
 }

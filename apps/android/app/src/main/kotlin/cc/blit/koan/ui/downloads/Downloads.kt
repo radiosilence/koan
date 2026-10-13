@@ -1,14 +1,11 @@
 package cc.blit.koan.ui.downloads
 
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.res.painterResource
-import cc.blit.koan.R
 import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.ffi.KoanEngine
 import cc.blit.koan.ui.koanApp
+import cc.blit.koan.ui.playlists.MenuItem
+import cc.blit.koan.ui.theme.KoanIcons
 
 /**
  * Fetching for offline, and throwing the copies away. Both skip what does not
@@ -35,17 +32,15 @@ object Downloads {
 fun DownloadMenuItems(onDisk: Boolean?, dismiss: () -> Unit, trackIds: suspend KoanEngine.() -> List<Long>) {
     val mirror = koanApp().mirror
     if (onDisk != true) {
-        DropdownMenuItem(
-            text = { Text(if (onDisk == null) "Download All" else "Download") },
-            leadingIcon = { Icon(painterResource(R.drawable.koan_download), null) },
-            onClick = { dismiss(); Downloads.fetch(mirror, trackIds) },
-        )
+        MenuItem(if (onDisk == null) "Download All" else "Download", KoanIcons.downloads) {
+            dismiss()
+            Downloads.fetch(mirror, trackIds)
+        }
     }
     if (onDisk != false) {
-        DropdownMenuItem(
-            text = { Text(if (onDisk == null) "Remove Downloads" else "Remove Download") },
-            leadingIcon = { Icon(painterResource(R.drawable.koan_trash), null) },
-            onClick = { dismiss(); Downloads.remove(mirror, trackIds) },
-        )
+        MenuItem(if (onDisk == null) "Remove Downloads" else "Remove Download", KoanIcons.clear) {
+            dismiss()
+            Downloads.remove(mirror, trackIds)
+        }
     }
 }

@@ -1,16 +1,12 @@
 package cc.blit.koan.ui.playlists
 
 import android.widget.Toast
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -18,11 +14,12 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
-import cc.blit.koan.R
 import cc.blit.koan.ffi.KoanEngine
 import cc.blit.koan.ffi.Playlist
 import cc.blit.koan.ui.koanApp
+import cc.blit.koan.ui.theme.KoanIcon
+import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanSectionHeader
 import cc.blit.koan.ui.theme.LocalKoanTokens
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -51,7 +48,7 @@ fun AddToPlaylistSheet(trackIds: suspend KoanEngine.() -> List<Long>, onDismiss:
     var naming by remember { mutableStateOf(false) }
     val thumb = LocalKoanTokens.current.thumb
 
-    // After the sheet has gone, so said with the application's context.
+    // Said after the sheet has gone, so with the application's context.
     suspend fun added(count: UInt, name: String) = withContext(Dispatchers.Main) {
         Toast.makeText(app, "Added ${trackCount(count)} to $name", Toast.LENGTH_SHORT).show()
     }
@@ -70,29 +67,28 @@ fun AddToPlaylistSheet(trackIds: suspend KoanEngine.() -> List<Long>, onDismiss:
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         LazyColumn(Modifier.navigationBarsPadding()) {
+            item { KoanSectionHeader("Add to Playlist", Modifier.padding(horizontal = LocalKoanTokens.current.gutter)) }
             item {
-                ListItem(
-                    headlineContent = { Text("New Playlist…") },
-                    leadingContent = { Icon(painterResource(R.drawable.koan_plus), null) },
-                    modifier = Modifier.clickable { naming = true },
+                CollectionRow(
+                    "New Playlist…",
+                    null,
+                    appText = true,
+                    onClick = { naming = true },
+                    leading = { KoanIcon(KoanIcons.add, null) },
                 )
             }
-            if (!playlists.isNullOrEmpty()) item { HorizontalDivider() }
             items(playlists.orEmpty(), key = { it.id }) { playlist ->
                 val covers by produceState(emptyList<Long>(), playlist.id, playlist.changedAt) {
                     value = runCatching { app.mirror.engine().playlistCoverAlbumIds(playlist.id) }.getOrDefault(emptyList())
                 }
-                ListItem(
-                    headlineContent = { Text(playlist.name) },
-                    supportingContent = { Text(trackCount(playlist.trackCount)) },
-                    leadingContent = { PlaylistMosaic(covers, thumb) },
-                    modifier = Modifier.clickable {
-                        app.mirror.launch {
-                            val count = addToPlaylist(playlist.id, trackIds())
-                            added(count, playlist.name)
-                        }
+                CollectionRow(
+                    playlist.name,
+                    trackCount(playlist.trackCount),
+                    onClick = {
+                        app.mirror.launch { added(addToPlaylist(playlist.id, trackIds()), playlist.name) }
                         onDismiss()
                     },
+                    leading = { PlaylistMosaic(covers, thumb) },
                 )
             }
         }

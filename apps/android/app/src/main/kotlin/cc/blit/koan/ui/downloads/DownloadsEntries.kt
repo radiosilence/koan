@@ -1,29 +1,15 @@
 package cc.blit.koan.ui.downloads
 
 import android.text.format.Formatter
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,8 +19,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -42,7 +26,6 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation3.runtime.EntryProviderScope
 import androidx.navigation3.runtime.NavKey
-import cc.blit.koan.R
 import cc.blit.koan.art.Art
 import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.ffi.Album
@@ -50,16 +33,28 @@ import cc.blit.koan.ffi.AlbumSort
 import cc.blit.koan.ffi.KoanEngine
 import cc.blit.koan.ffi.Transfer
 import cc.blit.koan.ffi.TransferState
-import cc.blit.koan.ui.StubPage
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
 import cc.blit.koan.ui.library.NoFilter
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.nonce
+import cc.blit.koan.ui.playlists.CollectionRow
 import cc.blit.koan.ui.playlists.ConfirmDialog
+import cc.blit.koan.ui.playlists.KoanBar
+import cc.blit.koan.ui.playlists.MenuItem
 import cc.blit.koan.ui.playlists.PageBar
+import cc.blit.koan.ui.playlists.Sleeve
+import cc.blit.koan.ui.theme.KoanButton
+import cc.blit.koan.ui.theme.KoanButtonKind
+import cc.blit.koan.ui.theme.KoanIcon
+import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanSpace
+import cc.blit.koan.ui.theme.KoanText
+import cc.blit.koan.ui.theme.KoanTheme
+import cc.blit.koan.ui.theme.KoanTone
+import cc.blit.koan.ui.theme.KoanType
+import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
-import coil3.compose.AsyncImage
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -95,13 +90,20 @@ private fun DownloadsPage() {
     Column {
         PageBar("Downloads") {
             if (transfers.any { it.state == TransferState.DONE || it.state == TransferState.FAILED }) {
-                TextButton(onClick = { app.mirror.launch { clearSettledDownloads() } }) { Text("Clear Finished") }
+                KoanButton("Clear Finished", { app.mirror.launch { clearSettledDownloads() } }, kind = KoanButtonKind.Text)
             }
         }
         LazyColumn {
             item(key = "cache") { CacheUsage(onRemoveAll = { clearing = true }) }
             if (transfers.isEmpty()) {
-                item(key = "empty") { StubPage("Nothing downloading", Modifier.height(160.dp)) }
+                item(key = "empty") {
+                    KoanUnavailable(
+                        "Nothing downloading",
+                        KoanIcons.downloads,
+                        "Tracks fetched from your server appear here while they arrive.",
+                        Modifier.height(240.dp),
+                    )
+                }
             }
             items(transfers, key = { it.trackId }) { TransferRow(it, Modifier.animateItem()) }
         }
@@ -128,33 +130,31 @@ private fun CacheUsage(onRemoveAll: () -> Unit) {
     val limit by produceState<Long?>(null, used) {
         value = runCatching { app.mirror.engine().cacheLimitBytes()?.toLong() }.getOrNull()
     }
-    val gutter = LocalKoanTokens.current.gutter
     val size = { bytes: Long -> Formatter.formatShortFileSize(context, bytes) }
 
-    Column(Modifier.padding(horizontal = gutter, vertical = LocalKoanTokens.current.rowGap)) {
+    Column(
+        Modifier.padding(horizontal = LocalKoanTokens.current.gutter, vertical = KoanSpace.s),
+        verticalArrangement = Arrangement.spacedBy(KoanSpace.s),
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
+            KoanText(
                 limit?.let { "${size(used)} of ${size(it)}" } ?: "${size(used)} on this device",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.weight(1f),
+                Modifier.weight(1f),
             )
-            TextButton(onClick = onRemoveAll, enabled = used > 0) { Text("Remove All") }
+            KoanButton("Remove All", onRemoveAll, kind = KoanButtonKind.Compact, enabled = used > 0, destructive = true)
         }
-        limit?.takeIf { it > 0 }?.let {
-            LinearProgressIndicator(progress = { (used.toFloat() / it).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
-            Spacer(Modifier.height(4.dp))
-        }
+        limit?.takeIf { it > 0 }?.let { KoanBar(used.toFloat() / it) }
     }
-    ListItem(
-        headlineContent = { Text("Downloaded Records") },
-        supportingContent = { Text("What can play here without your server") },
-        leadingContent = { Icon(painterResource(R.drawable.koan_cloud_kept), null) },
-        modifier = Modifier.clickable { nav.push(DownloadedRoute()) },
+    CollectionRow(
+        "Downloaded Records",
+        "What plays here without your server",
+        appText = true,
+        onClick = { nav.push(DownloadedRoute()) },
+        leading = { KoanIcon(KoanIcons.onDevice, null) },
+        trailing = { KoanIcon(KoanIcons.disclosure, null, color = KoanTheme.color(KoanTone.Muted)) },
     )
-    HorizontalDivider()
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TransferRow(transfer: Transfer, modifier: Modifier) {
     val app = koanApp()
@@ -168,7 +168,7 @@ private fun TransferRow(transfer: Transfer, modifier: Modifier) {
     var menu by remember { mutableStateOf(false) }
     val size = { bytes: ULong -> Formatter.formatShortFileSize(context, bytes.toLong()) }
 
-    val subtitle = when (transfer.state) {
+    val detail = when (transfer.state) {
         TransferState.FAILED -> transfer.failureReason ?: "Couldn't be fetched"
         TransferState.QUEUED -> listOf(transfer.artist, "waiting").filter { it.isNotEmpty() }.joinToString(" — ")
         TransferState.DONE -> listOf(transfer.artist, "downloaded").filter { it.isNotEmpty() }.joinToString(" — ")
@@ -180,46 +180,35 @@ private fun TransferRow(transfer: Transfer, modifier: Modifier) {
             if (f != null && f.totalBytes > 0u) add("${size(f.bytesWritten)} of ${size(f.totalBytes)}")
         }.joinToString(" · ")
     }
-    val fraction = when (transfer.state) {
-        TransferState.DONE -> 1f
-        else -> figure?.progress?.toFloat() ?: 0f
-    }
+    // Whole once it has landed, whatever the last figure said; empty while the length is unknown.
+    val fraction = if (transfer.state == TransferState.DONE) 1f else figure?.progress?.toFloat() ?: 0f
 
     Box(modifier) {
-        ListItem(
-            headlineContent = { Text(transfer.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            supportingContent = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
-                    Text(
-                        subtitle,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = if (transfer.state == TransferState.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            },
-            leadingContent = { AsyncImage(transfer.albumId?.let { Art.album(it) } ?: Art.track(transfer.trackId), null, Modifier.size(LocalKoanTokens.current.thumb)) },
-            trailingContent = {
-                Text(
+        CollectionRow(
+            transfer.title,
+            detail,
+            detailTone = if (transfer.state == TransferState.FAILED) KoanTone.Bad else KoanTone.Muted,
+            onClick = transfer.albumId?.let { id -> { nav.push(AlbumRoute(id)) } },
+            onLongClick = { menu = true },
+            leading = { Sleeve(transfer.albumId?.let { Art.album(it) } ?: Art.track(transfer.trackId)) },
+            below = { KoanBar(fraction, Modifier.padding(top = KoanSpace.xs)) },
+            trailing = {
+                KoanText(
                     when (transfer.state) {
-                        TransferState.DONE -> "Done"
-                        TransferState.FAILED -> "Failed"
-                        TransferState.QUEUED -> "Queued"
+                        TransferState.DONE -> "done"
+                        TransferState.FAILED -> "failed"
+                        TransferState.QUEUED -> "queued"
                         TransferState.RUNNING -> figure?.progress?.let { "${(it * 100).toInt()}%" }.orEmpty()
                     },
-                    style = MaterialTheme.typography.labelMedium,
+                    role = KoanType.Meta,
+                    tone = KoanTone.Muted,
+                    appText = true,
                 )
             },
-            modifier = Modifier.combinedClickable(onClick = { transfer.albumId?.let { nav.push(AlbumRoute(it)) } }, onLongClick = { menu = true }),
         )
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             transfer.albumId?.let { albumId ->
-                DropdownMenuItem(
-                    text = { Text("Show in Library") },
-                    leadingIcon = { Icon(painterResource(R.drawable.koan_album), null) },
-                    onClick = { menu = false; nav.push(AlbumRoute(albumId)) },
-                )
+                MenuItem("Show in Library", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId)) }
             }
             if (transfer.state == TransferState.DONE) {
                 DownloadMenuItems(onDisk = true, dismiss = { menu = false }) { listOf(transfer.trackId) }
@@ -249,7 +238,11 @@ private fun DownloadedPage() {
         val shown = albums
         when {
             shown == null -> Unit
-            shown.isEmpty() -> StubPage("Nothing downloaded yet")
+            shown.isEmpty() -> KoanUnavailable(
+                "Nothing downloaded yet",
+                KoanIcons.onDevice,
+                "Records you play or download from your server appear here, with how much of each is on this device.",
+            )
             else -> LazyColumn {
                 items(shown, key = { it.id }) { DownloadedRow(it, Modifier.animateItem()) }
             }
@@ -257,34 +250,29 @@ private fun DownloadedPage() {
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun DownloadedRow(album: Album, modifier: Modifier) {
     val nav = LocalNavigator.current
     var menu by remember { mutableStateOf(false) }
     val have = album.onDevice?.have ?: 0u
     val total = album.onDevice?.total ?: 0u
+    val whole = total > 0u && have >= total
     val albumTracks: suspend KoanEngine.() -> List<Long> = { trackIds(album.id, null) }
 
     Box(modifier) {
-        ListItem(
-            headlineContent = { Text(album.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            supportingContent = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(album.artistName, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (total > 0u && have < total) {
-                        LinearProgressIndicator(progress = { have.toFloat() / total.toFloat() }, modifier = Modifier.fillMaxWidth())
-                    }
-                }
+        CollectionRow(
+            album.title,
+            album.artistName,
+            onClick = { nav.push(AlbumRoute(album.id)) },
+            onLongClick = { menu = true },
+            leading = { Sleeve(Art.album(album.id)) },
+            below = if (whole || total == 0u) null else ({ KoanBar(have.toFloat() / total.toFloat(), Modifier.padding(top = KoanSpace.xs)) }),
+            trailing = {
+                KoanText(if (whole) "all" else "$have of $total", role = KoanType.Meta, tone = KoanTone.Muted, appText = whole)
             },
-            leadingContent = { AsyncImage(Art.album(album.id), null, Modifier.size(LocalKoanTokens.current.thumb)) },
-            trailingContent = {
-                Text(if (have == total) "All" else "$have of $total", style = MaterialTheme.typography.labelMedium)
-            },
-            modifier = Modifier.combinedClickable(onClick = { nav.push(AlbumRoute(album.id)) }, onLongClick = { menu = true }),
         )
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-            DownloadMenuItems(onDisk = if (have == total) true else null, dismiss = { menu = false }, trackIds = albumTracks)
+            DownloadMenuItems(onDisk = if (whole) true else null, dismiss = { menu = false }, trackIds = albumTracks)
         }
     }
 }

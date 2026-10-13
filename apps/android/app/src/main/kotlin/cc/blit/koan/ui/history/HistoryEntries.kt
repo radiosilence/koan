@@ -1,25 +1,15 @@
 package cc.blit.koan.ui.history
 
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -28,19 +18,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation3.runtime.EntryProviderScope
 import androidx.navigation3.runtime.NavKey
-import cc.blit.koan.R
 import cc.blit.koan.art.Art
 import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.ffi.PlayHistoryEntry
-import cc.blit.koan.ui.StubPage
 import cc.blit.koan.ui.downloads.DownloadMenuItems
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
@@ -48,10 +34,23 @@ import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.nonce
 import cc.blit.koan.ui.nowplaying.clock
 import cc.blit.koan.ui.playlists.AddToPlaylistSheet
+import cc.blit.koan.ui.playlists.CollectionRow
 import cc.blit.koan.ui.playlists.ConfirmDialog
+import cc.blit.koan.ui.playlists.MenuItem
 import cc.blit.koan.ui.playlists.PageBar
+import cc.blit.koan.ui.playlists.Sleeve
+import cc.blit.koan.ui.theme.KoanButton
+import cc.blit.koan.ui.theme.KoanButtonKind
+import cc.blit.koan.ui.theme.KoanIcon
+import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanSectionHeader
+import cc.blit.koan.ui.theme.KoanText
+import cc.blit.koan.ui.theme.KoanTheme
+import cc.blit.koan.ui.theme.KoanTone
+import cc.blit.koan.ui.theme.KoanType
+import cc.blit.koan.ui.theme.KoanUnavailable
 import cc.blit.koan.ui.theme.LocalKoanTokens
-import coil3.compose.AsyncImage
+import cc.blit.koan.ui.theme.koanSurface
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -97,18 +96,24 @@ private fun HistoryPage() {
     var adding by remember { mutableStateOf<Long?>(null) }
     val zone = ZoneId.systemDefault()
     val today = LocalDate.now(zone)
+    val gutter = LocalKoanTokens.current.gutter
 
     Column {
         PageBar("History") {
-            TextButton(onClick = { clearing = true }, enabled = !entries.isNullOrEmpty()) { Text("Clear…") }
+            KoanButton("Clear…", { clearing = true }, kind = KoanButtonKind.Text, enabled = !entries.isNullOrEmpty())
         }
         val shown = entries
         when {
             shown == null -> Unit
-            shown.isEmpty() -> StubPage("Nothing played yet")
+            shown.isEmpty() -> KoanUnavailable("Nothing played yet", KoanIcons.history, "Everything you play lands here, most recent first.")
             else -> LazyColumn {
                 byDay(shown, zone) { it.playedAt }.forEach { (day, plays) ->
-                    stickyHeader(key = "day:$day") { DayHeading(dayLabel(day, today)) }
+                    stickyHeader(key = "day:$day") {
+                        KoanSectionHeader(
+                            dayLabel(day, today),
+                            Modifier.fillMaxWidth().koanSurface().padding(horizontal = gutter).padding(bottom = 4.dp),
+                        )
+                    }
                     items(plays, key = { it.id }) { entry ->
                         HistoryRow(entry, zone, onAdd = { adding = it }, modifier = Modifier.animateItem())
                     }
@@ -121,27 +126,13 @@ private fun HistoryPage() {
     if (clearing) {
         ConfirmDialog(
             "Clear History?",
-            "Every play is forgotten, on every device signed in to your account. This cannot be undone.",
+            "Every play is forgotten, here and on every device signed in to your account. This cannot be undone.",
             "Clear",
             onDismiss = { clearing = false },
         ) { app.mirror.launch { clearPlayHistory() } }
     }
 }
 
-@Composable
-private fun DayHeading(label: String) {
-    Text(
-        label,
-        style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
-            .padding(horizontal = LocalKoanTokens.current.gutter, vertical = LocalKoanTokens.current.rowGap),
-    )
-}
-
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, onAdd: (Long) -> Unit, modifier: Modifier) {
     val app = koanApp()
@@ -150,6 +141,8 @@ private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, onAdd: (Long) -> U
     val forget = { app.mirror.launch { deletePlays(listOf(entry.id)) } }
     val swipe = rememberSwipeToDismissBoxState()
     var menu by remember { mutableStateOf(false) }
+    // A play another client scrobbled in did not happen here, and saying so stops it reading as a phantom.
+    val elsewhere = if (entry.source != "local") " · scrobbled by another client" else ""
 
     SwipeToDismissBox(
         state = swipe,
@@ -158,62 +151,32 @@ private fun HistoryRow(entry: PlayHistoryEntry, zone: ZoneId, onAdd: (Long) -> U
         onDismiss = { forget() },
         backgroundContent = {
             Box(
-                Modifier.fillMaxSize().background(MaterialTheme.colorScheme.errorContainer).padding(horizontal = LocalKoanTokens.current.gutter),
+                Modifier.fillMaxSize().koanSurface().padding(horizontal = LocalKoanTokens.current.gutter),
                 contentAlignment = Alignment.CenterEnd,
             ) {
-                Icon(painterResource(R.drawable.koan_trash), "Forget", tint = MaterialTheme.colorScheme.onErrorContainer)
+                KoanIcon(KoanIcons.clear, "Forget", color = KoanTheme.color(KoanTone.Bad))
             }
         },
     ) {
-        Box {
-            ListItem(
-                headlineContent = { Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                supportingContent = {
-                    Text("${track.artistName} · ${track.albumTitle}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                },
-                overlineContent = {
-                    Row {
-                        Text(timeOf(entry.playedAt, zone))
-                        // A play another client scrobbled in did not happen here.
-                        if (entry.source != "local") Text(" · scrobbled by another client")
-                    }
-                },
-                leadingContent = {
-                    AsyncImage(track.albumId?.let { Art.album(it) } ?: Art.track(track.id), null, Modifier.size(LocalKoanTokens.current.thumb))
-                },
-                trailingContent = { Text(track.durationMs?.let(::clock).orEmpty(), color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                modifier = Modifier.combinedClickable(onClick = { app.player.playTracks(listOf(track.id)) }, onLongClick = { menu = true }),
+        Box(Modifier.koanSurface()) {
+            CollectionRow(
+                track.title,
+                "${timeOf(entry.playedAt, zone)} · ${track.artistName} · ${track.albumTitle}$elsewhere",
+                onClick = { app.player.playTracks(listOf(track.id)) },
+                onLongClick = { menu = true },
+                leading = { Sleeve(track.albumId?.let { Art.album(it) } ?: Art.track(track.id)) },
+                trailing = { KoanText(track.durationMs?.let(::clock).orEmpty(), role = KoanType.Meta, tone = KoanTone.Muted) },
             )
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(text = { Text("Play") }, onClick = { menu = false; app.player.playTracks(listOf(track.id)) })
-                DropdownMenuItem(
-                    text = { Text("Play Next") },
-                    leadingIcon = { Icon(painterResource(R.drawable.koan_play_next), null) },
-                    onClick = { menu = false; app.player.playNext(listOf(track.id)) },
-                )
-                DropdownMenuItem(
-                    text = { Text("Add to Queue") },
-                    leadingIcon = { Icon(painterResource(R.drawable.koan_add_to_queue), null) },
-                    onClick = { menu = false; app.player.enqueue(listOf(track.id)) },
-                )
-                DropdownMenuItem(
-                    text = { Text("Add to Playlist…") },
-                    leadingIcon = { Icon(painterResource(R.drawable.koan_playlist), null) },
-                    onClick = { menu = false; onAdd(track.id) },
-                )
+                MenuItem("Play", KoanIcons.play) { menu = false; app.player.playTracks(listOf(track.id)) }
+                MenuItem("Play Next", KoanIcons.playNext) { menu = false; app.player.playNext(listOf(track.id)) }
+                MenuItem("Add to Queue", KoanIcons.queue) { menu = false; app.player.enqueue(listOf(track.id)) }
+                MenuItem("Add to Playlist…", KoanIcons.playlist) { menu = false; onAdd(track.id) }
                 DownloadMenuItems(onDisk = track.onDisk, dismiss = { menu = false }) { listOf(track.id) }
                 track.albumId?.let { albumId ->
-                    DropdownMenuItem(
-                        text = { Text("Go to Album") },
-                        leadingIcon = { Icon(painterResource(R.drawable.koan_album), null) },
-                        onClick = { menu = false; nav.push(AlbumRoute(albumId)) },
-                    )
+                    MenuItem("Go to Album", KoanIcons.album) { menu = false; nav.push(AlbumRoute(albumId)) }
                 }
-                DropdownMenuItem(
-                    text = { Text("Remove from History") },
-                    leadingIcon = { Icon(painterResource(R.drawable.koan_trash), null) },
-                    onClick = { menu = false; forget() },
-                )
+                MenuItem("Remove from History", KoanIcons.remove, destructive = true) { menu = false; forget() }
             }
         }
     }
