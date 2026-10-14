@@ -43,7 +43,7 @@ private fun writeReport(context: Context, app: KoanApp): File {
         appendLine("Phone: ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
         appendLine("Controlling: ${controlled ?: "this phone"}; saved target: ${saved ?: "none"}")
         appendLine("Output: ${mirror.outputs.value?.current ?: "unknown"}")
-        appendLine("Now playing: ${mirror.nowPlaying.value?.let { "${it.state} ${it.title}" } ?: "nothing"}")
+        appendLine("Now playing: ${mirror.nowPlaying.value?.let { "${it.state} ${it.entry?.title ?: ""}" } ?: "nothing"}")
         appendLine(
             "Server: ${connection?.serverKind ?: "none"} ${connection?.serverVersion.orEmpty()}, " +
                 "linked ${connection?.linked}, offline ${connection?.offline}, " +
