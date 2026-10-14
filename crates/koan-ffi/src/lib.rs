@@ -5583,6 +5583,7 @@ impl KoanEngine {
                 repeat_mode: st.repeat.into(),
                 sleep: st.sleep.map(Into::into),
                 sleep_fading: st.sleep_fading,
+                start_failure: None,
             },
         });
         out.publish(StateSlice::Playhead {
@@ -5995,6 +5996,7 @@ impl KoanEngine {
             repeat_mode: self.state.play_mode().repeat.into(),
             sleep: self.state.sleep().map(Into::into),
             sleep_fading: self.state.sleep_fading(),
+            start_failure: self.state.start_failure(),
         }
     }
 

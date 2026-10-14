@@ -890,7 +890,7 @@ impl Player {
         match self.shared_state.item_playback_source(id) {
             Some(PlaybackSource::Ready(path)) => {
                 if let Err(e) = self.start_playback(id, &path, 0, Run::Playing) {
-                    log::error!("play failed: {}", e);
+                    self.start_failed("play", &e);
                 }
             }
             Some(PlaybackSource::Streaming {
@@ -931,7 +931,7 @@ impl Player {
             return;
         };
         if let Err(e) = self.start_playback(id, &path, position_ms, start) {
-            log::error!("cue failed: {}", e);
+            self.start_failed("cue", &e);
             return;
         }
         self.report(match start {
@@ -1015,9 +1015,19 @@ impl Player {
         }
         if result.is_err() {
             self.stop_playback_and_clear_state();
+        } else {
+            self.shared_state.set_start_failure(None);
         }
         self.wake_analyzer();
         result
+    }
+
+    /// A track asked for did not start: logged, and kept for the app to say,
+    /// since what the person otherwise meets is silence.
+    fn start_failed(&self, during: &str, e: &PlayerError) {
+        log::error!("{during}: playback failed: {e}");
+        self.shared_state
+            .set_start_failure(Some(format!("Couldn't play this track: {e}")));
     }
 
     fn try_open_session(
@@ -1366,7 +1376,7 @@ impl Player {
             // The download landed while probing: play it as an ordinary file.
             Some(PlaybackSource::Ready(path)) => {
                 if let Err(e) = self.start_playback(id, &path, 0, waiting.start) {
-                    log::error!("stream probe: playback failed: {}", e);
+                    self.start_failed("stream probe", &e);
                 }
             }
             Some(PlaybackSource::Streaming {
@@ -1803,7 +1813,7 @@ impl Player {
                     id
                 );
                 if let Err(e) = self.start_playback(id, &path, 0, waiting.start) {
-                    log::error!("track_stream_ready playback failed: {}", e);
+                    self.start_failed("stream ready", &e);
                 }
             }
             None => {} // Not enough data yet — wait.

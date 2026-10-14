@@ -268,8 +268,16 @@ fun AboutPane(model: SettingsModel) {
     val state by model.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val uri = LocalUriHandler.current
+    val app = koanApp()
+    val scope = rememberCoroutineScope()
     SettingsPage(Pane.About.title, state) {
         item { ValueRow("Version", appVersion(context).removePrefix("kōan ")) }
+        item {
+            ButtonRow {
+                KoanButton("Send logs", { scope.launch { shareLogs(context, app) } })
+            }
+        }
+        footer("The app's log since it started, with the build and this phone's model, for a bug report.")
         item { ValueRow("Licence", "MIT") }
         item {
             ButtonRow {

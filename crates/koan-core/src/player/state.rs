@@ -836,6 +836,11 @@ pub struct SharedPlayerState {
     /// `AudioBackend::output_mixed`.
     output_mixed: std::sync::atomic::AtomicU8,
 
+    /// Why the last track asked for did not start, until one does. The
+    /// output failing to open, a file that does not decode: what the person
+    /// would otherwise meet as silence.
+    start_failure: parking_lot::RwLock<Option<String>>,
+
     /// What DSP is doing to the current session's audio. `None` is the
     /// bit-perfect path.
     dsp: parking_lot::RwLock<Option<crate::audio::dsp::DspStatus>>,
@@ -889,6 +894,7 @@ impl SharedPlayerState {
             metadata_refresh_pending: AtomicBool::new(false),
             output_sample_rate: AtomicU64::new(0),
             output_mixed: std::sync::atomic::AtomicU8::new(0),
+            start_failure: parking_lot::RwLock::new(None),
             dsp: parking_lot::RwLock::new(None),
             renderer_clock: parking_lot::Mutex::new(None),
             renderer: parking_lot::RwLock::new(None),
@@ -1207,6 +1213,20 @@ impl SharedPlayerState {
             1 => Some(true),
             2 => Some(false),
             _ => None,
+        }
+    }
+
+    /// Why the last track asked for did not start, while none has since.
+    pub fn start_failure(&self) -> Option<String> {
+        self.start_failure.read().clone()
+    }
+
+    pub fn set_start_failure(&self, failure: Option<String>) {
+        let mut slot = self.start_failure.write();
+        if *slot != failure {
+            *slot = failure;
+            drop(slot);
+            self.changed();
         }
     }
 

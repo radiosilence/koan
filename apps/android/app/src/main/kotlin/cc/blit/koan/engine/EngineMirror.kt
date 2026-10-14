@@ -192,7 +192,11 @@ class EngineMirror(deviceName: String) {
 
     private fun apply(slice: StateSlice) {
         when (slice) {
-            is StateSlice.Playback -> _nowPlaying.value = slice.nowPlaying
+            is StateSlice.Playback -> {
+                val failure = slice.nowPlaying.startFailure
+                if (failure != null && failure != _nowPlaying.value?.startFailure) _notices.tryEmit(failure)
+                _nowPlaying.value = slice.nowPlaying
+            }
             is StateSlice.Playhead -> _playhead.value = Playhead(
                 slice.positionMs.toLong(),
                 slice.seekableMs.toLong(),
