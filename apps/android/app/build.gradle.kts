@@ -6,6 +6,12 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+/** The commit built, short; "unknown" outside a checkout. */
+val commit = providers.exec {
+    commandLine("git", "rev-parse", "--short=8", "HEAD")
+    isIgnoreExitValue = true
+}.standardOutput.asText.map { it.trim().ifEmpty { "unknown" } }
+
 /** The ABIs the core is built for. `-Pabis=arm64-v8a` builds one, for a device or an emulator on Apple silicon. */
 val koanAbis = providers.gradleProperty("abis").orElse("arm64-v8a,x86_64").map { it.split(",") }
 
@@ -20,6 +26,8 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "0.61.13"
+        // Which build a tester's log came from.
+        buildConfigField("String", "COMMIT", "\"${commit.get()}\"")
         // Only what the core is built for: a device would otherwise pick a
         // 32-bit ABI that JNA ships and koan does not, and fail to load.
         ndk { abiFilters += koanAbis.get() }
@@ -38,6 +46,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     // Lint cannot read the ABIs through the `abis` property, so it reports

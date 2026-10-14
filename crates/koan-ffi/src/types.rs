@@ -405,6 +405,9 @@ pub struct NowPlaying {
     pub sleep: Option<SleepState>,
     /// The sleep timer is fading playback out: not bit-perfect meanwhile.
     pub sleep_fading: bool,
+    /// Why the last track asked for did not start, until one does: the
+    /// output failing to open, a file that does not decode.
+    pub start_failure: Option<String>,
 }
 
 /// A sleep timer to set: stop after a while, or at the end of the track or
