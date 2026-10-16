@@ -18,6 +18,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use super::app::PickerAction;
+use super::artist_header::{ArtistHeader, HeaderHit};
 use super::cover_art::{Gfx, album_key};
 use super::theme::Theme;
 use super::transport::format_time;
@@ -81,6 +82,10 @@ pub enum Action {
     Favourite(i64),
     OpenAlbum(i64),
     OpenArtist(i64),
+    /// Replace the queue with these, shuffled.
+    Shuffle(Vec<i64>),
+    /// A link out of the terminal.
+    OpenUrl(String),
 }
 
 /// Where the pointer is on the page.
@@ -94,6 +99,7 @@ pub enum Hit {
     Sort,
     View,
     Filter,
+    Header(HeaderHit),
 }
 
 /// How many covers are fetched at once. Each of a remote library's is an HTTP
@@ -219,7 +225,8 @@ fn load(album: i64) -> Option<DynamicImage> {
 /// What the last render laid out, for the keys and the mouse to agree with it.
 #[derive(Default, Clone, Copy)]
 struct Geom {
-    area: Rect,
+    /// Below the heading and an artist's header: the records themselves.
+    body: Rect,
     cols: usize,
     tile_w: u16,
     tile_h: u16,
@@ -245,6 +252,10 @@ pub struct Browse {
     shown: Vec<usize>,
     pub cursor: usize,
     scroll: usize,
+    /// Whether the next frame scrolls to the cursor; the wheel and the
+    /// scrollbar turn it off so they are not undone.
+    follow: bool,
+    header: Option<ArtistHeader>,
     order: usize,
     pub filter: String,
     pub filter_active: bool,
@@ -264,6 +275,8 @@ impl Browse {
             shown: Vec::new(),
             cursor: 0,
             scroll: 0,
+            follow: true,
+            header: None,
             order: 0,
             filter: String::new(),
             filter_active: false,
@@ -298,7 +311,10 @@ impl Browse {
             },
         };
         self.albums = queries::list_albums(&db.conn, &query).unwrap_or_default();
-        if let Source::Artist(_) = self.source {
+        if let Source::Artist(id) = self.source {
+            if self.header.is_none() {
+                self.header = Some(ArtistHeader::new(id));
+            }
             self.title = self
                 .albums
                 .first()
@@ -314,6 +330,24 @@ impl Browse {
         };
         self.loaded = true;
         self.refilter();
+    }
+
+    /// Takes what the artist lookup has found; true when the page changed.
+    pub fn poll(&mut self) -> bool {
+        self.header.as_mut().is_some_and(ArtistHeader::poll)
+    }
+
+    /// Every track of every record shown, in the order of the records.
+    fn artist_ids(&self) -> Vec<i64> {
+        let Ok(db) = koan_core::db::pool::shared().get() else {
+            return Vec::new();
+        };
+        self.albums
+            .iter()
+            .filter_map(|a| queries::tracks_for_album(&db.conn, a.id).ok())
+            .flatten()
+            .map(|t| t.id)
+            .collect()
     }
 
     pub fn ensure_loaded(&mut self) {
@@ -344,6 +378,7 @@ impl Browse {
         };
         self.cursor = self.cursor.min(self.shown.len().saturating_sub(1));
         self.scroll = 0;
+        self.follow = true;
         self.keep_cursor_visible();
     }
 
@@ -395,10 +430,12 @@ impl Browse {
 
     fn move_to(&mut self, idx: usize) {
         self.cursor = idx.min(self.shown.len().saturating_sub(1));
+        self.follow = true;
         self.keep_cursor_visible();
     }
 
     pub fn scroll_by(&mut self, rows: isize) {
+        self.follow = false;
         let cols = self.cols();
         let total_rows = self.shown.len().div_ceil(cols);
         let max = total_rows.saturating_sub(self.page_rows());
@@ -557,22 +594,26 @@ impl Browse {
         if inside(g.filter) {
             return Some(Hit::Filter);
         }
-        let body_y = g.area.y + 1;
-        if col < g.area.x
-            || col >= g.area.x + g.area.width
+        if let Some(h) = self.header.as_ref().and_then(|h| h.hit(col, row)) {
+            return Some(Hit::Header(h));
+        }
+        let body_y = g.body.y;
+        if g.body.height == 0
+            || col < g.body.x
+            || col >= g.body.x + g.body.width
             || row < body_y
-            || row >= g.area.y + g.area.height
+            || row >= g.body.y + g.body.height
         {
             return None;
         }
         match self.view {
             View::Tiles => {
-                let margin = (g.area.width.saturating_sub(g.tile_w * g.cols as u16)) / 2;
-                if col < g.area.x + margin {
+                let margin = (g.body.width.saturating_sub(g.tile_w * g.cols as u16)) / 2;
+                if col < g.body.x + margin {
                     return None;
                 }
                 let tile_row = (row - body_y) / g.tile_h.max(1);
-                let tile_col = (col - g.area.x - margin) / g.tile_w.max(1);
+                let tile_col = (col - g.body.x - margin) / g.tile_w.max(1);
                 if tile_col as usize >= g.cols {
                     return None;
                 }
@@ -582,7 +623,7 @@ impl Browse {
                 // The label lines under the art are links, as far as their text
                 // goes; the rest of the tile selects.
                 let dy = (row - body_y) % g.tile_h.max(1);
-                let dx = (col - g.area.x - margin) % g.tile_w.max(1);
+                let dx = (col - g.body.x - margin) % g.tile_w.max(1);
                 let art_h = g.tile_h.saturating_sub(3);
                 let label = g.tile_w.saturating_sub(2) as usize;
                 let on_text =
@@ -621,6 +662,27 @@ impl Browse {
                 self.filter_active = true;
                 Action::None
             }
+            Hit::Header(h) => match h {
+                HeaderHit::Play | HeaderHit::Shuffle => {
+                    let ids = self.artist_ids();
+                    match (h, ids.is_empty()) {
+                        (_, true) => Action::None,
+                        (HeaderHit::Play, _) => Action::Play(ids, PickerAction::ReplaceQueue),
+                        _ => Action::Shuffle(ids),
+                    }
+                }
+                HeaderHit::More => {
+                    if let Some(header) = self.header.as_mut() {
+                        header.toggle_expanded();
+                    }
+                    Action::None
+                }
+                HeaderHit::Wikipedia => self
+                    .header
+                    .as_ref()
+                    .and_then(ArtistHeader::url)
+                    .map_or(Action::None, Action::OpenUrl),
+            },
             Hit::Title(idx) => {
                 self.move_to(idx);
                 self.album_at(idx).map_or(Action::None, Action::OpenAlbum)
@@ -665,10 +727,7 @@ impl Browse {
         }
         self.ensure_loaded();
         thumbs.begin_frame();
-        self.geom = Geom {
-            area,
-            ..Geom::default()
-        };
+        self.geom = Geom::default();
         self.render_header(area, buf, theme);
         let body = Rect::new(
             area.x,
@@ -682,6 +741,29 @@ impl Browse {
         if body.width < 4 {
             return;
         }
+        let mut body = body;
+        if let Some(mut header) = self.header.take() {
+            let h = header.height(body.width, body.height);
+            if h > 0 {
+                let header_hover = match hover {
+                    Some(Hit::Header(h)) => Some(h),
+                    _ => None,
+                };
+                let name = self.title.clone();
+                header.render(
+                    Rect::new(body.x, body.y, body.width, h),
+                    buf,
+                    theme,
+                    gfx,
+                    &name,
+                    self.albums.len(),
+                    header_hover,
+                );
+                body = Rect::new(body.x, body.y + h, body.width, body.height - h);
+            }
+            self.header = Some(header);
+        }
+        self.geom.body = body;
         if self.shown.is_empty() {
             let msg = if self.filter.is_empty() {
                 self.source.noun()
@@ -786,7 +868,9 @@ impl Browse {
         self.geom.rows = rows;
         // Left over width is split into a margin so the grid sits centred.
         let margin = (body.width - tile_w * cols as u16) / 2;
-        self.keep_cursor_visible();
+        if self.follow {
+            self.keep_cursor_visible();
+        }
         let total_rows = self.shown.len().div_ceil(cols);
         self.scroll = self.scroll.min(total_rows.saturating_sub(rows));
         let bottom = body.y + body.height;
@@ -873,7 +957,9 @@ impl Browse {
         self.geom.tile_w = body.width;
         self.geom.tile_h = 1;
         self.geom.rows = rows;
-        self.keep_cursor_visible();
+        if self.follow {
+            self.keep_cursor_visible();
+        }
         self.scroll = self.scroll.min(self.shown.len().saturating_sub(rows));
         let tracks = self.tracks_in_list();
         for r in 0..rows {
@@ -993,6 +1079,7 @@ impl Browse {
 
     /// Scrolls so the thumb is at `row`, for a click or a drag on the bar.
     pub fn scroll_to_bar(&mut self, row: u16) {
+        self.follow = false;
         let b = self.geom.bar;
         if b.height == 0 {
             return;
@@ -1119,8 +1206,8 @@ mod tests {
     /// The cell at `dx`, `dy` inside the first tile.
     fn first_tile(b: &Browse, dx: u16, dy: u16) -> (u16, u16) {
         let g = &b.geom;
-        let margin = g.area.width.saturating_sub(g.tile_w * g.cols as u16) / 2;
-        (g.area.x + margin + dx, g.area.y + 1 + dy)
+        let margin = g.body.width.saturating_sub(g.tile_w * g.cols as u16) / 2;
+        (g.body.x + margin + dx, g.body.y + dy)
     }
 
     #[test]
@@ -1149,6 +1236,18 @@ mod tests {
         // Past the end of the text it is the tile again.
         let (x, y) = first_tile(&b, b.geom.tile_w - 1, art_h);
         assert_eq!(b.hit(x, y), Some(Hit::Item(0)));
+    }
+
+    #[test]
+    fn the_wheel_is_not_undone_by_the_next_frame() {
+        let mut b = browse(200);
+        draw(&mut b, 80, 24);
+        b.scroll_by(2);
+        draw(&mut b, 80, 24);
+        assert_eq!(b.scroll, 2);
+        b.move_to(0);
+        draw(&mut b, 80, 24);
+        assert_eq!(b.scroll, 0);
     }
 
     #[test]

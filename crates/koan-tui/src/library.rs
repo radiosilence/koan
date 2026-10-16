@@ -1,5 +1,6 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
@@ -453,7 +454,26 @@ impl Widget for LibraryView<'_> {
             buf.set_line(inner.x, inner.y, &line, inner.width);
         } else {
             let scroll = self.state.scroll_offset;
-            let end = (scroll + content_height).min(self.state.nodes.len());
+            let total = self.state.nodes.len();
+            let end = (scroll + content_height).min(total);
+            let overflow = total > content_height && content_height > 0 && inner.width > 2;
+            let text_w = inner.width - u16::from(overflow);
+            if overflow {
+                let x = inner.x + inner.width - 1;
+                let h = content_height;
+                let thumb = (h * content_height / total).max(1);
+                let top = (h - thumb) * scroll / (total - content_height).max(1);
+                for row in 0..h {
+                    let on = row >= top && row < top + thumb;
+                    buf[(x, inner.y + row as u16)]
+                        .set_char(if on { '\u{2588}' } else { ' ' })
+                        .set_style(if on {
+                            Style::new().fg(self.theme.scrollbar_thumb)
+                        } else {
+                            Style::new().bg(self.theme.scrollbar_bg)
+                        });
+                }
+            }
 
             for (row, i) in (scroll..end).enumerate() {
                 let node = &self.state.nodes[i];
@@ -463,18 +483,18 @@ impl Widget for LibraryView<'_> {
                 // Fill entire row with cursor style first for full-width highlight bar.
                 if is_cursor {
                     let row_y = inner.y + row as u16;
-                    for col in inner.x..inner.x + inner.width {
+                    for col in inner.x..inner.x + text_w {
                         buf[(col, row_y)].set_style(self.theme.library_cursor);
                     }
                 } else if is_hovered {
                     let row_y = inner.y + row as u16;
-                    for col in inner.x..inner.x + inner.width {
+                    for col in inner.x..inner.x + text_w {
                         buf[(col, row_y)].set_style(self.theme.library_hover);
                     }
                 }
 
                 let line = render_node(node, is_cursor, self.theme);
-                buf.set_line(inner.x, inner.y + row as u16, &line, inner.width);
+                buf.set_line(inner.x, inner.y + row as u16, &line, text_w);
             }
         }
 

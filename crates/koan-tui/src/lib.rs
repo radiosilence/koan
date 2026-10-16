@@ -6,6 +6,7 @@
 pub mod accent;
 pub mod album_page;
 pub mod app;
+pub mod artist_header;
 pub mod browse;
 pub mod context_menu;
 pub mod cover_art;

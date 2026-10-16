@@ -44,6 +44,7 @@ pub struct AlbumPage {
     tracks: Vec<TrackRow>,
     cursor: usize,
     scroll: usize,
+    follow: bool,
     geom: Geom,
     last_click: Option<(usize, Instant)>,
 }
@@ -62,6 +63,7 @@ impl AlbumPage {
             tracks,
             cursor: 0,
             scroll: 0,
+            follow: true,
             geom: Geom::default(),
             last_click: None,
         })
@@ -73,6 +75,7 @@ impl AlbumPage {
 
     fn move_to(&mut self, idx: usize) {
         self.cursor = idx.min(self.tracks.len().saturating_sub(1));
+        self.follow = true;
         let rows = self.rows();
         if self.cursor < self.scroll {
             self.scroll = self.cursor;
@@ -82,6 +85,7 @@ impl AlbumPage {
     }
 
     pub fn scroll_by(&mut self, rows: isize) {
+        self.follow = false;
         let max = self.tracks.len().saturating_sub(self.rows());
         self.scroll = self.scroll.saturating_add_signed(rows).min(max);
     }
@@ -191,6 +195,7 @@ impl AlbumPage {
     }
 
     pub fn scroll_to_bar(&mut self, row: u16) {
+        self.follow = false;
         let b = self.geom.bar;
         if b.height == 0 {
             return;
@@ -317,7 +322,9 @@ impl AlbumPage {
         }
         let list = Rect::new(body.x, list_y, body.width, list_h);
         self.geom.list = list;
-        self.move_to(self.cursor);
+        if self.follow {
+            self.move_to(self.cursor);
+        }
         let rows = list_h as usize;
         self.scroll = self.scroll.min(self.tracks.len().saturating_sub(rows));
         let multi_disc = self.tracks.iter().any(|t| t.disc.is_some_and(|d| d > 1));
@@ -462,6 +469,7 @@ mod tests {
                 .collect(),
             cursor: 0,
             scroll: 0,
+            follow: true,
             geom: Geom::default(),
             last_click: None,
         }

@@ -618,6 +618,7 @@ impl App {
             }
         }
         self.thumbs.poll();
+        self.artist_page.poll();
 
         // Updated every frame: the analysis thread runs at its own rate, and
         // decay and smoothing run at the TUI frame rate.
@@ -1011,6 +1012,24 @@ impl App {
             }
             browse::Action::OpenAlbum(id) => self.go_page(Page::Album(id)),
             browse::Action::OpenArtist(id) => self.go_page(Page::Artist(id)),
+            browse::Action::Shuffle(ids) => {
+                self.tx.send(PlayerCommand::SetShuffle(true)).ok();
+                self.picker_result = Some((PickerKind::Track, ids, PickerAction::ReplaceQueue));
+            }
+            browse::Action::OpenUrl(url) => {
+                let opener = if cfg!(target_os = "macos") {
+                    "open"
+                } else {
+                    "xdg-open"
+                };
+                std::process::Command::new(opener)
+                    .arg(url)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                    .ok();
+            }
         }
     }
 
@@ -2299,6 +2318,15 @@ impl App {
                 if self.library_active()
                     && self.is_in_rect(event.column, event.row, self.layout.library_area)
                 {
+                    if let Some((x, y, h)) = self.library_bar()
+                        && event.column == x
+                        && event.row >= y
+                        && event.row < y + h as u16
+                    {
+                        self.browse_drag = true;
+                        self.library_scroll_to(event.row);
+                        return;
+                    }
                     let inner_h = self.library_content_height();
                     if let Some(ref mut lib) = self.library {
                         let inner_x = self.layout.library_area.x;
@@ -2570,6 +2598,8 @@ impl App {
                     if let Some(p) = self.album_page.as_mut() {
                         p.scroll_to_bar(row);
                     }
+                } else if self.page() == Page::Artists {
+                    self.library_scroll_to(row);
                 } else if let Some(browse) = self.browse_mut() {
                     browse.scroll_to_bar(row);
                 }
@@ -2779,7 +2809,7 @@ impl App {
                     && self.is_in_rect(event.column, event.row, self.layout.library_area)
                 {
                     if let Some(ref mut lib) = self.library {
-                        lib.move_up();
+                        lib.scroll_offset = lib.scroll_offset.saturating_sub(3);
                     }
                 } else if self.page() != Page::Queue {
                 } else {
@@ -2804,8 +2834,10 @@ impl App {
                 } else if self.library_active()
                     && self.is_in_rect(event.column, event.row, self.layout.library_area)
                 {
+                    let h = self.library_content_height();
                     if let Some(ref mut lib) = self.library {
-                        lib.move_down();
+                        let max = lib.nodes.len().saturating_sub(h);
+                        lib.scroll_offset = (lib.scroll_offset + 3).min(max);
                     }
                 } else if self.page() != Page::Queue {
                 } else {
@@ -3448,6 +3480,27 @@ impl App {
     /// moment there is more than one definition.
     pub(super) fn queue_visible_height(&self) -> usize {
         self.layout.queue_area.height.saturating_sub(1) as usize
+    }
+
+    /// The Artists tree's scrollbar, as a column and the rows it spans, when
+    /// the tree is longer than the pane.
+    fn library_bar(&self) -> Option<(u16, u16, usize)> {
+        let lib = self.library.as_ref()?;
+        let area = self.layout.library_area;
+        let h = self.library_content_height();
+        (lib.nodes.len() > h && area.width > 2 && h > 0)
+            .then(|| (area.x + area.width - 1, area.y + 1, h))
+    }
+
+    fn library_scroll_to(&mut self, row: u16) {
+        let Some((_, y, h)) = self.library_bar() else {
+            return;
+        };
+        if let Some(lib) = self.library.as_mut() {
+            let max = lib.nodes.len().saturating_sub(h);
+            let frac = row.saturating_sub(y) as f64 / h.saturating_sub(1).max(1) as f64;
+            lib.scroll_offset = ((frac.clamp(0.0, 1.0) * max as f64).round() as usize).min(max);
+        }
     }
 
     fn update_scroll(&mut self) {
