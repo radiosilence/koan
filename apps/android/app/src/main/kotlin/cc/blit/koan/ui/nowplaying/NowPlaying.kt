@@ -387,7 +387,6 @@ private fun Toggles(now: NowPlaying?, lyrics: Boolean, toggleLyrics: () -> Unit)
             toggleLyrics,
             tone = if (lyrics) KoanTone.Accent else KoanTone.Muted,
         )
-        Spacer(Modifier.weight(1f))
         now?.format?.let { format ->
             // In the accent while the device gets the samples untouched.
             val perfect = bitPerfect(format)
@@ -397,10 +396,18 @@ private fun Toggles(now: NowPlaying?, lyrics: Boolean, toggleLyrics: () -> Unit)
                 accent = perfect,
             )
         }
-        Spacer(Modifier.weight(1f))
-        PlayOnButton()
-        OutputButton()
-        SleepButton(now?.sleep, now?.sleepFading == true)
+        // Where it plays, what through, and the timer, as iOS's pills: each
+        // its icon and label as one button, evenly spaced, a long name cut
+        // short rather than pushed into its neighbour.
+        Row(
+            Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(KoanSpace.s, Alignment.End),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            PlayOnButton(Modifier.weight(1f, fill = false))
+            OutputButton(Modifier.weight(1f, fill = false))
+            SleepButton(now?.sleep, now?.sleepFading == true)
+        }
     }
 }
 

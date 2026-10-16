@@ -182,10 +182,10 @@ fun OutputButton(modifier: Modifier = Modifier) {
     KoanButton(
         { open = true },
         modifier.semantics { contentDescription = "Output: ${name ?: "default"}" },
-        kind = if (name == null) KoanButtonKind.Icon else KoanButtonKind.Text,
+        kind = KoanButtonKind.Text,
     ) {
         KoanIcon(KoanIcons.speaker, contentDescription = null, color = KoanTheme.color(if (toRenderer) KoanTone.Accent else KoanTone.Ink))
-        name?.let { KoanText(it, role = KoanType.Control, tone = KoanTone.Ink, maxLines = 1) }
+        name?.let { KoanText(it, Modifier.weight(1f, fill = false), role = KoanType.Control, tone = KoanTone.Ink, maxLines = 1) }
     }
     if (open) OutputSheet(onDismiss = { open = false })
 }

@@ -63,10 +63,10 @@ fun PlayOnButton(modifier: Modifier = Modifier) {
     KoanButton(
         { open = true },
         modifier.semantics { contentDescription = c?.let { "Controlling ${it.name}" } ?: "Play on" },
-        kind = if (c == null) KoanButtonKind.Icon else KoanButtonKind.Text,
+        kind = KoanButtonKind.Text,
     ) {
         KoanIcon(KoanIcons.devices, contentDescription = null, color = KoanTheme.color(tone))
-        c?.let { KoanText(it.name, role = KoanType.Control, tone = KoanTone.Ink, maxLines = 1) }
+        c?.let { KoanText(it.name, Modifier.weight(1f, fill = false), role = KoanType.Control, tone = KoanTone.Ink, maxLines = 1) }
     }
     if (open) PlayOnSheet(onDismiss = { open = false })
 }
