@@ -1,0 +1,1 @@
+- **The Mac's menu bar item shows the kōan ensō.** It drew a music note, which did not say which app it was.
