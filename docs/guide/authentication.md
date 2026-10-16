@@ -209,10 +209,32 @@ it.
 
 ## Token lifecycle
 
-- **Access token**: 15 minutes. Sent as `Authorization: Bearer <token>`.
+- **Access token**: 15 minutes. Sent as `Authorization: Bearer <token>`; see [GraphQL](#graphql) for the other ways in.
 - **Refresh token**: 30 days. Single-use rotation (each refresh returns a new pair). Stored server-side for revocation.
 - **Refresh**: `POST /auth/refresh` with `{"refresh_token": "..."}` returns new access + refresh tokens.
 - **Logout**: `POST /auth/logout` with `{"refresh_token": "..."}` revokes the token.
+
+## GraphQL
+
+Every request to `/graphql` and `/graphql/ws` carries one credential, checked in this order:
+
+1. **The web UI's session**, the `koan_access` cookie, which a browser signed in to the web UI sends by itself.
+2. **`Authorization: Bearer <credential>`**, either an access token from `/auth/login` or an API key. A token suits a client that signs in with a password and refreshes; a key suits a script or a device, since it does not expire and is revoked on its own, without touching the account's password or other sessions.
+3. **`?token=` on `/graphql/ws`**, for WebSocket clients that cannot set a header. It is refused on `/graphql`.
+
+The request acts as the account the credential names, at that account's role as it stands now, so a role change or a deletion applies to the next request rather than when a token expires. A credential that is missing or no longer good gets `401` with `WWW-Authenticate: Bearer`. A subscription socket is authenticated as it opens and closed when its account changes or, for a token, when the token expires; the client reconnects and authenticates again (see [Sockets](#sockets)).
+
+Tokens scoped to MCP through OAuth are refused here. With `[graphql] auth_enabled = false`, every request is an anonymous admin; that suits a server reachable only from the machine it runs on.
+
+```bash
+# A key for a script: printed once
+koan auth api-key create --username alice --name scripts
+
+curl -s https://koan.example/graphql \
+  -H "Authorization: Bearer $KOAN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "{ nowPlaying { state } }"}'
+```
 
 ## OAuth, for MCP clients
 
@@ -233,7 +255,7 @@ koan --headless --playground
 
 The playground page only renders with the correct `?introspection-key=` param (403 otherwise). The key is injected as an `X-Introspection-Key` header on every GraphQL request. Normal JWT auth still works for real API clients.
 
-The key is not checked against any account: a request carrying it is served as an admin, with no token. That is fine on a machine of your own and not on a server others can reach, since anyone who reads its log, where the URL is printed, has admin access until it restarts. Leave `--playground` off a deployed server. To explore one, point a GraphQL client (Altair, Insomnia, Bruno) at its `/graphql` with an access token from `/auth/login` (above) as `Authorization: Bearer <token>`. The API takes access tokens only; API keys are for the Subsonic API. A token lasts 15 minutes, and `/auth/refresh` gives another.
+The key is not checked against any account: a request carrying it is served as an admin, with no token. That is fine on a machine of your own and not on a server others can reach, since anyone who reads its log, where the URL is printed, has admin access until it restarts. Leave `--playground` off a deployed server. To explore one, point a GraphQL client (Altair, Insomnia, Bruno) at its `/graphql` with an API key or an access token as `Authorization: Bearer <credential>` (see [GraphQL](#graphql)). A key does not expire, which suits a client left open.
 
 ## 1Password integration
 

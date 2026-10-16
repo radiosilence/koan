@@ -70,21 +70,27 @@ pub async fn auth_middleware(
     };
 
     let mark = auth::account_mark();
+    // An access token, or failing that an API key: the key a device or a
+    // script was given, which acts as its account until revoked. A key has no
+    // expiry of its own, so a socket opened with one closes only when the
+    // account changes, a revocation included.
     let user = match auth::validate_access_token(&state.public_pem, &token) {
         Ok(claims) => {
             let expires = claims.exp;
             super::current_user(&state.pool, claims)
                 .await
-                .map(|user| (user, expires))
+                .map(|user| (user, Some(expires)))
         }
-        Err(_) => None,
+        Err(_) => super::key_user(&state.pool, token)
+            .await
+            .map(|user| (user, None)),
     };
     match user {
         Some((user, expires)) => {
             request.extensions_mut().insert(super::Lease {
                 user_id: user.user_id,
                 mark,
-                expires: Some(expires),
+                expires,
             });
             request.extensions_mut().insert(user);
             next.run(request).await
@@ -289,6 +295,40 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         let (status, _) = call(state, req).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn api_key_authenticates_as_its_account_until_revoked() {
+        let (public_pem, _) = keys_and_token(Role::Admin);
+        let (state, _dir) = enforcing(public_pem, None, Role::User);
+        let key = {
+            let db = state.pool.get().unwrap();
+            koan_core::db::queries::api_keys::create_api_key(&db.conn, 1, "script")
+                .unwrap()
+                .1
+        };
+        let bearer = |key: &str| {
+            HttpRequest::get("/graphql")
+                .header(header::AUTHORIZATION, format!("Bearer {key}"))
+                .body(Body::empty())
+                .unwrap()
+        };
+
+        let (status, body) = call(state.clone(), bearer(&key)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "alice:user");
+
+        let (status, _) = call(state.clone(), bearer(&format!("{key}x"))).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        {
+            let db = state.pool.get().unwrap();
+            assert!(
+                koan_core::db::queries::api_keys::revoke_api_key_value(&db.conn, &key).unwrap()
+            );
+        }
+        let (status, _) = call(state, bearer(&key)).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
