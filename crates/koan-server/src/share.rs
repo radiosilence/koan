@@ -923,7 +923,7 @@ mod tests {
         assert_eq!(zip.len(), 1);
         let mut entry = zip.by_index(0).unwrap();
         assert_eq!(
-            entry.name(),
+            entry.name().unwrap(),
             "Rrose - Hymn to Moisture/01 Wet _Moss_ & Stone.flac"
         );
         let mut bytes = Vec::new();
