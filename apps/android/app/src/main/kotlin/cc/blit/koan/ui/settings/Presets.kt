@@ -34,12 +34,18 @@ fun PresetButton(
     tinted: Boolean,
     choose: (String?) -> Unit,
     modifier: Modifier = Modifier,
+    /** The glyph alone, as a row's menu: the row already says what it is set to. */
+    glyph: Boolean = false,
 ) {
     var open by remember { mutableStateOf(false) }
     Box(modifier) {
-        KoanButton({ open = true }, Modifier.semantics { contentDescription = "Preset: $summary" }, kind = KoanButtonKind.Text) {
-            KoanIcon(KoanIcons.filters, contentDescription = null, color = KoanTheme.color(if (tinted) KoanTone.Accent else KoanTone.Ink))
-            KoanText(summary, Modifier.weight(1f, fill = false), role = KoanType.Control, tone = KoanTone.Ink, maxLines = 1)
+        KoanButton(
+            { open = true },
+            Modifier.semantics { contentDescription = "Preset: $summary" },
+            kind = if (glyph) KoanButtonKind.Icon else KoanButtonKind.Text,
+        ) {
+            KoanIcon(KoanIcons.filters, contentDescription = null, color = KoanTheme.color(if (tinted) KoanTone.Accent else if (glyph) KoanTone.Muted else KoanTone.Ink))
+            if (!glyph) KoanText(summary, Modifier.weight(1f, fill = false), role = KoanType.Control, tone = KoanTone.Ink, maxLines = 1)
         }
         KoanMenu(open, onDismissRequest = { open = false }) {
             (listOf<Pair<String, String?>>("Flat" to null) + presets.map { it to it }).forEach { (label, preset) ->
