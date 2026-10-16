@@ -1,109 +1,192 @@
 package cc.blit.koan.ui
 
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
+import androidx.navigation3.runtime.NavKey
+import androidx.navigation3.runtime.entryProvider
+import androidx.navigation3.runtime.rememberNavBackStack
+import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
-import cc.blit.koan.engine.KoanProcess
-import cc.blit.koan.engine.KoanRuntime
-import cc.blit.koan.nav.Tab
-import cc.blit.koan.state.ServerStatus
-import cc.blit.koan.state.SettingsModel
-import cc.blit.koan.theme.KoanAccent
-import cc.blit.koan.theme.KoanRole
-import cc.blit.koan.theme.KoanTab
-import cc.blit.koan.theme.KoanTabBar
-import cc.blit.koan.theme.KoanTheme
-import cc.blit.koan.theme.KoanText
-import cc.blit.koan.theme.KoanTone
-import cc.blit.koan.ui.pages.MiniPlayer
-import cc.blit.koan.ui.pages.SignInPage
+import cc.blit.koan.ui.downloads.downloadsEntries
+import cc.blit.koan.ui.history.historyEntries
+import cc.blit.koan.ui.library.libraryEntries
+import cc.blit.koan.ui.navigation.LocalNavigator
+import cc.blit.koan.ui.navigation.Navigator
+import cc.blit.koan.ui.navigation.Shell
+import cc.blit.koan.ui.navigation.Tab
+import cc.blit.koan.ui.navigation.resetting
+import cc.blit.koan.ui.nowplaying.MiniPlayer
+import cc.blit.koan.ui.nowplaying.nowPlayingEntries
+import cc.blit.koan.ui.playlists.playlistsEntries
+import cc.blit.koan.ui.queue.queueEntries
+import cc.blit.koan.ui.search.searchEntries
+import cc.blit.koan.ui.settings.AccountPrompts
+import cc.blit.koan.ui.settings.AskForNotificationsOnFirstPlay
+import cc.blit.koan.ui.settings.DspPrompts
+import cc.blit.koan.ui.settings.OpenedLinks
+import cc.blit.koan.ui.settings.SignInPage
+import cc.blit.koan.ui.settings.accountModel
+import cc.blit.koan.ui.settings.dspModel
+import cc.blit.koan.ui.settings.settingsEntries
+import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanTabBar
+import cc.blit.koan.ui.theme.KoanTabItem
+import cc.blit.koan.ui.theme.KoanUnavailable
+import cc.blit.koan.ui.theme.koanSurface
+import cc.blit.koan.ui.theme.recordWash
+import kotlinx.coroutines.flow.combine
 
 /**
- * The app: the theme, then whichever of three things the engine allows. Not up
- * yet (or failed) says so; signed out shows the sign-in page in place of the
- * tabs; otherwise the tabs.
+ * The app's frame: sign-in until a server is signed in to, then the tabs, each
+ * with its own back stack, the mini player above them, and Now Playing over
+ * everything.
  *
- * The record playing sets the accent, so it is read here and handed to the
- * theme: everything below draws in it.
+ * Every package registers its pages here through its `…Entries()` function;
+ * adding a page is a key and an `entry` in the package that owns it.
  */
 @Composable
 fun AppShell() {
-    val runtime by KoanProcess.runtime.collectAsStateWithLifecycle()
-    val failure by KoanProcess.failure.collectAsStateWithLifecycle()
-    val ready = runtime
-    val accent by (ready?.accent ?: remember { kotlinx.coroutines.flow.MutableStateFlow(KoanAccent.Mint) })
-        .collectAsStateWithLifecycle()
-    KoanTheme(accent = accent) {
-        Box(Modifier.fillMaxSize().background(KoanTheme.colors.bg)) {
-            when {
-                failure != null -> Message("the engine did not start: $failure", Modifier.safeDrawingPadding())
-                ready == null -> Message("starting the engine", Modifier.safeDrawingPadding())
-                else -> Ready(ready)
+    val app = koanApp()
+    val account = accountModel()
+    val state by account.state.collectAsStateWithLifecycle()
+    val startFailure by app.mirror.startFailure.collectAsStateWithLifecycle()
+    when {
+        startFailure != null -> CouldNotStart(startFailure)
+        state.signedIn == null -> Unit
+        state.signedIn == false -> SignInPage(account)
+        else -> Signed()
+    }
+    val dsp = dspModel()
+    OpenedLinks(account, dsp)
+    AccountPrompts(account)
+    DspPrompts(dsp)
+    AskForNotificationsOnFirstPlay()
+    Notices()
+}
+
+/** The engine would not open: why, on the app's ground, in place of everything else. */
+@Composable
+internal fun CouldNotStart(reason: String?) {
+    Box(Modifier.fillMaxSize().koanSurface().safeDrawingPadding()) {
+        KoanUnavailable("kōan could not start", KoanIcons.warning, reason)
+    }
+}
+
+/** What a command came to when it did not simply work, said once. */
+@Composable
+private fun Notices() {
+    val app = koanApp()
+    val context = LocalContext.current
+    LaunchedEffect(app) {
+        app.mirror.notices.collect { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
+    }
+}
+
+@Composable
+private fun Signed() {
+    val root = rememberNavBackStack(Shell)
+    val stacks = Tab.all.associateWith { rememberNavBackStack(it) }
+    val selected = rememberSaveable { mutableIntStateOf(Tab.all.indexOf(Tab.Library)) }
+    val navigator = remember(stacks, root) { Navigator(stacks, selected, root) }
+    CompositionLocalProvider(LocalNavigator provides navigator) {
+        // Every page sits on the record's wash: pages leave their ground bare.
+        NavDisplay(
+            modifier = Modifier.fillMaxSize().recordWash(),
+            backStack = root,
+            onBack = { navigator.closeNowPlaying() },
+            entryDecorators = listOf(rememberSaveableStateHolderNavEntryDecorator(), rememberViewModelStoreNavEntryDecorator()),
+            entryProvider = entryProvider {
+                entry<Shell> { Tabs(navigator, stacks) }
+                nowPlayingEntries()
+            },
+        )
+    }
+}
+
+@Composable
+private fun Tabs(navigator: Navigator, stacks: Map<Tab, List<NavKey>>) {
+    val app = koanApp()
+    // The engine's own syncs and scans, followed from its state.
+    LaunchedEffect(app) {
+        combine(app.mirror.tasks, app.mirror.sync, ::Pair).collect { (tasks, sync) -> app.activity.follow(tasks, sync) }
+    }
+    val current = navigator.tab
+    val stack = stacks.getValue(current)
+    Scaffold(
+        containerColor = Color.Transparent,
+        bottomBar = {
+            Column {
+                MiniPlayer()
+                KoanTabBar {
+                    Tab.all.forEach { tab ->
+                        KoanTabItem(tab.label, selected = tab == current, onClick = { navigator.select(tab) }, icon = tab.icon)
+                    }
+                }
             }
+        },
+    ) { padding ->
+        Box(Modifier.padding(padding).consumeWindowInsets(padding).fillMaxSize()) {
+            // The other tabs' stacks go beneath the open one's, so their pages
+            // keep their saved state while hidden.
+            val shown = Tab.all.filter { it != current }.flatMap { stacks.getValue(it) } + stack
+            NavDisplay(
+                backStack = shown,
+                onBack = { navigator.pop() },
+                entryDecorators = listOf(rememberSaveableStateHolderNavEntryDecorator(), rememberViewModelStoreNavEntryDecorator()),
+                entryProvider = navigator.resetting(
+                    entryProvider {
+                        queueEntries()
+                        libraryEntries()
+                        searchEntries()
+                        settingsEntries()
+                        playlistsEntries()
+                        downloadsEntries()
+                        historyEntries()
+                    },
+                ),
+            )
+            // Over every page, just above the transport.
+            val activity by app.activity.tasks.collectAsStateWithLifecycle()
+            ActivityCard(activity, Modifier.align(Alignment.BottomCenter))
+            // After NavDisplay, so it takes back first at a tab's root rather
+            // than revealing the tab kept beneath.
+            BackHandler(enabled = stack.size == 1 && current != Tab.Library) { navigator.select(Tab.Library) }
         }
     }
 }
 
-@Composable
-private fun Message(text: String, modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        KoanText(text, KoanRole.Body, KoanTone.Muted, maxLines = 6)
+private val Tab.label
+    get() = when (this) {
+        Tab.Queue -> "Queue"
+        Tab.Library -> "Library"
+        Tab.Search -> "Search"
+        Tab.Settings -> "Settings"
     }
-}
 
-@Composable
-private fun Ready(runtime: KoanRuntime) {
-    val settings by runtime.settings.settings.collectAsStateWithLifecycle()
-    val connection by runtime.mirror.connection.collectAsStateWithLifecycle()
-    val status = SettingsModel.status(settings, connection?.signInRefused == true, connection?.linked == true)
-    when (status) {
-        ServerStatus.SignedOut, is ServerStatus.Refused -> SignInPage(runtime)
-        // Loading shows the tabs too: a signed-in phone never flashes the sign-in page on launch.
-        else -> Tabs(runtime)
+private val Tab.icon
+    get() = when (this) {
+        Tab.Queue -> KoanIcons.queueSection
+        Tab.Library -> KoanIcons.library
+        Tab.Search -> KoanIcons.search
+        Tab.Settings -> KoanIcons.settings
     }
-}
-
-private val TabItems = Tab.entries.map { KoanTab(it, it.label) }
-
-/**
- * Four tabs over a stack each. The back stack drawn is the one the navigator
- * holds for the tab in front: Navigation 3 owns no state of its own here.
- */
-@Composable
-private fun Tabs(runtime: KoanRuntime) {
-    val navigator = runtime.navigator
-    val nav by navigator.state.collectAsStateWithLifecycle()
-    // At a non-start tab's root Back goes to the Queue tab; NavDisplay handles
-    // Back inside a stack.
-    BackHandler(enabled = !nav.canPop && nav.tab != Tab.Queue) { navigator.back() }
-    val entries = remember(runtime) { appEntries(runtime) }
-    Scaffold(
-        containerColor = KoanTheme.colors.bg,
-        bottomBar = {
-            Column(Modifier.navigationBarsPadding()) {
-                MiniPlayer(runtime)
-                KoanTabBar(TabItems, nav.tab, onSelect = navigator::selectTab, onReselect = navigator::selectTab)
-            }
-        },
-    ) { insets ->
-        NavDisplay(
-            backStack = nav.stack,
-            onBack = { navigator.back() },
-            entryProvider = entries,
-            modifier = Modifier.padding(insets),
-        )
-    }
-}

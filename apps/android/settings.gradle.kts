@@ -1,6 +1,3 @@
-import groovy.json.JsonSlurper
-import java.io.File
-
 pluginManagement {
     repositories {
         google()
@@ -14,34 +11,30 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        // The JVM half of rustls-platform-verifier is not published anywhere:
-        // the `rustls-platform-verifier-android` crate carries it as a Maven
-        // repository in its own `maven` directory. Ask cargo where that crate
-        // is, so the version Cargo.lock pins is the one the app compiles
-        // against. Without it every HTTPS request from the engine fails.
+        // The Kotlin half of rustls-platform-verifier, which the core's HTTPS
+        // verifies certificates through. It ships inside the crate rather than
+        // on a Maven server, so the repository is wherever cargo unpacked it.
         maven {
-            url = uri(platformVerifierMaven())
-            content { includeGroup("rustls") }
+            url = uri(rustlsPlatformVerifierMaven())
+            metadataSources.artifact()
         }
     }
 }
 
-rootProject.name = "koan-android"
-include(":app")
-
-fun platformVerifierMaven(): File {
-    val manifest = File(settingsDir, "../../Cargo.toml").canonicalFile
-    val process = ProcessBuilder(
-        "cargo", "metadata", "--format-version", "1",
-        "--filter-platform", "aarch64-linux-android",
-        "--manifest-path", manifest.path,
-    ).redirectError(ProcessBuilder.Redirect.DISCARD).start()
-    val json = process.inputStream.bufferedReader().readText()
-    check(process.waitFor() == 0) {
-        "`cargo metadata` failed: the Android build needs cargo on PATH, to find rustls-platform-verifier's Maven repository"
-    }
+fun rustlsPlatformVerifierMaven(): File {
+    val metadata = providers.exec {
+        workingDir = rootDir.resolve("../..")
+        commandLine(
+            "cargo", "metadata", "--format-version", "1",
+            "--filter-platform", "aarch64-linux-android",
+            "--manifest-path", "crates/koan-ffi/Cargo.toml",
+        )
+    }.standardOutput.asText.get()
     @Suppress("UNCHECKED_CAST")
-    val packages = (JsonSlurper().parseText(json) as Map<String, Any?>)["packages"] as List<Map<String, Any?>>
-    val crate = packages.first { it["name"] == "rustls-platform-verifier-android" }
-    return File(File(crate["manifest_path"] as String).parentFile, "maven")
+    val packages = (groovy.json.JsonSlurper().parseText(metadata) as Map<String, Any>)["packages"] as List<Map<String, Any>>
+    val manifest = packages.first { it["name"] == "rustls-platform-verifier-android" }["manifest_path"] as String
+    return File(manifest).parentFile.resolve("maven")
 }
+
+rootProject.name = "koan"
+include(":app")

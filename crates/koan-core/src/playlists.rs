@@ -1110,6 +1110,47 @@ mod tests {
         assert_eq!(entries(&db, id), [before[1], before[2]]);
     }
 
+    /// Forgetting the server takes its tracks out of every playlist; signing
+    /// back in and syncing the library brings them back, and the playlists
+    /// are pulled whole again even though the server's copies never changed.
+    #[test]
+    fn a_forgotten_server_refills_its_playlists_on_the_next_sync() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        upsert_track(&db.conn, &remote_meta("One", "s1")).unwrap();
+        upsert_track(&db.conn, &remote_meta("Two", "s2")).unwrap();
+
+        let server = std::sync::Arc::new(parking_lot::Mutex::new(Server {
+            lists: vec![("p1".into(), vec!["s1".into(), "s2".into()], 1)],
+            ..Default::default()
+        }));
+        let url = serve(server.clone());
+        let client = SubsonicClient::new(&url, "u", "pw");
+        reconcile_playlists(&db, &client, &url, "u");
+        let id = queries::playlist_by_remote_id(&db.conn, "p1")
+            .unwrap()
+            .unwrap()
+            .id;
+        assert_eq!(entries(&db, id).len(), 2);
+
+        crate::helpers::forget_remote(&db).unwrap();
+        assert!(entries(&db, id).is_empty());
+
+        let r1 = upsert_track(&db.conn, &remote_meta("One", "s1")).unwrap();
+        let r2 = upsert_track(&db.conn, &remote_meta("Two", "s2")).unwrap();
+        let sync = reconcile_playlists(&db, &client, &url, "u");
+        assert_eq!((sync.pulled, sync.pushed), (1, 0));
+        assert_eq!(
+            entries(&db, id).iter().map(|e| e.1).collect::<Vec<_>>(),
+            [r1, r2]
+        );
+        assert_eq!(
+            server.lock().lists[0].1,
+            ["s1", "s2"],
+            "the server copy is untouched"
+        );
+    }
+
     /// A song on the server's copy that the library does not have is left
     /// out of the local copy and put back, in place, by every push: nothing
     /// here could have removed it.

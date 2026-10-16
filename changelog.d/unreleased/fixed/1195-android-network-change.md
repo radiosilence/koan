@@ -1,0 +1,1 @@
+- **Android picks the server up again after a change of network.** Moving between Wi-Fi and mobile data makes the connections to the server afresh and tries it at once, and a track held up by a server that is not answering shows why in the queue.

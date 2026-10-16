@@ -2,7 +2,7 @@
 
 # kōan
 
-A music player and server for your own library, local or on any OpenSubsonic server: native SwiftUI apps on macOS, iOS and Apple TV, a terminal UI on macOS and Linux, and a server with a web UI, on one Rust core. [koan.rocks](https://koan.rocks)
+A music player and server for your own library, local or on any OpenSubsonic server: native SwiftUI apps on macOS, iOS and Apple TV, a Compose app on Android, a terminal UI on macOS and Linux, and a server with a web UI, on one Rust core. [koan.rocks](https://koan.rocks)
 
 It's a music player and server, for local collections and remote ones (anything OpenSubsonic). Remote libraries sit behind a fairly aggressive local cache. It handles multi-terabyte libraries with ease and has all the core audio features you'd want, like gapless and bit-perfect output (where the system allows). It's built from 25 years of messing about with music, being annoyed with pretty much everything, and wanting my dream application.
 
@@ -121,7 +121,7 @@ To run a server, play from Navidrome, or move off it, see the [documentation](ht
 - **Share links** whose pages play without an account and unfurl with their cover.
 - **An OpenSubsonic API**, so Subsonic apps play from it too, with favourites, ratings, bookmarks, saved play queues and transcoding to Opus, MP3 or AAC.
 - **Accounts** with API keys and app passwords, managed from the web UI or the apps, and web UI sign-in through an authenticating reverse proxy.
-- **ListenBrainz scrobbling** per account, sent by the server and set up from the web UI or the apps.
+- **ListenBrainz and Last.fm scrobbling** per account, sent by the server and set up from the web UI or the apps.
 - **MCP** at `/mcp` with its own sign-in, so an assistant such as Claude can browse the library and drive playback on your devices. It can never move, rename or delete a file. See [MCP integration](https://koan.rocks/docs/mcp-integration/).
 - **GraphQL** for everything the apps can do.
 

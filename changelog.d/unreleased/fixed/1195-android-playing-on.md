@@ -1,0 +1,1 @@
+- **Android says where the music plays.** While the phone controls another device, the mini player and Now Playing say "Playing on <device>", or that it is out of reach, with one tap back to the phone. A phone left controlling a Mac it could not reach looked as if it would not play.

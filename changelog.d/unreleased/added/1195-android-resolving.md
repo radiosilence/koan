@@ -1,0 +1,1 @@
+- **A play on Android says so at once.** Playing a record or an artist names it, loading, on Now Playing and the mini player from the tap until its tracks are queued, rather than leaving the track it replaces on show; play and pause wait for it.

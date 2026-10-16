@@ -1,52 +1,50 @@
-# Every version the Android build uses, pinned. Move them together: AGP bounds
-# the Gradle and Kotlin it works with, and the Compose BOM bounds compileSdk.
 [versions]
-agp = "8.13.2"
-kotlin = "2.3.21"
-coroutines = "1.10.2"
-composeBom = "2026.06.01"
-media3 = "1.10.1"
-lifecycle = "2.10.0"
-activityCompose = "1.12.4"
-coreKtx = "1.17.0"
-jna = "5.18.1"
-# Navigation 3: the back stack is a plain list the app owns.
-navigation3 = "1.0.0"
-# Coil 3 draws the artwork; its fetcher asks the engine for the bytes.
-coil = "3.3.0"
-# Drag reordering of the queue.
-reorderable = "3.0.0"
+agp = "9.4.1"
+kotlin = "2.4.21"
+compose-bom = "2026.09.00"
+activity-compose = "1.13.0"
+core-ktx = "1.19.1"
+lifecycle = "2.11.0"
+coroutines = "1.11.0"
+media3 = "1.11.1"
+navigation3 = "1.2.0"
+serialization = "1.11.0"
+coil = "3.6.3"
+# uniffi's Kotlin bindings call the core through JNA.
+jna = "5.19.1"
+# Must match the rustls-platform-verifier-android crate in Cargo.lock: the AAR ships inside it.
+rustls-platform-verifier = "0.1.1"
 junit = "4.13.2"
-robolectric = "4.16"
-# The JVM half of rustls-platform-verifier. Not on Maven Central: the crate
-# ships it in its own `maven` directory (see settings.gradle.kts), at the
-# version of the `rustls-platform-verifier-android` crate in Cargo.lock.
-rustlsPlatformVerifier = "0.1.1"
+robolectric = "4.17"
+reorderable = "3.1.0"
 
 [libraries]
-kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
-kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
-androidx-compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
-androidx-compose-ui = { module = "androidx.compose.ui:ui" }
-androidx-compose-foundation = { module = "androidx.compose.foundation:foundation" }
-androidx-compose-material3 = { module = "androidx.compose.material3:material3" }
-androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
-androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
+androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "core-ktx" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
 androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
-androidx-media3-session = { module = "androidx.media3:media3-session", version.ref = "media3" }
-androidx-media3-common = { module = "androidx.media3:media3-common", version.ref = "media3" }
+androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
+compose-ui = { module = "androidx.compose.ui:ui" }
+compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
+compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
+compose-material3 = { module = "androidx.compose.material3:material3" }
+kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+media3-session = { module = "androidx.media3:media3-session", version.ref = "media3" }
 androidx-navigation3-runtime = { module = "androidx.navigation3:navigation3-runtime", version.ref = "navigation3" }
 androidx-navigation3-ui = { module = "androidx.navigation3:navigation3-ui", version.ref = "navigation3" }
-reorderable = { module = "sh.calvin.reorderable:reorderable", version.ref = "reorderable" }
+androidx-lifecycle-viewmodel-navigation3 = { module = "androidx.lifecycle:lifecycle-viewmodel-navigation3", version.ref = "lifecycle" }
+kotlinx-serialization-core = { module = "org.jetbrains.kotlinx:kotlinx-serialization-core", version.ref = "serialization" }
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
+rustls-platform-verifier = { module = "rustls:rustls-platform-verifier", version.ref = "rustls-platform-verifier" }
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
-rustls-platform-verifier = { module = "rustls:rustls-platform-verifier", version.ref = "rustlsPlatformVerifier" }
-robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
-androidx-compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
-androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 junit = { module = "junit:junit", version.ref = "junit" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
+compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
+compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+reorderable = { module = "sh.calvin.reorderable:reorderable", version.ref = "reorderable" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

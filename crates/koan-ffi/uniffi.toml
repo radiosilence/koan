@@ -1,6 +1,7 @@
-# Kotlin only. A `KoanError` variant's field is called `message`, which
-# clashes with `Throwable.message` in the generated `KoanException`, so the
-# bindings do not compile. The Swift and Rust names are unchanged.
+[bindings.kotlin]
+package_name = "cc.blit.koan.ffi"
+
+# A Kotlin exception already has a `message`; the variants' own is `detail`.
 [bindings.kotlin.rename]
 "KoanError.Database.message" = "detail"
 "KoanError.Audio.message" = "detail"

@@ -1,504 +1,675 @@
-use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Weak};
+//! Android output: an AAudio stream, bit-perfect to a USB DAC where Android
+//! allows it (see `bit_perfect`), through the system mixer otherwise.
+//!
+//! The one device is the route Android has chosen. A stream follows it only
+//! until the device goes, when AAudio disconnects it; the app rebuilds the
+//! output on a route change (`restart_output`).
 
-use crossbeam_channel::{Receiver, Sender};
-use ndk::audio::{
-    AudioCallbackResult, AudioContentType, AudioDirection, AudioError, AudioFormat,
-    AudioPerformanceMode, AudioSharingMode, AudioStream, AudioStreamBuilder, AudioUsage,
-};
+use std::ffi::{CStr, c_char, c_void};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
+
 use parking_lot::Mutex;
 
-use super::android_policy::{
-    self as policy, Attempt, Granted, Output, REOPEN_DELAYS, Sharing, StreamFault, render,
-};
-use super::backend::{AudioBackend, AudioEngineHandle, BackendError, DeviceInfo, SampleRateWatch};
+use super::backend::{AudioBackend, AudioEngineHandle, BackendError, DeviceInfo};
+use super::bit_perfect::{self, Encoding, MixerFormat};
 use super::fade::{FadeControl, Fader};
 
-/// Android output, through AAudio.
-///
-/// The decode pipeline is the same one every platform runs: samples at the
-/// source's rate and channel count arrive in the rtrb ring, and the backend
-/// drains it. What AAudio adds is what Android decides, not koan.
-///
-/// There is no device list to choose from and no nominal rate to set. What
-/// stands in for a device is the route the system is playing to, which the
-/// app owns (it hears route changes through `AudioManager`) and tells us of
-/// through `set_route`. A stream is opened at the source's rate: exclusive
-/// where the device allows it, which is the only case in which the hardware
-/// runs at that rate, and shared otherwise, where the system mixer converts.
-/// What was granted is read back from the stream, not assumed.
-///
-/// When the route changes the system disconnects the stream and says so in
-/// its error callback. That callback may not close the stream or open another,
-/// so a worker thread does: it reopens on whatever the system now routes to,
-/// keeping the ring, the fader and the play position, and carries on if
-/// playback was running.
-pub struct AndroidAudioBackend;
+/// The rate Android's mixer usually runs at, for when no app has said.
+const USUAL_MIXER_RATE: u32 = 48000;
 
-/// The name of the route as the app last heard it: "Speaker", "Pixel Buds",
-/// "USB-C Headset". What DSP profiles are keyed on.
+#[allow(non_camel_case_types)]
+type aaudio_result_t = i32;
+
+#[repr(C)]
+struct AAudioStreamBuilder {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+struct AAudioStream {
+    _private: [u8; 0],
+}
+
+type DataCallback = unsafe extern "C" fn(*mut AAudioStream, *mut c_void, *mut c_void, i32) -> i32;
+type ErrorCallback = unsafe extern "C" fn(*mut AAudioStream, *mut c_void, aaudio_result_t);
+
+const AAUDIO_OK: aaudio_result_t = 0;
+const AAUDIO_ERROR_DISCONNECTED: aaudio_result_t = -899;
+const AAUDIO_UNSPECIFIED: i32 = 0;
+const AAUDIO_SHARING_MODE_SHARED: i32 = 1;
+const AAUDIO_PERFORMANCE_MODE_NONE: i32 = 10;
+const AAUDIO_USAGE_MEDIA: i32 = 1;
+const AAUDIO_CONTENT_TYPE_MUSIC: i32 = 2;
+const AAUDIO_CALLBACK_RESULT_CONTINUE: i32 = 0;
+
+#[link(name = "aaudio")]
+unsafe extern "C" {
+    fn AAudio_createStreamBuilder(builder: *mut *mut AAudioStreamBuilder) -> aaudio_result_t;
+    fn AAudio_convertResultToText(result: aaudio_result_t) -> *const c_char;
+    fn AAudioStreamBuilder_setDeviceId(builder: *mut AAudioStreamBuilder, id: i32);
+    fn AAudioStreamBuilder_setSampleRate(builder: *mut AAudioStreamBuilder, rate: i32);
+    fn AAudioStreamBuilder_setChannelCount(builder: *mut AAudioStreamBuilder, channels: i32);
+    fn AAudioStreamBuilder_setFormat(builder: *mut AAudioStreamBuilder, format: i32);
+    fn AAudioStreamBuilder_setSharingMode(builder: *mut AAudioStreamBuilder, mode: i32);
+    fn AAudioStreamBuilder_setPerformanceMode(builder: *mut AAudioStreamBuilder, mode: i32);
+    fn AAudioStreamBuilder_setUsage(builder: *mut AAudioStreamBuilder, usage: i32);
+    fn AAudioStreamBuilder_setContentType(builder: *mut AAudioStreamBuilder, content: i32);
+    fn AAudioStreamBuilder_setDataCallback(
+        builder: *mut AAudioStreamBuilder,
+        callback: DataCallback,
+        user: *mut c_void,
+    );
+    fn AAudioStreamBuilder_setErrorCallback(
+        builder: *mut AAudioStreamBuilder,
+        callback: ErrorCallback,
+        user: *mut c_void,
+    );
+    fn AAudioStreamBuilder_openStream(
+        builder: *mut AAudioStreamBuilder,
+        stream: *mut *mut AAudioStream,
+    ) -> aaudio_result_t;
+    fn AAudioStreamBuilder_delete(builder: *mut AAudioStreamBuilder) -> aaudio_result_t;
+    fn AAudioStream_requestStart(stream: *mut AAudioStream) -> aaudio_result_t;
+    fn AAudioStream_requestStop(stream: *mut AAudioStream) -> aaudio_result_t;
+    fn AAudioStream_close(stream: *mut AAudioStream) -> aaudio_result_t;
+    fn AAudioStream_getBufferCapacityInFrames(stream: *mut AAudioStream) -> i32;
+    fn AAudioStream_getXRunCount(stream: *mut AAudioStream) -> i32;
+    fn AAudioStream_getSampleRate(stream: *mut AAudioStream) -> i32;
+    fn AAudioStream_getFormat(stream: *mut AAudioStream) -> i32;
+}
+
+fn result_text(result: aaudio_result_t) -> String {
+    // SAFETY: AAudio returns a static, NUL-terminated string for any result.
+    unsafe { CStr::from_ptr(AAudio_convertResultToText(result)) }
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn check(result: aaudio_result_t, what: &str) -> Result<(), BackendError> {
+    if result == AAUDIO_OK {
+        Ok(())
+    } else {
+        Err(BackendError::StreamCreation(format!(
+            "{what}: {}",
+            result_text(result)
+        )))
+    }
+}
+
+/// Where Android routes media now, named as a person would: "Phone speaker",
+/// "Headphones", or a Bluetooth or USB device's product name. Told by the
+/// app on each route change; what the phone's one output is called.
 static ROUTE: parking_lot::RwLock<Option<String>> = parking_lot::RwLock::new(None);
 
-/// The `AudioDeviceInfo.getId()` of the route, which AAudio takes as a device
-/// id; 0 for whatever the system's default is.
-static ROUTE_DEVICE: AtomicI32 = AtomicI32::new(0);
-
-/// The rate the platform says the route runs at, in Hz; 0 while unknown.
-static ROUTE_RATE: AtomicU32 = AtomicU32::new(0);
-
-/// What the stream now open was granted.
-static GRANTED: Mutex<Option<Granted>> = Mutex::new(None);
-
-type RateWatch = Arc<dyn Fn(f64) + Send + Sync>;
-
-/// Told the rate the hardware runs at when a stream is opened or the route
-/// moves. One at a time: the player's current one.
-static WATCH: Mutex<Option<RateWatch>> = Mutex::new(None);
-
-/// Told by the app on each route change, and once at start. A new route is a
-/// new output to every device controlling this one, so they are told.
-///
-/// `device_id` is the route's `AudioDeviceInfo.getId()`, or 0 to follow the
-/// system's default; `sample_rate` is what the platform reports the route
-/// runs at, or 0 if it does not say.
-pub fn set_route(name: String, device_id: i32, sample_rate: u32) {
+/// The route changed: the phone's output is listed again under its new name.
+pub fn set_route(name: String) {
     let changed = ROUTE.write().replace(name.clone()).as_ref() != Some(&name);
-    ROUTE_DEVICE.store(device_id, Ordering::Release);
-    ROUTE_RATE.store(sample_rate, Ordering::Release);
     if changed {
         crate::remote::outputs::refresh_devices();
     }
 }
 
-/// What the most recent stream was granted, or `None` before any has opened.
-/// Kept after the stream closes: it is the last the route is known to run at.
-pub fn granted() -> Option<Granted> {
-    *GRANTED.lock()
+/// The output, and the bit-perfect format it holds, if any.
+#[derive(Default)]
+pub struct AndroidAudioBackend {
+    held: Mutex<Option<MixerFormat>>,
 }
 
-/// The rate the hardware runs at under the stream now open, as far as the
-/// platform says: see `android_policy::hardware_rate`.
-pub fn hardware_rate() -> Option<u32> {
-    granted().map(|g| policy::hardware_rate(g, ROUTE_RATE.load(Ordering::Acquire)))
-}
+/// What the player gave to be told a stream was disconnected. Static, so the
+/// error callback, which AAudio may still be running as a stream closes,
+/// reads nothing a stream owns.
+static DISCONNECT: std::sync::OnceLock<Disconnect> = std::sync::OnceLock::new();
 
-/// The route changed: say what the hardware now runs at.
-pub(crate) fn follow_route() {
-    if let Some(rate) = hardware_rate() {
-        tell_watch(rate as f64);
+impl AndroidAudioBackend {
+    fn device() -> DeviceInfo {
+        DeviceInfo {
+            name: ROUTE
+                .read()
+                .clone()
+                .unwrap_or_else(|| "Phone speaker".into()),
+            sample_rates: Vec::new(),
+            platform_id: 0,
+            kind: Default::default(),
+        }
     }
-}
 
-fn tell_watch(rate: f64) {
-    let watch = WATCH.lock().clone();
-    if let Some(watch) = watch {
-        watch(rate);
-    }
-}
-
-fn current_route() -> DeviceInfo {
-    DeviceInfo {
-        name: ROUTE
-            .read()
-            .clone()
-            .unwrap_or_else(|| "System Output".to_string()),
-        sample_rates: policy::LISTED_RATES.to_vec(),
-        platform_id: ROUTE_DEVICE.load(Ordering::Acquire).max(0) as u64,
-        kind: Default::default(),
+    fn mixer_rate() -> u32 {
+        bit_perfect::host().map_or(USUAL_MIXER_RATE, |h| h.mixer_rate())
     }
 }
 
 impl AudioBackend for AndroidAudioBackend {
     fn list_devices(&self) -> Result<Vec<DeviceInfo>, BackendError> {
-        Ok(vec![current_route()])
+        Ok(vec![Self::device()])
     }
 
     fn default_device(&self) -> Result<DeviceInfo, BackendError> {
-        Ok(current_route())
+        Ok(Self::device())
     }
 
     fn supported_sample_rates(&self, _device: &DeviceInfo) -> Result<Vec<f64>, BackendError> {
-        Ok(current_route().sample_rates)
+        Ok(Vec::new())
     }
 
     fn get_device_sample_rate(&self, _device: &DeviceInfo) -> Result<f64, BackendError> {
-        // Zero while unknown: no switch from an unknown rate is one to wait
-        // out.
-        Ok(hardware_rate()
-            .unwrap_or_else(|| ROUTE_RATE.load(Ordering::Acquire))
-            .into())
+        Ok(self.held.lock().map_or_else(Self::mixer_rate, |f| f.rate) as f64)
     }
 
-    fn set_device_sample_rate(&self, _device: &DeviceInfo, rate: f64) -> Result<f64, BackendError> {
-        // The rate is set by opening the stream. What the route will make of
-        // it is not known until then, so this answers with the best guess
-        // and the stream's grant corrects it through the watch.
-        Ok(policy::expected_rate(
-            rate,
-            ROUTE_RATE.load(Ordering::Acquire),
-        ))
+    fn set_device_sample_rate(&self, device: &DeviceInfo, rate: f64) -> Result<f64, BackendError> {
+        self.prepare_output(device, 0.0, rate, 2, None)
     }
 
-    fn watch_device_sample_rate(
+    /// Hold the USB DAC bit-perfect at the stream's format if it offers it,
+    /// and give the mixer back otherwise. Answers the rate the device runs
+    /// at: the stream's when held, the mixer's when not.
+    fn prepare_output(
         &self,
         _device: &DeviceInfo,
-        on_change: Box<dyn Fn(f64) + Send + Sync>,
-    ) -> Option<Box<dyn SampleRateWatch>> {
-        let watch: RateWatch = Arc::from(on_change);
-        *WATCH.lock() = Some(watch.clone());
-        Some(Box::new(Watching(watch)))
+        _current: f64,
+        rate: f64,
+        channels: u16,
+        bit_depth: Option<u16>,
+    ) -> Result<f64, BackendError> {
+        let mut held = self.held.lock();
+        let Some(host) = bit_perfect::host() else {
+            return Ok(USUAL_MIXER_RATE as f64);
+        };
+        let wanted = bit_perfect::choose(&host.offers(), rate as u32, channels, bit_depth);
+        if wanted.is_some() && wanted == *held {
+            return Ok(rate);
+        }
+        if let Some(format) = wanted
+            && host.hold(format)
+        {
+            log::info!(
+                "android output: bit-perfect, {} Hz {:?} on USB device {}",
+                format.rate,
+                format.encoding,
+                format.device_id
+            );
+            *held = Some(format);
+            return Ok(rate);
+        }
+        if held.take().is_some() {
+            host.release();
+        }
+        let mixer = host.mixer_rate();
+        log::info!(
+            "android output: through the mixer at {mixer} Hz ({})",
+            if wanted.is_some() {
+                "the USB DAC refused bit-perfect"
+            } else {
+                "no USB DAC offers this format bit-perfect"
+            }
+        );
+        Ok(mixer as f64)
+    }
+
+    fn output_mixed(&self) -> Option<bool> {
+        Some(self.held.lock().is_none())
+    }
+
+    fn narrows_depth(&self) -> bool {
+        true
+    }
+
+    fn output_depth(&self) -> Option<u16> {
+        self.held.lock().map(|f| f.encoding.bits())
+    }
+
+    fn on_disconnect(&self, rebuild: Arc<dyn Fn() + Send + Sync>) {
+        let _ = DISCONNECT.set(rebuild);
     }
 
     fn create_engine(
         &self,
-        device: &DeviceInfo,
+        _device: &DeviceInfo,
         sample_rate: f64,
         channels: u32,
         consumer: rtrb::Consumer<f32>,
         samples_played: Arc<AtomicU64>,
     ) -> Result<Box<dyn AudioEngineHandle>, BackendError> {
-        let rate = sample_rate.round() as u32;
         let fade = FadeControl::for_output();
-        let output = Output {
+        let state = Box::into_raw(Box::new(Callback {
             consumer,
             fader: Fader::new(fade.clone(), sample_rate),
             samples_played,
-            channels: channels as usize,
-        };
-        let (reopen_tx, reopen_rx) = crossbeam_channel::unbounded();
-        let inner = Arc::new(Inner {
-            output: Arc::new(OutputCell(UnsafeCell::new(output))),
             running: Arc::new(AtomicBool::new(false)),
-            fade,
-            rate,
-            channels: channels as i32,
-            device_id: device.platform_id as i32,
-            stream: Mutex::new(None),
-            closed: AtomicBool::new(false),
-            reopen_tx,
-        });
-        let (stream, granted) = inner.open().map_err(BackendError::StreamCreation)?;
-        inner.keep(stream, granted);
+            channels: channels as usize,
+            encoding: Encoding::Float,
+            scratch: Vec::new(),
+            xruns: Arc::new(AtomicI32::new(0)),
+            lead_in: Arc::new(AtomicU64::new(0)),
+            pace: Arc::new(Pace::default()),
+        }));
 
-        let worker = Arc::downgrade(&inner);
-        std::thread::Builder::new()
-            .name("koan-aaudio".into())
-            .spawn(move || reopen_worker(worker, reopen_rx))
-            .map_err(|e| BackendError::StreamCreation(e.to_string()))?;
-        Ok(Box::new(AndroidEngineHandle { inner }))
+        let mut held = self.held.lock();
+        let mut opened = Err(BackendError::NoDevices);
+        if let Some(format) = *held {
+            // SAFETY: `state` outlives any stream opened on it.
+            opened = unsafe {
+                open(
+                    sample_rate,
+                    channels,
+                    format.encoding,
+                    format.device_id,
+                    state,
+                )
+            };
+            if let Err(e) = &opened {
+                // Android took the attributes but will not open a stream to
+                // them: play through the mixer rather than not at all.
+                log::warn!("android output: bit-perfect stream refused ({e}); through the mixer");
+                if let Some(host) = bit_perfect::host() {
+                    host.release();
+                }
+                *held = None;
+            }
+        }
+        if held.is_none() {
+            // SAFETY: as above.
+            opened = unsafe {
+                open(
+                    sample_rate,
+                    channels,
+                    Encoding::Float,
+                    AAUDIO_UNSPECIFIED,
+                    state,
+                )
+            };
+        }
+        let stream = match opened {
+            Ok(stream) => stream,
+            Err(e) => {
+                // SAFETY: no stream holds them.
+                unsafe { drop(Box::from_raw(state)) };
+                return Err(e);
+            }
+        };
+        // SAFETY: the stream is open but not started, so no callback runs.
+        let callback = unsafe { &mut *state };
+        callback.encoding = held.map_or(Encoding::Float, |f| f.encoding);
+        // A callback is never asked for more frames than the buffer holds,
+        // so this is the most it converts at once.
+        let capacity = unsafe { AAudioStream_getBufferCapacityInFrames(stream) }.max(1) as usize;
+        callback.scratch = vec![0.0; capacity * channels as usize];
+        Ok(Box::new(AndroidEngine {
+            rate: sample_rate,
+            channels,
+            pace: callback.pace.clone(),
+            stream,
+            state,
+            running: callback.running.clone(),
+            fade,
+            xruns: callback.xruns.clone(),
+            lead_in: callback.lead_in.clone(),
+        }))
     }
 }
 
-/// The player's subscription to the hardware rate. A newer one replaces it,
-/// so it clears the slot on drop only if it is still the one there.
-struct Watching(RateWatch);
+/// Open a stream in `encoding` on `device`, or fail if AAudio would open it in
+/// anything else: the callback writes that encoding, and a stream of another
+/// would play it as noise.
+///
+/// # Safety
+///
+/// `state` must outlive the stream.
+unsafe fn open(
+    rate: f64,
+    channels: u32,
+    encoding: Encoding,
+    device: i32,
+    state: *mut Callback,
+) -> Result<*mut AAudioStream, BackendError> {
+    let mut builder = std::ptr::null_mut();
+    // SAFETY: AAudio's builder and stream calls, on pointers it returned.
+    unsafe {
+        check(AAudio_createStreamBuilder(&mut builder), "builder")?;
+        AAudioStreamBuilder_setDeviceId(builder, device);
+        AAudioStreamBuilder_setSampleRate(builder, rate as i32);
+        AAudioStreamBuilder_setChannelCount(builder, channels as i32);
+        AAudioStreamBuilder_setFormat(builder, encoding.aaudio());
+        AAudioStreamBuilder_setSharingMode(builder, AAUDIO_SHARING_MODE_SHARED);
+        AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_NONE);
+        AAudioStreamBuilder_setUsage(builder, AAUDIO_USAGE_MEDIA);
+        AAudioStreamBuilder_setContentType(builder, AAUDIO_CONTENT_TYPE_MUSIC);
+        AAudioStreamBuilder_setDataCallback(builder, render, state.cast());
+        AAudioStreamBuilder_setErrorCallback(builder, stream_error, std::ptr::null_mut());
+        let mut stream = std::ptr::null_mut();
+        let opened = AAudioStreamBuilder_openStream(builder, &mut stream);
+        AAudioStreamBuilder_delete(builder);
+        check(opened, "open")?;
+        let (got_rate, got_format) = (
+            AAudioStream_getSampleRate(stream),
+            AAudioStream_getFormat(stream),
+        );
+        if got_rate != rate as i32 || got_format != encoding.aaudio() {
+            AAudioStream_close(stream);
+            return Err(BackendError::StreamCreation(format!(
+                "asked for {rate} Hz format {}, AAudio offered {got_rate} Hz format {got_format}",
+                encoding.aaudio()
+            )));
+        }
+        Ok(stream)
+    }
+}
 
-impl SampleRateWatch for Watching {}
+/// What the app gave to be told when a stream is disconnected.
+type Disconnect = Arc<dyn Fn() + Send + Sync>;
 
-impl Drop for Watching {
-    fn drop(&mut self) {
-        let mut slot = WATCH.lock();
-        if slot.as_ref().is_some_and(|w| Arc::ptr_eq(w, &self.0)) {
-            *slot = None;
+/// What the render callback owns. Allocated before the stream opens and
+/// freed after it closes; the callback itself neither allocates nor locks.
+struct Callback {
+    consumer: rtrb::Consumer<f32>,
+    fader: Fader,
+    samples_played: Arc<AtomicU64>,
+    running: Arc<AtomicBool>,
+    channels: usize,
+    encoding: Encoding,
+    /// Samples read from the ring and faded, before conversion.
+    scratch: Vec<f32>,
+    xruns: Arc<AtomicI32>,
+    lead_in: Arc<AtomicU64>,
+    /// The rate AAudio asks for frames at, against the monotonic clock: the
+    /// first and latest callback's time, and the frames asked for in between.
+    pace: Arc<Pace>,
+}
+
+/// How fast the stream consumes, measured: what the playhead's prediction
+/// assumes is the nominal rate.
+#[derive(Default)]
+struct Pace {
+    first_ns: AtomicU64,
+    last_ns: AtomicU64,
+    frames: AtomicU64,
+    /// The latest callback, for `presentation`: the samples played once it
+    /// had run, the ring samples it took, and when it ended. Written as one
+    /// under `seq`, odd while a write is in progress.
+    seq: AtomicU64,
+    played: AtomicU64,
+    taken: AtomicU64,
+    at_ns: AtomicU64,
+}
+
+impl Pace {
+    fn note(&self, frames: u64) {
+        let now = monotonic_ns();
+        if self.first_ns.load(Ordering::Relaxed) == 0 {
+            self.first_ns.store(now, Ordering::Relaxed);
+        } else {
+            self.frames.fetch_add(frames, Ordering::Relaxed);
+        }
+        self.last_ns.store(now, Ordering::Relaxed);
+    }
+
+    /// Record the callback just run. Wait-free: the reader retries instead.
+    fn record(&self, played: u64, taken: u64) {
+        let seq = self.seq.load(Ordering::Relaxed);
+        self.seq.store(seq + 1, Ordering::Relaxed);
+        std::sync::atomic::fence(Ordering::Release);
+        self.played.store(played, Ordering::Relaxed);
+        self.taken.store(taken, Ordering::Relaxed);
+        self.at_ns.store(monotonic_ns(), Ordering::Relaxed);
+        self.seq.store(seq + 2, Ordering::Release);
+    }
+
+    /// The latest callback's record, whole.
+    fn latest(&self) -> (u64, u64, u64) {
+        loop {
+            let before = self.seq.load(Ordering::Acquire);
+            let record = (
+                self.played.load(Ordering::Relaxed),
+                self.taken.load(Ordering::Relaxed),
+                self.at_ns.load(Ordering::Relaxed),
+            );
+            std::sync::atomic::fence(Ordering::Acquire);
+            if before.is_multiple_of(2) && self.seq.load(Ordering::Relaxed) == before {
+                return record;
+            }
+            std::hint::spin_loop();
         }
     }
+
+    /// Frames a second, once the stream has run long enough to say.
+    fn rate(&self) -> Option<f64> {
+        let span = self
+            .last_ns
+            .load(Ordering::Relaxed)
+            .saturating_sub(self.first_ns.load(Ordering::Relaxed));
+        (span > 1_000_000_000)
+            .then(|| self.frames.load(Ordering::Relaxed) as f64 * 1e9 / span as f64)
+    }
 }
 
-/// `Output`, handed from one stream's callback to the next across a reopen.
-struct OutputCell(UnsafeCell<Output>);
+fn monotonic_ns() -> u64 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: a valid timespec to write into; CLOCK_MONOTONIC always exists.
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+    ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
+}
 
-// SAFETY: at most one stream's callback runs at a time, which is what makes
-// the `&mut` in `render` unique. A stream is opened without being started;
-// only the one in `Inner::stream` is ever started; and the one it replaces is
-// closed first, which does not return until its callback thread has exited.
-unsafe impl Sync for OutputCell {}
+unsafe extern "C" fn render(
+    stream: *mut AAudioStream,
+    user: *mut c_void,
+    data: *mut c_void,
+    frames: i32,
+) -> i32 {
+    // SAFETY: `user` is the `Callback` the stream was opened with, touched by
+    // this callback alone; `data` holds `frames` frames of the stream's format.
+    let cb = unsafe { &mut *user.cast::<Callback>() };
+    let channels = cb.channels.max(1);
+    let bytes = cb.encoding.bytes();
+    let total = frames.max(0) as usize * channels;
+    let out = unsafe { std::slice::from_raw_parts_mut(data.cast::<u8>(), total * bytes) };
+    cb.pace.note(frames.max(0) as u64);
+    cb.xruns.store(
+        unsafe { AAudioStream_getXRunCount(stream) },
+        Ordering::Relaxed,
+    );
 
-struct SendStream(AudioStream);
+    if !cb.running.load(Ordering::Acquire) || cb.leading_in(frames.max(0) as u64) {
+        // Every encoding's zero is all-zero bytes.
+        out.fill(0);
+        cb.pace.record(cb.samples_played.load(Ordering::Relaxed), 0);
+        return AAUDIO_CALLBACK_RESULT_CONTINUE;
+    }
 
-// SAFETY: an AAudio stream may be driven from any thread; the NDK documents
-// its calls as thread-safe. It is not `Send` in the crate only because it
-// holds a raw pointer.
-unsafe impl Send for SendStream {}
+    let mut done = 0;
+    let mut taken = 0;
+    while done < total {
+        let want = (total - done).min(cb.scratch.len() - cb.scratch.len() % channels);
+        if want == 0 {
+            break;
+        }
+        let take = cb.consumer.slots().min(cb.fader.readable(want, channels));
+        let take = take - take % channels;
+        let scratch = &mut cb.scratch[..want];
+        let mut got = 0;
+        if take > 0
+            && let Ok(chunk) = cb.consumer.read_chunk(take)
+        {
+            let (first, second) = chunk.as_slices();
+            scratch[..first.len()].copy_from_slice(first);
+            scratch[first.len()..take].copy_from_slice(second);
+            chunk.commit_all();
+            cb.samples_played.fetch_add(take as u64, Ordering::AcqRel);
+            cb.fader.apply(&mut scratch[..take], channels);
+            got = take;
+            taken += take;
+        }
+        // Silence past what the ring had: an underrun, or a fade's end.
+        scratch[got..].fill(0.0);
+        bit_perfect::encode(
+            scratch,
+            cb.encoding,
+            &mut out[done * bytes..(done + want) * bytes],
+        );
+        done += want;
+        if got < want {
+            break;
+        }
+    }
+    out[done * bytes..].fill(0);
+    cb.pace
+        .record(cb.samples_played.load(Ordering::Relaxed), taken as u64);
+    AAUDIO_CALLBACK_RESULT_CONTINUE
+}
 
-struct Inner {
-    output: Arc<OutputCell>,
+impl Callback {
+    /// Whether this callback plays lead-in silence: nothing read from the
+    /// ring and nothing counted as played, so the playhead waits with the
+    /// device. Taken with a compare-exchange, so a `fade_in` clearing it in
+    /// between is not overwritten with what was left.
+    fn leading_in(&mut self, frames: u64) -> bool {
+        let mut left = self.lead_in.load(Ordering::Relaxed);
+        while left > 0 {
+            match self.lead_in.compare_exchange_weak(
+                left,
+                left.saturating_sub(frames),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    self.fader.hold();
+                    return true;
+                }
+                Err(now) => left = now,
+            }
+        }
+        false
+    }
+}
+
+/// AAudio's stream errors, on a thread of its own rather than the render
+/// callback's. A disconnected stream never plays again: the device went, or
+/// the audio server restarted, which disconnects every stream at once. The
+/// player is asked to rebuild the output; closing the stream here would
+/// deadlock AAudio.
+unsafe extern "C" fn stream_error(_: *mut AAudioStream, _: *mut c_void, error: aaudio_result_t) {
+    log::warn!("android output: stream error: {}", result_text(error));
+    if error == AAUDIO_ERROR_DISCONNECTED
+        && let Some(rebuild) = DISCONNECT.get()
+    {
+        rebuild();
+    }
+}
+
+struct AndroidEngine {
+    rate: f64,
+    channels: u32,
+    pace: Arc<Pace>,
+    stream: *mut AAudioStream,
+    state: *mut Callback,
     running: Arc<AtomicBool>,
     fade: Arc<FadeControl>,
-    rate: u32,
-    channels: i32,
-    device_id: i32,
-    /// The stream now open; `None` between a disconnect and its reopening, or
-    /// after every attempt to reopen has failed.
-    stream: Mutex<Option<SendStream>>,
-    closed: AtomicBool,
-    /// Wakes the reopen worker. The error callback sends; it may do nothing
-    /// else with the stream.
-    reopen_tx: Sender<()>,
+    xruns: Arc<AtomicI32>,
+    lead_in: Arc<AtomicU64>,
 }
 
-fn fault_of(err: AudioError) -> StreamFault {
-    match err {
-        AudioError::Disconnected => StreamFault::Disconnected,
-        _ => StreamFault::Other,
-    }
-}
+// SAFETY: AAudio's stream calls may be made from any thread; the callback
+// state is reached only through the stream until `drop` closes it.
+unsafe impl Send for AndroidEngine {}
 
-impl Inner {
-    /// Open a stream, trying each way `android_policy::open_attempts` gives
-    /// and keeping the first the system grants at the rate asked for. The
-    /// stream is not started.
-    fn open(&self) -> Result<(AudioStream, Granted), String> {
-        let mut last = String::from("no attempt made");
-        for attempt in policy::open_attempts(self.rate) {
-            match self.open_once(attempt) {
-                Ok(opened) => return Ok(opened),
-                Err(e) => {
-                    log::info!(
-                        "aaudio: {:?} at {}Hz not opened: {e}",
-                        attempt.sharing,
-                        attempt.sample_rate
-                    );
-                    last = e;
-                }
-            }
+impl Drop for AndroidEngine {
+    fn drop(&mut self) {
+        // SAFETY: stopping first, as Oboe does: on older releases a close
+        // could race a callback still in flight. Closing ends the callbacks,
+        // after which nothing else holds `state`.
+        unsafe {
+            AAudioStream_requestStop(self.stream);
+            AAudioStream_close(self.stream);
+            drop(Box::from_raw(self.state));
         }
-        Err(last)
-    }
-
-    fn open_once(&self, attempt: Attempt) -> Result<(AudioStream, Granted), String> {
-        let channels = self.channels;
-        let samples_per_frame = channels as usize;
-        let cell = self.output.clone();
-        let running = self.running.clone();
-        let tx = self.reopen_tx.clone();
-
-        let stream = AudioStreamBuilder::new()
-            .map_err(|e| e.to_string())?
-            .direction(AudioDirection::Output)
-            .format(AudioFormat::PCM_Float)
-            .channel_count(channels)
-            .sample_rate(attempt.sample_rate as i32)
-            .sharing_mode(match attempt.sharing {
-                Sharing::Exclusive => AudioSharingMode::Exclusive,
-                Sharing::Shared => AudioSharingMode::Shared,
-            })
-            .performance_mode(AudioPerformanceMode::LowLatency)
-            .usage(AudioUsage::Media)
-            .content_type(AudioContentType::Music)
-            .device_id(self.device_id)
-            .data_callback(Box::new(move |_stream, data, frames| {
-                // SAFETY: AAudio hands over `frames` frames of the channel
-                // count and format asked for. Uniqueness of the `Output`
-                // borrow: see `OutputCell`.
-                let (output, data) = unsafe {
-                    (
-                        &mut *cell.0.get(),
-                        std::slice::from_raw_parts_mut(
-                            data as *mut f32,
-                            frames.max(0) as usize * samples_per_frame,
-                        ),
-                    )
-                };
-                render(output, &running, data);
-                AudioCallbackResult::Continue
-            }))
-            .error_callback(Box::new(move |_stream, err| {
-                // Not here: closing, reopening, or anything slow. The worker
-                // does it.
-                if policy::reopens(fault_of(err)) {
-                    let _ = tx.send(());
-                }
-            }))
-            .open_stream()
-            .map_err(|e| e.to_string())?;
-
-        if !policy::keeps(
-            attempt,
-            stream.sample_rate(),
-            channels,
-            stream.channel_count(),
-        ) || stream.format() != AudioFormat::PCM_Float
-        {
-            return Err(format!(
-                "granted {}Hz, {} channels, {:?}",
-                stream.sample_rate(),
-                stream.channel_count(),
-                stream.format()
-            ));
+        let xruns = self.xruns.load(Ordering::Relaxed);
+        if xruns > 0 {
+            log::warn!("android output: {xruns} underruns");
         }
-
-        let granted = Granted {
-            sharing: match stream.sharing_mode() {
-                AudioSharingMode::Exclusive => Sharing::Exclusive,
-                _ => Sharing::Shared,
-            },
-            sample_rate: stream.sample_rate() as u32,
-            device_id: stream.device_id(),
-        };
-        Ok((stream, granted))
-    }
-
-    /// Make `stream` the open one, closing any it replaces, and say what the
-    /// hardware now runs at.
-    fn keep(&self, stream: AudioStream, granted: Granted) {
-        log::info!(
-            "aaudio: {:?} stream at {}Hz on device {}",
-            granted.sharing,
-            granted.sample_rate,
-            granted.device_id
-        );
-        let old = self.stream.lock().replace(SendStream(stream));
-        close(old);
-        *GRANTED.lock() = Some(granted);
-        tell_watch(policy::hardware_rate(granted, ROUTE_RATE.load(Ordering::Acquire)) as f64);
-    }
-
-    /// Reopen after a disconnect, backing off until the system settles on a
-    /// route. Starts the new stream if playback was running.
-    fn reopen(&self) {
-        for delay in REOPEN_DELAYS {
-            if !delay.is_zero() {
-                std::thread::sleep(delay);
-            }
-            if self.closed.load(Ordering::Acquire) {
-                return;
-            }
-            // Closed first: the callback of the stream it replaces must have
-            // exited before the new one can start (see `OutputCell`).
-            close(self.stream.lock().take());
-            match self.open() {
-                Ok((stream, granted)) => {
-                    self.keep(stream, granted);
-                    if self.running.load(Ordering::Acquire)
-                        && let Err(e) = self.start_stream()
-                    {
-                        log::warn!("aaudio: reopened stream did not start: {e}");
-                    }
-                    return;
-                }
-                Err(e) => log::warn!("aaudio: reopen failed: {e}"),
-            }
+        if let Some(rate) = self.pace.rate() {
+            log::info!(
+                "android output: consumed {rate:.0} frames/s against {} nominal ({:+.3}%)",
+                self.rate,
+                (rate / self.rate - 1.0) * 100.0
+            );
         }
-        log::error!("aaudio: gave up reopening the output");
-    }
-
-    fn start_stream(&self) -> Result<(), BackendError> {
-        let slot = self.stream.lock();
-        let stream = slot
-            .as_ref()
-            .ok_or_else(|| BackendError::Platform("no output stream".into()))?;
-        stream
-            .0
-            .request_start()
-            .map_err(|e| BackendError::Platform(e.to_string()))
     }
 }
 
-/// Close a stream. The NDK crate unwraps the result in `Drop`, and a failure
-/// to close a stream already disconnected must not take a thread with it.
-fn close(stream: Option<SendStream>) {
-    if let Some(stream) = stream
-        && std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || drop(stream))).is_err()
-    {
-        log::warn!("aaudio: closing a stream failed");
-    }
-}
-
-fn reopen_worker(inner: Weak<Inner>, wake: Receiver<()>) {
-    while wake.recv().is_ok() {
-        // A burst of errors is one disconnect.
-        while wake.try_recv().is_ok() {}
-        let Some(inner) = inner.upgrade() else { return };
-        if inner.closed.load(Ordering::Acquire) {
-            return;
-        }
-        inner.reopen();
-    }
-}
-
-/// Handle to an AAudio output.
-struct AndroidEngineHandle {
-    inner: Arc<Inner>,
-}
-
-impl AudioEngineHandle for AndroidEngineHandle {
+impl AudioEngineHandle for AndroidEngine {
     fn start(&self) -> Result<(), BackendError> {
-        self.inner.running.store(true, Ordering::Release);
-        if self.inner.stream.lock().is_none() {
-            // Every try at reopening failed: try once more, now that the
-            // player is asking for sound.
-            let (stream, granted) = self.inner.open().map_err(BackendError::StreamCreation)?;
-            self.inner.keep(stream, granted);
-        }
-        self.inner.start_stream()
+        self.running.store(true, Ordering::Release);
+        // SAFETY: a stream this engine opened and has not closed.
+        check(unsafe { AAudioStream_requestStart(self.stream) }, "start")
     }
 
     fn stop(&self) -> Result<(), BackendError> {
-        self.inner.running.store(false, Ordering::Release);
-        let slot = self.inner.stream.lock();
-        let Some(stream) = slot.as_ref() else {
-            return Ok(());
-        };
-        match stream.0.request_pause() {
-            Ok(()) => Ok(()),
-            // Disconnected or being reopened: the callback already plays
-            // silence now `running` is clear, and the reopened stream is not
-            // started.
-            Err(AudioError::Disconnected | AudioError::InvalidState) => Ok(()),
-            Err(e) => Err(BackendError::Platform(e.to_string())),
-        }
+        self.running.store(false, Ordering::Release);
+        // SAFETY: as above.
+        check(unsafe { AAudioStream_requestStop(self.stream) }, "stop")
     }
 
     fn is_running(&self) -> bool {
-        self.inner.running.load(Ordering::Acquire)
+        self.running.load(Ordering::Acquire)
     }
 
     fn fade_out(&self) {
-        self.inner.fade.fade_out();
+        self.fade.fade_out();
     }
 
     fn fade_out_quickly(&self) {
-        self.inner.fade.fade_out_quickly();
+        self.fade.fade_out_quickly();
     }
 
     fn period(&self) -> std::time::Duration {
-        self.inner.fade.period()
+        self.fade.period()
+    }
+
+    fn set_sleep_gain(&self, gain: f32, snap: bool) {
+        self.fade.set_sleep_gain(gain, snap);
+    }
+
+    fn fade_in(&self) -> Result<(), BackendError> {
+        // A resume comes long after any rate switch the lead-in was covering.
+        self.lead_in.store(0, Ordering::Relaxed);
+        if self.is_running() {
+            self.fade.fade_in(false);
+            return Ok(());
+        }
+        self.fade.fade_in(true);
+        self.start()
     }
 
     fn fade_in_quickly(&self) -> Result<(), BackendError> {
         if self.is_running() {
-            self.inner.fade.fade_in_quickly(false);
+            self.fade.fade_in_quickly(false);
             return Ok(());
         }
-        self.inner.fade.fade_in_quickly(true);
-        self.start()
-    }
-
-    fn set_sleep_gain(&self, gain: f32, snap: bool) {
-        self.inner.fade.set_sleep_gain(gain, snap);
-    }
-
-    fn fade_in(&self) -> Result<(), BackendError> {
-        if self.is_running() {
-            self.inner.fade.fade_in(false);
-            return Ok(());
-        }
-        self.inner.fade.fade_in(true);
+        self.fade.fade_in_quickly(true);
         self.start()
     }
 
     fn is_silent(&self) -> bool {
-        self.inner.fade.is_silent()
+        self.fade.is_silent()
     }
-}
 
-impl Drop for AndroidEngineHandle {
-    fn drop(&mut self) {
-        self.inner.closed.store(true, Ordering::Release);
-        self.inner.running.store(false, Ordering::Release);
-        // Wakes the worker, which sees `closed` and returns.
-        let _ = self.inner.reopen_tx.send(());
-        close(self.inner.stream.lock().take());
+    fn lead_in(&self, frames: u64) {
+        self.lead_in.store(frames, Ordering::Relaxed);
+    }
+
+    /// AAudio takes a burst at a time through the mixer, 2006 frames or so:
+    /// 45 ms at 44.1 kHz, more than a client's tolerance for where the
+    /// playhead is. Between callbacks, the samples the last one took are
+    /// counted out at the stream's rate rather than all at once.
+    fn presentation(&self) -> Option<super::backend::Presentation> {
+        let pace = self.pace.clone();
+        let per_ns = self.rate * self.channels as f64 / 1e9;
+        Some(Arc::new(move || {
+            let (played, taken, at) = pace.latest();
+            let along = ((monotonic_ns().saturating_sub(at) as f64 * per_ns) as u64).min(taken);
+            played.saturating_sub(taken) + along
+        }))
     }
 }

@@ -1,0 +1,1 @@
+- **Signing out ends offline mode.** It stayed on, so the next account signed in showing only what was on the device.

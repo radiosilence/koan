@@ -2,9 +2,6 @@
 /target/
 **/*.rs.bk
 
-# Android: built by `just android-ffi`, not checked in
-apps/android/app/src/main/jniLibs/
-
 # macOS
 .DS_Store
 *.xcuserdata

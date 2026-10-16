@@ -3692,8 +3692,9 @@ async fn koan_scrobbling_connect(
     .await
 }
 
-/// Stop forwarding the caller's plays to ListenBrainz; what was waiting is
-/// dropped. Answers as `koanScrobbling`.
+/// Stop forwarding the caller's plays to `service` (`listenbrainz`, the
+/// default, or `lastfm`); what was waiting is dropped. Answers as
+/// `koanScrobbling`.
 async fn koan_scrobbling_disconnect(
     State(state): State<Arc<AppState>>,
     RawQuery(raw): RawQuery,
@@ -3705,7 +3706,12 @@ async fn koan_scrobbling_disconnect(
             use koan_core::db::queries::scrobbling;
             let user = scrobbling_account(caller)?;
             let failed = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
-            scrobbling::disconnect(&db.conn, user, scrobbling::LISTENBRAINZ).map_err(failed)?;
+            let service = match params.get("service") {
+                None | Some(scrobbling::LISTENBRAINZ) => scrobbling::LISTENBRAINZ,
+                Some(scrobbling::LASTFM) => scrobbling::LASTFM,
+                Some(_) => return Err(SubsonicError::bad_param("service")),
+            };
+            scrobbling::disconnect(&db.conn, user, service).map_err(failed)?;
             let services = scrobbling::services(&db.conn, user).map_err(failed)?;
             Ok(b.child(scrobbling_node(&services)))
         })
@@ -10962,6 +10968,46 @@ mod tests {
         assert!(body.contains("\"status\":\"ok\""), "{body}");
         let (_, body) = get_response(app, &format!("/rest/koanScrobbling?{MATE}")).await;
         assert!(!body.contains("lbuser"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn scrobbling_disconnects_lastfm_by_name_and_leaves_listenbrainz() {
+        let (state, _dir) = test_state();
+        let db = state.open_db().unwrap();
+        let mate: i64 = db
+            .conn
+            .query_row("SELECT id FROM users WHERE username = 'mate'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        use koan_core::db::queries::scrobbling::{LASTFM, LISTENBRAINZ, connect};
+        connect(&db.conn, mate, LISTENBRAINZ, "lb-token", "lbuser", 0).unwrap();
+        connect(&db.conn, mate, LASTFM, "fm-session", "fmuser", 0).unwrap();
+        drop(db);
+        let app = build_test_router(state);
+
+        let (_, body) = get_response(app.clone(), &format!("/rest/koanScrobbling?{MATE}")).await;
+        assert!(
+            !body.contains("fm-session") && !body.contains("lb-token"),
+            "{body}"
+        );
+        assert!(body.contains("fmuser") && body.contains("lbuser"), "{body}");
+
+        let (_, body) = get_response(
+            app.clone(),
+            &format!("/rest/koanScrobblingDisconnect?{MATE}&service=lastfm"),
+        )
+        .await;
+        assert!(
+            !body.contains("fmuser") && body.contains("lbuser"),
+            "{body}"
+        );
+        let (_, body) = get_response(
+            app,
+            &format!("/rest/koanScrobblingDisconnect?{MATE}&service=nowhere"),
+        )
+        .await;
+        assert!(body.contains("\"failed\""), "{body}");
     }
 
     /// Send `body` as a profile's file, as `koan_dsp_upload` does.

@@ -36,6 +36,7 @@ pub struct Config {
     pub sharing: SharingConfig,
     pub mcp: McpConfig,
     pub push: PushConfig,
+    pub lastfm: LastfmConfig,
     pub devices: DevicesConfig,
     pub dsp: DspConfig,
     pub appearance: AppearanceConfig,
@@ -90,6 +91,28 @@ pub struct SharingConfig {
     /// it cannot know which of its addresses a stranger can reach.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_url: Option<String>,
+}
+
+/// The Last.fm API account this server scrobbles through. Last.fm hands out
+/// one key and shared secret per application, so the server's admin registers
+/// them (<https://www.last.fm/api/account/create>) and every account on the
+/// server connects its own Last.fm through them. Without both, Last.fm is not
+/// offered. Secrets: `config.local.toml`, or `KOAN_LASTFM__API_KEY` and
+/// `KOAN_LASTFM__SECRET`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LastfmConfig {
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub api_key: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub secret: String,
+}
+
+impl LastfmConfig {
+    /// Both are set, so connecting and sending can work.
+    pub fn is_set(&self) -> bool {
+        !self.api_key.trim().is_empty() && !self.secret.trim().is_empty()
+    }
 }
 
 /// MCP clients signing in through this server's OAuth.
@@ -1382,6 +1405,8 @@ pub fn layer_of(path: &str) -> Layer {
         | "push.key_path"
         | "push.key_id"
         | "push.team_id"
+        | "lastfm.api_key"
+        | "lastfm.secret"
         // This machine's paths, disk and account.
         | "library.folders"
         | "remote.enabled"
@@ -1909,8 +1934,7 @@ fn to_edit_value(value: &toml::Value) -> toml_edit::Value {
 
 /// Where koan keeps its configuration, library database and cache.
 ///
-/// `~/.config/koan/` (on iOS, `Library/Application Support/koan`; on Android,
-/// whatever `set_app_dirs` was given, since an app has no home) unless
+/// `~/.config/koan/` (on iOS, `Library/Application Support/koan`) unless
 /// pointed elsewhere. `KOAN_CONFIG_DIR` is the
 /// user-facing way to do that — one machine, more than one library — and
 /// `set_config_dir` is the in-process one, which is what tests need: without
@@ -2068,44 +2092,11 @@ fn ios_library() -> PathBuf {
 /// against someone's iCloud storage — and which iOS may clear when the device
 /// is short of space, which is what a cache is for.
 fn default_cache_dir() -> PathBuf {
-    // An app that was told where its cache goes (Android's `cacheDir`, which
-    // the system may reclaim) keeps it there.
-    if let Some(dir) = CACHE_DIR.read().clone() {
-        return dir;
-    }
     #[cfg(any(target_os = "ios", target_os = "tvos"))]
     if CONFIG_DIR.read().is_none() && std::env::var_os("KOAN_CONFIG_DIR").is_none() {
         return ios_library().join("Caches").join("koan");
     }
     config_dir().join("cache")
-}
-
-/// The directories koan keeps its state in, given the two an Android app is
-/// handed: `Context.filesDir` and `Context.cacheDir`. Returns
-/// `(config dir, download cache dir)`.
-///
-/// Configuration, the library database and logs go in a `koan` folder of the
-/// app's files, which only the app can read and the system leaves alone. The
-/// download cache goes in a `koan` folder of the cache directory, so that the
-/// system may reclaim it when storage runs short, which is what a cache is
-/// for; this is the same reasoning as `Library/Caches` on iOS.
-pub fn app_dirs(files_dir: &Path, cache_dir: &Path) -> (PathBuf, PathBuf) {
-    (files_dir.join("koan"), cache_dir.join("koan"))
-}
-
-/// Point koan at the sandbox an app is given: see `app_dirs`. Set it before
-/// anything spawns, as `set_config_dir` says. An explicit `cache_dir` in the
-/// configuration still wins.
-pub fn set_app_dirs(files_dir: &Path, cache_dir: &Path) {
-    let (config, cache) = app_dirs(files_dir, cache_dir);
-    // The app's folders exist, but the `koan` one inside each does not yet.
-    for dir in [&config, &cache] {
-        if let Err(e) = fs::create_dir_all(dir) {
-            log::warn!("could not create {}: {e}", dir.display());
-        }
-    }
-    *CACHE_DIR.write() = Some(cache);
-    set_config_dir(config);
 }
 
 /// Point koan's configuration at `dir` for the life of the process.
@@ -2148,10 +2139,6 @@ pub fn isolate_config_for_tests() {
 pub static SWITCHING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 static CONFIG_DIR: LazyLock<parking_lot::RwLock<Option<PathBuf>>> =
-    LazyLock::new(|| parking_lot::RwLock::new(None));
-
-/// Where downloads go, when the app was told: see `set_app_dirs`.
-static CACHE_DIR: LazyLock<parking_lot::RwLock<Option<PathBuf>>> =
     LazyLock::new(|| parking_lot::RwLock::new(None));
 
 /// Path to the base config TOML file (committable to dotfiles).
@@ -2239,7 +2226,7 @@ fn check_secrets_in_git() {
 }
 
 fn scan_for_tracked_secrets() {
-    let sensitive_fields = ["password", "api_key", "refresh_token"];
+    let sensitive_fields = ["password", "api_key", "refresh_token", "secret"];
 
     for (label, path) in [
         ("config.toml", config_file_path()),
@@ -2316,19 +2303,6 @@ pub(crate) mod tests {
         let dir = std::env::temp_dir().join(format!("koan-test-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir
-    }
-
-    #[test]
-    fn an_apps_directories_are_kept_apart() {
-        // The config under the app's files, the downloads under its cache,
-        // which is the only part the system may reclaim.
-        let (config, cache) = app_dirs(
-            Path::new("/data/user/0/cc.blit.koan/files"),
-            Path::new("/data/user/0/cc.blit.koan/cache"),
-        );
-        assert_eq!(config, Path::new("/data/user/0/cc.blit.koan/files/koan"));
-        assert_eq!(cache, Path::new("/data/user/0/cc.blit.koan/cache/koan"));
-        assert!(!cache.starts_with("/data/user/0/cc.blit.koan/files"));
     }
 
     #[test]
@@ -3200,6 +3174,20 @@ fps = 30
              otherwise be silently ignored: {}",
             fs::read_to_string(&local).unwrap()
         );
+    }
+
+    #[test]
+    fn lastfm_credentials_are_secrets_and_need_both_halves() {
+        assert!(matches!(layer_of("lastfm.api_key"), Layer::Machine));
+        assert!(matches!(layer_of("lastfm.secret"), Layer::Machine));
+        let mut cfg = LastfmConfig::default();
+        assert!(!cfg.is_set());
+        cfg.api_key = "key".into();
+        assert!(!cfg.is_set());
+        cfg.secret = " ".into();
+        assert!(!cfg.is_set());
+        cfg.secret = "secret".into();
+        assert!(cfg.is_set());
     }
 
     #[test]

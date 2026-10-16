@@ -176,9 +176,14 @@ pub fn forget_remote(db: &Database) -> Result<u64, crate::db::connection::DbErro
         removed += u64::from(!kept);
     }
     // What waited for this server, and how far its history and the
-    // account's EQ profiles were read. The profiles themselves stay.
+    // account's EQ profiles were read. The profiles themselves stay. Its
+    // playlists lost the entries whose tracks went, yet still carry the stamp
+    // of the server copy they matched: without it the next sync pulls them
+    // whole again, rather than reading them as unchanged and leaving them
+    // empty.
     tx.execute_batch(
-        "DELETE FROM history_outbox;
+        "UPDATE playlists SET remote_changed = NULL WHERE remote_id IS NOT NULL;
+         DELETE FROM history_outbox;
          DELETE FROM favourite_outbox;
          UPDATE remote_servers SET history_cursor = NULL;
          DELETE FROM dsp_synced;

@@ -119,6 +119,166 @@ pub trait AudioSessionHost: Send + Sync {
     fn release(&self);
 }
 
+/// A sample encoding a USB DAC's mixer can run in.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MixerEncoding {
+    Pcm16,
+    Pcm24Packed,
+    Pcm32,
+    Float,
+}
+
+/// One bit-perfect configuration the USB output offers: an
+/// `AudioMixerAttributes` with `MIXER_BEHAVIOR_BIT_PERFECT`.
+#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MixerFormat {
+    /// `AudioDeviceInfo.getId()`.
+    pub device_id: i32,
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub encoding: MixerEncoding,
+}
+
+/// Android's `AudioManager`, for bit-perfect output to a USB DAC (Android
+/// 14). Called on the player thread before each stream opens. See
+/// `koan_core::audio::bit_perfect`.
+#[uniffi::export(with_foreign)]
+pub trait AndroidOutputHost: Send + Sync {
+    /// `AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE`.
+    fn mixer_rate(&self) -> u32;
+    /// The USB output's bit-perfect formats; empty when the route is not USB,
+    /// the system is older than Android 14, or bit-perfect output is off.
+    fn offers(&self) -> Vec<MixerFormat>;
+    /// `setPreferredMixerAttributes` for media with this format; `false` if
+    /// Android refused.
+    fn hold(&self, format: MixerFormat) -> bool;
+    /// `clearPreferredMixerAttributes`.
+    fn release(&self);
+}
+
+/// One entry of a DNS-SD TXT record.
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct TxtEntry {
+    pub key: String,
+    pub value: String,
+}
+
+/// Android's `NsdManager`, for finding koan devices on the network and being
+/// found: what Bonjour does on Apple platforms. See
+/// `koan_core::remote::nearby::nsd`.
+#[uniffi::export(with_foreign)]
+pub trait NearbyHost: Send + Sync {
+    /// Register this device as `name` on `port`, replacing any registration.
+    fn advertise(&self, name: String, port: u16, txt: Vec<TxtEntry>);
+    fn withdraw(&self);
+    /// Discover and resolve `_koan._tcp` services, reporting each through
+    /// `nearby_found` and `nearby_lost`, until `pause`.
+    fn browse(&self);
+    fn pause(&self);
+}
+
+/// Android's Wi-Fi, for finding UPnP renderers: the address to search from,
+/// and the `MulticastLock` without which Android drops multicast. See
+/// `koan_core::upnp::discovery::Network`.
+#[uniffi::export(with_foreign)]
+pub trait MulticastHost: Send + Sync {
+    /// The Wi-Fi interface's IPv4 address, dotted.
+    fn wifi_address(&self) -> Option<String>;
+    fn hold_multicast(&self, on: bool);
+}
+
+struct MulticastBridge(Arc<dyn MulticastHost>);
+
+impl koan_core::upnp::discovery::Network for MulticastBridge {
+    fn wifi_address(&self) -> Option<std::net::Ipv4Addr> {
+        self.0.wifi_address()?.parse().ok()
+    }
+
+    fn hold_multicast(&self, on: bool) {
+        self.0.hold_multicast(on);
+    }
+}
+
+#[cfg(target_os = "android")]
+struct NearbyBridge(Arc<dyn NearbyHost>);
+
+#[cfg(target_os = "android")]
+impl koan_core::remote::nearby::nsd::Host for NearbyBridge {
+    fn advertise(&self, name: &str, port: u16, txt: Vec<(String, String)>) {
+        let txt = txt
+            .into_iter()
+            .map(|(key, value)| TxtEntry { key, value })
+            .collect();
+        self.0.advertise(name.to_string(), port, txt);
+    }
+
+    fn withdraw(&self) {
+        self.0.withdraw();
+    }
+
+    fn browse(&self) {
+        self.0.browse();
+    }
+
+    fn pause(&self) {
+        self.0.pause();
+    }
+}
+
+struct OutputBridge(Arc<dyn AndroidOutputHost>);
+
+impl From<MixerFormat> for koan_core::audio::bit_perfect::MixerFormat {
+    fn from(f: MixerFormat) -> Self {
+        use koan_core::audio::bit_perfect::Encoding;
+        Self {
+            device_id: f.device_id,
+            rate: f.sample_rate,
+            channels: f.channels,
+            encoding: match f.encoding {
+                MixerEncoding::Pcm16 => Encoding::I16,
+                MixerEncoding::Pcm24Packed => Encoding::I24Packed,
+                MixerEncoding::Pcm32 => Encoding::I32,
+                MixerEncoding::Float => Encoding::Float,
+            },
+        }
+    }
+}
+
+impl From<koan_core::audio::bit_perfect::MixerFormat> for MixerFormat {
+    fn from(f: koan_core::audio::bit_perfect::MixerFormat) -> Self {
+        use koan_core::audio::bit_perfect::Encoding;
+        Self {
+            device_id: f.device_id,
+            sample_rate: f.rate,
+            channels: f.channels,
+            encoding: match f.encoding {
+                Encoding::I16 => MixerEncoding::Pcm16,
+                Encoding::I24Packed => MixerEncoding::Pcm24Packed,
+                Encoding::I32 => MixerEncoding::Pcm32,
+                Encoding::Float => MixerEncoding::Float,
+            },
+        }
+    }
+}
+
+impl koan_core::audio::bit_perfect::OutputHost for OutputBridge {
+    fn mixer_rate(&self) -> u32 {
+        self.0.mixer_rate()
+    }
+
+    fn offers(&self) -> Vec<koan_core::audio::bit_perfect::MixerFormat> {
+        self.0.offers().into_iter().map(Into::into).collect()
+    }
+
+    fn hold(&self, format: koan_core::audio::bit_perfect::MixerFormat) -> bool {
+        self.0.hold(format.into())
+    }
+
+    fn release(&self) {
+        self.0.release();
+    }
+}
+
 #[cfg(any(target_os = "ios", target_os = "tvos"))]
 struct SessionBridge(Arc<dyn AudioSessionHost>);
 
@@ -135,22 +295,6 @@ impl koan_core::audio::ios_backend::AudioSession for SessionBridge {
     fn release(&self) {
         self.0.release();
     }
-}
-
-/// What Android granted the output stream. Whether the route is bit-perfect
-/// is for the app to say from this: `exclusive` with `hardware_rate` equal to
-/// the source's means the hardware runs at the source's rate; anything else
-/// went through the system mixer.
-#[derive(Debug, Clone, uniffi::Record)]
-pub struct AudioOutputGrant {
-    /// The stream is the device's own rather than the system mixer's.
-    pub exclusive: bool,
-    /// The rate the stream was opened at, which is the source's.
-    pub stream_rate: u32,
-    /// The rate the output hardware runs at, as far as the platform says.
-    pub hardware_rate: u32,
-    /// `AudioDeviceInfo.getId()` of the device the stream is on; 0 if unknown.
-    pub device_id: i32,
 }
 
 /// Send `log` output to `~/.config/koan/koan.log`, the same file the CLI
@@ -174,7 +318,7 @@ fn init_logging() {
                 return;
             }
             #[cfg(target_os = "android")]
-            android::to_logcat(record);
+            logcat(record);
             let Ok(mut file) = self.0.lock() else { return };
             let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
             file.write(format_args!(
@@ -198,7 +342,41 @@ fn init_logging() {
     // A second engine in one process is not an error worth failing over.
     if log::set_logger(logger).is_ok() {
         log::set_max_level(log::LevelFilter::Info);
+        // The default hook writes to stderr, which Android discards: a thread
+        // that panicked would otherwise vanish without a word.
+        #[cfg(target_os = "android")]
+        std::panic::set_hook(Box::new(|info| log::error!("{info}")));
     }
+}
+
+/// Android discards a process's stderr: logcat is where its log is read.
+#[cfg(target_os = "android")]
+fn logcat(record: &log::Record) {
+    use std::ffi::{CString, c_char, c_int};
+
+    #[link(name = "log")]
+    unsafe extern "C" {
+        fn __android_log_write(prio: c_int, tag: *const c_char, text: *const c_char) -> c_int;
+    }
+    // android/log.h: INFO 4, WARN 5, ERROR 6.
+    let prio = match record.level() {
+        log::Level::Error => 6,
+        log::Level::Warn => 5,
+        _ => 4,
+    };
+    let Ok(text) = CString::new(format!("{}", record.args())) else {
+        return;
+    };
+    // SAFETY: both strings are NUL-terminated and outlive the call.
+    unsafe { __android_log_write(prio, c"koan".as_ptr(), text.as_ptr()) };
+}
+
+/// Where configuration, the library database and downloads live, for a
+/// platform whose app directories only the app can name: Android's
+/// `Context.filesDir`. Called once, before `KoanEngine::open`.
+#[uniffi::export]
+pub fn set_config_dir(path: String) {
+    config::set_config_dir(path);
 }
 
 impl Drop for KoanEngine {
@@ -357,6 +535,12 @@ pub struct KoanEngine {
 /// screen to correct.
 const PLAYHEAD_TOLERANCE_MS: u64 = 32;
 
+/// How long a playhead may read the same while playing before it is called
+/// held, when this thread next looks. The player wakes it when output should
+/// have begun to move (`OUTPUT_START_CHECK`); a stall mid-track is seen at the
+/// next wake for anything else.
+const PLAYHEAD_STALL: std::time::Duration = std::time::Duration::from_millis(250);
+
 /// The same, for how far a download reaches. The bar it draws is one bar wide
 /// and a fifth of a second of audio does not move it.
 const SEEKABLE_TOLERANCE_MS: u64 = 200;
@@ -496,40 +680,15 @@ const HAND_OFF_ANSWER: std::time::Duration = std::time::Duration::from_secs(12);
 /// takes longer, and is reported as not started yet.
 const HAND_OFF_TAKEN: std::time::Duration = std::time::Duration::from_secs(8);
 
-// Not on Android: uniffi's Kotlin bindings cannot generate an async primary
-// constructor, and `new` is the primary one. An Android app starts the engine
-// with `with_app_dirs`, which it needs anyway (it has no home directory).
-#[cfg(not(target_os = "android"))]
 #[uniffi::export]
 impl KoanEngine {
     /// Spawns the player thread and opens the library. One per process.
     /// `device_name` is what this device calls itself to the account's other
-    /// devices; without one, the hostname.
+    /// devices; without one, the hostname. Named rather than primary: Kotlin
+    /// has no async primary constructors.
     #[uniffi::constructor]
-    pub async fn new(device_name: Option<String>) -> Result<Arc<Self>, KoanError> {
+    pub async fn open(device_name: Option<String>) -> Result<Arc<Self>, KoanError> {
         offload::offload(move || Self::build(device_name)).await
-    }
-}
-
-#[uniffi::export]
-impl KoanEngine {
-    /// Spawns the player thread and opens the library, in the directories an
-    /// Android app is given: `filesDir` for the configuration, library and
-    /// logs, and `cacheDir` for downloads, which the system may reclaim. An
-    /// Android app has no home directory to find its way from, and this is
-    /// the only constructor its bindings have. Does the same anywhere else;
-    /// the paths are simply used. One engine per process, as with `new`.
-    #[uniffi::constructor]
-    pub async fn with_app_dirs(
-        device_name: Option<String>,
-        files_dir: String,
-        cache_dir: String,
-    ) -> Result<Arc<Self>, KoanError> {
-        offload::offload(move || {
-            config::set_app_dirs(Path::new(&files_dir), Path::new(&cache_dir));
-            Self::build(device_name)
-        })
-        .await
     }
     // --- Transport ---------------------------------------------------------
 
@@ -544,6 +703,13 @@ impl KoanEngine {
     /// `koan_core::remote::devices::resume`.
     pub fn link_nudge(&self) {
         koan_core::remote::devices::resume();
+    }
+
+    /// The device's network changed: Android's default network came or went.
+    /// Connections to the server start afresh and an unanswered server is
+    /// tried now. See `koan_core::helpers::network_changed`.
+    pub fn network_changed(&self) {
+        koan_core::helpers::network_changed();
     }
 
     /// The app went to the background, or came back. In the background
@@ -3780,9 +3946,63 @@ impl KoanEngine {
         let _ = host;
     }
 
+    /// Hand the engine Android's `NsdManager`, to find koan devices on the
+    /// network and be found. Does nothing off Android.
+    pub fn set_nearby_host(&self, host: Arc<dyn NearbyHost>) {
+        #[cfg(target_os = "android")]
+        koan_core::remote::nearby::nsd::set_host(Arc::new(NearbyBridge(host)));
+        #[cfg(not(target_os = "android"))]
+        let _ = host;
+    }
+
+    /// A koan device the app's `NsdManager` resolved. Does nothing off
+    /// Android.
+    pub fn nearby_found(&self, name: String, host: String, port: u16, txt: Vec<TxtEntry>) {
+        #[cfg(target_os = "android")]
+        koan_core::remote::nearby::nsd::found(
+            name,
+            host,
+            port,
+            txt.into_iter().map(|e| (e.key, e.value)).collect(),
+        );
+        #[cfg(not(target_os = "android"))]
+        let _ = (name, host, port, txt);
+    }
+
+    /// A koan device's service gone from the network.
+    pub fn nearby_lost(&self, name: String) {
+        #[cfg(target_os = "android")]
+        koan_core::remote::nearby::nsd::gone(&name);
+        #[cfg(not(target_os = "android"))]
+        let _ = name;
+    }
+
+    /// Whether the system refuses the app the local network: Android 17's
+    /// permission, denied. Shown where Settings explains it on Apple.
+    pub fn nearby_blocked(&self, blocked: bool) {
+        #[cfg(target_os = "android")]
+        koan_core::remote::nearby::nsd::blocked(blocked);
+        #[cfg(not(target_os = "android"))]
+        let _ = blocked;
+    }
+
+    /// Hand the engine the platform's Wi-Fi, for UPnP discovery: the address
+    /// searches go out of, and the lock that lets multicast in while they run.
+    pub fn set_multicast_host(&self, host: Arc<dyn MulticastHost>) {
+        koan_core::upnp::discovery::set_network(Arc::new(MulticastBridge(host)));
+    }
+
+    /// Hand the engine Android's `AudioManager`, for bit-perfect output to a
+    /// USB DAC. Until it is given, output goes through the system mixer.
+    pub fn set_output_host(&self, host: Arc<dyn AndroidOutputHost>) {
+        koan_core::audio::bit_perfect::set_host(Arc::new(OutputBridge(host)));
+    }
+
     /// The name of the port iOS routes audio to, on each route change: what
     /// profiles are chosen by on a phone, and the cue to read the session's
-    /// rate again. Does nothing elsewhere.
+    /// rate again. On Android, the media route's name, which is what the
+    /// phone's output is called; its output is restarted by the app. Does
+    /// nothing elsewhere.
     pub async fn set_audio_route(self: Arc<Self>, name: String) -> Result<(), KoanError> {
         #[cfg(any(target_os = "ios", target_os = "tvos"))]
         {
@@ -3792,58 +4012,16 @@ impl KoanEngine {
             })
             .await
         }
-        #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+        #[cfg(target_os = "android")]
+        {
+            koan_core::audio::android_backend::set_route(name);
+            Ok(())
+        }
+        #[cfg(not(any(target_os = "ios", target_os = "tvos", target_os = "android")))]
         {
             let _ = name;
             Ok(())
         }
-    }
-
-    /// The route Android is playing to, on each route change and once at
-    /// start: what profiles are chosen by on a phone, and the cue to reopen
-    /// the output on it. `device_id` is the route's `AudioDeviceInfo.getId()`
-    /// (0 to follow the system's default) and `sample_rate` the rate the
-    /// platform says it runs at (0 if it does not say). Does nothing
-    /// elsewhere.
-    pub async fn set_audio_route_android(
-        self: Arc<Self>,
-        name: String,
-        device_id: i32,
-        sample_rate: u32,
-    ) -> Result<(), KoanError> {
-        #[cfg(target_os = "android")]
-        {
-            offload::sequenced(move || {
-                koan_core::audio::android_backend::set_route(name, device_id, sample_rate);
-                self.send_local(PlayerCommand::RouteChanged)
-            })
-            .await
-        }
-        #[cfg(not(target_os = "android"))]
-        {
-            let _ = (name, device_id, sample_rate);
-            Ok(())
-        }
-    }
-
-    /// What the output stream was granted by the system, read back from the
-    /// stream rather than what was asked for. `None` before any stream has
-    /// opened, and off Android.
-    pub fn audio_output_grant(&self) -> Option<AudioOutputGrant> {
-        #[cfg(target_os = "android")]
-        {
-            use koan_core::audio::android_policy::Sharing;
-            let granted = koan_core::audio::android_backend::granted()?;
-            Some(AudioOutputGrant {
-                exclusive: granted.sharing == Sharing::Exclusive,
-                stream_rate: granted.sample_rate,
-                hardware_rate: koan_core::audio::android_backend::hardware_rate()
-                    .unwrap_or(granted.sample_rate),
-                device_id: granted.device_id,
-            })
-        }
-        #[cfg(not(target_os = "android"))]
-        None
     }
 
     // --- Settings ----------------------------------------------------------
@@ -3941,6 +4119,11 @@ impl KoanEngine {
                     .as_ref()
                     .map(|db| koan_core::helpers::tracks_from_server(db))
                     .unwrap_or(0),
+                remote_last_sync: db.as_ref().and_then(|db| {
+                    koan_core::remote::sync::get_last_sync(db, &cfg.remote.url)
+                        .ok()
+                        .flatten()
+                }),
                 download_workers: cfg.remote.download_workers as u32,
                 cache_limit: cfg.remote.cache_limit.clone().unwrap_or_default(),
                 cache_dir: cache_dir.to_string_lossy().into_owned(),
@@ -4460,20 +4643,9 @@ impl KoanEngine {
     /// still real, they just cannot be fetched until you sign in again.
     pub async fn sign_out_remote(self: Arc<Self>) -> Result<(), KoanError> {
         offload::offload(move || {
-            koan_core::remote::devices::forget_shares();
-            Config::persist(|cfg| {
-                cfg.remote.enabled = false;
-                cfg.remote.password = String::new();
-                cfg.remote.api_key = String::new();
-                cfg.remote.device_key = String::new();
-            })
-            .map_err(|e| KoanError::BadArgument {
+            koan_core::helpers::sign_out().map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
-            })?;
-            koan_core::remote::proof::forget();
-            koan_core::remote::link::relink();
-            koan_core::remote::nearby::readvertise();
-            Ok(())
+            })
         })
         .await
     }
@@ -4523,6 +4695,13 @@ impl KoanEngine {
             })
         })
         .await
+    }
+
+    /// The download cache's limit in bytes, as koan reads `cache_limit`, or
+    /// `None` when there is none. For drawing usage against it without a
+    /// second parser of the setting on each platform.
+    pub async fn cache_limit_bytes(self: Arc<Self>) -> Option<u64> {
+        offload::offload(|| Config::cached().cache_limit_bytes()).await
     }
 
     /// Delete every downloaded remote track. The library rows stay.
@@ -4970,6 +5149,7 @@ impl KoanEngine {
             .name("koan-state".into())
             .spawn(move || {
                 let mut last_queue = u64::MAX;
+                let mut last_unreachable: Option<String> = None;
                 let mut last_store = u64::MAX;
                 let mut last_library = u64::MAX;
                 let mut last_devices = u64::MAX;
@@ -4980,6 +5160,8 @@ impl KoanEngine {
                 // makes publishing again unnecessary until it would be wrong.
                 let mut anchor: Option<state::Anchor> = None;
                 let mut last_seekable = u64::MAX;
+                // The playhead's last reading, and when it last moved.
+                let mut advanced = (u64::MAX, Instant::now());
                 // Which transfers were running last pass. A transfer leaving
                 // this set has landed on disk, which wrote a cached path onto a
                 // library row — and nothing else says so, because the download
@@ -5101,10 +5283,22 @@ impl KoanEngine {
                         // client can work out for itself; a seek, a pause, a track
                         // boundary and a stall are not, and each of them breaks the
                         // prediction by more than the tolerance below.
-                        let playing = snapshot.state == types::PlayState::Playing
-                            && engine.state.playhead_moving();
-                        let seekable = engine.state.seekable_ms();
                         let now = Instant::now();
+                        if snapshot.position_ms != advanced.0 {
+                            advanced = (snapshot.position_ms, now);
+                        }
+                        // Playing is a playhead that moves, not a transport
+                        // that says so. Output that has run dry at a track's
+                        // end, or not yet begun, or plays a lead-in, holds the
+                        // playhead still with the transport playing; a client
+                        // counting on from the last anchor would run past it.
+                        // Another device's playhead is that device's to say.
+                        let held =
+                            target.is_none() && now.duration_since(advanced.1) > PLAYHEAD_STALL;
+                        let playing = snapshot.state == types::PlayState::Playing
+                            && engine.state.playhead_moving()
+                            && !held;
+                        let seekable = engine.state.seekable_ms();
                         let adrift = anchor.is_none_or(|held: state::Anchor| {
                             held.stale(snapshot.position_ms, playing, now, PLAYHEAD_TOLERANCE_MS)
                         });
@@ -5196,7 +5390,12 @@ impl KoanEngine {
                     // indexed reads. Neither can change without one of these
                     // two versions moving.
                     let queue_version = engine.state.playlist_version();
-                    let queue_moved = queue_version != last_queue;
+                    // The entry under the cursor carries the server's outage,
+                    // which moves no version.
+                    let unreachable = koan_core::helpers::server_unreachable();
+                    let queue_moved =
+                        queue_version != last_queue || unreachable != last_unreachable;
+                    last_unreachable = unreachable;
                     let library_moved = library != last_library;
                     last_queue = queue_version;
                     last_library = library;
@@ -5403,6 +5602,7 @@ impl KoanEngine {
                 repeat_mode: st.repeat.into(),
                 sleep: st.sleep.map(Into::into),
                 sleep_fading: st.sleep_fading,
+                start_failure: None,
             },
         });
         out.publish(StateSlice::Playhead {
@@ -5802,14 +6002,20 @@ impl KoanEngine {
             duration_ms: self.state.duration_ms(),
             queue_item_id: cursor.map(|c| c.0.to_string()),
             entry,
-            format: info
-                .as_ref()
-                .map(|i| StreamFormat::of(i, self.state.output_sample_rate(), self.state.dsp())),
+            format: info.as_ref().map(|i| {
+                StreamFormat::of(
+                    i,
+                    self.state.output_sample_rate(),
+                    self.state.output_mixed(),
+                    self.state.dsp(),
+                )
+            }),
             playlist_version: self.state.playlist_version(),
             shuffle: self.state.play_mode().shuffle,
             repeat_mode: self.state.play_mode().repeat.into(),
             sleep: self.state.sleep().map(Into::into),
             sleep_fading: self.state.sleep_fading(),
+            start_failure: self.state.start_failure(),
         }
     }
 
@@ -5850,7 +6056,9 @@ impl KoanEngine {
     /// app holds while it shows that device's queue; tracks by the server's
     /// ids, which only a device playing from the same library can resolve.
     fn send_remote(&self, to: &str, cmd: PlayerCommand) -> Result<(), KoanError> {
+        use koan_core::remote::devices::{self, Missed};
         use koan_core::remote::link::LinkCommand;
+        let here = cmd.instead_here();
         let entry = |id: QueueItemId| id.0.to_string();
         let tracks =
             |items: &[koan_core::player::state::PlaylistItem]| -> Result<Vec<String>, KoanError> {
@@ -5971,7 +6179,18 @@ impl KoanEngine {
             | PlayerCommand::RestorePlayMode(_)
             | PlayerCommand::Renderer { .. }) => return self.send_local(local),
         };
-        koan_core::remote::devices::send(to, link).map_err(|message| KoanError::Remote { message })
+        match (devices::send_reaching(to, link), here) {
+            (Ok(()), _) => Ok(()),
+            // Asked for music the controlled device cannot be reached to
+            // play: this device plays it, and stops controlling that one.
+            (Err(Missed::OutOfReach(_)), Some(here)) => {
+                devices::fall_back(to, here.asks_to_play());
+                self.send_local(here)
+            }
+            (Err(missed), _) => Err(KoanError::Remote {
+                message: missed.into_message(),
+            }),
+        }
     }
 
     /// The server's ids for these library tracks, where they have one.
@@ -6852,6 +7071,8 @@ fn connection_info() -> ConnectionInfo {
                 seq: n.seq,
                 device: n.device,
                 queued: n.outcome == AckOutcome::Queued,
+                refused: matches!(n.outcome, AckOutcome::Refused { .. }),
+                unreached: n.unreached,
                 detail: match n.outcome {
                     AckOutcome::Refused { reason } => reason,
                     AckOutcome::Failed { error } => error,

@@ -31,6 +31,26 @@ pub enum SignInError {
     Config(#[from] crate::config::ConfigError),
 }
 
+/// Forget the server: its credentials, the shares and proof this device held
+/// for being signed in to it, and offline mode, which is from that server. The
+/// link and the network advert follow. The synced library is left alone:
+/// those tracks are still real, they just cannot be fetched until someone
+/// signs in again.
+pub fn sign_out() -> Result<(), crate::config::ConfigError> {
+    crate::remote::devices::forget_shares();
+    Config::persist(|cfg| {
+        cfg.remote.enabled = false;
+        cfg.remote.password = String::new();
+        cfg.remote.api_key = String::new();
+        cfg.remote.device_key = String::new();
+    })?;
+    crate::remote::proof::forget();
+    crate::remote::offline::set_manual(false);
+    crate::remote::link::relink();
+    crate::remote::nearby::readvertise();
+    Ok(())
+}
+
 /// Sign in to a Subsonic server with a password and remember it.
 ///
 /// A koan server that offers `profile::SIGN_IN` is sent the password once and
@@ -224,6 +244,25 @@ pub fn subsonic_client(cfg: &Config) -> Option<Arc<SubsonicClient>> {
     let client = Arc::new(SubsonicClient::from_auth(auth.clone()));
     *slot = Some((auth, client.clone()));
     Some(client)
+}
+
+/// Why the signed-in server is not answering downloads, while it is not. Reads
+/// only the client already made.
+pub fn server_unreachable() -> Option<String> {
+    let client = SUBSONIC_CLIENT.lock().as_ref().map(|(_, c)| c.clone())?;
+    client.outage().reason()
+}
+
+/// The device moved to another network, or lost or regained one: what was
+/// learnt about reaching the server belongs to the last one. Connections are
+/// made afresh, a server that was not answering is tried now, and the other
+/// devices are looked for again.
+pub fn network_changed() {
+    let client = SUBSONIC_CLIENT.lock().as_ref().map(|(_, c)| c.clone());
+    if let Some(client) = client {
+        client.renew();
+    }
+    crate::remote::devices::resume();
 }
 
 type CachedClient = Option<(SubsonicAuth, Arc<SubsonicClient>)>;
@@ -477,6 +516,32 @@ mod refusal_tests {
             }
         });
         url
+    }
+
+    /// Offline mode is from a server: signing out of it ends it, so the next
+    /// account signs in online.
+    #[test]
+    fn signing_out_forgets_the_account_and_offline_mode() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        crate::config::set_config_dir(dir.path());
+        Config::persist(|c| {
+            c.remote.enabled = true;
+            c.remote.url = "https://music.example.com".into();
+            c.remote.username = "mate".into();
+            c.remote.api_key = "key".into();
+        })
+        .unwrap();
+        crate::remote::offline::set_manual(true);
+
+        sign_out().unwrap();
+        let cfg = Config::load().unwrap();
+        assert!(!cfg.remote.enabled);
+        assert!(cfg.remote.api_key.is_empty());
+        assert_eq!(remote_credential(&cfg).map(|_| ()), None);
+        assert!(!crate::remote::offline::manual());
     }
 
     #[test]

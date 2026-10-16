@@ -1,0 +1,1 @@
+- **Android names its own output.** Output and the now-playing row call the phone's route what it is, the phone speaker, headphones, or a Bluetooth or USB device by its product name, where they said "Android"; the row's buttons are spaced as on iOS and a long name is cut short. EQ profiles chosen per output follow the route, as on iOS.

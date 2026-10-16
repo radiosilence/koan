@@ -15,7 +15,6 @@ You do not have to switch to use kōan's apps. The macOS and iOS apps and the te
 
 These Navidrome features have no kōan equivalent today:
 
-- **Scrobbling to Last.fm** ([#773](https://github.com/radiosilence/koan/issues/773)). kōan forwards plays to ListenBrainz (see [Scrobbling](headless-server.md#scrobbling)), not to Last.fm.
 - **Serving under a sub-path** (`ND_BASEURL`, [#760](https://github.com/radiosilence/koan/issues/760)). kōan expects its own hostname.
 - **Per-library permissions** ([#762](https://github.com/radiosilence/koan/issues/762)). Every account sees the whole library.
 - **Internet radio**, which is not planned. Clients that use it lose the feature against kōan; the rest of the client works.

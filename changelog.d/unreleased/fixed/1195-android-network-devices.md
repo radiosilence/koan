@@ -1,0 +1,1 @@
+- **Android finds devices on the local network.** kōan devices are found and announced over Android's network service discovery, as the Apple apps do over Bonjour, and UPnP/DLNA renderers are searched for from the Wi-Fi interface. On Android 17 the app asks for the local network permission this needs.
