@@ -1,0 +1,1 @@
+- **Scan and sync can be retriggered after a crash.** A panic in a library scan or remote sync job now ends the job as Failed instead of leaving it Running and blocking every later run.
