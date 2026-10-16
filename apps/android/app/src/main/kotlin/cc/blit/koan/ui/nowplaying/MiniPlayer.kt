@@ -36,6 +36,8 @@ import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.PlayingBars
 import cc.blit.koan.ui.navigation.LocalNavigator
+import cc.blit.koan.ui.settings.Reach
+import cc.blit.koan.ui.settings.controlled
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanEdge
@@ -62,6 +64,7 @@ fun MiniPlayer() {
     val app = koanApp()
     val nav = LocalNavigator.current
     val now by app.mirror.nowPlaying.collectAsStateWithLifecycle()
+    val devices by app.mirror.devices.collectAsStateWithLifecycle()
     val entry = now?.entry ?: return
     val playing = now?.state == PlayState.PLAYING
     val tokens = LocalKoanTokens.current
@@ -93,7 +96,16 @@ fun MiniPlayer() {
                     PlayingBars(playing, size = 10.dp, color = KoanTheme.color(if (playing) KoanTone.Accent else KoanTone.Muted))
                     KoanText(entry.title, role = KoanType.Meta, tone = KoanTone.Strong, maxLines = 1)
                 }
-                if (entry.artist.isNotEmpty()) KoanText(entry.artist, role = KoanType.Fine, tone = KoanTone.Muted, maxLines = 1)
+                // Where it is playing matters more than who by, when it is not here.
+                val c = controlled(devices)
+                when {
+                    c != null -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(KoanSpace.xs)) {
+                        val tone = if (c.reach is Reach.OutOfReach) KoanTone.Bad else KoanTone.Accent
+                        KoanIcon(KoanIcons.devices, contentDescription = null, size = 12.sp, color = KoanTheme.color(tone))
+                        KoanText(c.headline, role = KoanType.Fine, tone = tone, maxLines = 1)
+                    }
+                    entry.artist.isNotEmpty() -> KoanText(entry.artist, role = KoanType.Fine, tone = KoanTone.Muted, maxLines = 1)
+                }
             }
             KoanButton(app.player::togglePlayPause, kind = KoanButtonKind.Icon) {
                 if (now?.waiting == true) {

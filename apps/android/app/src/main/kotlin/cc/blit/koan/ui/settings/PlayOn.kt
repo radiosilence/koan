@@ -15,7 +15,6 @@ import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -24,6 +23,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.engine.EngineMirror
@@ -44,34 +45,39 @@ import cc.blit.koan.ui.theme.KoanType
 import kotlinx.coroutines.launch
 
 /**
- * Play on: a button for Now Playing that opens the device picker. Its glyph
- * takes the accent while another device is controlled.
+ * Play on: a button for Now Playing that opens the device picker. While
+ * another device is controlled it names that device beside its glyph, in the
+ * accent, or in the warning tone while the device is out of reach, as iOS's
+ * does: the one sign on this page that the music is not playing here.
  */
 @Composable
 fun PlayOnButton(modifier: Modifier = Modifier) {
     val devices by koanApp().mirror.devices.collectAsStateWithLifecycle()
     var open by remember { mutableStateOf(false) }
-    KoanButton({ open = true }, modifier, kind = KoanButtonKind.Icon) {
-        KoanIcon(
-            KoanIcons.devices,
-            contentDescription = "Play on",
-            color = KoanTheme.color(if (devices.target != null) KoanTone.Accent else KoanTone.Ink),
-        )
+    val c = controlled(devices)
+    val tone = when {
+        c == null -> KoanTone.Ink
+        c.reach is Reach.OutOfReach -> KoanTone.Bad
+        else -> KoanTone.Accent
+    }
+    KoanButton(
+        { open = true },
+        modifier.semantics { contentDescription = c?.let { "Controlling ${it.name}" } ?: "Play on" },
+        kind = if (c == null) KoanButtonKind.Icon else KoanButtonKind.Text,
+    ) {
+        KoanIcon(KoanIcons.devices, contentDescription = null, color = KoanTheme.color(tone))
+        c?.let { KoanText(it.name, role = KoanType.Control, tone = KoanTone.Ink, maxLines = 1) }
     }
     if (open) PlayOnSheet(onDismiss = { open = false })
 }
 
 /**
- * Where the music plays, as two choices, as iOS's `DevicePicker` has them.
- *
- * Control: which kōan the transport, the queue and Now Playing show and command: this
- * phone, or another of the account's or the network's. Picking another pauses
- * this one and turns everything into that device's until another is picked.
- * Nothing moves until "Move here", which sends what the device controlled is
- * playing to that row's device.
- *
- * Output: where this phone's music comes out, its own output or a UPnP
- * renderer on the network (`OutputSection`).
+ * Which kōan the transport, the queue and Now Playing show and command, as
+ * iOS's `ControlPicker` has it: this phone, or another of the account's or the
+ * network's. Picking another pauses this one and turns everything into that
+ * device's until another is picked. Nothing moves until "Move here", which
+ * sends what the device controlled is playing to that row's device. Where the
+ * music comes out is Output's (`OutputSheet`).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -82,17 +88,8 @@ fun PlayOnSheet(onDismiss: () -> Unit) {
     val queue by mirror.queue.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var notice by remember { mutableStateOf<String?>(null) }
-    val outputs by mirror.outputs.collectAsStateWithLifecycle()
-    val renderers by mirror.renderers.collectAsStateWithLifecycle()
     val controlled = devices.devices.firstOrNull { it.id == devices.target }
     val hasQueue = queue.items.isNotEmpty()
-    val picker = remember { OutputPicker(mirror::engine, scope) }
-    // One search as the sheet opens, as the Mac does: it holds the Wi-Fi
-    // multicast lock for its window, and the list follows announcements after.
-    // The controlled device lists its outputs again instead, asked over the
-    // link to republish what moved.
-    val controlling = devices.target != null
-    LaunchedEffect(picker, controlling) { if (controlling) picker.refreshThere() else picker.search() }
 
     fun attempt(block: suspend () -> Unit) = scope.launch {
         try {
@@ -145,14 +142,6 @@ fun PlayOnSheet(onDismiss: () -> Unit) {
                     tone = KoanTone.Muted,
                 )
             }
-            OutputSection(
-                picker,
-                outputs,
-                renderers.output,
-                blocked = connection?.localNetworkBlocked == true,
-                controlled = controlled?.name ?: devices.target,
-                platform = controlled?.platform,
-            )
         }
     }
 }

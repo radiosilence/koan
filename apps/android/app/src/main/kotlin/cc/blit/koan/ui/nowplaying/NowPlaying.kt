@@ -74,7 +74,7 @@ import cc.blit.koan.ui.library.Playable
 import cc.blit.koan.ui.library.PlayableMenu
 import cc.blit.koan.ui.library.TrackHeart
 import cc.blit.koan.ui.navigation.LocalNavigator
-import cc.blit.koan.ui.settings.ControlledStrip
+import cc.blit.koan.ui.settings.OutputButton
 import cc.blit.koan.ui.settings.PlayOnButton
 import cc.blit.koan.ui.theme.KoanBadge
 import cc.blit.koan.ui.theme.KoanButton
@@ -200,15 +200,12 @@ private fun NowPlayingPage() {
                     verticalArrangement = Arrangement.spacedBy(KoanSpace.m, Alignment.CenterVertically),
                 ) {
                     GlyphButton(KoanIcons.expand, "Close", nav::closeNowPlaying)
-                    ControlledStrip(ruled = false)
                     controls()
                 }
             }
         } else {
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(KoanSpace.m)) {
                 GlyphButton(KoanIcons.expand, "Close", nav::closeNowPlaying, Modifier.padding(top = KoanSpace.xs))
-                // Where the music plays, when it is not here.
-                ControlledStrip(ruled = false)
                 stage(Modifier.weight(1f).fillMaxWidth())
                 controls()
                 Spacer(Modifier.size(KoanSpace.s))
@@ -402,6 +399,7 @@ private fun Toggles(now: NowPlaying?, lyrics: Boolean, toggleLyrics: () -> Unit)
         }
         Spacer(Modifier.weight(1f))
         PlayOnButton()
+        OutputButton()
         SleepButton(now?.sleep, now?.sleepFading == true)
     }
 }
