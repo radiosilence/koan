@@ -1,0 +1,1 @@
+- **Play on lists the controlled device's outputs on Android.** While the phone controls another device, the output section is that device's: every output it reports, with the one in use ticked and the EQ preset each is set to, and picking one switches it there. It used to label the other device's output as this phone's and leave the rest out.

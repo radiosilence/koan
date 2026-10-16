@@ -89,6 +89,30 @@ class OutputPickerTest {
         assertEquals(OutputState.Here, outputState(outputs(OutputChoice.Default, amp), null, null, null))
     }
 
+    @Test fun aControlledDevicesOutputIsPickedThereAndRefusalsShown() = runTest {
+        fake.answers["selectOutput"] = { Unit }
+        val picker = OutputPicker({ fake.engine }, this)
+        picker.chooseThere(OutputChoice.Device("Scarlett 4i4 USB"))
+        advanceUntilIdle()
+        assertEquals(listOf(listOf<Any?>(OutputChoice.Device("Scarlett 4i4 USB"))), fake.called("selectOutput"))
+        assertNull(picker.state.value.refused)
+
+        fake.answers["selectOutput"] = { throw KoanException.Remote("Studio Mac is out of reach.") }
+        picker.chooseThere(OutputChoice.Default)
+        advanceUntilIdle()
+        assertEquals("Studio Mac is out of reach.", picker.state.value.refused)
+    }
+
+    @Test fun anOutputSaysWhichPresetItIsSetTo() {
+        val mac = OutputsInfo("Studio Mac", emptyList(), emptyList(), OutputChoice.Default, null, listOf("Harman", "Flat"), true)
+        val scarlett = OutputInfo("Scarlett 4i4 USB", "Scarlett 4i4 USB", "usb", "", false, "Harman", false)
+        assertEquals("Harman", presetSummary(scarlett, mac))
+        assertEquals("Harman, edited", presetSummary(scarlett.copy(unsaved = true), mac))
+        assertEquals("Flat", presetSummary(scarlett.copy(preset = null), mac))
+        assertEquals("Unsaved", presetSummary(scarlett.copy(preset = null, unsaved = true), mac))
+        assertNull("no presets, nothing to say", presetSummary(phone, outputs(OutputChoice.Default)))
+    }
+
     @Test fun eachRendererSaysWhatItIs() {
         val here = OutputState.Here
         assertEquals("WiiM Pro · UPnP", rendererDetail(amp, here))
