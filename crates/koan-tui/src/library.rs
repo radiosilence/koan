@@ -412,6 +412,9 @@ impl<'a> LibraryView<'a> {
     }
 }
 
+/// The heading's control that starts a filter, for a pointer.
+pub const FILTER_CONTROL: &str = " / filter ";
+
 impl Widget for LibraryView<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let artists = self
@@ -426,6 +429,10 @@ impl Widget for LibraryView<'_> {
             format!(" {artists} \u{b7} /{} ", self.state.filter)
         };
         super::ui::heading(buf, area, self.theme, "artists", &note);
+        if !self.filter_focused && self.state.filter.is_empty() && area.width > 24 {
+            let x = area.x + area.width - FILTER_CONTROL.chars().count() as u16;
+            buf.set_string(x, area.y, FILTER_CONTROL, self.theme.hint_desc);
+        }
         let inner = Rect::new(
             area.x,
             area.y + 1,

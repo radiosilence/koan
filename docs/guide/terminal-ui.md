@@ -14,12 +14,20 @@ The TUI follows the shape of the Mac and mobile apps: pages you move between, a 
 | `4` | Artists | The library as a tree: artist, album, track |
 | `5` | Favourites | Favourited records, or the tracks themselves |
 | `6` | Recent | What was played in the last 30 days |
+| `7` | History | Every play, newest first, under the day it was played |
+| `8` | Settings | The settings that otherwise mean editing `config.toml` |
 
 The wheel and the scrollbars (which can be dragged) scroll every page. Opening a record or an artist (from a tile, a link, or the keys below) goes to the **album page** and the **artist page**. The album page holds the cover, who it is by, its facts and its tracks; the artist page is that artist's photograph and the opening of their Wikipedia article (with `play` and `shuffle`, and a link to the article), above their records as tiles. Both sit under Albums and Artists in the sidebar and in history.
 
 ![An artist page: the photograph, the start of their Wikipedia article, play and shuffle, and their records](../../site/public/screens/tui-artist.webp)
 
 `Tab` and `Shift+Tab` step through the pages. Pages keep a history like a browser: `[` and `]`, or `Alt+Left` and `Alt+Right`, go back and forward, and `Esc` leaves a page for the one before it. Albums, Favourites and Recent are the library's own listings with a filter on, the same ones the apps use, so the three agree about what is on a shelf.
+
+## History and settings
+
+History lists every play, grouped by day. `x` (or the `×` at the end of a row) forgets a play and `D` forgets all of them, on a second press; signed in to a koan server, a forgotten play is forgotten on the account's other devices too, as in the apps. The artist and the record in a row are links, `/` filters by title, artist or record, and `Enter` or a second click plays the track.
+
+Settings holds the playback, terminal, server and device settings that are a choice rather than a path or a password: ReplayGain and pre-amp, fading on pause, the theme, cover graphics and size, the frame counter and rate, the visualiser's colours, syncing, and what other devices on the network may do. `←` and `→` (or the arrows beside each value, or a click on the value) change one, and each is written to the file that owns it, so a setting that belongs to this machine stays out of a `config.toml` you share. Folders and the server account are shown and are set up in the apps or the config.
 
 ## Layout
 
@@ -33,7 +41,7 @@ The transport bar sits at the foot. Drag the hairline above it to resize the cov
 
 ## Browsing records
 
-Albums, Favourites and Recent draw each record as a tile. `v` switches to rows (tracks, on Favourites and Recent). `o` cycles the order on Albums: artist, date added, title, year. `/` filters what is shown.
+Albums, Favourites and Recent draw each record as a tile. `v` switches to rows (tracks, on Favourites and Recent). `o` cycles the order on Albums: artist, date added, title, year. `/` filters what is shown; the heading's `/ filter` does the same with a click.
 
 | Key | Action |
 |-----|--------|

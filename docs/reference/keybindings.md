@@ -24,7 +24,7 @@ See [The terminal UI](../guide/terminal-ui.md). These work from any page.
 
 | Key | Action |
 |-----|--------|
-| `1` to `6` | Queue, Now playing, Albums, Artists, Favourites, Recent |
+| `1` to `8` | Queue, Now playing, Albums, Artists, Favourites, Recent, History, Settings |
 | `Tab` / `Shift+Tab` | Next / previous page |
 | `[` / `]` or `Alt+Left` / `Alt+Right` | Back / forward through the pages visited |
 | `Esc` | Leave the page for the one before it |
@@ -103,6 +103,34 @@ Tree view: artist -> album -> track.
 | `Enter` | Expand node, or append the track and play it |
 | `/` or `f` | Filter library (type to search) |
 | `Esc` | Clear the filter, then leave the page |
+
+---
+
+## History (`7`)
+
+| Key | Action |
+|-----|--------|
+| `↑` `↓` or `j` `k` | Move between plays (the day headings are skipped) |
+| `Enter` | Play the track |
+| `a` | Append the track to the queue |
+| `A` / `O` | Open the artist / the record |
+| `x`, `Delete` or `Backspace` | Forget the play |
+| `D` | Forget every play (press again to confirm) |
+| `/` | Filter by title, artist or record |
+
+Click a play to select it and again to play it; click the artist or the record to open it, `×` to forget the play, `forget all` to arm the second press, `/ filter` to filter. The wheel and the scrollbar scroll.
+
+---
+
+## Settings (`8`)
+
+| Key | Action |
+|-----|--------|
+| `↑` `↓` or `j` `k` | Move between settings |
+| `→`, `Enter` or `Space` | Next value (flips a toggle) |
+| `←` | Previous value |
+
+Click the arrows beside a value, or the value, to change it. Changes apply at once, except the frame rate, which applies at the next start.
 
 ---
 
