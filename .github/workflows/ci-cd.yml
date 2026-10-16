@@ -934,7 +934,6 @@ jobs:
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.check-version.outputs.should_release == 'true' }}
     env:
       VERSION: ${{ needs.check-version.outputs.version }}
-      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install system deps
@@ -942,11 +941,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
         with:
           toolchain: stable
+      # The verification build is a debug build of the published crates,
+      # which `Test (ubuntu-latest)` compiles on every push to main, so its
+      # cache is read rather than one of this job's own, which only a release
+      # would save and which eviction always took first. rust-cache hashes
+      # CARGO_* variables into the key, so the registry token is set on the
+      # publishing step alone, not the job.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          key: publish
+          shared-key: test
+          save-if: false
       - name: Publish crates
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         # `cargo publish --workspace` resolves dependency order itself and waits
         # for each crate to appear in the index before publishing its dependents.
         # The verification build is what catches an internal version pin that no
