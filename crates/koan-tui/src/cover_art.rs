@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use image::DynamicImage;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Rect, Size};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::widgets::Widget;
 use ratatui_image::picker::{Picker, ProtocolType};
@@ -129,7 +129,7 @@ impl Gfx {
                 Some(picker) => picker
                     .new_protocol(
                         img.clone(),
-                        Size::new(area.width, area.height),
+                        Rect::new(0, 0, area.width, area.height),
                         Resize::Fit(Some(image::imageops::FilterType::Triangle)),
                     )
                     .map_or(Drawn::Unsupported, Drawn::Protocol),
@@ -139,7 +139,7 @@ impl Gfx {
         }
         match self.drawn.get(&slot) {
             Some(Drawn::Protocol(proto)) => {
-                let size = proto.size();
+                let size = proto.area();
                 let (w, h) = (size.width.min(area.width), size.height.min(area.height));
                 let (dx, dy) = if center {
                     ((area.width - w) / 2, (area.height - h) / 2)

@@ -389,10 +389,16 @@ impl<'a> LibraryView<'a> {
 
 impl Widget for LibraryView<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        let artists = self
+            .state
+            .nodes
+            .iter()
+            .filter(|n| matches!(n, LibraryNode::Artist { .. }))
+            .count();
         let note = if self.state.filter.is_empty() {
-            format!(" {} ", self.state.nodes.len())
+            format!(" {artists} ")
         } else {
-            format!(" {} \u{b7} /{} ", self.state.nodes.len(), self.state.filter)
+            format!(" {artists} \u{b7} /{} ", self.state.filter)
         };
         super::ui::heading(buf, area, self.theme, "artists", &note);
         let inner = Rect::new(

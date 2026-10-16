@@ -665,14 +665,20 @@ impl Browse {
                     (theme.track_normal, theme.hint_desc)
                 };
                 let label = tile_w.saturating_sub(2) as usize;
-                buf.set_stringn(x + 1, y + art_h, &album.title, label, title_style);
+                buf.set_stringn(
+                    x + 1,
+                    y + art_h,
+                    fit(&album.title, label),
+                    label,
+                    title_style,
+                );
                 let year = queries_year(album);
                 let sub = if year.is_empty() {
                     album.artist_name.clone()
                 } else {
                     format!("{} \u{b7} {}", album.artist_name, year)
                 };
-                buf.set_stringn(x + 1, y + art_h + 1, &sub, label, sub_style);
+                buf.set_stringn(x + 1, y + art_h + 1, fit(&sub, label), label, sub_style);
             }
         }
         self.scrollbar(body, buf, theme, total_rows, rows);
@@ -795,6 +801,16 @@ impl Browse {
     }
 }
 
+/// `text` cut to `width` cells, with an ellipsis where it was cut.
+fn fit(text: &str, width: usize) -> String {
+    if text.chars().count() <= width {
+        return text.to_string();
+    }
+    let mut cut: String = text.chars().take(width.saturating_sub(1)).collect();
+    cut.push('\u{2026}');
+    cut
+}
+
 fn queries_year(album: &AlbumRow) -> String {
     super::library::album_year(album.date.as_deref()).unwrap_or_default()
 }
@@ -906,6 +922,13 @@ mod tests {
         // No database behind the test, so a play has no ids to ask for.
         assert_eq!(b.click(hit), Action::None);
         assert!(b.last_click.is_none());
+    }
+
+    #[test]
+    fn long_titles_end_in_an_ellipsis() {
+        assert_eq!(fit("short", 10), "short");
+        assert_eq!(fit("a longer title", 8), "a longe\u{2026}");
+        assert_eq!(fit("anything", 0), "\u{2026}");
     }
 
     #[test]

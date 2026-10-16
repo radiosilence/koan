@@ -146,7 +146,9 @@ pub fn render(buf: &mut Buffer, app: &mut App, area: Rect) {
         COVER_MIN_WIDTH..=69 => 16,
         _ => 0,
     };
-    let max_art_h = body.height.saturating_sub(4).max(1);
+    // The cover takes under half the page's height, so the spectrum and the
+    // lyrics keep room under it.
+    let max_art_h = (body.height * 9 / 20).clamp(1, body.height.saturating_sub(4).max(1));
     if art_w / 2 > max_art_h {
         art_w = max_art_h * 2;
     }
