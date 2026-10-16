@@ -262,6 +262,12 @@ impl HistoryPage {
             KeyCode::Enter => return Some(self.play(self.cursor, PickerAction::AppendAndPlay)),
             KeyCode::Char('a') => return Some(self.play(self.cursor, PickerAction::Append)),
             KeyCode::Char('N') => return Some(self.play(self.cursor, PickerAction::PlayNext)),
+            KeyCode::Char('w') => {
+                return Some(
+                    self.track_at(self.cursor)
+                        .map_or(Action::None, |t| Action::Choose(vec![t.id])),
+                );
+            }
             KeyCode::Char('d') => {
                 return Some(
                     self.track_at(self.cursor)

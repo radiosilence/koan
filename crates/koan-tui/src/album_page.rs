@@ -144,6 +144,7 @@ impl AlbumPage {
             KeyCode::Char('r') if ctrl => return Some(self.play_all(PickerAction::ReplaceQueue)),
             KeyCode::Char('A') => return Some(Action::OpenArtist(self.album.artist_id)),
             KeyCode::Char('H') => return Some(Action::ToggleAlbum(self.album.id)),
+            KeyCode::Char('w') => return Some(Action::Choose(self.all())),
             KeyCode::Char('d') => return Some(Action::Download(self.all())),
             KeyCode::Char('u') => return Some(Action::RemoveDownload(self.all())),
             KeyCode::Char('i') => {

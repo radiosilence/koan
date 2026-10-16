@@ -90,6 +90,8 @@ pub enum Action {
     ToggleArtist(i64),
     /// Show what the library holds of a track.
     Info(i64),
+    /// Choose a playlist to put these tracks in.
+    Choose(Vec<i64>),
     /// Fetch these tracks to this device, or let the copies go.
     Download(Vec<i64>),
     RemoveDownload(Vec<i64>),
@@ -602,6 +604,14 @@ impl Browse {
                     self.album_at(self.cursor)
                         .map_or(Action::None, Action::ToggleAlbum),
                 );
+            }
+            KeyCode::Char('w') => {
+                let ids = self.ids_at(self.cursor);
+                return Some(if ids.is_empty() {
+                    Action::None
+                } else {
+                    Action::Choose(ids)
+                });
             }
             KeyCode::Char('d') => {
                 let ids = self.ids_at(self.cursor);

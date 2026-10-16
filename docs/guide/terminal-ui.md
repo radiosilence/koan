@@ -13,9 +13,10 @@ The TUI follows the shape of the Mac and mobile apps: pages you move between, a 
 | `3` | Albums | Every record in the library, as tiles of cover art or as rows |
 | `4` | Artists | The library as a tree: artist, album, track |
 | `5` | Favourites | Favourited records, or the tracks themselves |
-| `6` | Recent | What was played in the last 30 days |
-| `7` | History | Every play, newest first, under the day it was played |
-| `8` | Settings | The settings that otherwise mean editing `config.toml` |
+| `6` | Playlists | Your playlists, and each one's tracks |
+| `7` | Recent | What was played in the last 30 days |
+| `8` | History | Every play, newest first, under the day it was played |
+| `9` | Settings | The settings that otherwise mean editing `config.toml` |
 
 The wheel and the scrollbars (which can be dragged) scroll every page. Opening a record or an artist (from a tile, a link, or the keys below) goes to the **album page** and the **artist page**. The album page holds the cover, who it is by, its facts and its tracks; the artist page is that artist's photograph and the opening of their Wikipedia article (with `play` and `shuffle`, and a link to the article), above their records as tiles. Both sit under Albums and Artists in the sidebar and in history.
 
@@ -26,6 +27,12 @@ The wheel and the scrollbars (which can be dragged) scroll every page. Opening a
 ## Favourites, play next and downloads
 
 As in the apps, a record and an artist can be favourites as well as tracks. `f` favourites the record under the cursor on the browsing pages, `H` its artist (on an artist's page, that artist; the heart beside the name does the same with a click), and a favourite record wears a `♥` under its tile. `N` puts a record, a track or whatever the cursor is on next in the queue instead of last, on every page that has `a`. `i` shows what the library knows of a track, wherever it is listed, and `d` and `u` download a record or track to this device or remove the download; the apps' menus offer the same.
+
+## Playlists
+
+Playlists are the apps' playlists, the same rows and the same server copies: an edit is written here and pushed to the server in the background. `6` lists them; `Enter` or a second click opens one, `P` or the `▸` plays it, `s` plays it shuffled, `a` and `N` add it to the queue or put it next, `c` or `+ new` makes one, `r` renames, and `x` or the `×` deletes on a second press. On a playlist's page `Enter` plays from the track under the cursor, `K` and `J` (or the `▴` and `▾` at the end of a row) move a track up or down, and `x` or `×` takes it out. Playlists that a file in the library or a server decides, and smart playlists, are shown with `(read-only)` and refuse edits.
+
+`w` puts a record, a track or whatever the cursor is on into a playlist from any page that has `a`, and from the queue and Now playing, by choosing one in a list that starts with `+ new playlist…`. `W` in the queue saves the whole queue as a new playlist.
 
 ## History and settings
 

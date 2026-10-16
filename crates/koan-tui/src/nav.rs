@@ -9,9 +9,12 @@ pub enum Page {
     Albums,
     Artists,
     Favourites,
+    Playlists,
     Recent,
     History,
     Settings,
+    /// One playlist, by its id.
+    Playlist(i64),
     /// One record, by its id: reached from a tile, a link, or the queue.
     Album(i64),
     /// One artist's records, by id.
@@ -19,12 +22,13 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 8] = [
+    pub const ALL: [Page; 9] = [
         Page::Queue,
         Page::NowPlaying,
         Page::Albums,
         Page::Artists,
         Page::Favourites,
+        Page::Playlists,
         Page::Recent,
         Page::History,
         Page::Settings,
@@ -37,9 +41,11 @@ impl Page {
             Page::Albums => "albums",
             Page::Artists => "artists",
             Page::Favourites => "favourites",
+            Page::Playlists => "playlists",
             Page::Recent => "recent",
             Page::History => "history",
             Page::Settings => "settings",
+            Page::Playlist(_) => "playlist",
             Page::Album(_) => "album",
             Page::Artist(_) => "artist",
         }
@@ -50,6 +56,7 @@ impl Page {
         match self {
             Page::Album(_) => Page::Albums,
             Page::Artist(_) => Page::Artists,
+            Page::Playlist(_) => Page::Playlists,
             other => other,
         }
     }
@@ -62,9 +69,11 @@ impl Page {
             Page::Albums => "albums",
             Page::Artists => "artists",
             Page::Favourites => "faves",
+            Page::Playlists => "lists",
             Page::Recent => "recent",
             Page::History => "history",
             Page::Settings => "settings",
+            Page::Playlist(_) => "playlist",
             Page::Album(_) => "album",
             Page::Artist(_) => "artist",
         }
@@ -78,10 +87,11 @@ impl Page {
             Page::Albums => '3',
             Page::Artists => '4',
             Page::Favourites => '5',
-            Page::Recent => '6',
-            Page::History => '7',
-            Page::Settings => '8',
-            Page::Album(_) | Page::Artist(_) => ' ',
+            Page::Playlists => '6',
+            Page::Recent => '7',
+            Page::History => '8',
+            Page::Settings => '9',
+            Page::Album(_) | Page::Artist(_) | Page::Playlist(_) => ' ',
         }
     }
 

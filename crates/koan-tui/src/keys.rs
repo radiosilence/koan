@@ -34,7 +34,7 @@ pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
                     ("p", "track"),
                     ("a", "album"),
                     ("r", "artist"),
-                    ("1-8", "pages"),
+                    ("1-9", "pages"),
                     ("e", "edit"),
                     ("E", "eq"),
                     ("q", "quit"),
@@ -47,7 +47,7 @@ pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
                     ("E", "eq"),
                     ("M", "visualiser"),
                     ("F", "fullscreen"),
-                    ("1-8", "pages"),
+                    ("1-9", "pages"),
                     ("esc", "back"),
                     ("?", "help"),
                 ],
@@ -70,6 +70,7 @@ pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
                         ("P", "play"),
                         ("a", "add"),
                         ("N", "next"),
+                        ("w", "playlist"),
                         ("d", "download"),
                         ("A", "artist"),
                         ("/", "filter"),
@@ -78,7 +79,7 @@ pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
                     if page == Page::Albums {
                         hints.push(("o", "sort"));
                     }
-                    hints.extend([("1-8", "pages"), ("esc", "back")]);
+                    hints.extend([("1-9", "pages"), ("esc", "back")]);
                     hints
                 }
                 Page::History => vec![
@@ -92,13 +93,37 @@ pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
                     ("A", "artist"),
                     ("O", "album"),
                     ("/", "filter"),
-                    ("1-8", "pages"),
+                    ("1-9", "pages"),
+                    ("esc", "back"),
+                ],
+                Page::Playlists => vec![
+                    ("\u{2191}\u{2193}", "move"),
+                    ("ret", "open"),
+                    ("P", "play"),
+                    ("s", "shuffle"),
+                    ("a", "add"),
+                    ("c", "new"),
+                    ("r", "rename"),
+                    ("x", "delete"),
+                    ("/", "filter"),
+                    ("1-9", "pages"),
+                    ("esc", "back"),
+                ],
+                Page::Playlist(_) => vec![
+                    ("\u{2191}\u{2193}", "move"),
+                    ("ret", "play from here"),
+                    ("P", "play all"),
+                    ("s", "shuffle"),
+                    ("K/J", "move up/down"),
+                    ("x", "remove"),
+                    ("r", "rename"),
+                    ("w", "playlist"),
                     ("esc", "back"),
                 ],
                 Page::Settings => vec![
                     ("\u{2191}\u{2193}", "move"),
                     ("\u{2190}\u{2192}", "change"),
-                    ("1-8", "pages"),
+                    ("1-9", "pages"),
                     ("esc", "back"),
                 ],
                 Page::Artists => vec![
@@ -110,7 +135,7 @@ pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
                     ("A", "artist"),
                     ("O", "album"),
                     ("/", "filter"),
-                    ("1-8", "pages"),
+                    ("1-9", "pages"),
                     ("esc", "back"),
                 ],
             },
@@ -129,6 +154,12 @@ pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
             ],
             Mode::TrackInfo(_) | Mode::TrackDetails => vec![("esc", "close"), ("i", "close")],
             Mode::CoverArtZoom => vec![("esc", "close"), ("z", "close")],
+            Mode::NamePrompt => vec![("ret", "keep"), ("esc", "cancel")],
+            Mode::PlaylistChooser => vec![
+                ("\u{2191}\u{2193}", "navigate"),
+                ("ret", "add here"),
+                ("esc", "cancel"),
+            ],
             Mode::ContextMenu => vec![
                 ("\u{2191}\u{2193}", "navigate"),
                 ("ret", "select"),
