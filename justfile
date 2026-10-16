@@ -1651,22 +1651,28 @@ ios-store-shots src out captions="captions":
 ios-store *screenshots:
     uv run apps/ios/store/push.py {{screenshots}}
 
+# The Android SDK: ANDROID_HOME when it names one, else where Android Studio
+# or Homebrew's android-commandlinetools put it. A shell can export an
+# ANDROID_HOME left over from an SDK since removed, which Gradle would take
+# at its word. apps/android/local.properties still wins over all of these.
+android_sdk := `for d in "${ANDROID_HOME:-}" "$HOME/Library/Android/sdk" "$HOME/Android/Sdk" /opt/homebrew/share/android-commandlinetools /usr/local/share/android-commandlinetools; do if [ -n "$d" ] && [ -d "$d/platforms" ]; then echo "$d"; exit; fi; done`
+android_env := if android_sdk == "" { "" } else { "ANDROID_HOME=" + android_sdk }
+
 # Build koan-core for Android with cargo-ndk and generate the Kotlin bindings,
 # into the app's build directory, where Gradle packages them. Gradle runs the
 # same task before every build of the app. `abis` as Gradle takes them;
-# arm64-v8a alone serves a phone or an emulator on Apple silicon. Gradle
-# finds the SDK through ANDROID_HOME or apps/android/local.properties.
+# arm64-v8a alone serves a phone or an emulator on Apple silicon.
 android-ffi abis="arm64-v8a,x86_64":
-    cd apps/android && ./gradlew -q :app:koanFfi -Pabis={{abis}}
+    cd apps/android && {{android_env}} mise exec -- ./gradlew -q :app:koanFfi -Pabis={{abis}}
 
 # Build the debug app, install it on the device or emulator adb is connected
 # to, and open it.
 android-run abis="arm64-v8a":
-    cd apps/android && ./gradlew -q :app:installDebug -Pabis={{abis}}
+    cd apps/android && {{android_env}} mise exec -- ./gradlew -q :app:installDebug -Pabis={{abis}}
     adb shell am start -n cc.blit.koan/.MainActivity
 
 # Build the release APK CI builds: minified, signed with this machine's debug
 # key, for sideloading (`adb install`, or open it on the phone).
 android-apk abis="arm64-v8a":
-    cd apps/android && ./gradlew -q :app:assembleRelease -Pabis={{abis}}
+    cd apps/android && {{android_env}} mise exec -- ./gradlew -q :app:assembleRelease -Pabis={{abis}}
     @echo "$PWD/apps/android/app/build/outputs/apk/release/app-release.apk"
