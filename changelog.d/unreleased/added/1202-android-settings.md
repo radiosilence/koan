@@ -1,0 +1,1 @@
+- **The Android app has Settings and a real sign-in.** Settings has Library, Server, Playback, Devices and Appearance panes that save as you change them, and sign-in takes a password, an API key, a pasted invite or a code shown on the phone for a signed-in device to approve. It has not been run on a device yet.

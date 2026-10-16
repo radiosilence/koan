@@ -1,0 +1,1 @@
+- **Reconnecting no longer leaks a thread.** The remote link spawned a fresh background wake-up thread on each connect after all links had dropped; it now starts one for the whole process.

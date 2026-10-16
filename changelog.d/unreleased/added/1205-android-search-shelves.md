@@ -1,0 +1,1 @@
+- **Search and the shelves on Android.** Search finds artists, records and tracks as you type; favourites, recently played and downloaded are pages of the same shape, each heading showing how many the library has and opening that list. Long-press to pick across kinds and play or queue together. Not yet run on a device.

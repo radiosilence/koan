@@ -70,6 +70,7 @@ pub fn playlist_item_from_track(
         playlist_entry_id: None,
         id: QueueItemId::new(),
         db_id: Some(track.id),
+        uid: None,
         path: dest,
         title: track.title.clone(),
         artist: track.artist_name.clone(),
@@ -83,6 +84,41 @@ pub fn playlist_item_from_track(
         state,
         played: false,
     }
+}
+
+/// Where the queue's tracks are in the library now, for the items whose row
+/// is not the one their uid names: a row deleted, or its id since given to
+/// another track. A uid no row holds is looked for by the item's file, which
+/// finds a local track merged into another or indexed again under a new uid;
+/// failing that the item is unlinked, and plays and is drawn from its own
+/// metadata until a sync brings the track back. One query for the uids, and
+/// one per item no uid finds.
+pub fn queue_relinks(
+    db: &Database,
+    state: &crate::player::state::SharedPlayerState,
+) -> Vec<(crate::player::state::QueueItemId, Option<i64>)> {
+    let items = state.queue_uids();
+    if items.is_empty() {
+        return Vec::new();
+    }
+    let Ok(rows) = queries::uids::ids_for_uids(
+        &db.conn,
+        queries::uids::UidKind::Track,
+        items.iter().map(|(_, _, uid, _)| uid.as_str()),
+    ) else {
+        return Vec::new();
+    };
+    items
+        .into_iter()
+        .filter_map(|(id, held, uid, path)| {
+            let now = rows.get(&uid).copied().or_else(|| {
+                queries::track_id_by_path(&db.conn, &path.to_string_lossy())
+                    .ok()
+                    .flatten()
+            });
+            (now != held).then_some((id, now))
+        })
+        .collect()
 }
 
 /// Build playlist items for many tracks at once.
@@ -103,6 +139,10 @@ pub(super) fn playlist_items_with(
     let ids: Vec<i64> = tracks.iter().map(|t| t.id).collect();
     let extras = queries::queue_item_extras(&db.conn, &ids).unwrap_or_default();
 
+    let uids =
+        queries::uids::uids_for(&db.conn, queries::uids::UidKind::Track, ids.iter().copied())
+            .unwrap_or_default();
+
     let mut found = Vec::new();
     let items = tracks
         .iter()
@@ -111,7 +151,10 @@ pub(super) fn playlist_items_with(
             let remote_url = extra.and_then(|e| e.remote_url.as_deref());
             let album_date = extra.and_then(|e| e.album_date.as_deref());
             let (path, state) = resolve_item_path(&mut found, cfg, track, remote_url, album_date);
-            playlist_item_from_track(track, album_date, path, state)
+            PlaylistItem {
+                uid: uids.get(&track.id).cloned(),
+                ..playlist_item_from_track(track, album_date, path, state)
+            }
         })
         .collect();
     // Bookkeeping an enqueue should not wait behind a scan for: skipped while

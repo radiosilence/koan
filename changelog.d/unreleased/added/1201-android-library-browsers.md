@@ -1,0 +1,1 @@
+- **The Android Library tab browses.** Albums as a grid of sleeves, artists and tracks as lists, each with the name filter, sorts and browse filters, and the playlists listed beside the sections. Unrun on a device.

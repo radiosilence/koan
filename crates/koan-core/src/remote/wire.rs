@@ -71,11 +71,11 @@ static ON_ENGINE: Mutex<Vec<Weak<Waker>>> = Mutex::new(Vec::new());
 /// Wake `waker` whenever the engine says something moved, for as long as it
 /// lives. One thread serves every waker in the process.
 pub fn wake_on_engine_change(waker: &Arc<Waker>) {
-    let mut list = ON_ENGINE.lock();
-    let first = list.is_empty();
-    list.push(Arc::downgrade(waker));
-    drop(list);
-    if first {
+    ON_ENGINE.lock().push(Arc::downgrade(waker));
+    // Once for the process: the thread never exits, so spawning whenever the
+    // list happened to be empty leaked one per connect after every link dropped.
+    static SPAWN: std::sync::Once = std::sync::Once::new();
+    SPAWN.call_once(|| {
         std::thread::Builder::new()
             .name("koan-wire".into())
             .spawn(|| {
@@ -93,7 +93,7 @@ pub fn wake_on_engine_change(waker: &Arc<Waker>) {
                 }
             })
             .expect("failed to spawn the wire thread");
-    }
+    });
 }
 
 /// One end of a conversation over a socket.
@@ -264,5 +264,26 @@ mod tests {
         // SAFETY: as above.
         let ready = unsafe { libc::poll(fds.as_mut_ptr(), 1, 0) };
         assert_eq!(ready, 0, "drained");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_wire_thread_is_spawned_once_however_often_links_come_and_go() {
+        fn wire_threads() -> usize {
+            std::fs::read_dir("/proc/self/task")
+                .unwrap()
+                .filter_map(|t| std::fs::read_to_string(t.ok()?.path().join("comm")).ok())
+                .filter(|name| name.trim() == "koan-wire")
+                .count()
+        }
+        for _ in 0..3 {
+            // Every link dropped: the list is empty again.
+            ON_ENGINE.lock().clear();
+            let waker = Waker::new().unwrap();
+            wake_on_engine_change(&waker);
+        }
+        // Threads name themselves once they start running.
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(wire_threads(), 1);
     }
 }

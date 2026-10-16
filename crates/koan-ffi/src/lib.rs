@@ -36,6 +36,8 @@ use uuid::Uuid;
 
 use koan_core::db::queries::RECENT_LIMIT;
 
+#[cfg(target_os = "android")]
+mod android;
 mod offload;
 mod queue_slice;
 mod server_queue;
@@ -135,6 +137,22 @@ impl koan_core::audio::ios_backend::AudioSession for SessionBridge {
     }
 }
 
+/// What Android granted the output stream. Whether the route is bit-perfect
+/// is for the app to say from this: `exclusive` with `hardware_rate` equal to
+/// the source's means the hardware runs at the source's rate; anything else
+/// went through the system mixer.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct AudioOutputGrant {
+    /// The stream is the device's own rather than the system mixer's.
+    pub exclusive: bool,
+    /// The rate the stream was opened at, which is the source's.
+    pub stream_rate: u32,
+    /// The rate the output hardware runs at, as far as the platform says.
+    pub hardware_rate: u32,
+    /// `AudioDeviceInfo.getId()` of the device the stream is on; 0 if unknown.
+    pub device_id: i32,
+}
+
 /// Send `log` output to `~/.config/koan/koan.log`, the same file the CLI
 /// writes.
 ///
@@ -155,6 +173,8 @@ fn init_logging() {
             if !self.enabled(record.metadata()) {
                 return;
             }
+            #[cfg(target_os = "android")]
+            android::to_logcat(record);
             let Ok(mut file) = self.0.lock() else { return };
             let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
             file.write(format_args!(
@@ -476,6 +496,10 @@ const HAND_OFF_ANSWER: std::time::Duration = std::time::Duration::from_secs(12);
 /// takes longer, and is reported as not started yet.
 const HAND_OFF_TAKEN: std::time::Duration = std::time::Duration::from_secs(8);
 
+// Not on Android: uniffi's Kotlin bindings cannot generate an async primary
+// constructor, and `new` is the primary one. An Android app starts the engine
+// with `with_app_dirs`, which it needs anyway (it has no home directory).
+#[cfg(not(target_os = "android"))]
 #[uniffi::export]
 impl KoanEngine {
     /// Spawns the player thread and opens the library. One per process.
@@ -484,6 +508,28 @@ impl KoanEngine {
     #[uniffi::constructor]
     pub async fn new(device_name: Option<String>) -> Result<Arc<Self>, KoanError> {
         offload::offload(move || Self::build(device_name)).await
+    }
+}
+
+#[uniffi::export]
+impl KoanEngine {
+    /// Spawns the player thread and opens the library, in the directories an
+    /// Android app is given: `filesDir` for the configuration, library and
+    /// logs, and `cacheDir` for downloads, which the system may reclaim. An
+    /// Android app has no home directory to find its way from, and this is
+    /// the only constructor its bindings have. Does the same anywhere else;
+    /// the paths are simply used. One engine per process, as with `new`.
+    #[uniffi::constructor]
+    pub async fn with_app_dirs(
+        device_name: Option<String>,
+        files_dir: String,
+        cache_dir: String,
+    ) -> Result<Arc<Self>, KoanError> {
+        offload::offload(move || {
+            config::set_app_dirs(Path::new(&files_dir), Path::new(&cache_dir));
+            Self::build(device_name)
+        })
+        .await
     }
     // --- Transport ---------------------------------------------------------
 
@@ -3753,6 +3799,53 @@ impl KoanEngine {
         }
     }
 
+    /// The route Android is playing to, on each route change and once at
+    /// start: what profiles are chosen by on a phone, and the cue to reopen
+    /// the output on it. `device_id` is the route's `AudioDeviceInfo.getId()`
+    /// (0 to follow the system's default) and `sample_rate` the rate the
+    /// platform says it runs at (0 if it does not say). Does nothing
+    /// elsewhere.
+    pub async fn set_audio_route_android(
+        self: Arc<Self>,
+        name: String,
+        device_id: i32,
+        sample_rate: u32,
+    ) -> Result<(), KoanError> {
+        #[cfg(target_os = "android")]
+        {
+            offload::sequenced(move || {
+                koan_core::audio::android_backend::set_route(name, device_id, sample_rate);
+                self.send_local(PlayerCommand::RouteChanged)
+            })
+            .await
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = (name, device_id, sample_rate);
+            Ok(())
+        }
+    }
+
+    /// What the output stream was granted by the system, read back from the
+    /// stream rather than what was asked for. `None` before any stream has
+    /// opened, and off Android.
+    pub fn audio_output_grant(&self) -> Option<AudioOutputGrant> {
+        #[cfg(target_os = "android")]
+        {
+            use koan_core::audio::android_policy::Sharing;
+            let granted = koan_core::audio::android_backend::granted()?;
+            Some(AudioOutputGrant {
+                exclusive: granted.sharing == Sharing::Exclusive,
+                stream_rate: granted.sample_rate,
+                hardware_rate: koan_core::audio::android_backend::hardware_rate()
+                    .unwrap_or(granted.sample_rate),
+                device_id: granted.device_id,
+            })
+        }
+        #[cfg(not(target_os = "android"))]
+        None
+    }
+
     // --- Settings ----------------------------------------------------------
 
     /// The kōan theme, or the platform's look. Saved at once; it takes effect
@@ -5107,6 +5200,18 @@ impl KoanEngine {
                     let library_moved = library != last_library;
                     last_queue = queue_version;
                     last_library = library;
+                    // Rows lost or regained, or items put back as they were
+                    // (an undo): the queue finds its tracks again by uid, a
+                    // reused row id naming another track. Before the queue
+                    // goes out, so no pass joins it against the wrong rows.
+                    // This device's own queue, whichever device is in view.
+                    if (queue_moved || library_moved)
+                        && let Ok(db) = engine.db()
+                    {
+                        engine
+                            .state
+                            .relink(&koan_core::helpers::queue_relinks(&db, &engine.state));
+                    }
                     if (queue_moved || library_moved) && target.is_none() {
                         let slices = queue
                             .update(&engine.state, library_moved, |ids| engine.queue_joins(ids));
@@ -6440,10 +6545,18 @@ impl KoanEngine {
 /// are correct; anything that has since gone keeps the copy stored in the
 /// snapshot, so a restore never silently drops tracks.
 fn restore_items(db: &Database, saved: &[PersistedQueueItem]) -> Vec<PlaylistItem> {
-    // By id first: a saved path names the container it was written in, which
-    // iOS moves on every update, and a track still downloading when the session
-    // was saved has no row with its path at all. The title guards against an
-    // id SQLite has since reused for another track.
+    // By uid first, which no other track can have taken. Then, for a session
+    // saved before uids were, by id: a saved path names the container it was
+    // written in, which iOS moves on every update, and a track still
+    // downloading when the session was saved has no row with its path at all.
+    // The title guards against an id SQLite has since reused for another
+    // track.
+    let by_uid = queries::uids::ids_for_uids(
+        &db.conn,
+        queries::uids::UidKind::Track,
+        saved.iter().filter_map(|i| i.uid.as_deref()),
+    )
+    .unwrap_or_default();
     let saved_ids: Vec<i64> = saved.iter().filter_map(|i| i.db_id).collect();
     let titles: HashMap<i64, String> = queries::tracks_by_ids(&db.conn, &saved_ids)
         .unwrap_or_default()
@@ -6453,6 +6566,17 @@ fn restore_items(db: &Database, saved: &[PersistedQueueItem]) -> Vec<PlaylistIte
     let ids: Vec<Option<i64>> = saved
         .iter()
         .map(|item| {
+            if let Some(uid) = &item.uid {
+                // A uid no row holds is a track forgotten since, or a local
+                // one indexed again under another: its file finds the latter.
+                // The title guard below cannot tell a reused id from the
+                // right one, so it is not tried.
+                return by_uid.get(uid).copied().or_else(|| {
+                    queries::track_id_by_path(&db.conn, &item.path)
+                        .ok()
+                        .flatten()
+                });
+            }
             item.db_id
                 .filter(|id| titles.get(id) == Some(&item.title))
                 .or_else(|| {
@@ -6475,7 +6599,14 @@ fn restore_items(db: &Database, saved: &[PersistedQueueItem]) -> Vec<PlaylistIte
                 played: saved_item.played.unwrap_or(false),
                 ..item
             },
-            None => saved_item.to_playlist_item(),
+            None => {
+                let item = saved_item.to_playlist_item();
+                PlaylistItem {
+                    db_id: None,
+                    state: koan_core::player::state::relinked_state(&item.state, false, &item.path),
+                    ..item
+                }
+            }
         })
         .collect()
 }
@@ -7112,6 +7243,7 @@ mod restore_tests {
             disc: None,
             duration_ms: None,
             db_id,
+            uid: None,
             played: None,
         }
     }
@@ -7148,6 +7280,58 @@ mod restore_tests {
             PathBuf::from(stale),
             "unknown id: kept as saved"
         );
+        assert_eq!(items[2].db_id, None, "and linked to no track");
+    }
+
+    #[test]
+    fn a_saved_queue_restores_by_uid_whatever_its_row_id_now_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let (a, b) = (dir.path().join("a.flac"), dir.path().join("b.flac"));
+        std::fs::write(&a, b"audio").unwrap();
+        std::fs::write(&b, b"audio").unwrap();
+        // Two tracks of one title: the title guard cannot tell them apart.
+        let first = track(&db, "Intro", &a);
+        let second = track(&db, "Intro", &b);
+        let uid_of =
+            |id| queries::uids_for(&db.conn, queries::UidKind::Track, [id]).unwrap()[&id].clone();
+
+        let mut item = saved("Intro", "/gone/b.flac", Some(first));
+        item.uid = Some(uid_of(second));
+        let mut forgotten = saved("Intro", "/gone/c.flac", Some(first));
+        forgotten.uid = Some("01900000-0000-7000-8000-000000000000".into());
+        let items = restore_items(&db, &[item, forgotten]);
+
+        assert_eq!(
+            items[0].db_id,
+            Some(second),
+            "the uid's track, not the row id's"
+        );
+        assert_eq!(items[0].path, b);
+        assert_eq!(items[1].db_id, None, "a uid no row holds is unlinked");
+        assert_eq!(items[1].title, "Intro", "and plays from what was saved");
+        assert!(
+            matches!(
+                items[1].state,
+                koan_core::player::state::ItemState::Failed(_)
+            ),
+            "its file gone too, it fails rather than waiting on nothing"
+        );
+    }
+
+    #[test]
+    fn a_saved_item_whose_uid_is_gone_is_found_by_its_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let file = dir.path().join("song.flac");
+        std::fs::write(&file, b"audio").unwrap();
+        // Indexed again since the session was saved, under a new uid.
+        let id = track(&db, "Song", &file);
+        let mut item = saved("Song", &file.to_string_lossy(), Some(id + 50));
+        item.uid = Some("01900000-0000-7000-8000-00000000abcd".into());
+
+        let items = restore_items(&db, &[item]);
+        assert_eq!(items[0].db_id, Some(id));
     }
 }
 

@@ -1131,6 +1131,7 @@ mod tests {
         );
 
         let item = |title: &str, path: &str, db_id: Option<i64>| PlaylistItem {
+            uid: None,
             playlist_entry_id: None,
             id: QueueItemId::new(),
             db_id,
@@ -1201,6 +1202,7 @@ mod tests {
 
         // Directly add items to the playlist (simulating what the player thread does).
         let item = PlaylistItem {
+            uid: None,
             playlist_entry_id: None,
             id: QueueItemId::new(),
             db_id: None,

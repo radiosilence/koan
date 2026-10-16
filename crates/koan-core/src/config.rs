@@ -1909,7 +1909,8 @@ fn to_edit_value(value: &toml::Value) -> toml_edit::Value {
 
 /// Where koan keeps its configuration, library database and cache.
 ///
-/// `~/.config/koan/` (on iOS, `Library/Application Support/koan`) unless
+/// `~/.config/koan/` (on iOS, `Library/Application Support/koan`; on Android,
+/// whatever `set_app_dirs` was given, since an app has no home) unless
 /// pointed elsewhere. `KOAN_CONFIG_DIR` is the
 /// user-facing way to do that — one machine, more than one library — and
 /// `set_config_dir` is the in-process one, which is what tests need: without
@@ -2067,11 +2068,44 @@ fn ios_library() -> PathBuf {
 /// against someone's iCloud storage — and which iOS may clear when the device
 /// is short of space, which is what a cache is for.
 fn default_cache_dir() -> PathBuf {
+    // An app that was told where its cache goes (Android's `cacheDir`, which
+    // the system may reclaim) keeps it there.
+    if let Some(dir) = CACHE_DIR.read().clone() {
+        return dir;
+    }
     #[cfg(any(target_os = "ios", target_os = "tvos"))]
     if CONFIG_DIR.read().is_none() && std::env::var_os("KOAN_CONFIG_DIR").is_none() {
         return ios_library().join("Caches").join("koan");
     }
     config_dir().join("cache")
+}
+
+/// The directories koan keeps its state in, given the two an Android app is
+/// handed: `Context.filesDir` and `Context.cacheDir`. Returns
+/// `(config dir, download cache dir)`.
+///
+/// Configuration, the library database and logs go in a `koan` folder of the
+/// app's files, which only the app can read and the system leaves alone. The
+/// download cache goes in a `koan` folder of the cache directory, so that the
+/// system may reclaim it when storage runs short, which is what a cache is
+/// for; this is the same reasoning as `Library/Caches` on iOS.
+pub fn app_dirs(files_dir: &Path, cache_dir: &Path) -> (PathBuf, PathBuf) {
+    (files_dir.join("koan"), cache_dir.join("koan"))
+}
+
+/// Point koan at the sandbox an app is given: see `app_dirs`. Set it before
+/// anything spawns, as `set_config_dir` says. An explicit `cache_dir` in the
+/// configuration still wins.
+pub fn set_app_dirs(files_dir: &Path, cache_dir: &Path) {
+    let (config, cache) = app_dirs(files_dir, cache_dir);
+    // The app's folders exist, but the `koan` one inside each does not yet.
+    for dir in [&config, &cache] {
+        if let Err(e) = fs::create_dir_all(dir) {
+            log::warn!("could not create {}: {e}", dir.display());
+        }
+    }
+    *CACHE_DIR.write() = Some(cache);
+    set_config_dir(config);
 }
 
 /// Point koan's configuration at `dir` for the life of the process.
@@ -2114,6 +2148,10 @@ pub fn isolate_config_for_tests() {
 pub static SWITCHING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 static CONFIG_DIR: LazyLock<parking_lot::RwLock<Option<PathBuf>>> =
+    LazyLock::new(|| parking_lot::RwLock::new(None));
+
+/// Where downloads go, when the app was told: see `set_app_dirs`.
+static CACHE_DIR: LazyLock<parking_lot::RwLock<Option<PathBuf>>> =
     LazyLock::new(|| parking_lot::RwLock::new(None));
 
 /// Path to the base config TOML file (committable to dotfiles).
@@ -2278,6 +2316,19 @@ pub(crate) mod tests {
         let dir = std::env::temp_dir().join(format!("koan-test-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn an_apps_directories_are_kept_apart() {
+        // The config under the app's files, the downloads under its cache,
+        // which is the only part the system may reclaim.
+        let (config, cache) = app_dirs(
+            Path::new("/data/user/0/cc.blit.koan/files"),
+            Path::new("/data/user/0/cc.blit.koan/cache"),
+        );
+        assert_eq!(config, Path::new("/data/user/0/cc.blit.koan/files/koan"));
+        assert_eq!(cache, Path::new("/data/user/0/cc.blit.koan/cache/koan"));
+        assert!(!cache.starts_with("/data/user/0/cc.blit.koan/files"));
     }
 
     #[test]

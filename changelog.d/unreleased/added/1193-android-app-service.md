@@ -1,0 +1,1 @@
+- **The Android app has a playback service.** `apps/android` is a Gradle project that builds the engine and its Kotlin bindings, starts the engine in a Media3 media service with audio focus, route changes and USB bit-perfect handling, and follows its state with a Kotlin `EngineMirror`. It has one placeholder screen and has not been run on a device.

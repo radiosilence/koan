@@ -1,0 +1,1 @@
+- **The Mac app can find UPnP renderers and nearby kōans again.** Its bundle declared no local network use, so macOS never asked and dropped the search; it now says why it wants the network and asks, as the iOS app does.

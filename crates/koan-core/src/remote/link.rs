@@ -353,25 +353,49 @@ impl LinkCommand {
     ///
     /// Where the sound goes is not playback: an output switch reaches into
     /// the room, and a preset into the config. Those are the account's own.
+    ///
+    /// Exhaustive, like `allowed_playback` and `relayable`, so a new variant
+    /// is open to strangers on the network only once someone decides it is.
     pub fn allowed_nearby(&self) -> bool {
-        !matches!(
-            self,
+        match self {
+            Self::Play { .. }
+            | Self::Enqueue { .. }
+            | Self::PlayNext { .. }
+            | Self::Remove { .. }
+            | Self::Clear
+            | Self::JumpTo { .. }
+            | Self::Seek { .. }
+            | Self::Pause
+            | Self::Resume
+            | Self::Next
+            | Self::Previous
+            | Self::PlayItem { .. }
+            | Self::RemoveItems { .. }
+            | Self::MoveItems { .. }
+            | Self::Insert { .. }
+            | Self::Undo
+            | Self::Redo
+            | Self::Shuffle { .. }
+            | Self::Repeat { .. }
+            | Self::SleepTimer { .. }
+            | Self::HandOff { .. }
+            | Self::WatchLevels { .. } => true,
             Self::Sync { .. }
-                | Self::Evict { .. }
-                | Self::Devices { .. }
-                | Self::DeviceKeys { .. }
-                | Self::Forgotten { .. }
-                | Self::HistoryChanged
-                | Self::DspProfilesChanged
-                | Self::Levels { .. }
-                | Self::Acked { .. }
-                | Self::SetOutput { .. }
-                | Self::RefreshOutputs
-                | Self::SetRendererVolume { .. }
-                | Self::SetPreset { .. }
-                | Self::Shares { .. }
-                | Self::Shared { .. }
-        )
+            | Self::Evict { .. }
+            | Self::Devices { .. }
+            | Self::DeviceKeys { .. }
+            | Self::Forgotten { .. }
+            | Self::HistoryChanged
+            | Self::DspProfilesChanged
+            | Self::Levels { .. }
+            | Self::Acked { .. }
+            | Self::SetOutput { .. }
+            | Self::RefreshOutputs
+            | Self::SetRendererVolume { .. }
+            | Self::SetPreset { .. }
+            | Self::Shares { .. }
+            | Self::Shared { .. } => false,
+        }
     }
 
     /// The server's ids for the tracks this command names, if any.
@@ -729,6 +753,8 @@ impl LinkIdentity {
             ("tvos", "Apple TV")
         } else if cfg!(target_os = "macos") {
             ("macos", "Mac")
+        } else if cfg!(target_os = "android") {
+            ("android", "Android")
         } else {
             ("linux", "Linux")
         };

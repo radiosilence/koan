@@ -1,0 +1,1 @@
+- **A slow network mount no longer stalls playback.** Checking that queued downloads still exist on disk no longer holds the queue locked while it waits on the filesystem.
