@@ -235,6 +235,10 @@
     width: calc(var(--spacing) * 16);
     height: calc(var(--spacing) * 16);
   }
+  .size-\[18px\] {
+    width: 18px;
+    height: 18px;
+  }
   .size-\[200px\] {
     width: 200px;
     height: 200px;
