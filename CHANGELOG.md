@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Album and artist pages in the terminal UI, and links to them.** Artist and album names under a tile, in the queue's album headings and on the album page open the page, and `A` and `O` do the same from the keyboard. The key hints along the foot can be clicked, queue rows have a `⋯` menu button, and the browsing pages' scrollbars can be dragged, so nothing depends on a right click.
+- **Artist pages in the terminal UI show the artist.** A photograph and the opening of their Wikipedia article sit above the records, with play and shuffle buttons and a link to the article. The wheel and a draggable scrollbar now work on the album and artist pages and on the Artists tree.
+- **Covers in the terminal UI are drawn as images** where the terminal supports the kitty or iTerm2 protocol, and in half blocks elsewhere. `playback.art_graphics = false`, or `I` in the TUI, keeps half blocks.
+- **`E` in the terminal UI chooses the EQ.** It lists the profiles with the one in use marked, and plays the output through the one picked, as `koan dsp assign` and the apps do.
+- **A Now playing page in the terminal UI.** The cover, the signal path (source, output, DSP, and whether the stream is bit-perfect), level meters, the spectrum, lyrics, and the active DSP profile's frequency response. The transport bar carries a small spectrum.
+- **The terminal UI has pages.** Queue, Now playing, Albums, Artists, Favourites and Recent, reached by number keys, `Tab`, a sidebar or a tab bar, with back and forward like a browser. Albums, Favourites and Recent show records as tiles of cover art or as rows; the layout follows the terminal's width. Everything works with the keyboard and with the mouse.
+- **History and Settings pages in the terminal UI.** History lists every play under the day it was played, with the artist and record as links, a filter, and forgetting one play or all of them (on the account's other devices too, signed in to a koan server). Settings changes playback, terminal, visualiser, server and device settings without editing `config.toml`. Albums, Favourites, Recent and Artists now show a clickable `/ filter` in their heading.
+
+### Changed
+
+- **The terminal UI is drawn in the kōan theme.** The accent follows the playing cover, headings are lowercase over hairlines, and the transport bar moved to the foot of the screen. The visualizers follow the accent in every mode: the default `visualizer.palette` is now `theme`, and `spectrum`, which was the frequency rainbow, means the same. The rainbow is `rainbow`. `playback.tui_theme = "ansi"` restores the terminal's own colours.
+
 ## 0.62.1
 
 ### Added
