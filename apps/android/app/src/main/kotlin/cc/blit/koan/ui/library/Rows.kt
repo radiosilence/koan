@@ -122,8 +122,8 @@ private fun Modifier.tap(playable: Playable, selection: Selection<Playable>?, on
 
 /**
  * One record in a grid: the sleeve with its codec, the title, and the artist
- * and year. A tap opens it, or ticks it while picking; a long press offers
- * the rest.
+ * and year. A tap on the sleeve plays it, a tap below opens it, either ticks
+ * it while picking; a long press offers the rest.
  */
 @Composable
 fun AlbumTile(album: Album, modifier: Modifier = Modifier, selection: Selection<Playable>? = null, showArtist: Boolean = true) {
@@ -137,7 +137,9 @@ fun AlbumTile(album: Album, modifier: Modifier = Modifier, selection: Selection<
             .padding(KoanSpace.xs),
         verticalArrangement = Arrangement.spacedBy(KoanSpace.xs),
     ) {
-        Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
+        // The sleeve plays the record and opens it, as the Apple apps' does;
+        // the words under it open it. While picking, either ticks it.
+        Box(Modifier.fillMaxWidth().aspectRatio(1f).tap(playable, selection, { menu = true }, rememberPlayNow(playable))) {
             Sleeve(Art.album(album.id), Modifier.matchParentSize())
             album.codec?.let { KoanBadge(it.uppercase(), Modifier.align(Alignment.TopEnd).padding(KoanSpace.s)) }
             album.onDevice?.let { on ->
@@ -237,11 +239,16 @@ fun AlbumRow(album: Album, modifier: Modifier = Modifier, selection: Selection<P
 @Composable
 fun ArtistRow(artist: Artist, modifier: Modifier = Modifier, selection: Selection<Playable>? = null) {
     val nav = LocalNavigator.current
+    val playable = Playable.OfArtist(artist.id, artist.name)
+    val play = rememberPlayNow(playable)
     LibraryRow(
-        Playable.OfArtist(artist.id, artist.name),
+        playable,
         selection,
         { nav.push(ArtistRoute(artist.id)) },
         modifier,
+        // No hover on a phone, so the play button the Mac shows on hover is
+        // always there; a tap on the rest of the row opens the artist.
+        lead = { if (selection?.active != true) KoanButton("Play ${artist.name}", play, kind = KoanButtonKind.Icon, icon = KoanIcons.play) },
         trailing = { ArtistHeart(artist.id, showing = false) },
     ) {
         TitleAndDetail(
@@ -293,6 +300,7 @@ fun TrackRow(
             }
         },
         trailing = {
+            TrackAvailability(track)
             TrackHeart(track.id, showing = false)
             track.durationMs?.let { KoanText(duration(it), role = KoanType.Fine, tone = KoanTone.Muted) }
         },

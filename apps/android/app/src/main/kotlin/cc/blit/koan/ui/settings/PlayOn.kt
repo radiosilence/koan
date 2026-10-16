@@ -51,7 +51,7 @@ import kotlinx.coroutines.launch
  * does: the one sign on this page that the music is not playing here.
  */
 @Composable
-fun PlayOnButton(modifier: Modifier = Modifier) {
+fun PlayOnButton(modifier: Modifier = Modifier, labelled: Boolean = true) {
     val devices by koanApp().mirror.devices.collectAsStateWithLifecycle()
     var open by remember { mutableStateOf(false) }
     val c = controlled(devices)
@@ -63,10 +63,10 @@ fun PlayOnButton(modifier: Modifier = Modifier) {
     KoanButton(
         { open = true },
         modifier.semantics { contentDescription = c?.let { "Controlling ${it.name}" } ?: "Play on" },
-        kind = if (c == null) KoanButtonKind.Icon else KoanButtonKind.Text,
+        kind = if (labelled) KoanButtonKind.Text else KoanButtonKind.Icon,
     ) {
         KoanIcon(KoanIcons.devices, contentDescription = null, color = KoanTheme.color(tone))
-        c?.let { KoanText(it.name, role = KoanType.Control, tone = KoanTone.Ink, maxLines = 1) }
+        c?.takeIf { labelled }?.let { KoanText(it.name, Modifier.weight(1f, fill = false), role = KoanType.Control, tone = KoanTone.Ink, maxLines = 1) }
     }
     if (open) PlayOnSheet(onDismiss = { open = false })
 }
@@ -174,11 +174,11 @@ private fun DeviceRow(
 ) {
     Row(inset.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(KoanSpace.s), verticalAlignment = Alignment.CenterVertically) {
         KoanButton(onSelect, Modifier.weight(1f), kind = KoanButtonKind.Card, enabled = !unreachable) {
-            Row(Modifier.padding(vertical = KoanSpace.s), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(vertical = KoanSpace.s), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.width(28.dp)) {
                     if (selected) KoanIcon(KoanIcons.check, contentDescription = "Controlling", color = KoanTheme.color(KoanTone.Accent))
                 }
-                Column {
+                Column(Modifier.weight(1f)) {
                     KoanText(name, tone = if (selected) KoanTone.Accent else KoanTone.Ink)
                     detail?.takeIf { it.isNotEmpty() }?.let { KoanText(it, role = KoanType.Fine, tone = KoanTone.Muted) }
                 }

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -239,7 +240,13 @@ fun Modifier.koanChip(): Modifier =
 
 /** An empty page: its glyph in `muted`, what is missing in `body`, and why in `meta`. */
 @Composable
-fun KoanUnavailable(title: String, icon: Int, detail: String?, modifier: Modifier = Modifier) {
+fun KoanUnavailable(
+    title: String,
+    icon: Int,
+    detail: String?,
+    modifier: Modifier = Modifier,
+    actions: (@Composable RowScope.() -> Unit)? = null,
+) {
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             Modifier.widthIn(max = 420.dp).padding(KoanSpace.xxl),
@@ -249,6 +256,7 @@ fun KoanUnavailable(title: String, icon: Int, detail: String?, modifier: Modifie
             KoanIcon(icon, contentDescription = null, size = 24.sp, color = KoanTheme.color(KoanTone.Muted))
             KoanText(title, appText = true, textAlign = TextAlign.Center)
             detail?.let { KoanText(it, role = KoanType.Meta, tone = KoanTone.Muted, textAlign = TextAlign.Center) }
+            actions?.let { Row(horizontalArrangement = Arrangement.spacedBy(KoanSpace.m), content = it) }
         }
     }
 }

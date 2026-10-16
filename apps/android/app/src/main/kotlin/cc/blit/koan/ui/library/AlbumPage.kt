@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -23,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -52,17 +54,28 @@ import cc.blit.koan.ui.theme.LocalKoanTokens
 @Composable
 fun AlbumPage(albumId: Long, track: Long? = null) {
     val app = koanApp()
-    val model = viewModel { AlbumModel(app.mirror, albumId) }
-    val page by model.page.collectAsStateWithLifecycle()
-    val held = page
-    val album = held?.album
-    when {
-        held == null -> PageBar("")
-        album == null -> Column {
+    val nav = LocalNavigator.current
+    val model = viewModel { AlbumModel({ app.mirror.engine().albumPage(albumId) }, app.mirror.library) }
+    val read by model.page.collectAsStateWithLifecycle()
+    val album = (read as? AlbumRead.Read)?.page?.album
+    when (val held = read) {
+        AlbumRead.Reading -> PageBar("")
+        is AlbumRead.Read if album != null -> RecordAccent(albumId) { Record(album, held.page.tracks, track, model.selection) }
+        // Never a record page with nothing on it: gone from the library, or
+        // the read failed, each said as such. A failed read is worth trying
+        // again; a record that has gone comes back, if it does, with the library.
+        else -> Column {
             PageBar("")
-            KoanUnavailable("This album isn't in the library any more", KoanIcons.unknownAlbum, null)
+            val failed = held == AlbumRead.Failed
+            KoanUnavailable(
+                if (failed) "Couldn't read this album" else "This album isn't in the library any more",
+                KoanIcons.unknownAlbum,
+                null,
+            ) {
+                KoanButton("Go Back", { nav.pop() })
+                if (failed) KoanButton("Try Again", model::retry)
+            }
         }
-        else -> RecordAccent(albumId) { Record(album, held.tracks, track, model.selection) }
     }
 }
 
@@ -162,7 +175,10 @@ private fun Header(album: Album, tracks: List<Track>) {
             size = 320.dp,
         )
         KoanText(album.title, role = KoanType.Title, textAlign = TextAlign.Center, maxLines = 3)
-        KoanButton(album.artistName, { nav.push(ArtistRoute(album.artistId)) }, kind = KoanButtonKind.Link)
+        // The artist's name as the library has it: the text overload would lowercase it as the app's own word.
+        KoanButton({ nav.push(ArtistRoute(album.artistId)) }, kind = KoanButtonKind.Link) {
+            Text(album.artistName, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
         val total = tracks.sumOf { it.durationMs ?: 0 }
         KoanText(
             listOfNotNull(album.year?.toString(), album.codec?.uppercase(), length(total).takeIf { total > 0 }).joinToString(" · "),
