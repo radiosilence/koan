@@ -600,7 +600,7 @@ jobs:
     # The image this commit already pushed, tagged with the release's version
     # and `latest` only after every other job has passed: a failed release
     # must not move `latest`. Retagging needs no rebuild, and repeats safely.
-    needs: [fmt, css, clippy, test, build, msrv, audit, macos-app, create-release, create-macos-app, testflight, container, check-version]
+    needs: [fmt, css, clippy, test, build, msrv, audit, macos-app, create-release, create-macos-app, container, check-version]
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.container.result == 'success' && needs.check-version.outputs.should_release == 'true' }}
     permissions:
       contents: read
@@ -843,6 +843,10 @@ jobs:
           name: koan-macos-app
           path: apps/macos/.build/pkg/Koan.dmg
 
+  # Nothing waits on this. App Store Connect's processing of an upload takes
+  # anywhere from minutes to an hour and says nothing about the release, so the
+  # GitHub release, the crates, the image tags and the package go out without
+  # it. A failed upload is retried alone, from ios.yml's manual dispatch.
   testflight:
     name: Release (TestFlight)
     needs: [fmt, clippy, test, audit, check-version]
@@ -854,7 +858,7 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [fmt, css, clippy, test, build, msrv, audit, macos-app, android-app, create-release, create-macos-app, testflight, container-release, check-version, publish-crate, publish-package]
+    needs: [fmt, css, clippy, test, build, msrv, audit, macos-app, android-app, create-release, create-macos-app, container-release, check-version, publish-crate, publish-package]
     # The publishes having run, not merely not failed: they are skipped when
     # anything before them failed, and a skipped job is not a failure.
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.create-release.result == 'success' && needs.publish-crate.result == 'success' && needs.publish-package.result == 'success' && needs.check-version.outputs.should_release == 'true' }}
@@ -926,7 +930,7 @@ jobs:
     # only once the rest of the release can follow it. Notarisation comes after the GitHub release and is
     # not waited for. Publishing is skipped when the version is already out
     # (below), so a re-run after a later failure passes straight through.
-    needs: [fmt, css, clippy, test, build, msrv, audit, macos-app, create-release, create-macos-app, testflight, check-version]
+    needs: [fmt, css, clippy, test, build, msrv, audit, macos-app, create-release, create-macos-app, check-version]
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.check-version.outputs.should_release == 'true' }}
     env:
       VERSION: ${{ needs.check-version.outputs.version }}
@@ -1167,7 +1171,7 @@ jobs:
     # a release it finds must already have its package. After every other job
     # has passed, as the crates are: a published package version cannot be
     # reused.
-    needs: [fmt, css, clippy, test, build, msrv, audit, macos-app, create-release, create-macos-app, testflight, container-release, check-version]
+    needs: [fmt, css, clippy, test, build, msrv, audit, macos-app, create-release, create-macos-app, container-release, check-version]
     # The package pins the image by version, so the version tag must exist.
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.container-release.result == 'success' && needs.check-version.outputs.should_release == 'true' }}
     permissions:
