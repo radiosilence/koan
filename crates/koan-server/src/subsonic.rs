@@ -3741,15 +3741,16 @@ fn dsp_profiles_changed(username: &str) {
     );
 }
 
-/// An edit's time as the server takes it: a device whose clock runs ahead
-/// cannot make its edits outlast every later one.
+/// An edit's time as the server takes it: never later than the server's own
+/// clock, so a device whose clock runs ahead cannot make its edits outrank
+/// those a correct clock makes after it.
 fn dsp_edited_at(params: &RawParams) -> Result<i64, SubsonicError> {
     let at: i64 = params
         .get("editedAt")
         .ok_or_else(|| SubsonicError::missing_param("editedAt"))?
         .parse()
         .map_err(|_| SubsonicError::new(SubsonicErrorCode::Generic, "editedAt is not a time"))?;
-    Ok(at.min(koan_core::auth::now_unix() as i64 * 1000 + 60_000))
+    Ok(at.min(chrono::Utc::now().timestamp_millis()))
 }
 
 fn dsp_uid(params: &RawParams) -> Result<String, SubsonicError> {
@@ -11135,6 +11136,7 @@ mod tests {
         assert!(body.contains("\"status\":\"ok\""), "{body}");
 
         // Deleted by a device whose clock runs far ahead.
+        let before = chrono::Utc::now().timestamp_millis();
         let ahead = chrono::Utc::now().timestamp_millis() + 50_000;
         call(
             format!("/rest/koanDspProfileDelete?{MATE}"),
@@ -11164,7 +11166,7 @@ mod tests {
         let (_, body) = get_response(app.clone(), &format!("/rest/koanDspProfiles?{MATE}")).await;
         let profile = &json(&body)["subsonic-response"]["koanDspProfiles"]["profile"][0];
         assert_eq!(profile["doc"], doc.json().as_str(), "{body}");
-        assert!(profile["editedAt"].as_i64().unwrap() > ahead, "{body}");
+        assert!(profile["editedAt"].as_i64().unwrap() > before, "{body}");
         assert!(deleted(MATE.into()).await.is_empty(), "restored");
         let v = restore(MATE.into()).await;
         assert_eq!(
@@ -11189,6 +11191,29 @@ mod tests {
         assert!(deleted(MATE.into()).await.is_empty());
         let v = restore(MATE.into()).await;
         assert_eq!(v["subsonic-response"]["error"]["code"], 70, "expired: {v}");
+    }
+
+    /// An edit stamped ahead of the server's clock counts as made now, so an
+    /// edit a correct clock makes after it still wins.
+    #[tokio::test]
+    async fn a_dsp_edit_stamped_ahead_does_not_outrank_a_later_correct_one() {
+        let (state, _dir) = test_state();
+        let app = build_test_router(state);
+        let wav = b"RIFF and the rest";
+        let doc = dsp_doc("Room", wav);
+        let stored = |at: i64| {
+            let app = app.clone();
+            let form = format!("uid={UID}&editedAt={at}&doc={}", form_value(&doc.json()));
+            async move {
+                json(&post_form(app, &format!("/rest/koanDspProfileSave?{MATE}"), &form).await)
+                    ["subsonic-response"]["koanDspSaved"]["stored"]
+                    .clone()
+            }
+        };
+        let now = chrono::Utc::now().timestamp_millis();
+        assert_eq!(stored(now + 50_000).await, true, "stamped ahead");
+        let later = chrono::Utc::now().timestamp_millis();
+        assert_eq!(stored(later).await, true, "a correct clock, later");
     }
 
     /// A file is taken only as the bytes a profile of the account names, and
