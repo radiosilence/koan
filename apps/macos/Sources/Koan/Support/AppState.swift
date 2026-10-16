@@ -43,9 +43,9 @@ final class AppState {
         // A Mac names itself by its hostname; an Apple TV by the name it was
         // given in its settings.
         #if os(iOS) || os(tvOS)
-        let engine = try await KoanEngine(deviceName: UIDevice.current.name)
+        let engine = try await KoanEngine.open(deviceName: UIDevice.current.name)
         #else
-        let engine = try await KoanEngine(deviceName: nil)
+        let engine = try await KoanEngine.open(deviceName: nil)
         #endif
         self.engine = engine
         // Before any window draws: see `KoanTheme`.

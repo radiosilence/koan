@@ -32,12 +32,10 @@ uniffi = "0.32"
 uuid = { version = "1", features = ["v7"] }
 chrono = "0.4"
 
-# Android only: logcat, and the one JNI entry point the app calls to give
-# rustls-platform-verifier the application context. Both versions are the
-# ones that crate itself uses, so there is one of each in the build.
+# The app's Context, handed to reqwest's certificate verification: see
+# `android.rs`.
 [target.'cfg(target_os = "android")'.dependencies]
-android_logger = "0.15"
-jni = { version = "0.22", default-features = false }
+jni = "0.22"
 rustls-platform-verifier = "0.7"
 
 [dev-dependencies]

@@ -1,0 +1,1 @@
+- **Send logs from the Android app.** Settings → About → Send logs shares the app's log since it started, with the build, the phone and what it was playing to, so a bug can be reported without a computer. A track that fails to start now says why instead of staying silent.

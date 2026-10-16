@@ -767,7 +767,8 @@ pub struct QueueEntry {
     pub duration_ms: Option<u64>,
     pub status: QueueEntryStatus,
     pub download_progress: Option<(u64, u64)>,
-    /// Why this entry cannot play, when `status` is `Failed`.
+    /// Why this entry cannot play, when `status` is `Failed`; or, under the
+    /// cursor and still to come, why it has not arrived yet.
     pub error: Option<String>,
 }
 
@@ -847,6 +848,16 @@ pub struct SharedPlayerState {
     /// the system's, and not ours to claim.
     output_sample_rate: AtomicU64,
 
+    /// Whether the system mixes the output on its way to the device: 0 where
+    /// the platform does not say, 1 mixed, 2 passed through. See
+    /// `AudioBackend::output_mixed`.
+    output_mixed: std::sync::atomic::AtomicU8,
+
+    /// Why the last track asked for did not start, until one does. The
+    /// output failing to open, a file that does not decode: what the person
+    /// would otherwise meet as silence.
+    start_failure: parking_lot::RwLock<Option<String>>,
+
     /// What DSP is doing to the current session's audio. `None` is the
     /// bit-perfect path.
     dsp: parking_lot::RwLock<Option<crate::audio::dsp::DspStatus>>,
@@ -899,6 +910,8 @@ impl SharedPlayerState {
             quit_requested: AtomicBool::new(false),
             metadata_refresh_pending: AtomicBool::new(false),
             output_sample_rate: AtomicU64::new(0),
+            output_mixed: std::sync::atomic::AtomicU8::new(0),
+            start_failure: parking_lot::RwLock::new(None),
             dsp: parking_lot::RwLock::new(None),
             renderer_clock: parking_lot::Mutex::new(None),
             renderer: parking_lot::RwLock::new(None),
@@ -1210,6 +1223,39 @@ impl SharedPlayerState {
     /// an answer for this one.
     pub fn clear_output_sample_rate(&self) {
         self.output_sample_rate.store(0, Ordering::Release);
+    }
+
+    pub fn output_mixed(&self) -> Option<bool> {
+        match self.output_mixed.load(Ordering::Acquire) {
+            1 => Some(true),
+            2 => Some(false),
+            _ => None,
+        }
+    }
+
+    /// Why the last track asked for did not start, while none has since.
+    pub fn start_failure(&self) -> Option<String> {
+        self.start_failure.read().clone()
+    }
+
+    pub fn set_start_failure(&self, failure: Option<String>) {
+        let mut slot = self.start_failure.write();
+        if *slot != failure {
+            *slot = failure;
+            drop(slot);
+            self.changed();
+        }
+    }
+
+    pub fn set_output_mixed(&self, mixed: Option<bool>) {
+        let v = match mixed {
+            None => 0,
+            Some(true) => 1,
+            Some(false) => 2,
+        };
+        if self.output_mixed.swap(v, Ordering::AcqRel) != v {
+            self.changed();
+        }
     }
 
     // --- DSP ---
@@ -2210,6 +2256,7 @@ impl SharedPlayerState {
             .into_iter()
             .map(|r| (r.track_id, (r.written, r.total)))
             .collect();
+        let unreachable = crate::helpers::server_unreachable();
         let pl = self.playlist.read();
 
         for item in &pl.items {
@@ -2257,8 +2304,12 @@ impl SharedPlayerState {
                     status,
                     duration_ms,
                     download_progress,
-                    error: match &item.state {
-                        ItemState::Failed(reason) => Some(reason.clone()),
+                    error: match (place, &item.state) {
+                        (_, ItemState::Failed(reason)) => Some(reason.clone()),
+                        // Waiting for a server that is not answering: why it
+                        // has not started, though it will once the server is
+                        // back.
+                        (Place::Cursor, ItemState::Pending) => unreachable.clone(),
                         _ => None,
                     },
                 },

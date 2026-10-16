@@ -2957,6 +2957,9 @@ impl App {
             .vq_cache
             .entries
             .iter()
+            // Failed only: an entry waiting for the server carries why, too,
+            // and will play once it answers.
+            .filter(|e| e.status == QueueEntryStatus::Failed)
             .filter_map(|e| e.error.as_deref())
             .peekable();
         if reasons.peek().is_none() {

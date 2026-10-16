@@ -28,30 +28,10 @@ The Mac switches the output device to each track's sample rate, so playback is b
 
 The format badge shows the rate the hardware runs at, read back from the session, so a route that did not take the track's rate shows as a conversion. The Apple TV app does the same; over HDMI the rate is the one the television or receiver negotiates.
 
-## The Android app (in development)
 
-The Android app is a Kotlin and Compose app that links the same engine as the iOS app, and it is not finished: it has the kōan theme, the four tabs (queue, library, search, settings) server sign-in and Settings. The queue works: it groups tracks under their albums, reorders by dragging a row's handle, selects by long press, and a mini player above the tabs opens a now-playing screen with a seek bar, the transport, synced lyrics and a badge saying what the output is being handed and whether the route is bit-perfect. The Library tab browses albums (a grid of sleeves), artists and tracks with the name filter, sorts and browse filters, and lists the playlists; History (plays by day, long-press to pick plays and forget them) and Downloads (what is arriving from the server, with a bar each, and what koan is busy with) are done; the rest are placeholders. It is built from source (`apps/android`, Android 9 or later, `gradle assembleDebug` with the Android SDK, NDK r27c, `cargo-ndk` and the Rust Android targets installed) and has not been run on a device yet.
+## The Android app
 
-### Settings and signing in on Android
-
-A phone that is not signed in opens on the sign-in page. It takes a server address, a username and a password, or an API key made in the web UI (one that can be revoked on its own). An invite pasted into the address field signs in by itself and loads the library; if the app is already signed in to another account it asks first. **Show a code** signs the phone in from a device that is already signed in: the phone shows a code, and you type it under Settings → Devices → Pair a device on the other (a koan server and a device signed in to it are needed).
-
-Settings has five panes, and each change is saved as you make it, to the same configuration the other apps and the command line use; it is read again whenever the page comes back to the front.
-
-- **Library** lists any scanned folders and what the library holds, and clears the library index. Scanning folders on the phone itself is not part of the Android app yet.
-- **Server** shows the signed-in server and its link, syncs, signs out (keeping or forgetting its tracks), and sets offline mode, automatic sync, parallel downloads and the cache limit (`50GB`, blank for none).
-- **Playback** says whether the current output is bit-perfect, chooses the output (including a UPnP renderer found on the network), and sets fade on pause and ReplayGain.
-- **Devices** makes the phone discoverable to other koan apps on the network, sets whether they get full control or playback only, lists who is connected (disconnect or refuse them), adds devices by address, and approves a device that is waiting for a code.
-- **Appearance** sets whether the accent follows the record playing.
-
-Search finds artists, records and tracks as you type, and favourites, recently played and downloaded are pages of the same shape: artists as pills, records as tiles, tracks as rows, each heading showing how many the library has and opening that list. Long-press anything to pick several, across kinds, and play or queue them together.
-
-Playback belongs to a foreground media service, so it carries on when the app is left, and the lock screen, headset buttons and notification control it. It pauses when another app takes audio focus or the headphones are unplugged.
-
-### Sample rates on Android
-
-Android mixes everything to one rate unless told otherwise. The internal speaker, wired headphones and Bluetooth go through that mixer and are resampled, usually to 48 kHz, so they are never bit-perfect. On Android 14 or later, a USB DAC can be put in a bit-perfect mixing mode at each track's rate before koan opens its stream; support varies by manufacturer, and a DAC that does not offer it is resampled like the rest. The app decides whether the route is bit-perfect from what the system granted the stream, not from what koan asked for.
-
+The Android app plays from a server, as the iOS app does, and needs Android 10 or later on a 64-bit ARM phone. It is installed from an APK until it is on Google Play; see [Android](guide/android.md) for where to get one and what it does not do yet.
 ## History and Recently played
 
 Both apps keep what you play. **History** lists every play by day, and is where a play is forgotten. **Recently Played**, beside it in the Mac's and the iPad's sidebar and the iPhone's Library tab, answers "what was that record I had on yesterday": the records, artists and tracks of the last 30 days, each once however often it played, newest first. Both follow each play as it is recorded.

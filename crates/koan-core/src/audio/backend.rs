@@ -58,8 +58,8 @@ impl OutputKind {
 
 /// Trait abstracting platform audio output.
 ///
-/// Implementations exist for CoreAudio (macOS), RemoteIO (iOS), AAudio (Android)
-/// and cpal (Linux).
+/// Implementations exist for CoreAudio (macOS), RemoteIO (iOS), cpal (Linux)
+/// and AAudio (Android).
 /// The decode pipeline (rtrb ring buffer, Symphonia, `PlaybackTimeline`) is
 /// completely decoupled — backends are dumb consumers that drain the ring buffer.
 pub trait AudioBackend: Send + Sync {
@@ -79,6 +79,52 @@ pub trait AudioBackend: Send + Sync {
     /// Returns the actual device rate after the switch (may differ if unsupported).
     /// On Linux/cpal this is a no-op — the rate is set at stream creation.
     fn set_device_sample_rate(&self, device: &DeviceInfo, rate: f64) -> Result<f64, BackendError>;
+
+    /// Prepare the device, now at `current`, for a stream of this format, and
+    /// answer the rate it will run at. Most platforms switch only the rate,
+    /// and only when it differs; Android also chooses the sample encoding and
+    /// whether its mixer is bypassed, which depends on the channels and the
+    /// source's bit depth, whatever the rate.
+    fn prepare_output(
+        &self,
+        device: &DeviceInfo,
+        current: f64,
+        rate: f64,
+        _channels: u16,
+        _bit_depth: Option<u16>,
+    ) -> Result<f64, BackendError> {
+        if (current - rate).abs() > 0.1 {
+            self.set_device_sample_rate(device, rate)
+        } else {
+            Ok(current)
+        }
+    }
+
+    /// Whether the system mixes this output with other apps' on its way to
+    /// the device, where the platform can say: Android's mixer converts and
+    /// applies volume unless koan holds a USB DAC bit-perfect. `None` where
+    /// the device rate is the whole story.
+    fn output_mixed(&self) -> Option<bool> {
+        None
+    }
+
+    /// The most integer bits a sample keeps on its way to the device, where
+    /// the output narrows them: a gapless run cannot carry a deeper track
+    /// through it. `None` where nothing is narrowed.
+    fn output_depth(&self) -> Option<u16> {
+        None
+    }
+
+    /// Whether `output_depth` may narrow, so a session must assume it does
+    /// until the output is open: the decoder runs ahead of it.
+    fn narrows_depth(&self) -> bool {
+        false
+    }
+
+    /// Be told when the output stops for good underneath the player, so it
+    /// can be rebuilt: Android disconnects every stream when its audio server
+    /// restarts. Called on a thread of the platform's; it must only send.
+    fn on_disconnect(&self, _rebuild: Arc<dyn Fn() + Send + Sync>) {}
 
     /// Subscribe to nominal sample rate changes on a device.
     ///
@@ -106,6 +152,10 @@ pub trait AudioBackend: Send + Sync {
         samples_played: Arc<AtomicU64>,
     ) -> Result<Box<dyn AudioEngineHandle>, BackendError>;
 }
+
+/// The samples an engine has played as of now, for an output that hands
+/// over samples in chunks too coarse to read the playhead from directly.
+pub type Presentation = Arc<dyn Fn() -> u64 + Send + Sync>;
 
 /// A live sample rate subscription. Unsubscribes on drop.
 pub trait SampleRateWatch: Send + Sync {}
@@ -145,6 +195,12 @@ pub trait AudioEngineHandle: Send {
     /// never heard. Nothing reports when the clock has locked, so the wait is
     /// a length of time. Cleared by `fade_in`.
     fn lead_in(&self, _frames: u64) {}
+    /// Where the playhead is between callbacks, when the output's callbacks
+    /// are far enough apart that the count they keep would read as a playhead
+    /// moving in jumps. `None` where the count is fine as it is.
+    fn presentation(&self) -> Option<Presentation> {
+        None
+    }
 }
 
 #[cfg(test)]

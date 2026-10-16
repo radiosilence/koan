@@ -1,46 +1,46 @@
+import javax.inject.Inject
+
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
 }
 
-// The engine: koan-ffi built for Android, and the Kotlin bindings uniffi
-// generates from it. Neither is checked in. This is `just android-ffi`, run
-// by Gradle so that a build from a clean checkout has what it compiles
-// against. `-PskipFfi` leaves what is already in jniLibs and the build
-// directory alone, for a Kotlin-only edit loop.
-val repoRoot: File = rootDir.resolve("../..").canonicalFile
-val ndkVersion = "27.2.12479018"
-val platformLevel = 28
-val jniLibsDir: File = projectDir.resolve("src/main/jniLibs")
-val bindingsDir: Provider<Directory> = layout.buildDirectory.dir("generated/uniffi/kotlin")
-val skipFfi = providers.gradleProperty("skipFfi").isPresent
+/** The commit built, short; "unknown" outside a checkout. */
+val commit = providers.exec {
+    commandLine("git", "rev-parse", "--short=8", "HEAD")
+    isIgnoreExitValue = true
+}.standardOutput.asText.map { it.trim().ifEmpty { "unknown" } }
+
+/** The ABIs the core is built for. `-Pabis=arm64-v8a` builds one, for a device or an emulator on Apple silicon. */
+val koanAbis = providers.gradleProperty("abis").orElse("arm64-v8a,x86_64").map { it.split(",") }
 
 android {
     namespace = "cc.blit.koan"
-    compileSdk = 36
-    ndkVersion = this@Build_gradle.ndkVersion
+    compileSdk = 37
+    ndkVersion = "30.0.16248370"
 
     defaultConfig {
         applicationId = "cc.blit.koan"
-        // AAudio's Usage and ContentType, which the engine links at load.
-        minSdk = platformLevel
-        targetSdk = 36
+        minSdk = 29
+        targetSdk = 37
         versionCode = 1
-        versionName = "0.0.0-phase2"
-        // The ABIs the engine is built for: devices, and the emulator. No
-        // 32-bit.
-        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        versionName = "0.61.13"
+        // Which build a tester's log came from.
+        buildConfigField("String", "COMMIT", "\"${commit.get()}\"")
+        // Only what the core is built for: a device would otherwise pick a
+        // 32-bit ABI that JNA ships and koan does not, and fail to load.
+        ndk { abiFilters += koanAbis.get() }
     }
 
     buildTypes {
-        debug {
-            buildConfigField("boolean", "STRICT_MODE", "true")
-        }
         release {
+            // The debug key, so a release APK can be sideloaded. A Play upload
+            // needs a key of its own, given to the build from outside the repo.
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            buildConfigField("boolean", "STRICT_MODE", "false")
         }
     }
 
@@ -49,107 +49,120 @@ android {
         buildConfig = true
     }
 
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+    // Lint cannot read the ABIs through the `abis` property, so it reports
+    // x86_64 missing even in the default build, which carries it.
+    lint {
+        disable += "ChromeOsAbiSupport"
     }
 
-    sourceSets.getByName("main").java.srcDir(bindingsDir)
-
+    // Robolectric renders composables in unit tests, which needs the app's resources.
     testOptions {
-        unitTests.isReturnDefaultValues = true
-        // Robolectric runs the few Compose tests that draw a control on the JVM.
         unitTests.isIncludeAndroidResources = true
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
 }
 
 kotlin {
-    compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-        allWarningsAsErrors.set(true)
+    jvmToolchain(21)
+}
+
+/**
+ * koan-core, built with cargo-ndk for each ABI into `jniLibs`, and the Kotlin
+ * bindings uniffi generates from the built library.
+ *
+ * Always a release build of the core: a debug one decodes too slowly to keep
+ * the audio fed.
+ */
+abstract class KoanFfi @Inject constructor(private val exec: ExecOperations) : DefaultTask() {
+    @get:Input
+    abstract val abis: ListProperty<String>
+
+    @get:Input
+    abstract val minSdk: Property<Int>
+
+    @get:Internal
+    abstract val workspace: DirectoryProperty
+
+    @get:Internal
+    abstract val ndk: DirectoryProperty
+
+    @get:OutputDirectory
+    abstract val jniLibs: DirectoryProperty
+
+    @get:OutputDirectory
+    abstract val kotlin: DirectoryProperty
+
+    @TaskAction
+    fun build() {
+        val root = workspace.get().asFile
+        exec.exec {
+            workingDir = root
+            environment("ANDROID_NDK_HOME", ndk.get().asFile.path)
+            commandLine(
+                listOf("cargo", "ndk", "--platform", minSdk.get().toString(), "-o", jniLibs.get().asFile.path) +
+                    abis.get().flatMap { listOf("-t", it) } +
+                    listOf("build", "--release", "-p", "koan-ffi"),
+            )
+        }
+        val lib = jniLibs.get().dir(abis.get().first()).file("libkoan_ffi.so").asFile
+        kotlin.get().asFile.deleteRecursively()
+        exec.exec {
+            workingDir = root
+            commandLine(
+                "cargo", "run", "-q", "-p", "uniffi-bindgen", "--",
+                "generate", "--library", lib.path, "--language", "kotlin", "--no-format",
+                "--out-dir", kotlin.get().asFile.path,
+            )
+        }
     }
 }
 
-val sdkNdk = androidComponents.sdkComponents.ndkDirectory
-
-val buildKoanLibs = tasks.register<Exec>("buildKoanLibs") {
-    group = "koan"
-    description = "cargo ndk: koan-ffi for arm64-v8a and x86_64 into src/main/jniLibs"
-    workingDir = repoRoot
-    onlyIf { !skipFfi }
-    inputs.files(fileTree(repoRoot.resolve("crates")) {
-        include("**/*.rs", "**/Cargo.toml", "**/build.rs", "**/uniffi.toml")
-    })
-    inputs.file(repoRoot.resolve("Cargo.lock"))
-    outputs.dir(jniLibsDir)
-    doFirst { environment("ANDROID_NDK_HOME", sdkNdk.get().asFile.absolutePath) }
-    // `rustc --crate-type cdylib`: the crate also declares a staticlib for
-    // Apple's linker, which Android has no use for and which doubles the link.
-    commandLine(
-        "cargo", "ndk", "-t", "arm64-v8a", "-t", "x86_64", "-P", platformLevel.toString(),
-        "-o", jniLibsDir.absolutePath,
-        "rustc", "--release", "-p", "koan-ffi", "--lib", "--crate-type", "cdylib",
-    )
+val koanFfi = tasks.register<KoanFfi>("koanFfi") {
+    abis.set(koanAbis)
+    minSdk.set(android.defaultConfig.minSdk!!)
+    workspace.set(rootProject.layout.projectDirectory.dir("../.."))
+    ndk.set(androidComponents.sdkComponents.ndkDirectory)
+    jniLibs.set(layout.buildDirectory.dir("koan-ffi/jniLibs"))
+    kotlin.set(layout.buildDirectory.dir("koan-ffi/kotlin"))
+    // cargo knows what changed; Gradle cannot see the Rust sources.
+    outputs.upToDateWhen { false }
 }
 
-val generateKoanBindings = tasks.register<Exec>("generateKoanBindings") {
-    group = "koan"
-    description = "uniffi-bindgen: Kotlin bindings from the built library's metadata"
-    workingDir = repoRoot
-    dependsOn(buildKoanLibs)
-    onlyIf { !skipFfi }
-    inputs.dir(jniLibsDir.resolve("arm64-v8a")).optional()
-    inputs.file(repoRoot.resolve("crates/koan-ffi/uniffi.toml"))
-    outputs.dir(bindingsDir)
-    doFirst { delete(bindingsDir) }
-    commandLine(
-        "cargo", "run", "-q", "-p", "uniffi-bindgen", "--", "generate",
-        "--library", jniLibsDir.resolve("arm64-v8a/libkoan_ffi.so").absolutePath,
-        "--language", "kotlin", "--out-dir", bindingsDir.get().asFile.absolutePath,
-    )
-}
-
-// Bindings before any Kotlin compiles, the libraries before they are packaged.
-tasks.configureEach {
-    if (name.startsWith("compile") && name.contains("Kotlin")) dependsOn(generateKoanBindings)
-    if (name.startsWith("merge") && name.endsWith("JniLibFolders")) dependsOn(buildKoanLibs)
-    if (name.startsWith("ksp") || name.startsWith("lint")) dependsOn(generateKoanBindings)
-}
-
-// androidx.core 1.18+ needs compileSdk 37 and AGP 9; AGP 8.13 tops out at 36.
-// Hold it where this toolchain can build it, whoever asks for newer.
-configurations.configureEach {
-    resolutionStrategy.force("androidx.core:core:${libs.versions.coreKtx.get()}")
+androidComponents {
+    onVariants { variant ->
+        variant.sources.jniLibs?.addGeneratedSourceDirectory(koanFfi, KoanFfi::jniLibs)
+        variant.sources.kotlin?.addGeneratedSourceDirectory(koanFfi, KoanFfi::kotlin)
+    }
 }
 
 dependencies {
-    implementation(libs.kotlinx.coroutines.android)
-    implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.androidx.compose.ui)
-    implementation(libs.androidx.compose.foundation)
-    implementation(libs.androidx.compose.material3)
-    implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.media3.session)
     implementation(libs.androidx.navigation3.runtime)
     implementation(libs.androidx.navigation3.ui)
+    implementation(libs.androidx.lifecycle.viewmodel.navigation3)
+    implementation(libs.kotlinx.serialization.core)
     implementation(libs.coil.compose)
-    implementation(libs.reorderable)
-    implementation(libs.androidx.media3.session)
-    implementation(libs.androidx.media3.common)
-    // uniffi's generated Kotlin crosses into the engine through JNA; on
-    // Android that is the AAR, which carries libjnidispatch.
-    implementation("${libs.jna.get()}@aar")
-    // rustls-platform-verifier's Kotlin half, which the engine's TLS calls
-    // back into.
+    implementation(libs.jna) { artifact { type = "aar" } }
     implementation(libs.rustls.platform.verifier)
-
+    implementation(platform(libs.compose.bom))
+    implementation(libs.compose.ui)
+    implementation(libs.compose.ui.tooling.preview)
+    implementation(libs.compose.material3)
+    implementation(libs.reorderable)
+    debugImplementation(libs.compose.ui.tooling)
+    debugImplementation(libs.compose.ui.test.manifest)
     testImplementation(libs.junit)
-    testImplementation(libs.robolectric)
-    testImplementation(platform(libs.androidx.compose.bom))
-    testImplementation(libs.androidx.compose.ui.test.junit4)
-    debugImplementation(libs.androidx.compose.ui.test.manifest)
     testImplementation(libs.kotlinx.coroutines.test)
-    // The JVM jar, so the generated bindings load in a unit test.
-    testImplementation(libs.jna)
+    testImplementation(libs.robolectric)
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
 }

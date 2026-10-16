@@ -135,6 +135,32 @@ pub struct Notice {
     /// The device's name, as listed.
     pub device: String,
     pub outcome: acks::AckOutcome,
+    /// No way got it there: `outcome` is a failure with only the reason.
+    pub unreached: bool,
+}
+
+/// Why a command did not get to a device.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Missed {
+    /// Nothing reaches it from here: not on this network, and no server that
+    /// relays to it. Says so by the device's name.
+    OutOfReach(String),
+    /// It was reached, or the server answered, and this is the reason.
+    Said(String),
+}
+
+impl Missed {
+    pub fn into_message(self) -> String {
+        match self {
+            Self::OutOfReach(m) | Self::Said(m) => m,
+        }
+    }
+}
+
+impl From<String> for Missed {
+    fn from(message: String) -> Self {
+        Self::Said(message)
+    }
 }
 
 /// The last command that did not simply arrive.
@@ -1412,7 +1438,19 @@ pub fn send(id: &str, cmd: LinkCommand) -> Result<(), String> {
 /// `send`, handing the outcome to `then` once it is known, rather than to the
 /// app's notice. Returns as soon as the command is on its way.
 pub fn send_then(id: &str, cmd: LinkCommand, then: Option<Then>) -> Result<(), String> {
-    choosable(id)?;
+    reach(id, cmd, then).map_err(Missed::into_message)
+}
+
+/// `send`, saying whether a command that did not go out failed for want of
+/// any way to the device: what lets a front end play here instead.
+pub fn send_reaching(id: &str, cmd: LinkCommand) -> Result<(), Missed> {
+    reach(id, cmd, None)
+}
+
+/// Every way to `id` in turn. A device listed asleep or reconnecting is
+/// tried all the same, since the list may be from before the link came up:
+/// only the ways themselves say it is out of reach.
+fn reach(id: &str, cmd: LinkCommand, then: Option<Then>) -> Result<(), Missed> {
     used(id);
     let (nearby, own, shared) = with(|s| {
         let listed = s.account.iter().find(|(d, _)| d.id == id);
@@ -1426,7 +1464,9 @@ pub fn send_then(id: &str, cmd: LinkCommand, then: Option<Then>) -> Result<(), S
     // set at most, and decides for itself; what only an account may send its
     // own devices goes to them alone.
     if !own && !cmd.allowed_playback() {
-        return Err("Only your own devices can be asked that.".into());
+        return Err(Missed::Said(
+            "Only your own devices can be asked that.".into(),
+        ));
     }
     let routes = Routes {
         lan: nearby,
@@ -1463,10 +1503,54 @@ pub fn send_then(id: &str, cmd: LinkCommand, then: Option<Then>) -> Result<(), S
         // Activity outlives this process's list of devices.
         log::info!("devices: {id} is not listed; asking the server");
     }
+    let outcome = match ask_server(id, &cmd, Some(ack)) {
+        Ok(outcome) => outcome,
+        // A connection the network dropped a moment ago comes back when
+        // dialled: one more look there, under the same ack, before giving
+        // the device up.
+        Err(Missed::OutOfReach(why)) if crate::remote::nearby::dials(id) => {
+            crate::remote::nearby::dial_now();
+            let back = await_until(
+                || with(|s| s.nearby.iter().any(|n| n.hello.id == id)),
+                NETWORK_WAIT,
+            );
+            let sent = back
+                && if answers_on_network(id) {
+                    crate::remote::nearby::send_acked(id, cmd.clone(), ack)
+                } else {
+                    crate::remote::nearby::send(id, cmd.clone())
+                };
+            if !sent {
+                acks::forget(ack);
+                return Err(Missed::OutOfReach(why));
+            }
+            let routes = Routes {
+                lan: true,
+                lan_answers: answers_on_network(id),
+                ..routes
+            };
+            follow(id, cmd, ack, answer, Route::Network, routes, then);
+            return Ok(());
+        }
+        Err(missed) => {
+            acks::forget(ack);
+            return Err(missed);
+        }
+    };
     acks::forget(ack);
-    let outcome = ask_server(id, &cmd, Some(ack))?;
     told(id, &cmd, outcome, then);
     Ok(())
+}
+
+/// What the person is told when neither the network nor the server reaches
+/// `id`: a transport error, or a server that relays nothing, says nothing
+/// about the device.
+fn out_of_reach(id: &str) -> String {
+    let name = list()
+        .into_iter()
+        .find(|d| d.id == id)
+        .map_or_else(|| "That device".to_owned(), |d| d.name);
+    format!("{name} is out of reach.")
 }
 
 /// The ways a command can reach a device, and which of them bring an answer.
@@ -1517,7 +1601,7 @@ fn follow(
             acks::forget(ack);
             match walked {
                 Ok(outcome) => told(&id, &cmd, outcome, then),
-                Err(error) => unanswered(&id, &cmd, error, then),
+                Err(missed) => unanswered(&id, &cmd, missed.into_message(), then),
             }
         });
 }
@@ -1532,7 +1616,7 @@ fn walk(
     answer: &crossbeam_channel::Receiver<acks::AckOutcome>,
     first: Route,
     routes: Routes,
-) -> Result<Option<acks::AckOutcome>, String> {
+) -> Result<Option<acks::AckOutcome>, Missed> {
     if first == Route::Network {
         if let Ok(outcome) = answer.recv_timeout(NETWORK_ANSWER) {
             return Ok(Some(outcome));
@@ -1565,7 +1649,10 @@ fn unanswered(id: &str, cmd: &LinkCommand, error: String, then: Option<Then>) {
             log::warn!("devices: no answer from {id} for {cmd:?}, and the server: {error}");
             then(None);
         }
-        None => told(id, cmd, Some(acks::AckOutcome::Failed { error }), None),
+        None => {
+            log::warn!("devices: {cmd:?} did not reach {id}: {error}");
+            notify(id, acks::AckOutcome::Failed { error }, true);
+        }
     }
 }
 
@@ -1588,6 +1675,11 @@ fn told(id: &str, cmd: &LinkCommand, outcome: Option<acks::AckOutcome>, then: Op
     let Some(outcome) = outcome.filter(|o| *o != acks::AckOutcome::Done) else {
         return;
     };
+    notify(id, outcome, false);
+}
+
+/// Make `outcome` the app's notice about `id`.
+fn notify(id: &str, outcome: acks::AckOutcome, unreached: bool) {
     let device = list()
         .into_iter()
         .find(|d| d.id == id)
@@ -1598,6 +1690,7 @@ fn told(id: &str, cmd: &LinkCommand, outcome: Option<acks::AckOutcome>, then: Op
             seq,
             device,
             outcome,
+            unreached,
         });
     });
 }
@@ -1621,13 +1714,66 @@ fn ask_server(
     id: &str,
     cmd: &LinkCommand,
     ack: Option<u64>,
-) -> Result<Option<acks::AckOutcome>, String> {
+) -> Result<Option<acks::AckOutcome>, Missed> {
     let cfg = Config::load().unwrap_or_default();
-    let client = crate::helpers::subsonic_client(&cfg).ok_or("not signed in to a server")?;
+    // No server and not on this network: nothing could carry it.
+    let client = crate::helpers::subsonic_client(&cfg)
+        .ok_or_else(|| Missed::OutOfReach(out_of_reach(id)))?;
     let json = serde_json::to_string(cmd).map_err(|e| e.to_string())?;
     client
         .koan_command(id, &json, ack)
-        .map_err(|e| e.to_string())
+        .map_err(|e| relay_error(id, e))
+}
+
+/// Why the server did not get a command to `id`. Its word, an expired key or
+/// a refusal, stands; not found, or no answer at all, is a server with nothing
+/// to relay through.
+fn relay_error(id: &str, e: crate::remote::client::SubsonicError) -> Missed {
+    match e {
+        crate::remote::client::SubsonicError::Api { code, message } if code != 70 => {
+            Missed::Said(message)
+        }
+        e => {
+            log::warn!("devices: the server cannot relay to {id}: {e}");
+            Missed::OutOfReach(out_of_reach(id))
+        }
+    }
+}
+
+/// Stop controlling `id`, which a command could not reach, so that this
+/// device plays instead; the app is told why. Only for a command that asks
+/// for music: one that pauses or seeks has nothing here to act on.
+pub fn fall_back(id: &str, playing: bool) {
+    let name = list()
+        .into_iter()
+        .find(|d| d.id == id)
+        .map_or_else(|| "That device".to_owned(), |d| d.name);
+    log::info!("devices: {id} is out of reach; acting here instead");
+    let here = this_word();
+    let error = if playing {
+        format!("{name} is out of reach, so this {here} is playing.")
+    } else {
+        format!("{name} is out of reach, so it is queued on this {here}.")
+    };
+    // Told while the device is still listed, so the notice has its name.
+    notify(id, acks::AckOutcome::Failed { error }, true);
+    set_target(None);
+}
+
+/// What this device is called in a sentence: its kind, as the person would
+/// say it.
+fn this_word() -> &'static str {
+    if cfg!(target_os = "ios") {
+        "iPhone"
+    } else if cfg!(target_os = "tvos") {
+        "Apple TV"
+    } else if cfg!(target_os = "macos") {
+        "Mac"
+    } else if cfg!(target_os = "android") {
+        "phone"
+    } else {
+        "computer"
+    }
 }
 
 /// `send`, by the server first: for the lock screen's buttons. iOS runs
@@ -1639,13 +1785,15 @@ fn ask_server(
 pub fn send_by_server_first(id: &str, cmd: LinkCommand) -> Result<(), String> {
     server_first(
         || {
-            ask_server(id, &cmd, Some(acks::next_id())).map(|outcome| match outcome {
-                Some(acks::AckOutcome::Refused { reason }) => Err(reason),
-                outcome => {
-                    told(id, &cmd, outcome, None);
-                    Ok(())
-                }
-            })?
+            ask_server(id, &cmd, Some(acks::next_id()))
+                .map_err(Missed::into_message)
+                .map(|outcome| match outcome {
+                    Some(acks::AckOutcome::Refused { reason }) => Err(reason),
+                    outcome => {
+                        told(id, &cmd, outcome, None);
+                        Ok(())
+                    }
+                })?
         },
         || send(id, cmd.clone()),
     )
@@ -1680,6 +1828,111 @@ pub fn this_id() -> Option<String> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// The device controlled, restored on a network it is not on: a server
+    /// that cannot relay to it says so by the device's name, and one that
+    /// answers keeps its own words.
+    #[test]
+    fn a_command_to_a_device_out_of_reach_names_it() {
+        use crate::remote::client::SubsonicError;
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        with(|s| {
+            s.target = Some(Remembered {
+                id: "mac".into(),
+                name: "Studio Mac".into(),
+                platform: "macos".into(),
+            })
+        });
+
+        let refused = reqwest::blocking::Client::new()
+            .get("http://127.0.0.1:1/rest/koanCommand")
+            .send()
+            .unwrap_err();
+        assert_eq!(
+            relay_error("mac", SubsonicError::from(refused)),
+            Missed::OutOfReach("Studio Mac is out of reach.".into())
+        );
+        let unknown = SubsonicError::Api {
+            code: 70,
+            message: "not found".into(),
+        };
+        assert_eq!(
+            relay_error("mac", unknown),
+            Missed::OutOfReach("Studio Mac is out of reach.".into())
+        );
+        let revoked = SubsonicError::Api {
+            code: 44,
+            message: "The key has been revoked.".into(),
+        };
+        assert_eq!(
+            relay_error("mac", revoked),
+            Missed::Said("The key has been revoked.".into())
+        );
+
+        assert_eq!(
+            send("mac", LinkCommand::Pause).unwrap_err(),
+            "Studio Mac is out of reach.",
+            "no server, and not on this network"
+        );
+        with(|s| *s = Store::default());
+    }
+
+    /// Off the network the controlled device is on, with no server to relay:
+    /// the command is out of reach, and falling back stops controlling it and
+    /// says this device is playing. A device that answered, however it
+    /// answered, is not fallen back from.
+    #[test]
+    fn an_unreachable_target_is_let_go_and_a_refusal_is_not() {
+        use crate::remote::client::SubsonicError;
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        with(|s| {
+            s.target = Some(Remembered {
+                id: "mac".into(),
+                name: "Studio Mac".into(),
+                platform: "macos".into(),
+            })
+        });
+
+        let missed = send_reaching("mac", LinkCommand::Resume).unwrap_err();
+        assert!(matches!(missed, Missed::OutOfReach(_)), "{missed:?}");
+        assert_eq!(
+            target().as_deref(),
+            Some("mac"),
+            "a miss alone keeps the target"
+        );
+
+        fall_back("mac", true);
+        assert_eq!(target(), None, "this device plays now");
+        let notice = notice().expect("the person is told");
+        assert!(notice.unreached);
+        assert_eq!(
+            notice.outcome,
+            acks::AckOutcome::Failed {
+                error: format!(
+                    "Studio Mac is out of reach, so this {} is playing.",
+                    this_word()
+                ),
+            }
+        );
+
+        let refused = relay_error(
+            "mac",
+            SubsonicError::Api {
+                code: 50,
+                message: "Studio Mac is shared for playback only.".into(),
+            },
+        );
+        assert_eq!(
+            refused,
+            Missed::Said("Studio Mac is shared for playback only.".into()),
+            "the server answered: no falling back"
+        );
+        with(|s| *s = Store::default());
+    }
 
     /// A TV dialled by address whose AirPlay record was matched by name, at
     /// its `.local.` host: a second hello inside the window, which does not

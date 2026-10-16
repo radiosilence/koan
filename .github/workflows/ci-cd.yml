@@ -38,6 +38,7 @@ jobs:
       docker: ${{ steps.filter.outputs.docker }}
       package: ${{ steps.filter.outputs.package }}
       macos: ${{ steps.filter.outputs.macos }}
+      android: ${{ steps.filter.outputs.android }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -57,6 +58,7 @@ jobs:
           docker=true
           package=true
           macos=true
+          android=true
           if [ "$EVENT" = "pull_request" ]; then
             # HEAD is the merge commit GitHub built for this PR and its first
             # parent is the base branch, so this is exactly the PR's diff. If it
@@ -113,7 +115,13 @@ jobs:
                   fi
                 done
               fi
+              # The Android app compiles all of koan-core, so any Rust change can
+              # break it; a change confined to the Apple apps or the site cannot.
+              if ! printf '%s\n' "$files" | grep -E '^apps/android/|^crates/|^tools/|^Cargo\.(toml|lock)$|^\.cargo/|^justfile$|^mise\.toml$|^rust-toolchain|^\.github/workflows/' | grep -qvE '\.md$'; then
+                android=false
+              fi
               echo "macOS jobs: $macos (release: $release)"
+              echo "Android job: $android"
               printf '%s\n' "$files" | sed 's/^/  /'
             fi
           fi
@@ -122,6 +130,7 @@ jobs:
             echo "docker=$docker"
             echo "package=$package"
             echo "macos=$macos"
+            echo "android=$android"
           } >> "$GITHUB_OUTPUT"
 
   fmt:
@@ -404,6 +413,65 @@ jobs:
         env:
           TVOS_DEPLOYMENT_TARGET: "26.0"
       - run: just tv-build
+
+  android-app:
+    name: Android App
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: ${{ !cancelled() && needs.changes.outputs.code == 'true' && needs.changes.outputs.android == 'true' }}
+    timeout-minutes: 60
+    concurrency:
+      group: android-app-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Rust, the JDK and cargo-ndk as mise.toml pins them, as a contributor's
+      # terminal has them; cargo-ndk is built with mise's Rust.
+      - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
+        with:
+          install_args: rust java cargo:cargo-ndk just
+      - run: rustup target add aarch64-linux-android
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: android-app
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      # The runner's SDK has neither the NDK the app pins nor its platform.
+      - run: |
+          ndk=$(sed -n 's/.*ndkVersion = "\(.*\)"/\1/p' apps/android/app/build.gradle.kts)
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$ndk" "platforms;android-37.0" > /dev/null
+      # The release is signed with the debug key (see the app's build), so it
+      # sideloads. Android installs an update only over a build signed with the
+      # same key, so CI signs with one kept in the ANDROID_DEBUG_KEYSTORE secret
+      # (a base64 debug.keystore, password `android`); without it each run
+      # signs with a key of its own, and one CI build will not update another.
+      - name: Debug key
+        env:
+          ANDROID_DEBUG_KEYSTORE: ${{ secrets.ANDROID_DEBUG_KEYSTORE }}
+        run: |
+          if [ -z "$ANDROID_DEBUG_KEYSTORE" ]; then
+            echo "::notice::ANDROID_DEBUG_KEYSTORE is not set, so this APK is signed with a key of its own"
+            exit 0
+          fi
+          mkdir -p ~/.android
+          printf '%s' "$ANDROID_DEBUG_KEYSTORE" | base64 --decode > ~/.android/debug.keystore
+      # One ABI: phones, and emulators on Apple silicon.
+      - name: Test, lint and build
+        working-directory: apps/android
+        run: ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleRelease -Pabis=arm64-v8a
+      - name: Name the APK
+        env:
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          echo "APK_NAME=koan-android-${SHA}" >> "$GITHUB_ENV"
+          mv apps/android/app/build/outputs/apk/release/app-release.apk "koan-android-${SHA}.apk"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.APK_NAME }}
+          path: ${{ env.APK_NAME }}.apk
+          retention-days: 14
 
   msrv:
     name: MSRV (1.89)

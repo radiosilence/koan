@@ -1,7 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- UPnP discovery: following the Wi-Fi network, and letting announcements in for a few seconds after a search. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- Android 17: finding koan devices and renderers on the local network. -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
+    <!-- Bit-perfect output: setting a USB DAC's preferred mixer attributes. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -9,10 +17,33 @@
     <application
         android:name=".KoanApp"
         android:allowBackup="false"
-        android:label="kōan"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.Material.NoActionBar"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="true"
+        android:theme="@style/Theme.Koan">
+
+        <!-- Settings → About → Send logs shares the log report through this. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/shared_files" />
+        </provider>
+
+        <!-- Covers for the system's media controls and the lock screen, which open
+             a session's artwork URI from their own process. Read only, covers only. -->
+        <provider
+            android:name=".playback.ArtProvider"
+            android:authorities="${applicationId}.art"
+            android:exported="true"
+            tools:ignore="ExportedContentProvider" />
 
         <activity
             android:name=".MainActivity"
@@ -22,16 +53,55 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Invites and pairing links, as the iPhone takes them (see `ui/settings/Links.kt`). -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:host="koan.rocks" />
+                <data android:pathPrefix="/join" />
+                <data android:pathPrefix="/pair" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="koan" android:host="join" />
+            </intent-filter>
+            <!-- EQ and convolution files shared to the app or opened with it: the
+                 import Settings' file picker runs (see `ui/settings/Links.kt`). -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="audio/wav" />
+                <data android:mimeType="audio/x-wav" />
+                <data android:mimeType="audio/vnd.wave" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip-compressed" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="audio/wav" />
+                <data android:mimeType="audio/x-wav" />
+                <data android:mimeType="audio/vnd.wave" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip-compressed" />
+            </intent-filter>
         </activity>
 
-        <!--
-            The playback service: engine start, the media session and its
-            notification. Foreground type mediaPlayback is what lets music
-            carry on when the app is left.
-        -->
+        <!-- Exported without a permission: Media3 controllers (the system's media
+             controls, Bluetooth, Android Auto, Wear) bind to it from other apps,
+             and MediaSessionService decides who may control it. -->
         <service
-            android:name=".service.KoanPlaybackService"
+            android:name=".playback.PlaybackService"
             android:exported="true"
+            tools:ignore="ExportedService"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
                 <action android:name="androidx.media3.session.MediaSessionService" />

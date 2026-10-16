@@ -1,1 +1,0 @@
-- **The core builds for Android.** `koan-core` has an AAudio output (exclusive, falling back to shared, reopened on a route change) and `koan-ffi` builds for `arm64-v8a` and `x86_64` with `just android-ffi`, which also generates the Kotlin bindings. There is no Android app yet.

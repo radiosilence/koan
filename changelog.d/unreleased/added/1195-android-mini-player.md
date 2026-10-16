@@ -1,0 +1,1 @@
+- **The Android mini player is always there.** With nothing queued it says so, and while there is another device it carries Play on, so the phone works as a remote from a cold start, as on iOS.

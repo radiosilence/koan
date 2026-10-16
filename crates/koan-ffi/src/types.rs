@@ -334,6 +334,11 @@ pub struct StreamFormat {
     /// past the device — other clients, the volume stage — is the system's,
     /// and this says nothing about it.
     pub output_sample_rate: Option<u32>,
+    /// Whether the system mixes the output with other apps' on its way to the
+    /// device, where the platform says: on Android, `false` only while koan
+    /// holds a USB DAC bit-perfect. `None` elsewhere, where
+    /// `output_sample_rate` is the whole story.
+    pub output_mixed: Option<bool>,
     /// What DSP is doing to the audio. `None` is the untouched path.
     pub dsp: Option<DspInfo>,
 }
@@ -362,10 +367,12 @@ impl StreamFormat {
     pub(crate) fn of(
         t: &TrackInfo,
         output_sample_rate: Option<u32>,
+        output_mixed: Option<bool>,
         dsp: Option<koan_core::audio::dsp::DspStatus>,
     ) -> Self {
         Self {
             output_sample_rate,
+            output_mixed,
             dsp: dsp.map(Into::into),
             codec: t.codec.clone(),
             sample_rate: t.sample_rate,
@@ -398,6 +405,9 @@ pub struct NowPlaying {
     pub sleep: Option<SleepState>,
     /// The sleep timer is fading playback out: not bit-perfect meanwhile.
     pub sleep_fading: bool,
+    /// Why the last track asked for did not start, until one does: the
+    /// output failing to open, a file that does not decode.
+    pub start_failure: Option<String>,
 }
 
 /// A sleep timer to set: stop after a while, or at the end of the track or
@@ -639,7 +649,8 @@ impl QueueItem {
             status,
             failure_reason: match &load {
                 LoadState::Failed(reason) => Some(reason.clone()),
-                _ => None,
+                LoadState::Ready => None,
+                _ => koan_core::helpers::server_unreachable(),
             },
             // The transport polls this and there is no connection here to ask.
             // Nothing it draws needs them; the queue's own rows carry the real
@@ -2030,6 +2041,9 @@ pub struct Settings {
     pub remote_signed_in: bool,
     /// Tracks the server accounts for.
     pub remote_tracks: u64,
+    /// Unix seconds when the library was last known to match the server's.
+    /// Read only.
+    pub remote_last_sync: Option<i64>,
     pub download_workers: u32,
     /// Human-readable, e.g. "50GB". Empty means unlimited.
     pub cache_limit: String,
@@ -2303,6 +2317,11 @@ pub struct CommandNotice {
     pub device: String,
     /// Waiting for the device to wake, rather than not taken.
     pub queued: bool,
+    /// Reached, and turned down: `detail` is the device's reason.
+    pub refused: bool,
+    /// Never got there: `detail` says why, naming the device. Otherwise, not
+    /// queued or refused, the device took it and failed.
+    pub unreached: bool,
     /// Why it was not taken.
     pub detail: String,
 }

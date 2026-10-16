@@ -1,1 +1,0 @@
-- **The Android queue plays and reorders.** The queue groups tracks under their albums, reorders by dragging a row's handle, selects by long press, and a mini player above the tabs opens a now-playing screen with a seek bar, synced lyrics and a badge saying whether the output route is bit-perfect. Unit-tested only; not yet run on a device.

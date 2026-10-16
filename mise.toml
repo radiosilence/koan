@@ -3,4 +3,6 @@ rust = "latest"
 just = "latest"
 "github:tailwindlabs/tailwindcss" = "4.3.3"
 xcodegen = "2.46.0"
-java = "temurin-21"
+# The Android app: Gradle's JDK, and the Rust core cross-compiled against the NDK.
+java = "temurin-21.0.12+8.0.LTS"
+"cargo:cargo-ndk" = "4.1.2"

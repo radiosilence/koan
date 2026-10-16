@@ -2,7 +2,7 @@
 
 # kōan
 
-A music player and server for your own library, local or on any OpenSubsonic server: native SwiftUI apps on macOS, iOS and Apple TV, a terminal UI on macOS and Linux, and a server with a web UI, on one Rust core. [koan.rocks](https://koan.rocks)
+A music player and server for your own library, local or on any OpenSubsonic server: native SwiftUI apps on macOS, iOS and Apple TV, a Compose app on Android, a terminal UI on macOS and Linux, and a server with a web UI, on one Rust core. [koan.rocks](https://koan.rocks)
 
 It's a music player and server, for local collections and remote ones (anything OpenSubsonic). Remote libraries sit behind a fairly aggressive local cache. It handles multi-terabyte libraries with ease and has all the core audio features you'd want, like gapless and bit-perfect output (where the system allows). It's built from 25 years of messing about with music, being annoyed with pretty much everything, and wanting my dream application.
 

@@ -2,23 +2,23 @@
 
 ## What is koan
 
-Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus a native SwiftUI app on macOS. Five crates:
+Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus native apps: SwiftUI on macOS, iOS and tvOS, Compose on Android. Five crates:
 
 - **koan-core** — library crate. Audio engine, player, database, indexer, format strings, file organization, remote (Subsonic/Navidrome) client, shared helpers. No UI code, no terminal deps.
 - **koan-tui** — library crate. Ratatui TUI, visualizers, media keys. Exports `run_tui()`. Depends on koan-core.
 - **koan-server** — library crate. GraphQL (async-graphql + axum), Subsonic REST API, MCP server. Depends on koan-core.
-- **koan-ffi** — staticlib/cdylib crate. uniffi bindings exposing koan-core to Swift. Depends on koan-core only. Not published to crates.io.
+- **koan-ffi** — staticlib/cdylib crate. uniffi bindings exposing koan-core to Swift and Kotlin. Depends on koan-core only. Not published to crates.io.
 - **koan-cli** — binary crate (`koan`). Thin entry point: clap CLI, logger, signal handling, command routing. Depends on koan-core + koan-tui + koan-server.
 
 Plus **tools/uniffi-bindgen** — the Swift bindings generator (`just ffi-bindings`). A crate of its own so that running it builds uniffi and nothing else; it reads the bindings from any built koan-ffi library, the iOS one included.
 
 Plus **apps/macos** — SwiftUI app (SwiftPM, Swift 6, macOS 26+). Links koan-ffi.
 
-Plus **apps/android** — Kotlin + Jetpack Compose app (Gradle, Kotlin DSL, minSdk 28). Links koan-ffi through uniffi's Kotlin bindings, which Gradle generates; neither they nor the `.so` files are checked in. Phases 2 and 3a of #535: the playback service, the mirror, the models, the theme, artwork and the tab shell; the pages are placeholders until phase 3b.
+Plus **apps/android** — Compose app (Gradle, Kotlin, Android 10+). Loads koan-ffi as a shared library through uniffi's Kotlin bindings; Gradle builds it with cargo-ndk.
 
 Dependency rules (compiler-enforced): koan-tui, koan-server and koan-ffi cannot import each other; all three depend only on koan-core. Native clients import koan-core through koan-ffi.
 
-**Local UI goes through FFI, not GraphQL.** The macOS app links the engine in-process — a daemon, a port and an auth surface buy nothing when the UI is sitting on top of the audio engine. GraphQL is the surface for clients that genuinely can't link the core: the web UI, jukebox remotes. The iOS app links the core like the Mac app does. When adding a capability to one, consider whether the other needs it too — both are thin shims over the same koan-core helpers.
+**Local UI goes through FFI, not GraphQL.** The macOS app links the engine in-process — a daemon, a port and an auth surface buy nothing when the UI is sitting on top of the audio engine. GraphQL is the surface for clients that genuinely can't link the core: the web UI, jukebox remotes. The iOS and Android apps link the core like the Mac app does. When adding a capability to one, consider whether the other needs it too — both are thin shims over the same koan-core helpers.
 
 ## Architecture overview
 
@@ -128,6 +128,9 @@ just tv-signin [ROUTES] # each other way onto the TV and its failures, from fres
 just tv-pair-qr     # the same, approved by an iPhone simulator that reads the QR code off the TV
 just tv-discover    # a signed-out TV simulator finds a server the Mac announces as a signed-in device would, and pairs
 just tv-testflight BUILD # archive, sign and upload the tvOS app to TestFlight (needs the ASC key)
+just android-ffi [ABIS] # koan-core for Android via cargo-ndk, and the Kotlin bindings
+just android-run [ABIS] # build, install and open the Android app on the device adb is connected to
+just android-apk [ABIS] # the sideloadable release APK CI builds, signed with the debug key
 ```
 
 The macOS app needs `just macos-ffi` to have run at least once — it generates the Swift bindings that `swift build` compiles against. `macos-build` does this for you.
@@ -149,10 +152,10 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `audio/backend.rs` | `AudioBackend` + `AudioEngineHandle` traits — platform-agnostic audio output |
 | `audio/coreaudio_backend.rs` | macOS `CoreAudioBackend` impl (wraps engine.rs + device.rs) |
 | `audio/ios_backend.rs` | iOS and tvOS `IosAudioBackend` impl — the route is the only device; the session belongs to the app |
-| `audio/android_backend.rs` | Android `AndroidAudioBackend` impl over AAudio (`ndk` crate): exclusive then shared, error callback reopens on a route change |
-| `audio/android_policy.rs` | The Android backend's decisions and its data callback body, without AAudio, so desktop tests cover them |
 | `audio/toolbox.rs` | The AudioToolbox names the engine uses, declared by hand for tvOS: `coreaudio-sys`'s build script knows only macOS and iOS |
 | `audio/cpal_backend.rs` | Linux `CpalBackend` impl (ALSA/PipeWire/PulseAudio via cpal) |
+| `audio/android_backend.rs` | Android `AndroidAudioBackend`: AAudio declared by hand, the stream opened in the encoding `bit_perfect` chose |
+| `audio/bit_perfect.rs` | Bit-perfect USB output on Android 14+: which of the DAC's mixer formats to hold for a stream (`choose`), the exact float-to-integer conversion, and the app's `OutputHost` |
 | `audio/engine.rs` | CoreAudio output setup, render callback. AUHAL on macOS, RemoteIO on iOS — two properties apart |
 | `audio/buffer.rs` | `PlaybackTimeline`, track boundaries, decode thread entry points (`start_decode`, `decode_queue_loop`, `decode_single`) |
 | `audio/device.rs` | CoreAudio device enumeration, sample rate get/set (macOS only) |
@@ -189,7 +192,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `remote/scrobbling.rs` | The account's scrobbling on its koan server (`koanScrobbling`): status, connect with a ListenBrainz token, disconnect. The server keeps the token and never returns it |
 | `remote/connections.rs` | Who is connected to this device and whom it is connected to — the server link, the account's devices behind it, nearby sessions either way — for Settings to list and end |
 | `remote/devices.rs` | The devices this one can play on — the account's from the link, the network's from `nearby` — which one the app controls, and getting a command to it |
-| `remote/nearby.rs` | LAN control: listener on `devices.port`, Bonjour via `dns_sd`, a connection per device found or listed by address. Strangers get playback and the queue only (`LinkCommand::allowed_nearby`) |
+| `remote/nearby.rs` | LAN control: listener on `devices.port`, Bonjour via `dns_sd` (Apple) or the app's `NsdManager` via `nsd` (Android), a connection per device found or listed by address. Strangers get playback and the queue only (`LinkCommand::allowed_nearby`) |
 | `remote/wire.rs` | Event-driven WebSocket sessions: one `poll` on the socket and a pipe the engine's change signal rings |
 | `remote/wikimedia.rs` | Wikidata items, Wikipedia lead sections and Commons images — where artist bios and photos come from |
 | `remote/queue.rs` | The download queue: what to fetch when. Follows the playlist (started by `Player::spawn`; front ends never enqueue), worker pool, a priority lane for the track under the cursor, cursor-aware reordering. With a cache limit, fetches only as far ahead of the cursor as the limit allows (the playback window), and trims the cache |
@@ -303,51 +306,18 @@ follows the top of the stack in front — see `TabShell`.
 
 ### apps/android (`apps/android/app/src/main/kotlin/cc/blit/koan/`)
 
-The Kotlin counterparts of the Swift modules above, with the Swift doc comments as their specification. Engine calls run on `EngineDispatcher`, never on Main, and nothing in a composable calls the engine: a page reads a `StateFlow` and calls a model method that returns at once. `./gradlew assembleDebug` builds the engine (`cargo ndk`) and the bindings first; `./gradlew testDebugUnitTest` runs the JVM tests.
+Gradle's `koanFfi` task builds koan-ffi with cargo-ndk into `jniLibs` and generates the Kotlin bindings (package `cc.blit.koan.ffi`, from `crates/koan-ffi/uniffi.toml`) before every build; neither is checked in. The SDK comes from `ANDROID_HOME` or `local.properties`, the JDK and cargo-ndk from mise.
 
 | Module | What |
 |--------|------|
-| `Native.kt` | The one JNI entry point: loads `koan_ffi` and hands the application context to rustls-platform-verifier (`initTlsOnce`). Everything else crosses by JNA |
-| `engine/KoanProcess.kt` | The process's one engine (`KoanEngine.withAppDirs`), built once by the service on the engine dispatcher; the route told to the engine; the bit-perfect status read back from `audioOutputGrant()`. Outlives a service instance, because the engine is one per process |
-| `engine/EngineDispatcher.kt` | The single thread every engine call is issued from, so commands are issued in the order they were asked |
-| `state/EngineMirror.kt` | `EngineMirror.swift`: one `StateFlow` per slice, fed by following `observe()`; a value equal to the one held wakes nobody. Big lists (`QueueRows`, `QueueState`) are compared by identity |
-| `state/PlayerModel.kt` | `PlayerModel.swift`: commands, the seek hold, the session autosave. Leaves out devices, renderers, the pasteboard and drops |
-| `state/SettingsModel.kt`, `SettingsRules.kt` | `SettingsModel.swift` and `Pairing.swift`: the configuration read on open and on resume and written whole when a field is committed (writes serialised, last edit wins); sign-in by password, API key or invite; pairing both ways (this device's code, and approving another's). `SettingsRules` decides what a cache limit, an address or a pairing code may be |
-| `ui/pages/SettingsPage.kt`, `SignInPage.kt` | Settings in five panes (library, server, playback, devices, appearance) and the sign-in gate (account, invite, code), on the theme's form controls: `KoanSegmented`, `KoanField`, `KoanPicker`, `KoanStepper`, `KoanFormRow` |
-| `service/KoanPlaybackService.kt` | A Media3 `MediaSessionService` (foreground type `mediaPlayback`). Starts the engine; audio focus, becoming noisy, route changes and USB bit-perfect are wired here |
-| `service/KoanPlayer.kt` | A `SimpleBasePlayer` that reports the mirror and forwards commands. Its timeline is the current track only; `KoanPlayerState` is the pure mapping, tested on the JVM |
-| `service/AudioFocusPolicy.kt`, `AudioFocusController.kt` | Pause on loss, pause until gain on transient loss, duck by the system on a transient loss that allows it |
-| `service/RouteWatcher.kt`, `OutputRoute.kt` | Which output music goes to, and telling the engine (`setAudioRouteAndroid`) |
-| `service/UsbBitPerfect.kt`, `BitPerfect.kt` | `setPreferredMixerAttributes` with bit-perfect behaviour at the source rate on API 34+, and the judgement of whether a route is bit-perfect from what was granted |
-| `state/LibraryModel.kt` | `LibraryModel.swift`: what the section on screen shows, as one flow per kind of row; filter (debounced), sorts and browse filter persisted; record and artist pages read before the move; favourites; scan and sync as activity. Implements `PageLoader` |
-| `state/PlaylistsModel.kt` | `PlaylistsModel.swift`: the list whole, one playlist's entries at a time, mutations that write through and leave the reload to the engine's library signal |
-| `state/ActivityModel.kt` | `ActivityModel.swift`: what koan is busy with and what each task holds, so a new one is disabled only where they overlap. `EngineProgress` is the engine's `ProgressReporter` |
-| `state/BrowseSupport.kt`, `KeyValueStore.kt` | `AlbumSort.swift` and `BrowseFilter.swift`: stable storage keys, labels, the sorts offered; and the little store models keep them in |
-| `nav/Route.kt`, `nav/Navigator.kt` | `Section`, `Route` and the four `Tab`s; the navigator over a stack per tab, with the iOS tab behaviour. Navigation 3 draws `NavState.stack` and owns no state |
-| `engine/ModelWiring.kt` | The mirror's slices turned into model calls (library and history versions, scan and sync rows, sync progress) and the accent of the record playing |
-| `art/ArtworkStore.kt`, `ArtworkFetcher.kt`, `ArtImageLoader.kt` | `CoverArtCache.swift` for Coil 3: engine bytes once per record on the IO dispatcher, a `Fetcher` over Coil's disk cache, a memory cache sized from `memoryClass` and keyed by record and size bucket, the record's colour |
-| `theme/` | `KoanTheme.swift`: tokens, type (Geist Mono), the record accent in OKLCH (`KoanAccent`, `Oklch`), controls, and the glyph set (`KoanGlyphs.kt` is generated by `just icons`) |
-| `ui/AppShell.kt`, `ui/AppPages.kt` | The theme, the tabs and mini player over `NavDisplay`; and the one place a route is bound to its page in `ui/pages/` |
-| `ui/Sleeve.kt` | A square cover through Coil, requested at its draw size |
-| `ui/pages/LibraryPage.kt` | The Library tab's root: `Section.library` with stats counts, then the playlists |
-| `ui/pages/AlbumsPage.kt`, `ArtistsPage.kt`, `TracksPage.kt` | `AlbumBrowser`, `ArtistBrowser` and `TrackBrowser`: a `LazyVerticalGrid` of `Sleeve`s and two `LazyColumn`s over `library.visible*`, keyed by id with a `contentType`; sorts offered by `BrowseSupport` and set through the model |
-| `ui/pages/BrowseChrome.kt`, `BrowseLayout.kt` | What the three share: header with the name filter and browse filters, `ChoiceStrip`, scroll position kept per tab and section (`ScrollStore`) and sent to the top on `navigator.rewinds`; and the pure parts (tile columns, labels, year typing) the JVM tests run |
-| `theme/KoanField.kt` | `KoanFilterField`: the minimal themed text field the filters use, until the theme's general field replaces it |
-| `ui/pages/QueuePage.kt`, `ui/queue/QueueRows.kt`, `QueueLayout.kt` | `QueueView.swift`/`QueueRow.swift`: the album-grouped `LazyColumn` keyed by queue item id with a `contentType` per row shape, drag reorder (`sh.calvin.reorderable`), selection, following what is playing. `QueueLayout` is the pure part (runs into headings, a drop into one `moveInQueue`, selection) and is tested on the JVM; a row reads its own entry through `derivedStateOf` so a track change does not regroup the list |
-| `state/PlayingLevels.kt`, `ui/queue/PlayingBars.kt` | `PlayingLevels.swift`: one `vizStream` subscription for every playing indicator, opened by the first and closed by the last (so the analyser parks), the three bands snapshot state read only in `drawBehind`. Attached from a started lifecycle |
-| `ui/pages/MiniPlayer.kt`, `NowPlayingSheet.kt`, `ui/queue/PlayerBits.kt` | `TransportBar.swift`: the mini player above the tab bar and the full-screen now-playing dialog. Seek holds through `PlayerModel` (`beginScrub`, `seek`); the format badge names the source and the route's verdict from `KoanProcess.bitPerfect` |
-| `state/LyricsModel.kt`, `ui/queue/LyricsView.kt` | `LyricsPanel.swift`: cache then LRCLIB, off Main and only while the lyrics are shown; the line sung found by sleeping to the next timestamp. `engine/QueueSession.kt` holds the per-runtime levels and lyrics objects so no composable reaches the engine |
-| `theme/KoanSlider.kt` | The seek bar: flat, progress read in the draw block |
-| `ui/pages/PlayHistoryPage.kt`, `HistoryDays.kt` | `HistoryView.swift`: plays grouped by local day (`java.time`, so DST days group as the wall clock does), long-press to pick plays and forget them, the filter, clear with a confirmation |
-| `ui/pages/DownloadsPage.kt`, `TransferMeter.kt`, `TransferText.kt` | `DownloadsView.swift` and `TransferMeter.swift`: transfers keyed by track, the running tasks above them. `mirror.figures` is collected only by a transfer's bar (an `Animatable` read in the draw phase, so no recomposition) and its two text lines (strings, distinct until changed); nothing that holds the list collects it |
-| `ui/pages/AlbumPage.kt`, `ui/pages/ArtistPage.kt` | A record (disc headings, tap to play from a track, long-press to pick, scrolls to the track search matched) and an artist (photo, cut-down biography, grid of records, or the tracks on others' records). The pick is a mode, as `PlayableSelection` is |
-| `ui/pages/RecordHeader.kt` | The head of a record, artist or playlist: the cover as wide as the grid's first column, text from the second, actions wrapping below |
-| `ui/pages/RecordSupport.kt`, `RecordActions.kt`, `TrackRows.kt` | What the two pages decide with no Compose (disc lines, highlight index, availability, `Pick`, bio and artist states, grid geometry); their verbs (ids resolved off the main thread, then the Queue tab once the engine has the new queue); the track row, selection bar and messages |
-| `state/SearchModel.kt` | `SearchModel.swift`: the query, debounced and generation-guarded so a slow answer to an old query never lands over a newer one; the results are the search shelf's (`shelfSummary(Search)`), with the listings' totals. Also plays or queues a pick and plays a shelf from a track. Leaves out the Mac's completion tokens: the field is on the page |
-| `state/PlayableSelection.kt` | `PlayableSelection.swift`: a pick across artists, records and tracks, held in tick order and keyed by kind and id; `PlayableResolver` turns it into track ids on the engine's dispatcher. Touch has no shift-range: a long press starts picking, a tap ticks |
-| `state/ShelfSupport.kt` | `ShelfTotals` (a heading's count and the page's counts line, from the shelf's own totals), and the grid's column and row cutting |
-| `ui/pages/ShelfSections.kt`, `ShelfPage.kt` | `MixedCollection.swift` and `ShelfView.swift`: artists as pills, records as tiles (a row of them one lazy item) and tracks as rows in one `LazyColumn`; headings open `library.browse(list, shelf)`. `FavouritesPage`, `RecentlyPlayedPage`, `OnDevicePage` are one call each; `SearchPage` adds the field |
-| `ui/pages/PlaylistsPage.kt`, `PlaylistPage.kt`, `ui/playlists/` | `PlaylistsList.swift` and `PlaylistView.swift`: the playlists with a 2 by 2 mosaic each and drag reorder; one playlist laid out like the queue (grouped by contiguous run or flat, selection, drag reorder). `PlaylistLayout` is the pure part (rows, selection to positions, a drag to the order sent); read-only playlists get no edit affordances. `PlaylistDialogs.kt` hosts the new-playlist request (`PlaylistsModel.naming`), rename and delete |
+| `KoanApp.kt` | The `Application`: points the core's config directory at `filesDir`, hands the core the app's `Context`, opens the one engine, builds Coil's loader |
+| `engine/EngineMirror.kt` | The engine's state slices as `StateFlow`s, read by one loop off the main thread; queue patches applied to their base. `PlayerModel.kt` sends the commands |
+| `playback/KoanPlayer.kt` | The engine as a Media3 `SimpleBasePlayer`: reports queue and playhead, forwards the session's commands. Nothing plays through Media3 |
+| `playback/PlaybackService.kt` | `MediaSessionService`: background playback and the notification, audio focus, pause on becoming noisy, output rebuilt on a route change |
+| `playback/BitPerfect.kt` | `BitPerfectHost`: a USB DAC's bit-perfect mixer attributes for the engine to choose from, held and released through `AudioManager`; the person's on/off preference |
+| `art/Art.kt` | Covers for Coil, fetched from the engine, bytes kept on disk, dropped on `art_evictions` |
+| `ui/AppShell.kt` | Sign-in, then four tabs (Queue, Library, Search, Settings) on Navigation 3, each with its own back stack; the mini player; Now Playing over the tabs |
+| `ui/<feature>/` | One package per area, each registering its pages through an `…Entries()` function. See `apps/android/README.md` |
 
 ### koan-server (`crates/koan-server/src/`)
 
@@ -393,7 +363,7 @@ The Kotlin counterparts of the Swift modules above, with the Swift doc comments 
 
 - **TUI→Player communication:** always via `PlayerCommand` through the crossbeam channel. Never reach into player internals from the TUI thread.
 - **Player→TUI communication:** via `SharedPlayerState` (atomics + RwLock). The player thread sleeps until a command or a known event — the playhead reaching a queued track, a fade reaching silence — and `position_ms()` reads the playhead live. The TUI redraws on its own tick.
-- **Audio thread (CoreAudio/cpal/AAudio):** atomics and rtrb only. No allocations, no locks, no channels.
+- **Audio thread (CoreAudio/cpal):** atomics and rtrb only. No allocations, no locks, no channels.
 - **Decode thread:** owns the Symphonia decoder. Communicates via rtrb producer + `PlaybackTimeline` (RwLock for boundaries, atomics for counters).
 - **Background work** (downloads, lyrics fetch, organize): spawn named threads, communicate results via crossbeam one-shot channels or `Arc<Mutex<Option<T>>>` polling.
 - **Parallel iteration** (scan, remote sync): rayon. Don't hand-roll thread pools.
@@ -406,7 +376,6 @@ The Kotlin counterparts of the Swift modules above, with the Swift doc comments 
 | `rtrb` | Lock-free SPSC ring buffer for audio — the only bridge between decode and audio output |
 | `coreaudio-sys` | Raw CoreAudio AUHAL bindings for bit-perfect output (macOS) |
 | `cpal` | Cross-platform audio I/O — ALSA/PipeWire/PulseAudio (Linux) |
-| `ndk` | AAudio bindings for the Android output (Android) |
 | `crossbeam-channel` | Bounded MPSC with timeout recv — command channel + one-shots |
 | `parking_lot` | Faster RwLock/Mutex, no poisoning |
 | `rusqlite` (bundled) | SQLite with FTS5 for full-text search |

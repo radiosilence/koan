@@ -164,6 +164,9 @@ pub struct PlaybackTimeline {
     /// of the stream. Set, it is the playhead in place of `samples_played`:
     /// what has been encoded runs seconds ahead of what is heard.
     clock: parking_lot::Mutex<Option<RendererClock>>,
+    /// The engine's reading of `samples_played` between its callbacks, where
+    /// it gives one. See `AudioEngineHandle::presentation`.
+    presentation: parking_lot::Mutex<Option<super::backend::Presentation>>,
 }
 
 impl std::fmt::Debug for PlaybackTimeline {
@@ -182,13 +185,18 @@ impl PlaybackTimeline {
             samples_played: Arc::new(AtomicU64::new(0)),
             queued: parking_lot::Mutex::new(None),
             clock: parking_lot::Mutex::new(None),
+            presentation: parking_lot::Mutex::new(None),
         })
     }
 
     /// Samples played: the engine's count, or the renderer's clock.
     fn played(&self, bounds: &[TrackBoundary]) -> u64 {
         let Some(clock) = *self.clock.lock() else {
-            return self.samples_played.load(Ordering::Acquire);
+            let played = self.samples_played.load(Ordering::Acquire);
+            return match &*self.presentation.lock() {
+                Some(presented) => presented().min(played),
+                None => played,
+            };
         };
         let Some(first) = bounds.first() else {
             return 0;
@@ -310,6 +318,13 @@ impl PlaybackTimeline {
         self.samples_written.store(0, Ordering::Relaxed);
         self.samples_played.store(0, Ordering::Relaxed);
         *self.clock.lock() = None;
+        *self.presentation.lock() = None;
+    }
+
+    /// Read the playhead through `presentation` while the engine that gave it
+    /// plays; `None` when it stops.
+    pub fn set_presentation(&self, presentation: Option<super::backend::Presentation>) {
+        *self.presentation.lock() = presentation;
     }
 
     /// Get a clone of the samples_played Arc for the audio engine.
@@ -536,6 +551,9 @@ pub struct Processing {
     pub pre_amp_db: f64,
     /// The output device's DSP profile. `None` leaves the samples untouched.
     pub dsp: Option<Arc<Setup>>,
+    /// The most integer bits the output keeps, set once it is open; 0 for no
+    /// limit. A deeper track ends the gapless run, as a rate change does.
+    pub depth_limit: Arc<std::sync::atomic::AtomicU16>,
 }
 
 impl Default for Processing {
@@ -544,6 +562,7 @@ impl Default for Processing {
             rg_mode: ReplayGainMode::Off,
             pre_amp_db: 0.0,
             dsp: None,
+            depth_limit: Arc::default(),
         }
     }
 }
@@ -921,6 +940,15 @@ fn decode_single(
             expected.1,
             out_rate,
             channels
+        );
+        return Ok(Decoded::FormatMismatch);
+    }
+    let limit = processing.depth_limit.load(Ordering::Relaxed);
+    if expected.is_some() && limit > 0 && info.bit_depth.unwrap_or(24) > limit {
+        log::info!(
+            "bit depth change at {}: {} bits through an output of {limit}, restarting audio engine",
+            path.display(),
+            info.bit_depth.unwrap_or(24)
         );
         return Ok(Decoded::FormatMismatch);
     }
@@ -1489,6 +1517,24 @@ mod tests {
     }
 
     #[test]
+    fn an_engine_presentation_reads_the_playhead_between_callbacks() {
+        let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
+        tl.push_boundary(make_boundary(QueueItemId::new(), 0, 0, 2, 44100));
+        tl.add_written(176_400);
+        timeline.samples_played.store(88_200, Ordering::Relaxed);
+        timeline.set_presentation(Some(Arc::new(|| 66_150)));
+        assert_eq!(timeline.playhead().unwrap().position_ms, 750);
+
+        // Never ahead of what the engine has taken from the ring.
+        timeline.set_presentation(Some(Arc::new(|| 1_000_000)));
+        assert_eq!(timeline.playhead().unwrap().position_ms, 1000);
+
+        timeline.set_presentation(None);
+        assert_eq!(timeline.playhead().unwrap().position_ms, 1000);
+    }
+
+    #[test]
     fn test_timeline_reset() {
         // After reset(), current_playback() returns None and all counters are cleared.
         let timeline = PlaybackTimeline::new();
@@ -1741,6 +1787,32 @@ mod tests {
             "a 48kHz track must not join a 44.1kHz ring buffer"
         );
         assert_eq!(bounds[0].info.sample_rate, 44100);
+    }
+
+    #[test]
+    fn a_track_deeper_than_the_output_ends_the_gapless_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.wav");
+        let b = dir.path().join("b.wav");
+        crate::test_utils::generate_wav(&a, 44100, 2, 0.1, 16);
+        crate::test_utils::generate_wav(&b, 44100, 2, 0.1, 24);
+
+        let narrow = Processing::default();
+        narrow.depth_limit.store(16, Ordering::Relaxed);
+        let bounds = run_queue_with(&[a.clone(), b.clone()], &narrow).0;
+        assert_eq!(bounds.len(), 1, "24 bits must not join a 16-bit output");
+
+        let wide = Processing::default();
+        wide.depth_limit.store(24, Ordering::Relaxed);
+        assert_eq!(run_queue_with(&[a.clone(), b.clone()], &wide).0.len(), 2);
+
+        // A session seeded with the first track's depth: a short 16-bit track,
+        // decoded long before any output opens, does not carry 24 bits on.
+        let seeded = Processing::default();
+        seeded.depth_limit.store(16, Ordering::Relaxed);
+        let short = dir.path().join("short.wav");
+        crate::test_utils::generate_wav(&short, 44100, 2, 0.01, 16);
+        assert_eq!(run_queue_with(&[short, b], &seeded).0.len(), 1);
     }
 
     #[test]

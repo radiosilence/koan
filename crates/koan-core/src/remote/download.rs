@@ -106,6 +106,16 @@ impl DownloadError {
         }
     }
 
+    /// Why the server is out of reach, in words for the person and without
+    /// the request's URL, which carries the credentials.
+    fn unavailable_reason(&self) -> String {
+        match self {
+            DownloadError::Status { status, .. } => format!("The server answered {status}"),
+            DownloadError::Http(e) if e.is_timeout() => "The server is not answering".into(),
+            _ => "Can't reach the server".into(),
+        }
+    }
+
     /// Whether this says the server is not answering at all, rather than that
     /// this track cannot be had. Every other download would get the same
     /// answer, so it is waited out instead of counted against the track.
@@ -175,11 +185,18 @@ struct OutageState {
     failures: u32,
     /// When the next try may go. `None` while the server is up.
     retry_at: Option<Instant>,
+    /// What the last unanswered try met. `None` while the server is up.
+    reason: Option<String>,
 }
 
 impl Outage {
     pub fn is_down(&self) -> bool {
         self.state.lock().retry_at.is_some()
+    }
+
+    /// Why the server is not answering, while it is not.
+    pub fn reason(&self) -> Option<String> {
+        self.state.lock().reason.clone()
     }
 
     /// Make the next try due now, keeping the count of failures: if this one
@@ -232,15 +249,21 @@ impl Outage {
         }
     }
 
-    /// The server did not answer. Returns how long until it is tried again.
-    fn down(&self, retry_after: Option<Duration>) -> Duration {
+    /// The server did not answer, meeting `reason`. Returns how long until it
+    /// is tried again.
+    pub(crate) fn down(&self, retry_after: Option<Duration>, reason: String) -> Duration {
         let mut s = self.state.lock();
         s.failures += 1;
         let wait = outage_backoff(s.failures, retry_after);
         s.retry_at = Some(Instant::now() + wait);
+        let news = s.reason.as_ref() != Some(&reason);
+        s.reason = Some(reason);
         drop(s);
         // Those waiting for this answer take the new time from here.
         self.changed.notify_all();
+        if news {
+            crate::signal::engine_changed().bump();
+        }
         wait
     }
 
@@ -257,6 +280,7 @@ impl Outage {
         *s = OutageState::default();
         drop(s);
         self.changed.notify_all();
+        crate::signal::engine_changed().bump();
     }
 }
 
@@ -333,7 +357,7 @@ pub fn download_with_retries(
 
         if let Some(p) = &patience {
             if e.is_unavailable() {
-                let wait = p.outage.down(e.retry_after());
+                let wait = p.outage.down(e.retry_after(), e.unavailable_reason());
                 log::warn!(
                     "download of {}: server unavailable ({}), trying again in {:?}",
                     dest.display(),
@@ -828,7 +852,7 @@ mod tests {
     #[test]
     fn asking_for_music_cuts_an_outage_wait_short() {
         let outage = Outage::default();
-        outage.down(Some(Duration::from_secs(600)));
+        outage.down(Some(Duration::from_secs(600)), "refused".into());
         outage.retry_now();
         let started = Instant::now();
         outage.hold();
@@ -839,7 +863,7 @@ mod tests {
         assert!(outage.is_down(), "still down until a try succeeds");
 
         // Failing again carries the backoff on from the count it had.
-        let wait = outage.down(None);
+        let wait = outage.down(None, "refused".into());
         assert_eq!(wait, outage_backoff(2, None));
 
         // Nothing to cut short while the server is up.
@@ -991,9 +1015,28 @@ mod tests {
     }
 
     #[test]
+    fn an_unreachable_server_is_explained_without_the_credentials_in_its_url() {
+        let refused = download_client()
+            .unwrap()
+            .get("http://127.0.0.1:1/rest/download?u=koan&t=secret&s=salt")
+            .send()
+            .unwrap_err();
+        let e = DownloadError::Http(refused);
+        assert!(e.is_unavailable(), "a refused connection is an outage");
+        let reason = e.unavailable_reason();
+        assert_eq!(reason, "Can't reach the server");
+
+        let outage = Outage::default();
+        outage.down(None, reason);
+        assert_eq!(outage.reason().as_deref(), Some("Can't reach the server"));
+        outage.up();
+        assert_eq!(outage.reason(), None, "answered: nothing to explain");
+    }
+
+    #[test]
     fn hold_blocks_while_down_and_lets_go_when_the_server_answers() {
         let outage = Outage::default();
-        outage.down(Some(Duration::from_secs(60)));
+        outage.down(Some(Duration::from_secs(60)), "refused".into());
         assert!(outage.is_down());
 
         let started = Instant::now();

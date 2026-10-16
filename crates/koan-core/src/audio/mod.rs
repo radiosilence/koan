@@ -1,11 +1,10 @@
+pub mod analyzer;
 #[cfg(target_os = "android")]
 pub mod android_backend;
-// Built on every platform for its tests: what to do with a stream needs no phone.
-pub mod analyzer;
-#[cfg(any(target_os = "android", test))]
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
-pub mod android_policy;
 pub mod backend;
+// Built everywhere for its tests: the choice is plain logic.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub mod bit_perfect;
 pub mod buffer;
 #[cfg(target_os = "macos")]
 pub mod coreaudio_backend;
@@ -42,13 +41,13 @@ pub fn platform_backend() -> Box<dyn AudioBackend> {
     {
         Box::new(cpal_backend::CpalBackend::new())
     }
+    #[cfg(target_os = "android")]
+    {
+        Box::new(android_backend::AndroidAudioBackend::default())
+    }
     #[cfg(any(target_os = "ios", target_os = "tvos"))]
     {
         Box::new(ios_backend::IosAudioBackend)
-    }
-    #[cfg(target_os = "android")]
-    {
-        Box::new(android_backend::AndroidAudioBackend)
     }
 }
 
@@ -72,13 +71,10 @@ pub(crate) fn release_session() {
 }
 
 /// The platform's audio route changed: on iOS and tvOS, ask the new one for
-/// the output's rate and report what it runs at; on Android, report what the
-/// stream's route runs at now.
+/// the output's rate and report what it runs at.
 pub(crate) fn follow_route() {
     #[cfg(any(target_os = "ios", target_os = "tvos"))]
     ios_backend::follow_route();
-    #[cfg(target_os = "android")]
-    android_backend::follow_route();
 }
 
 /// Cross-platform facade: list output devices via the platform backend.

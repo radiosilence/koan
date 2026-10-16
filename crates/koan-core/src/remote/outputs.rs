@@ -151,7 +151,7 @@ pub fn refresh_for_controller() {
         .spawn(|| {
             loop {
                 refresh_devices();
-                #[cfg(not(any(target_os = "ios", target_os = "tvos", target_os = "android")))]
+                #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
                 crate::upnp::discovery::search_if_stale();
                 if !REFRESH.lock().done() {
                     break;

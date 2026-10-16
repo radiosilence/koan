@@ -370,7 +370,7 @@ final class PlayerModel {
                 do {
                     _ = try await engine.replaceQueue(trackIds: ids, startAt: 0, shuffled: shuffled)
                 } catch {
-                    self.lastError = String(describing: error)
+                    self.lastError = SettingsModel.describe(error)
                 }
             }
             self.resolving = nil
@@ -638,7 +638,11 @@ final class PlayerModel {
         guard let notice else { return }
         lastNotice = notice.queued
             ? "Waiting for \(notice.device) to wake"
-            : "Couldn't reach \(notice.device): \(notice.detail)"
+            : notice.refused
+            ? "\(notice.device) turned it down: \(notice.detail)"
+            : notice.unreached
+            ? notice.detail
+            : "\(notice.device) couldn't do it: \(notice.detail)"
     }
 
     /// Whether `destination` (this device for `nil`) can take the music the
@@ -827,7 +831,7 @@ final class PlayerModel {
             do {
                 try await body()
             } catch {
-                lastError = String(describing: error)
+                lastError = SettingsModel.describe(error)
             }
         }
     }
@@ -847,7 +851,7 @@ final class PlayerModel {
             do {
                 try await body(engine)
             } catch {
-                lastError = String(describing: error)
+                lastError = SettingsModel.describe(error)
             }
             if let job { activity?.end(job) }
             pendingMutations -= 1

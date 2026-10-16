@@ -1,1 +1,0 @@
-- **Album and artist pages on Android.** A record with disc headings, tap to play from a track, long-press to pick, and a scroll to the track a search matched; an artist with a photo, a biography cut to a few lines, a grid of their records, or the tracks they are credited on.

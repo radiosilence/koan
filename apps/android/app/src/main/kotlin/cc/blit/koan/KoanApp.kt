@@ -1,43 +1,89 @@
 package cc.blit.koan
 
-import android.app.ActivityManager
 import android.app.Application
-import android.os.StrictMode
-import cc.blit.koan.art.ArtImageLoader
+import android.content.Context
+import android.os.Build
+import android.provider.Settings
+import cc.blit.koan.art.ArtFetcher
+import cc.blit.koan.art.ArtKeyer
+import cc.blit.koan.art.followArtEvictions
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
+import coil3.disk.DiskCache
+import okio.Path.Companion.toOkioPath
+import cc.blit.koan.engine.EngineMirror
+import cc.blit.koan.engine.PlayerModel
+import cc.blit.koan.ffi.setConfigDir
+import cc.blit.koan.ui.ActivityModel
+import cc.blit.koan.ui.theme.GraphicsSetting
+import cc.blit.koan.net.NearbyNsd
+import cc.blit.koan.net.NetworkWatch
+import cc.blit.koan.net.WifiMulticast
+import cc.blit.koan.playback.AudioRoute
+import cc.blit.koan.playback.BitPerfectHost
 import java.io.File
 
 class KoanApp : Application(), SingletonImageLoader.Factory {
-    // Resolved before StrictMode is on: asking for a directory is disk access,
-    // and the image loader is built on Main by the first sleeve that is drawn.
-    private lateinit var artDirectory: File
-    private var memoryClass = 0
+    lateinit var mirror: EngineMirror
+    lateinit var nearby: NearbyNsd
+        private set
+    lateinit var player: PlayerModel
+        private set
+
+    /** Everything slow happening now, for the card over every page. */
+    val activity = ActivityModel()
+
+    /** How much the app draws, kept on this device. */
+    val graphics by lazy { GraphicsSetting(this) }
 
     override fun onCreate() {
         super.onCreate()
-        artDirectory = ArtImageLoader.directory(cacheDir)
-        memoryClass = getSystemService(ActivityManager::class.java).memoryClass
-        if (BuildConfig.STRICT_MODE) strictMode()
+        System.loadLibrary("koan_ffi")
+        attachContext(this)
+        // Configuration, the library database and downloads. Excluded from
+        // backup in the manifest: the downloads are lossless files, and the
+        // rest is rebuilt by signing in.
+        setConfigDir(File(filesDir, "koan").path)
+        val name = Settings.Global.getString(contentResolver, Settings.Global.DEVICE_NAME) ?: Build.MODEL
+        mirror = EngineMirror(name)
+        player = PlayerModel(mirror)
+        val output = BitPerfectHost(this)
+        // The host first: a restored session that was playing resumes, and
+        // opens its output through it.
+        nearby = NearbyNsd(this, mirror)
+        val multicast = WifiMulticast(this)
+        NetworkWatch(this, mirror)
+        AudioRoute(this, mirror)
+        mirror.launch {
+            setNearbyHost(nearby)
+            setMulticastHost(multicast)
+            setOutputHost(output)
+            player.followSession()
+        }
     }
 
-    /** Artwork: the fetcher for the engine's cover bytes, a memory cache sized from the heap budget, a disk cache. */
+    /** Coil, with covers fetched from the engine and their bytes kept in the app's cache directory. */
     override fun newImageLoader(context: PlatformContext): ImageLoader {
-        return ArtImageLoader.build(this, memoryClass, artDirectory)
+        val loader = ImageLoader.Builder(context)
+            .components {
+                add(ArtKeyer())
+                add(ArtFetcher.Factory(mirror))
+            }
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve("art").toOkioPath())
+                    .maxSizeBytes(256L * 1024 * 1024)
+                    .build()
+            }
+            .build()
+        followArtEvictions(mirror, loader)
+        return loader
     }
 
-    /**
-     * Debug builds die on the first thing that blocks the main thread: disk,
-     * network, a slow call. That is the point of it, and it is the issue's rule:
-     * nothing on Main waits on the engine, a file or the network. VM
-     * violations are logged, not fatal, because a leak in a library should not
-     * stop a build from running.
-     */
-    private fun strictMode() {
-        StrictMode.setThreadPolicy(
-            StrictMode.ThreadPolicy.Builder().detectAll().penaltyLog().penaltyDeath().build(),
-        )
-        StrictMode.setVmPolicy(StrictMode.VmPolicy.Builder().detectAll().penaltyLog().build())
+    private companion object {
+        /** The app's context, for the Android APIs the core reaches over JNI. */
+        @JvmStatic
+        external fun attachContext(context: Context)
     }
 }
