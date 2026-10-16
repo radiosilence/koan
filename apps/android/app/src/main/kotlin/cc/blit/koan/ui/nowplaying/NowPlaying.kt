@@ -75,6 +75,7 @@ import cc.blit.koan.ui.library.PlayableMenu
 import cc.blit.koan.ui.library.TrackHeart
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.settings.OutputButton
+import cc.blit.koan.ui.settings.outputName
 import cc.blit.koan.ui.settings.PlayOnButton
 import cc.blit.koan.ui.theme.KoanBadge
 import cc.blit.koan.ui.theme.KoanButton
@@ -377,30 +378,49 @@ internal fun nextRepeat(mode: RepeatMode) = when (mode) {
     RepeatMode.ONE -> RepeatMode.OFF
 }
 
-/** The lyrics, the format and the sleep timer: what is switched on for listening, and what the output is fed. */
+/**
+ * The lyrics, the format and the sleep timer: what is switched on for
+ * listening, and what the output is fed. Under them, where the music plays
+ * and what through, as iOS's row of pills: each its icon and name as one
+ * button, centred, a long name cut short rather than pushed into its
+ * neighbour.
+ */
 @Composable
 private fun Toggles(now: NowPlaying?, lyrics: Boolean, toggleLyrics: () -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        GlyphButton(
-            KoanIcons.lyrics,
-            if (lyrics) "Show artwork" else "Show lyrics",
-            toggleLyrics,
-            tone = if (lyrics) KoanTone.Accent else KoanTone.Muted,
-        )
-        Spacer(Modifier.weight(1f))
-        now?.format?.let { format ->
-            // In the accent while the device gets the samples untouched.
-            val perfect = bitPerfect(format)
-            KoanBadge(
-                quality(format),
-                Modifier.semantics { if (perfect) stateDescription = "Bit-perfect" },
-                accent = perfect,
+    val mirror = koanApp().mirror
+    val controlling = mirror.devices.collectAsStateWithLifecycle().value.target != null
+    val named = outputName(mirror.outputs.collectAsStateWithLifecycle().value) != null
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(KoanSpace.xs)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            GlyphButton(
+                KoanIcons.lyrics,
+                if (lyrics) "Show artwork" else "Show lyrics",
+                toggleLyrics,
+                tone = if (lyrics) KoanTone.Accent else KoanTone.Muted,
             )
+            Spacer(Modifier.weight(1f))
+            now?.format?.let { format ->
+                // In the accent while the device gets the samples untouched.
+                val perfect = bitPerfect(format)
+                KoanBadge(
+                    quality(format),
+                    Modifier.semantics { if (perfect) stateDescription = "Bit-perfect" },
+                    accent = perfect,
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            SleepButton(now?.sleep, now?.sleepFading == true)
         }
-        Spacer(Modifier.weight(1f))
-        PlayOnButton()
-        OutputButton()
-        SleepButton(now?.sleep, now?.sleepFading == true)
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(KoanSpace.l, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // Only a named button shares the room, so a bare glyph never
+            // takes a share a name could use.
+            PlayOnButton(if (controlling) Modifier.weight(1f, fill = false) else Modifier)
+            OutputButton(if (named) Modifier.weight(1f, fill = false) else Modifier)
+        }
     }
 }
 
