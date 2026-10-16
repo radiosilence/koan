@@ -21,7 +21,7 @@ jobs:
           BRANCH: ${{ github.event.pull_request.head.ref }}
           SELF: ${{ github.run_id }}
         run: |
-          for status in queued in_progress waiting pending; do
+          for status in requested queued pending waiting in_progress; do
             gh run list --repo "$REPO" --branch "$BRANCH" --event pull_request --status "$status" \
               --json databaseId --jq '.[].databaseId'
           done | sort -u | while read -r id; do

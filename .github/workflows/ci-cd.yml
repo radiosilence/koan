@@ -33,6 +33,9 @@ jobs:
     name: Changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       code: ${{ steps.filter.outputs.code }}
       docker: ${{ steps.filter.outputs.docker }}
@@ -47,6 +50,8 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           HEAD_REF: ${{ github.head_ref }}
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
         # Only a change to something that feeds a build is worth two operating
         # systems and three toolchains. Prose, plans and the licence are not.
         #
@@ -59,7 +64,18 @@ jobs:
           package=true
           macos=true
           android=true
+          # A pull request merged or closed as its run was created: the
+          # cancelling workflow can look before this run is listed, and the
+          # run would otherwise hold runners for a change that is already in.
+          # Unanswered, it counts as open.
+          state=OPEN
           if [ "$EVENT" = "pull_request" ]; then
+            state=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json state --jq .state 2>/dev/null || echo OPEN)
+          fi
+          if [ "$state" != "OPEN" ]; then
+            echo "pull request #$PR is no longer open -- skipping everything"
+            code=false docker=false package=false macos=false android=false
+          elif [ "$EVENT" = "pull_request" ]; then
             # HEAD is the merge commit GitHub built for this PR and its first
             # parent is the base branch, so this is exactly the PR's diff. If it
             # cannot be worked out, code stays true and everything runs.
@@ -148,12 +164,12 @@ jobs:
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # No Rust cache: formatting compiles nothing, and the repository's
+      # cache space is better spent on the jobs that do.
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          components: rustfmt
       - run: cargo fmt --all -- --check
 
   # CHANGELOG.md is generated from changelog.d/ (scripts/changelog.py). A pull
@@ -571,8 +587,11 @@ jobs:
           platforms: linux/amd64
           push: ${{ github.ref == 'refs/heads/main' }}
           tags: ${{ steps.tags.outputs.tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # The layer cache lives beside the image in GHCR rather than in the
+          # repository's Actions cache, whose 10 GB it otherwise fills, evicting
+          # the Rust caches. Written from main only; anything else reads it.
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
+          cache-to: ${{ github.ref == 'refs/heads/main' && format('type=registry,ref={0}:buildcache,mode=max', env.IMAGE) || '' }}
 
   container-release:
     name: Container image (release tags)
@@ -623,6 +642,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      actions: write
     outputs:
       should_release: ${{ steps.check.outputs.should_release }}
       version: ${{ steps.check.outputs.version }}
@@ -672,6 +694,25 @@ jobs:
             echo "::error::deploy/pulumi out of sync with ${CURRENT_VERSION}: package.json $PKG_VERSION, versions.ts $PKG_APP_VERSION"
             exit 1
           fi
+      # GitHub has no priority among its runners, and the account's few macOS
+      # ones are what a release waits on. A release cancels this repository's
+      # pull request runs, which are re-run from their page or by the next
+      # push, and main's earlier non-release runs, which a newer one supersedes.
+      - name: Make room for the release
+        if: steps.check.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SELF: ${{ github.run_id }}
+        run: |
+          for status in requested queued pending waiting in_progress; do
+            gh run list --repo "$GITHUB_REPOSITORY" --workflow ci-cd.yml --status "$status" --limit 100 \
+              --json databaseId,event,headBranch,displayTitle \
+              --jq '.[] | select(.event == "pull_request" or (.event == "push" and .headBranch == "main" and (.displayTitle | startswith("release: ") | not))) | .databaseId'
+          done | sort -u | while read -r id; do
+            [ "$id" = "$SELF" ] && continue
+            echo "cancelling run $id"
+            gh run cancel "$id" --repo "$GITHUB_REPOSITORY" || true
+          done
 
   create-release:
     name: Release (${{ matrix.binary_name }})
