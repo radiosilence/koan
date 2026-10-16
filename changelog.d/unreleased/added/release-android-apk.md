@@ -1,0 +1,1 @@
+- **Releases carry the Android APK.** Each GitHub release now has `koan-android-arm64.apk` beside the macOS and Linux downloads, so the app can be installed without finding a CI run.

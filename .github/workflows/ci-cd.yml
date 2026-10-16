@@ -809,7 +809,7 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [fmt, css, clippy, test, build, msrv, audit, macos-app, create-release, create-macos-app, testflight, container-release, check-version, publish-crate, publish-package]
+    needs: [fmt, css, clippy, test, build, msrv, audit, macos-app, android-app, create-release, create-macos-app, testflight, container-release, check-version, publish-crate, publish-package]
     # The publishes having run, not merely not failed: they are skipped when
     # anything before them failed, and a skipped job is not a failure.
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.create-release.result == 'success' && needs.publish-crate.result == 'success' && needs.publish-package.result == 'success' && needs.check-version.outputs.should_release == 'true' }}
@@ -833,6 +833,16 @@ jobs:
             echo "::error::RELEASE_TOKEN is not set; the release cannot be published"
             exit 1
           fi
+      # The Android job names its APK by commit, as a pull request's is found;
+      # a release names it as the other platforms' downloads are named.
+      - name: Name the APK
+        run: |
+          apk=$(find artifacts -name 'koan-android-*.apk' | head -1)
+          if [ -z "$apk" ]; then
+            echo "::error::the Android job left no APK to release"
+            exit 1
+          fi
+          mv "$apk" artifacts/koan-android-arm64.apk
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         # The action creates the tag through the API, on the commit that was
         # built: GitHub refuses a git push of it from the workflow token for any
@@ -854,10 +864,13 @@ jobs:
             brew install --cask radiosilence/koan/koan-app # the macOS app
             ```
 
+            Android: install `koan-android-arm64.apk` below.
+
             ---
           files: |
             artifacts/**/*.tar.gz
             artifacts/**/*.dmg
+            artifacts/koan-android-arm64.apk
 
   publish-crate:
     name: Publish to crates.io

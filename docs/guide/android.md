@@ -15,18 +15,20 @@ the playing record's accent in place of the wallpaper's.
 
 ## Installing the APK
 
-Until kōan is on Google Play, the app is installed from an APK. Each CI run on
-the main branch or on a pull request builds one, signed with a development
-key, and attaches it to the run as `koan-android-<commit>`. To install it:
+Until kōan is on Google Play, the app is installed from an APK. Each release
+on GitHub carries one, `koan-android-arm64.apk`, signed with a development key.
+Each CI run on the main branch or on a pull request builds one too, attached to
+the run as `koan-android-<commit>`, for trying a change before it is released.
+To install it:
 
-1. Open the run under the repository's Actions tab and download the
-   `koan-android-<commit>` artifact. GitHub delivers it zipped; unzip it to get
-   the `.apk`.
+1. Download `koan-android-arm64.apk` from the latest release, or open a run
+   under the repository's Actions tab and download its `koan-android-<commit>`
+   artifact, which GitHub delivers zipped; unzip it to get the `.apk`.
 2. Install it with either of these:
    - **From the phone:** open the file on the phone and allow your browser or
      file manager to install unknown apps when Android asks.
    - **From a computer:** with USB debugging on, run
-     `adb install koan-android-<commit>.apk`.
+     `adb install koan-android-arm64.apk`.
 3. Open kōan and sign in with your server's address, user and password.
 
 Updating is the same: install the newer APK over the old one. Each build is
