@@ -402,7 +402,7 @@ fb2k-compatible template engine, re-exported from [sift](https://github.com/radi
 | `signal.rs` | `Wake` — a generation counter a reader can wait on, and the process-wide one every front end waits on. What lets koan hold state in versions and atomics without anyone having to look again |
 | `organize.rs` | File renaming using format strings. Preview/execute/undo, all planned by one `plan()` so a preview and the execute that follows it agree. Scoped by track id or by path. Refuses to overwrite; database rows (track paths, scan cache, favourites, playback state) are rewritten in the same transaction as the move. Playlists need no rewriting — they point at library rows, not at paths. Every move is logged for undo. Moves ancillary files (cover art, cue sheets). |
 | `lyrics.rs` | LRCLIB lyrics fetching and parsing (synced LRC + plain text). Cached per-track in SQLite. |
-| `scrobbling.rs` | Forwarding plays to ListenBrainz: one sleeping thread, woken when a play is queued, sending the durable `scrobble_outbox` in batches and backing off only while the service is unreachable. Now-playing notices are best effort |
+| `scrobbling.rs` | Forwarding plays to ListenBrainz and Last.fm (`scrobbling/lastfm.rs` holds Last.fm's signed calls, its sign-in round trip and the server's key from `[lastfm]`): one sleeping thread, woken when a play is queued, sending the durable `scrobble_outbox` in batches and backing off only while the service is unreachable. Now-playing notices are best effort |
 
 ## koan-cli modules
 

@@ -2640,3 +2640,139 @@ async fn setup_turned_off_leaves_an_empty_server_to_the_cli() {
     assert_eq!((r.status, r.location()), (StatusCode::SEE_OTHER, "/login"));
     assert!(r.cookies().is_empty());
 }
+
+/// Last.fm, as far as turning a token into a session goes: every
+/// `auth.getSession` is answered with the session of `fmuser`.
+fn fake_lastfm() {
+    use std::io::{BufRead, BufReader, Read, Write};
+    static STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    STARTED.get_or_init(|| {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        koan_core::scrobbling::lastfm::use_api(&format!(
+            "http://{}/2.0/",
+            listener.local_addr().unwrap()
+        ));
+        koan_core::scrobbling::lastfm::use_credentials("test-key", "test-secret");
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut length = 0;
+                let mut line = String::new();
+                while reader.read_line(&mut line).is_ok_and(|n| n > 0) && line != "\r\n" {
+                    if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = v.trim().parse().unwrap_or(0);
+                    }
+                    line.clear();
+                }
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).unwrap();
+                let body = String::from_utf8(body).unwrap();
+                let answer = if body.contains("token=good-token") {
+                    r#"{"session":{"name":"fmuser","key":"session-key-9","subscriber":0}}"#
+                } else {
+                    r#"{"error":4,"message":"Unauthorized Token"}"#
+                };
+                let _ = write!(
+                    &stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{answer}",
+                    answer.len()
+                );
+            }
+        });
+    });
+}
+
+#[tokio::test]
+async fn lastfm_connects_through_last_fm_and_disconnects_without_showing_the_key() {
+    fake_lastfm();
+    let f = setup_at(true, Some("https://koan.example.com/"));
+    let db = Database::open(f.state.pool.path()).unwrap();
+    let alice: i64 = db
+        .conn
+        .query_row("SELECT id FROM users WHERE username = 'alice'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    let access =
+        auth::mint_access_token(&f.state.private_pem, alice, "alice", Role::User, 900).unwrap();
+    let page = |uri: &str| {
+        get(uri)
+            .header(header::COOKIE, format!("koan_access={access}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    let r = send(&f.app, page("/scrobbling")).await;
+    assert!(r.body.contains("Connect Last.fm"), "{}", r.body);
+
+    // Sent to Last.fm, to come back to this server's own address.
+    let r = send(&f.app, page("/scrobbling/lastfm/connect")).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    let to = r.headers[header::LOCATION].to_str().unwrap().to_owned();
+    let (host, query_text) = to.split_once('?').unwrap();
+    assert_eq!(host, "https://www.last.fm/api/auth/");
+    let query: std::collections::HashMap<_, _> = form_urlencoded::parse(query_text.as_bytes())
+        .into_owned()
+        .collect();
+    assert_eq!(query["api_key"], "test-key");
+    assert!(!to.contains("test-secret"));
+    let back = query["cb"]
+        .strip_prefix("https://koan.example.com")
+        .unwrap();
+    assert!(back.starts_with("/scrobbling/lastfm/return/"), "{back}");
+
+    // A token Last.fm does not know connects nothing.
+    let r = send(&f.app, page(&format!("{back}?token=bad"))).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(
+        r.body.contains("did not accept") || r.body.contains("expired"),
+        "{}",
+        r.body
+    );
+    assert!(
+        queries::scrobbling::service(&db.conn, alice, queries::scrobbling::LASTFM)
+            .unwrap()
+            .is_none()
+    );
+
+    // The state is spent: start again, and come back with the right token.
+    let r = send(&f.app, page("/scrobbling/lastfm/connect")).await;
+    let to = r.headers[header::LOCATION].to_str().unwrap().to_owned();
+    let cb = form_urlencoded::parse(to.split_once('?').unwrap().1.as_bytes())
+        .find(|(k, _)| k == "cb")
+        .unwrap()
+        .1
+        .into_owned();
+    let back = cb
+        .strip_prefix("https://koan.example.com")
+        .unwrap()
+        .to_owned();
+    let r = send(&f.app, page(&format!("{back}?token=good-token"))).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let r = send(&f.app, page("/scrobbling")).await;
+    assert!(r.body.contains("fmuser"), "{}", r.body);
+    assert!(!r.body.contains("session-key-9"));
+    let kept = queries::scrobbling::service(&db.conn, alice, queries::scrobbling::LASTFM)
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.account_name, "fmuser");
+
+    // The page cannot be made to connect it twice with the same return.
+    let r = send(&f.app, page(&format!("{back}?token=good-token"))).await;
+    assert!(r.body.contains("expired"), "{}", r.body);
+
+    let post = Request::post("/scrobbling/lastfm/disconnect")
+        .header(header::HOST, HOST)
+        .header(header::COOKIE, format!("koan_access={access}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("datastar-request", "true")
+        .body(Body::from("{}"))
+        .unwrap();
+    let r = send(&f.app, post).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(
+        queries::scrobbling::service(&db.conn, alice, queries::scrobbling::LASTFM)
+            .unwrap()
+            .is_none()
+    );
+}
