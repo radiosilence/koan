@@ -268,7 +268,13 @@ def render_rust(glyphs):
     ]
     for name, _, strokes, fills in glyphs:
         const = name.upper().replace("-", "_")
-        lines.append(f'pub const {const}: Glyph = Glyph {{ name: "{name}", strokes: "{strokes}", fills: "{fills}" }};')
+        lines += [
+            f"pub const {const}: Glyph = Glyph {{",
+            f'    name: "{name}",',
+            f'    strokes: "{strokes}",',
+            f'    fills: "{fills}",',
+            "};",
+        ]
     lines += ["", "/// Every glyph in the set.", "pub const ALL: &[Glyph] = &["]
     lines += [f"    {name.upper().replace('-', '_')}," for name, _, _, _ in glyphs]
     lines += ["];", ""]
