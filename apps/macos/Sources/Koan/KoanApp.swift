@@ -270,7 +270,10 @@ private struct MenuBarLabel: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        KoanIcon(Icon.track)
+        // The ensō, theme or no theme: this is kōan's mark among other apps',
+        // not a control in its own look. A template, so the menu bar tints it.
+        Image(nsImage: KoanGlyph.all["enso"]!.image(pointSize: 15)) // theme: raw
+            .accessibilityLabel("kōan")
             .onChange(of: residency?.wantsWindow ?? false, initial: true) { _, wants in
                 if wants { residency?.showWindow(with: openWindow) }
             }

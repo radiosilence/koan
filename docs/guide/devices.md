@@ -161,8 +161,8 @@ if it can be woken.
 A Mac can be controlled from your other devices only while kōan is running on
 it. With **Keep running in the menu bar** (Settings ▸ Devices ▸ In the
 background), closing the window leaves kōan running: it stays signed in to the
-server and listening on the network, leaves the Dock and ⌘-Tab, and keeps an
-item in the menu bar with what is playing, play and pause, next, **Open kōan**
+server and listening on the network, leaves the Dock and ⌘-Tab, and keeps its
+ensō in the menu bar, with what is playing, play and pause, next, **Open kōan**
 and **Quit kōan**. Opening the window puts it back in the Dock. Quitting it
 from the menu bar takes the Mac out of reach. **Open at login** has macOS open
 kōan when you log in, so the Mac is reachable again after a restart; it is
