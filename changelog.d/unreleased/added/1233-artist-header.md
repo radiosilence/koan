@@ -1,0 +1,1 @@
+- **Artist pages in the terminal UI show the artist.** A photograph and the opening of their Wikipedia article sit above the records, with play and shuffle buttons and a link to the article. The wheel and a draggable scrollbar now work on the album and artist pages and on the Artists tree.
