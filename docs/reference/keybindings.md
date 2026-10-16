@@ -156,6 +156,7 @@ Everything on both pages is also a click: the row, `▸`, `×`, `▴`, `▾`, th
 | `i` | Show what the library holds of the track |
 | `d` / `u` | Download the track to this device / remove the download |
 | `w` | Put the track in a playlist |
+| `m` | Menu of everything that can be done with the track |
 | `A` / `O` | Open the artist / the record |
 | `x`, `Delete` or `Backspace` | Forget the play |
 | `D` | Forget every play (press again to confirm) |
@@ -196,6 +197,7 @@ Click the arrows beside a value, or the value, to change it, or `run` to start a
 | `H` | Favourite the artist (on an artist's page, that artist) |
 | `i` | Show what the library holds of the track (track rows) |
 | `w` | Put the record or track in a playlist |
+| `m` | Menu of everything that can be done with the record or track |
 | `d` / `u` | Download the record or track to this device / remove the download |
 
 ### Mouse

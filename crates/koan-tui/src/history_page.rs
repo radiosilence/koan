@@ -29,6 +29,7 @@ pub enum HistoryHit {
     Forget(usize),
     Filter,
     ForgetAll,
+    Menu,
 }
 
 enum Line {
@@ -42,6 +43,7 @@ struct Geom {
     bar: Rect,
     filter: Rect,
     clear: Rect,
+    menu: Rect,
     links: Vec<(Rect, HistoryHit)>,
     total: usize,
 }
@@ -262,6 +264,7 @@ impl HistoryPage {
             KeyCode::Enter => return Some(self.play(self.cursor, PickerAction::AppendAndPlay)),
             KeyCode::Char('a') => return Some(self.play(self.cursor, PickerAction::Append)),
             KeyCode::Char('N') => return Some(self.play(self.cursor, PickerAction::PlayNext)),
+            KeyCode::Char('m') => return Some(self.menu(self.cursor)),
             KeyCode::Char('w') => {
                 return Some(
                     self.track_at(self.cursor)
@@ -313,6 +316,35 @@ impl HistoryPage {
         Some(Action::None)
     }
 
+    /// What can be done with the play at `idx`.
+    fn menu(&self, idx: usize) -> Action {
+        use PickerAction::{Append, AppendAndPlay, PlayNext};
+        let Some(t) = self.track_at(idx) else {
+            return Action::None;
+        };
+        let one = vec![t.id];
+        let mut items = vec![
+            ("Play".to_string(), Action::Play(one.clone(), AppendAndPlay)),
+            ("Add to the queue".into(), Action::Play(one.clone(), Append)),
+            ("Play next".into(), Action::Play(one.clone(), PlayNext)),
+            (
+                "Add to a playlist\u{2026}".into(),
+                Action::Choose(one.clone()),
+            ),
+            ("Favourite or unfavourite".into(), Action::Favourite(t.id)),
+        ];
+        if let Some(a) = t.album_id {
+            items.push(("Go to the record".into(), Action::OpenAlbum(a)));
+        }
+        if let Some(a) = t.artist_id {
+            items.push(("Go to the artist".into(), Action::OpenArtist(a)));
+        }
+        items.push(("Track info".into(), Action::Info(t.id)));
+        items.push(("Download".into(), Action::Download(one.clone())));
+        items.push(("Remove the download".into(), Action::RemoveDownload(one)));
+        Action::Menu(t.title.clone(), items)
+    }
+
     pub fn hit(&self, col: u16, row: u16) -> Option<HistoryHit> {
         let g = &self.geom;
         if inside(g.filter, col, row) {
@@ -320,6 +352,9 @@ impl HistoryPage {
         }
         if inside(g.clear, col, row) {
             return Some(HistoryHit::ForgetAll);
+        }
+        if inside(g.menu, col, row) {
+            return Some(HistoryHit::Menu);
         }
         if let Some((_, hit)) = g.links.iter().find(|(r, _)| inside(*r, col, row)) {
             return Some(*hit);
@@ -343,6 +378,7 @@ impl HistoryPage {
                 self.forget_all();
                 Action::None
             }
+            HistoryHit::Menu => self.menu(self.cursor),
             HistoryHit::Forget(i) => {
                 self.forget(i);
                 Action::None
@@ -427,6 +463,12 @@ impl HistoryPage {
         };
         if !self.entries.is_empty() {
             self.geom.clear = control(buf, clear_text, clear_style);
+            let menu_style = if hover == Some(HistoryHit::Menu) {
+                theme.hint_desc.add_modifier(Modifier::UNDERLINED)
+            } else {
+                theme.hint_desc
+            };
+            self.geom.menu = control(buf, " \u{22ef} actions ".into(), menu_style);
         }
         let filter_text = if self.filter_active || !self.filter.is_empty() {
             let cursor = if self.filter_active { "\u{2588}" } else { "" };
@@ -763,6 +805,23 @@ mod tests {
             p.handle_key(key('u')),
             Some(Action::RemoveDownload(vec![1]))
         );
+    }
+
+    #[test]
+    fn the_menu_acts_on_the_play_under_the_cursor() {
+        let mut p = page();
+        draw(&mut p, 100, 12);
+        let Action::Menu(title, items) = p.menu(1) else {
+            panic!("a menu");
+        };
+        assert_eq!(title, "two");
+        assert!(
+            items
+                .iter()
+                .any(|(l, a)| l == "Track info" && *a == Action::Info(2))
+        );
+        let menu = p.geom.menu;
+        assert_eq!(p.hit(menu.x, menu.y), Some(HistoryHit::Menu));
     }
 
     #[test]

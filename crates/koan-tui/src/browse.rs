@@ -92,6 +92,8 @@ pub enum Action {
     Info(i64),
     /// Choose a playlist to put these tracks in.
     Choose(Vec<i64>),
+    /// A menu of actions for what the cursor is on, with its heading.
+    Menu(String, Vec<(String, Action)>),
     /// Fetch these tracks to this device, or let the copies go.
     Download(Vec<i64>),
     RemoveDownload(Vec<i64>),
@@ -108,6 +110,7 @@ pub enum Hit {
     Sort,
     View,
     Filter,
+    Menu,
     Header(HeaderHit),
 }
 
@@ -243,6 +246,7 @@ struct Geom {
     sort: Rect,
     view: Rect,
     filter: Rect,
+    menu: Rect,
     /// The scrollbar's column, when the page overflows.
     bar: Rect,
     /// Rows in all, and the fully visible ones; the scroll runs between.
@@ -532,6 +536,80 @@ impl Browse {
         self.shown.get(self.cursor).map(|&i| self.tracks[i].id)
     }
 
+    /// What can be done with the record or track at `idx`, as a menu.
+    fn menu(&self, idx: usize) -> Action {
+        use PickerAction::{Append, AppendAndPlay, PlayNext, ReplaceQueue};
+        let ids = self.ids_at(idx);
+        let Some(&i) = self.shown.get(idx) else {
+            return Action::None;
+        };
+        if ids.is_empty() {
+            return Action::None;
+        }
+        let play = |label: &str, how| (label.to_string(), Action::Play(ids.clone(), how));
+        let mut items = Vec::new();
+        if self.tracks_in_list() {
+            let t = &self.tracks[i];
+            items.extend([
+                play("Play", AppendAndPlay),
+                play("Add to the queue", Append),
+                play("Play next", PlayNext),
+                play("Replace the queue", ReplaceQueue),
+                (
+                    "Add to a playlist\u{2026}".into(),
+                    Action::Choose(ids.clone()),
+                ),
+                ("Favourite or unfavourite".into(), Action::Favourite(t.id)),
+            ]);
+            if let Some(a) = t.album_id {
+                items.push(("Go to the record".into(), Action::OpenAlbum(a)));
+            }
+            if let Some(a) = t.artist_id {
+                items.push(("Go to the artist".into(), Action::OpenArtist(a)));
+            }
+            items.push(("Track info".into(), Action::Info(t.id)));
+            items.push(("Download".into(), Action::Download(ids.clone())));
+            items.push((
+                "Remove the download".into(),
+                Action::RemoveDownload(ids.clone()),
+            ));
+            return Action::Menu(t.title.clone(), items);
+        }
+        let a = &self.albums[i];
+        let fav = |on: bool, noun: &str| {
+            format!(
+                "{} the {noun}",
+                if on { "Unfavourite" } else { "Favourite" }
+            )
+        };
+        items.extend([
+            ("Open the record".into(), Action::OpenAlbum(a.id)),
+            play("Play", AppendAndPlay),
+            play("Add to the queue", Append),
+            play("Play next", PlayNext),
+            play("Replace the queue", ReplaceQueue),
+            (
+                "Add to a playlist\u{2026}".into(),
+                Action::Choose(ids.clone()),
+            ),
+            (
+                fav(self.fav_albums.contains(&a.id), "record"),
+                Action::ToggleAlbum(a.id),
+            ),
+            (
+                fav(self.fav_artists.contains(&a.artist_id), "artist"),
+                Action::ToggleArtist(a.artist_id),
+            ),
+            ("Go to the artist".into(), Action::OpenArtist(a.artist_id)),
+            ("Download".into(), Action::Download(ids.clone())),
+            (
+                "Remove the download".into(),
+                Action::RemoveDownload(ids.clone()),
+            ),
+        ]);
+        Action::Menu(a.title.clone(), items)
+    }
+
     /// `None` when the key is not the page's, so the app can try it as a
     /// transport key.
     pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> Option<Action> {
@@ -605,6 +683,7 @@ impl Browse {
                         .map_or(Action::None, Action::ToggleAlbum),
                 );
             }
+            KeyCode::Char('m') => return Some(self.menu(self.cursor)),
             KeyCode::Char('w') => {
                 let ids = self.ids_at(self.cursor);
                 return Some(if ids.is_empty() {
@@ -666,6 +745,9 @@ impl Browse {
         }
         if inside(g.filter) {
             return Some(Hit::Filter);
+        }
+        if inside(g.menu) {
+            return Some(Hit::Menu);
         }
         if let Some(h) = self.header.as_ref().and_then(|h| h.hit(col, row)) {
             return Some(Hit::Header(h));
@@ -735,6 +817,7 @@ impl Browse {
                 self.filter_active = true;
                 Action::None
             }
+            Hit::Menu => self.menu(self.cursor),
             Hit::Header(h) => match h {
                 HeaderHit::Play | HeaderHit::Shuffle => {
                     let ids = self.artist_ids();
@@ -904,6 +987,9 @@ impl Browse {
             },
             Hit::View,
         ));
+        if !self.shown.is_empty() {
+            controls.insert(0, (" \u{22ef} actions ".to_string(), Hit::Menu));
+        }
         if !self.filter_active && self.filter.is_empty() {
             controls.insert(0, (" / filter ".to_string(), Hit::Filter));
         }
@@ -918,6 +1004,7 @@ impl Browse {
             match kind {
                 Hit::Sort => self.geom.sort = at,
                 Hit::Filter => self.geom.filter = at,
+                Hit::Menu => self.geom.menu = at,
                 _ => self.geom.view = at,
             }
         }
@@ -1331,6 +1418,18 @@ mod tests {
         // Past the end of the text it is the tile again.
         let (x, y) = first_tile(&b, b.geom.tile_w - 1, art_h);
         assert_eq!(b.hit(x, y), Some(Hit::Item(0)));
+    }
+
+    #[test]
+    fn the_menu_lists_what_can_be_done_with_a_record() {
+        let mut b = browse(3);
+        draw(&mut b, 80, 24);
+        // Without a library to read the tracks of, the menu has nothing to
+        // play, and says nothing rather than offering what would do nothing.
+        assert_eq!(b.menu(0), Action::None);
+        let Some(Hit::Menu) = b.hit(b.geom.menu.x, b.geom.menu.y) else {
+            panic!("the actions control is a hit");
+        };
     }
 
     #[test]

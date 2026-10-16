@@ -70,6 +70,7 @@ pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
                         ("P", "play"),
                         ("a", "add"),
                         ("N", "next"),
+                        ("m", "actions"),
                         ("w", "playlist"),
                         ("d", "download"),
                         ("A", "artist"),
@@ -155,6 +156,11 @@ pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
             Mode::TrackInfo(_) | Mode::TrackDetails => vec![("esc", "close"), ("i", "close")],
             Mode::CoverArtZoom => vec![("esc", "close"), ("z", "close")],
             Mode::NamePrompt => vec![("ret", "keep"), ("esc", "cancel")],
+            Mode::ActionsMenu => vec![
+                ("\u{2191}\u{2193}", "navigate"),
+                ("ret", "do it"),
+                ("esc", "close"),
+            ],
             Mode::PlaylistChooser => vec![
                 ("\u{2191}\u{2193}", "navigate"),
                 ("ret", "add here"),

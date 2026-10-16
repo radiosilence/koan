@@ -4,6 +4,7 @@
 //! Depends on koan-core only.
 
 pub mod accent;
+pub mod actions_menu;
 pub mod album_page;
 pub mod app;
 pub mod artist_header;
