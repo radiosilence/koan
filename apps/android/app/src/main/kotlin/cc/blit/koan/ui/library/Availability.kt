@@ -99,7 +99,7 @@ fun TrackAvailability(track: Track, modifier: Modifier = Modifier) {
     val transfers = TransfersByTrack.of(mirror)
     val transfer by remember(track.id, transfers) {
         transfers.map { it[track.id] }.distinctUntilChanged()
-    }.collectAsStateWithLifecycle(transfers.value[track.id])
+    }.collectAsStateWithLifecycle(null)
     val muted = KoanTheme.color(KoanTone.Muted)
     Box(modifier.size(18.dp), contentAlignment = Alignment.Center) {
         when (availability(track.onServer, track.onDisk, transfer?.state)) {
