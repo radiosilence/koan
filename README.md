@@ -18,8 +18,6 @@ One thing I've noticed: when you mix self-hosted apps with proprietary tech, say
 
 I did use AI-assisted coding for this project. I've been building fairly high-quality software for a *loooong* time (decades) before AI existed, and I'd like to think the decisions reflect that rather than vibing slop. I probably could have written it myself, but I wanted to step back and be more of an architect, technical lead and product owner than the person typing out the code, as I'm just one person.
 
-If it gets traction I'll happily look at more platforms like Android, but I'm already out $99 for an Apple Developer account, so I'm not shelling out for an Android phone just yet.
-
 — [@radiosilence](https://github.com/radiosilence)
 
 <img alt="Favourites in the macOS app" src="site/public/screens/mac-favourites.webp" width="49%" /> <img alt="An artist page in the macOS app" src="site/public/screens/mac-artist.webp" width="49%" />
