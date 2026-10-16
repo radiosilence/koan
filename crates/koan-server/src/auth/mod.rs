@@ -70,6 +70,25 @@ pub(crate) async fn current_user(pool: &Arc<Pool>, claims: Claims) -> Option<Aut
     .flatten()
 }
 
+/// The account an API key belongs to, as it stands now. `None` for a key
+/// that is not live.
+pub(crate) async fn key_user(pool: &Arc<Pool>, key: String) -> Option<AuthUser> {
+    let pool = pool.clone();
+    tokio::task::spawn_blocking(move || {
+        let db = pool.get().ok()?;
+        let user =
+            koan_core::db::queries::api_keys::authenticate_api_key(&db.conn, &key).ok()??;
+        Some(AuthUser {
+            user_id: user.id,
+            username: user.username,
+            role: user.role,
+        })
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 /// What a socket opened with a credential is held under: its account as of
 /// `mark` (see `koan_core::auth::account_mark`), and for a token, when it
 /// lapses.

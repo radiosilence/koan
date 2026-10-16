@@ -29,7 +29,7 @@ curl -s http://localhost:4000/graphql \
   -d '{"query": "{ nowPlaying { state, track { title, artist } } }"}'
 ```
 
-The IDE is for a server on your own machine: its key grants admin without signing in. A deployed server runs without `--playground` and is explored with a GraphQL client and an access token, as above (see [Authentication](authentication.md#graphql-playground)).
+The IDE is for a server on your own machine: its key grants admin without signing in. A deployed server runs without `--playground` and is explored with a GraphQL client and an API key or access token (see [Authentication](authentication.md#graphql)).
 
 ## Authentication
 
