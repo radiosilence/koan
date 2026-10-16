@@ -166,6 +166,13 @@ pub fn run_tui(
     let mut next_frame = std::time::Instant::now();
 
     let mut app = app::App::new(state, viz_snapshot, tx.clone(), log_buffer, target_fps);
+    // Before anything reads the keyboard: the terminal answers on stdin.
+    app.art.gfx = crate::cover_art::Gfx::detect(
+        koan_core::config::Config::load()
+            .unwrap_or_default()
+            .playback
+            .art_graphics,
+    );
 
     if expects_playback {
         app.loading_message = Some("loading...".into());

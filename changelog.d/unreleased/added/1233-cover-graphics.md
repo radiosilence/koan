@@ -1,1 +1,1 @@
-- **Covers in the terminal UI are drawn as images** where the terminal supports the kitty, iTerm2 or sixel protocol, and in half blocks elsewhere. `playback.art_graphics = false`, or `I` in the TUI, keeps half blocks.
+- **Covers in the terminal UI are drawn as images** where the terminal supports the kitty or iTerm2 protocol, and in half blocks elsewhere. `playback.art_graphics = false`, or `I` in the TUI, keeps half blocks.

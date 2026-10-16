@@ -41,6 +41,13 @@ enum Drawn {
     Unsupported,
 }
 
+/// The protocols covers are drawn in. Sixel is left out: the encoder in the
+/// release of `ratatui-image` that builds on the MSRV panics at ordinary
+/// sizes, so a sixel-only terminal gets half blocks.
+fn usable(protocol: ProtocolType) -> bool {
+    matches!(protocol, ProtocolType::Kitty | ProtocolType::Iterm2)
+}
+
 /// How many drawings are kept before the lot is dropped. A screenful of
 /// tiles is well under this; scrolling a long library through it is not.
 const DRAWN_LIMIT: usize = 192;
@@ -66,11 +73,18 @@ impl Gfx {
         if !graphics {
             return Self::halfblocks();
         }
-        let picker = Picker::from_query_stdio().ok();
+        let picker = Picker::from_query_stdio();
+        match &picker {
+            Ok(p) => log::info!(
+                "cover graphics: {:?}, cells {:?}px",
+                p.protocol_type(),
+                p.font_size()
+            ),
+            Err(e) => log::warn!("cover graphics: the terminal did not answer: {e}"),
+        }
+        let picker = picker.ok();
         Self {
-            graphics: picker
-                .as_ref()
-                .is_some_and(|p| p.protocol_type() != ProtocolType::Halfblocks),
+            graphics: picker.as_ref().is_some_and(|p| usable(p.protocol_type())),
             picker,
             drawn: HashMap::new(),
         }
@@ -85,7 +99,7 @@ impl Gfx {
     pub fn available(&self) -> bool {
         self.picker
             .as_ref()
-            .is_some_and(|p| p.protocol_type() != ProtocolType::Halfblocks)
+            .is_some_and(|p| usable(p.protocol_type()))
     }
 
     /// Switches between real images and half blocks. Returns what is now in
@@ -363,5 +377,100 @@ impl Widget for CoverArt<'_> {
                     .set_style(Style::new().fg(cell.fg).bg(cell.bg));
             }
         }
+    }
+}
+
+#[cfg(test)]
+impl Gfx {
+    /// A drawer that uses `protocol`, for tests: no terminal is asked.
+    pub fn forced(protocol: ProtocolType) -> Self {
+        let mut picker = Picker::halfblocks();
+        picker.set_protocol_type(protocol);
+        Self {
+            picker: Some(picker),
+            graphics: usable(protocol),
+            drawn: HashMap::new(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn picture() -> DynamicImage {
+        DynamicImage::ImageRgb8(image::RgbImage::from_fn(96, 96, |x, y| {
+            image::Rgb([(x * 2) as u8, (y * 2) as u8, 128])
+        }))
+    }
+
+    fn draw_all(gfx: &mut Gfx) {
+        let img = picture();
+        for (w, h) in [(1u16, 1u16), (2, 1), (8, 4), (24, 12), (60, 8), (5, 30)] {
+            for center in [false, true] {
+                let area = Rect::new(2, 1, w, h);
+                let mut buf = Buffer::empty(Rect::new(0, 0, 80, 40));
+                gfx.draw(7, &img, area, &mut buf, center);
+            }
+            for visible in [0u16, 1, h / 2, h, h + 3] {
+                let area = Rect::new(2, 1, w, h);
+                let mut buf = Buffer::empty(Rect::new(0, 0, 80, 40));
+                gfx.draw_clipped(9, &img, area, visible, &mut buf);
+            }
+        }
+    }
+
+    #[test]
+    fn every_protocol_draws_at_any_size_without_panicking() {
+        for protocol in [
+            ProtocolType::Halfblocks,
+            ProtocolType::Kitty,
+            ProtocolType::Iterm2,
+        ] {
+            draw_all(&mut Gfx::forced(protocol));
+        }
+    }
+
+    #[test]
+    fn sixel_is_never_used() {
+        let gfx = Gfx::forced(ProtocolType::Sixel);
+        assert!(!gfx.graphics() && !gfx.available());
+        // And drawing through it is half blocks, at sizes that crash the
+        // sixel encoder.
+        draw_all(&mut Gfx::forced(ProtocolType::Sixel));
+    }
+
+    #[test]
+    fn a_graphics_protocol_puts_something_in_the_cells() {
+        let img = picture();
+        let area = Rect::new(0, 0, 24, 12);
+        let mut buf = Buffer::empty(area);
+        Gfx::forced(ProtocolType::Kitty).draw(1, &img, area, &mut buf, false);
+        assert!(
+            (0..area.width).any(|x| buf[(x, 0)].symbol() != " "),
+            "the first row of the image is drawn"
+        );
+    }
+
+    #[test]
+    fn graphics_can_be_switched_off_and_back_on() {
+        let mut gfx = Gfx::forced(ProtocolType::Kitty);
+        assert!(gfx.graphics() && gfx.available());
+        assert!(!gfx.set_graphics(false));
+        assert!(!gfx.graphics() && gfx.available());
+        assert!(gfx.set_graphics(true));
+        // A terminal with no protocol cannot be switched on.
+        let mut plain = Gfx::halfblocks();
+        assert!(!plain.set_graphics(true));
+    }
+
+    #[test]
+    fn a_clipped_tile_shows_only_the_rows_that_fit() {
+        let img = picture();
+        let area = Rect::new(0, 0, 20, 10);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 20, 12));
+        Gfx::forced(ProtocolType::Kitty).draw_clipped(3, &img, area, 4, &mut buf);
+        assert!((0..20).any(|x| buf[(x, 3)].symbol() != " "));
+        assert!((0..20).all(|x| buf[(x, 4)].symbol() == " "));
     }
 }

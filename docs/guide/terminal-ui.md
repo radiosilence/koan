@@ -59,7 +59,7 @@ With the mouse: click selects, a second click opens, the wheel scrolls, and the 
 
 ## Covers
 
-Covers are drawn as real images where the terminal supports the kitty, iTerm2 or sixel graphics protocol (Ghostty, kitty, WezTerm and iTerm2 do). Elsewhere, and whenever `playback.art_graphics` is off, they are drawn in half blocks: two pixels to a cell, which is blocky and has a charm of its own. `I` switches between the two for the session and saves the choice.
+Covers are drawn as real images where the terminal supports the kitty or iTerm2 graphics protocol (Ghostty, kitty, WezTerm and iTerm2 do). Sixel is not used. Elsewhere, and whenever `playback.art_graphics` is off, they are drawn in half blocks: two pixels to a cell, which is blocky and has a charm of its own. `I` switches between the two for the session and saves the choice.
 
 Graphics are detected once at startup by asking the terminal, which can add a moment on a terminal that does not answer. Setting `art_graphics = false` skips the question.
 
