@@ -29,7 +29,8 @@ See [The terminal UI](../guide/terminal-ui.md). These work from any page.
 | `[` / `]` or `Alt+Left` / `Alt+Right` | Back / forward through the pages visited |
 | `Esc` | Leave the page for the one before it |
 | `I` | Draw covers as images or in half blocks |
-| `E` | Choose the EQ the output plays through |
+| `E` | Choose the EQ the output plays through (also a click on `EQ` in the transport bar, or on the signal path's `dsp` row or the curve on Now playing) |
+| `B` | Bypass the EQ, or put back the one bypassed |
 | `A` / `O` | Open the artist / the record of the selection |
 
 ### Navigation

@@ -49,6 +49,7 @@ const SECTIONS: &[Section] = &[
             ("z", "Zoom cover art"),
             ("D", "Output device"),
             ("E", "Choose the EQ"),
+            ("B", "Bypass the EQ, or put it back"),
             ("A / O", "Artist / album of the selection"),
         ],
     },

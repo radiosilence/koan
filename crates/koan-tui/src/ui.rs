@@ -62,6 +62,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     app.layout.browse_area = Rect::default();
     app.layout.now_playing_art_area = Rect::default();
     app.layout.nav_hits.clear();
+    app.layout.eq_hits.clear();
 
     let has_art = app.art.now_playing_art.cached().is_some();
     // Now playing carries the cover and the spectrum itself, so the transport
@@ -159,6 +160,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         .viz_config
         .enabled
         .then(|| mini_levels(&app.visualizer.spectrum));
+    let eq_hit = std::cell::Cell::new(Rect::default());
     let transport = TransportBar::new(
         track_info.as_ref(),
         playing_entry.as_ref(),
@@ -171,8 +173,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     .with_output_rate(app.state.output_sample_rate())
     .with_dsp(app.state.dsp())
     .with_sleep(app.state.sleep(), app.state.sleep_fading())
-    .with_levels(levels);
+    .with_levels(levels)
+    .with_eq_hit(&eq_hit);
     frame.render_widget(transport, text_area);
+    if eq_hit.get().width > 0 {
+        app.layout.eq_hits.push(eq_hit.get());
+    }
 
     // Visualizer — renders in the space above the transport text.
 

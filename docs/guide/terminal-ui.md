@@ -67,7 +67,7 @@ With the mouse: click selects, a second click opens, the wheel scrolls, and the 
 
 ## The EQ
 
-`E` opens a list of EQ profiles with the one in use marked. Choosing one plays the output through it, and "off" plays the output untouched; it is the same choice the apps' EQ page and `koan dsp assign` make, so they agree. Editing, importing and measuring profiles still happen in the apps and the CLI. See [DSP](dsp.md).
+`E` opens a list of EQ profiles with the one in use marked. Choosing one plays the output through it, and "off" plays the output untouched; it is the same choice the apps' EQ page and `koan dsp assign` make, so they agree. `B` bypasses the EQ and, pressed again, puts back the profile that was bypassed, for comparing with and without; with nothing to put back it opens the list. The EQ is also a link wherever it is shown: the `EQ` in the transport bar, the signal path's `dsp` row and the curve on Now playing all open the list when clicked. Editing, importing and measuring profiles still happen in the apps and the CLI. See [DSP](dsp.md).
 
 ## Covers
 
