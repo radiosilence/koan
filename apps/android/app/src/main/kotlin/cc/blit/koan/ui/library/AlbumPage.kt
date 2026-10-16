@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -23,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -173,7 +175,10 @@ private fun Header(album: Album, tracks: List<Track>) {
             size = 320.dp,
         )
         KoanText(album.title, role = KoanType.Title, textAlign = TextAlign.Center, maxLines = 3)
-        KoanButton(album.artistName, { nav.push(ArtistRoute(album.artistId)) }, kind = KoanButtonKind.Link)
+        // The artist's name as the library has it: the text overload would lowercase it as the app's own word.
+        KoanButton({ nav.push(ArtistRoute(album.artistId)) }, kind = KoanButtonKind.Link) {
+            Text(album.artistName, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
         val total = tracks.sumOf { it.durationMs ?: 0 }
         KoanText(
             listOfNotNull(album.year?.toString(), album.codec?.uppercase(), length(total).takeIf { total > 0 }).joinToString(" · "),
