@@ -1,0 +1,1 @@
+- **Android finds renderers before Now Playing opens.** The app searches for UPnP/DLNA renderers when it opens and once a minute while it is on screen, so the Output button is there for a renderer on a phone that is the only device on the account. Before, the only search ran as Now Playing opened.

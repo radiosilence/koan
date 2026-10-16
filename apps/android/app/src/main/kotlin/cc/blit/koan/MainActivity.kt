@@ -9,12 +9,18 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import cc.blit.koan.playback.PlaybackService
 import cc.blit.koan.ui.AppShell
 import cc.blit.koan.ui.KoanRoot
 import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.minutes
 
 class MainActivity : ComponentActivity() {
     private var controller: ListenableFuture<MediaController>? = null
@@ -33,6 +39,20 @@ class MainActivity : ComponentActivity() {
             checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) != PackageManager.PERMISSION_GRANTED
         ) {
             localNetwork.launch(Manifest.permission.ACCESS_LOCAL_NETWORK)
+        }
+        // Play on and Output show only once there is something to pick, so
+        // the renderers have to be known before anyone asks for them: a
+        // search on opening, and again while the app stays open, for a
+        // renderer switched on since. Each search holds the multicast lock
+        // only for its own few seconds.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                val mirror = (application as KoanApp).mirror
+                while (true) {
+                    mirror.engine().searchRenderers()
+                    delay(RENDERER_SEARCH_EVERY)
+                }
+            }
         }
     }
 
@@ -65,5 +85,9 @@ class MainActivity : ComponentActivity() {
         controller?.let(MediaController::releaseFuture)
         controller = null
         super.onStop()
+    }
+
+    private companion object {
+        val RENDERER_SEARCH_EVERY = 1.minutes
     }
 }
