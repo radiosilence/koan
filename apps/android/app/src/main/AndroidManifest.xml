@@ -37,6 +37,14 @@
                 android:resource="@xml/shared_files" />
         </provider>
 
+        <!-- Covers for the system's media controls and the lock screen, which open
+             a session's artwork URI from their own process. Read only, covers only. -->
+        <provider
+            android:name=".playback.ArtProvider"
+            android:authorities="${applicationId}.art"
+            android:exported="true"
+            tools:ignore="ExportedContentProvider" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

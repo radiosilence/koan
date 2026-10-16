@@ -88,7 +88,7 @@ class PlaybackService : MediaSessionService() {
         setMediaNotificationProvider(
             DefaultMediaNotificationProvider.Builder(this).build().apply { setSmallIcon(R.drawable.ic_notification) },
         )
-        session = MediaSession.Builder(this, KoanPlayer(engine, scope))
+        session = MediaSession.Builder(this, KoanPlayer(engine, scope, ArtProvider.authority(this)))
             .setSessionActivity(open)
             .setBitmapLoader(CacheBitmapLoader(ArtBitmapLoader(this, scope)))
             .build()

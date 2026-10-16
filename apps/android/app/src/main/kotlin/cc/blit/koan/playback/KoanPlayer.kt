@@ -35,6 +35,8 @@ import kotlinx.coroutines.launch
 class KoanPlayer(
     private val engine: EngineMirror,
     private val scope: CoroutineScope,
+    /** `ArtProvider`'s, which names each item's artwork. */
+    private val artAuthority: String,
 ) : SimpleBasePlayer(Looper.getMainLooper()) {
     private var mapped: Pair<List<QueueItem>, List<MediaItemData>> = emptyList<QueueItem>() to emptyList()
 
@@ -92,7 +94,7 @@ class KoanPlayer(
                         .setArtist(item.artist)
                         .setAlbumTitle(item.album)
                         .setAlbumArtist(item.albumArtist)
-                        .setArtworkUri(ArtBitmapLoader.artUri(item.albumId, item.trackId))
+                        .setArtworkUri(ArtProvider.uri(artAuthority, item.albumId, item.trackId))
                         .setTrackNumber(item.trackNumber?.toInt())
                         .setDiscNumber(item.disc?.toInt())
                         .setIsPlayable(true)
