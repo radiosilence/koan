@@ -16,7 +16,7 @@ the playing record's accent in place of the wallpaper's.
 ## Installing the APK
 
 Until kōan is on Google Play, the app is installed from an APK. Each release
-on GitHub carries one, `koan-android-arm64.apk`, signed with a development key.
+on GitHub carries one, `koan-android-arm64.apk`, signed with kōan's release key.
 Each CI run on the main branch or on a pull request builds one too, attached to
 the run as `koan-android-<commit>`, for trying a change before it is released.
 To install it:
@@ -31,10 +31,12 @@ To install it:
      `adb install koan-android-arm64.apk`.
 3. Open kōan and sign in with your server's address, user and password.
 
-Updating is the same: install the newer APK over the old one. Each build is
-signed with the key of the machine that built it, so Android refuses to install
-a CI build over one you built locally, and the reverse. Uninstall the old one
-first. That signs the app out and removes its downloads.
+Updating is the same: install the newer APK over the old one. Releases and CI
+builds share the release key, so any of them installs over any other. A build
+you made yourself is signed with your machine's debug key instead, and Android
+refuses to install one over the other; uninstall the old one first, which signs
+the app out and removes its downloads. The same goes once for an APK installed
+before releases carried one, which was signed with a key of its own.
 
 The APK is built for 64-bit ARM, which covers current phones and emulators on
 Apple-silicon Macs. To build it yourself, run `just android-apk`; it prints the

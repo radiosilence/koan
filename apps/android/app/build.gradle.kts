@@ -33,11 +33,26 @@ android {
         ndk { abiFilters += koanAbis.get() }
     }
 
+    // The release key when the build is given it, as CI is: every APK it
+    // builds is then an update to the last. Without it, this machine's debug
+    // key, so a local build still sideloads. The key and its password live in
+    // 1Password and in the repository's secrets, never here.
+    val releaseKeystore = providers.environmentVariable("KOAN_ANDROID_KEYSTORE").orNull
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storeType = "pkcs12"
+                storePassword = providers.environmentVariable("KOAN_ANDROID_KEYSTORE_PASSWORD").get()
+                keyAlias = "koan"
+                keyPassword = storePassword
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // The debug key, so a release APK can be sideloaded. A Play upload
-            // needs a key of its own, given to the build from outside the repo.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
