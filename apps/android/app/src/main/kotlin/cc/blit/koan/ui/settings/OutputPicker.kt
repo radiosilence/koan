@@ -8,14 +8,27 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.engine.describe
@@ -25,6 +38,7 @@ import cc.blit.koan.ffi.OutputChoice
 import cc.blit.koan.ffi.OutputInfo
 import cc.blit.koan.ffi.OutputsInfo
 import cc.blit.koan.ffi.RendererOutput
+import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanIcon
@@ -154,7 +168,87 @@ internal fun noRenderers(searching: Boolean) = when {
 }
 
 /**
- * The Output half of the sheet, for the device in view: the outputs the engine
+ * Output: a button for Now Playing that opens the output picker, naming what
+ * the device in view plays through where that is known, as iOS's output pill
+ * does. In the accent while the music goes to a renderer.
+ */
+@Composable
+fun OutputButton(modifier: Modifier = Modifier) {
+    val mirror = koanApp().mirror
+    val outputs by mirror.outputs.collectAsStateWithLifecycle()
+    var open by remember { mutableStateOf(false) }
+    val name = outputName(outputs)
+    val toRenderer = outputs?.current is OutputChoice.Renderer
+    KoanButton(
+        { open = true },
+        modifier.semantics { contentDescription = "Output: ${name ?: "default"}" },
+        kind = if (name == null) KoanButtonKind.Icon else KoanButtonKind.Text,
+    ) {
+        KoanIcon(KoanIcons.speaker, contentDescription = null, color = KoanTheme.color(if (toRenderer) KoanTone.Accent else KoanTone.Ink))
+        name?.let { KoanText(it, role = KoanType.Control, tone = KoanTone.Ink, maxLines = 1) }
+    }
+    if (open) OutputSheet(onDismiss = { open = false })
+}
+
+/**
+ * What the device in view plays through, by name: a renderer, a device chosen
+ * by name, or this phone's route. Nothing for another device's default, which
+ * it does not name.
+ */
+internal fun outputName(outputs: OutputsInfo?): String? {
+    val o = outputs ?: return null
+    return when (val current = o.current) {
+        is OutputChoice.Renderer -> o.renderers.firstOrNull { it.id == current.udn }?.name
+        is OutputChoice.Device -> current.name
+        OutputChoice.Default -> if (o.owner == null) o.devices.firstOrNull()?.name else null
+    }
+}
+
+/**
+ * Where the music comes out, for the device in view, as iOS's Output sheet
+ * has it: this phone's route and the renderers on the network, or while
+ * another device is controlled, that device's outputs, said by its name.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun OutputSheet(onDismiss: () -> Unit) {
+    val mirror = koanApp().mirror
+    val devices by mirror.devices.collectAsStateWithLifecycle()
+    val outputs by mirror.outputs.collectAsStateWithLifecycle()
+    val renderers by mirror.renderers.collectAsStateWithLifecycle()
+    val connection by mirror.connection.collectAsStateWithLifecycle()
+    val controlled = devices.devices.firstOrNull { it.id == devices.target }
+    val there = controlled?.name ?: devices.target
+    val scope = rememberCoroutineScope()
+    val picker = remember { OutputPicker(mirror::engine, scope) }
+    // This phone searches for renderers once as the sheet opens, holding the
+    // Wi-Fi multicast lock for the search's window; a controlled device is
+    // asked over the link to list its outputs again instead.
+    LaunchedEffect(picker, there != null) { if (there != null) picker.refreshThere() else picker.search() }
+    val on = KoanTheme.isOn
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        shape = if (on) RectangleShape else BottomSheetDefaults.ExpandedShape,
+        containerColor = if (on) KoanTheme.colors.bg else BottomSheetDefaults.ContainerColor,
+        tonalElevation = 0.dp,
+    ) {
+        Column(Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = KoanSpace.l)) {
+            KoanText("Output", inset, role = KoanType.TitleSmall, tone = KoanTone.Strong, appText = true)
+            there?.let { KoanText("On $it", inset, role = KoanType.Fine, tone = KoanTone.Muted) }
+            OutputSection(
+                picker,
+                outputs,
+                renderers.output,
+                blocked = connection?.localNetworkBlocked == true,
+                controlled = there,
+                platform = controlled?.platform,
+            )
+        }
+    }
+}
+
+/**
+ * The outputs of the device in view: the outputs the engine
  * publishes as this app's own, which while another device is controlled are
  * that device's (`owner`), as the Mac and iOS pickers read them. A phone's own
  * output is the route the system chose, so it is one row; a computer lists its
@@ -168,7 +262,6 @@ fun OutputSection(picker: OutputPicker, outputs: OutputsInfo?, renderer: Rendere
         // Controlling a device that has not said what it has: reconnecting,
         // or out of reach. This phone's own outputs are not the question.
         controlled != null -> Column {
-            KoanText("Output on $controlled", inset.padding(top = KoanSpace.l), role = KoanType.TitleSmall, tone = KoanTone.Strong, appText = true)
             KoanText(
                 "$controlled's outputs appear here once it is reachable.",
                 inset.padding(vertical = KoanSpace.s),
@@ -185,7 +278,6 @@ fun OutputSection(picker: OutputPicker, outputs: OutputsInfo?, renderer: Rendere
 private fun ControlledOutputs(picker: OutputPicker, outputs: OutputsInfo, platform: String?) {
     val state by picker.state.collectAsStateWithLifecycle()
     Column {
-        KoanText("Output on ${outputs.owner}", inset.padding(top = KoanSpace.l), role = KoanType.TitleSmall, tone = KoanTone.Strong, appText = true)
         state.refused?.let { KoanText(it, inset.padding(vertical = KoanSpace.s), role = KoanType.Fine, tone = KoanTone.Bad) }
         // A phone's or a television's output is its route, which its system
         // chooses: listed, not picked between.
@@ -225,7 +317,6 @@ private fun OwnOutputs(picker: OutputPicker, outputs: OutputsInfo?, renderer: Re
     val playing = playingTo(outputs, renderer)
     val renderers = outputs?.renderers.orEmpty()
     Column {
-        KoanText("Output", inset.padding(top = KoanSpace.l), role = KoanType.TitleSmall, tone = KoanTone.Strong, appText = true)
         OutputRow(
             name = outputs?.devices?.firstOrNull()?.name?.let { "This phone · $it" } ?: "This phone",
             detail = playing?.let { udn -> "Playing on ${renderers.firstOrNull { it.id == udn }?.name ?: renderer?.name ?: "a speaker"}. Pick this to bring the music back." },
