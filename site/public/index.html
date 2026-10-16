@@ -549,20 +549,32 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">mis
 
     <section id="tui" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
       <h2>The terminal UI</h2>
-      <p>Where it all started: a full-screen Ratatui interface on macOS and Linux, with a transport bar with album art,
-        an album-grouped queue, a fuzzy picker, a library browser, a lyrics panel, mouse support and 22 visualiser modes
-        (because why not).</p>
+      <p>Where it all started: a full-screen Ratatui interface on macOS and Linux, now shaped like the apps. It has pages
+        (the queue, now playing, albums, artists, favourites and recent) with a sidebar that becomes a tab bar on a narrow
+        terminal, record and artist pages reached by links, cover art drawn as real images where the terminal supports
+        it, a now-playing page that shows the signal path and the EQ in use, an accent that follows the cover, a fuzzy
+        picker, lyrics, mouse support and 22 visualiser modes (because why not).</p>
     </section>
 
-    <div class="mx-auto my-8 grid max-w-5xl items-start gap-6 px-5 md:grid-cols-2">
+    <div class="mx-auto my-8 grid max-w-6xl items-start gap-6 px-5 md:grid-cols-2">
       <figure>
-        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/tui.webp" width="1000"
-          height="1078" loading="lazy" decoding="async"
-          alt="The TUI: album art and spectrum visualiser above an album-grouped queue">
+        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/tui-albums.webp" width="2000"
+          height="1600" loading="lazy" decoding="async"
+          alt="The TUI's Albums page: a grid of cover art, with the page list at the left and the transport and spectrum below">
       </figure>
       <figure>
-        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/organize.webp" width="1000"
-          height="734" loading="lazy" decoding="async"
+        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/tui-now-playing.webp" width="2000"
+          height="1600" loading="lazy" decoding="async"
+          alt="The TUI's Now playing page: the cover, the signal path, level meters, the spectrum, lyrics and the EQ curve">
+      </figure>
+      <figure>
+        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/tui-artist.webp" width="2000"
+          height="1600" loading="lazy" decoding="async"
+          alt="The TUI's artist page: a photograph, the opening of the Wikipedia article and the artist's records">
+      </figure>
+      <figure>
+        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/organize.webp" width="2000"
+          height="1600" loading="lazy" decoding="async"
           alt="The TUI organise dialog previewing where each file will be moved">
       </figure>
     </div>

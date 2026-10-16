@@ -147,6 +147,8 @@ show_fps = false            # FPS counter overlay in top-right corner (default: 
 
 # config.local.toml -- this machine's hardware and window
 art_size = 24               # album art width in terminal columns (default: 24)
+art_graphics = true         # draw covers with the terminal's graphics protocol (default: true)
+tui_theme = "koan"          # koan | ansi (default: koan)
 output_device = "My DAC"    # audio output device name (default: system default)
 renderers = true            # look for UPnP renderers on the network (default: true)
 muted = false               # play silence (default: false)
@@ -178,7 +180,15 @@ When a track needs the output device at a different sample rate, the device relo
 
 ### Album art size
 
-`art_size` sets the width in terminal columns. Height is always `art_size / 2` (square via halfblock rendering, where each cell is 2 pixels tall). The default of 24 columns = 24x12 cells = a 24x24 pixel-equivalent square. Drag the divider under the transport bar to change it; the new size is saved to `config.local.toml`, since it is a property of the terminal you are sitting at.
+`art_size` sets the width in terminal columns. Height is always `art_size / 2` (square in half blocks, where each cell is 2 pixels tall). The default of 24 columns = 24x12 cells = a 24x24 pixel-equivalent square. Drag the hairline above the transport bar to change it; the new size is saved to `config.local.toml`, since it is a property of the terminal you are sitting at.
+
+### Cover graphics
+
+With `art_graphics` on, the TUI asks the terminal at startup whether it draws images (the kitty or iTerm2 protocol; sixel is not used) and uses them for covers and album tiles. Terminals that do not answer get half blocks, which is also what `art_graphics = false` gives, and skips the question. `I` in the TUI switches for the session and saves the choice. It lives in `config.local.toml`: whether images work is a property of the terminal at hand.
+
+### TUI palette
+
+`tui_theme = "koan"` draws the [kōan theme](https://github.com/radiosilence/koan/blob/main/docs/design/koan-theme.md) in 24-bit colour where the terminal reports it, with the accent taken from the playing cover. `"ansi"` uses the terminal's own sixteen colours. No background is painted either way. Also in `config.local.toml`.
 
 ### Output device
 
@@ -299,7 +309,7 @@ scale = "bark"                # frequency scale (default: bark)
 amplitude_scale = "aweight"   # amplitude scale (default: aweight)
 bar_decay_ms = 50             # bar drop half-life in ms (default: 50)
 peak_decay_ms = 180           # peak marker linger half-life in ms (default: 180)
-palette = "spectrum"          # color palette: spectrum, mono, fire, neon (default: spectrum)
+palette = "theme"             # theme (follows the UI), rainbow, mono, fire, neon (default: theme)
 reactivity = 1.0              # animation reactivity 0.0..2.0 (default: 1.0)
 reactive_bg = false           # beat-reactive background on braille modes (default: false)
 

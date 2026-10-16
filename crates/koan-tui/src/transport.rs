@@ -159,7 +159,11 @@ pub struct TransportBar<'a> {
     dsp: Option<DspStatus>,
     sleep: Option<Sleep>,
     sleep_fading: bool,
+    levels: Option<[f32; MINI_BARS]>,
 }
+
+/// How many bars the transport's own spectrum has.
+pub const MINI_BARS: usize = 12;
 
 /// The sleep timer as the transport shows it: what is left, or what it
 /// waits for.
@@ -200,7 +204,14 @@ impl<'a> TransportBar<'a> {
             dsp: None,
             sleep: None,
             sleep_fading: false,
+            levels: None,
         }
+    }
+
+    /// A small spectrum drawn at the end of the album line, `0.0..=1.0` a bar.
+    pub fn with_levels(mut self, levels: Option<[f32; MINI_BARS]>) -> Self {
+        self.levels = levels;
+        self
     }
 
     pub fn with_ticker_offset(mut self, offset: usize) -> Self {
@@ -431,7 +442,31 @@ impl Widget for TransportBar<'_> {
                 }
 
                 let album_line = Line::from(album_spans);
-                buf.set_line(area.x, area.y + 2, &album_line, area.width);
+                // The spectrum takes the line's end when there is room for it
+                // and the text beside it.
+                let spectrum = self
+                    .levels
+                    .filter(|_| area.width >= 48)
+                    .map(|l| (l, MINI_BARS as u16 + 1));
+                let text_w = area.width - spectrum.map_or(0, |(_, w)| w);
+                buf.set_line(area.x, area.y + 2, &album_line, text_w);
+                if let Some((levels, w)) = spectrum {
+                    const STEPS: [char; 8] = [
+                        '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}',
+                        '\u{2587}', '\u{2588}',
+                    ];
+                    let x0 = area.x + area.width - w;
+                    for (i, level) in levels.iter().enumerate() {
+                        let step = ((level.clamp(0.0, 1.0) * 7.0).round() as usize).min(7);
+                        buf[(x0 + i as u16, area.y + 2)]
+                            .set_char(STEPS[step])
+                            .set_style(if step == 0 {
+                                self.theme.progress_empty
+                            } else {
+                                self.theme.progress_filled
+                            });
+                    }
+                }
             }
         } else {
             // Fallback: filename + codec info

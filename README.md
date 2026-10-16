@@ -127,9 +127,11 @@ To run a server, play from Navidrome, or move off it, see the [documentation](ht
 
 ### The terminal UI
 
-A full-screen Ratatui player on macOS and Linux: album art, an album-grouped queue, a fuzzy picker, a library browser, a lyrics panel, mouse support and 22 visualiser modes.
+A full-screen Ratatui player on macOS and Linux, shaped like the apps: pages for the queue, now playing, albums, artists, favourites and recent, linked record and artist pages, cover art drawn as real images where the terminal supports it, a now-playing page with the signal path and the EQ in use, an accent that follows the cover, mouse support and 22 visualiser modes. See [the terminal UI guide](https://koan.rocks/docs/terminal-ui/).
 
-<img alt="The terminal UI" src="site/public/screens/tui.webp" width="49%" /> <img alt="Organising files in the terminal UI" src="site/public/screens/organize.webp" width="49%" />
+<img alt="The terminal UI's album grid" src="site/public/screens/tui-albums.webp" width="49%" /> <img alt="The terminal UI's now-playing page" src="site/public/screens/tui-now-playing.webp" width="49%" />
+
+<img alt="The terminal UI's queue" src="site/public/screens/tui.webp" width="49%" /> <img alt="Organising files in the terminal UI" src="site/public/screens/organize.webp" width="49%" />
 
 ## How it compares
 

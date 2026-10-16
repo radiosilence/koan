@@ -190,21 +190,88 @@ pub enum VisualizerPalette {
     /// Classic LED meter: green → yellow → red based on bar height (ignores frequency).
     Mono,
     /// Frequency rainbow: warm bass (red/orange) → cyan mids → purple/magenta highs.
+    /// Named `rainbow` in the config.
     Spectrum,
     /// Hot: deep red bass → orange → yellow → white highs.
     Fire,
     /// Synthwave: hot pink bass → electric blue mids → cyan highs.
     Neon,
+    /// The playing record's accent: its dimmed hue at the bass, the hue
+    /// itself through the mids, and its light tint at the highs.
+    Record((u8, u8, u8)),
 }
 
 impl VisualizerPalette {
+    /// A heat map's colour for an energy `0.0..=1.0`: black, up through the
+    /// palette's own colours, to white. The themed palette climbs its accent;
+    /// the others keep the classic blue-yellow-red.
+    pub fn heat(self, energy: f32) -> Color {
+        if let Self::Record(a) = self {
+            let dimmed = (a.0 / 3, a.1 / 3, a.2 / 3);
+            let tint = (
+                a.0 + (255 - a.0) / 2,
+                a.1 + (255 - a.1) / 2,
+                a.2 + (255 - a.2) / 2,
+            );
+            return if energy > 0.85 {
+                lerp_rgb(tint, (255, 255, 255), (energy - 0.85) / 0.15)
+            } else if energy > 0.5 {
+                lerp_rgb(a, tint, (energy - 0.5) / 0.35)
+            } else if energy > 0.12 {
+                lerp_rgb(dimmed, a, (energy - 0.12) / 0.38)
+            } else {
+                lerp_rgb((0, 0, 0), dimmed, energy / 0.12)
+            };
+        }
+        if energy > 0.85 {
+            lerp_rgb((255, 40, 0), (255, 255, 255), (energy - 0.85) / 0.15)
+        } else if energy > 0.6 {
+            lerp_rgb((255, 200, 0), (255, 40, 0), (energy - 0.6) / 0.25)
+        } else if energy > 0.35 {
+            lerp_rgb((0, 80, 255), (255, 200, 0), (energy - 0.35) / 0.25)
+        } else if energy > 0.12 {
+            lerp_rgb((0, 0, 60), (0, 80, 255), (energy - 0.12) / 0.23)
+        } else {
+            lerp_rgb((0, 0, 0), (0, 0, 60), energy / 0.12)
+        }
+    }
+
+    /// The colour of a matrix glyph of `intensity` `0.0..=1.0`: green for the
+    /// classic palettes, the accent for the themed one. `head` is the lead
+    /// glyph of a column, which runs toward white.
+    pub fn matrix(self, intensity: f32, head: bool) -> Color {
+        let i = intensity.clamp(0.0, 1.0);
+        match self {
+            Self::Record(a) => {
+                if head {
+                    let w = 0.55 + 0.45 * i;
+                    lerp_rgb(a, (255, 255, 255), w)
+                } else {
+                    lerp_rgb((a.0 / 6, a.1 / 6, a.2 / 6), a, i)
+                }
+            }
+            _ => {
+                if head {
+                    Color::Rgb(
+                        (200.0 * (0.8 + 0.2 * i)) as u8,
+                        255,
+                        (200.0 * (0.8 + 0.2 * i)) as u8,
+                    )
+                } else {
+                    Color::Rgb((i * 40.0) as u8, (80.0 + i * 175.0) as u8, (i * 40.0) as u8)
+                }
+            }
+        }
+    }
+
     pub fn parse(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "mono" => Self::Mono,
-            "spectrum" => Self::Spectrum,
+            "rainbow" => Self::Spectrum,
             "fire" => Self::Fire,
             "neon" => Self::Neon,
-            _ => Self::Spectrum,
+            // `spectrum` was the rainbow; it now follows the UI like the default.
+            _ => Self::Record(super::theme::MINT),
         }
     }
 
@@ -239,6 +306,19 @@ impl VisualizerPalette {
                     lerp_rgb((250, 220, 50), (255, 255, 200), u)
                 }
             }
+            Self::Record(a) => {
+                let dimmed = (a.0 / 3, a.1 / 3, a.2 / 3);
+                let tint = (
+                    a.0 + (255 - a.0) / 2,
+                    a.1 + (255 - a.1) / 2,
+                    a.2 + (255 - a.2) / 2,
+                );
+                if t < 0.5 {
+                    lerp_rgb(dimmed, a, t / 0.5)
+                } else {
+                    lerp_rgb(a, tint, (t - 0.5) / 0.5)
+                }
+            }
             Self::Neon => {
                 // Hot pink → electric blue → cyan
                 if t < 0.5 {
@@ -257,9 +337,9 @@ impl VisualizerPalette {
 fn lerp_rgb(a: (u8, u8, u8), b: (u8, u8, u8), t: f32) -> Color {
     let t = t.clamp(0.0, 1.0);
     Color::Rgb(
-        (a.0 as f32 + (b.0 as f32 - a.0 as f32) * t) as u8,
-        (a.1 as f32 + (b.1 as f32 - a.1 as f32) * t) as u8,
-        (a.2 as f32 + (b.2 as f32 - a.2 as f32) * t) as u8,
+        (a.0 as f32 + (b.0 as f32 - a.0 as f32) * t).round() as u8,
+        (a.1 as f32 + (b.1 as f32 - a.1 as f32) * t).round() as u8,
+        (a.2 as f32 + (b.2 as f32 - a.2 as f32) * t).round() as u8,
     )
 }
 
@@ -414,7 +494,10 @@ fn fill_reactive_bg(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     if intensity < 0.02 {
         return;
     }
-    let hue_t = state.beat_hue_offset.rem_euclid(1.0);
+    let hue_t = match state.palette {
+        VisualizerPalette::Record(_) => 0.35,
+        _ => state.hue_offset().rem_euclid(1.0),
+    };
     let base = state.palette.freq_color(hue_t);
     let bg = dim(base, 1.0 - intensity * 0.35);
     let style = Style::new().bg(bg);
@@ -977,6 +1060,17 @@ impl VisualizerState {
     /// Apply decay smoothing without new analysis input (called when paused/stopped).
     ///
     /// Feeds silence into the smoothing pass so bars gracefully fall to zero.
+    /// How far the palette is shifted along its length by the beat. The
+    /// themed palette runs from dark to light rather than round a wheel, so
+    /// shifting it would put a seam where it wraps; it pulses in brightness
+    /// instead.
+    pub fn hue_offset(&self) -> f32 {
+        match self.palette {
+            VisualizerPalette::Record(_) => 0.0,
+            _ => self.beat_hue_offset,
+        }
+    }
+
     pub fn decay_to_zero(&mut self) {
         let (bar_decay, peak_decay) = self.decay_factors();
         for i in 0..NUM_BARS {
@@ -1119,10 +1213,8 @@ fn apply_matrix_overlay(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
                 .wrapping_add((t * 2.0) as u32);
             let ch = MATRIX_CHARS[hash as usize % MATRIX_CHARS.len()];
 
-            // Green palette: brightness maps to green intensity.
-            let g = (80.0 + brightness * 175.0) as u8;
-            let rb = (brightness * 40.0) as u8;
-            let fg = Color::Rgb(rb, g, rb);
+            // Brightness maps to the palette's intensity.
+            let fg = state.palette.matrix(brightness, false);
 
             let mut style = Style::new().fg(fg);
             if brightness > 0.6 {
@@ -1226,7 +1318,7 @@ fn render_radial(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
             cy,
         );
 
-        let warped = (freq_t + drift + state.beat_hue_offset).rem_euclid(1.0);
+        let warped = (freq_t + drift + state.hue_offset()).rem_euclid(1.0);
         let base = state.palette.freq_color(warped);
         let color = brighten(base, state.beat_energy * 0.5);
 
@@ -1344,28 +1436,7 @@ fn render_spectrogram(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
             // puts loud content solidly into the red zone.
             let energy = raw_energy.sqrt();
 
-            // Heat map: blue → yellow → red → white.
-            let color = if energy > 0.85 {
-                // White-hot.
-                let t = (energy - 0.85) / 0.15;
-                lerp_rgb((255, 40, 0), (255, 255, 255), t)
-            } else if energy > 0.6 {
-                // Red.
-                let t = (energy - 0.6) / 0.25;
-                lerp_rgb((255, 200, 0), (255, 40, 0), t)
-            } else if energy > 0.35 {
-                // Yellow.
-                let t = (energy - 0.35) / 0.25;
-                lerp_rgb((0, 80, 255), (255, 200, 0), t)
-            } else if energy > 0.12 {
-                // Blue.
-                let t = (energy - 0.12) / 0.23;
-                lerp_rgb((0, 0, 60), (0, 80, 255), t)
-            } else {
-                // Near-black blue.
-                let t = energy / 0.12;
-                lerp_rgb((0, 0, 0), (0, 0, 60), t)
-            };
+            let color = state.palette.heat(energy);
 
             let x = area.x + col as u16;
             buf[(x, y)].set_char('█').set_style(Style::new().fg(color));
@@ -1585,7 +1656,7 @@ fn render_flame(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
             let bottom_y = px_h as f32;
 
             let freq_t = bar_f / (NUM_BARS - 1) as f32;
-            let warped = (freq_t + drift + state.beat_hue_offset).rem_euclid(1.0);
+            let warped = (freq_t + drift + state.hue_offset()).rem_euclid(1.0);
             let base = state.palette.freq_color(warped);
             let color = dim(brighten(base, state.beat_energy * 0.3), 1.0 - brightness);
 
@@ -1632,7 +1703,7 @@ fn render_plasma(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
             let v = (v1 + v2 + v3 + v4) / 4.0; // -1..1
             let n = (v + 1.0) * 0.5; // 0..1
 
-            let warped = (n + state.beat_hue_offset).rem_euclid(1.0);
+            let warped = (n + state.hue_offset()).rem_euclid(1.0);
             let color = brighten(state.palette.freq_color(warped), state.beat_energy * 0.3);
 
             // Block character by intensity.
@@ -1704,7 +1775,7 @@ fn render_tunnel(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
                 continue;
             }
 
-            let color_t = (tex_u + state.beat_hue_offset).rem_euclid(1.0);
+            let color_t = (tex_u + state.hue_offset()).rem_euclid(1.0);
             let base = state.palette.freq_color(color_t);
             let color = dim(brighten(base, state.beat_energy * 0.4), 1.0 - brightness);
 
@@ -1807,7 +1878,7 @@ fn render_wireframe(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
                 (project(rx0, ry0, rz0), project(rx1, ry1, rz1))
             {
                 let freq_t = i as f32 / segments_major as f32;
-                let warped = (freq_t + drift + state.beat_hue_offset).rem_euclid(1.0);
+                let warped = (freq_t + drift + state.hue_offset()).rem_euclid(1.0);
                 let color = brighten(state.palette.freq_color(warped), state.beat_energy * 0.4);
                 grid.draw_line(px0, py0, px1, py1, color);
             }
@@ -1822,7 +1893,7 @@ fn render_wireframe(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
                 (project(rx0, ry0, rz0), project(rx2, ry2, rz2))
             {
                 let freq_t = i as f32 / segments_major as f32;
-                let warped = (freq_t + drift + state.beat_hue_offset).rem_euclid(1.0);
+                let warped = (freq_t + drift + state.hue_offset()).rem_euclid(1.0);
                 let color = brighten(state.palette.freq_color(warped), state.beat_energy * 0.3);
                 grid.draw_line(px0, py0, px1, py1, color);
             }
@@ -1891,7 +1962,7 @@ fn render_metaballs(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 
             // Color by dominant ball's spectrum position.
             let freq_t = dominant_ball as f32 / (num_balls - 1) as f32;
-            let warped = (freq_t + state.beat_hue_offset).rem_euclid(1.0);
+            let warped = (freq_t + state.hue_offset()).rem_euclid(1.0);
             let base = state.palette.freq_color(warped);
 
             // Brightness by how far above threshold.
@@ -1943,7 +2014,7 @@ fn render_starfield(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 
         // Brightness by proximity (closer = brighter). Beat pushes all stars brighter.
         let depth_t = (1.0 - sz / 100.0).clamp(0.0, 1.0);
-        let warped = (depth_t + state.beat_hue_offset).rem_euclid(1.0);
+        let warped = (depth_t + state.hue_offset()).rem_euclid(1.0);
         let color = brighten(
             state.palette.freq_color(warped),
             state.beat_energy * 0.6 + depth_t * 0.4,
@@ -2143,7 +2214,7 @@ fn render_moire(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
                 continue;
             }
 
-            let color_t = (v + state.beat_hue_offset).rem_euclid(1.0);
+            let color_t = (v + state.hue_offset()).rem_euclid(1.0);
             let base = state.palette.freq_color(color_t);
             let color = brighten(base, state.beat_energy * 0.4 * r);
 
@@ -2217,7 +2288,7 @@ fn render_kaleidoscope(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
                 continue;
             }
 
-            let freq_t = (norm_r + state.beat_hue_offset).rem_euclid(1.0);
+            let freq_t = (norm_r + state.hue_offset()).rem_euclid(1.0);
             let base = state.palette.freq_color(freq_t);
             let color = brighten(base, state.beat_energy * 0.4 * r + intensity * 0.2);
 
@@ -2274,7 +2345,7 @@ fn render_julia(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 
             // Smooth coloring: fractional escape count.
             let smooth = iter as f32 + 1.0 - (zr * zr + zi * zi).ln().ln() / 2.0f32.ln();
-            let t_color = (smooth / max_iter as f32 + state.beat_hue_offset).rem_euclid(1.0);
+            let t_color = (smooth / max_iter as f32 + state.hue_offset()).rem_euclid(1.0);
             let base = state.palette.freq_color(t_color);
             let brightness = (smooth / max_iter as f32).clamp(0.0, 1.0);
             let color = brighten(base, state.beat_energy * 0.3 * r + brightness * 0.2);
@@ -2346,7 +2417,7 @@ fn render_spiral(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
             let (sx, sy) = state.shaken(px, py, cx, cy);
 
             if let (Some(prev_px), Some(prev_py)) = (prev_x, prev_y) {
-                let freq_t = (frac + state.beat_hue_offset + arm as f32 * 0.15).rem_euclid(1.0);
+                let freq_t = (frac + state.hue_offset() + arm as f32 * 0.15).rem_euclid(1.0);
                 let base = state.palette.freq_color(freq_t);
                 let color = brighten(base, state.beat_energy * 0.4 * r + energy * 0.3);
                 grid.draw_line(prev_px, prev_py, sx, sy, color);
@@ -2413,7 +2484,7 @@ fn render_interference(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
                 continue;
             }
 
-            let color_t = (v + state.beat_hue_offset).rem_euclid(1.0);
+            let color_t = (v + state.hue_offset()).rem_euclid(1.0);
             let base = state.palette.freq_color(color_t);
             let color = brighten(base, state.beat_energy * 0.4 * r);
 
@@ -2480,7 +2551,7 @@ fn render_wormhole(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
         let color = dim(
             state
                 .palette
-                .freq_color((depth_t + state.beat_hue_offset).rem_euclid(1.0)),
+                .freq_color((depth_t + state.hue_offset()).rem_euclid(1.0)),
             0.4 + depth_t * 0.3,
         );
         grid.set_dot(proj_x as usize, proj_y as usize, color);
@@ -2548,7 +2619,7 @@ fn render_wormhole(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 
         // Draw wireframe edges around the ring.
         let depth_t = (1.0 - rel_z / (ring_spacing * num_rings as f32)).clamp(0.0, 1.0);
-        let freq_t = (depth_t + state.beat_hue_offset).rem_euclid(1.0);
+        let freq_t = (depth_t + state.hue_offset()).rem_euclid(1.0);
         let base_color = state.palette.freq_color(freq_t);
         let color = brighten(base_color, state.beat_energy * 0.4 * r + depth_t * 0.3);
         let color = dim(color, 1.0 - depth_t * 0.7); // Far rings dimmer.
@@ -2699,23 +2770,25 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
             let char_hash = row_phase.wrapping_mul(31).wrapping_add(flicker_tick);
             let ch = MATRIX_CHARS[char_hash as usize % MATRIX_CHARS.len()];
 
-            // Color: head is bright white/green, trail fades to dark green.
+            // Head is bright, near the head is full strength, the trail fades.
             let (fg, bold) = if dist_from_head == 0 {
-                // Head: bright white, pulsing with beat.
                 let brightness = 0.8 + state.beat_energy * 0.2 * r;
+                (state.palette.matrix(brightness, true), true)
+            } else if dist_from_head <= 2 {
                 (
-                    Color::Rgb((200.0 * brightness) as u8, 255, (200.0 * brightness) as u8),
+                    state
+                        .palette
+                        .matrix((220.0 + band_energy * 35.0) / 255.0, false),
                     true,
                 )
-            } else if dist_from_head <= 2 {
-                // Near head: bright green.
-                (Color::Rgb(50, (220.0 + band_energy * 35.0) as u8, 50), true)
             } else {
-                // Trail: fade from green to dark, intensity from band energy.
                 let fade = (1.0 - trail_frac).max(0.0);
-                let g = (180.0 * fade + band_energy * 60.0 * r) as u8;
-                let rb = (30.0 * fade) as u8;
-                (Color::Rgb(rb, g.max(rb), rb), false)
+                (
+                    state
+                        .palette
+                        .matrix((180.0 * fade + band_energy * 60.0 * r) / 255.0, false),
+                    false,
+                )
             };
 
             let mut style = Style::new().fg(fg);
@@ -2752,7 +2825,7 @@ impl<'a> SpectrumWidget<'a> {
         let drift = (elapsed * std::f32::consts::TAU / 8.0).sin() * 0.15;
 
         // Beat hue shift: jarring jump on transients, decays back.
-        let beat_offset = self.state.beat_hue_offset;
+        let beat_offset = self.state.hue_offset();
 
         // Combine and wrap to 0.0..1.0.
         (freq_t + drift + beat_offset).rem_euclid(1.0)
@@ -3081,17 +3154,45 @@ mod tests {
     fn palette_parse_variants() {
         assert_eq!(VisualizerPalette::parse("mono"), VisualizerPalette::Mono);
         assert_eq!(
-            VisualizerPalette::parse("spectrum"),
+            VisualizerPalette::parse("rainbow"),
             VisualizerPalette::Spectrum
         );
+        // The old name for the rainbow now follows the UI, like the default.
+        assert!(matches!(
+            VisualizerPalette::parse("spectrum"),
+            VisualizerPalette::Record(_)
+        ));
+        assert!(matches!(
+            VisualizerPalette::parse("theme"),
+            VisualizerPalette::Record(_)
+        ));
         assert_eq!(VisualizerPalette::parse("fire"), VisualizerPalette::Fire);
         assert_eq!(VisualizerPalette::parse("neon"), VisualizerPalette::Neon);
         assert_eq!(VisualizerPalette::parse("FIRE"), VisualizerPalette::Fire);
-        // Unknown falls back to spectrum.
-        assert_eq!(
+        // Unknown falls back to the themed default.
+        assert!(matches!(
             VisualizerPalette::parse("garbage"),
-            VisualizerPalette::Spectrum
-        );
+            VisualizerPalette::Record(_)
+        ));
+    }
+
+    #[test]
+    fn the_themed_palette_does_not_shift_with_the_beat() {
+        let mut state =
+            VisualizerState::from_config(&koan_core::config::VisualizerConfig::default());
+        state.palette = VisualizerPalette::Record((125, 211, 167));
+        state.beat_hue_offset = 0.6;
+        assert_eq!(state.hue_offset(), 0.0);
+        state.palette = VisualizerPalette::Spectrum;
+        assert_eq!(state.hue_offset(), 0.6);
+    }
+
+    #[test]
+    fn the_heat_map_climbs_the_accent_and_ends_white() {
+        let p = VisualizerPalette::Record((200, 40, 40));
+        assert_eq!(p.heat(0.0), Color::Rgb(0, 0, 0));
+        assert_eq!(p.heat(1.0), Color::Rgb(255, 255, 255));
+        assert_eq!(p.heat(0.5), Color::Rgb(200, 40, 40));
     }
 
     #[test]

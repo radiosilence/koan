@@ -1,0 +1,1 @@
+- **`E` in the terminal UI chooses the EQ.** It lists the profiles with the one in use marked, and plays the output through the one picked, as `koan dsp assign` and the apps do.

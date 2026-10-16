@@ -1,3 +1,4 @@
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
@@ -5,35 +6,85 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
 use super::app::Mode;
+use super::nav::Page;
 use super::theme::Theme;
 
 pub struct HintBar<'a> {
     mode: &'a Mode,
+    page: Page,
     theme: &'a Theme,
 }
 
 impl<'a> HintBar<'a> {
-    pub fn new(mode: &'a Mode, theme: &'a Theme) -> Self {
-        Self { mode, theme }
+    pub fn new(mode: &'a Mode, page: Page, theme: &'a Theme) -> Self {
+        Self { mode, page, theme }
     }
 }
 
-impl Widget for HintBar<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let hints: Vec<(&str, &str)> = match self.mode {
-            Mode::Normal => vec![
-                ("space", "pause"),
-                ("<>", "skip"),
-                (",.", "seek"),
-                ("/", "search"),
-                ("p", "track"),
-                ("a", "album"),
-                ("r", "artist"),
-                ("l", "library"),
-                ("e", "edit"),
-                ("q", "quit"),
-                ("?", "help"),
-            ],
+/// The keys the hint bar shows for a mode and a page, with what each does.
+pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
+    {
+        match mode {
+            Mode::Normal => match page {
+                Page::Queue => vec![
+                    ("space", "pause"),
+                    ("<>", "skip"),
+                    (",.", "seek"),
+                    ("/", "search"),
+                    ("p", "track"),
+                    ("a", "album"),
+                    ("r", "artist"),
+                    ("1-6", "pages"),
+                    ("e", "edit"),
+                    ("E", "eq"),
+                    ("q", "quit"),
+                    ("?", "help"),
+                ],
+                Page::NowPlaying => vec![
+                    ("space", "pause"),
+                    ("<>", "skip"),
+                    ("\u{2190}\u{2192}", "seek"),
+                    ("E", "eq"),
+                    ("M", "visualiser"),
+                    ("F", "fullscreen"),
+                    ("1-6", "pages"),
+                    ("esc", "back"),
+                    ("?", "help"),
+                ],
+                Page::Album(_) => vec![
+                    ("\u{2191}\u{2193}", "move"),
+                    ("ret", "play from here"),
+                    ("P", "play all"),
+                    ("a", "add"),
+                    ("C-r", "replace"),
+                    ("f", "favourite"),
+                    ("A", "artist"),
+                    ("esc", "back"),
+                ],
+                Page::Albums | Page::Favourites | Page::Recent | Page::Artist(_) => vec![
+                    ("\u{2191}\u{2193}\u{2190}\u{2192}", "move"),
+                    ("ret", "open"),
+                    ("P", "play"),
+                    ("a", "add"),
+                    ("A", "artist"),
+                    ("/", "filter"),
+                    ("v", "view"),
+                    ("o", "sort"),
+                    ("1-6", "pages"),
+                    ("esc", "back"),
+                ],
+                Page::Artists => vec![
+                    ("\u{2191}\u{2193}", "navigate"),
+                    ("\u{2192}/enter", "expand"),
+                    ("\u{2190}", "collapse"),
+                    ("a", "enqueue"),
+                    ("A", "artist"),
+                    ("O", "album"),
+                    ("/", "filter"),
+                    ("1-6", "pages"),
+                    ("esc", "back"),
+                ],
+            },
             Mode::QueueEdit => vec![
                 ("\u{2191}\u{2193}", "navigate"),
                 ("S-\u{2191}\u{2193}", "select"),
@@ -49,16 +100,6 @@ impl Widget for HintBar<'_> {
             ],
             Mode::TrackInfo(_) => vec![("esc", "close"), ("i", "close")],
             Mode::CoverArtZoom => vec![("esc", "close"), ("z", "close")],
-            Mode::LibraryBrowse => vec![
-                ("\u{2191}\u{2193}", "navigate"),
-                ("\u{2192}/enter", "expand"),
-                ("\u{2190}", "collapse"),
-                ("a", "enqueue"),
-                ("f", "filter"),
-                ("tab", "focus"),
-                ("space", "pause"),
-                ("esc", "close"),
-            ],
             Mode::ContextMenu => vec![
                 ("\u{2191}\u{2193}", "navigate"),
                 ("ret", "select"),
@@ -76,6 +117,11 @@ impl Widget for HintBar<'_> {
                 ("ret", "select"),
                 ("esc", "cancel"),
             ],
+            Mode::DspSelector => vec![
+                ("\u{2191}\u{2193}", "navigate"),
+                ("ret", "use"),
+                ("esc", "close"),
+            ],
             Mode::DeviceSelector => vec![
                 ("\u{2191}\u{2193}", "navigate"),
                 ("ret", "select"),
@@ -89,8 +135,63 @@ impl Widget for HintBar<'_> {
                 ("tab", "multi"),
                 ("esc", "cancel"),
             ],
-        };
+        }
+    }
+}
 
+/// The key press a hint's label stands for, when it names exactly one.
+pub fn label_event(label: &str) -> Option<KeyEvent> {
+    let plain = |code| Some(KeyEvent::new(code, KeyModifiers::NONE));
+    match label {
+        "space" => plain(KeyCode::Char(' ')),
+        "ret" => plain(KeyCode::Enter),
+        "esc" => plain(KeyCode::Esc),
+        "tab" => plain(KeyCode::Tab),
+        "C-r" => Some(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+        "C-z/y" | "C-a" => None,
+        l if l.chars().count() == 1 => plain(KeyCode::Char(l.chars().next()?)),
+        _ => None,
+    }
+}
+
+/// Each hint's cells and the key it stands for, laid out as `render` draws
+/// them, so a click on a hint is the key it names.
+pub fn hits(mode: &Mode, page: Page, area: Rect) -> Vec<(Rect, KeyEvent)> {
+    let mut x = area.x;
+    let mut out = Vec::new();
+    for (i, (key, desc)) in fitting(mode, page, area.width).iter().enumerate() {
+        if i > 0 {
+            x += 2;
+        }
+        let w = (key.chars().count() + 2 + 1 + desc.chars().count()) as u16;
+        if let Some(event) = label_event(key) {
+            out.push((Rect::new(x, area.y, w, 1), event));
+        }
+        x += w;
+    }
+    out
+}
+
+/// The hints that fit `width` whole: one that would be cut is left out, so
+/// a bar never ends mid-word.
+fn fitting(mode: &Mode, page: Page, width: u16) -> Vec<(&'static str, &'static str)> {
+    let mut used = 0usize;
+    let mut out = Vec::new();
+    for (key, desc) in hints(mode, page) {
+        let w =
+            key.chars().count() + 2 + 1 + desc.chars().count() + if out.is_empty() { 0 } else { 2 };
+        if used + w > width as usize {
+            break;
+        }
+        used += w;
+        out.push((key, desc));
+    }
+    out
+}
+
+impl Widget for HintBar<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let hints = fitting(self.mode, self.page, area.width);
         let mut spans: Vec<Span> = Vec::new();
         for (i, (key, desc)) in hints.iter().enumerate() {
             if i > 0 {

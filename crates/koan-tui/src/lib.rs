@@ -3,16 +3,23 @@
 //! Library crate that exports `run_tui()`. No main(), no clap, no CLI args.
 //! Depends on koan-core only.
 
+pub mod accent;
+pub mod album_page;
 pub mod app;
+pub mod artist_header;
+pub mod browse;
 pub mod context_menu;
 pub mod cover_art;
 pub mod device_selector;
+pub mod dsp_selector;
 pub mod enqueue;
 pub mod help_modal;
 pub mod keys;
 pub mod library;
 pub mod lyrics;
 pub mod media_keys;
+pub mod nav;
+pub mod now_playing;
 pub mod organize;
 pub mod picker;
 pub mod picker_items;

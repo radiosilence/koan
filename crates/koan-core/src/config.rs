@@ -216,6 +216,13 @@ pub struct PlaybackConfig {
     /// Album art width in terminal columns (default: 24).
     /// Height is always width/2 (square via halfblock rendering).
     pub art_size: u16,
+    /// Draw cover art in the terminal with the kitty, iTerm2 or sixel graphics
+    /// protocol where it supports one. Off, art is drawn in half blocks, which
+    /// every terminal can show.
+    pub art_graphics: bool,
+    /// The TUI's palette: `koan` for the kōan theme's colours (the cover's
+    /// accent included), `ansi` for the terminal's own sixteen.
+    pub tui_theme: String,
     /// Silence played after the output device changes sample rate, so the
     /// start of the track is not lost while the device relocks its clock.
     /// How long that takes is a property of the device.
@@ -289,6 +296,8 @@ impl Default for PlaybackConfig {
             renderers: true,
             muted: false,
             art_size: 24,
+            art_graphics: true,
+            tui_theme: "koan".into(),
             rate_switch_lead_in_ms: 1000,
         }
     }
@@ -310,7 +319,9 @@ pub struct VisualizerConfig {
     pub bar_decay_ms: u32,
     /// Peak decay half-life in milliseconds (how long peaks linger).
     pub peak_decay_ms: u32,
-    /// Color palette: "spectrum" (default), "mono", "fire", "neon".
+    /// Color palette: "theme" (default; the UI's own accent, taken from the
+    /// playing cover), "rainbow", "mono", "fire", "neon". "spectrum" and
+    /// "record" are older names for "theme".
     /// Controls the frequency-mapped color gradient on spectrum bars.
     pub palette: String,
     /// Reactivity multiplier (0.0..2.0, default 1.0).
@@ -337,7 +348,7 @@ impl Default for VisualizerConfig {
             amplitude_scale: "aweight".into(),
             bar_decay_ms: 50,
             peak_decay_ms: 180,
-            palette: "spectrum".into(),
+            palette: "theme".into(),
             reactivity: 1.0,
             bass_shake: true,
             matrix_overlay: false,
@@ -1442,6 +1453,8 @@ pub fn layer_of(path: &str) -> Layer {
         | "auth.server"
         // Volatile: UI state behind a keybind or a mouse drag.
         | "playback.art_size"
+        | "playback.art_graphics"
+        | "playback.tui_theme"
         | "visualizer.enabled"
         | "visualizer.mode"
         | "visualizer.matrix_overlay"

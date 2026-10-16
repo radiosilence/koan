@@ -1,6 +1,6 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
@@ -91,10 +91,7 @@ impl Widget for VizPickerOverlay<'_> {
             let is_current = *mode == self.state.current_mode;
 
             let base_style = if is_cursor {
-                Style::default()
-                    .fg(ratatui::style::Color::Black)
-                    .bg(ratatui::style::Color::White)
-                    .add_modifier(Modifier::BOLD)
+                self.theme.picker_cursor
             } else {
                 self.theme.hint_desc
             };
@@ -103,9 +100,7 @@ impl Widget for VizPickerOverlay<'_> {
             let marker_style = if is_cursor {
                 base_style
             } else if is_current {
-                Style::default()
-                    .fg(ratatui::style::Color::Green)
-                    .add_modifier(Modifier::BOLD)
+                self.theme.status_playing.add_modifier(Modifier::BOLD)
             } else {
                 self.theme.hint_desc
             };

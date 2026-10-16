@@ -14,11 +14,15 @@ use koan_core::player::state::{
     VisibleQueueSnapshot,
 };
 
+use super::accent::{self, Accent};
+use super::album_page::{AlbumHit, AlbumPage};
+use super::browse::{self, Browse, Source};
 use super::library::LibraryState;
 use super::lyrics::LyricsState;
+use super::nav::{Navigator, Page};
 use super::picker::{PickerKind, PickerPartKind, PickerState, picker_results_rect};
 use super::queue;
-use super::theme::Theme;
+use super::theme::{Palette, Theme};
 use super::transport::TransportBar;
 use super::visualizer::VisualizerState;
 
@@ -30,12 +34,12 @@ pub enum Mode {
     Normal,
     QueueEdit,
     Picker(PickerKind),
-    LibraryBrowse,
     TrackInfo(QueueItemId),
     CoverArtZoom,
     ContextMenu,
     Organize,
     DeviceSelector,
+    DspSelector,
     HelpModal,
     VizPicker,
 }
@@ -86,12 +90,6 @@ pub enum PickerAction {
     ReplaceQueue,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LibraryFocus {
-    Library,
-    Queue,
-}
-
 pub struct DragState {
     pub from_index: usize,
     pub current_y: u16,
@@ -112,10 +110,21 @@ pub enum HoverZone {
     None,
     QueueItem(usize),
     LibraryItem(usize),
+    Browse(browse::Hit),
+    Album(AlbumHit),
+    Nav(NavTarget),
     SeekBar,
     ScrollbarQueue,
     TransportArt,
     TransportText,
+}
+
+/// What a click in the sidebar or the tab bar goes to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NavTarget {
+    Page(Page),
+    Back,
+    Forward,
 }
 
 /// Tracks the current mouse hover position and zone.
@@ -153,6 +162,17 @@ pub struct LayoutRects {
     pub seek_bar_width: u16,
     pub context_menu_area: ratatui::layout::Rect,
     pub organize_area: ratatui::layout::Rect,
+    /// The output or EQ chooser, while one is open.
+    pub selector_area: ratatui::layout::Rect,
+    /// The sidebar or tab bar, and what each part of it opens.
+    pub nav_hits: Vec<(ratatui::layout::Rect, NavTarget)>,
+    /// The key hints along the foot, and the key each stands for.
+    pub hint_hits: Vec<(ratatui::layout::Rect, KeyEvent)>,
+    /// The page the stage is showing, below the sidebar or tab bar.
+    pub stage_area: ratatui::layout::Rect,
+    pub browse_area: ratatui::layout::Rect,
+    /// The hairline above the transport, which resizes it when dragged.
+    pub transport_rule_y: Option<u16>,
 }
 
 /// Cover art caches and stable height tracking.
@@ -162,6 +182,8 @@ pub struct ArtState {
     pub cover_art: super::cover_art::CoverArtCache,
     /// Cached cover art for now-playing transport display.
     pub now_playing_art: super::cover_art::CoverArtCache,
+    /// How covers are drawn: graphics protocol or half blocks.
+    pub gfx: super::cover_art::Gfx,
 }
 
 pub struct App {
@@ -209,7 +231,22 @@ pub struct App {
     pub last_playing_path: Option<PathBuf>,
 
     pub library: Option<LibraryState>,
-    pub library_focus: LibraryFocus,
+
+    pub nav: Navigator,
+    pub albums_page: Browse,
+    pub favourites_page: Browse,
+    pub recent_page: Browse,
+    pub artist_page: Browse,
+    pub album_page: Option<AlbumPage>,
+    /// A drag that began on a page's scrollbar.
+    browse_drag: bool,
+    pub thumbs: browse::Thumbs,
+    /// The playing record's accent, easing as the record changes.
+    pub accent: Accent,
+    pub palette: Palette,
+    /// The path whose cover the accent was taken from.
+    accent_path: Option<PathBuf>,
+    theme_accent: (u8, u8, u8),
 
     pub art: ArtState,
 
@@ -221,6 +258,9 @@ pub struct App {
 
     /// Device selector modal state (when in DeviceSelector mode).
     pub device_selector: Option<DeviceSelectorState>,
+
+    /// EQ chooser state (when in DspSelector mode).
+    pub dsp_selector: Option<super::dsp_selector::DspSelectorState>,
 
     /// Visualizer picker modal state (when in VizPicker mode).
     pub viz_picker: Option<super::viz_picker::VizPickerState>,
@@ -332,18 +372,30 @@ impl App {
             last_click_idx: None,
             log_buffer,
             has_played: false,
-            theme: Theme::default(),
+            theme: Theme::new(Palette::detect(&cfg.playback.tui_theme), super::theme::MINT),
             layout: LayoutRects::default(),
             loading_message: None,
             picker_result: None,
             artist_drill_down: None,
             last_playing_path: None,
             library: None,
-            library_focus: LibraryFocus::Library,
+            nav: Navigator::default(),
+            albums_page: Browse::new(Source::Albums),
+            favourites_page: Browse::new(Source::Favourites),
+            recent_page: Browse::new(Source::Recent),
+            artist_page: Browse::new(Source::Artist(0)),
+            album_page: None,
+            browse_drag: false,
+            thumbs: browse::Thumbs::new(),
+            accent: Accent::default(),
+            palette: Palette::detect(&cfg.playback.tui_theme),
+            accent_path: None,
+            theme_accent: super::theme::MINT,
             art: ArtState::default(),
             context_menu: None,
             organize: None,
             device_selector: None,
+            dsp_selector: None,
             viz_picker: None,
             mode_stack: Vec::new(),
             last_mouse_row: None,
@@ -541,11 +593,32 @@ impl App {
 
         // Update now-playing cover art cache when track changes.
         // Clear when nothing is playing so the old image gets freed.
+        let now = std::time::Instant::now();
         if let Some(ref info) = self.state.track_info() {
-            self.art.now_playing_art.get(&info.path);
+            let art = self.art.now_playing_art.get(&info.path);
+            if self.accent_path.as_deref() != Some(info.path.as_path()) {
+                let rgb = art
+                    .and_then(accent::from_image)
+                    .unwrap_or(super::theme::MINT);
+                self.accent_path = Some(info.path.clone());
+                self.accent.set(rgb, now);
+            }
         } else {
             self.art.now_playing_art.clear();
+            if self.accent_path.take().is_some() {
+                self.accent.set(super::theme::MINT, now);
+            }
         }
+        let rgb = self.accent.at(now);
+        if rgb != self.theme_accent {
+            self.theme_accent = rgb;
+            self.theme = Theme::new(self.palette, rgb);
+            if let super::visualizer::VisualizerPalette::Record(_) = self.visualizer.palette {
+                self.visualizer.palette = super::visualizer::VisualizerPalette::Record(rgb);
+            }
+        }
+        self.thumbs.poll();
+        self.artist_page.poll();
 
         // Updated every frame: the analysis thread runs at its own rate, and
         // decay and smoothing run at the TUI frame rate.
@@ -578,7 +651,7 @@ impl App {
         }
 
         // Trigger lyrics fetch on track change.
-        if self.lyrics_panel {
+        if self.lyrics_panel || self.page() == Page::NowPlaying {
             let current_playing_path = self
                 .queue
                 .vq_cache
@@ -676,7 +749,7 @@ impl App {
         // Derive the playing track from the visible queue cache (atomic snapshot)
         // NOT from track_info directly — track_info changes before the visible
         // queue is rebuilt, causing a 1-frame scroll offset jump.
-        if self.mode == Mode::Normal {
+        if self.mode == Mode::Normal && self.layout.queue_area.height > 0 {
             let current_playing = self
                 .queue
                 .vq_cache
@@ -715,15 +788,248 @@ impl App {
         match &self.mode {
             Mode::Picker(_) => self.handle_picker_key(key),
             Mode::QueueEdit => self.handle_edit_key(key),
-            Mode::LibraryBrowse => self.handle_library_key(key),
             Mode::TrackInfo(_) => self.handle_info_key(key),
             Mode::CoverArtZoom => self.handle_zoom_key(key),
             Mode::ContextMenu => self.handle_context_menu_key(key),
             Mode::Organize => self.handle_organize_key(key),
             Mode::DeviceSelector => self.handle_device_selector_key(key),
+            Mode::DspSelector => self.handle_dsp_selector_key(key),
             Mode::HelpModal => self.handle_help_modal_key(key),
             Mode::VizPicker => self.handle_viz_picker_key(key),
-            Mode::Normal => self.handle_normal_key(key),
+            Mode::Normal => self.handle_page_key(key),
+        }
+    }
+
+    pub fn page(&self) -> Page {
+        self.nav.current()
+    }
+
+    /// Whether a page's own text field is taking the keys.
+    fn typing(&self) -> bool {
+        match self.page() {
+            Page::Albums => self.albums_page.filter_active,
+            Page::Favourites => self.favourites_page.filter_active,
+            Page::Recent => self.recent_page.filter_active,
+            Page::Artists => self.library.as_ref().is_some_and(|l| l.filter_active),
+            Page::Artist(_) => self.artist_page.filter_active,
+            Page::Queue | Page::NowPlaying | Page::Album(_) => false,
+        }
+    }
+
+    pub fn browse_mut(&mut self) -> Option<&mut Browse> {
+        match self.page() {
+            Page::Albums => Some(&mut self.albums_page),
+            Page::Favourites => Some(&mut self.favourites_page),
+            Page::Recent => Some(&mut self.recent_page),
+            Page::Artist(_) => Some(&mut self.artist_page),
+            _ => None,
+        }
+    }
+
+    /// Opens a page, reading what it shows afresh.
+    pub fn go_page(&mut self, page: Page) {
+        self.nav.go(page);
+        self.page_opened();
+    }
+
+    fn page_opened(&mut self) {
+        match self.page() {
+            Page::Albums => self.albums_page.reload(),
+            Page::Favourites => self.favourites_page.reload(),
+            Page::Recent => self.recent_page.reload(),
+            Page::Artists => {
+                if self.library.is_none() {
+                    self.library = Some(LibraryState::load());
+                }
+            }
+            Page::NowPlaying => self.lyrics.track_path = None,
+            Page::Album(id) => self.album_page = AlbumPage::load(id),
+            Page::Artist(id) => {
+                self.artist_page = Browse::new(Source::Artist(id));
+                self.artist_page.reload();
+            }
+            Page::Queue => {}
+        }
+    }
+
+    pub fn go_back(&mut self) {
+        if self.nav.back() {
+            self.page_opened();
+        }
+    }
+
+    pub fn go_forward(&mut self) {
+        if self.nav.forward() {
+            self.page_opened();
+        }
+    }
+
+    fn activate(&mut self, target: NavTarget) {
+        match target {
+            NavTarget::Page(p) => self.go_page(p),
+            NavTarget::Back => self.go_back(),
+            NavTarget::Forward => self.go_forward(),
+        }
+    }
+
+    /// The keys that move between pages. True when `key` was one.
+    fn navigate_key(&mut self, key: &KeyEvent) -> bool {
+        let plain = !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+        match key.code {
+            KeyCode::Char(c) if plain => {
+                if let Some(page) = Page::from_key(c) {
+                    self.go_page(page);
+                    return true;
+                }
+                match c {
+                    '[' => self.go_back(),
+                    ']' => self.go_forward(),
+                    _ => return false,
+                }
+                true
+            }
+            KeyCode::Tab => {
+                self.go_page(self.nav.next_page());
+                true
+            }
+            KeyCode::BackTab => {
+                self.go_page(self.nav.prev_page());
+                true
+            }
+            KeyCode::Left if key.modifiers.contains(KeyModifiers::ALT) => {
+                self.go_back();
+                true
+            }
+            KeyCode::Right if key.modifiers.contains(KeyModifiers::ALT) => {
+                self.go_forward();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn handle_page_key(&mut self, key: KeyEvent) {
+        if !self.typing() {
+            if self.navigate_key(&key) {
+                return;
+            }
+            if key.code == KeyCode::Char('I') {
+                self.toggle_graphics();
+                return;
+            }
+        }
+        match self.page() {
+            Page::Queue => self.handle_normal_key(key),
+            Page::Artists => self.handle_library_key(key),
+            Page::NowPlaying => {
+                if key.code == KeyCode::Esc {
+                    self.leave_page();
+                } else {
+                    self.handle_transport_key(key);
+                }
+            }
+            Page::Album(_) => {
+                let action = self.album_page.as_mut().and_then(|p| p.handle_key(key));
+                match action {
+                    Some(action) => self.apply_browse(action),
+                    None if key.code == KeyCode::Esc => self.leave_page(),
+                    None => self.handle_transport_key(key),
+                }
+            }
+            Page::Albums | Page::Favourites | Page::Recent | Page::Artist(_) => {
+                let Some(browse) = self.browse_mut() else {
+                    return;
+                };
+                match browse.handle_key(key) {
+                    Some(action) => self.apply_browse(action),
+                    None if key.code == KeyCode::Esc => self.leave_page(),
+                    None => self.handle_transport_key(key),
+                }
+            }
+        }
+    }
+
+    /// Esc on a page that is not the queue: where you came from, or the queue.
+    fn leave_page(&mut self) {
+        if self.status_message.is_some() {
+            self.status_message = None;
+        } else if self.nav.can_back() {
+            self.go_back();
+        } else {
+            self.go_page(Page::Queue);
+        }
+    }
+
+    /// The keys that mean the same on every page: transport, modes, the
+    /// visualiser, pickers and help.
+    fn handle_transport_key(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let shared = match key.code {
+            KeyCode::Char(
+                ' ' | '>' | '<' | 'n' | 's' | 'T' | 'R' | '.' | ',' | 'L' | 'V' | 'F' | 'M' | 'X'
+                | 'S' | 'v' | 'D' | 'E' | 'p' | 'q' | '?' | 'z',
+            ) => !ctrl,
+            KeyCode::Left | KeyCode::Right => true,
+            _ => false,
+        };
+        if shared {
+            self.handle_normal_key(key);
+        }
+    }
+
+    /// Switches covers between the terminal's graphics protocol and half
+    /// blocks, and remembers the choice.
+    pub fn toggle_graphics(&mut self) {
+        if !self.art.gfx.available() {
+            self.status_message = Some((
+                "this terminal draws no graphics; covers stay in half blocks".into(),
+                std::time::Instant::now(),
+            ));
+            return;
+        }
+        let on = self.art.gfx.set_graphics(!self.art.gfx.graphics());
+        let _ = koan_core::config::Config::persist(|cfg| cfg.playback.art_graphics = on);
+        self.status_message = Some((
+            if on {
+                format!("covers drawn as images ({})", self.art.gfx.protocol_name())
+            } else {
+                "covers drawn in half blocks".into()
+            },
+            std::time::Instant::now(),
+        ));
+    }
+
+    fn apply_browse(&mut self, action: browse::Action) {
+        match action {
+            browse::Action::None => {}
+            browse::Action::Play(ids, how) => {
+                self.picker_result = Some((PickerKind::Track, ids, how));
+            }
+            browse::Action::Favourite(id) => {
+                self.toggle_favourite(id);
+            }
+            browse::Action::OpenAlbum(id) => self.go_page(Page::Album(id)),
+            browse::Action::OpenArtist(id) => self.go_page(Page::Artist(id)),
+            browse::Action::Shuffle(ids) => {
+                self.tx.send(PlayerCommand::SetShuffle(true)).ok();
+                self.picker_result = Some((PickerKind::Track, ids, PickerAction::ReplaceQueue));
+            }
+            browse::Action::OpenUrl(url) => {
+                let opener = if cfg!(target_os = "macos") {
+                    "open"
+                } else {
+                    "xdg-open"
+                };
+                std::process::Command::new(opener)
+                    .arg(url)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                    .ok();
+            }
         }
     }
 
@@ -818,7 +1124,19 @@ impl App {
                 self.open_picker(PickerKind::Artist);
             }
             KeyCode::Char('l') => {
-                self.open_library();
+                self.go_page(Page::Artists);
+            }
+            KeyCode::Char('A') | KeyCode::Char('O') => {
+                let link = if key.code == KeyCode::Char('A') {
+                    queue::HeaderLink::Artist
+                } else {
+                    queue::HeaderLink::Album
+                };
+                let db_id = self
+                    .visible_queue()
+                    .get(self.queue.cursor)
+                    .and_then(|e| e.db_id);
+                self.open_entry_link(db_id, link);
             }
             KeyCode::Char('L') => {
                 self.lyrics_panel = !self.lyrics_panel;
@@ -960,6 +1278,7 @@ impl App {
             KeyCode::Char('D') => {
                 self.open_device_selector();
             }
+            KeyCode::Char('E') => self.open_dsp_selector(),
             KeyCode::Char('/') => {
                 self.open_queue_jump();
             }
@@ -1090,6 +1409,70 @@ impl App {
                         sel.current_device = Some(name);
                     }
                 }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn open_dsp_selector(&mut self) {
+        self.dsp_selector = Some(super::dsp_selector::DspSelectorState::load());
+        self.push_mode(Mode::DspSelector);
+    }
+
+    /// Plays the output through the EQ at `idx`, or untouched for the first.
+    fn apply_dsp(&mut self, idx: usize) {
+        let Some(sel) = self.dsp_selector.as_mut() else {
+            return;
+        };
+        let Some(entry) = sel.entries.get(idx) else {
+            return;
+        };
+        let name = entry.name.clone();
+        let device = self
+            .state
+            .renderer()
+            .map(|r| r.udn)
+            .or_else(koan_core::audio::dsp::profiles::current_device);
+        let Some(device) = device else {
+            self.status_message = Some((
+                "no output device to set an eq on".into(),
+                std::time::Instant::now(),
+            ));
+            return;
+        };
+        match koan_core::audio::dsp::profiles::assign(name.as_deref(), &device) {
+            Ok(()) => {
+                self.tx.send(PlayerCommand::ReloadDsp).ok();
+                sel.active = name.clone();
+                sel.cursor = idx;
+                self.status_message = Some((
+                    match name {
+                        Some(n) => format!("eq: {n}"),
+                        None => "eq off".into(),
+                    },
+                    std::time::Instant::now(),
+                ));
+            }
+            Err(e) => self.status_message = Some((e, std::time::Instant::now())),
+        }
+    }
+
+    fn handle_dsp_selector_key(&mut self, key: KeyEvent) {
+        let Some(sel) = self.dsp_selector.as_mut() else {
+            return;
+        };
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('E') => {
+                self.dsp_selector = None;
+                self.pop_mode();
+            }
+            KeyCode::Up | KeyCode::Char('k') => sel.move_by(-1),
+            KeyCode::Down | KeyCode::Char('j') => sel.move_by(1),
+            KeyCode::Home | KeyCode::Char('g') => sel.cursor = 0,
+            KeyCode::End | KeyCode::Char('G') => sel.cursor = sel.entries.len().saturating_sub(1),
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                let idx = sel.cursor;
+                self.apply_dsp(idx);
             }
             _ => {}
         }
@@ -1646,10 +2029,10 @@ impl App {
         // Transport bar resize: drag the bottom edge to resize album art / header.
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                // Start drag if clicking near the bottom edge of transport area.
+                // Start drag if clicking the hairline above the transport.
                 let t = self.layout.transport_area;
                 if t.height > 0
-                    && event.row == t.y + t.height - 1
+                    && self.layout.transport_rule_y == Some(event.row)
                     && event.column >= t.x
                     && event.column < t.x + t.width
                 {
@@ -1658,7 +2041,7 @@ impl App {
             }
             MouseEventKind::Drag(MouseButton::Left) if self.transport_drag.is_some() => {
                 let (start_row, original_size) = self.transport_drag.unwrap();
-                let delta = event.row as i32 - start_row as i32;
+                let delta = start_row as i32 - event.row as i32;
                 // Each row of drag = 2 units of art_size (since art_height = art_size / 2).
                 let new_size = (original_size as i32 + delta * 2).clamp(4, 80) as u16;
                 self.art_size = new_size;
@@ -1743,6 +2126,59 @@ impl App {
             return;
         }
 
+        // The output and EQ choosers: click a row to choose it, click outside
+        // to close, wheel to move.
+        if matches!(self.mode, Mode::DeviceSelector | Mode::DspSelector) {
+            let area = self.layout.selector_area;
+            let inner = ratatui::layout::Rect::new(
+                area.x + 1,
+                area.y + 1,
+                area.width.saturating_sub(2),
+                area.height.saturating_sub(2),
+            );
+            match event.kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if !self.is_in_rect(event.column, event.row, area) {
+                        self.dsp_selector = None;
+                        self.device_selector = None;
+                        self.pop_mode();
+                    } else if self.is_in_rect(event.column, event.row, inner) {
+                        let row = (event.row - inner.y) as usize;
+                        if self.mode == Mode::DspSelector {
+                            let top = self
+                                .dsp_selector
+                                .as_ref()
+                                .map_or(0, |s| s.top(inner.height as usize));
+                            self.apply_dsp(top + row);
+                        } else if let Some(sel) = self.device_selector.as_mut()
+                            && row < sel.devices.len()
+                        {
+                            sel.cursor = row;
+                            self.handle_device_selector_key(KeyEvent::from(KeyCode::Enter));
+                        }
+                    }
+                }
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                    let delta = if matches!(event.kind, MouseEventKind::ScrollUp) {
+                        -1
+                    } else {
+                        1
+                    };
+                    if let Some(sel) = self.dsp_selector.as_mut() {
+                        sel.move_by(delta);
+                    } else if let Some(sel) = self.device_selector.as_mut()
+                        && !sel.devices.is_empty()
+                    {
+                        sel.cursor = (sel.cursor as isize + delta)
+                            .rem_euclid(sel.devices.len() as isize)
+                            as usize;
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
         // Picker intercepts all mouse events when active.
         if let Mode::Picker(_) = &self.mode {
             let picker_area = self.layout.picker_area;
@@ -1823,14 +2259,77 @@ impl App {
 
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                // A key hint along the foot is that key.
+                if let Some(key) = self
+                    .layout
+                    .hint_hits
+                    .iter()
+                    .find(|(r, _)| {
+                        event.column >= r.x
+                            && event.column < r.x + r.width
+                            && event.row == r.y
+                    })
+                    .map(|(_, k)| *k)
+                {
+                    self.handle_key(key);
+                    return;
+                }
+
+                // Sidebar and tab bar.
+                if let Some(target) = self.nav_target_at(event.column, event.row) {
+                    self.activate(target);
+                    return;
+                }
+
+                // The record and the browsing pages.
+                if self.page() != Page::Queue
+                    && self.is_in_rect(event.column, event.row, self.layout.browse_area)
+                {
+                    let (col, row) = (event.column, event.row);
+                    if let Page::Album(_) = self.page() {
+                        let mut action = browse::Action::None;
+                        if let Some(p) = self.album_page.as_mut() {
+                            if p.on_scrollbar(col, row) {
+                                self.browse_drag = true;
+                                p.scroll_to_bar(row);
+                            } else if let Some(hit) = p.hit(col, row) {
+                                action = p.click(hit);
+                            }
+                        }
+                        self.apply_browse(action);
+                        return;
+                    }
+                    let mut dragging = false;
+                    let mut action = browse::Action::None;
+                    if let Some(browse) = self.browse_mut() {
+                        if browse.on_scrollbar(col, row) {
+                            dragging = true;
+                            browse.scroll_to_bar(row);
+                        } else if let Some(hit) = browse.hit(col, row) {
+                            action = browse.click(hit);
+                        }
+                    }
+                    self.browse_drag |= dragging;
+                    self.apply_browse(action);
+                    return;
+                }
+
                 // Library pane click.
-                if self.mode == Mode::LibraryBrowse
+                if self.library_active()
                     && self.is_in_rect(event.column, event.row, self.layout.library_area)
                 {
-                    self.library_focus = LibraryFocus::Library;
+                    if let Some((x, y, h)) = self.library_bar()
+                        && event.column >= x
+                        && event.row >= y
+                        && event.row < y + h as u16
+                    {
+                        self.browse_drag = true;
+                        self.library_scroll_to(event.row);
+                        return;
+                    }
                     let inner_h = self.library_content_height();
                     if let Some(ref mut lib) = self.library {
-                        let inner_x = self.layout.library_area.x + 1;
+                        let inner_x = self.layout.library_area.x;
                         let inner_y = self.layout.library_area.y + 1;
                         if event.row >= inner_y && (event.row - inner_y) < inner_h as u16 {
                             let row = (event.row - inner_y) as usize;
@@ -1951,12 +2450,29 @@ impl App {
                     return;
                 }
 
-                // Switch focus to queue when clicking it in library mode.
-                if self.mode == Mode::LibraryBrowse {
-                    self.library_focus = LibraryFocus::Queue;
-                }
-
                 let visible = self.visible_queue();
+                if let Some((first, link)) = queue::QueueView::header_link_at(
+                    &visible,
+                    self.layout.queue_area,
+                    self.queue.scroll_offset,
+                    event.column,
+                    event.row,
+                ) {
+                    let db_id = visible.get(first).and_then(|e| e.db_id);
+                    self.open_entry_link(db_id, link);
+                    return;
+                }
+                if event.column == queue::menu_button_x(self.layout.queue_area)
+                    && let Some(idx) = queue::QueueView::queue_index_at_y(
+                        &visible,
+                        self.layout.queue_area,
+                        self.queue.scroll_offset,
+                        event.row,
+                    )
+                {
+                    self.open_queue_menu(idx, event.column, event.row);
+                    return;
+                }
                 let Some(idx) = queue::QueueView::queue_index_at_y(
                     &visible,
                     self.layout.queue_area,
@@ -2076,6 +2592,18 @@ impl App {
                     });
                 }
             }
+            MouseEventKind::Drag(MouseButton::Left) if self.browse_drag => {
+                let row = event.row;
+                if let Page::Album(_) = self.page() {
+                    if let Some(p) = self.album_page.as_mut() {
+                        p.scroll_to_bar(row);
+                    }
+                } else if self.page() == Page::Artists {
+                    self.library_scroll_to(row);
+                } else if let Some(browse) = self.browse_mut() {
+                    browse.scroll_to_bar(row);
+                }
+            }
             MouseEventKind::Drag(MouseButton::Left) if self.scrollbar_grab_offset.is_some() => {
                 self.scroll_to_scrollbar_y(event.row);
             }
@@ -2186,7 +2714,22 @@ impl App {
                 // Clear drag state — reorder already happened live during drag.
                 self.queue.drag.take();
                 self.scrollbar_grab_offset = None;
+                self.browse_drag = false;
             }
+            MouseEventKind::Down(MouseButton::Right)
+                if self.page() != Page::Queue
+                    && self.is_in_rect(event.column, event.row, self.layout.browse_area) => {
+                    // Right-click on a record or track -> add it to the queue.
+                    let (col, row) = (event.column, event.row);
+                    if let Some(browse) = self.browse_mut()
+                        && let Some(browse::Hit::Item(idx)) = browse.hit(col, row)
+                    {
+                        let action = browse.append_at(idx);
+                        self.apply_browse(action);
+                        self.status_message =
+                            Some(("added to the queue".into(), std::time::Instant::now()));
+                    }
+                }
             MouseEventKind::Down(MouseButton::Right)
                 // Right-click on queue item -> context menu at click position.
                 if self.is_in_rect(event.column, event.row, self.layout.queue_area) => {
@@ -2252,12 +2795,23 @@ impl App {
                     if let Some(ref mut picker) = self.picker {
                         picker.move_up();
                     }
-                } else if self.mode == Mode::LibraryBrowse
+                } else if self.page() != Page::Queue
+                    && self.is_in_rect(event.column, event.row, self.layout.browse_area)
+                {
+                    if let Page::Album(_) = self.page() {
+                        if let Some(p) = self.album_page.as_mut() {
+                            p.scroll_by(-3);
+                        }
+                    } else if let Some(browse) = self.browse_mut() {
+                        browse.scroll_by(-1);
+                    }
+                } else if self.library_active()
                     && self.is_in_rect(event.column, event.row, self.layout.library_area)
                 {
                     if let Some(ref mut lib) = self.library {
-                        lib.move_up();
+                        lib.scroll_offset = lib.scroll_offset.saturating_sub(3);
                     }
+                } else if self.page() != Page::Queue {
                 } else {
                     self.queue.scroll_offset = self.queue.scroll_offset.saturating_sub(1);
                 }
@@ -2267,12 +2821,25 @@ impl App {
                     if let Some(ref mut picker) = self.picker {
                         picker.move_down();
                     }
-                } else if self.mode == Mode::LibraryBrowse
+                } else if self.page() != Page::Queue
+                    && self.is_in_rect(event.column, event.row, self.layout.browse_area)
+                {
+                    if let Page::Album(_) = self.page() {
+                        if let Some(p) = self.album_page.as_mut() {
+                            p.scroll_by(3);
+                        }
+                    } else if let Some(browse) = self.browse_mut() {
+                        browse.scroll_by(1);
+                    }
+                } else if self.library_active()
                     && self.is_in_rect(event.column, event.row, self.layout.library_area)
                 {
+                    let h = self.library_content_height();
                     if let Some(ref mut lib) = self.library {
-                        lib.move_down();
+                        let max = lib.nodes.len().saturating_sub(h);
+                        lib.scroll_offset = (lib.scroll_offset + 3).min(max);
                     }
+                } else if self.page() != Page::Queue {
                 } else {
                     let visible = self.visible_queue();
                     let total_display = super::queue::display_line_count(&visible);
@@ -2291,6 +2858,65 @@ impl App {
     }
 
     /// Compute the hover zone from current mouse position and layout rects.
+    /// The menu of actions for the queue row `idx`, opened at `col`, `row`.
+    /// A right click opens it, and so does the row's own button.
+    fn open_queue_menu(&mut self, idx: usize, col: u16, row: u16) {
+        let visible = self.visible_queue();
+        let id_at_idx = self.queue.vq_cache.entries.get(idx).map(|e| e.id);
+        if !id_at_idx.is_some_and(|id| self.queue.selected_ids.contains(&id)) {
+            self.select_single(idx);
+        }
+        self.queue.cursor = idx;
+        let is_fav = visible
+            .get(idx)
+            .is_some_and(|e| e.db_id.is_some_and(|id| self.favourites.contains(&id)));
+        let fav_label = if is_fav { "Unfavourite" } else { "Favourite" };
+        let actions = self.build_context_actions(fav_label);
+        self.context_menu = Some(ContextMenuState { actions, cursor: 0 });
+        self.push_mode(Mode::ContextMenu);
+        self.hover.column = col;
+        self.hover.row = row;
+    }
+
+    /// Opens the record or the artist of the library track `db_id`.
+    pub fn open_entry_link(&mut self, db_id: Option<i64>, link: queue::HeaderLink) {
+        let found = db_id.and_then(|id| {
+            let db = koan_core::db::pool::shared().get().ok()?;
+            let track = koan_core::db::queries::get_track_row(&db.conn, id)
+                .ok()
+                .flatten()?;
+            let album = koan_core::db::queries::get_album(&db.conn, track.album_id?)
+                .ok()
+                .flatten()?;
+            Some(match link {
+                queue::HeaderLink::Album => Page::Album(album.id),
+                queue::HeaderLink::Artist => Page::Artist(album.artist_id),
+            })
+        });
+        match found {
+            Some(page) => self.go_page(page),
+            None => {
+                self.status_message = Some((
+                    "that track is not in the library".into(),
+                    std::time::Instant::now(),
+                ));
+            }
+        }
+    }
+
+    fn nav_target_at(&self, col: u16, row: u16) -> Option<NavTarget> {
+        self.layout
+            .nav_hits
+            .iter()
+            .find(|(r, _)| col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height)
+            .map(|(_, t)| *t)
+    }
+
+    /// Whether the artists tree is the page in front.
+    pub fn library_active(&self) -> bool {
+        self.mode == Mode::Normal && self.page() == Page::Artists && self.library.is_some()
+    }
+
     fn update_hover_zone(&mut self) {
         let col = self.hover.column;
         let row = self.hover.row;
@@ -2339,8 +2965,34 @@ impl App {
             }
         }
 
+        if let Some(target) = self.nav_target_at(col, row) {
+            self.hover.zone = HoverZone::Nav(target);
+            return;
+        }
+
+        if self.page() != Page::Queue && self.is_in_rect(col, row, self.layout.browse_area) {
+            if let Page::Album(_) = self.page() {
+                if let Some(hit) = self.album_page.as_ref().and_then(|p| p.hit(col, row)) {
+                    self.hover.zone = HoverZone::Album(hit);
+                    return;
+                }
+            } else {
+                let hit = match self.page() {
+                    Page::Albums => self.albums_page.hit(col, row),
+                    Page::Favourites => self.favourites_page.hit(col, row),
+                    Page::Recent => self.recent_page.hit(col, row),
+                    Page::Artist(_) => self.artist_page.hit(col, row),
+                    _ => None,
+                };
+                if let Some(hit) = hit {
+                    self.hover.zone = HoverZone::Browse(hit);
+                    return;
+                }
+            }
+        }
+
         // Library item.
-        if self.mode == Mode::LibraryBrowse && self.is_in_rect(col, row, self.layout.library_area) {
+        if self.library_active() && self.is_in_rect(col, row, self.layout.library_area) {
             let inner_y = self.layout.library_area.y + 1;
             let inner_h = self.library_content_height();
             if row >= inner_y
@@ -2627,35 +3279,17 @@ impl App {
             return;
         }
 
-        match key.code {
-            KeyCode::Esc => {
-                // If filter is non-empty, clear it first. Otherwise close library.
-                if self.library.as_ref().is_some_and(|l| !l.filter.is_empty()) {
-                    if let Some(ref mut lib) = self.library {
-                        lib.clear_filter();
-                    }
-                } else {
-                    self.library = None;
-                    self.mode = Mode::Normal;
-                }
+        if key.code == KeyCode::Esc {
+            // A filter is cleared first; otherwise the page is left.
+            if let Some(lib) = self.library.as_mut().filter(|l| !l.filter.is_empty()) {
+                lib.clear_filter();
+            } else {
+                self.leave_page();
             }
-            KeyCode::Char('q') => {
-                self.quit = true;
-            }
-            KeyCode::Tab => {
-                self.library_focus = match self.library_focus {
-                    LibraryFocus::Library => LibraryFocus::Queue,
-                    LibraryFocus::Queue => LibraryFocus::Library,
-                };
-            }
-            KeyCode::Char(' ') => self.toggle_pause(),
-            KeyCode::Char('>') | KeyCode::Char('n') => self.skip(PlayerCommand::NextTrack),
-            KeyCode::Char('<') => self.skip(PlayerCommand::PrevTrack),
-            _ => {
-                if self.library_focus == LibraryFocus::Library {
-                    self.handle_library_browse_key(key);
-                }
-            }
+            return;
+        }
+        if !self.handle_library_browse_key(key) {
+            self.handle_transport_key(key);
         }
     }
 
@@ -2684,9 +3318,9 @@ impl App {
         }
     }
 
-    fn handle_library_browse_key(&mut self, key: KeyEvent) {
+    fn handle_library_browse_key(&mut self, key: KeyEvent) -> bool {
         let Some(ref mut lib) = self.library else {
-            return;
+            return false;
         };
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => lib.move_up(),
@@ -2720,16 +3354,23 @@ impl App {
             KeyCode::Char('f') | KeyCode::Char('/') => {
                 lib.start_filter();
             }
-            _ => {}
+            KeyCode::Char('A') => {
+                if let Some(id) = lib.artist_target() {
+                    self.go_page(Page::Artist(id));
+                }
+            }
+            KeyCode::Char('O') => {
+                if let Some(id) = lib.album_target() {
+                    self.go_page(Page::Album(id));
+                }
+            }
+            _ => return false,
         }
+        true
     }
 
     pub fn open_library(&mut self) {
-        if self.library.is_none() {
-            self.library = Some(LibraryState::load());
-        }
-        self.mode = Mode::LibraryBrowse;
-        self.library_focus = LibraryFocus::Library;
+        self.go_page(Page::Artists);
     }
 
     fn open_picker(&mut self, kind: PickerKind) {
@@ -2828,7 +3469,7 @@ impl App {
     /// Rows of library content on screen. The filter input owns the bottom
     /// row while it has focus.
     pub(super) fn library_content_height(&self) -> usize {
-        let inner = self.layout.library_area.height.saturating_sub(2) as usize;
+        let inner = self.layout.library_area.height.saturating_sub(1) as usize;
         let filter_rows = self.library.as_ref().is_some_and(|lib| lib.filter_active) as usize;
         inner.saturating_sub(filter_rows)
     }
@@ -2839,6 +3480,27 @@ impl App {
     /// moment there is more than one definition.
     pub(super) fn queue_visible_height(&self) -> usize {
         self.layout.queue_area.height.saturating_sub(1) as usize
+    }
+
+    /// The Artists tree's scrollbar, as a column and the rows it spans, when
+    /// the tree is longer than the pane.
+    fn library_bar(&self) -> Option<(u16, u16, usize)> {
+        let lib = self.library.as_ref()?;
+        let area = self.layout.library_area;
+        let h = self.library_content_height();
+        (lib.nodes.len() > h && area.width > 6 && h > 0)
+            .then(|| (area.x + area.width - 3, area.y + 1, h))
+    }
+
+    fn library_scroll_to(&mut self, row: u16) {
+        let Some((_, y, h)) = self.library_bar() else {
+            return;
+        };
+        if let Some(lib) = self.library.as_mut() {
+            let max = lib.nodes.len().saturating_sub(h);
+            let frac = row.saturating_sub(y) as f64 / h.saturating_sub(1).max(1) as f64;
+            lib.scroll_offset = ((frac.clamp(0.0, 1.0) * max as f64).round() as usize).min(max);
+        }
     }
 
     fn update_scroll(&mut self) {

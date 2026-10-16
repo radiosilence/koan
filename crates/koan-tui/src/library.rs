@@ -1,7 +1,8 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Widget};
+use ratatui::widgets::Widget;
 
 use koan_core::db::queries;
 
@@ -329,6 +330,30 @@ impl LibraryState {
         }
     }
 
+    /// The artist page for the row under the cursor, whatever kind of row it is.
+    pub fn artist_target(&self) -> Option<i64> {
+        let mut i = self.cursor.min(self.nodes.len().checked_sub(1)?);
+        loop {
+            if let LibraryNode::Artist { id, .. } = &self.nodes[i] {
+                return Some(*id);
+            }
+            i = i.checked_sub(1)?;
+        }
+    }
+
+    /// The record page for the row under the cursor: the album it is, or the
+    /// one it is on.
+    pub fn album_target(&self) -> Option<i64> {
+        let mut i = self.cursor.min(self.nodes.len().checked_sub(1)?);
+        loop {
+            match &self.nodes[i] {
+                LibraryNode::Album { id, .. } => return Some(*id),
+                LibraryNode::Artist { .. } => return None,
+                LibraryNode::Track { .. } => i = i.checked_sub(1)?,
+            }
+        }
+    }
+
     pub fn enqueue_all_under_cursor(&self) -> Vec<i64> {
         if self.cursor >= self.nodes.len() {
             return vec![];
@@ -389,24 +414,27 @@ impl<'a> LibraryView<'a> {
 
 impl Widget for LibraryView<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let title_style = if self.focused {
-            self.theme.library_artist
+        let artists = self
+            .state
+            .nodes
+            .iter()
+            .filter(|n| matches!(n, LibraryNode::Artist { .. }))
+            .count();
+        let note = if self.state.filter.is_empty() {
+            format!(" {artists} ")
         } else {
-            self.theme.hint_desc
+            format!(" {artists} \u{b7} /{} ", self.state.filter)
         };
-
-        let title_text = if self.state.filter.is_empty() {
-            " library ".to_string()
-        } else {
-            format!(" library [{}] ", self.state.filter)
-        };
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(Line::from(vec![Span::styled(title_text, title_style)]));
-
-        let inner = block.inner(area);
-        block.render(area, buf);
+        super::ui::heading(buf, area, self.theme, "artists", &note);
+        let inner = Rect::new(
+            area.x,
+            area.y + 1,
+            area.width,
+            area.height.saturating_sub(1),
+        );
+        if inner.height == 0 {
+            return;
+        }
 
         // Reserve bottom row for filter input when filter is focused.
         let show_filter_bar = self.filter_focused;
@@ -426,7 +454,28 @@ impl Widget for LibraryView<'_> {
             buf.set_line(inner.x, inner.y, &line, inner.width);
         } else {
             let scroll = self.state.scroll_offset;
-            let end = (scroll + content_height).min(self.state.nodes.len());
+            let total = self.state.nodes.len();
+            let end = (scroll + content_height).min(total);
+            let overflow = total > content_height && content_height > 0 && inner.width > 6;
+            let text_w = inner.width - 2 * u16::from(overflow);
+            if overflow {
+                let x = inner.x + inner.width - 1;
+                let h = content_height;
+                let thumb = (h * content_height / total).max(1);
+                let top = (h - thumb) * scroll / (total - content_height).max(1);
+                for row in 0..h {
+                    let on = row >= top && row < top + thumb;
+                    for cx in [x - 1, x] {
+                        buf[(cx, inner.y + row as u16)]
+                            .set_char(if on { '\u{2588}' } else { ' ' })
+                            .set_style(if on {
+                                Style::new().fg(self.theme.scrollbar_thumb)
+                            } else {
+                                Style::new().bg(self.theme.scrollbar_bg)
+                            });
+                    }
+                }
+            }
 
             for (row, i) in (scroll..end).enumerate() {
                 let node = &self.state.nodes[i];
@@ -436,18 +485,18 @@ impl Widget for LibraryView<'_> {
                 // Fill entire row with cursor style first for full-width highlight bar.
                 if is_cursor {
                     let row_y = inner.y + row as u16;
-                    for col in inner.x..inner.x + inner.width {
+                    for col in inner.x..inner.x + text_w {
                         buf[(col, row_y)].set_style(self.theme.library_cursor);
                     }
                 } else if is_hovered {
                     let row_y = inner.y + row as u16;
-                    for col in inner.x..inner.x + inner.width {
+                    for col in inner.x..inner.x + text_w {
                         buf[(col, row_y)].set_style(self.theme.library_hover);
                     }
                 }
 
                 let line = render_node(node, is_cursor, self.theme);
-                buf.set_line(inner.x, inner.y + row as u16, &line, inner.width);
+                buf.set_line(inner.x, inner.y + row as u16, &line, text_w);
             }
         }
 
@@ -533,9 +582,9 @@ fn render_node<'a>(node: &LibraryNode, is_cursor: bool, theme: &Theme) -> Line<'
             };
             let source_span = if !is_cursor {
                 let (label, color) = match source.as_str() {
-                    "local" => (" \u{F0A0} ", ratatui::style::Color::Green), // nf-fa-hdd
-                    "remote" => (" \u{F0C2} ", ratatui::style::Color::Cyan), // nf-fa-cloud
-                    _ => (" ? ", ratatui::style::Color::Yellow),
+                    "local" => (" \u{F0A0} ", theme.tokens.muted), // nf-fa-hdd
+                    "remote" => (" \u{F0C2} ", theme.tokens.muted), // nf-fa-cloud
+                    _ => (" ? ", theme.warning),
                 };
                 Span::styled(label, ratatui::style::Style::default().fg(color))
             } else {

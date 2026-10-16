@@ -1,6 +1,5 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
@@ -93,10 +92,7 @@ impl Widget for ContextMenuOverlay<'_> {
             }
             let is_selected = i == self.state.cursor;
             let base_style = if is_selected {
-                Style::default()
-                    .fg(ratatui::style::Color::Black)
-                    .bg(ratatui::style::Color::White)
-                    .add_modifier(Modifier::BOLD)
+                self.theme.picker_cursor
             } else {
                 self.theme.hint_desc
             };

@@ -18,6 +18,20 @@ Every key in every mode. The hint bar at the bottom of the TUI shows available k
 | `.` or `->` | Seek +10 seconds |
 | `Shift+D` | Device selector (switch audio output) |
 
+### Pages
+
+See [The terminal UI](../guide/terminal-ui.md). These work from any page.
+
+| Key | Action |
+|-----|--------|
+| `1` to `6` | Queue, Now playing, Albums, Artists, Favourites, Recent |
+| `Tab` / `Shift+Tab` | Next / previous page |
+| `[` / `]` or `Alt+Left` / `Alt+Right` | Back / forward through the pages visited |
+| `Esc` | Leave the page for the one before it |
+| `I` | Draw covers as images or in half blocks |
+| `E` | Choose the EQ the output plays through |
+| `A` / `O` | Open the artist / the record of the selection |
+
 ### Navigation
 
 | Key | Action |
@@ -25,7 +39,7 @@ Every key in every mode. The hint bar at the bottom of the TUI shows available k
 | `p` | Track picker (fuzzy search) |
 | `a` | Album picker |
 | `r` | Artist picker |
-| `l` | Library browser |
+| `l` | Artists page (the library tree) |
 | `/` | Search queue (jump to matching track) |
 | `g` | Jump to start of queue |
 | `G` | Jump to end of queue |
@@ -79,7 +93,7 @@ Active when a fuzzy picker overlay is open (`p`, `a`, or `r`).
 
 ---
 
-## Library browser (`l`)
+## Artists page (`4` or `l`)
 
 Tree view: artist -> album -> track.
 
@@ -87,8 +101,40 @@ Tree view: artist -> album -> track.
 |-----|--------|
 | `Up` / `Down` | Navigate |
 | `Enter` | Expand node, or append the track and play it |
-| `f` | Filter library (type to search) |
-| `Esc` | Exit library browser |
+| `/` or `f` | Filter library (type to search) |
+| `Esc` | Clear the filter, then leave the page |
+
+---
+
+## Albums, Favourites and Recent (`3`, `5`, `6`)
+
+| Key | Action |
+|-----|--------|
+| Arrows or `h` `j` `k` `l` | Move through the tiles or rows |
+| `PgUp` / `PgDn`, `g` / `G` | Page, start, end |
+| `Enter` or `O` | Open the record (a track row plays the track) |
+| `A` | Open the artist |
+| `P` | Append the record (or track) and play it |
+| `a` | Append to the queue |
+| `Ctrl+R` | Replace the queue and play |
+| `/` | Filter what is shown |
+| `v` | Tiles or rows (tracks, on Favourites and Recent) |
+| `o` | Cycle the order (Albums) |
+| `f` | Favourite the track under the cursor (track rows) |
+
+### Mouse
+
+| Action | Effect |
+|--------|--------|
+| Click | Select |
+| Second click | Open the record |
+| Click a title or artist under a tile | Open the record / the artist |
+| Right-click | Append to the queue (also `a`, and the hint bar) |
+| Wheel | Scroll |
+| Click `sort:` or `view:` in the heading | Cycle the order, switch tiles and rows |
+| Click the sidebar or tab bar | Open that page, or go back or forward |
+| Click a key hint along the foot | The same as pressing that key |
+| Drag the scrollbar | Scroll |
 
 ---
 

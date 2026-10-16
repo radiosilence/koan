@@ -1,0 +1,1 @@
+- **The terminal UI has pages.** Queue, Now playing, Albums, Artists, Favourites and Recent, reached by number keys, `Tab`, a sidebar or a tab bar, with back and forward like a browser. Albums, Favourites and Recent show records as tiles of cover art or as rows; the layout follows the terminal's width. Everything works with the keyboard and with the mouse.

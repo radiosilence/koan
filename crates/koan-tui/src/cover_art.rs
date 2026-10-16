@@ -1,10 +1,15 @@
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use image::DynamicImage;
-use ratatui::buffer::Buffer;
+use ratatui::buffer::{Buffer, CellDiffOption};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::widgets::Widget;
+use ratatui_image::picker::{Picker, ProtocolType};
+use ratatui_image::protocol::Protocol;
+use ratatui_image::{Image, Resize};
 
 /// A pre-rendered cell: relative position + fg/bg colors.
 struct RenderedCell {
@@ -17,21 +22,225 @@ struct RenderedCell {
 /// Cached rendered output at a specific size. Avoids re-running
 /// Lanczos3 resize + pixel iteration every frame.
 struct RenderedArt {
-    width: u16,
-    height: u16,
     cells: Vec<RenderedCell>,
 }
 
-/// Transparent single-entry cache for cover art images.
-/// Holds at most ONE decoded image + its rendered halfblock output.
-/// When a new path is loaded the old image and all rendered buffers are dropped,
-/// keeping memory bounded (no multi-entry accumulation).
+/// Draws images into the buffer, in the terminal's graphics protocol when it
+/// has one and the person has not turned it off, otherwise in half blocks.
+/// Either way a drawing is made once per image and size and kept, so a frame
+/// that shows the same cover again costs a blit.
+pub struct Gfx {
+    picker: Option<Picker>,
+    graphics: bool,
+    drawn: HashMap<(u64, u16, u16, u8), Drawn>,
+}
+
+enum Drawn {
+    Protocol(Protocol),
+    Cells(RenderedArt),
+    Unsupported,
+}
+
+/// The protocols covers are drawn in. Sixel is left out: the encoder in the
+/// release of `ratatui-image` that builds on the MSRV panics at ordinary
+/// sizes, so a sixel-only terminal gets half blocks.
+fn usable(protocol: ProtocolType) -> bool {
+    matches!(protocol, ProtocolType::Kitty | ProtocolType::Iterm2)
+}
+
+/// How many drawings are kept before the lot is dropped. A screenful of
+/// tiles is well under this; scrolling a long library through it is not.
+const DRAWN_LIMIT: usize = 192;
+
+impl Default for Gfx {
+    fn default() -> Self {
+        Self::halfblocks()
+    }
+}
+
+impl Gfx {
+    pub fn halfblocks() -> Self {
+        Self {
+            picker: None,
+            graphics: false,
+            drawn: HashMap::new(),
+        }
+    }
+
+    /// Asks the terminal what it can draw. Must run before the event loop
+    /// reads the keyboard: the reply arrives on stdin.
+    pub fn detect(graphics: bool) -> Self {
+        if !graphics {
+            return Self::halfblocks();
+        }
+        let picker = Picker::from_query_stdio();
+        match &picker {
+            Ok(p) => log::info!(
+                "cover graphics: {:?}, cells {:?}px",
+                p.protocol_type(),
+                p.font_size()
+            ),
+            Err(e) => log::warn!("cover graphics: the terminal did not answer: {e}"),
+        }
+        let picker = picker.ok();
+        Self {
+            graphics: picker.as_ref().is_some_and(|p| usable(p.protocol_type())),
+            picker,
+            drawn: HashMap::new(),
+        }
+    }
+
+    /// Whether covers are drawn as real images.
+    pub fn graphics(&self) -> bool {
+        self.graphics
+    }
+
+    /// Whether the terminal reported a graphics protocol at all.
+    pub fn available(&self) -> bool {
+        self.picker
+            .as_ref()
+            .is_some_and(|p| usable(p.protocol_type()))
+    }
+
+    /// Switches between real images and half blocks. Returns what is now in
+    /// effect: off when the terminal has no graphics protocol to switch to.
+    pub fn set_graphics(&mut self, on: bool) -> bool {
+        let on = on && self.available();
+        if on != self.graphics {
+            self.graphics = on;
+            self.drawn.clear();
+        }
+        on
+    }
+
+    pub fn protocol_name(&self) -> &'static str {
+        match self.picker.as_ref().map(Picker::protocol_type) {
+            Some(ProtocolType::Kitty) => "kitty",
+            Some(ProtocolType::Iterm2) => "iterm2",
+            Some(ProtocolType::Sixel) => "sixel",
+            _ => "halfblocks",
+        }
+    }
+
+    /// Draws `img`, keyed by `key`, into `area`, top-left or centred.
+    pub fn draw(
+        &mut self,
+        key: u64,
+        img: &DynamicImage,
+        area: Rect,
+        buf: &mut Buffer,
+        center: bool,
+    ) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let slot = (key, area.width, area.height, center as u8);
+        if !self.drawn.contains_key(&slot) {
+            if self.drawn.len() >= DRAWN_LIMIT {
+                self.drawn.clear();
+            }
+            let made = match self.picker.as_ref().filter(|_| self.graphics) {
+                Some(picker) => picker
+                    .new_protocol(
+                        img.clone(),
+                        Rect::new(0, 0, area.width, area.height),
+                        Resize::Scale(Some(image::imageops::FilterType::Triangle)),
+                    )
+                    .map_or(Drawn::Unsupported, Drawn::Protocol),
+                None => Drawn::Cells(pre_render(img, area.width, area.height, center)),
+            };
+            self.drawn.insert(slot, made);
+        }
+        match self.drawn.get(&slot) {
+            Some(Drawn::Protocol(proto)) => {
+                let size = proto.area();
+                let (w, h) = (size.width.min(area.width), size.height.min(area.height));
+                let (dx, dy) = if center {
+                    ((area.width - w) / 2, (area.height - h) / 2)
+                } else {
+                    (0, 0)
+                };
+                let rect = Rect::new(area.x + dx, area.y + dy, w, h);
+                Image::new(proto).render(rect, buf);
+                // Each row of the image is one long string in its first cell,
+                // which ratatui would measure to track the cursor and drift;
+                // newer releases of the crate mark the cell one wide, as here.
+                for y in rect.y..rect.y + rect.height {
+                    if let Some(cell) = buf.cell_mut((rect.x, y)) {
+                        cell.set_diff_option(CellDiffOption::ForcedWidth(
+                            std::num::NonZeroU16::MIN,
+                        ));
+                    }
+                }
+            }
+            Some(Drawn::Cells(rendered)) => blit(rendered, area, area.height, buf),
+            _ => {}
+        }
+    }
+
+    /// Draws the top `visible` rows of the image that would fill `area`, for a
+    /// tile the page ends part-way through. A graphics protocol cannot be
+    /// cropped by a cell, so the part drawn is half blocks.
+    pub fn draw_clipped(
+        &mut self,
+        key: u64,
+        img: &DynamicImage,
+        area: Rect,
+        visible: u16,
+        buf: &mut Buffer,
+    ) {
+        if visible >= area.height {
+            return self.draw(key, img, area, buf, true);
+        }
+        if visible == 0 || area.width == 0 {
+            return;
+        }
+        let slot = (key, area.width, area.height, 3u8);
+        if !self.drawn.contains_key(&slot) {
+            if self.drawn.len() >= DRAWN_LIMIT {
+                self.drawn.clear();
+            }
+            self.drawn.insert(
+                slot,
+                Drawn::Cells(pre_render(img, area.width, area.height, true)),
+            );
+        }
+        if let Some(Drawn::Cells(rendered)) = self.drawn.get(&slot) {
+            blit(rendered, area, visible, buf);
+        }
+    }
+}
+
+fn blit(rendered: &RenderedArt, area: Rect, visible: u16, buf: &mut Buffer) {
+    for cell in rendered.cells.iter().filter(|c| c.ry < visible) {
+        if let Some(c) = buf.cell_mut(ratatui::layout::Position::new(
+            area.x + cell.rx,
+            area.y + cell.ry,
+        )) {
+            c.set_char('\u{2580}')
+                .set_style(Style::new().fg(cell.fg).bg(cell.bg));
+        }
+    }
+}
+
+/// The key a file's cover is drawn under.
+pub fn path_key(path: &Path) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    path.hash(&mut h);
+    h.finish() & !(1 << 63)
+}
+
+/// The key an album's tile is drawn under. Apart from `path_key`'s by the top
+/// bit, so a tile and a cover never share a drawing.
+pub fn album_key(album_id: i64) -> u64 {
+    (album_id as u64) | (1 << 63)
+}
+
+/// Single-entry cache for cover art images: at most ONE decoded image. When a
+/// new path is loaded the old image is dropped, keeping memory bounded.
 pub struct CoverArtCache {
     path: Option<PathBuf>,
     image: Option<DynamicImage>,
-    rendered: Option<RenderedArt>,
-    /// Separate cache for centered renders (e.g. zoom overlay).
-    rendered_centered: Option<RenderedArt>,
 }
 
 impl Default for CoverArtCache {
@@ -45,8 +254,6 @@ impl CoverArtCache {
         Self {
             path: None,
             image: None,
-            rendered: None,
-            rendered_centered: None,
         }
     }
 
@@ -57,8 +264,6 @@ impl CoverArtCache {
             self.path = Some(path.to_path_buf());
             self.image = koan_core::index::folder_art::cover_art(path)
                 .and_then(|bytes| image::load_from_memory(&bytes).ok());
-            self.rendered = None; // invalidate render cache on new image
-            self.rendered_centered = None;
         }
         self.image.as_ref()
     }
@@ -68,73 +273,26 @@ impl CoverArtCache {
         self.image.as_ref()
     }
 
+    /// The key the cached image is drawn under.
+    pub fn key(&self) -> u64 {
+        self.path.as_deref().map_or(0, path_key)
+    }
+
     /// Clear the cache.
     pub fn clear(&mut self) {
         self.path = None;
         self.image = None;
-        self.rendered = None;
-        self.rendered_centered = None;
     }
 
-    /// Render cached art into a buffer. Uses a pre-rendered cell cache
-    /// so repeated calls at the same size skip the resize + pixel work.
-    pub fn render_to(&mut self, area: Rect, buf: &mut Buffer) {
-        let Some(ref img) = self.image else { return };
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-
-        // Check if we have a cached render at this size.
-        let needs_render = self
-            .rendered
-            .as_ref()
-            .is_none_or(|r| r.width != area.width || r.height != area.height);
-
-        if needs_render {
-            self.rendered = Some(pre_render(img, area.width, area.height, false));
-        }
-
-        // Blit cached cells.
-        if let Some(ref rendered) = self.rendered {
-            for cell in &rendered.cells {
-                if let Some(c) = buf.cell_mut(ratatui::layout::Position::new(
-                    area.x + cell.rx,
-                    area.y + cell.ry,
-                )) {
-                    c.set_char('\u{2580}')
-                        .set_style(Style::new().fg(cell.fg).bg(cell.bg));
-                }
-            }
+    pub fn render_to(&self, gfx: &mut Gfx, area: Rect, buf: &mut Buffer) {
+        if let Some(img) = &self.image {
+            gfx.draw(self.key(), img, area, buf, false);
         }
     }
 
-    /// Render cached art centered in the given area. Uses a separate pre-rendered
-    /// cell cache from `render_to` so the two can coexist at different sizes.
-    pub fn render_to_centered(&mut self, area: Rect, buf: &mut Buffer) {
-        let Some(ref img) = self.image else { return };
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-
-        let needs_render = self
-            .rendered_centered
-            .as_ref()
-            .is_none_or(|r| r.width != area.width || r.height != area.height);
-
-        if needs_render {
-            self.rendered_centered = Some(pre_render(img, area.width, area.height, true));
-        }
-
-        if let Some(ref rendered) = self.rendered_centered {
-            for cell in &rendered.cells {
-                if let Some(c) = buf.cell_mut(ratatui::layout::Position::new(
-                    area.x + cell.rx,
-                    area.y + cell.ry,
-                )) {
-                    c.set_char('\u{2580}')
-                        .set_style(Style::new().fg(cell.fg).bg(cell.bg));
-                }
-            }
+    pub fn render_to_centered(&self, gfx: &mut Gfx, area: Rect, buf: &mut Buffer) {
+        if let Some(img) = &self.image {
+            gfx.draw(self.key(), img, area, buf, true);
         }
     }
 }
@@ -195,11 +353,7 @@ fn pre_render(img: &DynamicImage, width: u16, height: u16, center: bool) -> Rend
         }
     }
 
-    RenderedArt {
-        width,
-        height,
-        cells,
-    }
+    RenderedArt { cells }
 }
 
 /// Widget that renders a `DynamicImage` using Unicode halfblock characters.
@@ -234,5 +388,100 @@ impl Widget for CoverArt<'_> {
                     .set_style(Style::new().fg(cell.fg).bg(cell.bg));
             }
         }
+    }
+}
+
+#[cfg(test)]
+impl Gfx {
+    /// A drawer that uses `protocol`, for tests: no terminal is asked.
+    pub fn forced(protocol: ProtocolType) -> Self {
+        let mut picker = Picker::halfblocks();
+        picker.set_protocol_type(protocol);
+        Self {
+            picker: Some(picker),
+            graphics: usable(protocol),
+            drawn: HashMap::new(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn picture() -> DynamicImage {
+        DynamicImage::ImageRgb8(image::RgbImage::from_fn(96, 96, |x, y| {
+            image::Rgb([(x * 2) as u8, (y * 2) as u8, 128])
+        }))
+    }
+
+    fn draw_all(gfx: &mut Gfx) {
+        let img = picture();
+        for (w, h) in [(1u16, 1u16), (2, 1), (8, 4), (24, 12), (60, 8), (5, 30)] {
+            for center in [false, true] {
+                let area = Rect::new(2, 1, w, h);
+                let mut buf = Buffer::empty(Rect::new(0, 0, 80, 40));
+                gfx.draw(7, &img, area, &mut buf, center);
+            }
+            for visible in [0u16, 1, h / 2, h, h + 3] {
+                let area = Rect::new(2, 1, w, h);
+                let mut buf = Buffer::empty(Rect::new(0, 0, 80, 40));
+                gfx.draw_clipped(9, &img, area, visible, &mut buf);
+            }
+        }
+    }
+
+    #[test]
+    fn every_protocol_draws_at_any_size_without_panicking() {
+        for protocol in [
+            ProtocolType::Halfblocks,
+            ProtocolType::Kitty,
+            ProtocolType::Iterm2,
+        ] {
+            draw_all(&mut Gfx::forced(protocol));
+        }
+    }
+
+    #[test]
+    fn sixel_is_never_used() {
+        let gfx = Gfx::forced(ProtocolType::Sixel);
+        assert!(!gfx.graphics() && !gfx.available());
+        // And drawing through it is half blocks, at sizes that crash the
+        // sixel encoder.
+        draw_all(&mut Gfx::forced(ProtocolType::Sixel));
+    }
+
+    #[test]
+    fn a_graphics_protocol_puts_something_in_the_cells() {
+        let img = picture();
+        let area = Rect::new(0, 0, 24, 12);
+        let mut buf = Buffer::empty(area);
+        Gfx::forced(ProtocolType::Kitty).draw(1, &img, area, &mut buf, false);
+        assert!(
+            (0..area.width).any(|x| buf[(x, 0)].symbol() != " "),
+            "the first row of the image is drawn"
+        );
+    }
+
+    #[test]
+    fn graphics_can_be_switched_off_and_back_on() {
+        let mut gfx = Gfx::forced(ProtocolType::Kitty);
+        assert!(gfx.graphics() && gfx.available());
+        assert!(!gfx.set_graphics(false));
+        assert!(!gfx.graphics() && gfx.available());
+        assert!(gfx.set_graphics(true));
+        // A terminal with no protocol cannot be switched on.
+        let mut plain = Gfx::halfblocks();
+        assert!(!plain.set_graphics(true));
+    }
+
+    #[test]
+    fn a_clipped_tile_shows_only_the_rows_that_fit() {
+        let img = picture();
+        let area = Rect::new(0, 0, 20, 10);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 20, 12));
+        Gfx::forced(ProtocolType::Kitty).draw_clipped(3, &img, area, 4, &mut buf);
+        assert!((0..20).any(|x| buf[(x, 3)].symbol() != " "));
+        assert!((0..20).all(|x| buf[(x, 4)].symbol() == " "));
     }
 }
