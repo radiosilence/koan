@@ -1670,3 +1670,9 @@ android-run abis="arm64-v8a":
 android-apk abis="arm64-v8a":
     cd apps/android && ./gradlew -q :app:assembleRelease -Pabis={{abis}}
     @echo "$PWD/apps/android/app/build/outputs/apk/release/app-release.apk"
+
+# Create the Android release key, keep it in 1Password (VAULT, default Claude)
+# and set the secrets CI signs with. Once only: a new key cannot update an APK
+# signed with the old one.
+android-release-key:
+    PATH="$(mise where java)/bin:$PATH" scripts/android-release-key.sh
