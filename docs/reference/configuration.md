@@ -188,7 +188,7 @@ With `art_graphics` on, the TUI asks the terminal at startup whether it draws im
 
 ### TUI palette
 
-`tui_theme = "koan"` draws the [kōan theme](../design/koan-theme.md) in 24-bit colour where the terminal reports it, with the accent taken from the playing cover. `"ansi"` uses the terminal's own sixteen colours. No background is painted either way. Also in `config.local.toml`.
+`tui_theme = "koan"` draws the [kōan theme](https://github.com/radiosilence/koan/blob/main/docs/design/koan-theme.md) in 24-bit colour where the terminal reports it, with the accent taken from the playing cover. `"ansi"` uses the terminal's own sixteen colours. No background is painted either way. Also in `config.local.toml`.
 
 ### Output device
 
