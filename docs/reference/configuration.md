@@ -252,7 +252,12 @@ username = "admin"
 download_workers = 5             # parallel download threads (default: 5)
 cache_limit = "50GB"             # max cache size, LRU eviction at startup and as downloads land (default: unlimited)
 cache_dir = "/custom/path"       # explicit cache dir (default: ~/.config/koan/cache)
+auto_sync = true                 # check the server for changes on a timer (default: true)
+auto_sync_interval_mins = 60     # minutes between checks; 0 checks once at startup (default: 60)
+play_queue = false               # keep this device's queue on the server (default: false, per device)
 ```
+
+`auto_sync` is for servers that cannot say when their library changes; a kōan server tells its apps itself. A check walks the library only if the server reports a change since the last walk. `play_queue` is the Settings → Devices switch described in [The play queue on the server](../guide/remote-servers.md#the-play-queue-on-the-server).
 
 See [Remote Servers](../guide/remote-servers.md) for the full setup guide.
 
@@ -344,6 +349,7 @@ Controls how magnitudes map to bar height (the Y axis):
 ```toml
 [organize]
 default = "standard"      # pattern selected by default in the TUI modal
+move_ancillary = true     # cover art, cue sheets and logs move with the music (default: true)
 
 [organize.patterns]
 standard = "%album artist%/(%date%) %album%/%tracknumber%. %title%"
