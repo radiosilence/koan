@@ -113,6 +113,24 @@ class OutputPickerTest {
         assertNull("no presets, nothing to say", presetSummary(phone, outputs(OutputChoice.Default)))
     }
 
+    @Test fun theOutputButtonNamesOnlySomewhereParticular() {
+        val speaker = OutputInfo(PHONE_SPEAKER, PHONE_SPEAKER, "", "", false, null, false)
+        val own = OutputsInfo(null, listOf(speaker), emptyList(), OutputChoice.Default, null, emptyList(), false)
+        assertNull("the phone's speaker is the default: the glyph alone", outputLabel(own))
+        assertFalse("its route is the system's: nothing to choose", canChooseOutput(own, controlling = false))
+        val qudelix = own.copy(devices = listOf(OutputInfo("Qudelix-5K", "Qudelix-5K", "", "", false, null, false)))
+        assertEquals("Qudelix-5K", outputLabel(qudelix))
+        val toAmp = own.copy(renderers = listOf(amp), current = OutputChoice.Renderer(amp.id))
+        assertEquals("Living room amp", outputLabel(toAmp))
+        assertTrue(canChooseOutput(own.copy(renderers = listOf(amp)), controlling = false))
+
+        val mac = OutputsInfo("Studio Mac", emptyList(), emptyList(), OutputChoice.Default, null, emptyList(), false)
+        assertNull("another device's System Default is not named", outputLabel(mac))
+        assertEquals("Scarlett 4i4 USB", outputLabel(mac.copy(current = OutputChoice.Device("Scarlett 4i4 USB"))))
+        assertTrue(canChooseOutput(mac, controlling = true))
+        assertFalse("not yet published", canChooseOutput(own, controlling = true))
+    }
+
     @Test fun eachRendererSaysWhatItIs() {
         val here = OutputState.Here
         assertEquals("WiiM Pro · UPnP", rendererDetail(amp, here))

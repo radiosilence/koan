@@ -4000,7 +4000,9 @@ impl KoanEngine {
 
     /// The name of the port iOS routes audio to, on each route change: what
     /// profiles are chosen by on a phone, and the cue to read the session's
-    /// rate again. Does nothing elsewhere.
+    /// rate again. On Android, the media route's name, which is what the
+    /// phone's output is called; its output is restarted by the app. Does
+    /// nothing elsewhere.
     pub async fn set_audio_route(self: Arc<Self>, name: String) -> Result<(), KoanError> {
         #[cfg(any(target_os = "ios", target_os = "tvos"))]
         {
@@ -4010,7 +4012,12 @@ impl KoanEngine {
             })
             .await
         }
-        #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+        #[cfg(target_os = "android")]
+        {
+            koan_core::audio::android_backend::set_route(name);
+            Ok(())
+        }
+        #[cfg(not(any(target_os = "ios", target_os = "tvos", target_os = "android")))]
         {
             let _ = name;
             Ok(())

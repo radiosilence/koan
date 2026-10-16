@@ -97,6 +97,19 @@ fn check(result: aaudio_result_t, what: &str) -> Result<(), BackendError> {
     }
 }
 
+/// Where Android routes media now, named as a person would: "Phone speaker",
+/// "Headphones", or a Bluetooth or USB device's product name. Told by the
+/// app on each route change; what the phone's one output is called.
+static ROUTE: parking_lot::RwLock<Option<String>> = parking_lot::RwLock::new(None);
+
+/// The route changed: the phone's output is listed again under its new name.
+pub fn set_route(name: String) {
+    let changed = ROUTE.write().replace(name.clone()).as_ref() != Some(&name);
+    if changed {
+        crate::remote::outputs::refresh_devices();
+    }
+}
+
 /// The output, and the bit-perfect format it holds, if any.
 #[derive(Default)]
 pub struct AndroidAudioBackend {
@@ -111,7 +124,10 @@ static DISCONNECT: std::sync::OnceLock<Disconnect> = std::sync::OnceLock::new();
 impl AndroidAudioBackend {
     fn device() -> DeviceInfo {
         DeviceInfo {
-            name: "Android".into(),
+            name: ROUTE
+                .read()
+                .clone()
+                .unwrap_or_else(|| "Phone speaker".into()),
             sample_rates: Vec::new(),
             platform_id: 0,
             kind: Default::default(),
