@@ -1,0 +1,1 @@
+- **Releases carry the Android APK.** Each GitHub release now has `koan-android-arm64.apk` beside the macOS and Linux downloads, signed with a release key that CI builds share, so each one installs over the last. An APK installed before this has to be uninstalled once first.

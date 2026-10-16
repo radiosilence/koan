@@ -442,21 +442,25 @@ jobs:
       - run: |
           ndk=$(sed -n 's/.*ndkVersion = "\(.*\)"/\1/p' apps/android/app/build.gradle.kts)
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$ndk" "platforms;android-37.0" > /dev/null
-      # The release is signed with the debug key (see the app's build), so it
-      # sideloads. Android installs an update only over a build signed with the
-      # same key, so CI signs with one kept in the ANDROID_DEBUG_KEYSTORE secret
-      # (a base64 debug.keystore, password `android`); without it each run
-      # signs with a key of its own, and one CI build will not update another.
-      - name: Debug key
+      # Signed with the release key, so every CI build and every release is an
+      # update to the last (Android installs an update only over a build signed
+      # with the same key). A run without the secrets, as from a fork, signs
+      # with a debug key of its own.
+      - name: Release key
         env:
-          ANDROID_DEBUG_KEYSTORE: ${{ secrets.ANDROID_DEBUG_KEYSTORE }}
+          ANDROID_RELEASE_KEYSTORE: ${{ secrets.ANDROID_RELEASE_KEYSTORE }}
+          ANDROID_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
         run: |
-          if [ -z "$ANDROID_DEBUG_KEYSTORE" ]; then
-            echo "::notice::ANDROID_DEBUG_KEYSTORE is not set, so this APK is signed with a key of its own"
+          if [ -z "$ANDROID_RELEASE_KEYSTORE" ]; then
+            echo "::notice::ANDROID_RELEASE_KEYSTORE is not set, so this APK is signed with a debug key of its own"
             exit 0
           fi
-          mkdir -p ~/.android
-          printf '%s' "$ANDROID_DEBUG_KEYSTORE" | base64 --decode > ~/.android/debug.keystore
+          keystore="$RUNNER_TEMP/koan-release.p12"
+          printf '%s' "$ANDROID_RELEASE_KEYSTORE" | base64 --decode > "$keystore"
+          {
+            echo "KOAN_ANDROID_KEYSTORE=$keystore"
+            echo "KOAN_ANDROID_KEYSTORE_PASSWORD=$ANDROID_RELEASE_KEYSTORE_PASSWORD"
+          } >> "$GITHUB_ENV"
       # One ABI: phones, and emulators on Apple silicon.
       - name: Test, lint and build
         working-directory: apps/android
@@ -809,7 +813,7 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [fmt, css, clippy, test, build, msrv, audit, macos-app, create-release, create-macos-app, testflight, container-release, check-version, publish-crate, publish-package]
+    needs: [fmt, css, clippy, test, build, msrv, audit, macos-app, android-app, create-release, create-macos-app, testflight, container-release, check-version, publish-crate, publish-package]
     # The publishes having run, not merely not failed: they are skipped when
     # anything before them failed, and a skipped job is not a failure.
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.create-release.result == 'success' && needs.publish-crate.result == 'success' && needs.publish-package.result == 'success' && needs.check-version.outputs.should_release == 'true' }}
@@ -833,6 +837,16 @@ jobs:
             echo "::error::RELEASE_TOKEN is not set; the release cannot be published"
             exit 1
           fi
+      # The Android job names its APK by commit, as a pull request's is found;
+      # a release names it as the other platforms' downloads are named.
+      - name: Name the APK
+        run: |
+          apk=$(find artifacts -name 'koan-android-*.apk' | head -1)
+          if [ -z "$apk" ]; then
+            echo "::error::the Android job left no APK to release"
+            exit 1
+          fi
+          mv "$apk" artifacts/koan-android-arm64.apk
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         # The action creates the tag through the API, on the commit that was
         # built: GitHub refuses a git push of it from the workflow token for any
@@ -854,10 +868,13 @@ jobs:
             brew install --cask radiosilence/koan/koan-app # the macOS app
             ```
 
+            Android: install `koan-android-arm64.apk` below.
+
             ---
           files: |
             artifacts/**/*.tar.gz
             artifacts/**/*.dmg
+            artifacts/koan-android-arm64.apk
 
   publish-crate:
     name: Publish to crates.io
