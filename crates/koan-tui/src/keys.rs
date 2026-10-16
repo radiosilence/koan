@@ -158,27 +158,40 @@ pub fn label_event(label: &str) -> Option<KeyEvent> {
 /// them, so a click on a hint is the key it names.
 pub fn hits(mode: &Mode, page: Page, area: Rect) -> Vec<(Rect, KeyEvent)> {
     let mut x = area.x;
-    let end = area.x + area.width;
     let mut out = Vec::new();
-    for (i, (key, desc)) in hints(mode, page).iter().enumerate() {
+    for (i, (key, desc)) in fitting(mode, page, area.width).iter().enumerate() {
         if i > 0 {
             x += 2;
         }
         let w = (key.chars().count() + 2 + 1 + desc.chars().count()) as u16;
-        if x >= end {
-            break;
-        }
         if let Some(event) = label_event(key) {
-            out.push((Rect::new(x, area.y, w.min(end - x), 1), event));
+            out.push((Rect::new(x, area.y, w, 1), event));
         }
         x += w;
     }
     out
 }
 
+/// The hints that fit `width` whole: one that would be cut is left out, so
+/// a bar never ends mid-word.
+fn fitting(mode: &Mode, page: Page, width: u16) -> Vec<(&'static str, &'static str)> {
+    let mut used = 0usize;
+    let mut out = Vec::new();
+    for (key, desc) in hints(mode, page) {
+        let w =
+            key.chars().count() + 2 + 1 + desc.chars().count() + if out.is_empty() { 0 } else { 2 };
+        if used + w > width as usize {
+            break;
+        }
+        used += w;
+        out.push((key, desc));
+    }
+    out
+}
+
 impl Widget for HintBar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let hints = hints(self.mode, self.page);
+        let hints = fitting(self.mode, self.page, area.width);
         let mut spans: Vec<Span> = Vec::new();
         for (i, (key, desc)) in hints.iter().enumerate() {
             if i > 0 {

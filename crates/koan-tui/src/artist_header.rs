@@ -300,7 +300,10 @@ impl ArtistHeader {
                 );
             }
             if let Some(credit) = self.info.as_ref().and_then(|i| i.image_credit.as_deref()) {
-                put(buf, &format!("photo: {credit}"), theme.hint_desc);
+                let text = format!("photo: {credit}");
+                if x + text.chars().count() as u16 <= area.x + area.width {
+                    put(buf, &text, theme.hint_desc);
+                }
             }
         }
     }

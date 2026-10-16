@@ -159,15 +159,12 @@ fn render_plain(content: &str, area: Rect, buf: &mut Buffer, theme: &Theme) {
     }
 }
 
-/// Truncate a string to fit within a given display width (simple byte-based).
-fn truncate_to_width(s: &str, max_width: usize) -> &str {
-    if s.len() <= max_width {
-        return s;
+/// `s` cut to `max_width` cells, with an ellipsis where it was cut.
+fn truncate_to_width(s: &str, max_width: usize) -> String {
+    if s.chars().count() <= max_width {
+        return s.to_string();
     }
-    // Find a valid char boundary at or before max_width.
-    let mut end = max_width;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
+    let mut cut: String = s.chars().take(max_width.saturating_sub(1)).collect();
+    cut.push('\u{2026}');
+    cut
 }
