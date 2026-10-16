@@ -103,7 +103,7 @@ fun ShelfSections(shelf: Shelf, summary: ShelfSummary, modifier: Modifier = Modi
         val rows = remember(summary, columns) { summary.albums.chunked(columns) }
         LazyColumn(state = list, modifier = Modifier.fillMaxSize()) {
             if (summary.artists.isNotEmpty()) {
-                item(key = "artists-head") { SectionHead("Artists", summary.artistTotal.toLong(), { nav.push(ArtistsRoute(shelf)) }) }
+                item(key = "artists-head") { SectionHead("Artists", summary.artistTotal.toLong(), { nav.push(ArtistsRoute(shelf)) }, Modifier.padding(horizontal = gutter)) }
                 item(key = "artists") {
                     FlowRow(
                         Modifier.padding(horizontal = gutter),
@@ -119,7 +119,7 @@ fun ShelfSections(shelf: Shelf, summary: ShelfSummary, modifier: Modifier = Modi
                 }
             }
             if (summary.albums.isNotEmpty()) {
-                item(key = "albums-head") { SectionHead("Albums", summary.albumTotal.toLong(), { nav.push(AlbumsRoute(shelf)) }) }
+                item(key = "albums-head") { SectionHead("Albums", summary.albumTotal.toLong(), { nav.push(AlbumsRoute(shelf)) }, Modifier.padding(horizontal = gutter)) }
                 // A row of tiles per item, so the list recycles them as it
                 // scrolls rather than laying out every sleeve at once.
                 items(rows, key = { "albums-${it.first().id}" }) { row ->
@@ -130,7 +130,7 @@ fun ShelfSections(shelf: Shelf, summary: ShelfSummary, modifier: Modifier = Modi
                 }
             }
             if (summary.tracks.isNotEmpty()) {
-                item(key = "tracks-head") { SectionHead("Tracks", summary.trackTotal.toLong(), { nav.push(TracksRoute(shelf)) }) }
+                item(key = "tracks-head") { SectionHead("Tracks", summary.trackTotal.toLong(), { nav.push(TracksRoute(shelf)) }, Modifier.padding(horizontal = gutter)) }
                 itemsIndexed(summary.tracks, key = { _, t -> "track-${t.id}" }) { index, track ->
                     TrackRow(
                         track,
