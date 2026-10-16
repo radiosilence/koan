@@ -30,6 +30,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.blit.koan.engine.describe
 import cc.blit.koan.ffi.KoanEngineInterface
@@ -43,11 +44,13 @@ import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanIcon
 import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanSlider
 import cc.blit.koan.ui.theme.KoanSpace
 import cc.blit.koan.ui.theme.KoanText
 import cc.blit.koan.ui.theme.KoanTheme
 import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -158,6 +161,17 @@ class OutputPicker(private val engine: suspend () -> KoanEngineInterface, privat
         scope.launch {
             try {
                 engine().setOutputPreset(device, profile)
+            } catch (e: KoanException) {
+                _state.update { it.copy(refused = e.describe()) }
+            }
+        }
+    }
+
+    /** The volume of the renderer the device in view plays to, 0–100. */
+    fun setVolume(volume: Int) {
+        scope.launch {
+            try {
+                engine().setOutputVolume(volume.coerceIn(0, 100).toUByte())
             } catch (e: KoanException) {
                 _state.update { it.copy(refused = e.describe()) }
             }
@@ -314,27 +328,40 @@ private fun ControlledOutputs(picker: OutputPicker, outputs: OutputsInfo, platfo
         val routed = platform == "ios" || platform == "tvos" || platform == "android"
         if (routed) {
             outputs.devices.forEach { d ->
-                OutputRow(d.name, null, selected = outputs.current == OutputChoice.Default, onSelect = { picker.chooseThere(OutputChoice.Default) }, trailing = presetsFor(d, outputs, picker))
+                OutputRow(
+                    platformIcon(platform), d.name, presetSummary(d, outputs),
+                    selected = outputs.current == OutputChoice.Default,
+                    onSelect = { picker.chooseThere(OutputChoice.Default) },
+                    trailing = presetsFor(d, outputs, picker),
+                )
             }
         } else {
-            OutputRow("System Default", null, selected = outputs.current == OutputChoice.Default, onSelect = { picker.chooseThere(OutputChoice.Default) })
+            OutputRow(KoanIcons.output, "System Default", null, selected = outputs.current == OutputChoice.Default, onSelect = { picker.chooseThere(OutputChoice.Default) })
             outputs.devices.forEach { d ->
                 val choice = OutputChoice.Device(d.id)
-                OutputRow(d.name, null, selected = outputs.current == choice, onSelect = { picker.chooseThere(choice) }, trailing = presetsFor(d, outputs, picker))
+                OutputRow(
+                    kindIcon(d.kind), d.name, presetSummary(d, outputs),
+                    selected = outputs.current == choice,
+                    onSelect = { picker.chooseThere(choice) },
+                    trailing = presetsFor(d, outputs, picker),
+                )
             }
         }
         outputs.renderers.forEach { r ->
             val choice = OutputChoice.Renderer(r.id)
             val selected = outputs.current == choice
             OutputRow(
+                KoanIcons.speaker,
                 name = r.name,
-                detail = if (!selected && r.busy) BUSY else upnpKind(r),
+                detail = if (!selected && r.busy) BUSY else listOfNotNull(upnpKind(r), presetSummary(r, outputs)).joinToString(" · "),
                 selected = selected,
                 warning = !selected && r.busy,
+                reach = KoanIcons.wifi,
                 onSelect = { picker.chooseThere(choice) },
                 trailing = presetsFor(r, outputs, picker),
             )
         }
+        RendererVolume(outputs, picker)
     }
 }
 
@@ -350,6 +377,7 @@ private fun OwnOutputs(picker: OutputPicker, outputs: OutputsInfo?, renderer: Re
     Column {
         val route = outputs?.devices?.firstOrNull()
         OutputRow(
+            KoanIcons.phone,
             name = route?.name?.let { "This phone · $it" } ?: "This phone",
             detail = playing?.let { udn -> "Playing on ${renderers.firstOrNull { it.id == udn }?.name ?: renderer?.name ?: "a speaker"}. Pick this to bring the music back." },
             selected = playing == null,
@@ -358,7 +386,9 @@ private fun OwnOutputs(picker: OutputPicker, outputs: OutputsInfo?, renderer: Re
         )
         renderers.forEach { r ->
             OutputRow(
+                KoanIcons.speaker,
                 name = r.name,
+                reach = KoanIcons.wifi,
                 detail = rendererDetail(r, output),
                 selected = playing == r.id,
                 warning = when (output) {
@@ -370,6 +400,7 @@ private fun OwnOutputs(picker: OutputPicker, outputs: OutputsInfo?, renderer: Re
                 trailing = outputs?.let { presetsFor(r, it, picker) },
             )
         }
+        outputs?.let { RendererVolume(it, picker) }
         when {
             // Discovery is refused: neither devices nor renderers can be found.
             blocked -> LocalNetworkBlocked()
@@ -425,31 +456,87 @@ internal const val LOCAL_NETWORK_BLOCKED = "Allow nearby devices in Settings to 
 /** An output's preset menu, where the device in view has presets or the output is set from one. */
 private fun presetsFor(o: OutputInfo, outputs: OutputsInfo, picker: OutputPicker): (@Composable () -> Unit)? {
     val summary = presetSummary(o, outputs) ?: return null
-    return { PresetButton(summary, outputs.profiles, o.preset, tinted = false, choose = { picker.setPreset(o.id, it) }) }
+    return { PresetButton(summary, outputs.profiles, o.preset, tinted = false, choose = { picker.setPreset(o.id, it) }, glyph = true) }
 }
 
-/** One output: a fixed slot for the tick, its name and what it is, and its preset menu trailing. */
+/**
+ * One output, as iOS's `DeviceChoiceRow` draws it: its kind's glyph in a
+ * fixed leading slot, in the accent when it is the one playing; its name, how
+ * it is reached, and what it is set to; a tick when picked; and its preset
+ * menu trailing.
+ */
 @Composable
 private fun OutputRow(
+    icon: Int,
     name: String,
     detail: String?,
     selected: Boolean,
     onSelect: () -> Unit,
     warning: Boolean = false,
+    reach: Int? = null,
     trailing: (@Composable () -> Unit)? = null,
 ) {
     Row(inset.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         KoanButton(onSelect, Modifier.weight(1f), kind = KoanButtonKind.Card) {
-            Row(Modifier.fillMaxWidth().padding(vertical = KoanSpace.s), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.width(28.dp)) {
-                    if (selected) KoanIcon(KoanIcons.check, contentDescription = "Playing through", color = KoanTheme.color(KoanTone.Accent))
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = KoanSpace.s),
+                horizontalArrangement = Arrangement.spacedBy(KoanSpace.m),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) {
+                    KoanIcon(icon, contentDescription = null, color = KoanTheme.color(if (selected) KoanTone.Accent else KoanTone.Muted))
                 }
                 Column(Modifier.weight(1f)) {
-                    KoanText(name, tone = if (selected) KoanTone.Accent else KoanTone.Ink)
-                    detail?.takeIf { it.isNotEmpty() }?.let { KoanText(it, role = KoanType.Fine, tone = if (warning) KoanTone.Bad else KoanTone.Muted) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(KoanSpace.xs), verticalAlignment = Alignment.CenterVertically) {
+                        KoanText(name, Modifier.weight(1f, fill = false), tone = if (selected) KoanTone.Accent else KoanTone.Ink, maxLines = 1)
+                        reach?.let { KoanIcon(it, contentDescription = "On this network", size = 12.sp, color = KoanTheme.color(KoanTone.Muted)) }
+                    }
+                    detail?.takeIf { it.isNotEmpty() }?.let { KoanText(it, role = KoanType.Fine, tone = if (warning) KoanTone.Bad else KoanTone.Muted, maxLines = 2) }
                 }
+                if (selected) KoanIcon(KoanIcons.check, contentDescription = "Playing through", color = KoanTheme.color(KoanTone.Accent))
             }
         }
         trailing?.invoke()
     }
+}
+
+/** An output's glyph by how it is connected, as iOS draws them. */
+internal fun kindIcon(kind: String) = when (kind) {
+    "builtin" -> KoanIcons.laptop
+    "usb" -> KoanIcons.cable
+    "bluetooth" -> KoanIcons.headphones
+    "airplay" -> KoanIcons.airplay
+    "display" -> KoanIcons.display
+    else -> KoanIcons.speaker
+}
+
+/** A device's glyph by what it is: the one output of a phone or television is its own. */
+internal fun platformIcon(platform: String?) = when (platform) {
+    "ios", "android" -> KoanIcons.phone
+    "tvos" -> KoanIcons.television
+    "macos" -> KoanIcons.laptop
+    else -> KoanIcons.desktop
+}
+
+/**
+ * The volume of the renderer the device in view plays to, while it plays to
+ * one that says: the renderer's own, set there.
+ */
+@Composable
+private fun RendererVolume(outputs: OutputsInfo, picker: OutputPicker) {
+    val volume = outputs.volume ?: return
+    if (outputs.current !is OutputChoice.Renderer) return
+    var dragging by remember { mutableStateOf<Float?>(null) }
+    KoanSlider(
+        value = dragging ?: volume.toFloat(),
+        onValueChange = { dragging = it },
+        onValueChangeFinished = {
+            dragging?.let { picker.setVolume(it.roundToInt()) }
+            dragging = null
+        },
+        modifier = inset.fillMaxWidth().padding(vertical = KoanSpace.s).semantics { contentDescription = "Volume" },
+        range = 0f..100f,
+        low = { KoanIcon(KoanIcons.volumeDown, contentDescription = null, color = KoanTheme.color(KoanTone.Muted)) },
+        high = { KoanIcon(KoanIcons.volumeUp, contentDescription = null, color = KoanTheme.color(KoanTone.Muted)) },
+    )
 }
