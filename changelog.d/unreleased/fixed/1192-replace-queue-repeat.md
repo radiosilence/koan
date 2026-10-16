@@ -1,0 +1,1 @@
+- **Repeat off no longer wraps after starting a new queue.** Playing an album or a shuffled set while repeat was on could still queue a wrap to the first track at the end, because the decoder read the old repeat mode.

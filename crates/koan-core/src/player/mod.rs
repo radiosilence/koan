@@ -2359,6 +2359,12 @@ impl Player {
                 self.stop_playback_and_clear_state();
                 if let Some(mode) = mode.play_mode() {
                     self.mode = mode;
+                    // Published now, not at the end of the command: `cue`
+                    // starts a decode thread, whose lookahead reads the
+                    // published repeat. Left to `publish`, it could still
+                    // read the old mode and queue a wrap that repeat-off
+                    // forbids, which nothing revokes afterwards.
+                    self.shared_state.set_play_mode(mode);
                     self.shared_state.set_shuffled(mode.shuffle);
                 }
                 let (old_items, cursor) = self.shared_state.replace_playlist(items);
