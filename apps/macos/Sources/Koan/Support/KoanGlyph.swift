@@ -177,7 +177,7 @@ extension KoanGlyph {
         let side = Self.side(for: pointSize)
         let image = NSImage(size: NSSize(width: side, height: side), flipped: true) { rect in
             guard let context = NSGraphicsContext.current?.cgContext else { return false }
-            draw(in: context, rect: rect, pointSize: pointSize, colour: NSColor.labelColor.cgColor, layer: layer)
+            draw(in: context, rect: rect, pointSize: pointSize, colour: NSColor.labelColor.cgColor, layer: layer) // theme: raw: NSMenu tints only the label colour
             return true
         }
         Self.dynamicImages[key] = image
