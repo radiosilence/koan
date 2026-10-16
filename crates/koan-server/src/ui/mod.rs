@@ -157,6 +157,18 @@ pub fn router(
         // Where the keys page was.
         .route("/keys", get(|| async { see_other("/account") }))
         .route("/scrobbling", get(scrobbling::page))
+        .route(
+            "/scrobbling/lastfm/connect",
+            get(scrobbling::lastfm_connect),
+        )
+        .route(
+            "/scrobbling/lastfm/return/{state}",
+            get(scrobbling::lastfm_return),
+        )
+        .route(
+            "/scrobbling/lastfm/disconnect",
+            post(scrobbling::lastfm_disconnect),
+        )
         .route("/scrobbling/listenbrainz", post(scrobbling::connect))
         .route(
             "/scrobbling/listenbrainz/disconnect",

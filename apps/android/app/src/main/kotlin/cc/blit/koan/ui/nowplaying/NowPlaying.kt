@@ -256,7 +256,8 @@ private fun Sleeve(entry: QueueItem?) {
  */
 @Composable
 private fun Titles(entry: QueueItem?) {
-    val mirror = koanApp().mirror
+    val app = koanApp()
+    val mirror = app.mirror
     val nav = LocalNavigator.current
     val library by mirror.library.collectAsStateWithLifecycle()
     val trackId = entry?.trackId
@@ -271,6 +272,16 @@ private fun Titles(entry: QueueItem?) {
     }
     var menu by remember { mutableStateOf(false) }
     var info by remember { mutableStateOf(false) }
+    // A play still finding its tracks, named from the tap rather than leaving
+    // the paused track it replaces on show.
+    val resolving by app.player.resolving.collectAsStateWithLifecycle()
+    resolving?.let { name ->
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            KoanText(name, role = KoanType.TitleSmall, tone = KoanTone.Strong, maxLines = 1)
+            KoanText(KoanTheme.label("Loading…"), tone = KoanTone.Muted, maxLines = 1)
+        }
+        return
+    }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(
             Modifier.weight(1f).link(details != null, label = "Track info") { info = true },
@@ -349,6 +360,7 @@ private fun Transport(now: NowPlaying?) {
     val enabled = now?.entry != null
     val shuffle = now?.shuffle == true
     val repeat = now?.repeatMode ?: RepeatMode.OFF
+    val resolving by player.resolving.collectAsStateWithLifecycle()
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
         GlyphButton(
             KoanIcons.shuffle,
@@ -361,7 +373,7 @@ private fun Transport(now: NowPlaying?) {
         GlyphButton(KoanIcons.previous, "Previous", player::previous, size = 24.sp, enabled = enabled)
         KoanButton(player::togglePlayPause, kind = KoanButtonKind.IconOutlined, enabled = enabled) {
             Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
-                if (now?.waiting == true) {
+                if (now?.waiting == true || resolving != null) {
                     CircularProgressIndicator(Modifier.size(24.dp), color = KoanTheme.color(KoanTone.Ink), strokeWidth = 2.dp)
                 } else {
                     KoanIcon(if (playing) KoanIcons.pause else KoanIcons.play, if (playing) "Pause" else "Play", size = 28.sp)

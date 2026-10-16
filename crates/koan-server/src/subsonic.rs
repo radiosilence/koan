@@ -3692,8 +3692,9 @@ async fn koan_scrobbling_connect(
     .await
 }
 
-/// Stop forwarding the caller's plays to ListenBrainz; what was waiting is
-/// dropped. Answers as `koanScrobbling`.
+/// Stop forwarding the caller's plays to `service` (`listenbrainz`, the
+/// default, or `lastfm`); what was waiting is dropped. Answers as
+/// `koanScrobbling`.
 async fn koan_scrobbling_disconnect(
     State(state): State<Arc<AppState>>,
     RawQuery(raw): RawQuery,
@@ -3705,7 +3706,12 @@ async fn koan_scrobbling_disconnect(
             use koan_core::db::queries::scrobbling;
             let user = scrobbling_account(caller)?;
             let failed = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
-            scrobbling::disconnect(&db.conn, user, scrobbling::LISTENBRAINZ).map_err(failed)?;
+            let service = match params.get("service") {
+                None | Some(scrobbling::LISTENBRAINZ) => scrobbling::LISTENBRAINZ,
+                Some(scrobbling::LASTFM) => scrobbling::LASTFM,
+                Some(_) => return Err(SubsonicError::bad_param("service")),
+            };
+            scrobbling::disconnect(&db.conn, user, service).map_err(failed)?;
             let services = scrobbling::services(&db.conn, user).map_err(failed)?;
             Ok(b.child(scrobbling_node(&services)))
         })
@@ -3741,15 +3747,16 @@ fn dsp_profiles_changed(username: &str) {
     );
 }
 
-/// An edit's time as the server takes it: a device whose clock runs ahead
-/// cannot make its edits outlast every later one.
+/// An edit's time as the server takes it: never later than the server's own
+/// clock, so a device whose clock runs ahead cannot make its edits outrank
+/// those a correct clock makes after it.
 fn dsp_edited_at(params: &RawParams) -> Result<i64, SubsonicError> {
     let at: i64 = params
         .get("editedAt")
         .ok_or_else(|| SubsonicError::missing_param("editedAt"))?
         .parse()
         .map_err(|_| SubsonicError::new(SubsonicErrorCode::Generic, "editedAt is not a time"))?;
-    Ok(at.min(koan_core::auth::now_unix() as i64 * 1000 + 60_000))
+    Ok(at.min(chrono::Utc::now().timestamp_millis()))
 }
 
 fn dsp_uid(params: &RawParams) -> Result<String, SubsonicError> {
@@ -10963,6 +10970,46 @@ mod tests {
         assert!(!body.contains("lbuser"), "{body}");
     }
 
+    #[tokio::test]
+    async fn scrobbling_disconnects_lastfm_by_name_and_leaves_listenbrainz() {
+        let (state, _dir) = test_state();
+        let db = state.open_db().unwrap();
+        let mate: i64 = db
+            .conn
+            .query_row("SELECT id FROM users WHERE username = 'mate'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        use koan_core::db::queries::scrobbling::{LASTFM, LISTENBRAINZ, connect};
+        connect(&db.conn, mate, LISTENBRAINZ, "lb-token", "lbuser", 0).unwrap();
+        connect(&db.conn, mate, LASTFM, "fm-session", "fmuser", 0).unwrap();
+        drop(db);
+        let app = build_test_router(state);
+
+        let (_, body) = get_response(app.clone(), &format!("/rest/koanScrobbling?{MATE}")).await;
+        assert!(
+            !body.contains("fm-session") && !body.contains("lb-token"),
+            "{body}"
+        );
+        assert!(body.contains("fmuser") && body.contains("lbuser"), "{body}");
+
+        let (_, body) = get_response(
+            app.clone(),
+            &format!("/rest/koanScrobblingDisconnect?{MATE}&service=lastfm"),
+        )
+        .await;
+        assert!(
+            !body.contains("fmuser") && body.contains("lbuser"),
+            "{body}"
+        );
+        let (_, body) = get_response(
+            app,
+            &format!("/rest/koanScrobblingDisconnect?{MATE}&service=nowhere"),
+        )
+        .await;
+        assert!(body.contains("\"failed\""), "{body}");
+    }
+
     /// Send `body` as a profile's file, as `koan_dsp_upload` does.
     async fn upload_dsp(app: axum::Router, query: &str, body: Vec<u8>) -> String {
         let resp = app
@@ -11135,6 +11182,7 @@ mod tests {
         assert!(body.contains("\"status\":\"ok\""), "{body}");
 
         // Deleted by a device whose clock runs far ahead.
+        let before = chrono::Utc::now().timestamp_millis();
         let ahead = chrono::Utc::now().timestamp_millis() + 50_000;
         call(
             format!("/rest/koanDspProfileDelete?{MATE}"),
@@ -11164,7 +11212,7 @@ mod tests {
         let (_, body) = get_response(app.clone(), &format!("/rest/koanDspProfiles?{MATE}")).await;
         let profile = &json(&body)["subsonic-response"]["koanDspProfiles"]["profile"][0];
         assert_eq!(profile["doc"], doc.json().as_str(), "{body}");
-        assert!(profile["editedAt"].as_i64().unwrap() > ahead, "{body}");
+        assert!(profile["editedAt"].as_i64().unwrap() > before, "{body}");
         assert!(deleted(MATE.into()).await.is_empty(), "restored");
         let v = restore(MATE.into()).await;
         assert_eq!(
@@ -11189,6 +11237,29 @@ mod tests {
         assert!(deleted(MATE.into()).await.is_empty());
         let v = restore(MATE.into()).await;
         assert_eq!(v["subsonic-response"]["error"]["code"], 70, "expired: {v}");
+    }
+
+    /// An edit stamped ahead of the server's clock counts as made now, so an
+    /// edit a correct clock makes after it still wins.
+    #[tokio::test]
+    async fn a_dsp_edit_stamped_ahead_does_not_outrank_a_later_correct_one() {
+        let (state, _dir) = test_state();
+        let app = build_test_router(state);
+        let wav = b"RIFF and the rest";
+        let doc = dsp_doc("Room", wav);
+        let stored = |at: i64| {
+            let app = app.clone();
+            let form = format!("uid={UID}&editedAt={at}&doc={}", form_value(&doc.json()));
+            async move {
+                json(&post_form(app, &format!("/rest/koanDspProfileSave?{MATE}"), &form).await)
+                    ["subsonic-response"]["koanDspSaved"]["stored"]
+                    .clone()
+            }
+        };
+        let now = chrono::Utc::now().timestamp_millis();
+        assert_eq!(stored(now + 50_000).await, true, "stamped ahead");
+        let later = chrono::Utc::now().timestamp_millis();
+        assert_eq!(stored(later).await, true, "a correct clock, later");
     }
 
     /// A file is taken only as the bytes a profile of the account names, and

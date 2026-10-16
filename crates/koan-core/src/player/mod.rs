@@ -2454,6 +2454,12 @@ impl Player {
                 self.stop_playback_and_clear_state();
                 if let Some(mode) = mode.play_mode() {
                     self.mode = mode;
+                    // Published now, not at the end of the command: `cue`
+                    // starts a decode thread, whose lookahead reads the
+                    // published repeat. Left to `publish`, it could still
+                    // read the old mode and queue a wrap that repeat-off
+                    // forbids, which nothing revokes afterwards.
+                    self.shared_state.set_play_mode(mode);
                     self.shared_state.set_shuffled(mode.shuffle);
                 }
                 let (old_items, cursor) = self.shared_state.replace_playlist(items);
@@ -3021,6 +3027,7 @@ mod tests {
 
     fn make_item(title: &str) -> PlaylistItem {
         PlaylistItem {
+            uid: None,
             playlist_entry_id: None,
             id: QueueItemId::new(),
             db_id: None,
@@ -3300,6 +3307,57 @@ mod tests {
             assert!(!player.session_release_due(playing, true, later));
         }
         assert_eq!(player.session_release_at, None);
+    }
+
+    #[test]
+    fn an_item_unlinked_from_its_row_plays_from_its_own_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.wav");
+        crate::test_utils::generate_wav(&path, 8_000, 1, 1.0, 16);
+
+        let mut player = Player::new();
+        player.backend = Box::new(StuckBackend {
+            rate: 8_000.0,
+            asked: Default::default(),
+            starts: Default::default(),
+        });
+        let on_disk = PlaylistItem {
+            path,
+            db_id: Some(7),
+            uid: Some("0190a000-0000-7000-8000-000000000001".into()),
+            ..make_item("t")
+        };
+        let arriving = PlaylistItem {
+            path: dir.path().join("not yet.flac"),
+            db_id: Some(8),
+            uid: Some("0190a000-0000-7000-8000-000000000002".into()),
+            state: ItemState::Pending,
+            ..make_item("u")
+        };
+        let (kept, stranded) = (on_disk.id, arriving.id);
+        player.process_command(PlayerCommand::AddToPlaylist(vec![on_disk, arriving]));
+        // Their tracks forgotten: the rows they named are gone.
+        player
+            .shared_state
+            .relink(&[(kept, None), (stranded, None)]);
+        assert_eq!(player.shared_state.item_db_id(kept), None);
+        assert!(
+            matches!(
+                player.shared_state.item_state(stranded),
+                Some(ItemState::Failed(_))
+            ),
+            "nothing would ever fetch it: failed, not waited on"
+        );
+
+        player.process_command(PlayerCommand::Play(kept));
+        assert_eq!(player.shared_state.playback_state(), PlaybackState::Playing);
+
+        // Its track back: waiting for its download again.
+        player.shared_state.relink(&[(stranded, Some(9))]);
+        assert_eq!(
+            player.shared_state.item_state(stranded),
+            Some(ItemState::Pending)
+        );
     }
 
     #[test]

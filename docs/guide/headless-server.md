@@ -187,11 +187,19 @@ Sign-in, and which credential each kind of client should use, is in [Authenticat
 
 ## Scrobbling
 
-Each account can forward its plays to ListenBrainz from the web UI's Scrobbling page, linked from Account, or from Settings → Integrations → Scrobbling in the Mac and iOS apps: paste the user token from ListenBrainz's settings and the server checks it, then sends the plays already in the account's history and, from then on, every play kōan's apps and other Subsonic clients report (`scrobble`), with now-playing notices. It is the server that sends, so no client needs configuring, and a play reported once is forwarded once whichever device made it.
+Each account can forward its plays to ListenBrainz or Last.fm from the web UI's Scrobbling page, linked from Account, or from Settings → Integrations → Scrobbling in the Mac and iOS apps: paste the user token from ListenBrainz's settings and the server checks it, then sends the plays already in the account's history and, from then on, every play kōan's apps and other Subsonic clients report (`scrobble`), with now-playing notices. It is the server that sends, so no client needs configuring, and a play reported once is forwarded once whichever device made it.
 
 Plays wait in the database until ListenBrainz accepts them, so a restart or an outage delays them rather than losing them; the page shows how many are waiting. A token ListenBrainz stops accepting is shown there, and plays are kept until the account connects again. Plays the server's own player records are forwarded in the history sent on connecting, when they were listened to for half the track or four minutes, but not as they happen. Tracks without an artist or title are not sent.
 
-The apps reach this through the `koanScrobbling` extension: `koanScrobbling` reports the account's connection (account name, plays waiting, and the error when the token was refused), `koanScrobblingConnect` takes a `token` in a form POST body, and only there, so that it stays out of access logs (one in the query string is ignored), and `koanScrobblingDisconnect` removes it. The token is never sent back. The Apple TV app shows the connection but cannot change it, having no keyboard.
+### Last.fm
+
+Last.fm needs an API key and shared secret for the server, which its admin registers at <https://www.last.fm/api/account/create> and sets as `lastfm.api_key` and `lastfm.secret` in `config.local.toml` (see [Configuration](../reference/configuration.md#lastfm)), and `sharing.public_url`, so that Last.fm can send people back. The Scrobbling page then offers Connect Last.fm: it sends the person to Last.fm to approve kōan and back, and the server exchanges what Last.fm returns for a session key it keeps, never showing it. The return address carries a one-time code made when the person left, so a link someone else makes cannot connect their Last.fm to your account. Without the key and secret the page says Last.fm is not set up.
+
+Plays are sent as they are reported, fifty to a call, with now-playing notices, and wait in the database the same way. Last.fm ignores plays more than two weeks old, so connecting sends only the last two weeks of history, and a play still waiting past that is dropped rather than sent. A session key Last.fm stops accepting (the person revoked kōan there) is shown on the page, and plays are kept until the account connects again. Connecting Last.fm is done in the web UI; the apps show it in `koanScrobbling` as a service named `lastfm` and can disconnect it with `service=lastfm`.
+
+### For apps
+
+The apps reach this through the `koanScrobbling` extension: `koanScrobbling` reports the account's connection (account name, plays waiting, and the error when the token was refused), `koanScrobblingConnect` takes a `token` in a form POST body, and only there, so that it stays out of access logs (one in the query string is ignored), and `koanScrobblingDisconnect` removes it (`service=lastfm` for Last.fm; ListenBrainz when none is named). The token is never sent back. The Apple TV app shows the connection but cannot change it, having no keyboard.
 
 ## Sharing
 

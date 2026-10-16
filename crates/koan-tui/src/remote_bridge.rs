@@ -118,6 +118,7 @@ fn poll_loop(client: GraphQLClient, state: Arc<SharedPlayerState>) {
                             .map(QueueItemId)
                             .unwrap_or_else(|_| QueueItemId::new());
                         PlaylistItem {
+                            uid: None,
                             playlist_entry_id: None,
                             id: qid,
                             db_id: None,

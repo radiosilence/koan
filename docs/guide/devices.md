@@ -264,7 +264,10 @@ has processed instead, ReplayGain included; see
 kōan finds renderers over SSDP and serves each track from a port it opens
 only while a renderer is the output. Each track has a random URL of its own,
 so nothing else in the library can be fetched from it. On a Mac the first
-connection from the amplifier may bring up the firewall prompt. The iOS app
+connection from the amplifier may bring up the firewall prompt. macOS also
+asks whether kōan may use the local network, the first time it looks; if
+no amplifier or other kōan appears, check System Settings → Privacy &
+Security → Local Network and turn kōan on. The iOS app
 cannot search for renderers yet, because Apple requires a multicast entitlement
 for it.
 

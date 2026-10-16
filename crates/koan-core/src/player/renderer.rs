@@ -1461,6 +1461,7 @@ mod tests {
         // A library id of its own, which a download is keyed by.
         static NEXT_TRACK: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1);
         PlaylistItem {
+            uid: None,
             playlist_entry_id: None,
             id: QueueItemId::new(),
             db_id: Some(NEXT_TRACK.fetch_add(1, std::sync::atomic::Ordering::Relaxed)),

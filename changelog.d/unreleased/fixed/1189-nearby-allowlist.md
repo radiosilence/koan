@@ -1,0 +1,1 @@
+- **New link commands are closed to nearby strangers by default.** The list of commands a device on the local network may send is now an explicit allow-list, so a command added later has to be opted in.

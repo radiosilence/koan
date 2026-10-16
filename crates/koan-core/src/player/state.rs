@@ -360,6 +360,17 @@ pub enum ItemState {
     Failed(String),
 }
 
+/// What an item relinked to a row, or to none, can now say about itself.
+pub fn relinked_state(state: &ItemState, linked: bool, path: &std::path::Path) -> ItemState {
+    match (linked, state) {
+        (false, ItemState::Pending) if !path.exists() => {
+            ItemState::Failed("no longer in the library".into())
+        }
+        (true, ItemState::Failed(_)) if !path.exists() => ItemState::Pending,
+        (_, state) => state.clone(),
+    }
+}
+
 /// An item's state, and any transfer against it, as one answer.
 ///
 /// Derived rather than stored. `Downloading` carries the store's own figures —
@@ -423,7 +434,13 @@ pub enum PlaybackSource {
 pub struct PlaylistItem {
     pub id: QueueItemId,
     /// Database track ID — set for tracks loaded from DB, used for downloads.
+    /// A row id names a track only while the row lasts: see `uid`.
     pub db_id: Option<i64>,
+    /// The track's uid, which outlives its row: a server's tracks forgotten
+    /// and synced again come back under the same uids and, SQLite reusing
+    /// row ids, perhaps other ids. When the library loses rows the queue
+    /// finds its tracks again by this (`helpers::queue_relinks`).
+    pub uid: Option<String>,
     /// The playlist entry this came from, when it came from a playlist.
     ///
     /// A playlist may hold the same track twice, and two copies are two queue
@@ -1845,19 +1862,43 @@ impl SharedPlayerState {
     /// time. Only items with a database row behind them: one without has
     /// nowhere to be fetched from, and parking the cursor on it would be worse
     /// than letting it fail honestly.
+    ///
+    /// The files are looked at with no lock held: a slow or hung mount would
+    /// otherwise stall the decode thread's lookahead behind the write lock.
     pub fn reset_items_with_missing_files(&self) -> Vec<(i64, QueueItemId)> {
+        self.reset_items_where(|path| !path.exists())
+    }
+
+    fn reset_items_where(
+        &self,
+        missing: impl Fn(&std::path::Path) -> bool,
+    ) -> Vec<(i64, QueueItemId)> {
+        let ready: Vec<(QueueItemId, i64, PathBuf)> = self
+            .playlist
+            .read()
+            .items
+            .iter()
+            .filter(|item| matches!(item.state, ItemState::Ready))
+            .filter_map(|item| Some((item.id, item.db_id?, item.path.clone())))
+            .collect();
+        let gone: Vec<_> = ready.into_iter().filter(|(_, _, p)| missing(p)).collect();
+        if gone.is_empty() {
+            return Vec::new();
+        }
+
+        // Only what is still Ready at the path that was looked at: the item
+        // may have been fetched again, or replaced, in the meantime.
         let mut pl = self.playlist.write();
         let mut reset = Vec::new();
         for item in pl.items.iter_mut() {
-            let Some(db_id) = item.db_id else { continue };
-            if !matches!(item.state, ItemState::Ready) {
-                continue;
+            if matches!(item.state, ItemState::Ready)
+                && let Some((_, db_id, _)) = gone
+                    .iter()
+                    .find(|(id, _, path)| *id == item.id && *path == item.path)
+            {
+                item.state = ItemState::Pending;
+                reset.push((*db_id, item.id));
             }
-            if item.path.exists() {
-                continue;
-            }
-            item.state = ItemState::Pending;
-            reset.push((db_id, item.id));
         }
         drop(pl);
         if !reset.is_empty() {
@@ -2043,6 +2084,43 @@ impl SharedPlayerState {
         pl.cursor = cursor;
         drop(pl);
         self.bump_content();
+    }
+
+    /// The queue's items with uids, by item, with their row and file: what
+    /// `helpers::queue_relinks` finds each track again by.
+    pub fn queue_uids(&self) -> Vec<(QueueItemId, Option<i64>, String, PathBuf)> {
+        self.playlist
+            .read()
+            .items
+            .iter()
+            .filter_map(|i| Some((i.id, i.db_id, i.uid.clone()?, i.path.clone())))
+            .collect()
+    }
+
+    /// Point items at the rows their tracks now hold, or at none. The queue's
+    /// content changes only if an item's row does.
+    ///
+    /// An item left with no row and no file has nothing to fetch it by: it
+    /// fails, rather than waiting for a download nothing will start. One that
+    /// failed for want of its file goes back to waiting when its track
+    /// returns, so the download queue takes it up again.
+    pub fn relink(&self, links: &[(QueueItemId, Option<i64>)]) {
+        let mut changed = false;
+        {
+            let mut pl = self.playlist.write();
+            for &(id, db_id) in links {
+                if let Some(item) = pl.items.iter_mut().find(|i| i.id == id)
+                    && item.db_id != db_id
+                {
+                    item.db_id = db_id;
+                    item.state = relinked_state(&item.state, db_id.is_some(), &item.path);
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.bump_content();
+        }
     }
 
     /// Remove multiple items by IDs.
@@ -2300,6 +2378,7 @@ mod tests {
 
     fn make_item(title: &str, state: ItemState) -> PlaylistItem {
         PlaylistItem {
+            uid: None,
             playlist_entry_id: None,
             id: QueueItemId::new(),
             db_id: None,
@@ -2316,6 +2395,40 @@ mod tests {
             state,
             played: false,
         }
+    }
+
+    // --- missing files ---
+
+    #[test]
+    fn missing_files_are_checked_with_no_lock_held() {
+        let state = SharedPlayerState::new();
+        let gone = PlaylistItem {
+            db_id: Some(1),
+            ..ready_item("gone")
+        };
+        let kept = PlaylistItem {
+            db_id: Some(2),
+            ..ready_item("kept")
+        };
+        let loose = ready_item("no-db-row");
+        let (gone_id, kept_id, loose_id) = (gone.id, kept.id, loose.id);
+        state.add_items(vec![gone, kept, loose]);
+
+        let reset = state.reset_items_where(|path| {
+            // A write lock held across the look would refuse this.
+            assert!(
+                state.playlist.try_write().is_some(),
+                "the playlist is locked while its files are checked"
+            );
+            path.ends_with("gone.flac") || path.ends_with("no-db-row.flac")
+        });
+
+        assert_eq!(reset, vec![(1, gone_id)]);
+        let pl = state.playlist.read();
+        let state_of = |id| pl.items.iter().find(|i| i.id == id).unwrap().state.clone();
+        assert!(matches!(state_of(gone_id), ItemState::Pending));
+        assert!(matches!(state_of(kept_id), ItemState::Ready));
+        assert!(matches!(state_of(loose_id), ItemState::Ready));
     }
 
     // --- shuffle ---
@@ -3373,6 +3486,7 @@ mod tests {
 
     fn make_album_item(title: &str, album: &str, album_artist: &str) -> PlaylistItem {
         PlaylistItem {
+            uid: None,
             playlist_entry_id: None,
             id: QueueItemId::new(),
             db_id: None,

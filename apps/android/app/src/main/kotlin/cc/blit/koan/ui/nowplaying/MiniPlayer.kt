@@ -68,6 +68,7 @@ fun MiniPlayer() {
     val now by app.mirror.nowPlaying.collectAsStateWithLifecycle()
     val devices by app.mirror.devices.collectAsStateWithLifecycle()
     val entry = now?.entry
+    val resolving by app.player.resolving.collectAsStateWithLifecycle()
     val playing = now?.state == PlayState.PLAYING
     val tokens = LocalKoanTokens.current
     val openAt = with(LocalDensity.current) { 48.dp.toPx() }
@@ -97,11 +98,18 @@ fun MiniPlayer() {
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(KoanSpace.s)) {
                     PlayingBars(playing, size = 10.dp, color = KoanTheme.color(if (playing) KoanTone.Accent else KoanTone.Muted))
-                    KoanText(entry?.title ?: KoanTheme.label("Nothing playing"), role = KoanType.Meta, tone = if (entry == null) KoanTone.Muted else KoanTone.Strong, maxLines = 1)
+                    // A play still finding its tracks, named from the tap.
+                    KoanText(
+                        resolving ?: entry?.title ?: KoanTheme.label("Nothing playing"),
+                        role = KoanType.Meta,
+                        tone = if (resolving == null && entry == null) KoanTone.Muted else KoanTone.Strong,
+                        maxLines = 1,
+                    )
                 }
                 // Where it is playing matters more than who by, when it is not here.
                 val c = controlled(devices)
                 when {
+                    resolving != null -> KoanText(KoanTheme.label("Loading…"), role = KoanType.Fine, tone = KoanTone.Muted, maxLines = 1)
                     c != null -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(KoanSpace.xs)) {
                         val tone = if (c.reach is Reach.OutOfReach) KoanTone.Bad else KoanTone.Accent
                         KoanIcon(KoanIcons.devices, contentDescription = null, size = 12.sp, color = KoanTheme.color(tone))
@@ -114,7 +122,7 @@ fun MiniPlayer() {
             // most likely to be wanted as a remote.
             if (devices.target != null || devices.devices.isNotEmpty()) PlayOnButton(labelled = false)
             KoanButton(app.player::togglePlayPause, kind = KoanButtonKind.Icon, enabled = entry != null) {
-                if (now?.waiting == true) {
+                if (now?.waiting == true || resolving != null) {
                     CircularProgressIndicator(Modifier.size(18.dp), color = KoanTheme.color(KoanTone.Ink), strokeWidth = 2.dp)
                 } else {
                     KoanIcon(if (playing) KoanIcons.pause else KoanIcons.play, if (playing) "Pause" else "Play", size = 18.sp)

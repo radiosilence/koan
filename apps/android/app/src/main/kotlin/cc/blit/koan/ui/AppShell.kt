@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -15,6 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -32,23 +34,27 @@ import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.Navigator
 import cc.blit.koan.ui.navigation.Shell
 import cc.blit.koan.ui.navigation.Tab
+import cc.blit.koan.ui.navigation.resetting
 import cc.blit.koan.ui.nowplaying.MiniPlayer
 import cc.blit.koan.ui.nowplaying.nowPlayingEntries
 import cc.blit.koan.ui.playlists.playlistsEntries
 import cc.blit.koan.ui.queue.queueEntries
 import cc.blit.koan.ui.search.searchEntries
 import cc.blit.koan.ui.settings.AccountPrompts
-import cc.blit.koan.ui.settings.DspPrompts
 import cc.blit.koan.ui.settings.AskForNotificationsOnFirstPlay
+import cc.blit.koan.ui.settings.DspPrompts
 import cc.blit.koan.ui.settings.OpenedLinks
 import cc.blit.koan.ui.settings.SignInPage
 import cc.blit.koan.ui.settings.accountModel
 import cc.blit.koan.ui.settings.dspModel
 import cc.blit.koan.ui.settings.settingsEntries
 import cc.blit.koan.ui.theme.KoanIcons
-import cc.blit.koan.ui.theme.recordWash
 import cc.blit.koan.ui.theme.KoanTabBar
 import cc.blit.koan.ui.theme.KoanTabItem
+import cc.blit.koan.ui.theme.KoanUnavailable
+import cc.blit.koan.ui.theme.koanSurface
+import cc.blit.koan.ui.theme.recordWash
+import kotlinx.coroutines.flow.combine
 
 /**
  * The app's frame: sign-in until a server is signed in to, then the tabs, each
@@ -60,12 +66,15 @@ import cc.blit.koan.ui.theme.KoanTabItem
  */
 @Composable
 fun AppShell() {
+    val app = koanApp()
     val account = accountModel()
     val state by account.state.collectAsStateWithLifecycle()
-    when (state.signedIn) {
-        null -> Unit
-        false -> SignInPage(account)
-        true -> Signed()
+    val startFailure by app.mirror.startFailure.collectAsStateWithLifecycle()
+    when {
+        startFailure != null -> CouldNotStart(startFailure)
+        state.signedIn == null -> Unit
+        state.signedIn == false -> SignInPage(account)
+        else -> Signed()
     }
     val dsp = dspModel()
     OpenedLinks(account, dsp)
@@ -73,6 +82,14 @@ fun AppShell() {
     DspPrompts(dsp)
     AskForNotificationsOnFirstPlay()
     Notices()
+}
+
+/** The engine would not open: why, on the app's ground, in place of everything else. */
+@Composable
+internal fun CouldNotStart(reason: String?) {
+    Box(Modifier.fillMaxSize().koanSurface().safeDrawingPadding()) {
+        KoanUnavailable("kōan could not start", KoanIcons.warning, reason)
+    }
 }
 
 /** What a command came to when it did not simply work, said once. */
@@ -108,6 +125,11 @@ private fun Signed() {
 
 @Composable
 private fun Tabs(navigator: Navigator, stacks: Map<Tab, List<NavKey>>) {
+    val app = koanApp()
+    // The engine's own syncs and scans, followed from its state.
+    LaunchedEffect(app) {
+        combine(app.mirror.tasks, app.mirror.sync, ::Pair).collect { (tasks, sync) -> app.activity.follow(tasks, sync) }
+    }
     val current = navigator.tab
     val stack = stacks.getValue(current)
     Scaffold(
@@ -131,16 +153,21 @@ private fun Tabs(navigator: Navigator, stacks: Map<Tab, List<NavKey>>) {
                 backStack = shown,
                 onBack = { navigator.pop() },
                 entryDecorators = listOf(rememberSaveableStateHolderNavEntryDecorator(), rememberViewModelStoreNavEntryDecorator()),
-                entryProvider = entryProvider {
-                    queueEntries()
-                    libraryEntries()
-                    searchEntries()
-                    settingsEntries()
-                    playlistsEntries()
-                    downloadsEntries()
-                    historyEntries()
-                },
+                entryProvider = navigator.resetting(
+                    entryProvider {
+                        queueEntries()
+                        libraryEntries()
+                        searchEntries()
+                        settingsEntries()
+                        playlistsEntries()
+                        downloadsEntries()
+                        historyEntries()
+                    },
+                ),
             )
+            // Over every page, just above the transport.
+            val activity by app.activity.tasks.collectAsStateWithLifecycle()
+            ActivityCard(activity, Modifier.align(Alignment.BottomCenter))
             // After NavDisplay, so it takes back first at a tab's root rather
             // than revealing the tab kept beneath.
             BackHandler(enabled = stack.size == 1 && current != Tab.Library) { navigator.select(Tab.Library) }

@@ -27,7 +27,7 @@ Three kinds of setting are machine-scoped and always land in
 
 | Kind | Settings |
 |------|----------|
-| Secrets | `remote.password`, `subsonic.password` |
+| Secrets | `remote.password`, `subsonic.password`, `lastfm.api_key`, `lastfm.secret` |
 | This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username`, `remote.cache_dir`, `remote.cache_limit`, `playback.output_device/renderers/muted`, `subsonic.enabled/port/username/transcode/ffmpeg`, `devices.nearby/discoverable/port/addresses/nearby_control/refused/keep_running`, everything under `dsp` |
 | Volatile UI state -- flipped by a keypress or a mouse drag | `playback.art_size`, `visualizer.enabled`, `visualizer.mode`, `visualizer.matrix_overlay`, `visualizer.bass_shake` |
 
@@ -419,6 +419,21 @@ public_url = "https://music.example.com"
 ```
 
 The address the server is reached at from outside. Share links, invite links and MCP sign-in are built on it; without it the server makes no share links and offers MCP clients no sign-in, since an address taken from request headers could be chosen by whoever sends them.
+
+---
+
+## `[lastfm]`
+
+```toml
+# config.local.toml -- both are secrets
+[lastfm]
+api_key = "..."
+secret  = "..."
+```
+
+The API account the server scrobbles to Last.fm through. Last.fm gives one key and shared secret to each application, so the server's admin registers kōan at <https://www.last.fm/api/account/create> and sets both here, or as `KOAN_LASTFM__API_KEY` and `KOAN_LASTFM__SECRET`. Every account on the server then connects its own Last.fm. Without both, Last.fm is not offered.
+
+Connecting also needs `sharing.public_url` (above), since Last.fm sends the person back to `<public_url>/scrobbling/lastfm/return/...`. See [Scrobbling](../guide/headless-server.md#scrobbling).
 
 ---
 

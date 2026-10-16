@@ -34,6 +34,7 @@ import cc.blit.koan.ffi.Assistants
 import cc.blit.koan.ffi.KoanException
 import cc.blit.koan.playback.BitPerfectHost
 import cc.blit.koan.ui.koanApp
+import cc.blit.koan.ui.theme.Graphics
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanField
@@ -236,7 +237,9 @@ internal fun CopyButton(what: String, text: String) {
  */
 @Composable
 fun AppearancePane(model: SettingsModel) {
-    val mirror = koanApp().mirror
+    val app = koanApp()
+    val mirror = app.mirror
+    val graphics by app.graphics.level.collectAsStateWithLifecycle()
     val state by model.state.collectAsStateWithLifecycle()
     val appearance by mirror.appearance.collectAsStateWithLifecycle()
     val a = appearance ?: return SettingsPage(Pane.Appearance.title, state) {}
@@ -258,6 +261,20 @@ fun AppearancePane(model: SettingsModel) {
         item { SwitchRow("Colours from the record", a.recordColours) { on -> mirror.setAppearance { setRecordColours(on) } } }
         footer(
             "The record playing colours the accent on selection and progress. Off, the accent is kōan's mint, in either theme.",
+        )
+        header("Graphics")
+        item {
+            KoanSegmented(
+                Graphics.entries.map { it.label to it },
+                graphics,
+                app.graphics::set,
+                inset.padding(vertical = KoanSpace.s),
+            )
+        }
+        item { KoanText(graphics.detail, inset.padding(vertical = KoanSpace.xs), role = KoanType.Fine, tone = KoanTone.Muted) }
+        footer(
+            "How much kōan spends on looking like itself. Every step down removes something that costs while the music " +
+                "plays, the colour drifting behind the page first, since it costs the most.",
         )
     }
 }

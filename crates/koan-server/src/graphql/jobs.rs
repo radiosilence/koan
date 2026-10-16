@@ -84,6 +84,28 @@ impl JobRegistry {
         }
     }
 
+    /// Run `work` and record its outcome against job `id`. A panic finishes the
+    /// job as Failed: left Running it would be handed back by `start` for
+    /// every later call, and the kind could never be triggered again.
+    pub(super) fn run(&self, id: &str, work: impl FnOnce() -> Result<String, String>) {
+        let outcome =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).unwrap_or_else(|panic| {
+                let what = panic
+                    .downcast_ref::<&str>()
+                    .map(|s| s.to_string())
+                    .or_else(|| panic.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "unknown panic".into());
+                Err(format!("job panicked: {what}"))
+            });
+        match outcome {
+            Ok(message) => self.finish(id, JobState::Succeeded, message),
+            Err(message) => {
+                log::error!("job {id} failed: {message}");
+                self.finish(id, JobState::Failed, message)
+            }
+        }
+    }
+
     /// Something the job's own thread can report progress through.
     pub(super) fn handle(&self, id: &str) -> JobHandle {
         JobHandle {
@@ -136,6 +158,20 @@ mod tests {
         reg.finish(&first.id, JobState::Succeeded, "done".into());
         let second = reg.start("scan").unwrap();
         assert_ne!(first.id, second.id);
+    }
+
+    #[test]
+    fn a_panicking_job_ends_failed_and_the_kind_can_start_again() {
+        let reg = JobRegistry::default();
+        let job = reg.start("scan").unwrap();
+        reg.run(&job.id, || panic!("boom"));
+
+        let done = reg.get(&job.id).unwrap();
+        assert_eq!(done.state, JobState::Failed);
+        assert!(done.message.contains("boom"), "{}", done.message);
+
+        let next = reg.start("scan").expect("a new scan can start");
+        assert_ne!(next.id, job.id);
     }
 
     #[test]

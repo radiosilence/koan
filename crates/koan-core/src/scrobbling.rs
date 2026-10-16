@@ -1,4 +1,4 @@
-//! Forwarding plays to ListenBrainz.
+//! Forwarding plays to ListenBrainz and Last.fm.
 //!
 //! A server records every play an account reports. Plays bound for a service
 //! wait in `scrobble_outbox` (see `db::queries::scrobbling`), so they survive a
@@ -18,7 +18,12 @@ use parking_lot::{Condvar, Mutex};
 use serde_json::{Value, json};
 
 use crate::db::pool::Pool;
-use crate::db::queries::scrobbling::{self as queries, LISTENBRAINZ, Listen, ScrobbleTarget};
+use crate::db::queries::scrobbling::{
+    self as queries, LASTFM, LISTENBRAINZ, Listen, ScrobbleTarget,
+};
+
+pub mod lastfm;
+pub use lastfm::LastfmError;
 
 const API: &str = "https://api.listenbrainz.org";
 
@@ -136,8 +141,8 @@ fn run(pool: Pool) {
         if !drain {
             continue;
         }
-        match send_queued(&pool, &mut |token, kind, listens| {
-            submit(&http, token, kind, listens)
+        match send_queued(&pool, &mut |target, kind, listens| {
+            submit(&http, target, kind, listens)
         }) {
             Ok(()) => {
                 retry = FIRST_RETRY;
@@ -179,7 +184,7 @@ impl From<rusqlite::Error> for Unsent {
 /// no other; the pass then fails, and the sender tries again after a wait.
 fn send_queued(
     pool: &Pool,
-    send: &mut impl FnMut(&str, ListenType, &[&Listen]) -> Sent,
+    send: &mut impl FnMut(&ScrobbleTarget, ListenType, &[&Listen]) -> Sent,
 ) -> Result<(), Unsent> {
     let targets = queries::targets(&pool.get()?.conn)?;
     let mut unreachable: Option<Unsent> = None;
@@ -200,21 +205,29 @@ type Sent = Result<(), Failure>;
 fn drain(
     pool: &Pool,
     target: &ScrobbleTarget,
-    send: &mut impl FnMut(&str, ListenType, &[&Listen]) -> Sent,
+    send: &mut impl FnMut(&ScrobbleTarget, ListenType, &[&Listen]) -> Sent,
 ) -> Result<Result<(), Option<Duration>>, Unsent> {
-    if target.service != LISTENBRAINZ {
-        refuse(pool, target, "kōan cannot send to this service.")?;
-        return Ok(Ok(()));
-    }
+    let (name, batch_size) = match target.service.as_str() {
+        LISTENBRAINZ => ("ListenBrainz", BATCH),
+        LASTFM => ("Last.fm", lastfm::BATCH),
+        _ => {
+            refuse(pool, target, "kōan cannot send to this service.")?;
+            return Ok(Ok(()));
+        }
+    };
     loop {
-        let batch = queries::queued(&pool.get()?.conn, target, BATCH)?;
+        let batch = queries::queued(&pool.get()?.conn, target, batch_size)?;
         if batch.is_empty() {
             return Ok(Ok(()));
         }
-        // A play of a track with no artist or title tells the service nothing.
-        let (sendable, blank): (Vec<_>, Vec<_>) = batch
-            .into_iter()
-            .partition(|q| !q.listen.artist.trim().is_empty() && !q.listen.title.trim().is_empty());
+        // A play of a track with no artist or title tells the service nothing,
+        // and Last.fm ignores one too old to scrobble.
+        let oldest = lastfm::oldest_taken(&target.service);
+        let (sendable, blank): (Vec<_>, Vec<_>) = batch.into_iter().partition(|q| {
+            !q.listen.artist.trim().is_empty()
+                && !q.listen.title.trim().is_empty()
+                && oldest.is_none_or(|t| q.listen.played_at >= t)
+        });
         if !blank.is_empty() {
             let ids: Vec<i64> = blank.iter().map(|q| q.outbox_id).collect();
             queries::dequeue(&pool.get()?.conn, &ids)?;
@@ -224,13 +237,13 @@ fn drain(
         }
         let listens: Vec<&Listen> = sendable.iter().map(|q| &q.listen).collect();
         let ids: Vec<i64> = sendable.iter().map(|q| q.outbox_id).collect();
-        match send(&target.token, ListenType::of(listens.len()), &listens) {
+        match send(target, ListenType::of(listens.len()), &listens) {
             Ok(()) => queries::dequeue(&pool.get()?.conn, &ids)?,
             Err(Failure::Refused) => {
                 refuse(
                     pool,
                     target,
-                    "ListenBrainz refused the token. Connect again with a current one.",
+                    &format!("{name} refused the credential. Connect again."),
                 )?;
                 return Ok(Ok(()));
             }
@@ -238,17 +251,17 @@ fn drain(
             // to find it, and drop only what it rejects.
             Err(Failure::Rejected(why)) => {
                 for (listen, id) in listens.iter().zip(&ids) {
-                    match send(&target.token, ListenType::Single, &[listen]) {
+                    match send(target, ListenType::Single, &[listen]) {
                         Ok(()) => {}
                         Err(Failure::Rejected(_)) => {
                             log::info!(
-                                "scrobbling: ListenBrainz rejected {} – {}: {why}",
+                                "scrobbling: {name} rejected {} – {}: {why}",
                                 listen.artist,
                                 listen.title
                             );
                         }
                         Err(Failure::Refused) => {
-                            refuse(pool, target, "ListenBrainz refused the token.")?;
+                            refuse(pool, target, &format!("{name} refused the credential."))?;
                             return Ok(Ok(()));
                         }
                         Err(Failure::Unreachable(wait)) => return Ok(Err(wait)),
@@ -272,18 +285,38 @@ fn refuse(pool: &Pool, target: &ScrobbleTarget, why: &str) -> Result<(), Unsent>
 
 fn send_notice(pool: &Pool, http: &reqwest::blocking::Client, user: i64, track: i64) {
     let found = pool.get().ok().and_then(|db| {
-        let token = queries::target(&db.conn, user, LISTENBRAINZ).ok()??;
+        let targets: Vec<ScrobbleTarget> = [LISTENBRAINZ, LASTFM]
+            .into_iter()
+            .filter_map(|service| {
+                let token = queries::target(&db.conn, user, service).ok()??;
+                Some(ScrobbleTarget {
+                    user_id: user,
+                    service: service.to_owned(),
+                    token,
+                })
+            })
+            .collect();
+        if targets.is_empty() {
+            return None;
+        }
         let listen = queries::now_playing(&db.conn, track).ok()??;
-        Some((token, listen))
+        Some((targets, listen))
     });
-    let Some((token, listen)) = found else { return };
+    let Some((targets, listen)) = found else {
+        return;
+    };
     if listen.artist.trim().is_empty() || listen.title.trim().is_empty() {
         return;
     }
-    if let Err(Failure::Unreachable(_) | Failure::Rejected(_)) =
-        submit(http, &token, ListenType::PlayingNow, &[&listen])
-    {
-        log::debug!("scrobbling: now playing for user {user} not sent");
+    for target in targets {
+        if let Err(Failure::Unreachable(_) | Failure::Rejected(_)) =
+            submit(http, &target, ListenType::PlayingNow, &[&listen])
+        {
+            log::debug!(
+                "scrobbling: now playing for user {user} not sent to {}",
+                target.service
+            );
+        }
     }
 }
 
@@ -323,6 +356,19 @@ enum Failure {
 }
 
 fn submit(
+    http: &reqwest::blocking::Client,
+    target: &ScrobbleTarget,
+    kind: ListenType,
+    listens: &[&Listen],
+) -> Result<(), Failure> {
+    match target.service.as_str() {
+        LISTENBRAINZ => submit_listenbrainz(http, &target.token, kind, listens),
+        LASTFM => lastfm::submit(http, &target.token, kind == ListenType::PlayingNow, listens),
+        _ => Err(Failure::Rejected("a service kōan cannot send to".into())),
+    }
+}
+
+fn submit_listenbrainz(
     http: &reqwest::blocking::Client,
     token: &str,
     kind: ListenType,
@@ -440,7 +486,7 @@ pub fn connect_listenbrainz(
     token: &str,
     account_name: &str,
 ) -> Result<(usize, queries::ScrobbleService), ConnectError> {
-    let saved = queries::connect(conn, user, LISTENBRAINZ, token, account_name)
+    let saved = queries::connect(conn, user, LISTENBRAINZ, token, account_name, 0)
         .and_then(|queued| Ok((queued, queries::service(conn, user, LISTENBRAINZ)?)));
     match saved {
         Ok((queued, Some(service))) => {
@@ -563,7 +609,7 @@ mod tests {
             .query_row("SELECT id FROM tracks", [], |r| r.get(0))
             .unwrap();
         for (user, token) in [(1, "stuck"), (2, "fine")] {
-            queries::connect(&db.conn, user, LISTENBRAINZ, token, token).unwrap();
+            queries::connect(&db.conn, user, LISTENBRAINZ, token, token, 0).unwrap();
             record_plays_at(&db.conn, user, &[(track, 100 + user)], SOURCE_SUBSONIC).unwrap();
         }
         (dir, Pool::new(path))
@@ -577,7 +623,8 @@ mod tests {
     fn an_unreachable_account_holds_up_no_other() {
         let (_dir, pool) = two_accounts();
         let mut sent = Vec::new();
-        let result = send_queued(&pool, &mut |token, _, listens| {
+        let result = send_queued(&pool, &mut |target, _, listens| {
+            let token = target.token.as_str();
             if token == "stuck" {
                 return Err(Failure::Unreachable(Some(Duration::from_secs(5))));
             }
@@ -595,14 +642,53 @@ mod tests {
     #[test]
     fn a_rejected_listen_is_dropped_and_the_queue_moves_on() {
         let (_dir, pool) = two_accounts();
-        let result = send_queued(&pool, &mut |token, _, _| {
-            if token == "stuck" {
+        let result = send_queued(&pool, &mut |target, _, _| {
+            if target.token == "stuck" {
                 return Err(Failure::Rejected("403: forbidden".into()));
             }
             Ok(())
         });
         assert!(result.is_ok());
         assert_eq!((pending(&pool, 1), pending(&pool, 2)), (0, 0));
+    }
+
+    #[test]
+    fn lastfm_is_sent_in_batches_of_fifty_and_never_what_it_would_ignore() {
+        use crate::db::queries::{SOURCE_SUBSONIC, record_plays_at, sample_meta, upsert_track};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        let db = crate::db::connection::Database::open(&path).unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO users (id, username, password_hash, role) VALUES (1, 'u', 'x', 'user')",
+                [],
+            )
+            .unwrap();
+        upsert_track(&db.conn, &sample_meta("Archangel", "Burial", "Untrue")).unwrap();
+        let track: i64 = db
+            .conn
+            .query_row("SELECT id FROM tracks", [], |r| r.get(0))
+            .unwrap();
+        queries::connect(&db.conn, 1, LASTFM, "session", "fmuser", 0).unwrap();
+        let now = crate::auth::now_unix() as i64;
+        let mut plays: Vec<(i64, i64)> = (0..120).map(|i| (track, now - 100 - i)).collect();
+        // A month old: Last.fm would ignore it.
+        plays.push((track, now - 30 * 24 * 3600));
+        record_plays_at(&db.conn, 1, &plays, SOURCE_SUBSONIC).unwrap();
+
+        let pool = Pool::new(path);
+        let mut sizes = Vec::new();
+        let result = send_queued(&pool, &mut |target, _, listens| {
+            assert_eq!(
+                (target.service.as_str(), target.token.as_str()),
+                (LASTFM, "session")
+            );
+            sizes.push(listens.len());
+            Ok(())
+        });
+        assert!(result.is_ok());
+        assert_eq!(sizes, vec![50, 50, 20]);
+        assert_eq!(pending(&pool, 1), 0, "the stale play is dropped, not held");
     }
 
     #[test]

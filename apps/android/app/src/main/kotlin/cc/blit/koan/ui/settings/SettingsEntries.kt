@@ -1,13 +1,17 @@
 package cc.blit.koan.ui.settings
 
+import android.os.SystemClock
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.LocalActivity
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -27,6 +31,8 @@ import cc.blit.koan.ui.theme.KoanSpace
 import cc.blit.koan.ui.theme.KoanText
 import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
+import cc.blit.koan.ui.theme.Rainbow
+import cc.blit.koan.ui.theme.SecretTaps
 import kotlinx.serialization.Serializable
 
 /** The pages Settings goes into, as the iPhone's are. */
@@ -96,14 +102,14 @@ fun dspModel(): DspModel {
 fun accountModel(): AccountModel {
     val app = koanApp()
     val activity = LocalActivity.current as ComponentActivity
-    return viewModel(viewModelStoreOwner = activity) { AccountModel(app.mirror::engine) }
+    return viewModel(viewModelStoreOwner = activity) { AccountModel(app.mirror::engine, app.activity) }
 }
 
 /** The page's own copy of the settings, read again whenever the app comes back to the front. */
 @Composable
 private fun settingsModel(): SettingsModel {
     val app = koanApp()
-    val model = viewModel { SettingsModel(app.mirror::engine) }
+    val model = viewModel { SettingsModel(app.mirror::engine, app.activity) }
     LifecycleResumeEffect(model) {
         model.reload()
         onPauseOrDispose {}
@@ -133,13 +139,28 @@ private fun SettingsRoot() {
             else -> true
         }
     }
-    val version = appVersion(LocalContext.current)
+    val context = LocalContext.current
+    val version = appVersion(context)
+    val appearance by app.mirror.appearance.collectAsStateWithLifecycle()
+    val taps = remember { SecretTaps() }
     SettingsPage("Settings", state) {
         panes.forEach { pane ->
             item(pane.name) { KoanNavRow(pane.title, pane.icon, selected = false, onClick = { nav.push(SettingsPaneRoute(pane)) }) }
         }
         item {
-            KoanText(version, Modifier.padding(KoanSpace.page), role = KoanType.Fine, tone = KoanTone.Muted)
+            KoanText(
+                version,
+                Modifier
+                    .clickable(interactionSource = null, indication = null) {
+                        if (!taps.tap(SystemClock.uptimeMillis())) return@clickable
+                        val on = appearance?.rainbow != true
+                        app.mirror.setAppearance { setRainbow(on) }
+                        Toast.makeText(context, (if (on) Rainbow.on else Rainbow.off).random(), Toast.LENGTH_SHORT).show()
+                    }
+                    .padding(KoanSpace.page),
+                role = KoanType.Fine,
+                tone = KoanTone.Muted,
+            )
         }
     }
 }

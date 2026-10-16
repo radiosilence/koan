@@ -10,6 +10,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::auth::now_unix;
 
 pub const LISTENBRAINZ: &str = "listenbrainz";
+pub const LASTFM: &str = "lastfm";
 
 /// A connected service, as the account's settings page shows it.
 #[derive(Debug, Clone)]
@@ -70,6 +71,9 @@ fn listen_from(row: &rusqlite::Row<'_>, played_at: i64, at: usize) -> rusqlite::
 /// every play in the account's history that counts as heard. Returns how many
 /// plays were queued.
 ///
+/// Only plays from `since` (unix seconds) on are queued, for a service that
+/// refuses older ones: Last.fm takes none more than two weeks old.
+///
 /// Plays clients reported count as they are. koan's own playback records how
 /// long each track was listened to, and those count by Last.fm's rule: half
 /// the track or four minutes, never a track under thirty seconds.
@@ -79,6 +83,7 @@ pub fn connect(
     service: &str,
     token: &str,
     account_name: &str,
+    since: i64,
 ) -> rusqlite::Result<usize> {
     super::atomically(conn, || {
         // Replacing the row clears its outbox through the foreign key, so a
@@ -95,14 +100,14 @@ pub fn connect(
         conn.execute(
             "INSERT INTO scrobble_outbox (user_id, service, history_id)
              SELECT ?1, ?2, h.id FROM play_history h JOIN tracks t ON t.id = h.track_id
-              WHERE h.user_id = ?1
+              WHERE h.user_id = ?1 AND h.played_at >= ?3
                 AND (h.source = 'subsonic'
                      OR CASE WHEN t.duration_ms > 0
                              THEN t.duration_ms >= 30000
                                   AND h.duration_ms >= MIN(t.duration_ms / 2, 240000)
                              ELSE h.duration_ms >= 240000 END)
               ORDER BY h.played_at",
-            params![user, service],
+            params![user, service, since],
         )
     })
 }
@@ -277,7 +282,7 @@ mod tests {
         record_play_at(&db.conn, user, track, 300, Some(5_000), SOURCE_LOCAL).unwrap();
         record_play_at(&db.conn, user, track, 400, None, SOURCE_LOCAL).unwrap();
 
-        let queued_count = connect(&db.conn, user, LISTENBRAINZ, "tok", "mate").unwrap();
+        let queued_count = connect(&db.conn, user, LISTENBRAINZ, "tok", "mate", 0).unwrap();
         assert_eq!(queued_count, 2);
 
         let target = targets(&db.conn).unwrap().remove(0);
@@ -291,12 +296,35 @@ mod tests {
     }
 
     #[test]
+    fn connecting_can_leave_out_plays_a_service_would_refuse() {
+        let (db, user, track) = setup();
+        record_plays_at(
+            &db.conn,
+            user,
+            &[(track, 100), (track, 900)],
+            SOURCE_SUBSONIC,
+        )
+        .unwrap();
+        assert_eq!(
+            connect(&db.conn, user, LASTFM, "sk", "mate", 500).unwrap(),
+            1
+        );
+        let target = targets(&db.conn).unwrap().remove(0);
+        let times: Vec<i64> = queued(&db.conn, &target, 10)
+            .unwrap()
+            .iter()
+            .map(|q| q.listen.played_at)
+            .collect();
+        assert_eq!(times, vec![900]);
+    }
+
+    #[test]
     fn reported_plays_are_queued_as_they_are_recorded() {
         let (db, user, track) = setup();
         record_plays_at(&db.conn, user, &[(track, 100)], SOURCE_SUBSONIC).unwrap();
         assert!(targets(&db.conn).unwrap().is_empty(), "nothing connected");
 
-        connect(&db.conn, user, LISTENBRAINZ, "tok", "mate").unwrap();
+        connect(&db.conn, user, LISTENBRAINZ, "tok", "mate", 0).unwrap();
         record_plays_at(&db.conn, user, &[(track, 500)], SOURCE_SUBSONIC).unwrap();
         // Written when a track starts, before it is known to be heard.
         record_play_at(&db.conn, user, track, 600, None, SOURCE_LOCAL).unwrap();
@@ -320,14 +348,14 @@ mod tests {
             SOURCE_SUBSONIC,
         )
         .unwrap();
-        connect(&db.conn, user, LISTENBRAINZ, "tok", "mate").unwrap();
+        connect(&db.conn, user, LISTENBRAINZ, "tok", "mate", 0).unwrap();
 
         refuse(&db.conn, user, LISTENBRAINZ, "Invalid token").unwrap();
         assert!(targets(&db.conn).unwrap().is_empty());
         assert!(target(&db.conn, user, LISTENBRAINZ).unwrap().is_none());
         assert_eq!(services(&db.conn, user).unwrap()[0].pending, 2);
 
-        connect(&db.conn, user, LISTENBRAINZ, "tok2", "mate").unwrap();
+        connect(&db.conn, user, LISTENBRAINZ, "tok2", "mate", 0).unwrap();
         let svc = &services(&db.conn, user).unwrap()[0];
         assert_eq!((svc.pending, svc.error.as_deref()), (2, None));
 
@@ -343,7 +371,7 @@ mod tests {
     #[test]
     fn forgetting_a_play_drops_it_from_the_queue() {
         let (db, user, track) = setup();
-        connect(&db.conn, user, LISTENBRAINZ, "tok", "mate").unwrap();
+        connect(&db.conn, user, LISTENBRAINZ, "tok", "mate", 0).unwrap();
         record_plays_at(&db.conn, user, &[(track, 100)], SOURCE_SUBSONIC).unwrap();
         db.conn.execute("DELETE FROM play_history", []).unwrap();
         assert!(targets(&db.conn).unwrap().is_empty());

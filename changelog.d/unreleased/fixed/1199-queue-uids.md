@@ -1,0 +1,1 @@
+- **The queue keeps its tracks after a server's tracks are forgotten and synced again.** A queued track could take on another track's cover, favourite and details when the library reused its id; the queue now finds each track again by its uid, and plays a track that is gone from its own file until it returns.
