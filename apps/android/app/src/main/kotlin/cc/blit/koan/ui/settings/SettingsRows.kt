@@ -25,6 +25,7 @@ import cc.blit.koan.ui.theme.KoanTone
 import cc.blit.koan.ui.theme.KoanType
 import cc.blit.koan.ui.theme.koanRule
 import cc.blit.koan.ui.theme.koanSurface
+import cc.blit.koan.ui.theme.rainbowShimmer
 
 /**
  * A settings page: its title, its sections, and the status line beneath them
@@ -37,7 +38,7 @@ fun SettingsPage(title: String, state: SettingsState, content: LazyListScope.() 
             item {
                 KoanText(
                     title,
-                    Modifier.padding(horizontal = KoanSpace.page, vertical = KoanSpace.m),
+                    Modifier.padding(horizontal = KoanSpace.page, vertical = KoanSpace.m).rainbowShimmer(),
                     role = KoanType.Title,
                     tone = KoanTone.Strong,
                     appText = true,

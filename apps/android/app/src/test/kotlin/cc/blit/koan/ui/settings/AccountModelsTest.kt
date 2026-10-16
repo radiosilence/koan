@@ -163,4 +163,10 @@ class AccountModelsTest {
         nearbyServers = emptyList(), commandNotice = null,
         connections = emptyList(), held = emptyList(),
     )
+
+    @Test fun anEngineThatWouldNotOpenLeavesSignInUnknown() = runTest(dispatcher) {
+        val model = AccountModel({ throw KoanException.Database("database is newer") })
+        advanceUntilIdle()
+        assertNull(model.state.value.signedIn)
+    }
 }

@@ -11,6 +11,7 @@ import cc.blit.koan.ffi.KoanException
 import cc.blit.koan.ffi.ScrobblingConnection
 import cc.blit.koan.ffi.ServerQueue
 import cc.blit.koan.ffi.Settings
+import cc.blit.koan.ui.ActivityModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -51,7 +52,10 @@ data class SettingsState(
  * written whole through `KoanEngine.updateSettings` as each control changes:
  * the engine routes each key to the file that owns it.
  */
-class SettingsModel(private val engine: suspend () -> KoanEngineInterface) : ViewModel() {
+class SettingsModel(
+    private val engine: suspend () -> KoanEngineInterface,
+    private val activity: ActivityModel = ActivityModel(),
+) : ViewModel() {
     private val _state = MutableStateFlow(SettingsState())
     val state: StateFlow<SettingsState> = _state.asStateFlow()
 
@@ -86,7 +90,7 @@ class SettingsModel(private val engine: suspend () -> KoanEngineInterface) : Vie
     // -- Server ----------------------------------------------------------
 
     fun syncNow() = run(holds = REMOTE) {
-        val s = syncRemote()
+        val s = activity.run(ActivityModel.SYNCING, followsSync = true) { syncRemote() }
         // "0 tracks across 0 albums" reads as a failure, and is what an
         // unchanged library answers.
         if (s.tracks == 0u && s.favouritesImported == 0u) {
@@ -110,7 +114,7 @@ class SettingsModel(private val engine: suspend () -> KoanEngineInterface) : Vie
                 // Local rows too: it takes the server off the ones that were
                 // on both.
                 try {
-                    engine.forgetRemote()
+                    activity.run("Forgetting the server's tracks") { engine.forgetRemote() }
                 } catch (e: KoanException) {
                     failed(e)
                 }
@@ -120,7 +124,7 @@ class SettingsModel(private val engine: suspend () -> KoanEngineInterface) : Vie
     }
 
     fun clearCache(context: android.content.Context) = run(holds = DOWNLOADS) {
-        val c = clearDownloadCache()
+        val c = activity.run("Clearing downloads") { clearDownloadCache() }
         "Freed ${Formatter.formatShortFileSize(context, c.bytes.toLong())} across ${c.files} files"
     }
 

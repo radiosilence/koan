@@ -1,8 +1,11 @@
 package cc.blit.koan.ui.navigation
 
 import androidx.compose.runtime.MutableIntState
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.navigation3.runtime.NavBackStack
+import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.runtime.NavKey
 import cc.blit.koan.ui.nowplaying.NowPlayingRoute
 import java.util.UUID
@@ -49,11 +52,26 @@ class Navigator internal constructor(
 ) {
     val tab: Tab get() = Tab.all[selected.intValue]
 
-    /** Open `tab`; choosing the open tab again returns it to its first page. */
+    /** How many times each tab's first page has been made again: see `select`. */
+    private val resets = mutableStateMapOf<Tab, Int>()
+
+    /** The count `tab`'s first page is keyed on, so a new count makes it again, at its top. */
+    fun reset(tab: Tab) = resets[tab] ?: 0
+
+    /**
+     * Open `tab`. Choosing the open tab again returns it to its first page,
+     * and at its first page, to the top, as a tab bar does: the page is made
+     * again, its scroll and other kept state with it, and what it lists stays
+     * in its model.
+     */
     fun select(tab: Tab) {
         if (tab == this.tab) {
             val stack = stacks.getValue(tab)
-            while (stack.size > 1) stack.removeAt(stack.lastIndex)
+            if (stack.size > 1) {
+                while (stack.size > 1) stack.removeAt(stack.lastIndex)
+            } else {
+                resets[tab] = reset(tab) + 1
+            }
         } else {
             selected.intValue = Tab.all.indexOf(tab)
         }
@@ -77,6 +95,17 @@ class Navigator internal constructor(
     fun closeNowPlaying() {
         if (root.lastOrNull() is NowPlayingRoute) root.removeAt(root.lastIndex)
     }
+}
+
+/**
+ * `entries` with each tab's first page keyed on its reset count: the count
+ * moving makes the page again, with none of the saved state it had, as iOS
+ * remakes a tab's stack when its tab is chosen again at the root. The key sits
+ * inside the entry, under every decorator, so its saved state goes with it.
+ */
+fun Navigator.resetting(entries: (NavKey) -> NavEntry<NavKey>): (NavKey) -> NavEntry<NavKey> = { route ->
+    val entry = entries(route)
+    if (route !is Tab) entry else NavEntry<NavKey>(entry) { _ -> key(reset(route)) { entry.Content() } }
 }
 
 val LocalNavigator = staticCompositionLocalOf<Navigator> { error("no Navigator: compose inside AppShell") }

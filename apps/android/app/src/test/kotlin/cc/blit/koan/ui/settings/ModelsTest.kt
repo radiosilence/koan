@@ -37,9 +37,9 @@ class ModelsTest {
 
     @After fun tearDown() = Dispatchers.resetMain()
 
-    private fun account() = AccountModel { fake.engine }
+    private fun account() = AccountModel({ fake.engine })
 
-    private fun settingsModel() = SettingsModel { fake.engine }
+    private fun settingsModel() = SettingsModel({ fake.engine })
 
     @Test fun anInviteIsReadByTheEngine() = runTest(dispatcher) {
         val invite = invite()

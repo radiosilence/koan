@@ -9,6 +9,8 @@ import cc.blit.koan.ffi.Invite
 import cc.blit.koan.ffi.KoanEngineInterface
 import cc.blit.koan.ffi.KoanException
 import cc.blit.koan.ffi.PairingCode
+import cc.blit.koan.ui.ActivityModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -59,7 +61,10 @@ data class AccountState(
  * Scoped to the activity (`accountModel()`), so the sign-in page, Settings
  * and links opened from outside all share one.
  */
-class AccountModel(private val engine: suspend () -> KoanEngineInterface) : ViewModel() {
+class AccountModel(
+    private val engine: suspend () -> KoanEngineInterface,
+    private val activity: ActivityModel = ActivityModel(),
+) : ViewModel() {
     private val _state = MutableStateFlow(AccountState())
     val state: StateFlow<AccountState> = _state.asStateFlow()
 
@@ -67,7 +72,15 @@ class AccountModel(private val engine: suspend () -> KoanEngineInterface) : View
 
     init {
         viewModelScope.launch {
-            val signedIn = engine().settings().remoteSignedIn
+            // An engine that would not open leaves this unknown: the shell
+            // shows why, in place of sign-in or the tabs.
+            val signedIn = try {
+                engine().settings().remoteSignedIn
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                return@launch
+            }
             _state.update { it.copy(signedIn = signedIn) }
         }
     }
@@ -213,7 +226,7 @@ class AccountModel(private val engine: suspend () -> KoanEngineInterface) : View
         viewModelScope.launch {
             _state.update { it.copy(busy = label, error = null) }
             try {
-                engine().signIn()
+                activity.run(label) { engine().signIn() }
                 _state.update { it.copy(busy = "Loading the library") }
                 syncAfterSignIn()
             } catch (e: KoanException) {
@@ -231,7 +244,7 @@ class AccountModel(private val engine: suspend () -> KoanEngineInterface) : View
     private suspend fun syncAfterSignIn() {
         _state.update { it.copy(signedIn = true) }
         try {
-            engine().syncRemote()
+            activity.run("Loading the library", followsSync = true) { engine().syncRemote() }
         } catch (e: KoanException) {
             notice("Signed in, but the library did not load: ${e.describe()}")
         }

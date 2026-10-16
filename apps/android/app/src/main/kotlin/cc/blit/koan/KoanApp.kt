@@ -15,6 +15,8 @@ import okio.Path.Companion.toOkioPath
 import cc.blit.koan.engine.EngineMirror
 import cc.blit.koan.engine.PlayerModel
 import cc.blit.koan.ffi.setConfigDir
+import cc.blit.koan.ui.ActivityModel
+import cc.blit.koan.ui.theme.GraphicsSetting
 import cc.blit.koan.net.NearbyNsd
 import cc.blit.koan.net.NetworkWatch
 import cc.blit.koan.net.WifiMulticast
@@ -27,6 +29,12 @@ class KoanApp : Application(), SingletonImageLoader.Factory {
         private set
     lateinit var player: PlayerModel
         private set
+
+    /** Everything slow happening now, for the card over every page. */
+    val activity = ActivityModel()
+
+    /** How much the app draws, kept on this device. */
+    val graphics by lazy { GraphicsSetting(this) }
 
     override fun onCreate() {
         super.onCreate()
