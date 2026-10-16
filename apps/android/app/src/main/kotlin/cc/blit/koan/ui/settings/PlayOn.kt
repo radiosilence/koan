@@ -174,11 +174,11 @@ private fun DeviceRow(
 ) {
     Row(inset.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(KoanSpace.s), verticalAlignment = Alignment.CenterVertically) {
         KoanButton(onSelect, Modifier.weight(1f), kind = KoanButtonKind.Card, enabled = !unreachable) {
-            Row(Modifier.padding(vertical = KoanSpace.s), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(vertical = KoanSpace.s), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.width(28.dp)) {
                     if (selected) KoanIcon(KoanIcons.check, contentDescription = "Controlling", color = KoanTheme.color(KoanTone.Accent))
                 }
-                Column {
+                Column(Modifier.weight(1f)) {
                     KoanText(name, tone = if (selected) KoanTone.Accent else KoanTone.Ink)
                     detail?.takeIf { it.isNotEmpty() }?.let { KoanText(it, role = KoanType.Fine, tone = KoanTone.Muted) }
                 }
