@@ -1,0 +1,1 @@
+- **rustls 0.23.46.** Fixes RUSTSEC-2026-0346 to -0349 in the TLS client every HTTPS request goes through, among them a server able to downgrade later connections to classical key exchange.

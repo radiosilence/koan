@@ -12,8 +12,6 @@ serialization = "1.11.0"
 coil = "3.6.3"
 # uniffi's Kotlin bindings call the core through JNA.
 jna = "5.19.1"
-# Must match the rustls-platform-verifier-android crate in Cargo.lock: the AAR ships inside it.
-rustls-platform-verifier = "0.1.1"
 junit = "4.13.2"
 robolectric = "4.17"
 reorderable = "3.1.0"
@@ -35,7 +33,6 @@ androidx-navigation3-ui = { module = "androidx.navigation3:navigation3-ui", vers
 androidx-lifecycle-viewmodel-navigation3 = { module = "androidx.lifecycle:lifecycle-viewmodel-navigation3", version.ref = "lifecycle" }
 kotlinx-serialization-core = { module = "org.jetbrains.kotlinx:kotlinx-serialization-core", version.ref = "serialization" }
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
-rustls-platform-verifier = { module = "rustls:rustls-platform-verifier", version.ref = "rustls-platform-verifier" }
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 junit = { module = "junit:junit", version.ref = "junit" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
