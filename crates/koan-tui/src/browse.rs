@@ -816,29 +816,32 @@ impl Browse {
         }
         // The rule fills the rest, with the page's own controls on its right.
         let mut controls = Vec::new();
-        if self.source == Source::Albums && self.view == View::Tiles
-            || self.source == Source::Albums && self.view == View::List
-        {
-            controls.push(format!(" sort: {} ", ORDERS[self.order].1));
+        if self.source == Source::Albums {
+            controls.push((format!(" sort: {} ", ORDERS[self.order].1), Hit::Sort));
         }
-        controls.push(match (self.view, self.source) {
-            (View::Tiles, _) => " view: tiles ".to_string(),
-            (View::List, Source::Albums | Source::Artist(_)) => " view: rows ".to_string(),
-            (View::List, _) => " view: tracks ".to_string(),
-        });
-        let total: u16 = controls.iter().map(|c| c.chars().count() as u16).sum();
+        controls.push((
+            match (self.view, self.source) {
+                (View::Tiles, _) => " view: tiles ".to_string(),
+                (View::List, Source::Albums | Source::Artist(_)) => " view: rows ".to_string(),
+                (View::List, _) => " view: tracks ".to_string(),
+            },
+            Hit::View,
+        ));
+        if !self.filter_active && self.filter.is_empty() {
+            controls.insert(0, (" / filter ".to_string(), Hit::Filter));
+        }
+        let total: u16 = controls.iter().map(|(c, _)| c.chars().count() as u16).sum();
         let rule_end = end.saturating_sub(total).max(x);
         for cx in x..rule_end {
             buf[(cx, area.y)].set_char('\u{2500}').set_style(theme.rule);
         }
         x = rule_end;
-        for (i, text) in controls.iter().enumerate() {
-            let is_sort = self.source == Source::Albums && i == 0;
-            let at = put(buf, &mut x, text, theme.hint_desc);
-            if is_sort {
-                self.geom.sort = at;
-            } else {
-                self.geom.view = at;
+        for (text, kind) in controls {
+            let at = put(buf, &mut x, &text, theme.hint_desc);
+            match kind {
+                Hit::Sort => self.geom.sort = at,
+                Hit::Filter => self.geom.filter = at,
+                _ => self.geom.view = at,
             }
         }
     }
@@ -1095,7 +1098,7 @@ impl Browse {
 }
 
 /// `text` cut to `width` cells, with an ellipsis where it was cut.
-fn fit(text: &str, width: usize) -> String {
+pub(super) fn fit(text: &str, width: usize) -> String {
     if text.chars().count() <= width {
         return text.to_string();
     }

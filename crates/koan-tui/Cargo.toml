@@ -10,6 +10,7 @@ keywords = ["audio", "music", "player", "tui"]
 categories = ["multimedia::audio"]
 
 [dependencies]
+chrono = "0.4"
 crossbeam-channel = "0.5"
 crossterm = "0.29"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }

@@ -3028,6 +3028,7 @@ dependencies = [
 name = "koan-tui"
 version = "0.62.1"
 dependencies = [
+ "chrono",
  "core-foundation 0.10.1",
  "crossbeam-channel",
  "crossterm",

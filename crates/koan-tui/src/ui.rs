@@ -218,6 +218,32 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             heading(frame.buffer_mut(), stage, &app.theme, "now playing", "");
             super::now_playing::render(frame.buffer_mut(), app, stage);
         }
+        Page::History => {
+            app.layout.browse_area = stage;
+            let hover = match app.hover.zone {
+                super::app::HoverZone::History(h) => Some(h),
+                _ => None,
+            };
+            let App {
+                history_page,
+                theme,
+                ..
+            } = &mut *app;
+            history_page.render(stage, frame.buffer_mut(), theme, hover);
+        }
+        Page::Settings => {
+            app.layout.browse_area = stage;
+            let hover = match app.hover.zone {
+                super::app::HoverZone::Settings(h) => Some(h),
+                _ => None,
+            };
+            let App {
+                settings_page,
+                theme,
+                ..
+            } = &mut *app;
+            settings_page.render(stage, frame.buffer_mut(), theme, hover);
+        }
         Page::Album(_) => {
             app.layout.browse_area = stage;
             let hover = match app.hover.zone {

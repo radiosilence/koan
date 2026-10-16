@@ -17,11 +17,13 @@ use koan_core::player::state::{
 use super::accent::{self, Accent};
 use super::album_page::{AlbumHit, AlbumPage};
 use super::browse::{self, Browse, Source};
-use super::library::LibraryState;
+use super::history_page::{HistoryHit, HistoryPage};
+use super::library::{self, LibraryState};
 use super::lyrics::LyricsState;
 use super::nav::{Navigator, Page};
 use super::picker::{PickerKind, PickerPartKind, PickerState, picker_results_rect};
 use super::queue;
+use super::settings_page::{Setting, SettingsHit, SettingsPage};
 use super::theme::{Palette, Theme};
 use super::transport::TransportBar;
 use super::visualizer::VisualizerState;
@@ -112,6 +114,8 @@ pub enum HoverZone {
     LibraryItem(usize),
     Browse(browse::Hit),
     Album(AlbumHit),
+    History(HistoryHit),
+    Settings(SettingsHit),
     Nav(NavTarget),
     SeekBar,
     ScrollbarQueue,
@@ -238,6 +242,8 @@ pub struct App {
     pub recent_page: Browse,
     pub artist_page: Browse,
     pub album_page: Option<AlbumPage>,
+    pub history_page: HistoryPage,
+    pub settings_page: SettingsPage,
     /// A drag that began on a page's scrollbar.
     browse_drag: bool,
     pub thumbs: browse::Thumbs,
@@ -385,6 +391,8 @@ impl App {
             recent_page: Browse::new(Source::Recent),
             artist_page: Browse::new(Source::Artist(0)),
             album_page: None,
+            history_page: HistoryPage::new(),
+            settings_page: SettingsPage::new(),
             browse_drag: false,
             thumbs: browse::Thumbs::new(),
             accent: Accent::default(),
@@ -812,7 +820,8 @@ impl App {
             Page::Recent => self.recent_page.filter_active,
             Page::Artists => self.library.as_ref().is_some_and(|l| l.filter_active),
             Page::Artist(_) => self.artist_page.filter_active,
-            Page::Queue | Page::NowPlaying | Page::Album(_) => false,
+            Page::History => self.history_page.filter_active,
+            Page::Queue | Page::NowPlaying | Page::Album(_) | Page::Settings => false,
         }
     }
 
@@ -837,6 +846,8 @@ impl App {
             Page::Albums => self.albums_page.reload(),
             Page::Favourites => self.favourites_page.reload(),
             Page::Recent => self.recent_page.reload(),
+            Page::History => self.history_page.reload(),
+            Page::Settings => self.settings_page.reload(),
             Page::Artists => {
                 if self.library.is_none() {
                     self.library = Some(LibraryState::load());
@@ -930,6 +941,20 @@ impl App {
                     self.handle_transport_key(key);
                 }
             }
+            Page::History => match self.history_page.handle_key(key) {
+                Some(action) => self.apply_browse(action),
+                None if key.code == KeyCode::Esc => self.leave_page(),
+                None => self.handle_transport_key(key),
+            },
+            Page::Settings => match self.settings_page.handle_key(key) {
+                Some(changed) => {
+                    if let Some(setting) = changed {
+                        self.apply_setting(setting);
+                    }
+                }
+                None if key.code == KeyCode::Esc => self.leave_page(),
+                None => self.handle_transport_key(key),
+            },
             Page::Album(_) => {
                 let action = self.album_page.as_mut().and_then(|p| p.handle_key(key));
                 match action {
@@ -999,6 +1024,32 @@ impl App {
             },
             std::time::Instant::now(),
         ));
+    }
+
+    /// Puts a setting just written to the config into effect in the running
+    /// TUI. The player reads the playback ones from the config itself.
+    fn apply_setting(&mut self, setting: Setting) {
+        let cfg = koan_core::config::Config::cached();
+        match setting {
+            Setting::Theme => {
+                self.palette = Palette::detect(&cfg.playback.tui_theme);
+                self.theme = Theme::new(self.palette, self.theme_accent);
+            }
+            Setting::CoverGraphics => {
+                self.art.gfx.set_graphics(cfg.playback.art_graphics);
+            }
+            Setting::ArtSize => self.art_size = cfg.playback.art_size.clamp(4, 80),
+            Setting::ShowFps => self.show_fps = cfg.playback.show_fps,
+            Setting::Palette => {
+                self.visualizer.palette =
+                    super::visualizer::VisualizerPalette::parse(&cfg.visualizer.palette);
+                if let super::visualizer::VisualizerPalette::Record(_) = self.visualizer.palette {
+                    self.visualizer.palette =
+                        super::visualizer::VisualizerPalette::Record(self.theme_accent);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn apply_browse(&mut self, action: browse::Action) {
@@ -2286,6 +2337,32 @@ impl App {
                     && self.is_in_rect(event.column, event.row, self.layout.browse_area)
                 {
                     let (col, row) = (event.column, event.row);
+                    if self.page() == Page::History {
+                        let mut action = browse::Action::None;
+                        let p = &mut self.history_page;
+                        if p.on_scrollbar(col, row) {
+                            self.browse_drag = true;
+                            p.scroll_to_bar(row);
+                        } else if let Some(hit) = p.hit(col, row) {
+                            action = p.click(hit);
+                        }
+                        self.apply_browse(action);
+                        return;
+                    }
+                    if self.page() == Page::Settings {
+                        let p = &mut self.settings_page;
+                        let mut changed = None;
+                        if p.on_scrollbar(col, row) {
+                            self.browse_drag = true;
+                            p.scroll_to_bar(row);
+                        } else if let Some(hit) = p.hit(col, row) {
+                            changed = p.click(hit);
+                        }
+                        if let Some(setting) = changed {
+                            self.apply_setting(setting);
+                        }
+                        return;
+                    }
                     if let Page::Album(_) = self.page() {
                         let mut action = browse::Action::None;
                         if let Some(p) = self.album_page.as_mut() {
@@ -2318,6 +2395,16 @@ impl App {
                 if self.library_active()
                     && self.is_in_rect(event.column, event.row, self.layout.library_area)
                 {
+                    let area = self.layout.library_area;
+                    if event.row == area.y
+                        && event.column + (library::FILTER_CONTROL.len() as u16) >= area.x + area.width
+                        && let Some(lib) = self.library.as_mut()
+                        && lib.filter.is_empty()
+                        && !lib.filter_active
+                    {
+                        lib.start_filter();
+                        return;
+                    }
                     if let Some((x, y, h)) = self.library_bar()
                         && event.column >= x
                         && event.row >= y
@@ -2594,7 +2681,11 @@ impl App {
             }
             MouseEventKind::Drag(MouseButton::Left) if self.browse_drag => {
                 let row = event.row;
-                if let Page::Album(_) = self.page() {
+                if self.page() == Page::History {
+                    self.history_page.scroll_to_bar(row);
+                } else if self.page() == Page::Settings {
+                    self.settings_page.scroll_to_bar(row);
+                } else if let Page::Album(_) = self.page() {
                     if let Some(p) = self.album_page.as_mut() {
                         p.scroll_to_bar(row);
                     }
@@ -2798,7 +2889,11 @@ impl App {
                 } else if self.page() != Page::Queue
                     && self.is_in_rect(event.column, event.row, self.layout.browse_area)
                 {
-                    if let Page::Album(_) = self.page() {
+                    if self.page() == Page::History {
+                        self.history_page.scroll_by(-3);
+                    } else if self.page() == Page::Settings {
+                        self.settings_page.scroll_by(-3);
+                    } else if let Page::Album(_) = self.page() {
                         if let Some(p) = self.album_page.as_mut() {
                             p.scroll_by(-3);
                         }
@@ -2824,7 +2919,11 @@ impl App {
                 } else if self.page() != Page::Queue
                     && self.is_in_rect(event.column, event.row, self.layout.browse_area)
                 {
-                    if let Page::Album(_) = self.page() {
+                    if self.page() == Page::History {
+                        self.history_page.scroll_by(3);
+                    } else if self.page() == Page::Settings {
+                        self.settings_page.scroll_by(3);
+                    } else if let Page::Album(_) = self.page() {
                         if let Some(p) = self.album_page.as_mut() {
                             p.scroll_by(3);
                         }
@@ -2971,7 +3070,17 @@ impl App {
         }
 
         if self.page() != Page::Queue && self.is_in_rect(col, row, self.layout.browse_area) {
-            if let Page::Album(_) = self.page() {
+            if self.page() == Page::History {
+                if let Some(hit) = self.history_page.hit(col, row) {
+                    self.hover.zone = HoverZone::History(hit);
+                    return;
+                }
+            } else if self.page() == Page::Settings {
+                if let Some(hit) = self.settings_page.hit(col, row) {
+                    self.hover.zone = HoverZone::Settings(hit);
+                    return;
+                }
+            } else if let Page::Album(_) = self.page() {
                 if let Some(hit) = self.album_page.as_ref().and_then(|p| p.hit(col, row)) {
                     self.hover.zone = HoverZone::Album(hit);
                     return;

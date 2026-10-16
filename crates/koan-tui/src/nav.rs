@@ -10,6 +10,8 @@ pub enum Page {
     Artists,
     Favourites,
     Recent,
+    History,
+    Settings,
     /// One record, by its id: reached from a tile, a link, or the queue.
     Album(i64),
     /// One artist's records, by id.
@@ -17,13 +19,15 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 6] = [
+    pub const ALL: [Page; 8] = [
         Page::Queue,
         Page::NowPlaying,
         Page::Albums,
         Page::Artists,
         Page::Favourites,
         Page::Recent,
+        Page::History,
+        Page::Settings,
     ];
 
     pub fn title(self) -> &'static str {
@@ -34,6 +38,8 @@ impl Page {
             Page::Artists => "artists",
             Page::Favourites => "favourites",
             Page::Recent => "recent",
+            Page::History => "history",
+            Page::Settings => "settings",
             Page::Album(_) => "album",
             Page::Artist(_) => "artist",
         }
@@ -57,6 +63,8 @@ impl Page {
             Page::Artists => "artists",
             Page::Favourites => "faves",
             Page::Recent => "recent",
+            Page::History => "history",
+            Page::Settings => "settings",
             Page::Album(_) => "album",
             Page::Artist(_) => "artist",
         }
@@ -71,6 +79,8 @@ impl Page {
             Page::Artists => '4',
             Page::Favourites => '5',
             Page::Recent => '6',
+            Page::History => '7',
+            Page::Settings => '8',
             Page::Album(_) | Page::Artist(_) => ' ',
         }
     }
@@ -196,10 +206,10 @@ mod tests {
     #[test]
     fn the_pages_wrap() {
         let mut nav = Navigator::default();
-        nav.go(Page::Recent);
+        nav.go(Page::Settings);
         assert_eq!(nav.next_page(), Page::Queue);
         nav.go(Page::Queue);
-        assert_eq!(nav.prev_page(), Page::Recent);
+        assert_eq!(nav.prev_page(), Page::Settings);
     }
 
     #[test]
