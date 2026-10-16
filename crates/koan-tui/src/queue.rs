@@ -16,6 +16,43 @@ const SPINNER: &[char] = &[
     '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}', '\u{2834}', '\u{2826}', '\u{2827}',
 ];
 
+/// The two links in an album heading: who it is by and which record it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeaderLink {
+    Artist,
+    Album,
+}
+
+/// Where each link sits in the heading's text, as column offsets from the
+/// start of its line: the artist, then " \u{2014} ", the year, the record.
+fn header_ranges(entry: &QueueEntry) -> [(HeaderLink, std::ops::Range<u16>); 2] {
+    let artist = entry.album_artist.chars().count() as u16;
+    let year = entry
+        .year
+        .as_deref()
+        .map_or(0, |y| y.chars().count() as u16 + 3);
+    let album = entry.album.chars().count() as u16;
+    let start = 1;
+    let album_start = start + artist + 3 + year;
+    [
+        (HeaderLink::Artist, start..start + artist),
+        (HeaderLink::Album, album_start..album_start + album),
+    ]
+}
+
+fn link_at(entry: &QueueEntry, area_x: u16, col: u16) -> Option<HeaderLink> {
+    let off = col.checked_sub(area_x)?;
+    header_ranges(entry)
+        .into_iter()
+        .find(|(_, r)| r.contains(&off))
+        .map(|(l, _)| l)
+}
+
+/// Where the row's `\u{22ef}` button sits: left of the scrollbar.
+pub fn menu_button_x(area: Rect) -> u16 {
+    area.x + area.width.saturating_sub(3)
+}
+
 pub struct QueueView<'a> {
     entries: &'a [QueueEntry],
     mode: &'a Mode,
@@ -27,6 +64,7 @@ pub struct QueueView<'a> {
     spinner_tick: usize,
     hover_index: Option<usize>,
     favourites: Option<&'a HashSet<i64>>,
+    pointer: Option<(u16, u16)>,
 }
 
 impl<'a> QueueView<'a> {
@@ -51,6 +89,7 @@ impl<'a> QueueView<'a> {
             spinner_tick,
             hover_index: None,
             favourites: None,
+            pointer: None,
         }
     }
 
@@ -64,6 +103,31 @@ impl<'a> QueueView<'a> {
             self.hover_index = Some(*idx);
         }
         self
+    }
+
+    /// Where the pointer is, so a link under it is drawn underlined.
+    pub fn with_pointer(mut self, pointer: Option<(u16, u16)>) -> Self {
+        self.pointer = pointer;
+        self
+    }
+
+    /// The link under `col`, `row` when that is on an album heading, with the
+    /// index of the heading's first entry.
+    pub fn header_link_at(
+        entries: &[QueueEntry],
+        area: Rect,
+        scroll_offset: usize,
+        col: u16,
+        row: u16,
+    ) -> Option<(usize, HeaderLink)> {
+        let rel_y = row.checked_sub(area.y)? as usize;
+        let lines = build_display_lines(entries);
+        let (idx, is_header) = *lines.get(scroll_offset + rel_y.checked_sub(1)?)?;
+        if !is_header {
+            return None;
+        }
+        let idx = idx?;
+        link_at(&entries[idx], area.x, col).map(|l| (idx, l))
     }
 
     pub fn with_favourites(mut self, favourites: &'a HashSet<i64>) -> Self {
@@ -197,10 +261,19 @@ impl Widget for QueueView<'_> {
         // the album-grouping logic.
         let index_map = build_display_lines(self.entries);
         let mut display_lines: Vec<(Option<usize>, Line)> = Vec::with_capacity(index_map.len());
+        let hovered_link = self.pointer.and_then(|(col, row)| {
+            Self::header_link_at(self.entries, area, self.scroll_offset, col, row)
+        });
         for &(entry_idx, is_header) in &index_map {
             if is_header {
                 if let Some(i) = entry_idx {
-                    display_lines.push((None, render_album_header(&self.entries[i], self.theme)));
+                    let hover = hovered_link
+                        .filter(|(first, _)| *first == i)
+                        .map(|(_, l)| l);
+                    display_lines.push((
+                        None,
+                        render_album_header(&self.entries[i], self.theme, hover),
+                    ));
                 }
             } else if let Some(i) = entry_idx {
                 let is_cursor = is_edit && i == self.cursor;
@@ -230,13 +303,25 @@ impl Widget for QueueView<'_> {
             .min(display_lines.len().saturating_sub(1));
         let end = (start + visible_height).min(display_lines.len());
 
-        for (row, (_idx, line)) in display_lines
+        for (row, (idx, line)) in display_lines
             .iter()
             .skip(start)
             .take(end - start)
             .enumerate()
         {
             buf.set_line(inner.x, inner.y + row as u16, line, inner.width);
+            // The row's menu, for anyone without a right button: on the row
+            // the pointer is over and on the ones selected.
+            if let Some(i) = *idx
+                && inner.width > 24
+                && (self.hover_index == Some(i)
+                    || self.selected.contains(&i)
+                    || (is_edit && i == self.cursor))
+            {
+                buf[(menu_button_x(area), inner.y + row as u16)]
+                    .set_char('\u{22ef}')
+                    .set_style(self.theme.hint_key);
+            }
         }
 
         // Scrollbar — only when content overflows.
@@ -309,7 +394,11 @@ impl Widget for QueueView<'_> {
     }
 }
 
-fn render_album_header<'a>(entry: &QueueEntry, theme: &Theme) -> Line<'a> {
+fn render_album_header<'a>(
+    entry: &QueueEntry,
+    theme: &Theme,
+    hover: Option<HeaderLink>,
+) -> Line<'a> {
     let year = entry
         .year
         .as_deref()
@@ -321,8 +410,15 @@ fn render_album_header<'a>(entry: &QueueEntry, theme: &Theme) -> Line<'a> {
         .map(|c| format!(" [{}]", c))
         .unwrap_or_default();
 
-    let artist_style = theme.album_header_artist;
-    let album_style = theme.album_header_album;
+    let underline = |style: ratatui::style::Style, on: bool| {
+        if on {
+            style.add_modifier(ratatui::style::Modifier::UNDERLINED)
+        } else {
+            style
+        }
+    };
+    let artist_style = underline(theme.album_header_artist, hover == Some(HeaderLink::Artist));
+    let album_style = underline(theme.album_header_album, hover == Some(HeaderLink::Album));
     let dim = theme.hint_desc;
 
     Line::from(vec![

@@ -4,11 +4,13 @@
 //! Depends on koan-core only.
 
 pub mod accent;
+pub mod album_page;
 pub mod app;
 pub mod browse;
 pub mod context_menu;
 pub mod cover_art;
 pub mod device_selector;
+pub mod dsp_selector;
 pub mod enqueue;
 pub mod help_modal;
 pub mod keys;

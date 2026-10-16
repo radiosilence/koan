@@ -32,7 +32,7 @@ struct RenderedArt {
 pub struct Gfx {
     picker: Option<Picker>,
     graphics: bool,
-    drawn: HashMap<(u64, u16, u16, bool), Drawn>,
+    drawn: HashMap<(u64, u16, u16, u8), Drawn>,
 }
 
 enum Drawn {
@@ -120,7 +120,7 @@ impl Gfx {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        let slot = (key, area.width, area.height, center);
+        let slot = (key, area.width, area.height, center as u8);
         if !self.drawn.contains_key(&slot) {
             if self.drawn.len() >= DRAWN_LIMIT {
                 self.drawn.clear();
@@ -148,14 +148,46 @@ impl Gfx {
                 };
                 Image::new(proto).render(Rect::new(area.x + dx, area.y + dy, w, h), buf);
             }
-            Some(Drawn::Cells(rendered)) => blit(rendered, area, buf),
+            Some(Drawn::Cells(rendered)) => blit(rendered, area, area.height, buf),
             _ => {}
+        }
+    }
+
+    /// Draws the top `visible` rows of the image that would fill `area`, for a
+    /// tile the page ends part-way through. A graphics protocol cannot be
+    /// cropped by a cell, so the part drawn is half blocks.
+    pub fn draw_clipped(
+        &mut self,
+        key: u64,
+        img: &DynamicImage,
+        area: Rect,
+        visible: u16,
+        buf: &mut Buffer,
+    ) {
+        if visible >= area.height {
+            return self.draw(key, img, area, buf, true);
+        }
+        if visible == 0 || area.width == 0 {
+            return;
+        }
+        let slot = (key, area.width, area.height, 3u8);
+        if !self.drawn.contains_key(&slot) {
+            if self.drawn.len() >= DRAWN_LIMIT {
+                self.drawn.clear();
+            }
+            self.drawn.insert(
+                slot,
+                Drawn::Cells(pre_render(img, area.width, area.height, true)),
+            );
+        }
+        if let Some(Drawn::Cells(rendered)) = self.drawn.get(&slot) {
+            blit(rendered, area, visible, buf);
         }
     }
 }
 
-fn blit(rendered: &RenderedArt, area: Rect, buf: &mut Buffer) {
-    for cell in &rendered.cells {
+fn blit(rendered: &RenderedArt, area: Rect, visible: u16, buf: &mut Buffer) {
+    for cell in rendered.cells.iter().filter(|c| c.ry < visible) {
         if let Some(c) = buf.cell_mut(ratatui::layout::Position::new(
             area.x + cell.rx,
             area.y + cell.ry,

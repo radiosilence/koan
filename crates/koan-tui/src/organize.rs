@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
@@ -382,10 +382,7 @@ impl Widget for OrganizeOverlay<'_> {
                 }
                 let is_selected = i == self.state.pattern_cursor;
                 let style = if is_selected && pat_focused {
-                    Style::default()
-                        .fg(ratatui::style::Color::Black)
-                        .bg(ratatui::style::Color::White)
-                        .add_modifier(Modifier::BOLD)
+                    self.theme.picker_cursor
                 } else if is_selected {
                     Style::default().add_modifier(Modifier::BOLD)
                 } else {
@@ -476,14 +473,14 @@ impl Widget for OrganizeOverlay<'_> {
 
                     let Some(to) = entry.to.as_deref() else {
                         all_lines.push(Line::from(vec![
-                            Span::styled("\u{2717} ", Style::default().fg(Color::Red)),
+                            Span::styled("\u{2717} ", self.theme.failed),
                             Span::styled(
                                 entry
                                     .outcome
                                     .reason()
                                     .unwrap_or("cannot be placed")
                                     .to_string(),
-                                Style::default().fg(Color::Red),
+                                self.theme.failed,
                             ),
                         ]));
                         continue;
@@ -492,11 +489,17 @@ impl Widget for OrganizeOverlay<'_> {
                     let to_rel = strip(to);
                     let shared = shared_prefix_len(&from_rel, &to_rel);
                     let (marker, marker_colour, changed_colour) = match &entry.outcome {
-                        PlanOutcome::Move => ("\u{2192} ", Color::DarkGray, Color::Green),
+                        PlanOutcome::Move => (
+                            "\u{2192} ",
+                            self.theme.tokens.muted,
+                            self.theme.tokens.accent,
+                        ),
                         // Blocked, not broken: nothing was destroyed and the
                         // file is still where it was.
-                        PlanOutcome::Conflict(_) => ("\u{26a0} ", Color::Yellow, Color::Yellow),
-                        _ => ("\u{2717} ", Color::Red, Color::Red),
+                        PlanOutcome::Conflict(_) => {
+                            ("\u{26a0} ", self.theme.warning, self.theme.warning)
+                        }
+                        _ => ("\u{2717} ", self.theme.tokens.bad, self.theme.tokens.bad),
                     };
 
                     let common_part = to_rel[..shared].to_string();
@@ -561,10 +564,7 @@ impl Widget for OrganizeOverlay<'_> {
             });
         let btn_focused = self.state.focus == OrganizeFocus::RunButton;
         let btn_style = if btn_focused {
-            Style::default()
-                .fg(ratatui::style::Color::Black)
-                .bg(ratatui::style::Color::Green)
-                .add_modifier(Modifier::BOLD)
+            self.theme.picker_cursor
         } else {
             self.theme.hint_desc
         };

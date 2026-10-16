@@ -1,1 +1,0 @@
-- **The terminal UI is drawn in the kōan theme.** The accent follows the playing cover, headings are lowercase over hairlines, and the `record` visualizer palette, now the default, follows the accent. `playback.tui_theme = "ansi"` restores the terminal's own colours. The transport bar moved to the foot of the screen.

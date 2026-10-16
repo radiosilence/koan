@@ -329,6 +329,30 @@ impl LibraryState {
         }
     }
 
+    /// The artist page for the row under the cursor, whatever kind of row it is.
+    pub fn artist_target(&self) -> Option<i64> {
+        let mut i = self.cursor.min(self.nodes.len().checked_sub(1)?);
+        loop {
+            if let LibraryNode::Artist { id, .. } = &self.nodes[i] {
+                return Some(*id);
+            }
+            i = i.checked_sub(1)?;
+        }
+    }
+
+    /// The record page for the row under the cursor: the album it is, or the
+    /// one it is on.
+    pub fn album_target(&self) -> Option<i64> {
+        let mut i = self.cursor.min(self.nodes.len().checked_sub(1)?);
+        loop {
+            match &self.nodes[i] {
+                LibraryNode::Album { id, .. } => return Some(*id),
+                LibraryNode::Artist { .. } => return None,
+                LibraryNode::Track { .. } => i = i.checked_sub(1)?,
+            }
+        }
+    }
+
     pub fn enqueue_all_under_cursor(&self) -> Vec<i64> {
         if self.cursor >= self.nodes.len() {
             return vec![];
@@ -536,9 +560,9 @@ fn render_node<'a>(node: &LibraryNode, is_cursor: bool, theme: &Theme) -> Line<'
             };
             let source_span = if !is_cursor {
                 let (label, color) = match source.as_str() {
-                    "local" => (" \u{F0A0} ", ratatui::style::Color::Green), // nf-fa-hdd
-                    "remote" => (" \u{F0C2} ", ratatui::style::Color::Cyan), // nf-fa-cloud
-                    _ => (" ? ", ratatui::style::Color::Yellow),
+                    "local" => (" \u{F0A0} ", theme.tokens.muted), // nf-fa-hdd
+                    "remote" => (" \u{F0C2} ", theme.tokens.muted), // nf-fa-cloud
+                    _ => (" ? ", theme.warning),
                 };
                 Span::styled(label, ratatui::style::Style::default().fg(color))
             } else {

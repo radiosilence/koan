@@ -319,8 +319,9 @@ pub struct VisualizerConfig {
     pub bar_decay_ms: u32,
     /// Peak decay half-life in milliseconds (how long peaks linger).
     pub peak_decay_ms: u32,
-    /// Color palette: "record" (default; the playing cover's accent), "spectrum",
-    /// "mono", "fire", "neon".
+    /// Color palette: "theme" (default; the UI's own accent, taken from the
+    /// playing cover), "rainbow", "mono", "fire", "neon". "spectrum" and
+    /// "record" are older names for "theme".
     /// Controls the frequency-mapped color gradient on spectrum bars.
     pub palette: String,
     /// Reactivity multiplier (0.0..2.0, default 1.0).
@@ -347,7 +348,7 @@ impl Default for VisualizerConfig {
             amplitude_scale: "aweight".into(),
             bar_decay_ms: 50,
             peak_decay_ms: 180,
-            palette: "record".into(),
+            palette: "theme".into(),
             reactivity: 1.0,
             bass_shake: true,
             matrix_overlay: false,

@@ -64,7 +64,17 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     app.layout.nav_hits.clear();
 
     let has_art = app.art.now_playing_art.cached().is_some();
-    let art_height = app.art_size / 2; // square via halfblock rendering
+    // Now playing carries the cover and the spectrum itself, so the transport
+    // is just its three lines there; on a narrow terminal the cover takes no
+    // more than a third of the width.
+    let art_cells = if app.page() == Page::NowPlaying {
+        0
+    } else if area.width < 80 {
+        app.art_size.min((area.width / 3).max(4))
+    } else {
+        app.art_size
+    };
+    let art_height = art_cells / 2; // square via halfblock rendering
     let transport_height = art_height.max(TRANSPORT_HEIGHT_DEFAULT);
 
     // Main layout: stage (flex) | hairline | transport | hints (1)
@@ -103,7 +113,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         .cloned();
 
     // Always reserve art space — placeholder keeps layout stable.
-    let art_width = app.art_size.min(transport_rect.width.saturating_sub(2));
+    let art_width = art_cells.min(transport_rect.width.saturating_sub(2));
     let art_area = Rect::new(
         transport_rect.x,
         transport_rect.y,
@@ -122,7 +132,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         )
     };
 
-    if has_art {
+    if has_art && art_width > 0 {
         app.layout.now_playing_art_area = art_area;
         app.art
             .now_playing_art
@@ -208,16 +218,52 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             heading(frame.buffer_mut(), stage, &app.theme, "now playing", "");
             super::now_playing::render(frame.buffer_mut(), app, stage);
         }
-        Page::Albums | Page::Favourites | Page::Recent => {
+        Page::Album(_) => {
             app.layout.browse_area = stage;
             let hover = match app.hover.zone {
-                super::app::HoverZone::BrowseItem(i) => Some(i),
+                super::app::HoverZone::Album(h) => Some(h),
+                _ => None,
+            };
+            let App {
+                album_page,
+                thumbs,
+                art,
+                theme,
+                favourites,
+                ..
+            } = &mut *app;
+            match album_page {
+                Some(p) => p.render(
+                    stage,
+                    frame.buffer_mut(),
+                    theme,
+                    &mut art.gfx,
+                    thumbs,
+                    favourites,
+                    hover,
+                ),
+                None => {
+                    heading(frame.buffer_mut(), stage, theme, "album", "");
+                    frame.buffer_mut().set_string(
+                        stage.x + 1,
+                        stage.y + 1,
+                        "this record is not in the library",
+                        theme.hint_desc,
+                    );
+                }
+            }
+        }
+        Page::Albums | Page::Favourites | Page::Recent | Page::Artist(_) => {
+            app.layout.browse_area = stage;
+            let hover = match app.hover.zone {
+                super::app::HoverZone::Browse(h) => Some(h),
                 _ => None,
             };
             let App {
                 albums_page,
                 favourites_page,
                 recent_page,
+                artist_page,
                 thumbs,
                 art,
                 theme,
@@ -228,7 +274,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             let page = match nav.current() {
                 Page::Albums => albums_page,
                 Page::Favourites => favourites_page,
-                _ => recent_page,
+                Page::Recent => recent_page,
+                _ => artist_page,
             };
             page.render(
                 stage,
@@ -256,6 +303,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // Key hints / status message.
+    app.layout.hint_hits.clear();
     if let Some((ref msg, _)) = app.status_message {
         let style = app.theme.hint_key;
         let line = ratatui::text::Line::from(vec![
@@ -264,6 +312,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         ]);
         frame.render_widget(ratatui::widgets::Paragraph::new(line), chunks[3]);
     } else {
+        app.layout.hint_hits = super::keys::hits(&app.mode, app.page(), chunks[3]);
         let hint_bar = HintBar::new(&app.mode, app.page(), &app.theme);
         frame.render_widget(hint_bar, chunks[3]);
     }
@@ -313,7 +362,19 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if app.mode == Mode::DeviceSelector
         && let Some(ref selector) = app.device_selector
     {
+        app.layout.selector_area =
+            super::device_selector::device_selector_rect(area, selector.devices.len());
         let overlay = DeviceSelectorOverlay::new(selector, &app.theme);
+        frame.render_widget(overlay, area);
+    }
+
+    // EQ chooser overlay.
+    if app.mode == Mode::DspSelector
+        && let Some(ref selector) = app.dsp_selector
+    {
+        app.layout.selector_area =
+            super::dsp_selector::dsp_selector_rect(area, selector.entries.len());
+        let overlay = super::dsp_selector::DspSelectorOverlay::new(selector, &app.theme);
         frame.render_widget(overlay, area);
     }
 
@@ -512,7 +573,7 @@ impl Width {
 fn render_nav(frame: &mut Frame, app: &mut App, area: Rect) -> Rect {
     let width = Width::of(area);
     let theme = &app.theme;
-    let current = app.nav.current();
+    let current = app.nav.current().tab();
     let can_back = app.nav.can_back();
     let can_forward = app.nav.can_forward();
     let buf = frame.buffer_mut();
@@ -681,6 +742,7 @@ fn render_queue(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
         app.spinner_tick,
     )
     .with_drop_indicator(drop_indicator)
+    .with_pointer(Some((app.hover.column, app.hover.row)))
     .with_hover(&app.hover.zone)
     .with_favourites(&app.favourites);
     frame.render_widget(queue_view, area);
@@ -965,5 +1027,90 @@ mod tests {
         let rgb = crate::accent::from_image(&red).expect("a red");
         app.accent.set(rgb, std::time::Instant::now());
         assert_eq!(app.accent.target(), rgb);
+    }
+
+    #[test]
+    fn a_hint_is_a_button() {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let mut app = app_with_queue(5);
+        draw(&mut app, 120, 40);
+        // `[1-6] pages` is not one key, but `[e] edit` is.
+        let (rect, key) = app
+            .layout
+            .hint_hits
+            .iter()
+            .find(|(_, k)| k.code == crossterm::event::KeyCode::Char('e'))
+            .cloned()
+            .expect("an edit hint");
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: rect.x,
+            row: rect.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(key.code, crossterm::event::KeyCode::Char('e'));
+        assert_eq!(app.mode, Mode::QueueEdit);
+    }
+
+    #[test]
+    fn the_queue_headings_name_links_and_a_row_has_a_menu_button() {
+        use crate::queue::{HeaderLink, QueueView, menu_button_x};
+        let app = app_with_queue(3);
+        let entries = &app.queue.vq_cache.entries;
+        let area = Rect::new(0, 0, 80, 20);
+        // Row 1 is the heading: " artist \u{2014} (2024) album [FLAC]".
+        assert_eq!(
+            QueueView::header_link_at(entries, area, 0, 2, 1),
+            Some((0, HeaderLink::Artist))
+        );
+        let album_col = 1 + "artist".len() as u16 + 3 + "(2024) ".len() as u16;
+        assert_eq!(
+            QueueView::header_link_at(entries, area, 0, album_col + 1, 1),
+            Some((0, HeaderLink::Album))
+        );
+        // Off the text, and on a track row, there is no link.
+        assert_eq!(QueueView::header_link_at(entries, area, 0, 70, 1), None);
+        assert_eq!(QueueView::header_link_at(entries, area, 0, 2, 2), None);
+        assert_eq!(menu_button_x(area), 77);
+    }
+
+    #[test]
+    fn the_eq_chooser_opens_and_closes_by_key_and_by_click() {
+        use crossterm::event::{
+            KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+        };
+        let mut app = app_with_queue(3);
+        app.handle_key(KeyEvent::from(KeyCode::Char('E')));
+        assert_eq!(app.mode, Mode::DspSelector);
+        draw(&mut app, 100, 30);
+        assert!(app.layout.selector_area.width > 0);
+        app.handle_key(KeyEvent::from(KeyCode::Esc));
+        assert_eq!(app.mode, Mode::Normal);
+        app.handle_key(KeyEvent::from(KeyCode::Char('E')));
+        draw(&mut app, 100, 30);
+        // A click outside the popup closes it.
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn a_record_and_an_artist_page_render_without_the_library() {
+        let mut app = app_with_queue(3);
+        for page in [Page::Album(999), Page::Artist(999)] {
+            app.go_page(page);
+            for (w, h) in [(120u16, 40u16), (60, 20), (30, 10), (5, 3)] {
+                draw(&mut app, w, h);
+            }
+        }
+        // Back from either lands on the page before it, and the tab it sits
+        // under is the one lit.
+        assert_eq!(app.page().tab(), Page::Artists);
+        app.go_back();
+        assert_eq!(app.page(), Page::Album(999));
     }
 }

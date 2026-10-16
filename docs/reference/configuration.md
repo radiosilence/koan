@@ -309,7 +309,7 @@ scale = "bark"                # frequency scale (default: bark)
 amplitude_scale = "aweight"   # amplitude scale (default: aweight)
 bar_decay_ms = 50             # bar drop half-life in ms (default: 50)
 peak_decay_ms = 180           # peak marker linger half-life in ms (default: 180)
-palette = "record"            # color palette: record, spectrum, mono, fire, neon (default: record)
+palette = "theme"             # theme (follows the UI), rainbow, mono, fire, neon (default: theme)
 reactivity = 1.0              # animation reactivity 0.0..2.0 (default: 1.0)
 reactive_bg = false           # beat-reactive background on braille modes (default: false)
 

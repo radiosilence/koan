@@ -10,6 +10,10 @@ pub enum Page {
     Artists,
     Favourites,
     Recent,
+    /// One record, by its id: reached from a tile, a link, or the queue.
+    Album(i64),
+    /// One artist's records, by id.
+    Artist(i64),
 }
 
 impl Page {
@@ -30,6 +34,17 @@ impl Page {
             Page::Artists => "artists",
             Page::Favourites => "favourites",
             Page::Recent => "recent",
+            Page::Album(_) => "album",
+            Page::Artist(_) => "artist",
+        }
+    }
+
+    /// The page in the sidebar or the tab bar this one sits under.
+    pub fn tab(self) -> Page {
+        match self {
+            Page::Album(_) => Page::Albums,
+            Page::Artist(_) => Page::Artists,
+            other => other,
         }
     }
 
@@ -42,6 +57,8 @@ impl Page {
             Page::Artists => "artists",
             Page::Favourites => "faves",
             Page::Recent => "recent",
+            Page::Album(_) => "album",
+            Page::Artist(_) => "artist",
         }
     }
 
@@ -54,6 +71,7 @@ impl Page {
             Page::Artists => '4',
             Page::Favourites => '5',
             Page::Recent => '6',
+            Page::Album(_) | Page::Artist(_) => ' ',
         }
     }
 
@@ -126,7 +144,7 @@ impl Navigator {
     pub fn next_page(&self) -> Page {
         let i = Page::ALL
             .iter()
-            .position(|p| *p == self.current())
+            .position(|p| *p == self.current().tab())
             .unwrap_or(0);
         Page::ALL[(i + 1) % Page::ALL.len()]
     }
@@ -134,7 +152,7 @@ impl Navigator {
     pub fn prev_page(&self) -> Page {
         let i = Page::ALL
             .iter()
-            .position(|p| *p == self.current())
+            .position(|p| *p == self.current().tab())
             .unwrap_or(0);
         Page::ALL[(i + Page::ALL.len() - 1) % Page::ALL.len()]
     }
@@ -182,6 +200,18 @@ mod tests {
         assert_eq!(nav.next_page(), Page::Queue);
         nav.go(Page::Queue);
         assert_eq!(nav.prev_page(), Page::Recent);
+    }
+
+    #[test]
+    fn a_record_sits_under_albums_and_an_artist_under_artists() {
+        assert_eq!(Page::Album(7).tab(), Page::Albums);
+        assert_eq!(Page::Artist(7).tab(), Page::Artists);
+        assert_eq!(Page::Queue.tab(), Page::Queue);
+        let mut nav = Navigator::default();
+        nav.go(Page::Album(1));
+        nav.go(Page::Album(2));
+        assert!(nav.can_back());
+        assert_eq!(nav.next_page(), Page::Artists);
     }
 
     #[test]

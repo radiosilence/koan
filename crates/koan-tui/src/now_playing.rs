@@ -29,8 +29,8 @@ pub fn deviation(
     dsp: Option<&DspStatus>,
     replaygain: ReplayGainMode,
 ) -> Option<String> {
-    if let Some(d) = dsp {
-        return Some(format!("dsp: {}", d.profile));
+    if dsp.is_some() {
+        return Some("processed by dsp".into());
     }
     if let Some(out) = output_rate
         && out != info.sample_rate
@@ -66,14 +66,29 @@ fn db_label(level: f32) -> String {
     }
 }
 
-/// A response curve in braille, `db` against the log-spaced `freqs`, with a
-/// zero line. The vertical range is the curve's own, at least ±6 dB.
-fn eq_plot(area: Rect, buf: &mut Buffer, theme: &Theme, db: &[f64]) {
-    if area.width < 8 || area.height < 3 || db.is_empty() {
+/// A response curve in braille, `db` against log-spaced frequency, with a
+/// zero line, dB labels down the side and a frequency axis under it. The
+/// vertical range is the curve's own, at least ±6 dB. The first row says what
+/// the curve is.
+fn eq_plot(area: Rect, buf: &mut Buffer, theme: &Theme, profile: &str, db: &[f64]) {
+    if area.width < 14 || area.height < 5 || db.is_empty() {
         return;
     }
+    let heading = format!("eq \u{b7} {profile}");
+    buf.set_stringn(
+        area.x,
+        area.y,
+        &heading,
+        area.width as usize,
+        theme.hint_desc,
+    );
     let label_w = 5u16;
-    let plot = Rect::new(area.x + label_w, area.y, area.width - label_w, area.height);
+    let plot = Rect::new(
+        area.x + label_w,
+        area.y + 1,
+        area.width - label_w,
+        area.height - 2,
+    );
     let range = db.iter().fold(6.0f64, |m, v| m.max(v.abs())).ceil();
     let mut grid = BrailleGrid::new(plot.width as usize, plot.height as usize);
     let (pw, ph) = (grid.px_width(), grid.px_height());
@@ -96,9 +111,24 @@ fn eq_plot(area: Rect, buf: &mut Buffer, theme: &Theme, db: &[f64]) {
     grid.render_to(plot, buf);
     let label = |v: f64| format!("{:>+4.0} ", v);
     let style = theme.hint_desc;
-    buf.set_string(area.x, area.y, label(range), style);
-    buf.set_string(area.x, area.y + area.height / 2, label(0.0), style);
-    buf.set_string(area.x, area.y + area.height - 1, label(-range), style);
+    buf.set_string(area.x, plot.y, label(range), style);
+    buf.set_string(area.x, plot.y + plot.height / 2, label(0.0), style);
+    buf.set_string(area.x, plot.y + plot.height - 1, label(-range), style);
+    // The frequency axis: the curve runs 20 Hz to 20 kHz on a log scale.
+    let axis_y = area.y + area.height - 1;
+    for (hz, text) in [
+        (50.0f64, "50"),
+        (200.0, "200"),
+        (1000.0, "1k"),
+        (5000.0, "5k"),
+        (15000.0, "15k"),
+    ] {
+        let t = (hz / 20.0).log10() / (20000.0f64 / 20.0).log10();
+        let x = plot.x + (t * plot.width.saturating_sub(1) as f64).round() as u16;
+        if x + text.len() as u16 <= plot.x + plot.width {
+            buf.set_string(x, axis_y, text, style);
+        }
+    }
 }
 
 fn row(buf: &mut Buffer, area: Rect, y: u16, key: &str, value: Vec<Span<'_>>, theme: &Theme) {
@@ -289,7 +319,7 @@ pub fn render(buf: &mut Buffer, app: &mut App, area: Rect) {
                     low.x + low.width - plot_w + 2,
                     low.y,
                     plot_w - 2,
-                    low.height.min(10),
+                    low.height.min(12),
                 )),
             )
         }
@@ -298,7 +328,8 @@ pub fn render(buf: &mut Buffer, app: &mut App, area: Rect) {
     let pos = app.state.position_ms();
     LyricsPanel::new(&app.lyrics, pos, &app.theme, app.spinner_tick).render(lyrics_area, buf);
     if let (Some(plot), Some(curve)) = (plot_area, &curve) {
-        eq_plot(plot, buf, &app.theme, &curve.total);
+        let profile = app.state.dsp().map(|d| d.profile).unwrap_or_default();
+        eq_plot(plot, buf, &app.theme, &profile, &curve.total);
     }
 }
 
@@ -344,7 +375,7 @@ mod tests {
         assert!(
             deviation(&info(44100), Some(44100), Some(&dsp), off)
                 .unwrap()
-                .contains("hd650")
+                .contains("dsp")
         );
     }
 

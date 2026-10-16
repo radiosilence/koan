@@ -4,6 +4,8 @@
 //! Records are shown as tiles of cover art, or as rows.
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender};
@@ -35,12 +37,14 @@ pub enum Source {
     Albums,
     Favourites,
     Recent,
+    /// One artist's records.
+    Artist(i64),
 }
 
 impl Source {
     fn shelf(self) -> Option<Shelf<'static>> {
         match self {
-            Source::Albums => None,
+            Source::Albums | Source::Artist(_) => None,
             Source::Favourites => Some(Shelf::Favourites),
             Source::Recent => Some(Shelf::Recent),
         }
@@ -51,6 +55,7 @@ impl Source {
             Source::Albums => "albums",
             Source::Favourites => "nothing favourited yet",
             Source::Recent => "nothing played in the last 30 days",
+            Source::Artist(_) => "no records by this artist",
         }
     }
 }
@@ -74,24 +79,43 @@ pub enum Action {
     None,
     Play(Vec<i64>, PickerAction),
     Favourite(i64),
+    OpenAlbum(i64),
+    OpenArtist(i64),
 }
 
 /// Where the pointer is on the page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hit {
     Item(usize),
+    /// A record's title under its tile: a link to the record.
+    Title(usize),
+    /// A record's artist under its tile: a link to the artist.
+    Artist(usize),
     Sort,
     View,
     Filter,
 }
 
+/// How many covers are fetched at once. Each of a remote library's is an HTTP
+/// round trip, so one at a time would fill a screen of tiles over many seconds.
+const THUMB_WORKERS: usize = 6;
+
+enum Loaded {
+    Image(Option<DynamicImage>),
+    /// Scrolled away before its turn came; asked for again if it comes back.
+    Skipped,
+}
+
 /// Covers, loaded off the UI thread. Asking for one that is not there starts
-/// the load and answers nothing; the page asks again next frame.
+/// the load and answers nothing; the page asks again next frame. Only covers
+/// the last frame wanted are loaded, so scrolling a long library does not
+/// queue a fetch for every tile it flew past.
 pub struct Thumbs {
     images: HashMap<i64, Option<DynamicImage>>,
     asked: HashSet<i64>,
+    wanted: Arc<Mutex<HashSet<i64>>>,
     tx: Sender<i64>,
-    rx: Receiver<(i64, Option<DynamicImage>)>,
+    rx: Receiver<(i64, Loaded)>,
 }
 
 impl Default for Thumbs {
@@ -104,41 +128,65 @@ impl Thumbs {
     pub fn new() -> Self {
         let (tx, req) = crossbeam_channel::unbounded::<i64>();
         let (done, rx) = crossbeam_channel::unbounded();
-        std::thread::Builder::new()
-            .name("koan-thumbs".into())
-            .spawn(move || {
-                while let Ok(album) = req.recv() {
-                    if done.send((album, load(album))).is_err() {
-                        break;
+        let wanted: Arc<Mutex<HashSet<i64>>> = Arc::default();
+        for n in 0..THUMB_WORKERS {
+            let (req, done, wanted) = (req.clone(), done.clone(), wanted.clone());
+            std::thread::Builder::new()
+                .name(format!("koan-thumbs-{n}"))
+                .spawn(move || {
+                    while let Ok(album) = req.recv() {
+                        let still = wanted.lock().is_ok_and(|w| w.contains(&album));
+                        let out = if still {
+                            Loaded::Image(load(album))
+                        } else {
+                            Loaded::Skipped
+                        };
+                        if done.send((album, out)).is_err() {
+                            break;
+                        }
                     }
-                }
-            })
-            .ok();
+                })
+                .ok();
+        }
         Self {
             images: HashMap::new(),
             asked: HashSet::new(),
+            wanted,
             tx,
             rx,
         }
     }
 
-    /// Takes in what the loader has finished. Returns whether anything came.
+    /// Takes in what the loaders have finished. Returns whether anything came.
     pub fn poll(&mut self) -> bool {
         let mut any = false;
-        while let Ok((id, image)) = self.rx.try_recv() {
+        while let Ok((id, out)) = self.rx.try_recv() {
             self.asked.remove(&id);
-            if self.images.len() >= THUMB_LIMIT {
-                self.images.clear();
+            if let Loaded::Image(image) = out {
+                if self.images.len() >= THUMB_LIMIT {
+                    self.images.clear();
+                }
+                self.images.insert(id, image);
+                any = true;
             }
-            self.images.insert(id, image);
-            any = true;
         }
         any
     }
 
+    /// Starts a frame: what was wanted before no longer is, until it is asked
+    /// for again.
+    pub(super) fn begin_frame(&self) {
+        if let Ok(mut w) = self.wanted.lock() {
+            w.clear();
+        }
+    }
+
     /// The cover for `album`, loading it if it is not here. `None` is either
-    /// not yet or no cover; `loaded` tells which.
-    fn get(&mut self, album: i64) -> Option<&DynamicImage> {
+    /// not yet or no cover.
+    pub(super) fn get(&mut self, album: i64) -> Option<&DynamicImage> {
+        if let Ok(mut w) = self.wanted.lock() {
+            w.insert(album);
+        }
         if !self.images.contains_key(&album) && self.asked.insert(album) {
             self.tx.send(album).ok();
         }
@@ -146,13 +194,25 @@ impl Thumbs {
     }
 }
 
+/// A record's cover as a thumbnail: from a file beside or inside one of its
+/// tracks, else from the server, as the apps do. A library synced from a
+/// server has no files to read.
 fn load(album: i64) -> Option<DynamicImage> {
     let db = koan_core::db::pool::shared().get().ok()?;
-    let tracks = queries::tracks_for_album(&db.conn, album).ok()?;
-    let path = tracks
-        .iter()
-        .find_map(|t| t.path.as_deref().or(t.cached_path.as_deref()))?;
-    let bytes = koan_core::index::folder_art::cover_art(std::path::Path::new(path))?;
+    let row = queries::cover_track_for_album(&db.conn, album).ok()??;
+    let local = row.path.as_deref().or(row.cached_path.as_deref());
+    if let Some(bytes) = local.and_then(|p| koan_core::index::folder_art::cover_art(Path::new(p)))
+        && let Ok(img) = image::load_from_memory(&bytes)
+    {
+        return Some(img.thumbnail(192, 192));
+    }
+    let remote_id = row.remote_id?;
+    let cfg = koan_core::config::Config::cached();
+    if !cfg.remote.enabled {
+        return None;
+    }
+    let client = koan_core::helpers::subsonic_client(&cfg)?;
+    let bytes = client.get_cover_art(&remote_id, Some(256)).ok()?;
     Some(image::load_from_memory(&bytes).ok()?.thumbnail(192, 192))
 }
 
@@ -167,11 +227,17 @@ struct Geom {
     sort: Rect,
     view: Rect,
     filter: Rect,
+    /// The scrollbar's column, when the page overflows.
+    bar: Rect,
+    /// Rows in all, and the fully visible ones; the scroll runs between.
+    total_rows: usize,
 }
 
 pub struct Browse {
     pub source: Source,
     pub view: View,
+    /// The heading, for a page about one artist.
+    title: String,
     albums: Vec<AlbumRow>,
     tracks: Vec<TrackRow>,
     /// What is shown, as indices into `albums` or `tracks`: all of them, or
@@ -192,6 +258,7 @@ impl Browse {
         Self {
             source,
             view: View::Tiles,
+            title: String::new(),
             albums: Vec::new(),
             tracks: Vec::new(),
             shown: Vec::new(),
@@ -218,14 +285,26 @@ impl Browse {
         };
         let now = shelves::now();
         let user = queries::LOCAL_USER;
-        let query = match self.source.shelf() {
-            Some(shelf) => shelf.albums(user, now),
-            None => AlbumQuery {
+        let query = match (self.source.shelf(), self.source) {
+            (Some(shelf), _) => shelf.albums(user, now),
+            (None, Source::Artist(id)) => AlbumQuery {
+                artist_id: Some(id),
+                order: AlbumOrder::Date,
+                ..Default::default()
+            },
+            (None, _) => AlbumQuery {
                 order: ORDERS[self.order].0,
                 ..Default::default()
             },
         };
         self.albums = queries::list_albums(&db.conn, &query).unwrap_or_default();
+        if let Source::Artist(_) = self.source {
+            self.title = self
+                .albums
+                .first()
+                .map(|a| a.artist_name.clone())
+                .unwrap_or_default();
+        }
         self.tracks = match self.source.shelf() {
             Some(shelf) => shelf
                 .tracks(user, now)
@@ -356,6 +435,26 @@ impl Browse {
         }
     }
 
+    /// The record the item at `idx` is, or is on.
+    fn album_at(&self, idx: usize) -> Option<i64> {
+        let &i = self.shown.get(idx)?;
+        if self.tracks_in_list() {
+            self.tracks[i].album_id
+        } else {
+            Some(self.albums[i].id)
+        }
+    }
+
+    /// The artist the item at `idx` is by.
+    fn artist_at(&self, idx: usize) -> Option<i64> {
+        let &i = self.shown.get(idx)?;
+        if self.tracks_in_list() {
+            self.tracks[i].artist_id
+        } else {
+            Some(self.albums[i].artist_id)
+        }
+    }
+
     /// The track under the cursor when the page lists tracks, for hearting.
     pub fn track_at_cursor(&self) -> Option<i64> {
         if !self.tracks_in_list() {
@@ -404,7 +503,22 @@ impl Browse {
             KeyCode::Char('d') if ctrl => self.move_to(self.cursor + page),
             KeyCode::Home | KeyCode::Char('g') => self.move_to(0),
             KeyCode::End | KeyCode::Char('G') => self.move_to(usize::MAX),
-            KeyCode::Enter => return Some(self.play(self.cursor, PickerAction::AppendAndPlay)),
+            KeyCode::Enter if self.tracks_in_list() => {
+                return Some(self.play(self.cursor, PickerAction::AppendAndPlay));
+            }
+            KeyCode::Enter | KeyCode::Char('O') => {
+                return Some(
+                    self.album_at(self.cursor)
+                        .map_or(Action::None, Action::OpenAlbum),
+                );
+            }
+            KeyCode::Char('A') => {
+                return Some(
+                    self.artist_at(self.cursor)
+                        .map_or(Action::None, Action::OpenArtist),
+                );
+            }
+            KeyCode::Char('P') => return Some(self.play(self.cursor, PickerAction::AppendAndPlay)),
             KeyCode::Char('r') if ctrl => {
                 return Some(self.play(self.cursor, PickerAction::ReplaceQueue));
             }
@@ -451,18 +565,44 @@ impl Browse {
         {
             return None;
         }
-        let idx = match self.view {
+        match self.view {
             View::Tiles => {
+                let margin = (g.area.width.saturating_sub(g.tile_w * g.cols as u16)) / 2;
+                if col < g.area.x + margin {
+                    return None;
+                }
                 let tile_row = (row - body_y) / g.tile_h.max(1);
-                let tile_col = (col - g.area.x) / g.tile_w.max(1);
+                let tile_col = (col - g.area.x - margin) / g.tile_w.max(1);
                 if tile_col as usize >= g.cols {
                     return None;
                 }
-                (self.scroll + tile_row as usize) * g.cols + tile_col as usize
+                let idx = (self.scroll + tile_row as usize) * g.cols + tile_col as usize;
+                let &i = self.shown.get(idx)?;
+                let album = &self.albums[i];
+                // The label lines under the art are links, as far as their text
+                // goes; the rest of the tile selects.
+                let dy = (row - body_y) % g.tile_h.max(1);
+                let dx = (col - g.area.x - margin) % g.tile_w.max(1);
+                let art_h = g.tile_h.saturating_sub(3);
+                let label = g.tile_w.saturating_sub(2) as usize;
+                let on_text =
+                    |text: &str| dx >= 1 && (dx as usize) <= fit(text, label).chars().count();
+                if dy == art_h && on_text(&album.title) {
+                    return Some(Hit::Title(idx));
+                }
+                if dy == art_h + 1 && on_text(&album.artist_name) {
+                    let end = fit(&album.artist_name, label).chars().count();
+                    if (dx as usize) <= end {
+                        return Some(Hit::Artist(idx));
+                    }
+                }
+                Some(Hit::Item(idx))
             }
-            View::List => self.scroll + (row - body_y) as usize,
-        };
-        (idx < self.shown.len()).then_some(Hit::Item(idx))
+            View::List => {
+                let idx = self.scroll + (row - body_y) as usize;
+                (idx < self.shown.len()).then_some(Hit::Item(idx))
+            }
+        }
     }
 
     /// A left click. The first selects; the second, soon after on the same
@@ -481,6 +621,14 @@ impl Browse {
                 self.filter_active = true;
                 Action::None
             }
+            Hit::Title(idx) => {
+                self.move_to(idx);
+                self.album_at(idx).map_or(Action::None, Action::OpenAlbum)
+            }
+            Hit::Artist(idx) => {
+                self.move_to(idx);
+                self.artist_at(idx).map_or(Action::None, Action::OpenArtist)
+            }
             Hit::Item(idx) => {
                 let double = self
                     .last_click
@@ -488,7 +636,11 @@ impl Browse {
                 self.move_to(idx);
                 if double {
                     self.last_click = None;
-                    self.play(idx, PickerAction::AppendAndPlay)
+                    if self.tracks_in_list() {
+                        self.play(idx, PickerAction::AppendAndPlay)
+                    } else {
+                        self.album_at(idx).map_or(Action::None, Action::OpenAlbum)
+                    }
                 } else {
                     self.last_click = Some((idx, Instant::now()));
                     Action::None
@@ -506,12 +658,13 @@ impl Browse {
         gfx: &mut Gfx,
         thumbs: &mut Thumbs,
         favourites: &HashSet<i64>,
-        hover: Option<usize>,
+        hover: Option<Hit>,
     ) {
         if area.width == 0 || area.height == 0 {
             return;
         }
         self.ensure_loaded();
+        thumbs.begin_frame();
         self.geom = Geom {
             area,
             ..Geom::default()
@@ -570,6 +723,7 @@ impl Browse {
             Source::Albums => "albums",
             Source::Favourites => "favourites",
             Source::Recent => "recent",
+            Source::Artist(_) => self.title.as_str(),
         };
         put(buf, &mut x, title, theme.heading);
         put(buf, &mut x, &count, theme.hint_desc);
@@ -587,7 +741,7 @@ impl Browse {
         }
         controls.push(match (self.view, self.source) {
             (View::Tiles, _) => " view: tiles ".to_string(),
-            (View::List, Source::Albums) => " view: rows ".to_string(),
+            (View::List, Source::Albums | Source::Artist(_)) => " view: rows ".to_string(),
             (View::List, _) => " view: tracks ".to_string(),
         });
         let total: u16 = controls.iter().map(|c| c.chars().count() as u16).sum();
@@ -614,7 +768,7 @@ impl Browse {
         theme: &Theme,
         gfx: &mut Gfx,
         thumbs: &mut Thumbs,
-        hover: Option<usize>,
+        hover: Option<Hit>,
     ) {
         let cols = ((body.width / TILE_MIN_W) as usize).max(1);
         let tile_w = (body.width / cols as u16).min(TILE_MAX_W);
@@ -623,6 +777,8 @@ impl Browse {
         let art_w = tile_w.saturating_sub(2).max(1);
         let art_h = (art_w / 2).max(1);
         let tile_h = art_h + 3;
+        // Rows that fit whole, which paging and the cursor keep to; the one
+        // after is drawn as far as it reaches.
         let rows = ((body.height / tile_h) as usize).max(1);
         self.geom.cols = cols;
         self.geom.tile_w = tile_w;
@@ -633,52 +789,72 @@ impl Browse {
         self.keep_cursor_visible();
         let total_rows = self.shown.len().div_ceil(cols);
         self.scroll = self.scroll.min(total_rows.saturating_sub(rows));
+        let bottom = body.y + body.height;
 
-        for r in 0..rows {
+        for r in 0..=rows {
             for c in 0..cols {
                 let idx = (self.scroll + r) * cols + c;
                 let Some(&i) = self.shown.get(idx) else { break };
                 let album = &self.albums[i];
                 let x = body.x + margin + c as u16 * tile_w;
                 let y = body.y + r as u16 * tile_h;
-                if y + art_h + 2 > body.y + body.height {
+                if y >= bottom {
                     continue;
                 }
                 let selected = idx == self.cursor;
-                let hovered = hover == Some(idx);
                 let art = Rect::new(x + 1, y, art_w, art_h);
+                let art_visible = (bottom - y).min(art_h);
                 if let Some(img) = thumbs.get(album.id) {
-                    gfx.draw(album_key(album.id), img, art, buf, true);
+                    gfx.draw_clipped(album_key(album.id), img, art, art_visible, buf);
                 } else {
-                    placeholder(art, buf, theme, &album.title);
+                    placeholder(art, art_visible, buf, theme, &album.title);
                 }
                 if selected {
-                    for dy in 0..art_h {
+                    for dy in 0..art_visible {
                         buf[(x, y + dy)].set_char('\u{258c}').set_style(theme.bar);
                     }
                 }
-                let (title_style, sub_style) = if selected {
-                    (theme.track_cursor, theme.track_playing)
-                } else if hovered {
-                    (theme.track_hover, theme.hint_desc)
-                } else {
-                    (theme.track_normal, theme.hint_desc)
-                };
                 let label = tile_w.saturating_sub(2) as usize;
-                buf.set_stringn(
-                    x + 1,
-                    y + art_h,
-                    fit(&album.title, label),
-                    label,
-                    title_style,
-                );
-                let year = queries_year(album);
-                let sub = if year.is_empty() {
-                    album.artist_name.clone()
-                } else {
-                    format!("{} \u{b7} {}", album.artist_name, year)
-                };
-                buf.set_stringn(x + 1, y + art_h + 1, fit(&sub, label), label, sub_style);
+                let title_y = y + art_h;
+                if title_y < bottom {
+                    let style = if selected {
+                        theme.track_cursor
+                    } else {
+                        theme.track_normal
+                    };
+                    let style = if hover == Some(Hit::Title(idx)) {
+                        style.add_modifier(Modifier::UNDERLINED)
+                    } else {
+                        style
+                    };
+                    buf.set_stringn(x + 1, title_y, fit(&album.title, label), label, style);
+                }
+                if title_y + 1 < bottom {
+                    // The artist is a link; the year after it is not.
+                    let artist = fit(&album.artist_name, label);
+                    let used = artist.chars().count();
+                    let style = if selected {
+                        theme.track_playing
+                    } else {
+                        theme.hint_desc
+                    };
+                    let style = if hover == Some(Hit::Artist(idx)) {
+                        style.add_modifier(Modifier::UNDERLINED)
+                    } else {
+                        style
+                    };
+                    buf.set_stringn(x + 1, title_y + 1, &artist, label, style);
+                    let year = queries_year(album);
+                    if !year.is_empty() && used + 3 + year.len() <= label {
+                        buf.set_stringn(
+                            x + 1 + used as u16,
+                            title_y + 1,
+                            format!(" \u{b7} {year}"),
+                            label - used,
+                            theme.hint_desc,
+                        );
+                    }
+                }
             }
         }
         self.scrollbar(body, buf, theme, total_rows, rows);
@@ -690,7 +866,7 @@ impl Browse {
         buf: &mut Buffer,
         theme: &Theme,
         favourites: &HashSet<i64>,
-        hover: Option<usize>,
+        hover: Option<Hit>,
     ) {
         let rows = body.height as usize;
         self.geom.cols = 1;
@@ -705,7 +881,7 @@ impl Browse {
             let Some(&i) = self.shown.get(idx) else { break };
             let y = body.y + r as u16;
             let selected = idx == self.cursor;
-            let hovered = hover == Some(idx);
+            let hovered = hover == Some(Hit::Item(idx));
             let (name, detail, tail, fav) = if tracks {
                 let t = &self.tracks[i];
                 (
@@ -780,12 +956,21 @@ impl Browse {
         self.scrollbar(body, buf, theme, self.shown.len(), rows);
     }
 
-    fn scrollbar(&self, body: Rect, buf: &mut Buffer, theme: &Theme, total: usize, visible: usize) {
+    fn scrollbar(
+        &mut self,
+        body: Rect,
+        buf: &mut Buffer,
+        theme: &Theme,
+        total: usize,
+        visible: usize,
+    ) {
         if total <= visible || body.height == 0 || body.width < 2 {
             return;
         }
         let x = body.x + body.width - 1;
         let h = body.height as usize;
+        self.geom.bar = Rect::new(x, body.y, 1, body.height);
+        self.geom.total_rows = total;
         let thumb = (h * visible / total).max(1);
         let top = (h - thumb) * self.scroll / (total - visible).max(1);
         for row in 0..h {
@@ -798,6 +983,23 @@ impl Browse {
                     Style::new().bg(theme.scrollbar_bg)
                 });
         }
+    }
+
+    /// Whether `col`, `row` is on the scrollbar.
+    pub fn on_scrollbar(&self, col: u16, row: u16) -> bool {
+        let b = self.geom.bar;
+        b.width > 0 && col == b.x && row >= b.y && row < b.y + b.height
+    }
+
+    /// Scrolls so the thumb is at `row`, for a click or a drag on the bar.
+    pub fn scroll_to_bar(&mut self, row: u16) {
+        let b = self.geom.bar;
+        if b.height == 0 {
+            return;
+        }
+        let max = self.geom.total_rows.saturating_sub(self.page_rows());
+        let frac = row.saturating_sub(b.y) as f64 / (b.height.saturating_sub(1)).max(1) as f64;
+        self.scroll = ((frac.clamp(0.0, 1.0) * max as f64).round() as usize).min(max);
     }
 }
 
@@ -817,9 +1019,9 @@ fn queries_year(album: &AlbumRow) -> String {
 
 /// A tile with no cover (yet): the record's first letter on the raised
 /// ground, so the grid keeps its shape while covers arrive.
-fn placeholder(area: Rect, buf: &mut Buffer, theme: &Theme, title: &str) {
+pub(super) fn placeholder(area: Rect, visible: u16, buf: &mut Buffer, theme: &Theme, title: &str) {
     let ground = Style::new().bg(theme.tokens.surface);
-    for y in area.y..area.y + area.height {
+    for y in area.y..area.y + visible.min(area.height) {
         for x in area.x..area.x + area.width {
             buf[(x, y)].set_char(' ').set_style(ground);
         }
@@ -829,12 +1031,14 @@ fn placeholder(area: Rect, buf: &mut Buffer, theme: &Theme, title: &str) {
         .find(|c| c.is_alphanumeric())
         .map(|c| c.to_uppercase().to_string())
         .unwrap_or_else(|| "\u{266a}".into());
-    buf.set_string(
-        area.x + area.width / 2,
-        area.y + area.height / 2,
-        letter,
-        ground.fg(theme.tokens.muted).add_modifier(Modifier::BOLD),
-    );
+    if area.height / 2 < visible {
+        buf.set_string(
+            area.x + area.width / 2,
+            area.y + area.height / 2,
+            letter,
+            ground.fg(theme.tokens.muted).add_modifier(Modifier::BOLD),
+        );
+    }
 }
 
 #[cfg(test)]
@@ -912,16 +1116,80 @@ mod tests {
         assert!(row >= b.scroll && row < b.scroll + b.geom.rows);
     }
 
+    /// The cell at `dx`, `dy` inside the first tile.
+    fn first_tile(b: &Browse, dx: u16, dy: u16) -> (u16, u16) {
+        let g = &b.geom;
+        let margin = g.area.width.saturating_sub(g.tile_w * g.cols as u16) / 2;
+        (g.area.x + margin + dx, g.area.y + 1 + dy)
+    }
+
     #[test]
-    fn a_click_selects_and_the_second_plays() {
+    fn a_click_selects_and_the_second_opens_the_record() {
         let mut b = browse(10);
         draw(&mut b, 80, 30);
-        let hit = b.hit(b.geom.area.x + 1, b.geom.area.y + 2).expect("a tile");
+        let (x, y) = first_tile(&b, 2, 1);
+        let hit = b.hit(x, y).expect("a tile");
         assert_eq!(hit, Hit::Item(0));
         assert_eq!(b.click(hit), Action::None);
-        // No database behind the test, so a play has no ids to ask for.
-        assert_eq!(b.click(hit), Action::None);
+        assert_eq!(b.click(hit), Action::OpenAlbum(0));
         assert!(b.last_click.is_none());
+    }
+
+    #[test]
+    fn the_title_and_artist_under_a_tile_are_links() {
+        let mut b = browse(10);
+        draw(&mut b, 80, 30);
+        let art_h = b.geom.tile_h - 3;
+        let (x, y) = first_tile(&b, 2, art_h);
+        assert_eq!(b.hit(x, y), Some(Hit::Title(0)));
+        assert_eq!(b.click(Hit::Title(0)), Action::OpenAlbum(0));
+        let (x, y) = first_tile(&b, 2, art_h + 1);
+        assert_eq!(b.hit(x, y), Some(Hit::Artist(0)));
+        assert_eq!(b.click(Hit::Artist(0)), Action::OpenArtist(0));
+        // Past the end of the text it is the tile again.
+        let (x, y) = first_tile(&b, b.geom.tile_w - 1, art_h);
+        assert_eq!(b.hit(x, y), Some(Hit::Item(0)));
+    }
+
+    #[test]
+    fn the_scrollbar_is_a_handle() {
+        let mut b = browse(400);
+        draw(&mut b, 80, 30);
+        let bar = b.geom.bar;
+        assert!(b.on_scrollbar(bar.x, bar.y));
+        assert!(!b.on_scrollbar(bar.x - 1, bar.y));
+        b.scroll_to_bar(bar.y + bar.height - 1);
+        let max = b.geom.total_rows - b.page_rows();
+        assert_eq!(b.scroll, max);
+        b.scroll_to_bar(bar.y);
+        assert_eq!(b.scroll, 0);
+    }
+
+    #[test]
+    fn a_row_that_does_not_fit_is_drawn_as_far_as_it_reaches() {
+        let mut b = browse(40);
+        // Tall enough for a whole row and a bit more.
+        draw(&mut b, 80, 17);
+        let art_h = b.geom.tile_h - 3;
+        let area = Rect::new(0, 0, 80, 17);
+        let mut buf = Buffer::empty(area);
+        let theme = Theme::default();
+        b.render(
+            area,
+            &mut buf,
+            &theme,
+            &mut Gfx::halfblocks(),
+            &mut Thumbs::new(),
+            &HashSet::new(),
+            None,
+        );
+        // The second row starts below the first and is cut by the bottom edge:
+        // its placeholder is drawn on the rows that exist.
+        let second_row_y = 1 + b.geom.tile_h;
+        assert!(second_row_y + 1 < 17, "a second row begins on screen");
+        let drawn =
+            (second_row_y..17).any(|y| (0..80).any(|x| buf[(x, y)].bg == theme.tokens.surface));
+        assert!(drawn, "art_h {art_h}");
     }
 
     #[test]

@@ -29,6 +29,8 @@ See [The terminal UI](../guide/terminal-ui.md). These work from any page.
 | `[` / `]` or `Alt+Left` / `Alt+Right` | Back / forward through the pages visited |
 | `Esc` | Leave the page for the one before it |
 | `I` | Draw covers as images or in half blocks |
+| `E` | Choose the EQ the output plays through |
+| `A` / `O` | Open the artist / the record of the selection |
 
 ### Navigation
 
@@ -110,7 +112,9 @@ Tree view: artist -> album -> track.
 |-----|--------|
 | Arrows or `h` `j` `k` `l` | Move through the tiles or rows |
 | `PgUp` / `PgDn`, `g` / `G` | Page, start, end |
-| `Enter` | Append the record (or track) and play it |
+| `Enter` or `O` | Open the record (a track row plays the track) |
+| `A` | Open the artist |
+| `P` | Append the record (or track) and play it |
 | `a` | Append to the queue |
 | `Ctrl+R` | Replace the queue and play |
 | `/` | Filter what is shown |
@@ -123,11 +127,14 @@ Tree view: artist -> album -> track.
 | Action | Effect |
 |--------|--------|
 | Click | Select |
-| Second click | Append and play |
-| Right-click | Append to the queue |
+| Second click | Open the record |
+| Click a title or artist under a tile | Open the record / the artist |
+| Right-click | Append to the queue (also `a`, and the hint bar) |
 | Wheel | Scroll |
 | Click `sort:` or `view:` in the heading | Cycle the order, switch tiles and rows |
 | Click the sidebar or tab bar | Open that page, or go back or forward |
+| Click a key hint along the foot | The same as pressing that key |
+| Drag the scrollbar | Scroll |
 
 ---
 
