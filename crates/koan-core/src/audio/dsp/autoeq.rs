@@ -262,7 +262,7 @@ fn read_index(freshness: Freshness) -> Result<Vec<Entry>, String> {
             // Written beside it and renamed over it, so an interrupted write
             // never leaves a truncated index looking fresh.
             let part = dir.join("INDEX.md.part");
-            let kept_new = std::fs::create_dir_all(&dir)
+            let kept_new = config::create_cache_dir(&dir)
                 .and_then(|()| std::fs::write(&part, &text))
                 .and_then(|()| std::fs::rename(&part, &file));
             if let Err(e) = &kept_new {

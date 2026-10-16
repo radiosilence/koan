@@ -497,7 +497,7 @@ fn book(site: &'static Site) -> Result<Arc<Vec<Entry>>, String> {
         kept_entries => match fetch_book(site) {
             Ok((text, entries)) => {
                 let part = file.with_extension("json.part");
-                let written = std::fs::create_dir_all(cache_dir())
+                let written = config::create_cache_dir(&cache_dir())
                     .and_then(|()| std::fs::write(&part, &text))
                     .and_then(|()| std::fs::rename(&part, &file));
                 if let Err(e) = written {
