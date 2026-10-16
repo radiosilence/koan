@@ -7,7 +7,7 @@ just android-run              # build, install on the device adb sees, open
 just android-ffi arm64-v8a    # only the core and the bindings
 ```
 
-Gradle finds the SDK through `ANDROID_HOME` or `local.properties`; mise provides the JDK and cargo-ndk.
+The `just` recipes find the SDK at `ANDROID_HOME` when it holds one, else where Android Studio or Homebrew's `android-commandlinetools` install it; `local.properties` overrides them. mise provides the JDK and cargo-ndk.
 
 ## Sideloading
 
