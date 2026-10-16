@@ -233,6 +233,8 @@ koan --headless --playground
 
 The playground page only renders with the correct `?introspection-key=` param (403 otherwise). The key is injected as an `X-Introspection-Key` header on every GraphQL request. Normal JWT auth still works for real API clients.
 
+The key is not checked against any account: a request carrying it is served as an admin, with no token. That is fine on a machine of your own and not on a server others can reach, since anyone who reads its log, where the URL is printed, has admin access until it restarts. Leave `--playground` off a deployed server. To explore one, point a GraphQL client (Altair, Insomnia, Bruno) at its `/graphql` with an access token from `/auth/login` (above) as `Authorization: Bearer <token>`. The API takes access tokens only; API keys are for the Subsonic API. A token lasts 15 minutes, and `/auth/refresh` gives another.
+
 ## 1Password integration
 
 With the `op` CLI installed, creating a user or resetting a password at a terminal offers to generate a 32-character password and to save it to 1Password as `koan@hostname`, asking again before updating an existing item. `--save-to-1password` saves without asking, and is the only way it happens without a terminal.
