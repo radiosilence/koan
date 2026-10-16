@@ -39,3 +39,6 @@ apps/macos/.build/
 # Generated from AppIcon.svg by `just macos-icon`
 apps/macos/Resources/AppIcon.iconset/
 apps/ios/Koan.xcodeproj/
+
+# Python bytecode, rewritten by every run of the scripts
+__pycache__/
