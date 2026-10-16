@@ -101,7 +101,7 @@ impl AlbumPage {
 
     /// The tracks from the cursor to the end: what Enter plays, so a record
     /// can be started part-way through.
-    fn from_here(&self) -> Action {
+    fn play_from_cursor(&self) -> Action {
         let ids: Vec<i64> = self.tracks[self.cursor.min(self.tracks.len())..]
             .iter()
             .map(|t| t.id)
@@ -126,7 +126,7 @@ impl AlbumPage {
             KeyCode::Char('d') if ctrl => self.move_to(self.cursor + page),
             KeyCode::Home | KeyCode::Char('g') => self.move_to(0),
             KeyCode::End | KeyCode::Char('G') => self.move_to(usize::MAX),
-            KeyCode::Enter => return Some(self.from_here()),
+            KeyCode::Enter => return Some(self.play_from_cursor()),
             KeyCode::Char('P') => return Some(self.play_all(PickerAction::AppendAndPlay)),
             KeyCode::Char('a') => return Some(self.play_all(PickerAction::Append)),
             KeyCode::Char('r') if ctrl => return Some(self.play_all(PickerAction::ReplaceQueue)),
@@ -177,7 +177,7 @@ impl AlbumPage {
                 self.move_to(idx);
                 if double {
                     self.last_click = None;
-                    self.from_here()
+                    self.play_from_cursor()
                 } else {
                     self.last_click = Some((idx, Instant::now()));
                     Action::None

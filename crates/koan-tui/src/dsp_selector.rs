@@ -109,7 +109,6 @@ impl Widget for DspSelectorOverlay<'_> {
             .skip(top)
             .take(inner.height as usize)
             .enumerate()
-            .map(|(r, e)| (r, e))
         {
             let selected = i == self.state.cursor;
             let style = if selected {
