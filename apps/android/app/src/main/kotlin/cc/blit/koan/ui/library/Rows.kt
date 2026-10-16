@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -316,7 +317,7 @@ fun TrackRow(
 /** A heading in a page of sections, with how many there are, opening the section's whole listing. */
 @Composable
 fun SectionHead(title: String, total: Long, onOpen: () -> Unit, modifier: Modifier = Modifier) {
-    KoanButton(onOpen, modifier.padding(horizontal = LocalKoanTokens.current.gutter), kind = KoanButtonKind.Standard) {
+    KoanButton(onOpen, modifier.wrapContentWidth(Alignment.Start), kind = KoanButtonKind.Standard) {
         KoanText(title, role = KoanType.Control, appText = true)
         KoanText("$total", Modifier.padding(start = KoanSpace.s), role = KoanType.Control, tone = KoanTone.Muted)
         KoanIcon(KoanIcons.disclosure, "See all", Modifier.padding(start = KoanSpace.xs))
