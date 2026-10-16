@@ -23,10 +23,10 @@ enum class WashTone(internal val limit: Double) {
  * settles where it stands.
  */
 internal object WashRules {
-    fun shown(recordColours: Boolean) = recordColours
+    fun shown(recordColours: Boolean, graphics: Graphics = Graphics.Full) = recordColours && graphics.showsWash
 
-    fun drifts(playing: Boolean, visible: Boolean, animations: Boolean, powerSaving: Boolean) =
-        playing && visible && animations && !powerSaving
+    fun drifts(playing: Boolean, visible: Boolean, animations: Boolean, powerSaving: Boolean, graphics: Graphics = Graphics.Full) =
+        playing && visible && animations && !powerSaving && graphics.drifts
 }
 
 /**

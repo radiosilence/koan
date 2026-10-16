@@ -143,6 +143,7 @@ fun ProvideRecordWash(
     pending: Boolean,
     playing: Boolean,
     recordColours: Boolean,
+    graphics: Graphics = Graphics.Full,
     content: @Composable () -> Unit,
 ) {
     val wash = remember { RecordWash() }
@@ -150,7 +151,7 @@ fun ProvideRecordWash(
     val tone = if (look.dark) WashTone.Dark else WashTone.Light
     val ground = (if (look.isOn) look.colors.bg else MaterialTheme.colorScheme.background).toArgb()
     val strength = RecordWash.strength(look.isOn)
-    val shown = WashRules.shown(recordColours)
+    val shown = WashRules.shown(recordColours, graphics)
     LaunchedEffect(sleeve, pending, tone, ground, shown) {
         if (pending && shown) return@LaunchedEffect
         val baked = sleeve?.takeIf { shown }?.let {
@@ -166,7 +167,7 @@ fun ProvideRecordWash(
     // settings changed outside it.
     val animations = remember(visible) { ValueAnimator.areAnimatorsEnabled() }
     val powerSaving = remember(visible) { context.getSystemService(PowerManager::class.java)?.isPowerSaveMode == true }
-    val drifts = shown && WashRules.drifts(playing, visible, animations, powerSaving)
+    val drifts = shown && WashRules.drifts(playing, visible, animations, powerSaving, graphics)
     LaunchedEffect(drifts) { if (drifts) wash.breathe() else wash.settle() }
 
     CompositionLocalProvider(LocalRecordWash provides wash, content = content)

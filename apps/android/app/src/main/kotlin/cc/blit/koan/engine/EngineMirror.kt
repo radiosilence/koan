@@ -17,6 +17,7 @@ import cc.blit.koan.ffi.SyncProgress
 import cc.blit.koan.ffi.Transfer
 import cc.blit.koan.ffi.TransferFigure
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -77,8 +78,34 @@ data class Renderers(val renderers: List<RendererInfo>, val output: RendererOutp
  * library asks the engine again when the version moves.
  */
 class EngineMirror(deviceName: String) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val opened: Deferred<KoanEngine> = scope.async { KoanEngine.open(deviceName) }
+    private val _startFailure = MutableStateFlow<String?>(null)
+    /**
+     * Why the engine did not open, when it did not: a library a newer build
+     * migrated, a database that cannot be read. The app shows this and
+     * nothing else; every call waiting on the engine ends quietly.
+     */
+    val startFailure: StateFlow<String?> = _startFailure.asStateFlow()
+
+    /**
+     * A call waiting on an engine that never opened ends here rather than
+     * crashing the app; anything else that escapes goes to the thread's
+     * handler, as it would have.
+     */
+    private val unopened = CoroutineExceptionHandler { _, e ->
+        if (opened.isCompleted && opened.getCompletionExceptionOrNull() != null) return@CoroutineExceptionHandler
+        Thread.currentThread().let { it.uncaughtExceptionHandler?.uncaughtException(it, e) }
+    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + unopened)
+    private val opened: Deferred<KoanEngine> = scope.async {
+        try {
+            KoanEngine.open(deviceName)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            _startFailure.value = failureToStart(e)
+            throw e
+        }
+    }
 
     private val _nowPlaying = MutableStateFlow<NowPlaying?>(null)
     /** Everything a transport shows but the position. `null` until the engine first answers. */
@@ -178,6 +205,8 @@ class EngineMirror(deviceName: String) {
 
     /** Tell the person why something they asked for did not happen. */
     fun report(e: Exception) {
+        // The whole app says why it could not start; each call need not.
+        if (_startFailure.value != null) return
         _notices.tryEmit((e as? KoanException)?.describe() ?: "Something went wrong: ${e.message ?: e}")
     }
 
@@ -245,6 +274,9 @@ class EngineMirror(deviceName: String) {
 }
 
 /** The engine's own words for what went wrong. */
+/** What the app says when the engine would not open. */
+fun failureToStart(e: Exception) = (e as? KoanException)?.describe() ?: e.message ?: e.toString()
+
 fun KoanException.describe() = when (this) {
     is KoanException.Database -> detail
     is KoanException.Audio -> detail
