@@ -162,12 +162,21 @@ internal fun noRenderers(searching: Boolean) = when {
  * Renderers follow.
  */
 @Composable
-fun OutputSection(picker: OutputPicker, outputs: OutputsInfo?, renderer: RendererOutput?, blocked: Boolean, platform: String?) {
-    val there = outputs?.owner != null
-    if (there) {
-        ControlledOutputs(picker, outputs!!, platform)
-    } else {
-        OwnOutputs(picker, outputs, renderer, blocked)
+fun OutputSection(picker: OutputPicker, outputs: OutputsInfo?, renderer: RendererOutput?, blocked: Boolean, controlled: String?, platform: String?) {
+    when {
+        outputs?.owner != null -> ControlledOutputs(picker, outputs, platform)
+        // Controlling a device that has not said what it has: reconnecting,
+        // or out of reach. This phone's own outputs are not the question.
+        controlled != null -> Column {
+            KoanText("Output on $controlled", inset.padding(top = KoanSpace.l), role = KoanType.TitleSmall, tone = KoanTone.Strong, appText = true)
+            KoanText(
+                "$controlled's outputs appear here once it is reachable.",
+                inset.padding(vertical = KoanSpace.s),
+                role = KoanType.Fine,
+                tone = KoanTone.Muted,
+            )
+        }
+        else -> OwnOutputs(picker, outputs, renderer, blocked)
     }
 }
 

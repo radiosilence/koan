@@ -145,7 +145,14 @@ fun PlayOnSheet(onDismiss: () -> Unit) {
                     tone = KoanTone.Muted,
                 )
             }
-            OutputSection(picker, outputs, renderers.output, blocked = connection?.localNetworkBlocked == true, platform = controlled?.platform)
+            OutputSection(
+                picker,
+                outputs,
+                renderers.output,
+                blocked = connection?.localNetworkBlocked == true,
+                controlled = controlled?.name ?: devices.target,
+                platform = controlled?.platform,
+            )
         }
     }
 }
