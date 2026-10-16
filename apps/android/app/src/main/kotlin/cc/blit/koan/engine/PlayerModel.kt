@@ -2,6 +2,9 @@ package cc.blit.koan.engine
 
 import cc.blit.koan.ffi.KoanEngine
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -15,6 +18,34 @@ import kotlinx.coroutines.withTimeoutOrNull
  * made: koan-ffi sends transport and queue commands down one lane.
  */
 class PlayerModel(private val mirror: EngineMirror) {
+    private val _resolving = MutableStateFlow<String?>(null)
+
+    /**
+     * What a play still finding its tracks is for, from the tap until the
+     * engine holds the new queue: Now Playing, the mini player and the button
+     * tapped name it, loading, at once, rather than the paused track it is
+     * about to replace. Play and pause are ignored meanwhile, so that track
+     * cannot be resumed under it.
+     */
+    val resolving: StateFlow<String?> = _resolving.asStateFlow()
+
+    /**
+     * Replace the queue with what `resolve` finds, named `name` until it
+     * lands: a record, an artist or a playlist, whose tracks are a database
+     * read away. Shuffled from a track at random, or in order.
+     */
+    fun playNow(name: String, shuffled: Boolean = false, resolve: suspend KoanEngine.() -> List<Long>) {
+        _resolving.value = name
+        mirror.launch {
+            try {
+                val ids = resolve()
+                if (ids.isNotEmpty()) replaceQueue(ids, (if (shuffled) ids.indices.random() else 0).toUInt(), shuffled)
+            } finally {
+                _resolving.value = null
+            }
+        }
+    }
+
     fun play(queueItemId: String) = mirror.launch { play(queueItemId) }
 
     /** Replace the queue with `trackIds` and play from `startAt`, in order or shuffled. */
@@ -30,11 +61,15 @@ class PlayerModel(private val mirror: EngineMirror) {
 
     fun remove(queueItemIds: List<String>) = mirror.launch { removeFromQueue(queueItemIds) }
 
-    fun togglePlayPause() = mirror.launch { togglePlayPause() }
+    fun togglePlayPause() {
+        if (_resolving.value == null) mirror.launch { togglePlayPause() }
+    }
 
     fun pause() = mirror.launch { pause() }
 
-    fun resume() = mirror.launch { resume() }
+    fun resume() {
+        if (_resolving.value == null) mirror.launch { resume() }
+    }
 
     fun next() = mirror.launch { next() }
 

@@ -48,11 +48,8 @@ sealed interface Playable {
 }
 
 /** Replace the queue with `playable`, in order or shuffled from a track at random. */
-fun KoanApp.play(playable: Playable, shuffled: Boolean = false) = mirror.launch {
-    val ids = playable.trackIds(this)
-    if (ids.isEmpty()) return@launch
-    replaceQueue(ids, (if (shuffled) ids.indices.random() else 0).toUInt(), shuffled)
-}
+fun KoanApp.play(playable: Playable, shuffled: Boolean = false) =
+    player.playNow(playable.name, shuffled) { playable.trackIds(this) }
 
 /**
  * The long-press menu for a playable thing, anchored where it is placed.
