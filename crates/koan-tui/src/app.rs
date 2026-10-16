@@ -730,7 +730,7 @@ impl App {
         // Derive the playing track from the visible queue cache (atomic snapshot)
         // NOT from track_info directly — track_info changes before the visible
         // queue is rebuilt, causing a 1-frame scroll offset jump.
-        if self.mode == Mode::Normal {
+        if self.mode == Mode::Normal && self.layout.queue_area.height > 0 {
             let current_playing = self
                 .queue
                 .vq_cache

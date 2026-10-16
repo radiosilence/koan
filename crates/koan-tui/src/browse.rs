@@ -497,6 +497,7 @@ impl Browse {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         area: Rect,
@@ -523,6 +524,9 @@ impl Browse {
             area.height.saturating_sub(1),
         );
         if body.height == 0 {
+            return;
+        }
+        if body.width < 4 {
             return;
         }
         if self.shown.is_empty() {

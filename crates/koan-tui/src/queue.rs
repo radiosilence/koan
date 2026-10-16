@@ -601,7 +601,7 @@ mod tests {
     fn cursor_row(terminal: &Terminal<TestBackend>, w: u16, h: u16) -> u16 {
         let buf = terminal.backend().buffer();
         (0..h)
-            .find(|&y| (0..w).any(|x| buf[(x, y)].symbol() == ">"))
+            .find(|&y| (0..w).any(|x| buf[(x, y)].symbol() == "\u{258c}"))
             .expect("cursor marker is on screen")
     }
 
