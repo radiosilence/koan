@@ -12,6 +12,19 @@ val commit = providers.exec {
     isIgnoreExitValue = true
 }.standardOutput.asText.map { it.trim().ifEmpty { "unknown" } }
 
+/**
+ * The Kotlin half of rustls-platform-verifier must be the version of the
+ * `rustls-platform-verifier-android` crate the core is built with, so it is
+ * read from Cargo.lock rather than pinned twice.
+ */
+val rustlsPlatformVerifier = providers.fileContents(rootProject.layout.projectDirectory.file("../../Cargo.lock"))
+    .asText.map { lock ->
+        val lines = lock.lines()
+        val at = lines.indexOfFirst { it.trim() == "name = \"rustls-platform-verifier-android\"" }
+        check(at >= 0) { "rustls-platform-verifier-android is not in Cargo.lock" }
+        lines[at + 1].substringAfter('"').substringBefore('"')
+    }.get()
+
 /** The ABIs the core is built for. `-Pabis=arm64-v8a` builds one, for a device or an emulator on Apple silicon. */
 val koanAbis = providers.gradleProperty("abis").orElse("arm64-v8a,x86_64").map { it.split(",") }
 
@@ -167,7 +180,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.core)
     implementation(libs.coil.compose)
     implementation(libs.jna) { artifact { type = "aar" } }
-    implementation(libs.rustls.platform.verifier)
+    implementation("org.rustls:rustls-platform-verifier:$rustlsPlatformVerifier")
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.tooling.preview)
