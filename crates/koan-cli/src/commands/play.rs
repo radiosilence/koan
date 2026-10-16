@@ -107,7 +107,7 @@ pub fn cmd_play(
         std::thread::Builder::new()
             .name("koan-resolve".into())
             .spawn(move || {
-                enqueue_playlist(ids, PickerAction::AppendAndPlay, tx_bg);
+                enqueue_playlist(ids, PickerAction::AppendAndPlay, None, tx_bg);
             })
             .expect("failed to spawn resolve thread");
     } else if !paths.is_empty() {
