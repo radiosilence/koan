@@ -67,6 +67,7 @@ import cc.blit.koan.ffi.RepeatMode
 import cc.blit.koan.ffi.SleepState
 import cc.blit.koan.ffi.SleepTimer
 import cc.blit.koan.ffi.Track
+import cc.blit.koan.ffi.TrackDetails
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.AlbumRoute
 import cc.blit.koan.ui.library.ArtistRoute
@@ -263,9 +264,18 @@ private fun Titles(entry: QueueItem?) {
     val track by produceState<Track?>(null, trackId, library) {
         value = trackId?.let { id -> runCatching { mirror.engine().track(id) }.getOrNull() }
     }
+    // What the library knows of the track, for its info sheet: the titles
+    // open it, the artist and the record being links of their own.
+    val details by produceState<TrackDetails?>(null, trackId, library) {
+        value = trackId?.let { id -> runCatching { mirror.engine().trackDetails(id) }.getOrNull() }
+    }
     var menu by remember { mutableStateOf(false) }
+    var info by remember { mutableStateOf(false) }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(
+            Modifier.weight(1f).link(details != null, label = "Track info") { info = true },
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
             KoanText(entry?.title ?: "Nothing playing", role = KoanType.TitleSmall, tone = KoanTone.Strong, maxLines = 1)
             entry?.let {
                 val artistId = track?.artistId
@@ -282,6 +292,7 @@ private fun Titles(entry: QueueItem?) {
                 }
             }
         }
+        details?.takeIf { info }?.let { TrackInfoSheet(it) { info = false } }
         trackId?.let { TrackHeart(it) }
         track?.let {
             Box {
@@ -293,8 +304,8 @@ private fun Titles(entry: QueueItem?) {
 }
 
 /** A line of text that opens a page, without a ripple: the theme presses nothing but buttons. */
-private fun Modifier.link(enabled: Boolean, onClick: () -> Unit) =
-    if (enabled) clickable(interactionSource = null, indication = null, role = Role.Button, onClick = onClick) else this
+private fun Modifier.link(enabled: Boolean, label: String? = null, onClick: () -> Unit) =
+    if (enabled) clickable(interactionSource = null, indication = null, onClickLabel = label, role = Role.Button, onClick = onClick) else this
 
 /**
  * The seek bar. Counts on from the playhead's anchor; a drag holds the thumb
@@ -401,6 +412,9 @@ private fun Toggles(now: NowPlaying?, lyrics: Boolean, toggleLyrics: () -> Unit)
     val eq by dsp.state.collectAsStateWithLifecycle()
     LaunchedEffect(dsp) { dsp.reload() }
     val controlling = devices.target != null
+    // One search for renderers on opening, as iOS does: those that answer
+    // are what makes Output worth showing here.
+    LaunchedEffect(controlling) { if (!controlling) mirror.engine().searchRenderers() }
     val playOn = controlling || devices.devices.isNotEmpty()
     val output = canChooseOutput(outputs, controlling)
     val named = outputLabel(outputs) != null

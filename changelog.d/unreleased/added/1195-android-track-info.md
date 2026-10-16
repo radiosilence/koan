@@ -1,0 +1,1 @@
+- **Track info on Android.** Tapping the titles on Now Playing shows what the library knows of the track: the file's tags, the server's entry, its ReplayGain and its ids, selectable to copy. Opening Now Playing looks for renderers, so Output appears when one answers.
