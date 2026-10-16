@@ -1,0 +1,1 @@
+- **Android search headings sit at the start of the page.** The Artists, Albums and Tracks headings in search results were centred.
