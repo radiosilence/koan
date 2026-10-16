@@ -1663,16 +1663,16 @@ android_env := if android_sdk == "" { "" } else { "ANDROID_HOME=" + android_sdk 
 # same task before every build of the app. `abis` as Gradle takes them;
 # arm64-v8a alone serves a phone or an emulator on Apple silicon.
 android-ffi abis="arm64-v8a,x86_64":
-    cd apps/android && {{android_env}} ./gradlew -q :app:koanFfi -Pabis={{abis}}
+    cd apps/android && {{android_env}} mise exec -- ./gradlew -q :app:koanFfi -Pabis={{abis}}
 
 # Build the debug app, install it on the device or emulator adb is connected
 # to, and open it.
 android-run abis="arm64-v8a":
-    cd apps/android && {{android_env}} ./gradlew -q :app:installDebug -Pabis={{abis}}
+    cd apps/android && {{android_env}} mise exec -- ./gradlew -q :app:installDebug -Pabis={{abis}}
     adb shell am start -n cc.blit.koan/.MainActivity
 
 # Build the release APK CI builds: minified, signed with this machine's debug
 # key, for sideloading (`adb install`, or open it on the phone).
 android-apk abis="arm64-v8a":
-    cd apps/android && {{android_env}} ./gradlew -q :app:assembleRelease -Pabis={{abis}}
+    cd apps/android && {{android_env}} mise exec -- ./gradlew -q :app:assembleRelease -Pabis={{abis}}
     @echo "$PWD/apps/android/app/build/outputs/apk/release/app-release.apk"
