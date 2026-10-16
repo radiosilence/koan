@@ -360,6 +360,17 @@ pub enum ItemState {
     Failed(String),
 }
 
+/// What an item relinked to a row, or to none, can now say about itself.
+pub fn relinked_state(state: &ItemState, linked: bool, path: &std::path::Path) -> ItemState {
+    match (linked, state) {
+        (false, ItemState::Pending) if !path.exists() => {
+            ItemState::Failed("no longer in the library".into())
+        }
+        (true, ItemState::Failed(_)) if !path.exists() => ItemState::Pending,
+        (_, state) => state.clone(),
+    }
+}
+
 /// An item's state, and any transfer against it, as one answer.
 ///
 /// Derived rather than stored. `Downloading` carries the store's own figures —
@@ -423,7 +434,13 @@ pub enum PlaybackSource {
 pub struct PlaylistItem {
     pub id: QueueItemId,
     /// Database track ID — set for tracks loaded from DB, used for downloads.
+    /// A row id names a track only while the row lasts: see `uid`.
     pub db_id: Option<i64>,
+    /// The track's uid, which outlives its row: a server's tracks forgotten
+    /// and synced again come back under the same uids and, SQLite reusing
+    /// row ids, perhaps other ids. When the library loses rows the queue
+    /// finds its tracks again by this (`helpers::queue_relinks`).
+    pub uid: Option<String>,
     /// The playlist entry this came from, when it came from a playlist.
     ///
     /// A playlist may hold the same track twice, and two copies are two queue
@@ -2023,6 +2040,43 @@ impl SharedPlayerState {
         self.bump_content();
     }
 
+    /// The queue's items with uids, by item, with their row and file: what
+    /// `helpers::queue_relinks` finds each track again by.
+    pub fn queue_uids(&self) -> Vec<(QueueItemId, Option<i64>, String, PathBuf)> {
+        self.playlist
+            .read()
+            .items
+            .iter()
+            .filter_map(|i| Some((i.id, i.db_id, i.uid.clone()?, i.path.clone())))
+            .collect()
+    }
+
+    /// Point items at the rows their tracks now hold, or at none. The queue's
+    /// content changes only if an item's row does.
+    ///
+    /// An item left with no row and no file has nothing to fetch it by: it
+    /// fails, rather than waiting for a download nothing will start. One that
+    /// failed for want of its file goes back to waiting when its track
+    /// returns, so the download queue takes it up again.
+    pub fn relink(&self, links: &[(QueueItemId, Option<i64>)]) {
+        let mut changed = false;
+        {
+            let mut pl = self.playlist.write();
+            for &(id, db_id) in links {
+                if let Some(item) = pl.items.iter_mut().find(|i| i.id == id)
+                    && item.db_id != db_id
+                {
+                    item.db_id = db_id;
+                    item.state = relinked_state(&item.state, db_id.is_some(), &item.path);
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.bump_content();
+        }
+    }
+
     /// Remove multiple items by IDs.
     pub fn remove_items(&self, ids: &[QueueItemId]) {
         use std::collections::HashSet;
@@ -2273,6 +2327,7 @@ mod tests {
 
     fn make_item(title: &str, state: ItemState) -> PlaylistItem {
         PlaylistItem {
+            uid: None,
             playlist_entry_id: None,
             id: QueueItemId::new(),
             db_id: None,
@@ -3380,6 +3435,7 @@ mod tests {
 
     fn make_album_item(title: &str, album: &str, album_artist: &str) -> PlaylistItem {
         PlaylistItem {
+            uid: None,
             playlist_entry_id: None,
             id: QueueItemId::new(),
             db_id: None,

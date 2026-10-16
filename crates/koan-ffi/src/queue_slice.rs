@@ -216,6 +216,7 @@ mod tests {
 
     fn item(i: usize, state: ItemState) -> PlaylistItem {
         PlaylistItem {
+            uid: None,
             id: QueueItemId::new(),
             db_id: Some(i as i64),
             playlist_entry_id: None,

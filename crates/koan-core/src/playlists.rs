@@ -751,6 +751,7 @@ mod tests {
 
         let state = SharedPlayerState::new();
         let queued = |entry: Option<i64>| PlaylistItem {
+            uid: None,
             id: QueueItemId::new(),
             db_id: Some(a),
             playlist_entry_id: entry,
@@ -806,6 +807,7 @@ mod tests {
         let items: Vec<PlaylistItem> = entries
             .iter()
             .map(|entry| PlaylistItem {
+                uid: None,
                 id: QueueItemId::new(),
                 db_id: Some(a),
                 playlist_entry_id: Some(*entry),
@@ -858,6 +860,7 @@ mod tests {
 
         let state = SharedPlayerState::new();
         let queued = |track: i64| PlaylistItem {
+            uid: None,
             id: QueueItemId::new(),
             db_id: Some(track),
             playlist_entry_id: None,

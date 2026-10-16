@@ -271,6 +271,7 @@ fn open_db_optional() -> Option<Database> {
 
 fn playlist_item_from_track_row(track: &queries::TrackRow, path: &Path) -> PlaylistItem {
     PlaylistItem {
+        uid: None,
         playlist_entry_id: None,
         id: QueueItemId::new(),
         db_id: Some(track.id),
@@ -292,6 +293,7 @@ fn playlist_item_from_track_row(track: &queries::TrackRow, path: &Path) -> Playl
 fn read_metadata_to_item(p: &Path) -> PlaylistItem {
     match koan_core::index::metadata::read_metadata(p) {
         Ok(meta) => PlaylistItem {
+            uid: None,
             playlist_entry_id: None,
             id: QueueItemId::new(),
             db_id: None,
@@ -317,6 +319,7 @@ fn read_metadata_to_item(p: &Path) -> PlaylistItem {
                 .to_string_lossy()
                 .into_owned();
             PlaylistItem {
+                uid: None,
                 playlist_entry_id: None,
                 id: QueueItemId::new(),
                 db_id: None,
