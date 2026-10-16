@@ -101,7 +101,7 @@ impl Setting {
             Setting::ArtSize => cfg.playback.art_size.to_string(),
             Setting::ShowFps => on_off(cfg.playback.show_fps),
             Setting::FrameRate => format!("{} fps", cfg.playback.target_fps),
-            Setting::Palette => cfg.visualizer.palette.clone(),
+            Setting::Palette => palette_name(&cfg.visualizer.palette).into(),
             Setting::AutoSync => on_off(cfg.remote.auto_sync),
             Setting::Discoverable => on_off(cfg.devices.discoverable),
             Setting::NearbyControl => match cfg.devices.nearby_control {
@@ -150,7 +150,9 @@ impl Setting {
                 c.playback.target_fps =
                     FRAME_RATES[(at + d).rem_euclid(FRAME_RATES.len() as isize) as usize];
             }
-            Setting::Palette => c.visualizer.palette = cycle(&PALETTES, &c.visualizer.palette),
+            Setting::Palette => {
+                c.visualizer.palette = cycle(&PALETTES, palette_name(&c.visualizer.palette));
+            }
             Setting::AutoSync => c.remote.auto_sync = !c.remote.auto_sync,
             Setting::Discoverable => c.devices.discoverable = !c.devices.discoverable,
             Setting::NearbyControl => {
@@ -165,6 +167,15 @@ impl Setting {
             }
         })
         .is_ok()
+    }
+}
+
+/// The palette's name as the page lists it: `spectrum` and `record` are older
+/// names for the themed palette.
+fn palette_name(configured: &str) -> &str {
+    match configured {
+        "spectrum" | "record" | "" => "theme",
+        other => other,
     }
 }
 
@@ -606,6 +617,12 @@ mod tests {
         assert!(kinds.iter().any(|h| matches!(h, SettingsHit::Inc(_))));
         let (rect, hit) = p.geom.links[0];
         assert_eq!(p.hit(rect.x, rect.y), Some(hit));
+    }
+
+    #[test]
+    fn older_palette_names_read_as_the_theme() {
+        assert_eq!(palette_name("spectrum"), "theme");
+        assert_eq!(palette_name("fire"), "fire");
     }
 
     #[test]
