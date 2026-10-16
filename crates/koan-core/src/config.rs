@@ -1932,6 +1932,18 @@ fn to_edit_value(value: &toml::Value) -> toml_edit::Value {
     }
 }
 
+/// Creates a cache directory inside the config directory, with a
+/// `.gitignore` that ignores everything in it, so a config directory kept in
+/// version control does not pick up downloads it can fetch again.
+pub fn create_cache_dir(dir: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let gitignore = dir.join(".gitignore");
+    if !gitignore.exists() {
+        std::fs::write(gitignore, "*\n")?;
+    }
+    Ok(())
+}
+
 /// Where koan keeps its configuration, library database and cache.
 ///
 /// `~/.config/koan/` (on iOS, `Library/Application Support/koan`) unless

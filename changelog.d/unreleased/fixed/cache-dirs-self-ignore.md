@@ -1,0 +1,1 @@
+- **EQ catalogue caches no longer show up in a version-controlled config directory.** The `squig/` and `autoeq/` folders now carry their own `.gitignore`, as `auth/` does, so a config directory kept in git does not need hand-maintained ignore entries for them.
