@@ -1,0 +1,1 @@
+- **The GraphQL API accepts API keys.** A key sent as `Authorization: Bearer` acts as its account, as on the Subsonic API, so a script or a GraphQL client need not sign in with a password and refresh a token every 15 minutes.
