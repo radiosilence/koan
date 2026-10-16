@@ -398,22 +398,24 @@ impl AlbumPage {
 
         // Scrollbar.
         let total = self.tracks.len();
-        if total > rows && list.width > 2 {
+        if total > rows && list.width > 6 {
             let x = list.x + list.width - 1;
-            self.geom.bar = Rect::new(x, list.y, 1, list.height);
+            self.geom.bar = Rect::new(x - 2, list.y, 3, list.height);
             self.geom.total = total;
             let h = list.height as usize;
             let thumb = (h * rows / total).max(1);
             let top = (h - thumb) * self.scroll / (total - rows).max(1);
             for row in 0..h {
                 let on = row >= top && row < top + thumb;
-                buf[(x, list.y + row as u16)]
-                    .set_char(if on { '\u{2588}' } else { ' ' })
-                    .set_style(if on {
-                        Style::new().fg(theme.scrollbar_thumb)
-                    } else {
-                        Style::new().bg(theme.scrollbar_bg)
-                    });
+                for cx in [x - 1, x] {
+                    buf[(cx, list.y + row as u16)]
+                        .set_char(if on { '\u{2588}' } else { ' ' })
+                        .set_style(if on {
+                            Style::new().fg(theme.scrollbar_thumb)
+                        } else {
+                            Style::new().bg(theme.scrollbar_bg)
+                        });
+                }
             }
         }
     }

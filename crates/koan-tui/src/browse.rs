@@ -1050,31 +1050,35 @@ impl Browse {
         total: usize,
         visible: usize,
     ) {
-        if total <= visible || body.height == 0 || body.width < 2 {
+        if total <= visible || body.height == 0 || body.width < 6 {
             return;
         }
         let x = body.x + body.width - 1;
         let h = body.height as usize;
-        self.geom.bar = Rect::new(x, body.y, 1, body.height);
+        // Two columns drawn and three to hit: a thumb one cell wide is hard
+        // to land on with a pointer.
+        self.geom.bar = Rect::new(x - 2, body.y, 3, body.height);
         self.geom.total_rows = total;
         let thumb = (h * visible / total).max(1);
         let top = (h - thumb) * self.scroll / (total - visible).max(1);
         for row in 0..h {
             let on = row >= top && row < top + thumb;
-            buf[(x, body.y + row as u16)]
-                .set_char(if on { '\u{2588}' } else { ' ' })
-                .set_style(if on {
-                    Style::new().fg(theme.scrollbar_thumb)
-                } else {
-                    Style::new().bg(theme.scrollbar_bg)
-                });
+            for cx in [x - 1, x] {
+                buf[(cx, body.y + row as u16)]
+                    .set_char(if on { '\u{2588}' } else { ' ' })
+                    .set_style(if on {
+                        Style::new().fg(theme.scrollbar_thumb)
+                    } else {
+                        Style::new().bg(theme.scrollbar_bg)
+                    });
+            }
         }
     }
 
     /// Whether `col`, `row` is on the scrollbar.
     pub fn on_scrollbar(&self, col: u16, row: u16) -> bool {
         let b = self.geom.bar;
-        b.width > 0 && col == b.x && row >= b.y && row < b.y + b.height
+        b.width > 0 && col >= b.x && col < b.x + b.width && row >= b.y && row < b.y + b.height
     }
 
     /// Scrolls so the thumb is at `row`, for a click or a drag on the bar.

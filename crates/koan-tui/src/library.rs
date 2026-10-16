@@ -456,8 +456,8 @@ impl Widget for LibraryView<'_> {
             let scroll = self.state.scroll_offset;
             let total = self.state.nodes.len();
             let end = (scroll + content_height).min(total);
-            let overflow = total > content_height && content_height > 0 && inner.width > 2;
-            let text_w = inner.width - u16::from(overflow);
+            let overflow = total > content_height && content_height > 0 && inner.width > 6;
+            let text_w = inner.width - 2 * u16::from(overflow);
             if overflow {
                 let x = inner.x + inner.width - 1;
                 let h = content_height;
@@ -465,13 +465,15 @@ impl Widget for LibraryView<'_> {
                 let top = (h - thumb) * scroll / (total - content_height).max(1);
                 for row in 0..h {
                     let on = row >= top && row < top + thumb;
-                    buf[(x, inner.y + row as u16)]
-                        .set_char(if on { '\u{2588}' } else { ' ' })
-                        .set_style(if on {
-                            Style::new().fg(self.theme.scrollbar_thumb)
-                        } else {
-                            Style::new().bg(self.theme.scrollbar_bg)
-                        });
+                    for cx in [x - 1, x] {
+                        buf[(cx, inner.y + row as u16)]
+                            .set_char(if on { '\u{2588}' } else { ' ' })
+                            .set_style(if on {
+                                Style::new().fg(self.theme.scrollbar_thumb)
+                            } else {
+                                Style::new().bg(self.theme.scrollbar_bg)
+                            });
+                    }
                 }
             }
 

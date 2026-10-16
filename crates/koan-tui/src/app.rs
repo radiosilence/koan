@@ -2319,7 +2319,7 @@ impl App {
                     && self.is_in_rect(event.column, event.row, self.layout.library_area)
                 {
                     if let Some((x, y, h)) = self.library_bar()
-                        && event.column == x
+                        && event.column >= x
                         && event.row >= y
                         && event.row < y + h as u16
                     {
@@ -3488,8 +3488,8 @@ impl App {
         let lib = self.library.as_ref()?;
         let area = self.layout.library_area;
         let h = self.library_content_height();
-        (lib.nodes.len() > h && area.width > 2 && h > 0)
-            .then(|| (area.x + area.width - 1, area.y + 1, h))
+        (lib.nodes.len() > h && area.width > 6 && h > 0)
+            .then(|| (area.x + area.width - 3, area.y + 1, h))
     }
 
     fn library_scroll_to(&mut self, row: u16) {
