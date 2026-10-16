@@ -78,6 +78,8 @@ data class OutputPickerState(
     val failed: Pair<OutputInfo, String>? = null,
     /** The search the sheet opened with is still waiting for answers. */
     val searching: Boolean = false,
+    /** Why the controlled device did not take the output picked. */
+    val refused: String? = null,
 )
 
 /**
@@ -121,6 +123,24 @@ class OutputPicker(private val engine: suspend () -> KoanEngineInterface, privat
 
     fun dismissFailure() = _state.update { it.copy(failed = null) }
 
+    /**
+     * Play the controlled device through `choice`: the same command iOS sends
+     * it. What it switched to comes back in its outputs; a refusal is shown.
+     */
+    fun chooseThere(choice: OutputChoice) {
+        _state.update { it.copy(refused = null) }
+        scope.launch {
+            try {
+                engine().selectOutput(choice)
+            } catch (e: KoanException) {
+                _state.update { it.copy(refused = e.describe()) }
+            }
+        }
+    }
+
+    /** The controlled device lists its outputs again, as it has them now. */
+    suspend fun refreshThere() = engine().refreshControlledOutputs()
+
     companion object {
         /** How long a search waits for answers: the multicast lock's window. */
         const val SEARCH_MS = 5_000L
@@ -134,11 +154,70 @@ internal fun noRenderers(searching: Boolean) = when {
 }
 
 /**
- * The Output half of the sheet: this phone's own output, then the renderers
- * the engine has found, each saying how it is going.
+ * The Output half of the sheet, for the device in view: the outputs the engine
+ * publishes as this app's own, which while another device is controlled are
+ * that device's (`owner`), as the Mac and iOS pickers read them. A phone's own
+ * output is the route the system chose, so it is one row; a computer lists its
+ * system default and each output it has, with the EQ preset each is set to.
+ * Renderers follow.
  */
 @Composable
-fun OutputSection(picker: OutputPicker, outputs: OutputsInfo?, renderer: RendererOutput?, blocked: Boolean) {
+fun OutputSection(picker: OutputPicker, outputs: OutputsInfo?, renderer: RendererOutput?, blocked: Boolean, controlled: String?, platform: String?) {
+    when {
+        outputs?.owner != null -> ControlledOutputs(picker, outputs, platform)
+        // Controlling a device that has not said what it has: reconnecting,
+        // or out of reach. This phone's own outputs are not the question.
+        controlled != null -> Column {
+            KoanText("Output on $controlled", inset.padding(top = KoanSpace.l), role = KoanType.TitleSmall, tone = KoanTone.Strong, appText = true)
+            KoanText(
+                "$controlled's outputs appear here once it is reachable.",
+                inset.padding(vertical = KoanSpace.s),
+                role = KoanType.Fine,
+                tone = KoanTone.Muted,
+            )
+        }
+        else -> OwnOutputs(picker, outputs, renderer, blocked)
+    }
+}
+
+/** The controlled device's outputs, each picked there by a command. */
+@Composable
+private fun ControlledOutputs(picker: OutputPicker, outputs: OutputsInfo, platform: String?) {
+    val state by picker.state.collectAsStateWithLifecycle()
+    Column {
+        KoanText("Output on ${outputs.owner}", inset.padding(top = KoanSpace.l), role = KoanType.TitleSmall, tone = KoanTone.Strong, appText = true)
+        state.refused?.let { KoanText(it, inset.padding(vertical = KoanSpace.s), role = KoanType.Fine, tone = KoanTone.Bad) }
+        // A phone's or a television's output is its route, which its system
+        // chooses: listed, not picked between.
+        val routed = platform == "ios" || platform == "tvos" || platform == "android"
+        if (routed) {
+            outputs.devices.forEach { d ->
+                OutputRow(d.name, presetSummary(d, outputs), selected = outputs.current == OutputChoice.Default, onSelect = { picker.chooseThere(OutputChoice.Default) })
+            }
+        } else {
+            OutputRow("System Default", null, selected = outputs.current == OutputChoice.Default, onSelect = { picker.chooseThere(OutputChoice.Default) })
+            outputs.devices.forEach { d ->
+                val choice = OutputChoice.Device(d.id)
+                OutputRow(d.name, presetSummary(d, outputs), selected = outputs.current == choice, onSelect = { picker.chooseThere(choice) })
+            }
+        }
+        outputs.renderers.forEach { r ->
+            val choice = OutputChoice.Renderer(r.id)
+            val selected = outputs.current == choice
+            OutputRow(
+                name = r.name,
+                detail = if (!selected && r.busy) BUSY else listOf(upnpKind(r), presetSummary(r, outputs)).filterNotNull().joinToString(" · "),
+                selected = selected,
+                warning = !selected && r.busy,
+                onSelect = { picker.chooseThere(choice) },
+            )
+        }
+    }
+}
+
+/** This phone's own output, then the renderers the engine has found, each saying how it is going. */
+@Composable
+private fun OwnOutputs(picker: OutputPicker, outputs: OutputsInfo?, renderer: RendererOutput?, blocked: Boolean) {
     val scope = rememberCoroutineScope()
     val state by picker.state.collectAsStateWithLifecycle()
     val output = outputState(outputs, renderer, state.connecting, state.failed)
@@ -177,6 +256,21 @@ fun OutputSection(picker: OutputPicker, outputs: OutputsInfo?, renderer: Rendere
     }
 }
 
+private const val BUSY = "In use by something else. Picking it takes over."
+
+private fun upnpKind(r: OutputInfo) = listOf(r.detail.ifEmpty { null }, "UPnP").filterNotNull().joinToString(" · ")
+
+/**
+ * The EQ preset an output is set to, in a word or two, as the device
+ * published it: its name, edited, Flat, or Unsaved. Nothing where the device
+ * has no presets to choose from.
+ */
+internal fun presetSummary(o: OutputInfo, outputs: OutputsInfo): String? {
+    if (outputs.profiles.isEmpty() && o.preset == null && !o.unsaved) return null
+    o.preset?.let { return if (o.unsaved) "$it, edited" else it }
+    return if (o.unsaved) "Unsaved" else "Flat"
+}
+
 /** A renderer's line: how picking it is going, else what it is. */
 internal fun rendererDetail(r: OutputInfo, output: OutputState): String {
     val what = listOf(r.detail.ifEmpty { null }, "UPnP").filterNotNull().joinToString(" · ")
@@ -184,7 +278,7 @@ internal fun rendererDetail(r: OutputInfo, output: OutputState): String {
         output is OutputState.Connecting && output.udn == r.id -> "Connecting…"
         output is OutputState.Failed && output.udn == r.id -> "Couldn't play here: ${output.reason}"
         output is OutputState.Playing && output.udn == r.id -> output.problem ?: "Playing here · $what"
-        r.busy -> "In use by something else. Picking it takes over."
+        r.busy -> BUSY
         else -> what
     }
 }

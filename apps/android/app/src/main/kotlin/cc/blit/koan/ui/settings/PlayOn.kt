@@ -89,7 +89,10 @@ fun PlayOnSheet(onDismiss: () -> Unit) {
     val picker = remember { OutputPicker(mirror::engine, scope) }
     // One search as the sheet opens, as the Mac does: it holds the Wi-Fi
     // multicast lock for its window, and the list follows announcements after.
-    LaunchedEffect(picker) { picker.search() }
+    // The controlled device lists its outputs again instead, asked over the
+    // link to republish what moved.
+    val controlling = devices.target != null
+    LaunchedEffect(picker, controlling) { if (controlling) picker.refreshThere() else picker.search() }
 
     fun attempt(block: suspend () -> Unit) = scope.launch {
         try {
@@ -142,7 +145,14 @@ fun PlayOnSheet(onDismiss: () -> Unit) {
                     tone = KoanTone.Muted,
                 )
             }
-            OutputSection(picker, outputs, renderers.output, blocked = connection?.localNetworkBlocked == true)
+            OutputSection(
+                picker,
+                outputs,
+                renderers.output,
+                blocked = connection?.localNetworkBlocked == true,
+                controlled = controlled?.name ?: devices.target,
+                platform = controlled?.platform,
+            )
         }
     }
 }
