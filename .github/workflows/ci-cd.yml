@@ -20,7 +20,7 @@ env:
 # notarisation included, and nor is a manual run, which is how a failed
 # release is retried. The group is chosen before any job runs, so it cannot
 # ask `check-version`. A push may release when its head commit is titled
-# `release: ` (as the release skill names its pull request) or changes
+# `release: ` (as `just release` names its pull request) or changes
 # `Cargo.toml`, which `check-version` compares with the commit before: the
 # second catches a version bump merged under any other title, at the cost of
 # also keeping a dependency change from being cancelled.
