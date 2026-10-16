@@ -5,35 +5,68 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
 use super::app::Mode;
+use super::nav::Page;
 use super::theme::Theme;
 
 pub struct HintBar<'a> {
     mode: &'a Mode,
+    page: Page,
     theme: &'a Theme,
 }
 
 impl<'a> HintBar<'a> {
-    pub fn new(mode: &'a Mode, theme: &'a Theme) -> Self {
-        Self { mode, theme }
+    pub fn new(mode: &'a Mode, page: Page, theme: &'a Theme) -> Self {
+        Self { mode, page, theme }
     }
 }
 
 impl Widget for HintBar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let hints: Vec<(&str, &str)> = match self.mode {
-            Mode::Normal => vec![
-                ("space", "pause"),
-                ("<>", "skip"),
-                (",.", "seek"),
-                ("/", "search"),
-                ("p", "track"),
-                ("a", "album"),
-                ("r", "artist"),
-                ("l", "library"),
-                ("e", "edit"),
-                ("q", "quit"),
-                ("?", "help"),
-            ],
+            Mode::Normal => match self.page {
+                Page::Queue => vec![
+                    ("space", "pause"),
+                    ("<>", "skip"),
+                    (",.", "seek"),
+                    ("/", "search"),
+                    ("p", "track"),
+                    ("a", "album"),
+                    ("r", "artist"),
+                    ("1-6", "pages"),
+                    ("e", "edit"),
+                    ("q", "quit"),
+                    ("?", "help"),
+                ],
+                Page::NowPlaying => vec![
+                    ("space", "pause"),
+                    ("<>", "skip"),
+                    ("\u{2190}\u{2192}", "seek"),
+                    ("M", "visualiser"),
+                    ("F", "fullscreen"),
+                    ("1-6", "pages"),
+                    ("esc", "back"),
+                    ("?", "help"),
+                ],
+                Page::Albums | Page::Favourites | Page::Recent => vec![
+                    ("\u{2191}\u{2193}\u{2190}\u{2192}", "move"),
+                    ("ret", "play"),
+                    ("a", "add"),
+                    ("/", "filter"),
+                    ("v", "view"),
+                    ("o", "sort"),
+                    ("1-6", "pages"),
+                    ("esc", "back"),
+                ],
+                Page::Artists => vec![
+                    ("\u{2191}\u{2193}", "navigate"),
+                    ("\u{2192}/enter", "expand"),
+                    ("\u{2190}", "collapse"),
+                    ("a", "enqueue"),
+                    ("/", "filter"),
+                    ("1-6", "pages"),
+                    ("esc", "back"),
+                ],
+            },
             Mode::QueueEdit => vec![
                 ("\u{2191}\u{2193}", "navigate"),
                 ("S-\u{2191}\u{2193}", "select"),
@@ -49,16 +82,6 @@ impl Widget for HintBar<'_> {
             ],
             Mode::TrackInfo(_) => vec![("esc", "close"), ("i", "close")],
             Mode::CoverArtZoom => vec![("esc", "close"), ("z", "close")],
-            Mode::LibraryBrowse => vec![
-                ("\u{2191}\u{2193}", "navigate"),
-                ("\u{2192}/enter", "expand"),
-                ("\u{2190}", "collapse"),
-                ("a", "enqueue"),
-                ("f", "filter"),
-                ("tab", "focus"),
-                ("space", "pause"),
-                ("esc", "close"),
-            ],
             Mode::ContextMenu => vec![
                 ("\u{2191}\u{2193}", "navigate"),
                 ("ret", "select"),

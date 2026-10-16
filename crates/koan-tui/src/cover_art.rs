@@ -1,10 +1,15 @@
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use image::DynamicImage;
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
+use ratatui::layout::{Rect, Size};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::Widget;
+use ratatui_image::picker::{Picker, ProtocolType};
+use ratatui_image::protocol::Protocol;
+use ratatui_image::{Image, Resize};
 
 /// A pre-rendered cell: relative position + fg/bg colors.
 struct RenderedCell {
@@ -17,21 +22,168 @@ struct RenderedCell {
 /// Cached rendered output at a specific size. Avoids re-running
 /// Lanczos3 resize + pixel iteration every frame.
 struct RenderedArt {
-    width: u16,
-    height: u16,
     cells: Vec<RenderedCell>,
 }
 
-/// Transparent single-entry cache for cover art images.
-/// Holds at most ONE decoded image + its rendered halfblock output.
-/// When a new path is loaded the old image and all rendered buffers are dropped,
-/// keeping memory bounded (no multi-entry accumulation).
+/// Draws images into the buffer, in the terminal's graphics protocol when it
+/// has one and the person has not turned it off, otherwise in half blocks.
+/// Either way a drawing is made once per image and size and kept, so a frame
+/// that shows the same cover again costs a blit.
+pub struct Gfx {
+    picker: Option<Picker>,
+    graphics: bool,
+    drawn: HashMap<(u64, u16, u16, bool), Drawn>,
+}
+
+enum Drawn {
+    Protocol(Protocol),
+    Cells(RenderedArt),
+    Unsupported,
+}
+
+/// How many drawings are kept before the lot is dropped. A screenful of
+/// tiles is well under this; scrolling a long library through it is not.
+const DRAWN_LIMIT: usize = 192;
+
+impl Default for Gfx {
+    fn default() -> Self {
+        Self::halfblocks()
+    }
+}
+
+impl Gfx {
+    pub fn halfblocks() -> Self {
+        Self {
+            picker: None,
+            graphics: false,
+            drawn: HashMap::new(),
+        }
+    }
+
+    /// Asks the terminal what it can draw. Must run before the event loop
+    /// reads the keyboard: the reply arrives on stdin.
+    pub fn detect(graphics: bool) -> Self {
+        if !graphics {
+            return Self::halfblocks();
+        }
+        let picker = Picker::from_query_stdio().ok();
+        Self {
+            graphics: picker
+                .as_ref()
+                .is_some_and(|p| p.protocol_type() != ProtocolType::Halfblocks),
+            picker,
+            drawn: HashMap::new(),
+        }
+    }
+
+    /// Whether covers are drawn as real images.
+    pub fn graphics(&self) -> bool {
+        self.graphics
+    }
+
+    /// Whether the terminal reported a graphics protocol at all.
+    pub fn available(&self) -> bool {
+        self.picker
+            .as_ref()
+            .is_some_and(|p| p.protocol_type() != ProtocolType::Halfblocks)
+    }
+
+    /// Switches between real images and half blocks. Returns what is now in
+    /// effect: off when the terminal has no graphics protocol to switch to.
+    pub fn set_graphics(&mut self, on: bool) -> bool {
+        let on = on && self.available();
+        if on != self.graphics {
+            self.graphics = on;
+            self.drawn.clear();
+        }
+        on
+    }
+
+    pub fn protocol_name(&self) -> &'static str {
+        match self.picker.as_ref().map(Picker::protocol_type) {
+            Some(ProtocolType::Kitty) => "kitty",
+            Some(ProtocolType::Iterm2) => "iterm2",
+            Some(ProtocolType::Sixel) => "sixel",
+            _ => "halfblocks",
+        }
+    }
+
+    /// Draws `img`, keyed by `key`, into `area`, top-left or centred.
+    pub fn draw(
+        &mut self,
+        key: u64,
+        img: &DynamicImage,
+        area: Rect,
+        buf: &mut Buffer,
+        center: bool,
+    ) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let slot = (key, area.width, area.height, center);
+        if !self.drawn.contains_key(&slot) {
+            if self.drawn.len() >= DRAWN_LIMIT {
+                self.drawn.clear();
+            }
+            let made = match self.picker.as_ref().filter(|_| self.graphics) {
+                Some(picker) => picker
+                    .new_protocol(
+                        img.clone(),
+                        Size::new(area.width, area.height),
+                        Resize::Fit(Some(image::imageops::FilterType::Triangle)),
+                    )
+                    .map_or(Drawn::Unsupported, Drawn::Protocol),
+                None => Drawn::Cells(pre_render(img, area.width, area.height, center)),
+            };
+            self.drawn.insert(slot, made);
+        }
+        match self.drawn.get(&slot) {
+            Some(Drawn::Protocol(proto)) => {
+                let size = proto.size();
+                let (w, h) = (size.width.min(area.width), size.height.min(area.height));
+                let (dx, dy) = if center {
+                    ((area.width - w) / 2, (area.height - h) / 2)
+                } else {
+                    (0, 0)
+                };
+                Image::new(proto).render(Rect::new(area.x + dx, area.y + dy, w, h), buf);
+            }
+            Some(Drawn::Cells(rendered)) => blit(rendered, area, buf),
+            _ => {}
+        }
+    }
+}
+
+fn blit(rendered: &RenderedArt, area: Rect, buf: &mut Buffer) {
+    for cell in &rendered.cells {
+        if let Some(c) = buf.cell_mut(ratatui::layout::Position::new(
+            area.x + cell.rx,
+            area.y + cell.ry,
+        )) {
+            c.set_char('\u{2580}')
+                .set_style(Style::new().fg(cell.fg).bg(cell.bg));
+        }
+    }
+}
+
+/// The key a file's cover is drawn under.
+pub fn path_key(path: &Path) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    path.hash(&mut h);
+    h.finish() & !(1 << 63)
+}
+
+/// The key an album's tile is drawn under. Apart from `path_key`'s by the top
+/// bit, so a tile and a cover never share a drawing.
+pub fn album_key(album_id: i64) -> u64 {
+    (album_id as u64) | (1 << 63)
+}
+
+/// Single-entry cache for cover art images: at most ONE decoded image. When a
+/// new path is loaded the old image is dropped, keeping memory bounded.
 pub struct CoverArtCache {
     path: Option<PathBuf>,
     image: Option<DynamicImage>,
-    rendered: Option<RenderedArt>,
-    /// Separate cache for centered renders (e.g. zoom overlay).
-    rendered_centered: Option<RenderedArt>,
 }
 
 impl Default for CoverArtCache {
@@ -45,8 +197,6 @@ impl CoverArtCache {
         Self {
             path: None,
             image: None,
-            rendered: None,
-            rendered_centered: None,
         }
     }
 
@@ -57,8 +207,6 @@ impl CoverArtCache {
             self.path = Some(path.to_path_buf());
             self.image = koan_core::index::folder_art::cover_art(path)
                 .and_then(|bytes| image::load_from_memory(&bytes).ok());
-            self.rendered = None; // invalidate render cache on new image
-            self.rendered_centered = None;
         }
         self.image.as_ref()
     }
@@ -68,73 +216,26 @@ impl CoverArtCache {
         self.image.as_ref()
     }
 
+    /// The key the cached image is drawn under.
+    pub fn key(&self) -> u64 {
+        self.path.as_deref().map_or(0, path_key)
+    }
+
     /// Clear the cache.
     pub fn clear(&mut self) {
         self.path = None;
         self.image = None;
-        self.rendered = None;
-        self.rendered_centered = None;
     }
 
-    /// Render cached art into a buffer. Uses a pre-rendered cell cache
-    /// so repeated calls at the same size skip the resize + pixel work.
-    pub fn render_to(&mut self, area: Rect, buf: &mut Buffer) {
-        let Some(ref img) = self.image else { return };
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-
-        // Check if we have a cached render at this size.
-        let needs_render = self
-            .rendered
-            .as_ref()
-            .is_none_or(|r| r.width != area.width || r.height != area.height);
-
-        if needs_render {
-            self.rendered = Some(pre_render(img, area.width, area.height, false));
-        }
-
-        // Blit cached cells.
-        if let Some(ref rendered) = self.rendered {
-            for cell in &rendered.cells {
-                if let Some(c) = buf.cell_mut(ratatui::layout::Position::new(
-                    area.x + cell.rx,
-                    area.y + cell.ry,
-                )) {
-                    c.set_char('\u{2580}')
-                        .set_style(Style::new().fg(cell.fg).bg(cell.bg));
-                }
-            }
+    pub fn render_to(&self, gfx: &mut Gfx, area: Rect, buf: &mut Buffer) {
+        if let Some(img) = &self.image {
+            gfx.draw(self.key(), img, area, buf, false);
         }
     }
 
-    /// Render cached art centered in the given area. Uses a separate pre-rendered
-    /// cell cache from `render_to` so the two can coexist at different sizes.
-    pub fn render_to_centered(&mut self, area: Rect, buf: &mut Buffer) {
-        let Some(ref img) = self.image else { return };
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-
-        let needs_render = self
-            .rendered_centered
-            .as_ref()
-            .is_none_or(|r| r.width != area.width || r.height != area.height);
-
-        if needs_render {
-            self.rendered_centered = Some(pre_render(img, area.width, area.height, true));
-        }
-
-        if let Some(ref rendered) = self.rendered_centered {
-            for cell in &rendered.cells {
-                if let Some(c) = buf.cell_mut(ratatui::layout::Position::new(
-                    area.x + cell.rx,
-                    area.y + cell.ry,
-                )) {
-                    c.set_char('\u{2580}')
-                        .set_style(Style::new().fg(cell.fg).bg(cell.bg));
-                }
-            }
+    pub fn render_to_centered(&self, gfx: &mut Gfx, area: Rect, buf: &mut Buffer) {
+        if let Some(img) = &self.image {
+            gfx.draw(self.key(), img, area, buf, true);
         }
     }
 }
@@ -195,11 +296,7 @@ fn pre_render(img: &DynamicImage, width: u16, height: u16, center: bool) -> Rend
         }
     }
 
-    RenderedArt {
-        width,
-        height,
-        cells,
-    }
+    RenderedArt { cells }
 }
 
 /// Widget that renders a `DynamicImage` using Unicode halfblock characters.

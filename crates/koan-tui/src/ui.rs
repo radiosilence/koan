@@ -3,18 +3,20 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph, Widget};
 
-use super::app::{App, LibraryFocus, Mode};
+use super::app::{App, Mode, NavTarget};
 use super::context_menu::{ContextMenuOverlay, context_menu_rect_at};
 use super::device_selector::DeviceSelectorOverlay;
 use super::help_modal::HelpModalOverlay;
 use super::keys::HintBar;
 use super::library::LibraryView;
 use super::lyrics::LyricsPanel;
+use super::nav::Page;
 use super::organize::{OrganizeOverlay, organize_popup_rect};
 use super::picker::{PickerOverlay, picker_popup_rect};
 use super::queue::QueueView;
+use super::theme::Theme;
 use super::track_info::TrackInfoOverlay;
-use super::transport::TransportBar;
+use super::transport::{MINI_BARS, TransportBar};
 use super::visualizer::VisualizerWidget;
 use super::viz_picker::VizPickerOverlay;
 
@@ -55,21 +57,37 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         return;
     }
 
+    app.layout.queue_area = Rect::default();
+    app.layout.library_area = Rect::default();
+    app.layout.browse_area = Rect::default();
+    app.layout.now_playing_art_area = Rect::default();
+    app.layout.nav_hits.clear();
+
     let has_art = app.art.now_playing_art.cached().is_some();
     let art_height = app.art_size / 2; // square via halfblock rendering
     let transport_height = art_height.max(TRANSPORT_HEIGHT_DEFAULT);
 
-    // Main layout: transport | content (flex) | hints (1)
+    // Main layout: stage (flex) | hairline | transport | hints (1)
     let chunks = Layout::vertical([
+        Constraint::Min(3),
+        Constraint::Length(1),
         Constraint::Length(transport_height),
-        Constraint::Min(3),    // content area
-        Constraint::Length(1), // hint bar
+        Constraint::Length(1),
     ])
     .split(area);
 
+    let stage_all = chunks[0];
+    let rule_row = chunks[1];
+    for x in rule_row.x..rule_row.x + rule_row.width {
+        frame.buffer_mut()[(x, rule_row.y)]
+            .set_char('\u{2500}')
+            .set_style(app.theme.rule);
+    }
+    app.layout.transport_rule_y = Some(rule_row.y);
+
     // The solver shrinks the transport when the terminal is short — every
     // rect below is derived from what it actually granted, not the request.
-    let transport_rect = chunks[0];
+    let transport_rect = chunks[2];
     app.layout.transport_area = transport_rect;
 
     // Transport — with optional album art on the left.
@@ -108,10 +126,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         app.layout.now_playing_art_area = art_area;
         app.art
             .now_playing_art
-            .render_to(art_area, frame.buffer_mut());
-    } else {
-        // No art — area is reserved but empty (placeholder space).
-        app.layout.now_playing_art_area = art_area;
+            .render_to(&mut app.art.gfx, art_area, frame.buffer_mut());
     }
     app.layout.transport_text_area = text_area;
 
@@ -130,6 +145,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     app.layout.seek_bar_width = bw;
 
     let seekable_ms = app.state.seek_ceiling_ms();
+    let levels = app
+        .viz_config
+        .enabled
+        .then(|| mini_levels(&app.visualizer.spectrum));
     let transport = TransportBar::new(
         track_info.as_ref(),
         playing_entry.as_ref(),
@@ -141,7 +160,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     .with_seekable_ms(seekable_ms)
     .with_output_rate(app.state.output_sample_rate())
     .with_dsp(app.state.dsp())
-    .with_sleep(app.state.sleep(), app.state.sleep_fading());
+    .with_sleep(app.state.sleep(), app.state.sleep_fading())
+    .with_levels(levels);
     frame.render_widget(transport, text_area);
 
     // Visualizer — renders in the space above the transport text.
@@ -160,53 +180,79 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         viz.render(spectrum_area, frame.buffer_mut());
     }
 
-    // Content area: library + queue side-by-side, or just queue, with optional lyrics panel.
-    let content_area = chunks[1];
-    let show_library = app.mode == Mode::LibraryBrowse && app.library.is_some();
-    let show_lyrics = app.lyrics_panel;
+    // The stage: a sidebar or a tab bar, and the page beside or under it.
+    let stage = render_nav(frame, app, stage_all);
+    app.layout.stage_area = stage;
+    match app.page() {
+        Page::Queue => {
+            if app.lyrics_panel {
+                let panes = Layout::horizontal([
+                    Constraint::Percentage(60), // queue
+                    Constraint::Percentage(40), // lyrics
+                ])
+                .split(stage);
 
-    if show_library {
-        let panes = Layout::horizontal([
-            Constraint::Percentage(40), // library
-            Constraint::Percentage(60), // queue
-        ])
-        .split(content_area);
+                app.layout.queue_area = panes[0];
+                render_queue(frame, app, panes[0]);
 
-        app.layout.library_area = panes[0];
-        app.layout.queue_area = panes[1];
-
-        // Library pane.
-        let visible_height = app.library_content_height();
-        if let Some(ref mut lib) = app.library {
-            lib.update_scroll(visible_height);
-            let focused = app.library_focus == LibraryFocus::Library;
-            let hover_idx = match &app.hover.zone {
-                super::app::HoverZone::LibraryItem(idx) => Some(*idx),
+                let pos_ms = app.state.position_ms();
+                let lyrics_panel =
+                    LyricsPanel::new(&app.lyrics, pos_ms, &app.theme, app.spinner_tick);
+                frame.render_widget(lyrics_panel, panes[1]);
+            } else {
+                app.layout.queue_area = stage;
+                render_queue(frame, app, stage);
+            }
+        }
+        Page::NowPlaying => {
+            heading(frame.buffer_mut(), stage, &app.theme, "now playing", "");
+            super::now_playing::render(frame.buffer_mut(), app, stage);
+        }
+        Page::Albums | Page::Favourites | Page::Recent => {
+            app.layout.browse_area = stage;
+            let hover = match app.hover.zone {
+                super::app::HoverZone::BrowseItem(i) => Some(i),
                 _ => None,
             };
-            let lib_view = LibraryView::new(lib, &app.theme, focused).with_hover(hover_idx);
-            frame.render_widget(lib_view, panes[0]);
+            let App {
+                albums_page,
+                favourites_page,
+                recent_page,
+                thumbs,
+                art,
+                theme,
+                favourites,
+                nav,
+                ..
+            } = &mut *app;
+            let page = match nav.current() {
+                Page::Albums => albums_page,
+                Page::Favourites => favourites_page,
+                _ => recent_page,
+            };
+            page.render(
+                stage,
+                frame.buffer_mut(),
+                theme,
+                &mut art.gfx,
+                thumbs,
+                favourites,
+                hover,
+            );
         }
-
-        // Queue pane.
-        render_queue(frame, app, panes[1]);
-    } else if show_lyrics {
-        let panes = Layout::horizontal([
-            Constraint::Percentage(60), // queue
-            Constraint::Percentage(40), // lyrics
-        ])
-        .split(content_area);
-
-        app.layout.queue_area = panes[0];
-        render_queue(frame, app, panes[0]);
-
-        // Lyrics panel.
-        let pos_ms = app.state.position_ms();
-        let lyrics_panel = LyricsPanel::new(&app.lyrics, pos_ms, &app.theme, app.spinner_tick);
-        frame.render_widget(lyrics_panel, panes[1]);
-    } else {
-        app.layout.queue_area = content_area;
-        render_queue(frame, app, content_area);
+        Page::Artists => {
+            app.layout.library_area = stage;
+            let visible_height = app.library_content_height();
+            if let Some(ref mut lib) = app.library {
+                lib.update_scroll(visible_height);
+                let hover_idx = match &app.hover.zone {
+                    super::app::HoverZone::LibraryItem(idx) => Some(*idx),
+                    _ => None,
+                };
+                let lib_view = LibraryView::new(lib, &app.theme, true).with_hover(hover_idx);
+                frame.render_widget(lib_view, stage);
+            }
+        }
     }
 
     // Key hints / status message.
@@ -216,10 +262,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             ratatui::text::Span::styled(msg.as_str(), style),
             ratatui::text::Span::styled("  [Esc] dismiss", app.theme.hint_desc),
         ]);
-        frame.render_widget(ratatui::widgets::Paragraph::new(line), chunks[2]);
+        frame.render_widget(ratatui::widgets::Paragraph::new(line), chunks[3]);
     } else {
-        let hint_bar = HintBar::new(&app.mode, &app.theme);
-        frame.render_widget(hint_bar, chunks[2]);
+        let hint_bar = HintBar::new(&app.mode, app.page(), &app.theme);
+        frame.render_widget(hint_bar, chunks[3]);
     }
 
     // Picker overlay (on top of everything).
@@ -323,7 +369,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         // Use cached render to avoid Lanczos3 resize every frame.
         app.art
             .now_playing_art
-            .render_to_centered(art_area, frame.buffer_mut());
+            .render_to_centered(&mut app.art.gfx, art_area, frame.buffer_mut());
 
         // Hint at bottom.
         let hint_area = Rect::new(
@@ -400,6 +446,205 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         ]);
         frame.render_widget(Paragraph::new(line), popup);
     }
+}
+
+/// A page's heading: its title, a note, and the hairline to the edge.
+pub fn heading(
+    buf: &mut ratatui::buffer::Buffer,
+    area: Rect,
+    theme: &Theme,
+    title: &str,
+    note: &str,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let end = area.x + area.width;
+    let mut x = area.x;
+    for (text, style) in [(title, theme.heading), (note, theme.hint_desc)] {
+        let w = (text.chars().count() as u16).min(end - x);
+        buf.set_stringn(x, area.y, text, w as usize, style);
+        x += w;
+    }
+    for cx in x..end {
+        buf[(cx, area.y)].set_char('\u{2500}').set_style(theme.rule);
+    }
+}
+
+/// The spectrum as the dozen bars the transport has room for.
+fn mini_levels(spectrum: &[f32]) -> [f32; MINI_BARS] {
+    let per = (spectrum.len() / MINI_BARS).max(1);
+    std::array::from_fn(|i| {
+        let group = &spectrum[(i * per).min(spectrum.len())..((i + 1) * per).min(spectrum.len())];
+        if group.is_empty() {
+            0.0
+        } else {
+            group.iter().sum::<f32>() / group.len() as f32
+        }
+    })
+}
+
+/// How wide the screen is, as the layout sees it: a sidebar beside the page
+/// when there is room for one, a tab bar over it when there is not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Width {
+    Wide,
+    Regular,
+    Compact,
+}
+
+const SIDEBAR_WIDTH: u16 = 18;
+
+impl Width {
+    pub fn of(area: Rect) -> Self {
+        if area.width >= 100 && area.height >= 9 {
+            Width::Wide
+        } else if area.width >= 56 {
+            Width::Regular
+        } else {
+            Width::Compact
+        }
+    }
+}
+
+/// Draws the sidebar or the tab bar into `area`, registers what each part
+/// opens, and returns the rest of `area` for the page.
+fn render_nav(frame: &mut Frame, app: &mut App, area: Rect) -> Rect {
+    let width = Width::of(area);
+    let theme = &app.theme;
+    let current = app.nav.current();
+    let can_back = app.nav.can_back();
+    let can_forward = app.nav.can_forward();
+    let buf = frame.buffer_mut();
+    let mut hits = Vec::new();
+
+    if width == Width::Wide {
+        let side = Rect::new(area.x, area.y, SIDEBAR_WIDTH, area.height);
+        for y in side.y..side.y + side.height {
+            buf[(side.x + SIDEBAR_WIDTH - 1, y)]
+                .set_char('\u{2502}')
+                .set_style(theme.rule);
+        }
+        buf.set_stringn(side.x + 1, side.y, "koan", 8, theme.heading);
+        for (i, page) in Page::ALL.into_iter().enumerate() {
+            let y = side.y + 2 + i as u16;
+            if y >= side.y + side.height {
+                break;
+            }
+            let active = page == current;
+            let hovered = app.hover.zone == super::app::HoverZone::Nav(NavTarget::Page(page));
+            let label_style = if active {
+                theme.heading
+            } else if hovered {
+                theme.track_normal
+            } else {
+                theme.hint_desc
+            };
+            if active {
+                buf[(side.x, y)].set_char('\u{258c}').set_style(theme.bar);
+            }
+            buf.set_stringn(side.x + 1, y, page.title(), 13, label_style);
+            buf.set_string(
+                side.x + SIDEBAR_WIDTH - 3,
+                y,
+                page.key().to_string(),
+                theme.hint_desc,
+            );
+            hits.push((
+                Rect::new(side.x, y, SIDEBAR_WIDTH - 1, 1),
+                NavTarget::Page(page),
+            ));
+        }
+        let y = side.y + side.height - 1;
+        let back_style = if can_back {
+            theme.track_normal
+        } else {
+            theme.rule
+        };
+        let fwd_style = if can_forward {
+            theme.track_normal
+        } else {
+            theme.rule
+        };
+        buf.set_string(side.x + 1, y, "\u{2039} back", back_style);
+        buf.set_string(side.x + 9, y, "fwd \u{203a}", fwd_style);
+        hits.push((Rect::new(side.x, y, 8, 1), NavTarget::Back));
+        hits.push((Rect::new(side.x + 8, y, 8, 1), NavTarget::Forward));
+        app.layout.nav_hits = hits;
+        return Rect::new(
+            area.x + SIDEBAR_WIDTH,
+            area.y,
+            area.width - SIDEBAR_WIDTH,
+            area.height,
+        );
+    }
+
+    // Tab bar: back and forward, then a tab a page. Titles when they fit,
+    // the short names when they do not, and numbers when not even those.
+    let bar = Rect::new(area.x, area.y, area.width, 1.min(area.height));
+    let usable = bar.width.saturating_sub(5) as usize;
+    let cost = |label: fn(Page) -> &'static str| {
+        Page::ALL
+            .iter()
+            .map(|p| label(*p).chars().count() + 2)
+            .sum::<usize>()
+    };
+    let label: fn(Page) -> &'static str = if cost(Page::title) <= usable {
+        Page::title
+    } else if cost(Page::short) <= usable {
+        Page::short
+    } else {
+        |_| ""
+    };
+    let numbers_only = label(Page::Queue).is_empty();
+    let back_style = if can_back {
+        theme.track_normal
+    } else {
+        theme.rule
+    };
+    let fwd_style = if can_forward {
+        theme.track_normal
+    } else {
+        theme.rule
+    };
+    buf.set_string(bar.x + 1, bar.y, "\u{2039}", back_style);
+    buf.set_string(bar.x + 3, bar.y, "\u{203a}", fwd_style);
+    hits.push((Rect::new(bar.x, bar.y, 3, 1), NavTarget::Back));
+    hits.push((Rect::new(bar.x + 3, bar.y, 2, 1), NavTarget::Forward));
+    let mut x = bar.x + 5;
+    let end = bar.x + bar.width;
+    for page in Page::ALL {
+        let text = if numbers_only {
+            if page == current {
+                format!(" {} {} ", page.key(), page.title())
+            } else {
+                format!(" {} ", page.key())
+            }
+        } else {
+            format!(" {} ", label(page))
+        };
+        let w = (text.chars().count() as u16).min(end.saturating_sub(x));
+        if w == 0 {
+            break;
+        }
+        let active = page == current;
+        let hovered = app.hover.zone == super::app::HoverZone::Nav(NavTarget::Page(page));
+        let style = if active {
+            theme.track_cursor
+        } else if hovered {
+            theme.track_normal
+        } else {
+            theme.hint_desc
+        };
+        buf.set_stringn(x, bar.y, &text, w as usize, style);
+        hits.push((Rect::new(x, bar.y, w, 1), NavTarget::Page(page)));
+        x += w;
+    }
+    app.layout.nav_hits = hits;
+    if area.height <= 1 {
+        return Rect::new(area.x, area.y + area.height, area.width, 0);
+    }
+    Rect::new(area.x, area.y + 1, area.width, area.height - 1)
 }
 
 /// FPS + beat-energy counter, right-aligned on the top row.
@@ -603,5 +848,122 @@ mod tests {
         app.close_stale_track_info();
 
         assert_eq!(app.mode, Mode::TrackInfo(id));
+    }
+
+    #[test]
+    fn every_page_renders_at_any_size() {
+        let mut app = app_with_queue(40);
+        for page in Page::ALL {
+            app.go_page(page);
+            for w in [1u16, 20, 30, 55, 56, 80, 99, 100, 160] {
+                for h in [1u16, 4, 5, 8, 9, 12, 24, 60] {
+                    draw(&mut app, w, h);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_layout_follows_the_width() {
+        assert_eq!(Width::of(Rect::new(0, 0, 160, 40)), Width::Wide);
+        assert_eq!(Width::of(Rect::new(0, 0, 100, 40)), Width::Wide);
+        assert_eq!(Width::of(Rect::new(0, 0, 99, 40)), Width::Regular);
+        assert_eq!(Width::of(Rect::new(0, 0, 56, 40)), Width::Regular);
+        assert_eq!(Width::of(Rect::new(0, 0, 55, 40)), Width::Compact);
+        // Too short for a sidebar's six pages and its foot.
+        assert_eq!(Width::of(Rect::new(0, 0, 160, 8)), Width::Regular);
+    }
+
+    #[test]
+    fn the_sidebar_and_the_tab_bar_open_pages_when_clicked() {
+        use crate::app::HoverZone;
+        for width in [160u16, 80, 40] {
+            let mut app = app_with_queue(5);
+            draw(&mut app, width, 40);
+            let pages: Vec<_> = app
+                .layout
+                .nav_hits
+                .iter()
+                .filter_map(|(r, t)| match t {
+                    NavTarget::Page(p) => Some((*r, *p)),
+                    _ => None,
+                })
+                .collect();
+            assert!(!pages.is_empty(), "width {width}");
+            let (rect, page) = *pages
+                .iter()
+                .find(|(_, p)| *p == Page::Albums)
+                .unwrap_or(&pages[0]);
+            app.handle_mouse(crossterm::event::MouseEvent {
+                kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column: rect.x,
+                row: rect.y,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            });
+            assert_eq!(app.page(), page, "width {width}");
+            assert!(app.nav.can_back());
+            assert_ne!(app.hover.zone, HoverZone::Nav(NavTarget::Back));
+        }
+    }
+
+    #[test]
+    fn keys_move_between_pages_and_back() {
+        use crossterm::event::{KeyCode, KeyEvent};
+        let mut app = app_with_queue(5);
+        app.handle_key(KeyEvent::from(KeyCode::Char('3')));
+        assert_eq!(app.page(), Page::Albums);
+        app.handle_key(KeyEvent::from(KeyCode::Char('5')));
+        assert_eq!(app.page(), Page::Favourites);
+        app.handle_key(KeyEvent::from(KeyCode::Esc));
+        assert_eq!(app.page(), Page::Albums);
+        app.handle_key(KeyEvent::from(KeyCode::Char(']')));
+        assert_eq!(app.page(), Page::Favourites);
+        app.handle_key(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.page(), Page::Recent);
+        app.handle_key(KeyEvent::from(KeyCode::Char('1')));
+        assert_eq!(app.page(), Page::Queue);
+    }
+
+    #[test]
+    fn typing_in_a_filter_does_not_change_page() {
+        use crossterm::event::{KeyCode, KeyEvent};
+        let mut app = app_with_queue(5);
+        app.handle_key(KeyEvent::from(KeyCode::Char('3')));
+        app.handle_key(KeyEvent::from(KeyCode::Char('/')));
+        app.handle_key(KeyEvent::from(KeyCode::Char('5')));
+        assert_eq!(app.page(), Page::Albums);
+        assert_eq!(app.albums_page.filter, "5");
+    }
+
+    #[test]
+    fn the_hairline_above_the_transport_resizes_it() {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let mut app = app_with_queue(5);
+        draw(&mut app, 100, 40);
+        let y = app.layout.transport_rule_y.expect("a hairline");
+        let before = app.art_size;
+        let ev = |kind, row| MouseEvent {
+            kind,
+            column: 10,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        app.handle_mouse(ev(MouseEventKind::Down(MouseButton::Left), y));
+        app.handle_mouse(ev(MouseEventKind::Drag(MouseButton::Left), y - 3));
+        assert_eq!(app.art_size, before + 6);
+    }
+
+    #[test]
+    fn the_cover_gives_the_interface_its_accent() {
+        let mut app = app_with_queue(2);
+        assert_eq!(app.accent.target(), crate::theme::MINT);
+        let red = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            32,
+            32,
+            image::Rgb([200, 20, 30]),
+        ));
+        let rgb = crate::accent::from_image(&red).expect("a red");
+        app.accent.set(rgb, std::time::Instant::now());
+        assert_eq!(app.accent.target(), rgb);
     }
 }

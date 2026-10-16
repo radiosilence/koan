@@ -25,12 +25,22 @@ const SECTIONS: &[Section] = &[
         ],
     },
     Section {
+        title: "Pages",
+        bindings: &[
+            ("1-6", "Queue / playing / albums / artists / faves / recent"),
+            ("tab", "Next page (S-tab previous)"),
+            ("[ ]", "Back / forward (also A-\u{2190} A-\u{2192})"),
+            ("esc", "Leave the page"),
+            ("I", "Covers: images / half blocks"),
+        ],
+    },
+    Section {
         title: "Navigation",
         bindings: &[
             ("p", "Track picker"),
             ("a", "Album picker"),
             ("r", "Artist picker"),
-            ("l", "Library browser"),
+            ("l", "Artists page"),
             ("/", "Search queue"),
             ("e", "Edit queue"),
             ("z", "Zoom cover art"),
@@ -63,14 +73,16 @@ const SECTIONS: &[Section] = &[
         ],
     },
     Section {
-        title: "Library (l)",
+        title: "Artists, albums, favourites, recent",
         bindings: &[
-            ("\u{2191}\u{2193}", "Navigate tree"),
-            ("\u{2192} / enter", "Expand node"),
-            ("\u{2190}", "Collapse node"),
-            ("a", "Enqueue selection"),
-            ("f", "Filter"),
-            ("tab", "Switch focus"),
+            (
+                "\u{2191}\u{2193}\u{2190}\u{2192}",
+                "Move (tree: expand / collapse)",
+            ),
+            ("enter", "Append & play"),
+            ("a", "Append (C-r replaces the queue)"),
+            ("/", "Filter"),
+            ("v / o", "Tiles or rows / sort order"),
         ],
     },
     Section {

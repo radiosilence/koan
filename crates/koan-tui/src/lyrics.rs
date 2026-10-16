@@ -66,6 +66,7 @@ impl Widget for LyricsPanel<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let block = Block::default()
             .borders(Borders::TOP | Borders::LEFT)
+            .border_style(self.theme.rule)
             .title(Line::from(Span::styled(" lyrics ", self.theme.hint_desc)));
 
         let inner = block.inner(area);

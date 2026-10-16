@@ -1,0 +1,1 @@
+- **A Now playing page in the terminal UI.** The cover, the signal path (source, output, DSP, and whether the stream is bit-perfect), level meters, the spectrum, lyrics, and the active DSP profile's frequency response. The transport bar carries a small spectrum.

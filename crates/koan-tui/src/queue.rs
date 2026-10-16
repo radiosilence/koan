@@ -2,9 +2,9 @@ use std::collections::HashSet;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Widget};
+use ratatui::widgets::Widget;
 
 use koan_core::player::state::{QueueEntry, QueueEntryStatus};
 
@@ -169,30 +169,18 @@ impl Widget for QueueView<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let is_edit = matches!(self.mode, Mode::QueueEdit);
 
-        let header_spans = if is_edit {
-            vec![
-                Span::styled(
-                    " queue [edit] ",
-                    self.theme
-                        .album_header_artist
-                        .fg(self.theme.warning)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(format!("({}) ", self.entries.len()), self.theme.hint_desc),
-            ]
+        let note = if is_edit {
+            format!(" edit \u{b7} {} ", self.entries.len())
         } else {
-            vec![
-                Span::styled(" queue ", self.theme.hint_desc),
-                Span::styled(format!("({}) ", self.entries.len()), self.theme.hint_desc),
-            ]
+            format!(" {} ", self.entries.len())
         };
-
-        let block = Block::default()
-            .borders(Borders::TOP)
-            .title(Line::from(header_spans));
-
-        let inner = block.inner(area);
-        block.render(area, buf);
+        super::ui::heading(buf, area, self.theme, "queue", &note);
+        let inner = Rect::new(
+            area.x,
+            area.y + 1,
+            area.width,
+            area.height.saturating_sub(1),
+        );
 
         // The top border can consume the only row there is.
         if inner.height == 0 {
@@ -436,7 +424,7 @@ fn render_track_line<'a>(
 
     // Visual markers: cursor > selected, drop indicator.
     let cursor_marker = if is_cursor {
-        Span::styled(">", theme.track_cursor)
+        Span::styled("\u{258c}", theme.bar)
     } else if is_drop_target {
         Span::styled("\u{25be}", theme.hint_key) // ▾ drop indicator
     } else if is_selected {

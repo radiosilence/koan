@@ -195,6 +195,9 @@ pub enum VisualizerPalette {
     Fire,
     /// Synthwave: hot pink bass → electric blue mids → cyan highs.
     Neon,
+    /// The playing record's accent: its dimmed hue at the bass, the hue
+    /// itself through the mids, and its light tint at the highs.
+    Record((u8, u8, u8)),
 }
 
 impl VisualizerPalette {
@@ -204,6 +207,7 @@ impl VisualizerPalette {
             "spectrum" => Self::Spectrum,
             "fire" => Self::Fire,
             "neon" => Self::Neon,
+            "record" => Self::Record(super::theme::MINT),
             _ => Self::Spectrum,
         }
     }
@@ -237,6 +241,19 @@ impl VisualizerPalette {
                 } else {
                     let u = (t - 0.66) / 0.34;
                     lerp_rgb((250, 220, 50), (255, 255, 200), u)
+                }
+            }
+            Self::Record(a) => {
+                let dimmed = (a.0 / 3, a.1 / 3, a.2 / 3);
+                let tint = (
+                    a.0 + (255 - a.0) / 2,
+                    a.1 + (255 - a.1) / 2,
+                    a.2 + (255 - a.2) / 2,
+                );
+                if t < 0.5 {
+                    lerp_rgb(dimmed, a, t / 0.5)
+                } else {
+                    lerp_rgb(a, tint, (t - 0.5) / 0.5)
                 }
             }
             Self::Neon => {

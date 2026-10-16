@@ -1,7 +1,7 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Widget};
+use ratatui::widgets::Widget;
 
 use koan_core::db::queries;
 
@@ -389,24 +389,21 @@ impl<'a> LibraryView<'a> {
 
 impl Widget for LibraryView<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let title_style = if self.focused {
-            self.theme.library_artist
+        let note = if self.state.filter.is_empty() {
+            format!(" {} ", self.state.nodes.len())
         } else {
-            self.theme.hint_desc
+            format!(" {} \u{b7} /{} ", self.state.nodes.len(), self.state.filter)
         };
-
-        let title_text = if self.state.filter.is_empty() {
-            " library ".to_string()
-        } else {
-            format!(" library [{}] ", self.state.filter)
-        };
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(Line::from(vec![Span::styled(title_text, title_style)]));
-
-        let inner = block.inner(area);
-        block.render(area, buf);
+        super::ui::heading(buf, area, self.theme, "artists", &note);
+        let inner = Rect::new(
+            area.x,
+            area.y + 1,
+            area.width,
+            area.height.saturating_sub(1),
+        );
+        if inner.height == 0 {
+            return;
+        }
 
         // Reserve bottom row for filter input when filter is focused.
         let show_filter_bar = self.filter_focused;
