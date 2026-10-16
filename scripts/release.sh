@@ -54,11 +54,13 @@ sed -i.bak -e "s/^version = \"$current\"/version = \"$version\"/" \
   -e "/^koan-.*path = \"crates\//s/version = \"$current\"/version = \"$version\"/" Cargo.toml
 sed -i.bak "s/^  \"version\": \"$current\"/  \"version\": \"$version\"/" deploy/pulumi/package.json
 sed -i.bak "s/^export const APP_VERSION = \"$current\";/export const APP_VERSION = \"$version\";/" deploy/pulumi/src/versions.ts
-rm -f Cargo.toml.bak deploy/pulumi/package.json.bak deploy/pulumi/src/versions.ts.bak
+sed -i.bak "s/^        versionName = \"$current\"/        versionName = \"$version\"/" apps/android/app/build.gradle.kts
+rm -f Cargo.toml.bak deploy/pulumi/package.json.bak deploy/pulumi/src/versions.ts.bak apps/android/app/build.gradle.kts.bak
 
 grep -q "^version = \"$version\"" Cargo.toml
 grep -q "\"version\": \"$version\"" deploy/pulumi/package.json
 grep -q "APP_VERSION = \"$version\"" deploy/pulumi/src/versions.ts
+grep -q "versionName = \"$version\"" apps/android/app/build.gradle.kts
 
 cargo update --workspace --offline
 
