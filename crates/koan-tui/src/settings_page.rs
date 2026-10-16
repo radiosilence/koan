@@ -25,6 +25,37 @@ pub enum Setting {
     AutoSync,
     Discoverable,
     NearbyControl,
+    Offline,
+}
+
+/// Work a row starts rather than a value it sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Task {
+    Scan,
+    Sync,
+}
+
+impl Task {
+    fn label(self) -> &'static str {
+        match self {
+            Task::Scan => "scan library",
+            Task::Sync => "sync now",
+        }
+    }
+
+    fn note(self) -> &'static str {
+        match self {
+            Task::Scan => "read the library folders for new, changed and removed files",
+            Task::Sync => "pull the server's library, favourites and playlists",
+        }
+    }
+}
+
+/// What a change on the page asks of the app.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    Changed(Setting),
+    Run(Task),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +71,7 @@ pub enum SettingsHit {
 enum Entry {
     Section(&'static str),
     Item(Setting),
+    Action(Task),
     /// Shown, not edited here: what the apps set through folders and sign-in.
     Info(&'static str, String),
 }
@@ -65,6 +97,7 @@ impl Setting {
             Setting::AutoSync => "sync the server",
             Setting::Discoverable => "visible to devices",
             Setting::NearbyControl => "devices may",
+            Setting::Offline => "offline mode",
         }
     }
 
@@ -83,6 +116,7 @@ impl Setting {
             Setting::AutoSync => "at start and on a timer",
             Setting::Discoverable => "announce this device on the network",
             Setting::NearbyControl => "full, or the queue and playback only",
+            Setting::Offline => "play only what is on this device",
         }
     }
 
@@ -109,11 +143,16 @@ impl Setting {
                 NearbyControl::Playback => "playback",
             }
             .into(),
+            Setting::Offline => on_off(koan_core::remote::offline::manual()),
         }
     }
 
     /// Moves the setting one step, `forward` or back, and writes it.
     fn step(self, forward: bool) -> bool {
+        if self == Setting::Offline {
+            koan_core::remote::offline::set_manual(!koan_core::remote::offline::manual());
+            return true;
+        }
         let d: isize = if forward { 1 } else { -1 };
         let cycle = |names: &[&str], now: &str| -> String {
             let at = names.iter().position(|n| *n == now).unwrap_or(0) as isize;
@@ -155,6 +194,7 @@ impl Setting {
             }
             Setting::AutoSync => c.remote.auto_sync = !c.remote.auto_sync,
             Setting::Discoverable => c.devices.discoverable = !c.devices.discoverable,
+            Setting::Offline => {}
             Setting::NearbyControl => {
                 let now = match c.devices.nearby_control {
                     NearbyControl::Full => "full",
@@ -177,6 +217,11 @@ fn palette_name(configured: &str) -> &str {
         "spectrum" | "record" | "" => "theme",
         other => other,
     }
+}
+
+/// Whether the cursor can rest on `entry`.
+fn selectable(entry: &Entry) -> bool {
+    matches!(entry, Entry::Item(_) | Entry::Action(_))
 }
 
 fn on_off(on: bool) -> String {
@@ -247,6 +292,10 @@ impl SettingsPage {
             entries.push(Entry::Info("signed in", "no server".into()));
         }
         entries.push(Entry::Item(Setting::AutoSync));
+        if cfg.remote.enabled {
+            entries.push(Entry::Item(Setting::Offline));
+            entries.push(Entry::Action(Task::Sync));
+        }
         entries.push(Entry::Section("devices"));
         entries.push(Entry::Item(Setting::Discoverable));
         entries.push(Entry::Item(Setting::NearbyControl));
@@ -258,6 +307,9 @@ impl SettingsPage {
                 "none; add one in the app or config".into(),
             ));
         }
+        if !folders.is_empty() {
+            entries.push(Entry::Action(Task::Scan));
+        }
         for (i, f) in folders.iter().enumerate() {
             entries.push(Entry::Info(
                 if i == 0 { "folders" } else { "" },
@@ -266,14 +318,14 @@ impl SettingsPage {
         }
         self.entries = entries;
         self.cursor = self.cursor.min(self.entries.len() - 1);
-        if !matches!(self.entries[self.cursor], Entry::Item(_)) {
+        if !selectable(&self.entries[self.cursor]) {
             self.cursor = self.step_item(self.cursor, true).unwrap_or(1);
         }
     }
 
     /// The next item row after (or before) `from`.
     fn step_item(&self, from: usize, forward: bool) -> Option<usize> {
-        let item = |i: &usize| matches!(self.entries[*i], Entry::Item(_));
+        let item = |i: &usize| selectable(&self.entries[*i]);
         if forward {
             (from + 1..self.entries.len()).find(item)
         } else {
@@ -301,7 +353,7 @@ impl SettingsPage {
     }
 
     fn select(&mut self, idx: usize) {
-        if matches!(self.entries.get(idx), Some(Entry::Item(_))) {
+        if self.entries.get(idx).is_some_and(selectable) {
             self.cursor = idx;
             self.follow = true;
             self.keep_cursor_visible();
@@ -314,18 +366,21 @@ impl SettingsPage {
         self.scroll = self.scroll.saturating_add_signed(rows).min(max);
     }
 
-    /// Changes the setting on row `idx`; the setting, for the app to apply.
-    fn change(&mut self, idx: usize, forward: bool) -> Option<Setting> {
-        let Some(Entry::Item(setting)) = self.entries.get(idx) else {
-            return None;
-        };
-        let setting = *setting;
-        let wrote = setting.step(forward);
-        self.reload();
-        wrote.then_some(setting)
+    /// Changes the setting on row `idx`, or starts the task on it.
+    fn change(&mut self, idx: usize, forward: bool) -> Option<Outcome> {
+        match self.entries.get(idx)? {
+            Entry::Item(setting) => {
+                let setting = *setting;
+                let wrote = setting.step(forward);
+                self.reload();
+                wrote.then_some(Outcome::Changed(setting))
+            }
+            Entry::Action(task) => forward.then_some(Outcome::Run(*task)),
+            _ => None,
+        }
     }
 
-    pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> Option<Option<Setting>> {
+    pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> Option<Option<Outcome>> {
         use crossterm::event::KeyCode;
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -369,14 +424,14 @@ impl SettingsPage {
         }
         if inside(g.list, col, row) {
             let idx = self.scroll + (row - g.list.y) as usize;
-            if matches!(self.entries.get(idx), Some(Entry::Item(_))) {
+            if self.entries.get(idx).is_some_and(selectable) {
                 return Some(SettingsHit::Row(idx));
             }
         }
         None
     }
 
-    pub fn click(&mut self, hit: SettingsHit) -> Option<Setting> {
+    pub fn click(&mut self, hit: SettingsHit) -> Option<Outcome> {
         match hit {
             SettingsHit::Row(i) => {
                 self.select(i);
@@ -454,6 +509,47 @@ impl SettingsPage {
                     buf.set_stringn(list.x + 2, y, label, 20, theme.hint_desc);
                     let room = end.saturating_sub(value_x) as usize;
                     buf.set_stringn(value_x, y, text, room, theme.track_normal);
+                }
+                Entry::Action(task) => {
+                    let selected = idx == self.cursor;
+                    let row_hover = matches!(
+                        hover,
+                        Some(SettingsHit::Row(n) | SettingsHit::Value(n)) if n == idx
+                    );
+                    if selected {
+                        for cx in list.x..end {
+                            buf[(cx, y)].set_style(theme.library_cursor);
+                        }
+                        buf[(list.x, y)].set_char('\u{258c}').set_style(theme.bar);
+                    } else if row_hover {
+                        for cx in list.x..end {
+                            buf[(cx, y)].set_style(theme.library_hover);
+                        }
+                    }
+                    let base = if selected {
+                        theme.library_cursor
+                    } else {
+                        theme.track_normal
+                    };
+                    let dim = if selected {
+                        theme.library_cursor
+                    } else {
+                        theme.hint_desc
+                    };
+                    buf.set_stringn(list.x + 2, y, task.label(), 20, base);
+                    let run = if hover == Some(SettingsHit::Value(idx)) {
+                        theme.track_playing.add_modifier(Modifier::UNDERLINED)
+                    } else {
+                        theme.track_playing
+                    };
+                    buf.set_string(value_x + 2, y, "run", run);
+                    self.geom
+                        .links
+                        .push((Rect::new(value_x + 2, y, 3, 1), SettingsHit::Value(idx)));
+                    let note_x = value_x + 8;
+                    if note_x + 8 < end {
+                        buf.set_stringn(note_x, y, task.note(), (end - note_x) as usize, dim);
+                    }
                 }
                 Entry::Item(setting) => {
                     let selected = idx == self.cursor;
@@ -580,6 +676,7 @@ mod tests {
 
     #[test]
     fn every_setting_is_listed_under_its_section() {
+        koan_core::config::isolate_config_for_tests();
         let mut p = SettingsPage::new();
         let buf = draw(&mut p, 100, 40);
         let shown: String = buf.content().iter().map(|c| c.symbol()).collect();
@@ -595,20 +692,22 @@ mod tests {
 
     #[test]
     fn the_cursor_rests_on_settings_never_on_headings() {
+        koan_core::config::isolate_config_for_tests();
         let mut p = SettingsPage::new();
         draw(&mut p, 100, 40);
         for _ in 0..30 {
             p.handle_key(KeyEvent::from(KeyCode::Down));
-            assert!(matches!(p.entries[p.cursor], Entry::Item(_)));
+            assert!(selectable(&p.entries[p.cursor]));
         }
         for _ in 0..30 {
             p.handle_key(KeyEvent::from(KeyCode::Up));
-            assert!(matches!(p.entries[p.cursor], Entry::Item(_)));
+            assert!(selectable(&p.entries[p.cursor]));
         }
     }
 
     #[test]
     fn each_value_has_arrows_and_a_value_to_hit() {
+        koan_core::config::isolate_config_for_tests();
         let mut p = SettingsPage::new();
         draw(&mut p, 100, 40);
         let kinds: Vec<_> = p.geom.links.iter().map(|(_, h)| *h).collect();
@@ -627,6 +726,7 @@ mod tests {
 
     #[test]
     fn it_draws_at_any_size() {
+        koan_core::config::isolate_config_for_tests();
         let mut p = SettingsPage::new();
         for w in 0..60 {
             for h in 0..12 {

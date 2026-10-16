@@ -23,6 +23,7 @@ const DOUBLE_CLICK: Duration = Duration::from_millis(500);
 pub enum AlbumHit {
     Track(usize),
     Artist,
+    Heart,
     Play,
     Add,
     Replace,
@@ -31,6 +32,7 @@ pub enum AlbumHit {
 #[derive(Default, Clone, Copy)]
 struct Geom {
     artist: Rect,
+    heart: Rect,
     play: Rect,
     add: Rect,
     replace: Rect,
@@ -42,6 +44,8 @@ struct Geom {
 pub struct AlbumPage {
     pub album: AlbumRow,
     tracks: Vec<TrackRow>,
+    /// Whether the record is a favourite.
+    pub favourite: bool,
     cursor: usize,
     scroll: usize,
     follow: bool,
@@ -58,9 +62,12 @@ impl AlbumPage {
         let db = koan_core::db::pool::shared().get().ok()?;
         let album = queries::get_album(&db.conn, id).ok()??;
         let tracks = queries::tracks_for_album(&db.conn, id).unwrap_or_default();
+        let favourite = queries::favourite_album_id_set(&db.conn, queries::LOCAL_USER)
+            .is_ok_and(|set| set.contains(&id));
         Some(Self {
             album,
             tracks,
+            favourite,
             cursor: 0,
             scroll: 0,
             follow: true,
@@ -133,8 +140,19 @@ impl AlbumPage {
             KeyCode::Enter => return Some(self.play_from_cursor()),
             KeyCode::Char('P') => return Some(self.play_all(PickerAction::AppendAndPlay)),
             KeyCode::Char('a') => return Some(self.play_all(PickerAction::Append)),
+            KeyCode::Char('N') => return Some(self.play_all(PickerAction::PlayNext)),
             KeyCode::Char('r') if ctrl => return Some(self.play_all(PickerAction::ReplaceQueue)),
             KeyCode::Char('A') => return Some(Action::OpenArtist(self.album.artist_id)),
+            KeyCode::Char('H') => return Some(Action::ToggleAlbum(self.album.id)),
+            KeyCode::Char('d') => return Some(Action::Download(self.all())),
+            KeyCode::Char('u') => return Some(Action::RemoveDownload(self.all())),
+            KeyCode::Char('i') => {
+                return Some(
+                    self.tracks
+                        .get(self.cursor)
+                        .map_or(Action::None, |t| Action::Info(t.id)),
+                );
+            }
             KeyCode::Char('f') => {
                 return Some(
                     self.tracks
@@ -151,6 +169,9 @@ impl AlbumPage {
         let g = &self.geom;
         if inside(g.artist, col, row) {
             return Some(AlbumHit::Artist);
+        }
+        if inside(g.heart, col, row) {
+            return Some(AlbumHit::Heart);
         }
         for (r, hit) in [
             (g.play, AlbumHit::Play),
@@ -171,6 +192,7 @@ impl AlbumPage {
     pub fn click(&mut self, hit: AlbumHit) -> Action {
         match hit {
             AlbumHit::Artist => Action::OpenArtist(self.album.artist_id),
+            AlbumHit::Heart => Action::ToggleAlbum(self.album.id),
             AlbumHit::Play => self.play_all(PickerAction::AppendAndPlay),
             AlbumHit::Add => self.play_all(PickerAction::Append),
             AlbumHit::Replace => self.play_all(PickerAction::ReplaceQueue),
@@ -247,10 +269,23 @@ impl AlbumPage {
                 buf.set_stringn(tx, y, text, tw, style);
             }
         };
-        put(
-            buf,
+        let (heart, heart_style) = if self.favourite {
+            ("\u{2665}", theme.favourite)
+        } else {
+            ("\u{2661}", theme.hint_desc)
+        };
+        let heart_style = if hover == Some(AlbumHit::Heart) {
+            heart_style.add_modifier(Modifier::UNDERLINED)
+        } else {
+            heart_style
+        };
+        buf.set_string(tx, body.y, heart, heart_style);
+        self.geom.heart = Rect::new(tx, body.y, 2, 1);
+        buf.set_stringn(
+            tx + 2,
             body.y,
             &self.album.title,
+            tw.saturating_sub(2),
             theme.heading.add_modifier(Modifier::BOLD),
         );
         let artist_style = if hover == Some(AlbumHit::Artist) {
@@ -466,6 +501,7 @@ mod tests {
                 added_at: None,
                 on_device: None,
             },
+            favourite: false,
             tracks: (0..n)
                 .map(|i| track(100 + i as i64, i as i32 + 1, &format!("song {i}")))
                 .collect(),
@@ -523,6 +559,33 @@ mod tests {
             panic!("expected a replace");
         };
         assert_eq!(ids.len(), 5);
+    }
+
+    #[test]
+    fn the_heart_and_h_favourite_the_record() {
+        let mut p = page(5);
+        draw(&mut p, 100, 30);
+        let key = |c| crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char(c));
+        assert_eq!(p.handle_key(key('H')), Some(Action::ToggleAlbum(1)));
+        let heart = p.geom.heart;
+        assert_eq!(p.hit(heart.x, heart.y), Some(AlbumHit::Heart));
+        assert_eq!(p.click(AlbumHit::Heart), Action::ToggleAlbum(1));
+    }
+
+    #[test]
+    fn n_i_d_and_u_act_on_the_record_and_the_track() {
+        let mut p = page(3);
+        draw(&mut p, 100, 30);
+        let key = |c| crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char(c));
+        assert!(matches!(
+            p.handle_key(key('N')),
+            Some(Action::Play(ids, PickerAction::PlayNext)) if ids.len() == 3
+        ));
+        assert!(matches!(p.handle_key(key('i')), Some(Action::Info(_))));
+        assert!(matches!(p.handle_key(key('d')), Some(Action::Download(ids)) if ids.len() == 3));
+        assert!(
+            matches!(p.handle_key(key('u')), Some(Action::RemoveDownload(ids)) if ids.len() == 3)
+        );
     }
 
     #[test]

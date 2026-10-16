@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **More of the apps' actions in the terminal UI.** `N` puts a record, track or tree node next in the queue; `f` and `H` favourite a record and its artist (queued for the server as in the apps), with a heart on the tile and in the album and artist headers; `i` shows what the library holds of any listed track; `d` and `u` download a record or track to this device or remove the download; and Settings gains offline mode, `scan library` and `sync now`.
+
+### Fixed
+
+- **Terminal UI: smaller glitches.** The transport's little spectrum no longer repeats the big one beside it, History shows plays as they are recorded, and `a` in the Artists tree appends instead of also starting playback, as its hint says.
+
 ## 0.63.0
 
 ### Added

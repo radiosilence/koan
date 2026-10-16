@@ -101,6 +101,8 @@ Tree view: artist -> album -> track.
 |-----|--------|
 | `Up` / `Down` | Navigate |
 | `Enter` | Expand node, or append the track and play it |
+| `a` | Append what is under the cursor to the queue |
+| `N` | Put it next, after the track playing |
 | `/` or `f` | Filter library (type to search) |
 | `Esc` | Clear the filter, then leave the page |
 
@@ -113,6 +115,9 @@ Tree view: artist -> album -> track.
 | `↑` `↓` or `j` `k` | Move between plays (the day headings are skipped) |
 | `Enter` | Play the track |
 | `a` | Append the track to the queue |
+| `N` | Put the track next, after the one playing |
+| `i` | Show what the library holds of the track |
+| `d` / `u` | Download the track to this device / remove the download |
 | `A` / `O` | Open the artist / the record |
 | `x`, `Delete` or `Backspace` | Forget the play |
 | `D` | Forget every play (press again to confirm) |
@@ -127,10 +132,10 @@ Click a play to select it and again to play it; click the artist or the record t
 | Key | Action |
 |-----|--------|
 | `↑` `↓` or `j` `k` | Move between settings |
-| `→`, `Enter` or `Space` | Next value (flips a toggle) |
+| `→`, `Enter` or `Space` | Next value (flips a toggle), or run the task on the row |
 | `←` | Previous value |
 
-Click the arrows beside a value, or the value, to change it. Changes apply at once, except the frame rate, which applies at the next start.
+Click the arrows beside a value, or the value, to change it, or `run` to start a task. Changes apply at once, except the frame rate, which applies at the next start. `scan library` and `sync now` run in the background and report how they went in the status line; offline mode narrows the library to what is on this device.
 
 ---
 
@@ -144,11 +149,15 @@ Click the arrows beside a value, or the value, to change it. Changes apply at on
 | `A` | Open the artist |
 | `P` | Append the record (or track) and play it |
 | `a` | Append to the queue |
+| `N` | Put it next, after the track playing |
 | `Ctrl+R` | Replace the queue and play |
 | `/` | Filter what is shown |
 | `v` | Tiles or rows (tracks, on Favourites and Recent) |
 | `o` | Cycle the order (Albums) |
-| `f` | Favourite the track under the cursor (track rows) |
+| `f` | Favourite the record under the cursor, or the track on a track row |
+| `H` | Favourite the artist (on an artist's page, that artist) |
+| `i` | Show what the library holds of the track (track rows) |
+| `d` / `u` | Download the record or track to this device / remove the download |
 
 ### Mouse
 

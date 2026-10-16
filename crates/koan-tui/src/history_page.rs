@@ -57,6 +57,8 @@ pub struct HistoryPage {
     pub filter: String,
     pub filter_active: bool,
     armed: Option<Instant>,
+    /// The history's version when it was read; a play moves it on.
+    seen: u64,
     geom: Geom,
     last_click: Option<(usize, Instant)>,
 }
@@ -95,13 +97,23 @@ impl HistoryPage {
             filter: String::new(),
             filter_active: false,
             armed: None,
+            seen: 0,
             geom: Geom::default(),
             last_click: None,
         }
     }
 
+    /// Reads the plays again if one was recorded or forgotten since the last
+    /// read, so the page stays current while it is open.
+    pub fn refresh(&mut self) {
+        if koan_core::player::history::version() != self.seen {
+            self.reload();
+        }
+    }
+
     /// Reads the plays again, narrowed by the filter.
     pub fn reload(&mut self) {
+        self.seen = koan_core::player::history::version();
         let Ok(db) = koan_core::db::pool::shared().get() else {
             return;
         };
@@ -249,6 +261,25 @@ impl HistoryPage {
             KeyCode::End | KeyCode::Char('G') => self.move_to(usize::MAX),
             KeyCode::Enter => return Some(self.play(self.cursor, PickerAction::AppendAndPlay)),
             KeyCode::Char('a') => return Some(self.play(self.cursor, PickerAction::Append)),
+            KeyCode::Char('N') => return Some(self.play(self.cursor, PickerAction::PlayNext)),
+            KeyCode::Char('d') => {
+                return Some(
+                    self.track_at(self.cursor)
+                        .map_or(Action::None, |t| Action::Download(vec![t.id])),
+                );
+            }
+            KeyCode::Char('u') => {
+                return Some(
+                    self.track_at(self.cursor)
+                        .map_or(Action::None, |t| Action::RemoveDownload(vec![t.id])),
+                );
+            }
+            KeyCode::Char('i') => {
+                return Some(
+                    self.track_at(self.cursor)
+                        .map_or(Action::None, |t| Action::Info(t.id)),
+                );
+            }
             KeyCode::Char('A') => {
                 return Some(
                     self.track_at(self.cursor)
@@ -709,6 +740,23 @@ mod tests {
         assert!(p.armed());
         p.handle_key(KeyEvent::from(KeyCode::Esc));
         assert!(!p.armed());
+    }
+
+    #[test]
+    fn n_puts_the_track_next_and_i_asks_for_its_info() {
+        let mut p = page();
+        draw(&mut p, 100, 12);
+        let key = |c| KeyEvent::from(KeyCode::Char(c));
+        assert_eq!(
+            p.handle_key(key('N')),
+            Some(Action::Play(vec![1], PickerAction::PlayNext))
+        );
+        assert_eq!(p.handle_key(key('i')), Some(Action::Info(1)));
+        assert_eq!(p.handle_key(key('d')), Some(Action::Download(vec![1])));
+        assert_eq!(
+            p.handle_key(key('u')),
+            Some(Action::RemoveDownload(vec![1]))
+        );
     }
 
     #[test]

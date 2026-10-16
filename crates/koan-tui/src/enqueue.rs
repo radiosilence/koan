@@ -5,7 +5,7 @@
 
 use koan_core::db::queries;
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::QueueMode;
+use koan_core::player::state::{QueueItemId, QueueMode};
 
 use crate::app::PickerAction;
 
@@ -13,12 +13,15 @@ use crate::app::PickerAction;
 /// - Append: add to end of queue, don't play.
 /// - AppendAndPlay: add to end, play the first added track.
 /// - ReplaceQueue: replace the queue in one command, play from top.
+/// - PlayNext: insert straight after `playing`, the item at the cursor; with
+///   none, append.
 ///
 /// Remote tracks download once the player has them: the download queue
 /// follows the playlist.
 pub fn enqueue_playlist(
     ids: Vec<i64>,
     action: PickerAction,
+    playing: Option<QueueItemId>,
     tx: crossbeam_channel::Sender<PlayerCommand>,
 ) {
     let db = match koan_core::db::pool::shared().get() {
@@ -48,6 +51,14 @@ pub fn enqueue_playlist(
             mode: QueueMode::InOrder,
         })
         .ok();
+        return;
+    }
+
+    if action == PickerAction::PlayNext
+        && let Some(after) = playing
+    {
+        tx.send(PlayerCommand::InsertInPlaylist { items, after })
+            .ok();
         return;
     }
 

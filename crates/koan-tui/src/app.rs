@@ -23,7 +23,7 @@ use super::lyrics::LyricsState;
 use super::nav::{Navigator, Page};
 use super::picker::{PickerKind, PickerPartKind, PickerState, picker_results_rect};
 use super::queue;
-use super::settings_page::{Setting, SettingsHit, SettingsPage};
+use super::settings_page::{Outcome, Setting, SettingsHit, SettingsPage, Task};
 use super::theme::{Palette, Theme};
 use super::transport::TransportBar;
 use super::visualizer::VisualizerState;
@@ -37,6 +37,8 @@ pub enum Mode {
     QueueEdit,
     Picker(PickerKind),
     TrackInfo(QueueItemId),
+    /// A track's row from the library, shown from a list other than the queue.
+    TrackDetails,
     CoverArtZoom,
     ContextMenu,
     Organize,
@@ -88,6 +90,8 @@ pub enum PickerAction {
     Append,
     /// Append and immediately play the first added track.
     AppendAndPlay,
+    /// Put them straight after the track playing, to come next.
+    PlayNext,
     /// Clear queue, add tracks, play from the top.
     ReplaceQueue,
 }
@@ -242,6 +246,10 @@ pub struct App {
     pub recent_page: Browse,
     pub artist_page: Browse,
     pub album_page: Option<AlbumPage>,
+    task_running: bool,
+    task_tx: crossbeam_channel::Sender<String>,
+    task_rx: crossbeam_channel::Receiver<String>,
+    pub track_details: Option<Box<koan_core::db::queries::TrackRow>>,
     pub history_page: HistoryPage,
     pub settings_page: SettingsPage,
     /// A drag that began on a page's scrollbar.
@@ -360,6 +368,7 @@ impl App {
         log_buffer: Arc<Mutex<Vec<String>>>,
         ticks_per_sec: u8,
     ) -> Self {
+        let task_channel = crossbeam_channel::unbounded();
         let cfg = koan_core::config::Config::load().unwrap_or_default();
         let ticker_divisor = (ticks_per_sec / TICKER_FPS).max(1);
         let visualizer = VisualizerState::from_config(&cfg.visualizer);
@@ -391,6 +400,10 @@ impl App {
             recent_page: Browse::new(Source::Recent),
             artist_page: Browse::new(Source::Artist(0)),
             album_page: None,
+            task_running: false,
+            task_tx: task_channel.0,
+            task_rx: task_channel.1,
+            track_details: None,
             history_page: HistoryPage::new(),
             settings_page: SettingsPage::new(),
             browse_drag: false,
@@ -479,6 +492,55 @@ impl App {
             return is_fav;
         }
         false
+    }
+
+    /// Favourites or unfavourites a record or an artist, queueing the change
+    /// for the server with it, and has the pages that show it read it again.
+    fn toggle_collection_favourite(&mut self, kind: koan_core::helpers::FavouriteKind, id: i64) {
+        use koan_core::db::queries;
+        use koan_core::helpers::FavouriteKind;
+        let Ok(db) = koan_core::db::pool::shared().get() else {
+            return;
+        };
+        let now = queries::atomically(&db.conn, || {
+            let now = match kind {
+                FavouriteKind::Album => {
+                    queries::toggle_favourite_album(&db.conn, queries::LOCAL_USER, id)?
+                }
+                _ => queries::toggle_favourite_artist(&db.conn, queries::LOCAL_USER, id)?,
+            };
+            koan_core::helpers::sync_collection_favourite_to_remote(&db, kind, id, now);
+            Ok::<_, koan_core::db::connection::DbError>(now)
+        });
+        drop(db);
+        let Ok(now) = now else {
+            return;
+        };
+        self.status_message = Some((
+            match (kind, now) {
+                (FavouriteKind::Album, true) => "record favourited",
+                (FavouriteKind::Album, false) => "record unfavourited",
+                (_, true) => "artist favourited",
+                (_, false) => "artist unfavourited",
+            }
+            .into(),
+            std::time::Instant::now(),
+        ));
+        for page in [
+            &mut self.albums_page,
+            &mut self.recent_page,
+            &mut self.artist_page,
+        ] {
+            page.reload_favourites();
+        }
+        // A shelf of favourites loses what was just let go.
+        self.favourites_page.reload();
+        if let Some(p) = self.album_page.as_mut()
+            && kind == FavouriteKind::Album
+            && p.album.id == id
+        {
+            p.favourite = now;
+        }
     }
 
     pub fn handle_tick(&mut self) {
@@ -626,6 +688,15 @@ impl App {
             }
         }
         self.thumbs.poll();
+        if let Ok(done) = self.task_rx.try_recv() {
+            self.task_running = false;
+            self.status_message = Some((done, std::time::Instant::now()));
+            self.albums_page.reload();
+            self.history_page.reload();
+        }
+        if self.page() == Page::History && !self.history_page.filter_active {
+            self.history_page.refresh();
+        }
         self.artist_page.poll();
 
         // Updated every frame: the analysis thread runs at its own rate, and
@@ -796,7 +867,7 @@ impl App {
         match &self.mode {
             Mode::Picker(_) => self.handle_picker_key(key),
             Mode::QueueEdit => self.handle_edit_key(key),
-            Mode::TrackInfo(_) => self.handle_info_key(key),
+            Mode::TrackInfo(_) | Mode::TrackDetails => self.handle_info_key(key),
             Mode::CoverArtZoom => self.handle_zoom_key(key),
             Mode::ContextMenu => self.handle_context_menu_key(key),
             Mode::Organize => self.handle_organize_key(key),
@@ -947,9 +1018,9 @@ impl App {
                 None => self.handle_transport_key(key),
             },
             Page::Settings => match self.settings_page.handle_key(key) {
-                Some(changed) => {
-                    if let Some(setting) = changed {
-                        self.apply_setting(setting);
+                Some(outcome) => {
+                    if let Some(outcome) = outcome {
+                        self.apply_outcome(outcome);
                     }
                 }
                 None if key.code == KeyCode::Esc => self.leave_page(),
@@ -1026,6 +1097,40 @@ impl App {
         ));
     }
 
+    fn apply_outcome(&mut self, outcome: Outcome) {
+        match outcome {
+            Outcome::Changed(setting) => self.apply_setting(setting),
+            Outcome::Run(task) => self.run_task(task),
+        }
+    }
+
+    /// Starts a scan or a sync on a thread of its own and says how it went.
+    fn run_task(&mut self, task: Task) {
+        if self.task_running {
+            self.status_message = Some((
+                "a scan or sync is already running".into(),
+                std::time::Instant::now(),
+            ));
+            return;
+        }
+        self.task_running = true;
+        let tx = self.task_tx.clone();
+        self.status_message = Some((
+            match task {
+                Task::Scan => "scanning the library...",
+                Task::Sync => "syncing with the server...",
+            }
+            .into(),
+            std::time::Instant::now(),
+        ));
+        std::thread::Builder::new()
+            .name("koan-task".into())
+            .spawn(move || {
+                tx.send(super::tasks::run(task)).ok();
+            })
+            .ok();
+    }
+
     /// Puts a setting just written to the config into effect in the running
     /// TUI. The player reads the playback ones from the config itself.
     fn apply_setting(&mut self, setting: Setting) {
@@ -1066,6 +1171,36 @@ impl App {
             browse::Action::Shuffle(ids) => {
                 self.tx.send(PlayerCommand::SetShuffle(true)).ok();
                 self.picker_result = Some((PickerKind::Track, ids, PickerAction::ReplaceQueue));
+            }
+            browse::Action::ToggleAlbum(id) => {
+                self.toggle_collection_favourite(koan_core::helpers::FavouriteKind::Album, id)
+            }
+            browse::Action::ToggleArtist(id) => {
+                self.toggle_collection_favourite(koan_core::helpers::FavouriteKind::Artist, id)
+            }
+            browse::Action::Info(id) => self.open_track_details(id),
+            browse::Action::Download(ids) => {
+                let n = ids.len();
+                self.tx.send(PlayerCommand::CacheTracks(ids)).ok();
+                self.status_message = Some((
+                    format!("downloading {n} track{}", if n == 1 { "" } else { "s" }),
+                    std::time::Instant::now(),
+                ));
+            }
+            browse::Action::RemoveDownload(ids) => {
+                let cleared = koan_core::db::pool::shared()
+                    .get()
+                    .map(|db| koan_core::helpers::clear_downloads_for(&db, &ids))
+                    .unwrap_or_default();
+                koan_core::helpers::requeue_cleared_downloads(&self.state);
+                self.status_message = Some((
+                    format!(
+                        "removed {} downloaded file{}",
+                        cleared.files,
+                        if cleared.files == 1 { "" } else { "s" }
+                    ),
+                    std::time::Instant::now(),
+                ));
             }
             browse::Action::OpenUrl(url) => {
                 let opener = if cfg!(target_os = "macos") {
@@ -2051,9 +2186,23 @@ impl App {
         match key.code {
             KeyCode::Esc | KeyCode::Char('i') | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
+                self.track_details = None;
                 self.art.cover_art.clear();
             }
             _ => {}
+        }
+    }
+
+    /// Shows what the library holds of `track_id`.
+    fn open_track_details(&mut self, track_id: i64) {
+        let row = koan_core::db::pool::shared()
+            .get()
+            .ok()
+            .and_then(|db| koan_core::db::queries::get_track_row(&db.conn, track_id).ok())
+            .flatten();
+        if let Some(row) = row {
+            self.track_details = Some(Box::new(row));
+            self.mode = Mode::TrackDetails;
         }
     }
 
@@ -2131,11 +2280,12 @@ impl App {
         }
 
         // Track info intercepts all mouse events when active.
-        if matches!(self.mode, Mode::TrackInfo(_)) {
+        if matches!(self.mode, Mode::TrackInfo(_) | Mode::TrackDetails) {
             if let MouseEventKind::Down(MouseButton::Left) = event.kind
                 && !self.is_in_rect(event.column, event.row, self.layout.track_info_area)
             {
                 self.mode = Mode::Normal;
+                self.track_details = None;
                 self.art.cover_art.clear();
             }
             return;
@@ -2351,15 +2501,15 @@ impl App {
                     }
                     if self.page() == Page::Settings {
                         let p = &mut self.settings_page;
-                        let mut changed = None;
+                        let mut outcome = None;
                         if p.on_scrollbar(col, row) {
                             self.browse_drag = true;
                             p.scroll_to_bar(row);
                         } else if let Some(hit) = p.hit(col, row) {
-                            changed = p.click(hit);
+                            outcome = p.click(hit);
                         }
-                        if let Some(setting) = changed {
-                            self.apply_setting(setting);
+                        if let Some(outcome) = outcome {
+                            self.apply_outcome(outcome);
                         }
                         return;
                     }
@@ -3456,8 +3606,13 @@ impl App {
             KeyCode::Char('a') => {
                 let ids = lib.enqueue_all_under_cursor();
                 if !ids.is_empty() {
-                    self.picker_result =
-                        Some((PickerKind::Track, ids, PickerAction::AppendAndPlay));
+                    self.picker_result = Some((PickerKind::Track, ids, PickerAction::Append));
+                }
+            }
+            KeyCode::Char('N') => {
+                let ids = lib.enqueue_all_under_cursor();
+                if !ids.is_empty() {
+                    self.picker_result = Some((PickerKind::Track, ids, PickerAction::PlayNext));
                 }
             }
             KeyCode::Char('f') | KeyCode::Char('/') => {

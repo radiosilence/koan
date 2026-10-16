@@ -155,9 +155,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     app.layout.seek_bar_width = bw;
 
     let seekable_ms = app.state.seek_ceiling_ms();
-    let levels = app
-        .viz_config
-        .enabled
+    // The little spectrum stands in for the big one: only where the transport
+    // has none above it and the page is not drawing its own.
+    let levels = (app.viz_config.enabled
+        && transport_rect.height <= TRANSPORT_HEIGHT_DEFAULT
+        && app.page() != Page::NowPlaying)
         .then(|| mini_levels(&app.visualizer.spectrum));
     let transport = TransportBar::new(
         track_info.as_ref(),
@@ -444,6 +446,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         app.layout.track_info_area = Rect::new(x, y, popup_width, popup_height);
 
         let overlay = TrackInfoOverlay::new(&entry, ti_ref, app.art.cover_art.cached(), &app.theme);
+        frame.render_widget(overlay, area);
+    }
+
+    // Track details overlay, for a track picked from any list.
+    if app.mode == Mode::TrackDetails
+        && let Some(track) = app.track_details.as_deref()
+    {
+        app.layout.track_info_area = super::track_details::popup_rect(area);
+        let overlay = super::track_details::TrackDetailsOverlay::new(track, &app.theme);
         frame.render_widget(overlay, area);
     }
 

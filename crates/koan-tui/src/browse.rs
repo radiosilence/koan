@@ -86,6 +86,13 @@ pub enum Action {
     Shuffle(Vec<i64>),
     /// A link out of the terminal.
     OpenUrl(String),
+    ToggleAlbum(i64),
+    ToggleArtist(i64),
+    /// Show what the library holds of a track.
+    Info(i64),
+    /// Fetch these tracks to this device, or let the copies go.
+    Download(Vec<i64>),
+    RemoveDownload(Vec<i64>),
 }
 
 /// Where the pointer is on the page.
@@ -255,6 +262,9 @@ pub struct Browse {
     /// Whether the next frame scrolls to the cursor; the wheel and the
     /// scrollbar turn it off so they are not undone.
     follow: bool,
+    /// The records and artists that are favourites, for the heart on a tile.
+    fav_albums: HashSet<i64>,
+    fav_artists: HashSet<i64>,
     header: Option<ArtistHeader>,
     order: usize,
     pub filter: String,
@@ -276,6 +286,8 @@ impl Browse {
             cursor: 0,
             scroll: 0,
             follow: true,
+            fav_albums: HashSet::new(),
+            fav_artists: HashSet::new(),
             header: None,
             order: 0,
             filter: String::new(),
@@ -330,6 +342,24 @@ impl Browse {
         };
         self.loaded = true;
         self.refilter();
+        self.reload_favourites();
+    }
+
+    /// Reads which records and artists are favourites.
+    pub fn reload_favourites(&mut self) {
+        let Ok(db) = koan_core::db::pool::shared().get() else {
+            return;
+        };
+        self.fav_albums =
+            queries::favourite_album_id_set(&db.conn, queries::LOCAL_USER).unwrap_or_default();
+        self.fav_artists =
+            queries::favourite_artist_id_set(&db.conn, queries::LOCAL_USER).unwrap_or_default();
+        if let Some(header) = self.header.as_mut() {
+            header.set_favourite(match self.source {
+                Source::Artist(id) => self.fav_artists.contains(&id),
+                _ => false,
+            });
+        }
     }
 
     /// Takes what the artist lookup has found; true when the page changed.
@@ -560,13 +590,46 @@ impl Browse {
                 return Some(self.play(self.cursor, PickerAction::ReplaceQueue));
             }
             KeyCode::Char('a') => return Some(self.play(self.cursor, PickerAction::Append)),
+            KeyCode::Char('N') => return Some(self.play(self.cursor, PickerAction::PlayNext)),
             KeyCode::Char('f') if self.tracks_in_list() => {
                 return Some(
                     self.track_at_cursor()
                         .map_or(Action::None, Action::Favourite),
                 );
             }
-            KeyCode::Char('/') | KeyCode::Char('f') => self.filter_active = true,
+            KeyCode::Char('f') => {
+                return Some(
+                    self.album_at(self.cursor)
+                        .map_or(Action::None, Action::ToggleAlbum),
+                );
+            }
+            KeyCode::Char('d') => {
+                let ids = self.ids_at(self.cursor);
+                return Some(if ids.is_empty() {
+                    Action::None
+                } else {
+                    Action::Download(ids)
+                });
+            }
+            KeyCode::Char('u') => {
+                let ids = self.ids_at(self.cursor);
+                return Some(if ids.is_empty() {
+                    Action::None
+                } else {
+                    Action::RemoveDownload(ids)
+                });
+            }
+            KeyCode::Char('i') if self.tracks_in_list() => {
+                return Some(self.track_at_cursor().map_or(Action::None, Action::Info));
+            }
+            KeyCode::Char('H') => {
+                let artist = match self.source {
+                    Source::Artist(id) => Some(id),
+                    _ => self.artist_at(self.cursor),
+                };
+                return Some(artist.map_or(Action::None, Action::ToggleArtist));
+            }
+            KeyCode::Char('/') => self.filter_active = true,
             KeyCode::Char('v') => self.toggle_view(),
             KeyCode::Char('o') => self.cycle_order(),
             KeyCode::Esc if !self.filter.is_empty() => self.clear_filter(),
@@ -671,6 +734,10 @@ impl Browse {
                         _ => Action::Shuffle(ids),
                     }
                 }
+                HeaderHit::Heart => match self.source {
+                    Source::Artist(id) => Action::ToggleArtist(id),
+                    _ => Action::None,
+                },
                 HeaderHit::More => {
                     if let Some(header) = self.header.as_mut() {
                         header.toggle_expanded();
@@ -914,7 +981,18 @@ impl Browse {
                     } else {
                         style
                     };
-                    buf.set_stringn(x + 1, title_y, fit(&album.title, label), label, style);
+                    if self.fav_albums.contains(&album.id) && label > 3 {
+                        buf.set_string(x + 1, title_y, "\u{2665}", theme.favourite);
+                        buf.set_stringn(
+                            x + 3,
+                            title_y,
+                            fit(&album.title, label - 2),
+                            label - 2,
+                            style,
+                        );
+                    } else {
+                        buf.set_stringn(x + 1, title_y, fit(&album.title, label), label, style);
+                    }
                 }
                 if title_y + 1 < bottom {
                     // The artist is a link; the year after it is not.
@@ -1243,6 +1321,37 @@ mod tests {
         // Past the end of the text it is the tile again.
         let (x, y) = first_tile(&b, b.geom.tile_w - 1, art_h);
         assert_eq!(b.hit(x, y), Some(Hit::Item(0)));
+    }
+
+    #[test]
+    fn f_favourites_the_record_and_h_its_artist() {
+        let mut b = browse(3);
+        draw(&mut b, 80, 24);
+        b.move_to(1);
+        let key = |c| crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char(c));
+        assert_eq!(b.handle_key(key('f')), Some(Action::ToggleAlbum(1)));
+        assert_eq!(b.handle_key(key('H')), Some(Action::ToggleArtist(1)));
+    }
+
+    #[test]
+    fn a_favourite_record_wears_a_heart() {
+        let mut b = browse(3);
+        b.fav_albums.insert(0);
+        draw(&mut b, 80, 24);
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+        let theme = Theme::default();
+        b.render(
+            area,
+            &mut buf,
+            &theme,
+            &mut Gfx::halfblocks(),
+            &mut Thumbs::new(),
+            &HashSet::new(),
+            None,
+        );
+        let shown: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(shown.contains('\u{2665}'));
     }
 
     #[test]
