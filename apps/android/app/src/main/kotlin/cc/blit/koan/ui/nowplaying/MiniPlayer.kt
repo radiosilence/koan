@@ -36,6 +36,7 @@ import cc.blit.koan.ffi.PlayState
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.library.PlayingBars
 import cc.blit.koan.ui.navigation.LocalNavigator
+import cc.blit.koan.ui.settings.PlayOnButton
 import cc.blit.koan.ui.settings.Reach
 import cc.blit.koan.ui.settings.controlled
 import cc.blit.koan.ui.theme.KoanButton
@@ -54,10 +55,11 @@ import cc.blit.koan.ui.theme.koanSurface
 import coil3.compose.AsyncImage
 
 /**
- * The transport, phone-sized, above the tabs while something is queued: how
- * far through as an accent line along its top, the sleeve, what is playing
- * beside the music's level,
- * play/pause and next. Tapped or pulled up, it opens Now Playing.
+ * The transport, phone-sized, always above the tabs: how far through as an
+ * accent line along its top, the sleeve, what is playing beside the music's
+ * level, Play on while there is another device, play/pause and next. Tapped or
+ * pulled up, it opens Now Playing. With nothing queued it says so and keeps
+ * Play on, so a phone works as a remote from a cold start, as iOS's does.
  */
 @Composable
 fun MiniPlayer() {
@@ -65,7 +67,7 @@ fun MiniPlayer() {
     val nav = LocalNavigator.current
     val now by app.mirror.nowPlaying.collectAsStateWithLifecycle()
     val devices by app.mirror.devices.collectAsStateWithLifecycle()
-    val entry = now?.entry ?: return
+    val entry = now?.entry
     val playing = now?.state == PlayState.PLAYING
     val tokens = LocalKoanTokens.current
     val openAt = with(LocalDensity.current) { 48.dp.toPx() }
@@ -74,9 +76,10 @@ fun MiniPlayer() {
         Modifier
             .koanSurface()
             .koanRule(KoanEdge.Top)
-            .clickable(remember { MutableInteractionSource() }, indication = null, onClickLabel = "Open Now Playing") { nav.openNowPlaying() }
+            .clickable(remember { MutableInteractionSource() }, indication = null, enabled = entry != null, onClickLabel = "Open Now Playing") { nav.openNowPlaying() }
             .draggable(
                 orientation = Orientation.Vertical,
+                enabled = entry != null,
                 state = rememberDraggableState { dy -> pulled += dy },
                 onDragStarted = { pulled = 0f },
                 onDragStopped = { velocity -> if (pulled < -openAt || velocity < -1500f) nav.openNowPlaying() },
@@ -88,13 +91,13 @@ fun MiniPlayer() {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val sleeve = Modifier.size(tokens.thumb).clip(if (KoanTheme.isOn) RectangleShape else RoundedCornerShape(6.dp))
-            entry.art(ArtSize.Thumb)?.let { AsyncImage(it, null, sleeve) }
+            entry?.art(ArtSize.Thumb)?.let { AsyncImage(it, null, sleeve) }
                 ?: Box(sleeve.background(KoanTheme.color(KoanTone.Rule)))
             Spacer(Modifier.width(KoanSpace.m))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(KoanSpace.s)) {
                     PlayingBars(playing, size = 10.dp, color = KoanTheme.color(if (playing) KoanTone.Accent else KoanTone.Muted))
-                    KoanText(entry.title, role = KoanType.Meta, tone = KoanTone.Strong, maxLines = 1)
+                    KoanText(entry?.title ?: KoanTheme.label("Nothing playing"), role = KoanType.Meta, tone = if (entry == null) KoanTone.Muted else KoanTone.Strong, maxLines = 1)
                 }
                 // Where it is playing matters more than who by, when it is not here.
                 val c = controlled(devices)
@@ -104,17 +107,20 @@ fun MiniPlayer() {
                         KoanIcon(KoanIcons.devices, contentDescription = null, size = 12.sp, color = KoanTheme.color(tone))
                         KoanText(c.headline, role = KoanType.Fine, tone = tone, maxLines = 1)
                     }
-                    entry.artist.isNotEmpty() -> KoanText(entry.artist, role = KoanType.Fine, tone = KoanTone.Muted, maxLines = 1)
+                    !entry?.artist.isNullOrEmpty() -> KoanText(entry!!.artist, role = KoanType.Fine, tone = KoanTone.Muted, maxLines = 1)
                 }
             }
-            KoanButton(app.player::togglePlayPause, kind = KoanButtonKind.Icon) {
+            // Reachable with nothing playing here, which is when a phone is
+            // most likely to be wanted as a remote.
+            if (devices.target != null || devices.devices.isNotEmpty()) PlayOnButton(labelled = false)
+            KoanButton(app.player::togglePlayPause, kind = KoanButtonKind.Icon, enabled = entry != null) {
                 if (now?.waiting == true) {
                     CircularProgressIndicator(Modifier.size(18.dp), color = KoanTheme.color(KoanTone.Ink), strokeWidth = 2.dp)
                 } else {
                     KoanIcon(if (playing) KoanIcons.pause else KoanIcons.play, if (playing) "Pause" else "Play", size = 18.sp)
                 }
             }
-            KoanButton(app.player::next, kind = KoanButtonKind.Icon) {
+            KoanButton(app.player::next, kind = KoanButtonKind.Icon, enabled = entry != null) {
                 KoanIcon(KoanIcons.next, "Next", size = 16.sp)
             }
         }
