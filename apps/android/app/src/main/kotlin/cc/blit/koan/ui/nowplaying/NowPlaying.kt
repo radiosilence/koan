@@ -75,6 +75,7 @@ import cc.blit.koan.ui.library.PlayableMenu
 import cc.blit.koan.ui.library.TrackHeart
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.settings.OutputButton
+import cc.blit.koan.ui.settings.outputName
 import cc.blit.koan.ui.settings.PlayOnButton
 import cc.blit.koan.ui.theme.KoanBadge
 import cc.blit.koan.ui.theme.KoanButton
@@ -404,8 +405,13 @@ private fun Toggles(now: NowPlaying?, lyrics: Boolean, toggleLyrics: () -> Unit)
             horizontalArrangement = Arrangement.spacedBy(KoanSpace.s, Alignment.End),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            PlayOnButton(Modifier.weight(1f, fill = false))
-            OutputButton(Modifier.weight(1f, fill = false))
+            // Only a named button shares the room, so a bare glyph never
+            // takes a share a name could use.
+            val mirror = koanApp().mirror
+            val controlling = mirror.devices.collectAsStateWithLifecycle().value.target != null
+            val named = outputName(mirror.outputs.collectAsStateWithLifecycle().value) != null
+            PlayOnButton(if (controlling) Modifier.weight(1f, fill = false) else Modifier)
+            OutputButton(if (named) Modifier.weight(1f, fill = false) else Modifier)
             SleepButton(now?.sleep, now?.sleepFading == true)
         }
     }
