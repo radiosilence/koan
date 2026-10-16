@@ -1,0 +1,1 @@
+- **Screenshots in the kōan theme.** The site, README and guides show the Mac, iPhone and Apple TV apps as they are drawn by default, with the EQ page, queue, playlists and artist pages added; the homepage's iPhone and Apple TV strips are carousels that move when asked.
