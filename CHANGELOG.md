@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.62.0
+
+### Added
+
+- **Scrobbling to Last.fm.** Accounts can connect Last.fm on the web UI's Scrobbling page, through Last.fm's own sign-in, and the server sends their plays and now-playing notices as it does for ListenBrainz. The server's admin registers an API key and sets `lastfm.api_key` and `lastfm.secret`, and `sharing.public_url`; connecting sends the last two weeks of history, as Last.fm takes no older plays.
+- **An Android app.** It links the same engine as the Apple apps and has the iPhone's pages: the queue, the library's shelves, records and artists, search with select mode, playlists, downloads and offline mode, history, Now Playing with lyrics and the sleep timer, and Settings down to devices, pairing and EQ. It plays gaplessly, in the background behind a media notification, drawn in the kōan theme or Material You. It is installed from an APK until it is on Google Play; see the Android guide.
+- **Bit-perfect output to USB DACs on Android 14 and later.** When the DAC offers the track's rate and channels unmixed, kōan takes it, opens the stream in an encoding that keeps every bit and shows the playback as bit-perfect; otherwise it plays through Android's mixer and says so. It can be turned off in Playback settings.
+- **The Android mini player is always there.** With nothing queued it says so, and while there is another device it carries Play on, so the phone works as a remote from a cold start, as on iOS.
+- **A play on Android says so at once.** Playing a record or an artist names it, loading, on Now Playing and the mini player from the tap until its tracks are queued, rather than leaving the track it replaces on show; play and pause wait for it.
+- **Send logs from the Android app.** Settings → About → Send logs shares the app's log since it started, with the build, the phone and what it was playing to, so a bug can be reported without a computer. A track that fails to start now says why instead of staying silent.
+- **The Android app shows what it is busy with, and why it could not start.** Signing in, loading the library, syncing and clearing downloads show on a card over every page, as on iOS. An engine that fails to open says so with the reason. Choosing the open tab again returns to its first page and then to its top, and Appearance has the graphics level, which turns the record's colour off or holds it still.
+- **Track info on Android.** Tapping the titles on Now Playing shows what the library knows of the track: the file's tags, the server's entry, its ReplayGain and its ids, selectable to copy. Opening Now Playing looks for renderers, so Output appears when one answers.
+- **Releases carry the Android APK.** Each GitHub release now has `koan-android-arm64.apk` beside the macOS and Linux downloads, signed with a release key that CI builds share, so each one installs over the last. An APK installed before this has to be uninstalled once first.
+
+### Security
+
+- **rustls 0.23.46.** Fixes RUSTSEC-2026-0346 to -0349 in the TLS client every HTTPS request goes through, among them a server able to downgrade later connections to classical key exchange.
+
+### Changed
+
+- **Web icons from the kōan set.** The web UI and share page draw their transport, share, chevron and heart icons from the same SVGs as the apps (`just icons` now emits a Rust module too), replacing hand-drawn glyphs and the share page's emoji skip buttons.
+
+### Fixed
+
+- **Scan and sync can be retriggered after a crash.** A panic in a library scan or remote sync job now ends the job as Failed instead of leaving it Running and blocking every later run.
+- **EQ sync no longer lets a fast clock win.** An edit stamped ahead of the server is counted as made on receipt, so edits from correct clocks made after it still win.
+- **Reconnecting no longer leaks a thread.** The remote link spawned a fresh background wake-up thread on each connect after all links had dropped; it now starts one for the whole process.
+- **New link commands are closed to nearby strangers by default.** The list of commands a device on the local network may send is now an explicit allow-list, so a command added later has to be opted in.
+- **A slow network mount no longer stalls playback.** Checking that queued downloads still exist on disk no longer holds the queue locked while it waits on the filesystem.
+- **Repeat off no longer wraps after starting a new queue.** Playing an album or a shuffled set while repeat was on could still queue a wrap to the first track at the end, because the decoder read the old repeat mode.
+- **Playing when the controlled device is out of reach plays here.** A device controlled from this one and no longer reachable, by the network or the server, used to swallow every play. Now playing a record or playlist, resuming, skipping or adding to the queue does it on this device instead, stops controlling the other, and says so; the network is dialled once more before the device is given up. Pausing or seeking it says it is out of reach. A server's own refusal, such as an expired key, is shown as the server gave it, and Android shows command failures where it showed none.
+- **Play on and Output are separate on Android, as on iOS.** Play on picks the device; Output, its own button on Now Playing, lists where the device in view plays: this phone's route and renderers, or while another device is controlled, that device's outputs with the one in use ticked and the EQ preset each is set to, picked there. The Play on button and the mini player name the controlled device in place of the old "Playing on" strip.
+- **The Android library behaves as iOS's does.** A record's sleeve plays it and opens it, in the album grid, on artist pages and on shelves, and artist rows carry a play button; both ask before replacing a queue with anything in it. Track rows on record pages, shelves and search mark whether a track is downloaded, on the server only, downloading, or failed. A record that cannot be read says so, with Try Again and Go Back, instead of staying blank.
+- **Android picks the server up again after a change of network.** Moving between Wi-Fi and mobile data makes the connections to the server afresh and tries it at once, and a track held up by a server that is not answering shows why in the queue.
+- **Android finds devices on the local network.** kōan devices are found and announced over Android's network service discovery, as the Apple apps do over Bonjour, and UPnP/DLNA renderers are searched for from the Wi-Fi interface. On Android 17 the app asks for the local network permission this needs.
+- **Now Playing on Android follows iOS's choices.** This phone's EQ preset is chosen on Now Playing while it plays; Output shows only with something to pick (a renderer, or the outputs of a device controlled), named only when the music goes somewhere particular, and each output there has its own preset menu. Play on shows once there is another device. Rows in Play on and Output share one leading edge.
+- **Android plays to UPnP/DLNA speakers.** Play on lists the renderers on the network beside this phone's own output, searching as it opens, and says when one is connecting, playing or would not take the music.
+- **Android says where the music plays.** While the phone controls another device, the mini player and Now Playing say "Playing on <device>", or that it is out of reach, with one tap back to the phone. A phone left controlling a Mac it could not reach looked as if it would not play.
+- **Android finds renderers before Now Playing opens.** The app searches for UPnP/DLNA renderers when it opens and once a minute while it is on screen, so the Output button is there for a renderer on a phone that is the only device on the account. Before, the only search ran as Now Playing opened.
+- **Android names its own output.** Output and the now-playing row call the phone's route what it is, the phone speaker, headphones, or a Bluetooth or USB device by its product name, where they said "Android"; the row's buttons are spaced as on iOS and a long name is cut short. EQ profiles chosen per output follow the route, as on iOS.
+- **Playlists refill after signing out and back in.** Forgetting a server's tracks emptied its playlists, and the next sync read them as unchanged and never pulled them again; they are now pulled whole once the library is back.
+- **Signing out ends offline mode.** It stayed on, so the next account signed in showing only what was on the device.
+- **The queue keeps its tracks after a server's tracks are forgotten and synced again.** A queued track could take on another track's cover, favourite and details when the library reused its id; the queue now finds each track again by its uid, and plays a track that is gone from its own file until it returns.
+- **The Mac app can find UPnP renderers and nearby kōans again.** Its bundle declared no local network use, so macOS never asked and dropped the search; it now says why it wants the network and asks, as the iOS app does.
+- **EQ catalogue caches no longer show up in a version-controlled config directory.** The `squig/` and `autoeq/` folders now carry their own `.gitignore`, as `auth/` does, so a config directory kept in git does not need hand-maintained ignore entries for them.
+
 ## 0.61.13
 
 ### Added
