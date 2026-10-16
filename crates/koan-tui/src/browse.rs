@@ -27,7 +27,7 @@ const TILE_MAX_W: u16 = 26;
 const TILE_MIN_W: u16 = 14;
 
 /// Decoded covers kept for tiles before the lot is dropped.
-const THUMB_LIMIT: usize = 320;
+const THUMB_LIMIT: usize = 240;
 
 /// A second click this soon after the first is a double click.
 const DOUBLE_CLICK: Duration = Duration::from_millis(500);
@@ -204,7 +204,7 @@ fn load(album: i64) -> Option<DynamicImage> {
     if let Some(bytes) = local.and_then(|p| koan_core::index::folder_art::cover_art(Path::new(p)))
         && let Ok(img) = image::load_from_memory(&bytes)
     {
-        return Some(img.thumbnail(192, 192));
+        return Some(img.thumbnail(256, 256));
     }
     let remote_id = row.remote_id?;
     let cfg = koan_core::config::Config::cached();
@@ -212,8 +212,8 @@ fn load(album: i64) -> Option<DynamicImage> {
         return None;
     }
     let client = koan_core::helpers::subsonic_client(&cfg)?;
-    let bytes = client.get_cover_art(&remote_id, Some(256)).ok()?;
-    Some(image::load_from_memory(&bytes).ok()?.thumbnail(192, 192))
+    let bytes = client.get_cover_art(&remote_id, Some(320)).ok()?;
+    Some(image::load_from_memory(&bytes).ok()?.thumbnail(256, 256))
 }
 
 /// What the last render laid out, for the keys and the mouse to agree with it.

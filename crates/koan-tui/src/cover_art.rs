@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use image::DynamicImage;
-use ratatui::buffer::Buffer;
+use ratatui::buffer::{Buffer, CellDiffOption};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::widgets::Widget;
@@ -144,7 +144,7 @@ impl Gfx {
                     .new_protocol(
                         img.clone(),
                         Rect::new(0, 0, area.width, area.height),
-                        Resize::Fit(Some(image::imageops::FilterType::Triangle)),
+                        Resize::Scale(Some(image::imageops::FilterType::Triangle)),
                     )
                     .map_or(Drawn::Unsupported, Drawn::Protocol),
                 None => Drawn::Cells(pre_render(img, area.width, area.height, center)),
@@ -160,7 +160,18 @@ impl Gfx {
                 } else {
                     (0, 0)
                 };
-                Image::new(proto).render(Rect::new(area.x + dx, area.y + dy, w, h), buf);
+                let rect = Rect::new(area.x + dx, area.y + dy, w, h);
+                Image::new(proto).render(rect, buf);
+                // Each row of the image is one long string in its first cell,
+                // which ratatui would measure to track the cursor and drift;
+                // newer releases of the crate mark the cell one wide, as here.
+                for y in rect.y..rect.y + rect.height {
+                    if let Some(cell) = buf.cell_mut((rect.x, y)) {
+                        cell.set_diff_option(CellDiffOption::ForcedWidth(
+                            std::num::NonZeroU16::MIN,
+                        ));
+                    }
+                }
             }
             Some(Drawn::Cells(rendered)) => blit(rendered, area, area.height, buf),
             _ => {}
