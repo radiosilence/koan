@@ -65,10 +65,24 @@ final class WalkTests: XCTestCase {
             if !pad { back() }
         }
 
+        for (name, shot) in [
+            ("Favourites", "05b-favourites"), ("Playlists", "05c-playlists"),
+            ("Recently played", "05d-recently-played"), ("History", "05e-history"),
+            ("Downloads", "05f-downloads"),
+        ] where open(page(name)) {
+            pause(3)
+            snap(shot)
+            if !pad { back() }
+        }
+
         // Play whatever the queue holds, then open Now Playing from the mini
         // player that sits over the tab bar.
-        let play = app.buttons[any: "play.fill"].firstMatch
-        if play.waitForExistence(timeout: 3) { play.tap() }
+        // `KOAN_WALK_PLAY=0` leaves the queue as it is, for a library that has
+        // one cued already.
+        if ProcessInfo.processInfo.environment["KOAN_WALK_PLAY"] != "0" {
+            let play = app.buttons[any: "play.fill"].firstMatch
+            if play.waitForExistence(timeout: 3) { play.tap() }
+        }
         pause(4)
         // The mini player: above the tab bar on a phone, at the foot of the
         // detail column on an iPad.
@@ -94,6 +108,14 @@ final class WalkTests: XCTestCase {
             app.swipeUp(velocity: .fast)
             pause(1)
             snap("09b-server-end")
+            back()
+        }
+        if open(app.buttons.matching(NSPredicate(format: "label ==[c] %@", "EQ")).firstMatch) {
+            pause(2)
+            snap("09h-eq")
+            app.swipeUp(velocity: .slow)
+            pause(1)
+            snap("09i-eq-more")
             back()
         }
         // The server's sections, where the server and the account have them.
@@ -125,8 +147,20 @@ final class WalkTests: XCTestCase {
             field.tap()
             field.typeText(ProcessInfo.processInfo.environment["KOAN_WALK_SEARCH"] ?? "gabriel")
             pause(3)
+            // The results are what is worth seeing, not the keyboard over them.
+            let submit = app.keyboards.buttons.matching(NSPredicate(format: "label ==[c] %@", "Search")).firstMatch
+            if submit.exists { submit.tap() }
+            if app.keyboards.count > 0 { app.swipeDown(velocity: .fast) }
+            pause(2)
         }
         snap("08-search")
+        // The artist the search found, as its pill is tapped.
+        let term = ProcessInfo.processInfo.environment["KOAN_WALK_SEARCH"] ?? "gabriel"
+        let pill = app.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] %@", term)).firstMatch
+        if open(pill) {
+            pause(4)
+            snap("08a-artist")
+        }
     }
 
     private func tab(_ name: String) {

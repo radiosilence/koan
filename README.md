@@ -24,7 +24,7 @@ If it gets traction I'll happily look at more platforms like Android, but I'm al
 
 <img alt="Favourites in the macOS app" src="site/public/screens/mac-favourites.webp" width="49%" /> <img alt="An artist page in the macOS app" src="site/public/screens/mac-artist.webp" width="49%" />
 
-<img alt="Now Playing on iPhone" src="site/public/screens/ios-now-playing.webp" width="19%" /> <img alt="An album on iPhone" src="site/public/screens/ios-album.webp" width="19%" /> <img alt="An artist on iPhone" src="site/public/screens/ios-artist.webp" width="19%" /> <img alt="The queue on iPhone, controlling a Mac" src="site/public/screens/ios-queue.webp" width="19%" /> <img alt="The Control sheet on iPhone" src="site/public/screens/ios-control.webp" width="19%" />
+<img alt="Now Playing on iPhone" src="site/public/screens/ios-now-playing.webp" width="19%" /> <img alt="An album on iPhone" src="site/public/screens/ios-album.webp" width="19%" /> <img alt="An artist on iPhone" src="site/public/screens/ios-artist.webp" width="19%" /> <img alt="The queue on iPhone" src="site/public/screens/ios-queue.webp" width="19%" /> <img alt="The EQ page on iPhone" src="site/public/screens/ios-eq.webp" width="19%" />
 
 ## Install
 

@@ -162,54 +162,42 @@
 }
 
 /*
- * The iPhone screenshots under the introduction, and the Apple TV ones in its section, drift past on their own. The
- * track holds the set twice and moves by one set's width, so the loop is seamless. It pauses under the pointer, and
- * stands still, scrollable, for anyone who has asked for reduced motion.
+ * The iPhone screenshots under the introduction, and the Apple TV ones in its section, sit in a row that scrolls by
+ * touch, trackpad, arrow keys or its buttons, and settles on a screenshot. Nothing moves until asked to.
  */
 @layer components {
-  .marquee {
-    overflow: hidden;
-    mask-image: linear-gradient(to right, transparent, #000 6%, #000 94%, transparent);
+  .carousel {
+    position: relative;
   }
 
-  .marquee-track {
-    display: flex;
-    width: max-content;
-    animation: marquee 140s linear infinite;
-  }
-
-  .marquee:hover .marquee-track {
-    animation-play-state: paused;
-  }
-
-  .marquee-set {
+  .carousel-track {
     display: flex;
     gap: 1.25rem;
-    padding-right: 1.25rem;
+    overflow-x: auto;
+    padding: 0 max(1.25rem, calc(50% - 21rem));
+    scroll-padding-inline: max(1.25rem, calc(50% - 21rem));
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .marquee {
-      overflow-x: auto;
-    }
-
-    .marquee-track {
-      animation: none;
-    }
-
-    .marquee-set[aria-hidden] {
-      display: none;
-    }
+  .carousel-track::-webkit-scrollbar {
+    display: none;
   }
 
-  @keyframes marquee {
-    to {
-      transform: translateX(-50%);
-    }
+  .carousel-track > img {
+    scroll-snap-align: start;
+  }
+
+  .carousel-btn {
+    @apply absolute top-1/2 z-10 -mt-5 h-10 w-10 border border-muted bg-bg text-xl leading-none text-ink hover:bg-hover;
+  }
+
+  .carousel-btn[hidden] {
+    display: none;
   }
 
   /* The full-size view any screenshot opens. */
-  main :is(figure, .marquee) img {
+  main :is(figure, .carousel) img {
     cursor: zoom-in;
   }
 

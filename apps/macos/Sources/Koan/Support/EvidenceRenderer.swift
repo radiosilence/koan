@@ -99,6 +99,19 @@ enum EvidenceRenderer {
         if let album = state.player.currentAlbumId {
             windows.append(("window-album", { nav.open(album: album) }))
         }
+        // Pages that need to be told which record, artist, playlist or query:
+        // `KOAN_RENDER_ARTIST` and `KOAN_RENDER_PLAYLIST` are row ids, and
+        // `KOAN_RENDER_SEARCH` the text typed into the field.
+        let environment = ProcessInfo.processInfo.environment
+        if let artist = environment["KOAN_RENDER_ARTIST"].flatMap({ Int64($0) }) {
+            windows.append(("window-artist", { nav.open(artist: artist) }))
+        }
+        if let playlist = environment["KOAN_RENDER_PLAYLIST"].flatMap({ Int64($0) }) {
+            windows.append(("window-playlist", { nav.open(playlist: playlist) }))
+        }
+        if let query = environment["KOAN_RENDER_SEARCH"] {
+            windows.append(("window-search", { state.search.query = query; state.search.schedule() }))
+        }
         // The sidebar on its own as well: a split view's sidebar column is not
         // drawn in a window that is never shown.
         windows.append(("window-sidebar", { nav.show(.albums) }))
@@ -125,6 +138,7 @@ enum EvidenceRenderer {
             $0 == "dark" ? [true] : [false]
         } ?? [false, true]
         for window in windows {
+            state.ui.showLyrics = false
             window.go()
             for dark in schemes {
                 let file = dir.appending(path: "\(window.name)-\(dark ? "dark" : "light").png")
