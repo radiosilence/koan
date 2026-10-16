@@ -229,6 +229,10 @@ The originals are not needed again.
 
 ## The EQ page
 
+![The EQ page on the Mac: a headphone correction and a tuning as curves with their total, and the device and preset chosen above](../../site/public/screens/mac-eq.webp)
+
+![The same page lower down: the chain from music in, through a correction and a tuning, to the output device](../../site/public/screens/mac-eq-target.webp)
+
 The apps' EQ page is the chain a device plays, read top to bottom: music in,
 the correction, the filters' EQs, the device out. **Device** at the top picks
 which device, starting with the output in use; **Preset** sets it from a
@@ -396,6 +400,8 @@ flat, and what each played kept as a preset named for the device, unless it
 was already set from a preset and not changed since.
 
 ## On every device
+
+![The EQ page on an iPhone, for the phone's speaker](../../site/public/screens/ios-eq.webp)
 
 Signed in to a kōan server, an EQ can be kept on every device of the
 account. Each EQ's **Sync** is either **Everywhere** or **This device**,
