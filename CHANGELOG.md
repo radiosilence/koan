@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.62.1
+
+### Added
+
+- **The GraphQL API accepts API keys.** A key sent as `Authorization: Bearer` acts as its account, as on the Subsonic API, so a script or a GraphQL client need not sign in with a password and refresh a token every 15 minutes.
+
+### Changed
+
+- **The Mac's menu bar item shows the kōan ensō.** It drew a music note, which did not say which app it was.
+- **Screenshots in the kōan theme.** The site, README and guides show the Mac, iPhone and Apple TV apps as they are drawn by default, with the EQ page, queue, playlists and artist pages added; the homepage's iPhone and Apple TV strips are carousels that move when asked.
+
+### Fixed
+
+- **Android search headings sit at the start of the page.** The Artists, Albums and Tracks headings in search results were centred.
+
 ## 0.62.0
 
 ### Added
