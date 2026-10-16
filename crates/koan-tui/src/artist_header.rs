@@ -281,8 +281,11 @@ impl ArtistHeader {
         }
         if y < end {
             let mut x = tx;
-            let mut put = |buf: &mut Buffer, text: &str, style: Style| -> Rect {
+            let mut put = |buf: &mut Buffer, text: &str, style: Style, whole: bool| -> Rect {
                 let w = (text.chars().count() as u16).min((area.x + area.width).saturating_sub(x));
+                if whole && (w as usize) < text.chars().count() {
+                    return Rect::default();
+                }
                 buf.set_stringn(x, y, text, w as usize, style);
                 let at = Rect::new(x, y, w, 1);
                 x += w + 2;
@@ -290,20 +293,18 @@ impl ArtistHeader {
             };
             if truncated || self.expanded {
                 let label = if self.expanded { "less" } else { "more" };
-                self.geom.more = put(buf, label, link(hover == Some(HeaderHit::More)));
+                self.geom.more = put(buf, label, link(hover == Some(HeaderHit::More)), false);
             }
             if self.info.as_ref().is_some_and(|i| i.bio_url.is_some()) {
                 self.geom.wiki = put(
                     buf,
                     "from wikipedia",
                     link(hover == Some(HeaderHit::Wikipedia)),
+                    false,
                 );
             }
             if let Some(credit) = self.info.as_ref().and_then(|i| i.image_credit.as_deref()) {
-                let text = format!("photo: {credit}");
-                if x + text.chars().count() as u16 <= area.x + area.width {
-                    put(buf, &text, theme.hint_desc);
-                }
+                put(buf, &format!("photo: {credit}"), theme.hint_desc, true);
             }
         }
     }
