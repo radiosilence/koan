@@ -99,7 +99,6 @@ fun SearchPage() {
     // handler for a tab's root and is asked first.
     if (selection.active) BackHandler { selection.end() }
 
-    var replacing by remember { mutableStateOf<Album?>(null) }
     val shown = results?.takeIf { query.isNotBlank() }
     val searching = query.isNotBlank() && shown?.query != query.trim()
 
@@ -122,15 +121,11 @@ fun SearchPage() {
                 shown == null || (shown.isEmpty && searching) -> Unit
                 shelf == null || shown.isEmpty ->
                     KoanUnavailable("Nothing found", KoanIcons.search, "No artists, albums or tracks match “${shown.query}”.")
-                else -> Found(shown.query, shelf, selection, onSleeve = { album ->
-                    if (app.mirror.queue.value.items.isEmpty()) playRecord(app, nav, album) else replacing = album
-                })
+                else -> Found(shown.query, shelf, selection)
             }
         }
         if (selection.active) SelectionBar(selection)
     }
-
-    replacing?.let { album -> ReplaceQueueDialog(album, onDismiss = { replacing = null }) }
 }
 
 /**
@@ -169,7 +164,7 @@ private fun SearchField(field: TextFieldState, modifier: Modifier) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Found(query: String, shelf: ShelfSummary, selection: Selection<Playable>, onSleeve: (Album) -> Unit) {
+private fun Found(query: String, shelf: ShelfSummary, selection: Selection<Playable>) {
     val nav = LocalNavigator.current
     val search = Shelf.Search(query)
     LazyVerticalGrid(
@@ -192,7 +187,7 @@ private fun Found(query: String, shelf: ShelfSummary, selection: Selection<Playa
         if (shelf.albums.isNotEmpty()) {
             heading("Albums", shelf.albumTotal) { nav.push(AlbumsRoute(search)) }
             items(shelf.albums, key = { "album:${it.id}" }) { album ->
-                AlbumTile(album, selection, onSleeve = { onSleeve(album) })
+                AlbumTile(album, selection)
             }
         }
         if (shelf.tracks.isNotEmpty()) {
@@ -209,42 +204,4 @@ private fun LazyGridScope.heading(title: String, total: ULong, open: () -> Unit)
     item(key = "heading:$title", span = { GridItemSpan(maxLineSpan) }) {
         SectionHead(title, total.toLong(), open)
     }
-}
-
-/** Opens the record and plays it, in place of whatever was queued. */
-private fun playRecord(app: KoanApp, nav: Navigator, album: Album) {
-    nav.push(AlbumRoute(album.id))
-    app.play(Playable.OfAlbum(album))
-}
-
-/**
- * A sleeve tap plays the record, and a queue built up over an evening should
- * not go to a tap meant to open it: with anything queued, ask first.
- */
-@Composable
-private fun ReplaceQueueDialog(album: Album, onDismiss: () -> Unit) {
-    val app = koanApp()
-    val nav = LocalNavigator.current
-    val queued by app.mirror.queue.collectAsStateWithLifecycle()
-    val count = queued.items.size
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { KoanText("Replace the queue?", role = KoanType.TitleSmall, appText = true) },
-        text = { KoanText("Playing this record takes the $count ${if (count == 1) "track" else "tracks"} queued off.") },
-        confirmButton = {
-            KoanButton("Play", {
-                onDismiss()
-                playRecord(app, nav, album)
-            })
-        },
-        dismissButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(KoanSpace.m)) {
-                KoanButton("Cancel", onDismiss)
-                KoanButton("Add to Queue", {
-                    onDismiss()
-                    app.mirror.launch { app.player.enqueue(Playable.OfAlbum(album).trackIds(this)) }
-                })
-            }
-        },
-    )
 }

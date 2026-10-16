@@ -238,15 +238,32 @@ class ShelfModel(mirror: EngineMirror, shelf: Shelf) : ViewModel() {
     )
 }
 
-class AlbumModel(mirror: EngineMirror, albumId: Long) : ViewModel() {
+/** A record's page as read: still reading, read (its `album` `null` when it has left the library), or the read failed. */
+sealed interface AlbumRead {
+    data object Reading : AlbumRead
+
+    data class Read(val page: AlbumPage) : AlbumRead
+
+    data object Failed : AlbumRead
+}
+
+/**
+ * A record's page, read again when the library moves or when asked to after a
+ * failed read. A failure is said as one, never left as a page still reading.
+ */
+class AlbumModel(read: suspend () -> AlbumPage, library: Flow<Long>) : ViewModel() {
     /** Things picked to play or queue together; ends with the page. */
     val selection = playableSelection()
 
-    /** `null` while reading; a page whose `album` is `null` is a record no longer in the library. */
-    val page: StateFlow<AlbumPage?> = held(
-        mirror.library.mapLatest { runCatching { mirror.engine().albumPage(albumId) }.getOrNull() },
-        null,
+    private val attempt = MutableStateFlow(0)
+
+    val page: StateFlow<AlbumRead> = held(
+        combine(library, attempt) { v, a -> v to a }
+            .mapLatest { runCatching { read() }.fold({ AlbumRead.Read(it) }, { AlbumRead.Failed }) },
+        AlbumRead.Reading,
     )
+
+    fun retry() = attempt.update { it + 1 }
 }
 
 data class ArtistRecord(

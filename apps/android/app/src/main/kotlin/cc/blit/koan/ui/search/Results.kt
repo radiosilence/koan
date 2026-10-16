@@ -33,7 +33,9 @@ import cc.blit.koan.ui.library.PlayableMenu
 import cc.blit.koan.ui.library.Selection
 import cc.blit.koan.ui.library.Sleeve
 import cc.blit.koan.ui.library.Tick
+import cc.blit.koan.ui.library.TrackAvailability
 import cc.blit.koan.ui.library.pickable
+import cc.blit.koan.ui.library.rememberPlayNow
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
@@ -80,7 +82,7 @@ internal fun ArtistPill(id: Long, name: String, selection: Selection<Playable>) 
  * artist. While picking, any of it ticks the record.
  */
 @Composable
-internal fun AlbumTile(album: Album, selection: Selection<Playable>, onSleeve: () -> Unit) {
+internal fun AlbumTile(album: Album, selection: Selection<Playable>) {
     val nav = LocalNavigator.current
     val playable = Playable.OfAlbum(album)
     val picked = selection.contains(playable)
@@ -91,7 +93,7 @@ internal fun AlbumTile(album: Album, selection: Selection<Playable>, onSleeve: (
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
-                .pickable(playable, selection, showMenu, onSleeve),
+                .pickable(playable, selection, showMenu, rememberPlayNow(playable)),
         ) {
             Sleeve(Art.album(album.id), Modifier.matchParentSize())
             if (selection.active) {
@@ -139,6 +141,7 @@ internal fun TrackRow(track: Track, selection: Selection<Playable>) {
                 KoanText(track.title, maxLines = 1)
                 KoanText("${track.artistName} — ${track.albumTitle}", role = KoanType.Fine, tone = KoanTone.Muted, maxLines = 1)
             }
+            TrackAvailability(track)
             track.durationMs?.let { KoanText(duration(it), role = KoanType.Fine, tone = KoanTone.Muted) }
         }
         PlayableMenu(playable, menu) { menu = false }
