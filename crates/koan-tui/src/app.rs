@@ -61,22 +61,6 @@ pub enum Mode {
     VizPicker,
 }
 
-/// State for the output device selector modal.
-pub struct DeviceSelectorState {
-    pub devices: Vec<String>,
-    pub cursor: usize,
-    /// Name of the currently active device (for marking).
-    pub current_device: Option<String>,
-    /// The UPnP renderers listed after the local devices, by UDN, in the
-    /// order their labels end `devices`.
-    pub renderers: Vec<String>,
-}
-
-/// How a UPnP renderer is labelled among the output devices.
-fn renderer_label(name: &str) -> String {
-    format!("{name} · UPnP")
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextAction {
     Play,
@@ -307,7 +291,7 @@ pub struct App {
     pub organize: Option<super::organize::OrganizeModalState>,
 
     /// Device selector modal state (when in DeviceSelector mode).
-    pub device_selector: Option<DeviceSelectorState>,
+    pub device_selector: Option<super::device_selector::OutputPicker>,
 
     /// EQ chooser state (when in DspSelector mode).
     pub dsp_selector: Option<super::dsp_selector::DspSelectorState>,
@@ -1989,127 +1973,59 @@ impl App {
     }
 
     fn open_device_selector(&mut self) {
-        match koan_core::audio::list_output_devices() {
-            Ok(devices) => {
-                // "System Default" as first entry, then real devices.
-                let mut device_names: Vec<String> = Vec::with_capacity(devices.len() + 1);
-                device_names.push("System Default".to_string());
-                device_names.extend(devices.iter().map(|d| d.name.clone()));
-
-                // Renderers answer over the next second or two; the list
-                // picks them up as they do (`refresh_device_selector`).
-                koan_core::upnp::discovery::search();
-                let renderers = koan_core::upnp::discovery::renderers();
-                device_names.extend(renderers.iter().map(|r| renderer_label(&r.name)));
-
-                let current = match self.state.renderer() {
-                    Some(output) => Some(renderer_label(&output.name)),
-                    None => koan_core::config::Config::cached()
-                        .playback
-                        .output_device
-                        .clone(),
-                };
-
-                // Position cursor: None (system default) → index 0, else find the device.
-                let cursor = current
-                    .as_ref()
-                    .and_then(|name| device_names.iter().position(|d| d == name))
-                    .unwrap_or(0);
-
-                self.device_selector = Some(DeviceSelectorState {
-                    devices: device_names,
-                    cursor,
-                    current_device: current,
-                    renderers: renderers.into_iter().map(|r| r.udn).collect(),
-                });
-                self.push_mode(Mode::DeviceSelector);
-            }
-            Err(e) => self.say(format!("the output devices could not be listed: {e}")),
-        }
+        self.device_selector = Some(super::device_selector::OutputPicker::open(&self.state));
+        self.push_mode(Mode::DeviceSelector);
     }
 
-    /// Follow renderers coming and going while the selector is open.
+    /// Follow renderers coming and going while the picker is open.
     pub fn refresh_device_selector(&mut self) {
-        let Some(selector) = self.device_selector.as_mut() else {
-            return;
-        };
-        let renderers = koan_core::upnp::discovery::renderers();
-        if renderers
-            .iter()
-            .map(|r| &r.udn)
-            .eq(selector.renderers.iter())
-        {
-            return;
+        if let Some(picker) = self.device_selector.as_mut() {
+            picker.refresh(&self.state);
         }
-        let local = selector.devices.len() - selector.renderers.len();
-        selector.devices.truncate(local);
-        selector
-            .devices
-            .extend(renderers.iter().map(|r| renderer_label(&r.name)));
-        selector.renderers = renderers.into_iter().map(|r| r.udn).collect();
-        selector.cursor = selector
-            .cursor
-            .min(selector.devices.len().saturating_sub(1));
     }
 
     fn handle_device_selector_key(&mut self, key: KeyEvent) {
-        let Some(ref mut selector) = self.device_selector else {
+        let Some(picker) = self.device_selector.as_mut() else {
             return;
         };
+        let picked = picker.handle_key(key);
+        self.apply_output(picked);
+    }
 
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
+    /// Does what the output picker asked.
+    fn apply_output(&mut self, picked: super::device_selector::Picked) {
+        use super::device_selector::Picked;
+        match picked {
+            Picked::Nothing => {}
+            Picked::Close => {
                 self.device_selector = None;
                 self.pop_mode();
             }
-            KeyCode::Up | KeyCode::Char('k') if !selector.devices.is_empty() => {
-                if selector.cursor == 0 {
-                    selector.cursor = selector.devices.len() - 1;
-                } else {
-                    selector.cursor -= 1;
-                }
+            Picked::OpenEq => {
+                self.device_selector = None;
+                self.pop_mode();
+                self.open_dsp_selector();
             }
-            KeyCode::Down | KeyCode::Char('j') if !selector.devices.is_empty() => {
-                if selector.cursor + 1 >= selector.devices.len() {
-                    selector.cursor = 0;
-                } else {
-                    selector.cursor += 1;
-                }
+            Picked::Volume(v) => {
+                self.tx.send(PlayerCommand::SetRendererVolume(v)).ok();
             }
-            KeyCode::Enter => {
-                let idx = selector.cursor;
-                let local = selector.devices.len() - selector.renderers.len();
-                if idx >= local {
-                    let udn = selector.renderers[idx - local].clone();
-                    let label = selector.devices[idx].clone();
-                    selector.current_device = Some(label);
-                    let tx = self.tx.clone();
-                    let choice = koan_core::upnp::choose();
-                    // Opening a session is a few round trips to the renderer.
-                    std::thread::spawn(move || {
-                        if let Err(e) = koan_core::upnp::connect(&udn, choice, &tx) {
-                            log::error!("upnp: {e}");
+            Picked::Choose(output) => {
+                if let Some(p) = self.device_selector.as_mut() {
+                    p.chose(output.clone());
+                }
+                // Taken now, in the order picked: opening a renderer's
+                // session is a few round trips, and a later pick drops it.
+                let choice = koan_core::upnp::choose();
+                let tx = self.tx.clone();
+                std::thread::Builder::new()
+                    .name("koan-output".into())
+                    .spawn(move || {
+                        if let Err(e) = koan_core::remote::outputs::set(output, choice, &tx) {
+                            log::error!("output: {e}");
                         }
-                    });
-                } else if idx == 0 {
-                    koan_core::upnp::choose();
-                    // "System Default" — clear the configured device.
-                    self.tx.send(PlayerCommand::ClearOutputDevice).ok();
-                    if let Some(ref mut sel) = self.device_selector {
-                        sel.current_device = None;
-                    }
-                } else {
-                    let name = selector.devices[idx].clone();
-                    koan_core::upnp::choose();
-                    self.tx
-                        .send(PlayerCommand::SetOutputDevice(name.clone()))
-                        .ok();
-                    if let Some(ref mut sel) = self.device_selector {
-                        sel.current_device = Some(name);
-                    }
-                }
+                    })
+                    .ok();
             }
-            _ => {}
         }
     }
 
@@ -3080,12 +2996,11 @@ impl App {
                                 .as_ref()
                                 .map_or(0, |s| s.top(inner.height as usize));
                             self.apply_dsp(top + row);
-                        } else if let Some(sel) = self.device_selector.as_mut()
-                            && let idx = sel.top(inner.height as usize) + row
-                            && idx < sel.devices.len()
+                        } else if let Some(picker) = self.device_selector.as_mut()
+                            && let Some(idx) = picker.row_at(event.column, event.row)
                         {
-                            sel.cursor = idx;
-                            self.handle_device_selector_key(KeyEvent::from(KeyCode::Enter));
+                            let picked = picker.click(idx);
+                            self.apply_output(picked);
                         }
                     }
                 }
@@ -3097,12 +3012,8 @@ impl App {
                     };
                     if let Some(sel) = self.dsp_selector.as_mut() {
                         sel.move_by(delta);
-                    } else if let Some(sel) = self.device_selector.as_mut()
-                        && !sel.devices.is_empty()
-                    {
-                        sel.cursor = (sel.cursor as isize + delta)
-                            .rem_euclid(sel.devices.len() as isize)
-                            as usize;
+                    } else if let Some(picker) = self.device_selector.as_mut() {
+                        picker.scroll(delta);
                     }
                 }
                 _ => {}

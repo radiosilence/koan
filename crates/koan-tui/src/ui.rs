@@ -5,7 +5,6 @@ use ratatui::widgets::{Clear, Paragraph, Widget};
 
 use super::app::{App, Mode, NavTarget};
 use super::context_menu::{ContextMenuOverlay, context_menu_rect_at};
-use super::device_selector::DeviceSelectorOverlay;
 use super::help_modal::HelpModalOverlay;
 use super::keys::HintBar;
 use super::library::LibraryView;
@@ -443,12 +442,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Device selector overlay.
     if app.mode == Mode::DeviceSelector
-        && let Some(ref selector) = app.device_selector
+        && let Some(picker) = app.device_selector.as_mut()
     {
-        app.layout.selector_area =
-            super::device_selector::device_selector_rect(area, selector.devices.len());
-        let overlay = DeviceSelectorOverlay::new(selector, &app.theme);
-        frame.render_widget(overlay, area);
+        app.layout.selector_area = picker.rect(area);
+        let problem = app.state.renderer().and_then(|r| r.problem);
+        picker.render(area, frame.buffer_mut(), &app.theme, problem.as_deref());
     }
 
     // EQ chooser overlay.
