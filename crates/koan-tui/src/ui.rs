@@ -532,7 +532,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
         app.layout.track_info_area = Rect::new(x, y, popup_width, popup_height);
 
-        let overlay = TrackInfoOverlay::new(&entry, ti_ref, app.art.cover_art.cached(), &app.theme);
+        let overlay = TrackInfoOverlay::new(
+            &entry,
+            ti_ref,
+            app.art.cover_art.cached(),
+            &app.theme,
+            app.art.gfx.squash(),
+        );
         frame.render_widget(overlay, area);
     }
 

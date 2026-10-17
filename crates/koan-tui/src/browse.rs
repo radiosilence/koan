@@ -967,6 +967,7 @@ impl Browse {
         }
         self.ensure_loaded();
         thumbs.begin_frame();
+        gfx.begin_frame();
         self.geom = Geom::default();
         self.render_header(area, buf, theme);
         let body = Rect::new(
@@ -1116,10 +1117,10 @@ impl Browse {
     ) {
         let cols = ((body.width / TILE_MIN_W) as usize).max(1);
         let tile_w = (body.width / cols as u16).min(TILE_MAX_W);
-        // A cell is about twice as tall as wide, so art of `w` columns is
-        // square at `w / 2` rows. Two lines of label under it, and a gap.
+        // Square art, as tall as the terminal's cell makes it. Two lines of
+        // label under it, and a gap.
         let art_w = tile_w.saturating_sub(2).max(1);
-        let art_h = (art_w / 2).max(1);
+        let art_h = gfx.rows_for(art_w);
         let tile_h = art_h + 3;
         // Rows that fit whole, which paging and the cursor keep to; the one
         // after is drawn as far as it reaches.

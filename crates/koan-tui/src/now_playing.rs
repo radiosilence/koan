@@ -169,7 +169,7 @@ pub fn render(buf: &mut Buffer, app: &mut App, area: Rect) {
         return;
     };
 
-    // The cover's column. Cells are about twice as tall as wide.
+    // The cover's column, square in the terminal's cells.
     let mut art_w = match body.width {
         100.. => 36u16,
         70..=99 => 28,
@@ -179,10 +179,10 @@ pub fn render(buf: &mut Buffer, app: &mut App, area: Rect) {
     // The cover takes under half the page's height, so the spectrum and the
     // lyrics keep room under it.
     let max_art_h = (body.height * 9 / 20).clamp(1, body.height.saturating_sub(4).max(1));
-    if art_w / 2 > max_art_h {
-        art_w = max_art_h * 2;
+    if app.art.gfx.rows_for(art_w) > max_art_h {
+        art_w = (f32::from(max_art_h) * 2.0 / app.art.gfx.squash()) as u16;
     }
-    let art_h = (art_w / 2).max(u16::from(art_w > 0));
+    let art_h = app.art.gfx.rows_for(art_w).min(max_art_h.max(1));
     let top_h = art_h.max(8).min(body.height);
     let text_x = body.x + if art_w > 0 { art_w + 2 } else { 0 } + 1;
     let text_w = (body.x + body.width).saturating_sub(text_x);
