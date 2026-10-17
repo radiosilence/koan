@@ -18,6 +18,7 @@ use super::accent::{self, Accent};
 use super::actions_menu::ActionsMenu;
 use super::album_page::{AlbumHit, AlbumPage};
 use super::browse::{self, Browse, Source};
+use super::browse_filter::{FilterPanel, Filters};
 use super::history_page::{HistoryHit, HistoryPage};
 use super::library::{self, LibraryState};
 use super::lyrics::LyricsState;
@@ -26,6 +27,7 @@ use super::picker::{PickerKind, PickerPartKind, PickerState, picker_results_rect
 use super::playlist_modals::{Chooser, NamePrompt, Purpose};
 use super::playlists_page::{ListHit, PlAction, PlaylistHit, PlaylistPage, PlaylistsPage};
 use super::queue;
+use super::search_page::{SearchHit, SearchPage};
 use super::settings_page::{Outcome, Setting, SettingsHit, SettingsPage, Task};
 use super::theme::{Palette, Theme};
 use super::transport::TransportBar;
@@ -53,6 +55,8 @@ pub enum Mode {
     PlaylistChooser,
     /// The things that can be done with what the cursor is on.
     ActionsMenu,
+    /// What narrows the record pages.
+    FilterPanel,
     HelpModal,
     VizPicker,
 }
@@ -133,6 +137,7 @@ pub enum HoverZone {
     Browse(browse::Hit),
     Album(AlbumHit),
     History(HistoryHit),
+    Search(SearchHit),
     Settings(SettingsHit),
     Playlists(ListHit),
     Playlist(PlaylistHit),
@@ -273,11 +278,15 @@ pub struct App {
     /// The EQ that was on before it was bypassed, for the key that puts it back.
     eq_last: Option<String>,
     pub history_page: HistoryPage,
+    pub search_page: SearchPage,
     pub playlists_page: PlaylistsPage,
     pub playlist_page: Option<PlaylistPage>,
     pub name_prompt: Option<NamePrompt>,
     pub chooser: Option<Chooser>,
     pub actions_menu: Option<ActionsMenu>,
+    pub filter_panel: Option<FilterPanel>,
+    /// The filters on the record pages, shared by them as the apps' are.
+    pub browse_filters: Filters,
     pub settings_page: SettingsPage,
     /// A drag that began on a page's scrollbar.
     browse_drag: bool,
@@ -434,11 +443,14 @@ impl App {
             track_details: None,
             eq_last: None,
             history_page: HistoryPage::new(),
+            search_page: SearchPage::new(),
             playlists_page: PlaylistsPage::new(),
             playlist_page: None,
             name_prompt: None,
             chooser: None,
             actions_menu: None,
+            filter_panel: None,
+            browse_filters: Filters::default(),
             settings_page: SettingsPage::new(),
             browse_drag: false,
             thumbs: browse::Thumbs::new(),
@@ -737,6 +749,7 @@ impl App {
             self.history_page.refresh();
         }
         self.artist_page.poll();
+        self.search_page.poll();
 
         // Updated every frame: the analysis thread runs at its own rate, and
         // decay and smoothing run at the TUI frame rate.
@@ -915,6 +928,7 @@ impl App {
             Mode::NamePrompt => self.handle_name_prompt_key(key),
             Mode::PlaylistChooser => self.handle_chooser_key(key),
             Mode::ActionsMenu => self.handle_actions_menu_key(key),
+            Mode::FilterPanel => self.handle_filter_panel_key(key),
             Mode::HelpModal => self.handle_help_modal_key(key),
             Mode::VizPicker => self.handle_viz_picker_key(key),
             Mode::Normal => self.handle_page_key(key),
@@ -934,12 +948,23 @@ impl App {
             Page::Artists => self.library.as_ref().is_some_and(|l| l.filter_active),
             Page::Artist(_) => self.artist_page.filter_active,
             Page::History => self.history_page.filter_active,
+            Page::Search => self.search_page.typing,
             Page::Playlists => self.playlists_page.filter_active,
             Page::Queue
             | Page::NowPlaying
             | Page::Album(_)
             | Page::Playlist(_)
             | Page::Settings => false,
+        }
+    }
+
+    pub fn browse(&self) -> Option<&Browse> {
+        match self.page() {
+            Page::Albums => Some(&self.albums_page),
+            Page::Favourites => Some(&self.favourites_page),
+            Page::Recent => Some(&self.recent_page),
+            Page::Artist(_) => Some(&self.artist_page),
+            _ => None,
         }
     }
 
@@ -965,6 +990,7 @@ impl App {
             Page::Favourites => self.favourites_page.reload(),
             Page::Recent => self.recent_page.reload(),
             Page::History => self.history_page.reload(),
+            Page::Search => self.search_page.open(),
             Page::Playlists => self.playlists_page.reload(),
             Page::Playlist(id) => self.playlist_page = PlaylistPage::load(id),
             Page::Settings => self.settings_page.reload(),
@@ -1074,6 +1100,14 @@ impl App {
                     None => self.handle_transport_key(key),
                 }
             }
+            Page::Search => match self.search_page.handle_key(key) {
+                Some(action) => self.apply_browse(action),
+                None if key.code == KeyCode::Esc => self.leave_page(),
+                None if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) => {
+                    self.navigate_key(&key);
+                }
+                None => self.handle_transport_key(key),
+            },
             Page::History => match self.history_page.handle_key(key) {
                 Some(action) => self.apply_browse(action),
                 None if key.code == KeyCode::Esc => self.leave_page(),
@@ -1237,6 +1271,14 @@ impl App {
                     return;
                 }
             },
+            Purpose::Folder => match super::settings_page::add_folder(&prompt.text) {
+                Ok(path) => format!("added {path}; run scan library to index it"),
+                Err(e) => {
+                    self.name_prompt = Some(prompt);
+                    self.say(e);
+                    return;
+                }
+            },
             Purpose::Rename(id) => match super::playlist_ops::rename(*id, &prompt.text) {
                 Ok(()) => format!("renamed to '{}'", prompt.text.trim()),
                 Err(e) => {
@@ -1248,6 +1290,7 @@ impl App {
         };
         self.pop_mode();
         self.playlists_changed();
+        self.settings_page.reload();
         self.say(said);
     }
 
@@ -1267,6 +1310,91 @@ impl App {
         let lists = super::playlist_ops::list();
         self.chooser = Some(Chooser::new(ids, &lists));
         self.push_mode(Mode::PlaylistChooser);
+    }
+
+    fn close_filter_panel(&mut self) {
+        self.filter_panel = None;
+        self.pop_mode();
+    }
+
+    /// Carries the panel's filters to the record pages.
+    fn filters_changed(&mut self) {
+        let Some(panel) = self.filter_panel.as_ref() else {
+            return;
+        };
+        self.browse_filters = panel.filters.clone();
+        for page in [
+            &mut self.albums_page,
+            &mut self.favourites_page,
+            &mut self.recent_page,
+        ] {
+            page.set_filters(&self.browse_filters);
+        }
+        if let Some(browse) = self.browse_mut() {
+            browse.ensure_loaded();
+        }
+    }
+
+    fn handle_filter_panel_key(&mut self, key: KeyEvent) {
+        let Some(panel) = self.filter_panel.as_mut() else {
+            self.pop_mode();
+            return;
+        };
+        let picking = panel.picking();
+        let changed = match key.code {
+            KeyCode::Esc if picking => {
+                panel.back();
+                false
+            }
+            KeyCode::Esc => {
+                self.close_filter_panel();
+                return;
+            }
+            KeyCode::Up => {
+                panel.move_by(-1);
+                false
+            }
+            KeyCode::Down => {
+                panel.move_by(1);
+                false
+            }
+            KeyCode::Enter if picking => {
+                let at = panel.pick_cursor();
+                panel.choose(at)
+            }
+            KeyCode::Backspace if picking => {
+                panel.backspace();
+                false
+            }
+            KeyCode::Char(c) if picking && !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                panel.type_char(c);
+                false
+            }
+            KeyCode::Char('q') => {
+                self.close_filter_panel();
+                return;
+            }
+            KeyCode::Char('k') => {
+                panel.move_by(-1);
+                false
+            }
+            KeyCode::Char('j') => {
+                panel.move_by(1);
+                false
+            }
+            KeyCode::Left | KeyCode::Char('h') => panel.activate(panel.cursor, false),
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter | KeyCode::Char(' ') => {
+                panel.activate(panel.cursor, true)
+            }
+            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.close_filter_panel();
+                return;
+            }
+            _ => false,
+        };
+        if changed {
+            self.filters_changed();
+        }
     }
 
     fn close_actions_menu(&mut self) {
@@ -1388,33 +1516,49 @@ impl App {
         match outcome {
             Outcome::Changed(setting) => self.apply_setting(setting),
             Outcome::Run(task) => self.run_task(task),
+            Outcome::RemoveFolder(i) => self.remove_folder(i),
         }
     }
 
     /// Starts a scan or a sync on a thread of its own and says how it went.
     fn run_task(&mut self, task: Task) {
+        match task {
+            Task::Scan => self.spawn_task("scanning the library...", super::tasks::scan),
+            Task::Sync => self.spawn_task("syncing with the server...", super::tasks::sync),
+            Task::AddFolder => self.open_name_prompt(Purpose::Folder, String::new()),
+        }
+    }
+
+    /// Takes a library folder out of the config, then forgets its tracks in
+    /// the background: a scan never prunes a folder it is no longer given.
+    fn remove_folder(&mut self, i: usize) {
         if self.task_running {
-            self.status_message = Some((
-                "a scan or sync is already running".into(),
-                std::time::Instant::now(),
-            ));
+            self.say("a scan or sync is already running");
+            return;
+        }
+        match super::settings_page::remove_folder(i) {
+            Ok(path) => {
+                self.settings_page.reload();
+                self.spawn_task("removing the folder's tracks...", move || {
+                    super::tasks::forget(&path)
+                });
+            }
+            Err(e) => self.say(e),
+        }
+    }
+
+    fn spawn_task(&mut self, said: &str, work: impl FnOnce() -> String + Send + 'static) {
+        if self.task_running {
+            self.say("a scan or sync is already running");
             return;
         }
         self.task_running = true;
+        self.say(said);
         let tx = self.task_tx.clone();
-        self.status_message = Some((
-            match task {
-                Task::Scan => "scanning the library...",
-                Task::Sync => "syncing with the server...",
-            }
-            .into(),
-            std::time::Instant::now(),
-        ));
         std::thread::Builder::new()
             .name("koan-task".into())
             .spawn(move || {
-                tx.send(super::tasks::Report::Task(super::tasks::run(task)))
-                    .ok();
+                tx.send(super::tasks::Report::Task(work())).ok();
             })
             .ok();
     }
@@ -1493,6 +1637,10 @@ impl App {
             }
             browse::Action::Info(id) => self.open_track_details(id),
             browse::Action::Choose(ids) => self.open_chooser(ids),
+            browse::Action::OpenFilters => {
+                self.filter_panel = Some(FilterPanel::new(self.browse_filters.clone()));
+                self.push_mode(Mode::FilterPanel);
+            }
             browse::Action::Menu(title, items) => {
                 self.actions_menu = Some(ActionsMenu::new(title, items));
                 self.push_mode(Mode::ActionsMenu);
@@ -2747,6 +2895,37 @@ impl App {
             return;
         }
 
+        if self.mode == Mode::FilterPanel {
+            let area = self.layout.modal_area;
+            let inner = ratatui::layout::Rect::new(
+                area.x + 1,
+                area.y + 1,
+                area.width.saturating_sub(2),
+                area.height.saturating_sub(2),
+            );
+            if let MouseEventKind::Down(MouseButton::Left) = event.kind {
+                if !self.is_in_rect(event.column, event.row, area) {
+                    if !self.filter_panel.as_mut().is_some_and(|p| p.back()) {
+                        self.close_filter_panel();
+                    }
+                } else if self.is_in_rect(event.column, event.row, inner) {
+                    let row = (event.row - inner.y) as usize;
+                    let changed = self.filter_panel.as_mut().is_some_and(|panel| {
+                        if panel.picking() {
+                            let at = panel.pick_top(inner.height as usize) + row;
+                            panel.choose(at)
+                        } else {
+                            panel.activate(row, true)
+                        }
+                    });
+                    if changed {
+                        self.filters_changed();
+                    }
+                }
+            }
+            return;
+        }
+
         if matches!(self.mode, Mode::NamePrompt | Mode::PlaylistChooser) {
             let area = self.layout.modal_area;
             let inner = ratatui::layout::Rect::new(
@@ -3032,6 +3211,18 @@ impl App {
                             }
                         }
                         self.apply_playlist(action);
+                        return;
+                    }
+                    if self.page() == Page::Search {
+                        let mut action = browse::Action::None;
+                        let p = &mut self.search_page;
+                        if p.on_scrollbar(col, row) {
+                            self.browse_drag = true;
+                            p.scroll_to_bar(row);
+                        } else if let Some(hit) = p.hit(col, row) {
+                            action = p.click(hit);
+                        }
+                        self.apply_browse(action);
                         return;
                     }
                     if self.page() == Page::History {
@@ -3384,6 +3575,8 @@ impl App {
                     if let Some(p) = self.playlist_page.as_mut() {
                         p.scroll_to_bar(row);
                     }
+                } else if self.page() == Page::Search {
+                    self.search_page.scroll_to_bar(row);
                 } else if self.page() == Page::History {
                     self.history_page.scroll_to_bar(row);
                 } else if self.page() == Page::Settings {
@@ -3598,6 +3791,8 @@ impl App {
                         if let Some(p) = self.playlist_page.as_mut() {
                             p.scroll_by(-3);
                         }
+                    } else if self.page() == Page::Search {
+                        self.search_page.scroll_by(-3);
                     } else if self.page() == Page::History {
                         self.history_page.scroll_by(-3);
                     } else if self.page() == Page::Settings {
@@ -3634,6 +3829,8 @@ impl App {
                         if let Some(p) = self.playlist_page.as_mut() {
                             p.scroll_by(3);
                         }
+                    } else if self.page() == Page::Search {
+                        self.search_page.scroll_by(3);
                     } else if self.page() == Page::History {
                         self.history_page.scroll_by(3);
                     } else if self.page() == Page::Settings {
@@ -3793,6 +3990,11 @@ impl App {
             } else if let Page::Playlist(_) = self.page() {
                 if let Some(hit) = self.playlist_page.as_ref().and_then(|p| p.hit(col, row)) {
                     self.hover.zone = HoverZone::Playlist(hit);
+                    return;
+                }
+            } else if self.page() == Page::Search {
+                if let Some(hit) = self.search_page.hit(col, row) {
+                    self.hover.zone = HoverZone::Search(hit);
                     return;
                 }
             } else if self.page() == Page::History {

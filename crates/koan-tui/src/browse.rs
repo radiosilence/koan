@@ -19,6 +19,7 @@ use ratatui::text::{Line, Span};
 
 use super::app::PickerAction;
 use super::artist_header::{ArtistHeader, HeaderHit};
+use super::browse_filter::Filters;
 use super::cover_art::{Gfx, album_key};
 use super::theme::Theme;
 use super::transport::format_time;
@@ -94,6 +95,8 @@ pub enum Action {
     Choose(Vec<i64>),
     /// A menu of actions for what the cursor is on, with its heading.
     Menu(String, Vec<(String, Action)>),
+    /// Open the panel of filters.
+    OpenFilters,
     /// Fetch these tracks to this device, or let the copies go.
     Download(Vec<i64>),
     RemoveDownload(Vec<i64>),
@@ -110,6 +113,7 @@ pub enum Hit {
     Sort,
     View,
     Filter,
+    Filters,
     Menu,
     Header(HeaderHit),
 }
@@ -246,6 +250,7 @@ struct Geom {
     sort: Rect,
     view: Rect,
     filter: Rect,
+    filters: Rect,
     menu: Rect,
     /// The scrollbar's column, when the page overflows.
     bar: Rect,
@@ -275,6 +280,8 @@ pub struct Browse {
     order: usize,
     pub filter: String,
     pub filter_active: bool,
+    /// What the filters panel has narrowed the records by.
+    filters: Filters,
     loaded: bool,
     geom: Geom,
     last_click: Option<(usize, Instant)>,
@@ -298,6 +305,7 @@ impl Browse {
             order: 0,
             filter: String::new(),
             filter_active: false,
+            filters: Filters::default(),
             loaded: false,
             geom: Geom::default(),
             last_click: None,
@@ -307,6 +315,19 @@ impl Browse {
     /// Whether the list view holds tracks (a shelf's) rather than records.
     fn tracks_in_list(&self) -> bool {
         self.view == View::List && self.source != Source::Albums
+    }
+
+    /// Whether the filters panel narrows this page: the records of the
+    /// library, not one artist's and not a shelf's tracks.
+    pub fn filterable(&self) -> bool {
+        !matches!(self.source, Source::Artist(_)) && !self.tracks_in_list()
+    }
+
+    pub fn set_filters(&mut self, filters: &Filters) {
+        if self.filters != *filters {
+            self.filters = filters.clone();
+            self.loaded = false;
+        }
     }
 
     /// Reads the listing again. Cheap enough to do whenever the page opens.
@@ -329,6 +350,9 @@ impl Browse {
                 ..Default::default()
             },
         };
+        if self.filterable() {
+            query.filter = self.filters.album_filter();
+        }
         query.filter.on_device |= offline;
         self.albums = queries::list_albums(&db.conn, &query).unwrap_or_default();
         if let Source::Artist(id) = self.source {
@@ -674,6 +698,13 @@ impl Browse {
             }
             KeyCode::Char('a') => return Some(self.play(self.cursor, PickerAction::Append)),
             KeyCode::Char('N') => return Some(self.play(self.cursor, PickerAction::PlayNext)),
+            KeyCode::Char('f') if ctrl => {
+                return Some(if self.filterable() {
+                    Action::OpenFilters
+                } else {
+                    Action::None
+                });
+            }
             KeyCode::Char('f') if self.tracks_in_list() => {
                 return Some(
                     self.track_at_cursor()
@@ -749,6 +780,9 @@ impl Browse {
         if inside(g.filter) {
             return Some(Hit::Filter);
         }
+        if inside(g.filters) {
+            return Some(Hit::Filters);
+        }
         if inside(g.menu) {
             return Some(Hit::Menu);
         }
@@ -820,6 +854,7 @@ impl Browse {
                 self.filter_active = true;
                 Action::None
             }
+            Hit::Filters => Action::OpenFilters,
             Hit::Menu => self.menu(self.cursor),
             Hit::Header(h) => match h {
                 HeaderHit::Play | HeaderHit::Shuffle => {
@@ -996,6 +1031,20 @@ impl Browse {
         if !self.filter_active && self.filter.is_empty() {
             controls.insert(0, (" / filter ".to_string(), Hit::Filter));
         }
+        if self.filterable() {
+            let n = self.filters.count();
+            controls.insert(
+                1.min(controls.len()),
+                (
+                    if n > 0 {
+                        format!(" filters ({n}) ")
+                    } else {
+                        " filters ".to_string()
+                    },
+                    Hit::Filters,
+                ),
+            );
+        }
         let total: u16 = controls.iter().map(|(c, _)| c.chars().count() as u16).sum();
         let rule_end = end.saturating_sub(total).max(x);
         for cx in x..rule_end {
@@ -1007,6 +1056,7 @@ impl Browse {
             match kind {
                 Hit::Sort => self.geom.sort = at,
                 Hit::Filter => self.geom.filter = at,
+                Hit::Filters => self.geom.filters = at,
                 Hit::Menu => self.geom.menu = at,
                 _ => self.geom.view = at,
             }
@@ -1433,6 +1483,20 @@ mod tests {
         let Some(Hit::Menu) = b.hit(b.geom.menu.x, b.geom.menu.y) else {
             panic!("the actions control is a hit");
         };
+    }
+
+    #[test]
+    fn ctrl_f_opens_the_filters_only_where_they_apply() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let ctrl_f = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL);
+        let mut b = browse(3);
+        assert_eq!(b.handle_key(ctrl_f), Some(Action::OpenFilters));
+        b.source = Source::Favourites;
+        b.view = View::List;
+        assert_eq!(b.handle_key(ctrl_f), Some(Action::None));
+        b.source = Source::Artist(1);
+        b.view = View::Tiles;
+        assert_eq!(b.handle_key(ctrl_f), Some(Action::None));
     }
 
     #[test]
