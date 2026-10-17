@@ -4,7 +4,6 @@
 //! adds where it stands in the queue and, while it plays, what the decoder
 //! reports.
 
-use image::DynamicImage;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
@@ -13,7 +12,7 @@ use ratatui::widgets::{Block, Borders, Widget};
 use koan_core::db::queries::{self, TrackMeta};
 use koan_core::player::state::{QueueEntry, QueueEntryStatus, TrackInfo};
 
-use super::cover_art::CoverArt;
+use super::cover_art::{Cover, Gfx};
 use super::text::{fit, width, wrap};
 use super::theme::Theme;
 use super::transport::format_time;
@@ -222,8 +221,8 @@ pub struct TrackInfoOverlay<'a> {
     title: &'a str,
     groups: Groups,
     scroll: usize,
-    /// The cover, and the squash it is drawn with.
-    cover: Option<(&'a DynamicImage, f32)>,
+    /// The cover, and what draws it.
+    cover: Option<(&'a Cover, &'a mut Gfx)>,
     theme: &'a Theme,
 }
 
@@ -232,7 +231,7 @@ impl<'a> TrackInfoOverlay<'a> {
         title: &'a str,
         groups: Groups,
         scroll: usize,
-        cover: Option<(&'a DynamicImage, f32)>,
+        cover: Option<(&'a Cover, &'a mut Gfx)>,
         theme: &'a Theme,
     ) -> Self {
         Self {
@@ -270,20 +269,25 @@ impl Widget for TrackInfoOverlay<'_> {
             return;
         }
 
-        // The cover takes a square at the top left: half blocks give two
-        // pixels a cell vertically, roughly a cell's 2:1 shape.
+        // The cover, square in the terminal's cells, at the top left.
         let mut text = Rect::new(inner.x + 1, inner.y, inner.width - 2, inner.height);
-        if let Some((img, squash)) = self.cover
+        if let Some((cover, gfx)) = self.cover
             && inner.width > 50
         {
-            let side = (inner.height - 1).min(inner.width / 4);
-            CoverArt::new(img)
-                .shaped(squash)
-                .render(Rect::new(inner.x + 1, inner.y, side, side), buf);
+            let tallest = (f32::from(inner.height - 1) * 2.0 / gfx.squash()) as u16;
+            let art_w = (inner.width / 4).min(tallest).max(1);
+            let art_h = gfx.rows_for(art_w).min(inner.height);
+            gfx.draw(
+                cover.key,
+                &cover.image,
+                Rect::new(inner.x + 1, inner.y, art_w, art_h),
+                buf,
+                false,
+            );
             text = Rect::new(
-                inner.x + side + 3,
+                inner.x + art_w + 3,
                 inner.y,
-                inner.width.saturating_sub(side + 4),
+                inner.width.saturating_sub(art_w + 4),
                 inner.height,
             );
         }
@@ -442,15 +446,21 @@ mod tests {
     #[test]
     fn it_draws_at_any_size() {
         let theme = Theme::new(super::super::theme::Palette::Ansi, (125, 211, 167));
-        let cover = DynamicImage::new_rgb8(8, 8);
+        let cover = Cover {
+            key: 1,
+            image: image::DynamicImage::new_rgb8(8, 8),
+            accent: None,
+        };
+        let mut gfx = Gfx::halfblocks();
         let d = details();
         for w in 0..120 {
             for h in 0..30 {
                 let area = Rect::new(0, 0, w, h);
-                for with_cover in [None, Some((&cover, 1.0))] {
+                for with_cover in [false, true] {
                     for scroll in [0, 100] {
                         let mut buf = Buffer::empty(area);
-                        TrackInfoOverlay::new(&d.title, d.groups(), scroll, with_cover, &theme)
+                        let cover = with_cover.then_some((&cover, &mut gfx));
+                        TrackInfoOverlay::new(&d.title, d.groups(), scroll, cover, &theme)
                             .render(area, &mut buf);
                     }
                 }

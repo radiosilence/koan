@@ -18,9 +18,9 @@ use koan_core::player::state::{
     PlaybackState, QueueEntry, QueueEntryStatus, QueueItemId, TrackInfo,
 };
 
-use koan_tui::app::{HoverZone, Mode};
+use koan_tui::app::HoverZone;
 use koan_tui::context_menu::context_menu_rect_at;
-use koan_tui::cover_art::CoverArt;
+use koan_tui::cover_art::Gfx;
 use koan_tui::help_modal::HelpModalOverlay;
 use koan_tui::lyrics::{LyricsPanel, LyricsState};
 use koan_tui::organize::organize_popup_rect;
@@ -190,44 +190,35 @@ fn layout_is_deterministic() {
 // Transport / seek bar
 // ---------------------------------------------------------------------------
 
-/// The click-to-seek hit test uses `bar_metrics`; the bar itself is drawn by
-/// `TransportBar::render`. If those two disagree, clicking seeks to the wrong
-/// place — and it still compiles.
+/// The click-to-seek hit test uses the bar `draw` reports. If that and the
+/// cells drawn disagree, clicking seeks to the wrong place — and it still
+/// compiles.
 #[test]
-fn seek_bar_metrics_match_rendered_bar() {
+fn seek_bar_hits_match_rendered_bar() {
     let info = track_info(215_000);
     let e = entry("Title", QueueEntryStatus::Playing);
     let theme = Theme::default();
 
     for width in [20u16, 40, 60, 80, 120, 200] {
         let area = Rect::new(0, 0, width, 3);
-        let (bar_start, bar_width) = TransportBar::bar_metrics(area, 107_500, 215_000);
-
-        let buf = render_widget(
-            TransportBar::new(
-                Some(&info),
-                Some(&e),
-                PlaybackState::Playing,
-                107_500,
-                &theme,
-            ),
-            width,
-            3,
-        );
-
-        // Column 0..4 is " " + 2-cell status icon + " ".
-        let prefix: String = (0..4.min(width))
-            .map(|x| buf[(x, 0)].symbol())
-            .collect::<Vec<_>>()
-            .concat();
-        assert_eq!(&prefix[..1], " ", "width={width}");
-        assert_eq!(bar_start, 4, "width={width}");
-
+        let mut buf = Buffer::empty(area);
+        let hits = TransportBar::new(
+            Some(&info),
+            Some(&e),
+            PlaybackState::Playing,
+            107_500,
+            &theme,
+        )
+        .draw(area, &mut buf);
+        let bar = hits.seek;
+        if bar.width == 0 {
+            continue;
+        }
         // Every cell inside the reported bar span is a bar glyph — filled,
         // empty, or the one that marks the playhead.
         let mut heads = 0;
-        for x in bar_start..bar_start + bar_width {
-            let sym = buf[(x, 0)].symbol();
+        for x in bar.x..bar.x + bar.width {
+            let sym = buf[(x, bar.y)].symbol();
             heads += usize::from(sym == "\u{25CF}");
             assert!(
                 sym == "\u{2501}" || sym == "\u{2500}" || sym == "\u{25CF}",
@@ -235,14 +226,12 @@ fn seek_bar_metrics_match_rendered_bar() {
             );
         }
         assert_eq!(heads, 1, "width={width}");
-        // The cell just past the bar is the separating space, not a bar glyph.
-        if bar_start + bar_width < width {
-            assert_eq!(
-                buf[(bar_start + bar_width, 0)].symbol(),
-                " ",
-                "width={width}"
-            );
-        }
+        assert_eq!(
+            buf[(bar.x + bar.width, bar.y)].symbol(),
+            " ",
+            "width={width}"
+        );
+        assert_eq!(buf[(bar.x - 1, bar.y)].symbol(), " ", "width={width}");
     }
 }
 
@@ -260,7 +249,6 @@ fn transport_survives_every_size_and_title() {
             ] {
                 render_widget(
                     TransportBar::new(Some(&info), Some(&e), state, 107_500, &theme)
-                        .with_ticker_offset(7)
                         .with_seekable_ms(Some(86_000)),
                     w,
                     h,
@@ -307,11 +295,11 @@ fn queue_survives_every_size_and_title() {
 
     let layout = queue::Layout::build(&entries, true);
     for &(w, h) in SIZES {
-        for mode in [Mode::Normal, Mode::QueueEdit] {
+        {
             // Cursor and scroll offset past the end must not index out of bounds.
             for (cursor, scroll) in [(0, 0), (3, 1), (entries.len(), entries.len() + 5)] {
                 render_widget(
-                    QueueView::new(&entries, &layout, &mode, cursor, scroll, &theme)
+                    QueueView::new(&entries, &layout, cursor, scroll, &theme)
                         .with_selected(&selected)
                         .with_spinner(3)
                         .with_drop_indicator(Some(2))
@@ -327,9 +315,8 @@ fn queue_survives_every_size_and_title() {
 
 fn render_empty_queue(w: u16, h: u16) {
     let theme = Theme::default();
-    let mode = Mode::Normal;
     let layout = queue::Layout::default();
-    render_widget(QueueView::new(&[], &layout, &mode, 0, 0, &theme), w, h);
+    render_widget(QueueView::new(&[], &layout, 0, 0, &theme), w, h);
 }
 
 #[test]
@@ -522,13 +509,19 @@ fn cover_art_halfblock_fills_expected_cells() {
         image::Rgba([200, 30, 90, 255]),
     ));
 
+    let mut gfx = Gfx::halfblocks();
+    let mut draw = |w: u16, h: u16| {
+        let area = Rect::new(0, 0, w, h);
+        let mut buf = Buffer::empty(area);
+        gfx.draw(1, &img, area, &mut buf, true);
+        buf
+    };
     for &(w, h) in SIZES {
-        let buf = render_widget(CoverArt::new(&img), w, h);
-        assert_eq!(buf.area, Rect::new(0, 0, w, h), "size=({w},{h})");
+        assert_eq!(draw(w, h).area, Rect::new(0, 0, w, h), "size=({w},{h})");
     }
 
     // At a comfortable size the art must actually paint halfblocks, not spaces.
-    let buf = render_widget(CoverArt::new(&img), 20, 10);
+    let buf = draw(20, 10);
     let painted = (0..10)
         .flat_map(|y| (0..20).map(move |x| (x, y)))
         .filter(|&(x, y)| buf[(x, y)].symbol() == "\u{2580}")
@@ -543,7 +536,7 @@ fn cover_art_halfblock_fills_expected_cells() {
 #[test]
 fn overlays_survive_every_size() {
     let theme = Theme::default();
-    let viz = VizPickerState::new(VisualizerMode::Bars);
+    let viz = VizPickerState::new(VisualizerMode::Bars, true);
     for &(w, h) in SIZES {
         for scroll in [0, usize::MAX] {
             render_widget(HelpModalOverlay::new(&theme, scroll), w, h);

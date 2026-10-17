@@ -33,6 +33,10 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
     /// from it is a *move*, and since a playlist may hold the same track twice,
     /// only the position says which copy moved.
     var origin: Origin?
+    /// Its place among the items of one drag. A drop hands its items over in
+    /// whatever order they finished loading, so the order they were dragged in
+    /// travels with them — see `inDragOrder`.
+    var place: Int?
 
     struct Origin: Codable, Hashable {
         let playlistId: Int64
@@ -60,8 +64,20 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
 
     var key: Playable.Key { Playable.Key(kind: kind, id: id) }
 
+    /// The transfers for a drag of several playables, each knowing its place.
+    static func dragging(_ playables: [Playable]) -> [PlayableTransfer] {
+        playables.enumerated().map { PlayableTransfer($1).placed($0) }
+    }
+
+    func placed(_ place: Int) -> PlayableTransfer {
+        var placed = self
+        placed.place = place
+        return placed
+    }
+
     init(_ playable: Playable) {
         origin = nil
+        place = nil
         switch playable {
         case .track(let track):
             kind = .track
@@ -97,6 +113,16 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
         case .file:
             return (try? await engine.importFiles(paths: [name]))?.trackIds ?? []
         }
+    }
+}
+
+extension [PlayableTransfer] {
+    /// Back in the order they were dragged in. Items without a place keep
+    /// theirs, after the placed ones.
+    var inDragOrder: [PlayableTransfer] {
+        enumerated()
+            .sorted { ($0.element.place ?? .max, $0.offset) < ($1.element.place ?? .max, $1.offset) }
+            .map(\.element)
     }
 }
 

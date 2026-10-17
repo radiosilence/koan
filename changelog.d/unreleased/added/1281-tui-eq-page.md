@@ -1,0 +1,1 @@
+- **An EQ page in the terminal UI.** `E` opens it: what the output plays through, with its correction and EQs, plotted together, and the presets to choose from.

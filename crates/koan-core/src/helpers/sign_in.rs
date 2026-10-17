@@ -256,7 +256,7 @@ pub fn server_unreachable() -> Option<String> {
 /// The device moved to another network, or lost or regained one: what was
 /// learnt about reaching the server belongs to the last one. Connections are
 /// made afresh, a server that was not answering is tried now, and the other
-/// devices are looked for again.
+/// devices are looked for again where `quiet` and `devices.nearby` allow it.
 pub fn network_changed() {
     let client = SUBSONIC_CLIENT.lock().as_ref().map(|(_, c)| c.clone());
     if let Some(client) = client {

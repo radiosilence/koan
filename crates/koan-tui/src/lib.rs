@@ -38,6 +38,7 @@ pub mod playlist_ops;
 pub mod playlists_page;
 pub mod queue;
 pub mod remote_bridge;
+pub mod replace_dialog;
 pub mod rows;
 pub mod settings_page;
 pub mod shelf_page;

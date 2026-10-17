@@ -1,15 +1,21 @@
-use std::cell::Cell;
+//! The transport, as the Mac's bar lays it out: what is playing on the left,
+//! the controls and the seek bar in the middle, and on the right what the
+//! output is handed and where it goes. Every part of it is a click as well as
+//! a key.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
+use unicode_width::UnicodeWidthStr;
 
 use koan_core::audio::dsp::DspStatus;
-use koan_core::player::state::{PlaybackState, QueueEntry, Sleep, TrackInfo};
+use koan_core::player::state::{PlaybackState, QueueEntry, Repeat, Sleep, TrackInfo};
 use koan_core::remote::devices::Reach;
 
+use super::shell::{Link, Links};
+use super::text::fit;
 use super::theme::Theme;
 
 /// Format audio quality info as a human-readable string.
@@ -21,7 +27,6 @@ use super::theme::Theme;
 /// resampled audio, and the one claim this player cannot afford to leave
 /// unqualified is the one about what reaches the DAC. DSP is named for the
 /// same reason.
-#[allow(clippy::manual_is_multiple_of)]
 pub fn format_quality(
     info: &TrackInfo,
     output_rate: Option<u32>,
@@ -38,11 +43,41 @@ pub fn format_quality(
     format!("{}{}{}", format_source(info), resampled, processed)
 }
 
-fn dsp_label(d: &DspStatus) -> &'static str {
+pub fn dsp_label(d: &DspStatus) -> &'static str {
     match (d.eq, d.convolution_rate.is_some()) {
         (true, true) => "EQ + FIR",
         (false, true) => "FIR",
         _ => "EQ",
+    }
+}
+
+/// The format badge the apps show: codec, depth over rate in kHz, and the
+/// rate the device was given where it differs.
+pub fn badge(info: &TrackInfo, output_rate: Option<u32>) -> String {
+    // Another device's track, which says only where it plays.
+    if info.sample_rate == 0 {
+        return info.codec.clone();
+    }
+    let mut s = info.codec.to_uppercase();
+    match info.bit_depth {
+        Some(depth) => s.push_str(&format!(" {depth}/{}", khz(info.sample_rate))),
+        None => s.push_str(&format!(" {} kHz", khz(info.sample_rate))),
+    }
+    if info.channels != 2 {
+        s.push_str(&format!(" {}ch", info.channels));
+    }
+    if let Some(out) = output_rate.filter(|&out| out != info.sample_rate) {
+        s.push_str(&format!(" → {}", khz(out)));
+    }
+    s
+}
+
+/// 44100 as "44.1", 96000 as "96".
+pub fn khz(hz: u32) -> String {
+    if hz.is_multiple_of(1000) {
+        format!("{}", hz / 1000)
+    } else {
+        format!("{:.1}", f64::from(hz) / 1000.0)
     }
 }
 
@@ -106,10 +141,11 @@ const HEAD: &str = "\u{25CF}";
 /// The seek bar as cell counts, either side of the playhead: what has played,
 /// what can still be reached, and what has not arrived yet. The three plus the
 /// head fill the bar exactly.
-struct BarRegions {
-    played: usize,
-    reachable: usize,
-    pending: usize,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BarRegions {
+    pub played: usize,
+    pub reachable: usize,
+    pub pending: usize,
 }
 
 impl BarRegions {
@@ -120,7 +156,12 @@ impl BarRegions {
     /// that a track already on disk — the ordinary case — draws as the
     /// ordinary bar, and a download finishing changes nothing about it. Lit
     /// the other way round, a bar goes dark the moment its transfer completes.
-    fn new(bar_width: usize, position_ms: u64, duration_ms: u64, seekable_ms: Option<u64>) -> Self {
+    pub fn new(
+        bar_width: usize,
+        position_ms: u64,
+        duration_ms: u64,
+        seekable_ms: Option<u64>,
+    ) -> Self {
         if bar_width == 0 {
             return Self {
                 played: 0,
@@ -151,129 +192,321 @@ impl BarRegions {
     }
 }
 
-pub struct TransportBar<'a> {
-    track_info: Option<&'a TrackInfo>,
-    playing_entry: Option<&'a QueueEntry>,
-    playback_state: PlaybackState,
+/// The seek bar, `elapsed ━━━●──── duration`, into `area`'s first row. Both
+/// times take the width of the longer, so the bar holds still as they count.
+/// Returns where the bar itself is, for a click to seek.
+pub fn seek_bar(
+    area: Rect,
+    buf: &mut Buffer,
+    theme: &Theme,
     position_ms: u64,
-    theme: &'a Theme,
-    ticker_offset: usize,
-    /// How far into the track a seek can land. `None` once the whole track is
-    /// reachable, which is every track that is not mid-download.
+    duration_ms: u64,
     seekable_ms: Option<u64>,
-    /// What the output device settled at. None until a track has started.
-    output_rate: Option<u32>,
-    dsp: Option<DspStatus>,
-    sleep: Option<Sleep>,
-    sleep_fading: bool,
-    levels: Option<[f32; MINI_BARS]>,
-    /// Where the EQ label was drawn, for a click on it.
-    eq_hit: Option<&'a Cell<Rect>>,
-    /// The device being controlled, while it cannot be reached at once.
-    unreachable: Option<(&'a str, &'a Reach)>,
+) -> Rect {
+    let total = format_time(duration_ms);
+    let elapsed = format_time(position_ms.min(duration_ms.max(position_ms)));
+    let time_w = total.width().max(elapsed.width());
+    let bar_w = area.width.saturating_sub(2 * time_w as u16 + 2);
+    if area.width == 0 || area.height == 0 {
+        return Rect::default();
+    }
+    if bar_w < 4 {
+        let line = format!("{elapsed} / {total}");
+        buf.set_stringn(area.x, area.y, &line, area.width as usize, theme.hint_desc);
+        return Rect::default();
+    }
+    let bar = BarRegions::new(bar_w as usize, position_ms, duration_ms, seekable_ms);
+    let line = Line::from(vec![
+        Span::styled(format!("{elapsed:>time_w$} "), theme.hint_desc),
+        Span::styled("\u{2501}".repeat(bar.played), theme.progress_filled),
+        Span::styled(HEAD, theme.progress_filled),
+        Span::styled("\u{2500}".repeat(bar.reachable), theme.progress_empty),
+        Span::styled(
+            "\u{2500}".repeat(bar.pending),
+            theme.progress_empty.add_modifier(Modifier::DIM),
+        ),
+        Span::styled(format!(" {total:<time_w$}"), theme.hint_desc),
+    ]);
+    buf.set_line(area.x, area.y, &line, area.width);
+    Rect::new(area.x + time_w as u16 + 1, area.y, bar_w, 1)
+}
+
+/// Seeks from a click on the bar `seek_bar` drew. `seekable_ms` is the
+/// engine's own ceiling, so a click past the downloaded extent lands where
+/// playback will be rather than being refused.
+pub fn seek_from_click(
+    bar: Rect,
+    click_x: u16,
+    duration_ms: u64,
+    seekable_ms: Option<u64>,
+) -> Option<u64> {
+    if bar.width == 0 || click_x < bar.x || click_x >= bar.x + bar.width {
+        return None;
+    }
+    // The middle of the cell, so the head lands on the cell clicked.
+    let frac = (f64::from(click_x - bar.x) + 0.5) / f64::from(bar.width);
+    let pos = (frac * duration_ms as f64) as u64;
+    Some(pos.min(seekable_ms.unwrap_or(u64::MAX)))
+}
+
+/// What a click on a part of the transport, or of Now playing, does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Control {
+    PlayPause,
+    Previous,
+    Next,
+    Shuffle,
+    Repeat,
+    /// The playing track's heart.
+    Favourite,
+    Sleep,
+    /// The output chooser.
+    Output,
+    /// The chooser of which device to control.
+    PlayOn,
+    /// The EQ chooser.
+    Eq,
+    /// The cover, full size.
+    Cover,
+}
+
+/// Where each control was drawn, and the seek bar.
+#[derive(Debug, Default, Clone)]
+pub struct Hits {
+    pub controls: Vec<(Rect, Control)>,
+    pub seek: Rect,
+}
+
+impl Hits {
+    pub fn at(&self, x: u16, y: u16) -> Option<Control> {
+        self.controls
+            .iter()
+            .find(|(r, _)| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height)
+            .map(|&(_, c)| c)
+    }
+}
+
+/// What a piece of a row does when clicked: presses a control, or follows a
+/// link to a page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Act {
+    Press(Control),
+    Go(Link),
+}
+
+pub(crate) fn press(c: Control) -> Option<Act> {
+    Some(Act::Press(c))
+}
+
+/// A row's pieces, each optionally a control or a link.
+pub(crate) type Parts<'a> = Vec<(Span<'a>, Option<Act>)>;
+
+/// Spans laid along a row from `x`, each optionally a control. Returns the
+/// row's width.
+pub(crate) fn place(
+    buf: &mut Buffer,
+    hits: &mut Vec<(Rect, Control)>,
+    links: &Links,
+    (x, y): (u16, u16),
+    max: u16,
+    parts: &[(Span<'_>, Option<Act>)],
+) -> u16 {
+    let mut at = x;
+    for (span, act) in parts {
+        let room = (x + max).saturating_sub(at);
+        if room == 0 {
+            break;
+        }
+        at += match act {
+            Some(Act::Go(link)) => links.draw(buf, at, y, &span.content, room, span.style, *link),
+            _ => {
+                let text = fit(&span.content, room as usize);
+                let w = text.width() as u16;
+                buf.set_stringn(at, y, &text, room as usize, span.style);
+                if let Some(Act::Press(c)) = act {
+                    hits.push((Rect::new(at, y, w, 1), *c));
+                }
+                w
+            }
+        };
+    }
+    at - x
+}
+
+/// The width `parts` take.
+pub(crate) fn width_of(parts: &[(Span<'_>, Option<Act>)]) -> u16 {
+    parts.iter().map(|(s, _)| s.width() as u16).sum()
+}
+
+/// The five transport controls: shuffle and repeat either side of previous,
+/// play or pause, and next. Play is the accent, as the apps' outlined button
+/// is the one prominent control.
+pub(crate) fn controls(
+    theme: &Theme,
+    playing: bool,
+    shuffle: bool,
+    repeat: Repeat,
+    gap: &'static str,
+) -> Parts<'static> {
+    let lit = |on: bool| {
+        if on {
+            Style::new().fg(theme.tokens.accent)
+        } else {
+            theme.hint_desc
+        }
+    };
+    let repeat_glyph = if repeat == Repeat::One {
+        "\u{21BB}1"
+    } else {
+        "\u{21BB}"
+    };
+    vec![
+        (
+            Span::styled("\u{21C4}", lit(shuffle)),
+            press(Control::Shuffle),
+        ),
+        (Span::raw(gap), None),
+        (
+            Span::styled("|\u{25C2}", theme.track_normal),
+            press(Control::Previous),
+        ),
+        (Span::raw(gap), None),
+        (
+            Span::styled(
+                if playing { "\u{2016}" } else { "\u{25B6}" },
+                Style::new()
+                    .fg(theme.tokens.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            press(Control::PlayPause),
+        ),
+        (Span::raw(gap), None),
+        (
+            Span::styled("\u{25B8}|", theme.track_normal),
+            press(Control::Next),
+        ),
+        (Span::raw(gap), None),
+        (
+            Span::styled(repeat_glyph, lit(repeat != Repeat::Off)),
+            press(Control::Repeat),
+        ),
+    ]
+}
+
+/// The sleep timer as the apps show it: the moon, and what is left or what it
+/// waits for.
+pub(crate) fn sleep_label(sleep: Option<Sleep>, fading: bool) -> String {
+    let what = match sleep {
+        _ if fading => "fading".to_string(),
+        Some(Sleep::At { unix_ms }) => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            format_time(unix_ms.saturating_sub(now))
+        }
+        Some(Sleep::EndOfTrack) => "track".into(),
+        Some(Sleep::EndOfRecord) => "album".into(),
+        None => return "\u{263E}".into(),
+    };
+    format!("\u{263E} {what}")
+}
+
+/// Play on: the device being controlled, named and lit, with how it can be
+/// reached when it cannot be at once; this one's own glyph otherwise.
+pub(crate) fn play_on(
+    theme: &Theme,
+    controlled: Option<(&str, &Reach)>,
+) -> (Span<'static>, Option<Act>) {
+    let Some((name, reach)) = controlled else {
+        return (
+            Span::styled("\u{21C6}", theme.hint_desc),
+            press(Control::PlayOn),
+        );
+    };
+    let soft = Style::new().fg(theme.warning);
+    let (text, style) = match reach {
+        Reach::Connected => (
+            format!("\u{21C6} {name}"),
+            Style::new().fg(theme.tokens.accent),
+        ),
+        Reach::Asleep => (format!("\u{263E} {name} asleep; a command wakes it"), soft),
+        Reach::Waking => (format!("\u{263E} waking {name}"), soft),
+        Reach::Reconnecting => (format!("\u{26A0} {name} reconnecting"), soft),
+        Reach::OutOfReach(Some(why)) => (
+            format!("\u{26A0} {name} out of reach: {why}"),
+            theme.failed.add_modifier(Modifier::BOLD),
+        ),
+        Reach::OutOfReach(None) => (
+            format!("\u{26A0} {name} out of reach"),
+            theme.failed.add_modifier(Modifier::BOLD),
+        ),
+    };
+    (Span::styled(text, style), press(Control::PlayOn))
 }
 
 /// How many bars the transport's own spectrum has.
 pub const MINI_BARS: usize = 12;
 
-/// The sleep timer as the transport shows it: what is left, or what it
-/// waits for.
-fn sleep_label(sleep: Sleep, fading: bool) -> String {
-    if fading {
-        return "\u{263E} fading".into();
-    }
-    match sleep {
-        Sleep::At { unix_ms } => {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64;
-            format!("\u{263E} {}", format_time(unix_ms.saturating_sub(now)))
-        }
-        Sleep::EndOfTrack => "\u{263E} end of track".into(),
-        Sleep::EndOfRecord => "\u{263E} end of record".into(),
-    }
+/// Under this the transport stacks its parts rather than setting them in
+/// three zones.
+const ZONES_MIN_WIDTH: u16 = 72;
+
+pub struct TransportBar<'a> {
+    pub track_info: Option<&'a TrackInfo>,
+    pub entry: Option<&'a QueueEntry>,
+    pub playback_state: PlaybackState,
+    pub position_ms: u64,
+    pub theme: &'a Theme,
+    /// How far into the track a seek can land. `None` once the whole track is
+    /// reachable, which is every track that is not mid-download.
+    pub seekable_ms: Option<u64>,
+    /// What the output device settled at. None until a track has started.
+    pub output_rate: Option<u32>,
+    pub dsp: Option<DspStatus>,
+    pub sleep: Option<Sleep>,
+    pub sleep_fading: bool,
+    pub shuffle: bool,
+    pub repeat: Repeat,
+    /// Whether the playing track is a favourite; `None` for one the library
+    /// does not hold.
+    pub favourite: Option<bool>,
+    /// What the output is called, when it is worth naming.
+    pub output: Option<String>,
+    /// The device being controlled, by name, and whether it can be reached.
+    pub controlled: Option<(&'a str, &'a Reach)>,
+    /// Where the artist and album links are drawn and looked up.
+    pub links: Option<&'a Links>,
+    pub levels: Option<[f32; MINI_BARS]>,
 }
 
 impl<'a> TransportBar<'a> {
     pub fn new(
         track_info: Option<&'a TrackInfo>,
-        playing_entry: Option<&'a QueueEntry>,
+        entry: Option<&'a QueueEntry>,
         playback_state: PlaybackState,
         position_ms: u64,
         theme: &'a Theme,
     ) -> Self {
         Self {
             track_info,
-            playing_entry,
+            entry,
             playback_state,
             position_ms,
             theme,
-            ticker_offset: 0,
             seekable_ms: None,
             output_rate: None,
             dsp: None,
             sleep: None,
             sleep_fading: false,
+            shuffle: false,
+            repeat: Repeat::Off,
+            favourite: None,
+            output: None,
+            controlled: None,
+            links: None,
             levels: None,
-            eq_hit: None,
-            unreachable: None,
         }
-    }
-
-    /// Warns that the device being controlled is out of reach, or asleep.
-    pub fn with_controlled(mut self, controlled: Option<&'a (String, Reach)>) -> Self {
-        self.unreachable = controlled
-            .filter(|(_, r)| *r != Reach::Connected)
-            .map(|(n, r)| (n.as_str(), r));
-        self
-    }
-
-    /// The warning at the end of the second line, drawn over what is there.
-    fn draw_reach(&self, area: Rect, buf: &mut Buffer) {
-        let Some((name, reach)) = self.unreachable else {
-            return;
-        };
-        if area.height < 2 {
-            return;
-        }
-        let soft = Style::new().fg(self.theme.warning);
-        let (text, style) = match reach {
-            Reach::Connected => return,
-            Reach::Asleep => (
-                format!(" \u{263E} {name} asleep; a command wakes it "),
-                soft,
-            ),
-            Reach::Waking => (format!(" \u{263E} waking {name} "), soft),
-            Reach::Reconnecting => (format!(" \u{26A0} {name} reconnecting "), soft),
-            Reach::OutOfReach(why) => (
-                match why {
-                    Some(why) => format!(" \u{26A0} {name} out of reach: {why} "),
-                    None => format!(" \u{26A0} {name} out of reach "),
-                },
-                self.theme.failed.add_modifier(Modifier::BOLD),
-            ),
-        };
-        let width = text.chars().count() as u16;
-        let x = area.x + area.width.saturating_sub(width);
-        buf.set_stringn(x, area.y + 1, &text, area.width as usize, style);
-    }
-
-    /// Has the bar say where it drew the EQ label.
-    pub fn with_eq_hit(mut self, hit: &'a Cell<Rect>) -> Self {
-        self.eq_hit = Some(hit);
-        self
-    }
-
-    /// A small spectrum drawn at the end of the album line, `0.0..=1.0` a bar.
-    pub fn with_levels(mut self, levels: Option<[f32; MINI_BARS]>) -> Self {
-        self.levels = levels;
-        self
-    }
-
-    pub fn with_ticker_offset(mut self, offset: usize) -> Self {
-        self.ticker_offset = offset;
-        self
     }
 
     pub fn with_seekable_ms(mut self, seekable_ms: Option<u64>) -> Self {
@@ -281,304 +514,283 @@ impl<'a> TransportBar<'a> {
         self
     }
 
-    pub fn with_output_rate(mut self, rate: Option<u32>) -> Self {
-        self.output_rate = rate;
-        self
+    /// The duration to draw against: the queue's, from the library, ahead
+    /// of the probed one, which a partial streaming file gives short.
+    fn duration_ms(&self) -> u64 {
+        self.entry
+            .and_then(|e| e.duration_ms)
+            .or(self.track_info.map(|i| i.duration_ms))
+            .unwrap_or(0)
     }
 
-    pub fn with_dsp(mut self, dsp: Option<DspStatus>) -> Self {
-        self.dsp = dsp;
-        self
+    fn heart(&self) -> Option<(Span<'static>, Option<Act>)> {
+        let on = self.favourite?;
+        Some(if on {
+            (
+                Span::styled("\u{2665}", Style::new().fg(self.theme.tokens.accent)),
+                press(Control::Favourite),
+            )
+        } else {
+            (
+                Span::styled("\u{2661}", self.theme.hint_desc),
+                press(Control::Favourite),
+            )
+        })
     }
 
-    pub fn with_sleep(mut self, sleep: Option<Sleep>, fading: bool) -> Self {
-        self.sleep = sleep;
-        self.sleep_fading = fading;
-        self
-    }
-
-    /// Compute the seek bar start (absolute x) and width for the given area.
-    /// Call this before render and store the results for click-to-seek.
-    pub fn bar_metrics(area: Rect, position_ms: u64, duration_ms: u64) -> (u16, u16) {
-        let time_width =
-            format!("{}/{}", format_time(position_ms), format_time(duration_ms)).len() as u16;
-        let chrome_width = 1 + 2 + 1 + 1 + time_width;
-        let bar_start = area.x + 4;
-        let bar_width = area.width.saturating_sub(chrome_width);
-        (bar_start, bar_width)
-    }
-
-    /// Seek from a click using the bar metrics stored from the last render.
-    /// This guarantees the click handler uses the exact same bar layout as what's on screen.
-    /// `seekable_ms` is the engine's own ceiling, so a click past the downloaded
-    /// extent lands where playback will actually be rather than being refused.
-    pub fn seek_from_click(
-        bar_start: u16,
-        bar_width: u16,
-        click_x: u16,
-        duration_ms: u64,
-        seekable_ms: Option<u64>,
-    ) -> Option<u64> {
-        let bar_end = bar_start + bar_width;
-        if click_x < bar_start || click_x >= bar_end || bar_width == 0 {
-            return None;
+    /// The title, then the artist and the album as links.
+    fn names(&self) -> (String, Vec<(Span<'a>, Option<Act>)>) {
+        let theme = self.theme;
+        let Some(entry) = self.entry else {
+            let title = self
+                .track_info
+                .and_then(|i| i.path.file_stem())
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            return (title, Vec::new());
+        };
+        let go = |link: fn(i64) -> Link| entry.db_id.map(|id| Act::Go(link(id)));
+        let mut by = Vec::new();
+        if !entry.artist.is_empty() {
+            by.push((
+                Span::styled(entry.artist.as_str(), theme.track_normal),
+                go(Link::ArtistOfTrack),
+            ));
         }
-        let frac = (click_x - bar_start) as f64 / bar_width as f64;
-        let pos = (frac * duration_ms as f64) as u64;
-        Some(pos.min(seekable_ms.unwrap_or(u64::MAX)))
+        if !entry.album.is_empty() {
+            if !by.is_empty() {
+                by.push((Span::styled(" \u{2014} ", theme.hint_desc), None));
+            }
+            by.push((
+                Span::styled(entry.album.as_str(), theme.track_normal),
+                go(Link::AlbumOfTrack),
+            ));
+        }
+        (entry.title.clone(), by)
+    }
+
+    /// The right-hand parts: the format badge with its EQ, then the sleep
+    /// timer and the output.
+    fn trailing(&self) -> (Parts<'static>, Parts<'static>) {
+        let theme = self.theme;
+        let mut format = Vec::new();
+        if let Some(info) = self.track_info {
+            format.push((
+                Span::styled(badge(info, self.output_rate), theme.hint_desc),
+                None,
+            ));
+        }
+        if let Some(d) = &self.dsp {
+            format.push((Span::styled(" \u{b7} ", theme.hint_desc), None));
+            format.push((
+                Span::styled(dsp_label(d), Style::new().fg(theme.tokens.accent)),
+                press(Control::Eq),
+            ));
+        }
+        let set = self.sleep.is_some() || self.sleep_fading;
+        let mut route = vec![(
+            Span::styled(
+                sleep_label(self.sleep, self.sleep_fading),
+                if set {
+                    Style::new().fg(theme.tokens.accent)
+                } else {
+                    theme.hint_desc
+                },
+            ),
+            press(Control::Sleep),
+        )];
+        route.push((Span::raw("  "), None));
+        route.push(play_on(theme, self.controlled));
+        if let (Some(output), None) = (&self.output, self.controlled) {
+            route.push((Span::raw("  "), None));
+            route.push((
+                Span::styled(format!("\u{25D4} {output}"), theme.hint_desc),
+                press(Control::Output),
+            ));
+        }
+        (format, route)
+    }
+
+    /// Draws the bar and says where its parts are.
+    pub fn draw(self, area: Rect, buf: &mut Buffer) -> Hits {
+        let mut hits = Hits::default();
+        if area.width == 0 || area.height == 0 {
+            return hits;
+        }
+        let unlinked = Links::default();
+        let links = self.links.unwrap_or(&unlinked);
+        let theme = self.theme;
+        let Some(_) = self.track_info else {
+            buf.set_stringn(
+                area.x + 1,
+                area.y,
+                "nothing playing",
+                area.width.saturating_sub(1) as usize,
+                theme.status_stopped,
+            );
+            return hits;
+        };
+        let playing = self.playback_state == PlaybackState::Playing;
+        let duration = self.duration_ms();
+        let (title, by) = self.names();
+        let mut lead: Vec<(Span<'_>, Option<Act>)> = vec![(
+            Span::styled(title, theme.heading.add_modifier(Modifier::BOLD)),
+            None,
+        )];
+        if let Some(heart) = self.heart() {
+            lead.push((Span::raw(" "), None));
+            lead.push(heart);
+        }
+        let (format, route) = self.trailing();
+        let rows = area.height.min(3);
+        let y = |row: u16| area.y + row.min(rows - 1);
+
+        if area.width >= ZONES_MIN_WIDTH {
+            // Three zones: the middle given its width, the sides what is left
+            // in equal shares, so the controls stay centred.
+            let gap = 2;
+            let centre_w = (area.width * 2 / 5).clamp(30, 64);
+            let side_w = (area.width - centre_w - 2 * gap) / 2;
+            let left = area.x + 1;
+            let centre = area.x + (area.width - centre_w) / 2;
+            let right_end = area.x + area.width - 1;
+            let side = side_w.saturating_sub(1);
+
+            // The heart stays beside the title, which gives way to it.
+            let heart_w = width_of(&lead[1..]);
+            place(
+                buf,
+                &mut hits.controls,
+                links,
+                (left, y(0)),
+                side.saturating_sub(heart_w),
+                &lead[..1],
+            );
+            let title_w = lead[0].0.width().min(side.saturating_sub(heart_w) as usize) as u16;
+            place(
+                buf,
+                &mut hits.controls,
+                links,
+                (left + title_w, y(0)),
+                heart_w,
+                &lead[1..],
+            );
+            if rows >= 2 {
+                place(buf, &mut hits.controls, links, (left, y(1)), side, &by);
+            }
+
+            let ctl = controls(theme, playing, self.shuffle, self.repeat, "   ");
+            let ctl_w = width_of(&ctl);
+            place(
+                buf,
+                &mut hits.controls,
+                links,
+                (centre + centre_w.saturating_sub(ctl_w) / 2, y(0)),
+                centre_w,
+                &ctl,
+            );
+            if rows >= 2 {
+                hits.seek = seek_bar(
+                    Rect::new(centre, y(1), centre_w, 1),
+                    buf,
+                    theme,
+                    self.position_ms,
+                    duration,
+                    self.seekable_ms,
+                );
+            }
+
+            // Right-aligned; what does not fit is dropped rather than cut.
+            for (row, parts) in [(0, &format), (1, &route)] {
+                let w = width_of(parts);
+                if w <= side && rows > row {
+                    place(
+                        buf,
+                        &mut hits.controls,
+                        links,
+                        (right_end - w, y(row)),
+                        w,
+                        parts,
+                    );
+                }
+            }
+            if rows >= 3
+                && let Some(levels) = self.levels
+            {
+                mini_spectrum(buf, theme, right_end - MINI_BARS as u16, y(2), &levels);
+            }
+        } else {
+            // Stacked: the names and the controls, the seek bar, then the
+            // badge and the output.
+            let inner = area.width.saturating_sub(2);
+            let left = area.x + 1;
+            let ctl = controls(theme, playing, self.shuffle, self.repeat, "  ");
+            let ctl_w = width_of(&ctl);
+            let room = inner.saturating_sub(ctl_w + 2);
+            place(buf, &mut hits.controls, links, (left, y(0)), room, &lead);
+            if inner >= ctl_w {
+                place(
+                    buf,
+                    &mut hits.controls,
+                    links,
+                    (left + inner - ctl_w, y(0)),
+                    ctl_w,
+                    &ctl,
+                );
+            }
+            if rows >= 2 {
+                hits.seek = seek_bar(
+                    Rect::new(left, y(1), inner, 1),
+                    buf,
+                    theme,
+                    self.position_ms,
+                    duration,
+                    self.seekable_ms,
+                );
+            }
+            if rows >= 3 {
+                let fmt_w = width_of(&format);
+                let by_room = if fmt_w + 2 <= inner / 2 {
+                    place(
+                        buf,
+                        &mut hits.controls,
+                        links,
+                        (left + inner - fmt_w, y(2)),
+                        fmt_w,
+                        &format,
+                    );
+                    inner - fmt_w - 2
+                } else {
+                    inner
+                };
+                place(buf, &mut hits.controls, links, (left, y(2)), by_room, &by);
+            }
+        }
+        hits
     }
 }
 
 impl Widget for TransportBar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        self.draw_bar(area, buf);
-        self.draw_reach(area, buf);
+        self.draw(area, buf);
     }
 }
 
-impl TransportBar<'_> {
-    fn draw_bar(&self, area: Rect, buf: &mut Buffer) {
-        if area.height < 2 {
-            return;
-        }
-
-        let Some(info) = self.track_info else {
-            // No track — render empty transport.
-            let line = Line::from(Span::styled(" stopped", self.theme.status_stopped));
-            buf.set_line(area.x, area.y, &line, area.width);
-            return;
-        };
-
-        // Line 1: status icon + seek bar + time
-        let status_icon = match self.playback_state {
-            PlaybackState::Playing => Span::styled("\u{25B8}\u{25B8}", self.theme.status_playing),
-            PlaybackState::Paused => Span::styled("\u{2016} ", self.theme.status_paused),
-            PlaybackState::Stopped => Span::styled("\u{25AA} ", self.theme.status_stopped),
-        };
-
-        // Prefer the queue entry's database-sourced duration over the probed
-        // duration — probing a partial streaming file can give a wrong value.
-        let duration_ms = self
-            .playing_entry
-            .and_then(|e| e.duration_ms)
-            .unwrap_or(info.duration_ms);
-
-        let time_str = format!(
-            "{}/{}",
-            format_time(self.position_ms),
-            format_time(duration_ms)
-        );
-
-        // Bar width: total - " " - icon(2) - " " - " " - time
-        let chrome_width = 1 + 2 + 1 + 1 + time_str.len() as u16;
-        let bar_width = area.width.saturating_sub(chrome_width) as usize;
-
-        let bar = BarRegions::new(bar_width, self.position_ms, duration_ms, self.seekable_ms);
-
-        let mut spans = vec![Span::raw(" "), status_icon, Span::raw(" ")];
-        if bar_width > 0 {
-            spans.push(Span::styled(
-                "\u{2501}".repeat(bar.played),
-                self.theme.progress_filled,
-            ));
-            spans.push(Span::styled(HEAD, self.theme.progress_filled));
-            spans.push(Span::styled(
-                "\u{2500}".repeat(bar.reachable),
-                self.theme.progress_empty,
-            ));
-            if bar.pending > 0 {
-                spans.push(Span::styled(
-                    "\u{2500}".repeat(bar.pending),
-                    self.theme.progress_empty.add_modifier(Modifier::DIM),
-                ));
-            }
-        }
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(time_str, self.theme.hint_desc));
-
-        let progress_line = Line::from(spans);
-        buf.set_line(area.x, area.y, &progress_line, area.width);
-
-        // Line 2: Artist — Title (from QueueEntry metadata, or fallback to filename)
-        if let Some(entry) = self.playing_entry {
-            let mut spans = Vec::new();
-
-            if !entry.artist.is_empty() {
-                spans.push(StyledSegment {
-                    text: entry.artist.clone(),
-                    style: self.theme.track_playing,
-                });
-                spans.push(StyledSegment {
-                    text: " \u{2014} ".into(),
-                    style: self.theme.hint_desc,
-                });
-            }
-
-            spans.push(StyledSegment {
-                text: entry.title.clone(),
-                style: self.theme.track_normal.add_modifier(Modifier::BOLD),
-            });
-
-            let total_width: usize = spans.iter().map(|s| s.text.chars().count()).sum();
-            let avail = area.width.saturating_sub(1) as usize; // -1 for leading space
-
-            if total_width <= avail {
-                // Fits — render normally.
-                let mut ratatui_spans = vec![Span::raw(" ")];
-                for seg in &spans {
-                    ratatui_spans.push(Span::styled(seg.text.clone(), seg.style));
-                }
-                let title_line = Line::from(ratatui_spans);
-                buf.set_line(area.x, area.y + 1, &title_line, area.width);
+fn mini_spectrum(buf: &mut Buffer, theme: &Theme, x: u16, y: u16, levels: &[f32; MINI_BARS]) {
+    const STEPS: [char; 8] = [
+        '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}', '\u{2587}',
+        '\u{2588}',
+    ];
+    for (i, level) in levels.iter().enumerate() {
+        let step = ((level.clamp(0.0, 1.0) * 7.0).round() as usize).min(7);
+        if let Some(cell) = buf.cell_mut((x + i as u16, y)) {
+            cell.set_char(STEPS[step]).set_style(if step == 0 {
+                theme.progress_empty
             } else {
-                // Ticker mode — scroll the title text.
-                let separator = "   \u{00B7}   "; // " · "
-                let sep_len = separator.chars().count();
-                let cycle_len = total_width + sep_len;
-                let offset = self.ticker_offset % cycle_len;
-
-                // Build full ticker character buffer with styles.
-                let mut chars: Vec<(char, Style)> = Vec::with_capacity(cycle_len);
-                for seg in &spans {
-                    for c in seg.text.chars() {
-                        chars.push((c, seg.style));
-                    }
-                }
-                for c in separator.chars() {
-                    chars.push((c, self.theme.hint_desc));
-                }
-
-                // Extract a window of `avail` characters starting at `offset`.
-                let mut ratatui_spans = vec![Span::raw(" ")];
-                let mut run_text = String::new();
-                let mut run_style: Option<Style> = None;
-
-                for i in 0..avail {
-                    let idx = (offset + i) % cycle_len;
-                    let (ch, style) = chars[idx];
-
-                    if run_style == Some(style) {
-                        run_text.push(ch);
-                    } else {
-                        if let Some(s) = run_style {
-                            ratatui_spans.push(Span::styled(run_text.clone(), s));
-                        }
-                        run_text.clear();
-                        run_text.push(ch);
-                        run_style = Some(style);
-                    }
-                }
-                if let Some(s) = run_style
-                    && !run_text.is_empty()
-                {
-                    ratatui_spans.push(Span::styled(run_text, s));
-                }
-
-                let title_line = Line::from(ratatui_spans);
-                buf.set_line(area.x, area.y + 1, &title_line, area.width);
-            }
-
-            // Line 3: Album (Year) · codec info (if we have enough height)
-            if area.height >= 3 {
-                let mut album_spans = vec![Span::raw(" ")];
-
-                if !entry.album.is_empty() {
-                    album_spans.push(Span::styled(
-                        entry.album.clone(),
-                        self.theme.album_header_album,
-                    ));
-                }
-
-                if let Some(ref year) = entry.year {
-                    album_spans.push(Span::styled(format!(" ({})", year), self.theme.hint_desc));
-                }
-
-                let format_info =
-                    format!(" \u{00B7} {}", format_quality(info, self.output_rate, None));
-                album_spans.push(Span::styled(format_info, self.theme.hint_desc));
-                // The EQ's label is a link to the chooser, so it is a span of
-                // its own and its place is told to whoever asked.
-                let text_end = area.width
-                    - self
-                        .levels
-                        .filter(|_| area.width >= 48)
-                        .map_or(0, |_| MINI_BARS as u16 + 1);
-                if let Some(dsp) = self.dsp.as_ref() {
-                    let used: usize = album_spans.iter().map(|s| s.width()).sum();
-                    let label = dsp_label(dsp);
-                    album_spans.push(Span::styled(" \u{00B7} ", self.theme.hint_desc));
-                    album_spans.push(Span::styled(label, self.theme.track_playing));
-                    let x = used as u16 + 3;
-                    let w = label.len() as u16;
-                    if let Some(hit) = self.eq_hit
-                        && x + w <= text_end
-                    {
-                        hit.set(Rect::new(area.x + x, area.y + 2, w, 1));
-                    }
-                }
-                if let Some(sleep) = self.sleep {
-                    album_spans.push(Span::styled(
-                        format!(" \u{00B7} {}", sleep_label(sleep, self.sleep_fading)),
-                        self.theme.hint_desc,
-                    ));
-                }
-
-                let album_line = Line::from(album_spans);
-                // The spectrum takes the line's end when there is room for it
-                // and the text beside it.
-                let spectrum = self
-                    .levels
-                    .filter(|_| area.width >= 48)
-                    .map(|l| (l, MINI_BARS as u16 + 1));
-                let text_w = area.width - spectrum.map_or(0, |(_, w)| w);
-                buf.set_line(area.x, area.y + 2, &album_line, text_w);
-                if let Some((levels, w)) = spectrum {
-                    const STEPS: [char; 8] = [
-                        '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}',
-                        '\u{2587}', '\u{2588}',
-                    ];
-                    let x0 = area.x + area.width - w;
-                    for (i, level) in levels.iter().enumerate() {
-                        let step = ((level.clamp(0.0, 1.0) * 7.0).round() as usize).min(7);
-                        buf[(x0 + i as u16, area.y + 2)]
-                            .set_char(STEPS[step])
-                            .set_style(if step == 0 {
-                                self.theme.progress_empty
-                            } else {
-                                self.theme.progress_filled
-                            });
-                    }
-                }
-            }
-        } else {
-            // Fallback: filename + codec info
-            let artist = info
-                .path
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-
-            let format_info = format_quality(info, self.output_rate, self.dsp.as_ref());
-
-            let info_line = Line::from(vec![
-                Span::raw(" "),
-                Span::styled(
-                    &artist,
-                    self.theme.track_normal.add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("  ", self.theme.hint_desc),
-                Span::styled(format_info, self.theme.hint_desc),
-            ]);
-            buf.set_line(area.x, area.y + 1, &info_line, area.width);
+                theme.progress_filled
+            });
         }
     }
-}
-
-/// Internal helper for ticker: a piece of text with a style.
-struct StyledSegment {
-    text: String,
-    style: Style,
 }
 
 pub fn format_time(ms: u64) -> String {
@@ -655,11 +867,14 @@ mod tests {
         assert_eq!(b.pending, 59);
     }
 
-    /// What the bar actually draws, as one string, for a track twenty seconds
-    /// into nine hours — the case a played run alone cannot show.
-    fn rendered(position_ms: u64, duration_ms: u64, seekable_ms: Option<u64>) -> String {
-        let theme = Theme::default();
-        let info = TrackInfo {
+    #[test]
+    fn a_bar_with_no_room_draws_nothing() {
+        let b = BarRegions::new(0, 30_000, 100_000, None);
+        assert_eq!((b.played, b.reachable, b.pending), (0, 0, 0));
+    }
+
+    fn info() -> TrackInfo {
+        TrackInfo {
             id: koan_core::player::state::QueueItemId::new(),
             path: std::path::PathBuf::from("/x.flac"),
             codec: "FLAC".into(),
@@ -667,35 +882,101 @@ mod tests {
             bit_depth: Some(16),
             bitrate_kbps: None,
             channels: 2,
-            duration_ms,
-        };
-        let area = Rect::new(0, 0, 60, 2);
-        let mut buf = Buffer::empty(area);
-        TransportBar::new(
-            Some(&info),
-            None,
-            PlaybackState::Playing,
-            position_ms,
-            &theme,
-        )
-        .with_seekable_ms(seekable_ms)
-        .render(area, &mut buf);
-        (0..area.width)
-            .map(|x| buf[(x, 0)].symbol())
-            .collect::<String>()
+            duration_ms: NINE_HOURS,
+        }
+    }
+
+    fn row(buf: &Buffer, y: u16) -> String {
+        (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect()
     }
 
     #[test]
     fn the_head_is_drawn_where_a_played_run_would_show_nothing() {
-        let bar = rendered(20_000, NINE_HOURS, None);
-        assert!(bar.contains(HEAD), "{bar}");
-        // Four cells of chrome, then the head at the very start of the bar.
-        assert_eq!(bar.chars().nth(4).unwrap().to_string(), HEAD, "{bar}");
+        let theme = Theme::default();
+        let area = Rect::new(0, 0, 60, 1);
+        let mut buf = Buffer::empty(area);
+        let bar = seek_bar(area, &mut buf, &theme, 20_000, NINE_HOURS, None);
+        let line = row(&buf, 0);
+        assert_eq!(buf[(bar.x, 0)].symbol(), HEAD, "{line}");
     }
 
     #[test]
-    fn a_bar_with_no_room_draws_nothing() {
-        let b = BarRegions::new(0, 30_000, 100_000, None);
-        assert_eq!((b.played, b.reachable, b.pending), (0, 0, 0));
+    fn the_seek_bar_holds_still_as_the_time_counts() {
+        let theme = Theme::default();
+        let area = Rect::new(0, 0, 50, 1);
+        let bars: Vec<Rect> = [0, 9_000, 59_000, 600_000, 3_599_000]
+            .into_iter()
+            .map(|pos| seek_bar(area, &mut Buffer::empty(area), &theme, pos, 3_600_000, None))
+            .collect();
+        assert!(bars.windows(2).all(|w| w[0] == w[1]), "{bars:?}");
+    }
+
+    #[test]
+    fn a_click_puts_the_head_on_the_cell_clicked() {
+        let bar = Rect::new(4, 0, 37, 1);
+        for duration in [1_000u64, 213_000, NINE_HOURS] {
+            for cell in 0..bar.width {
+                let pos = seek_from_click(bar, bar.x + cell, duration, None).unwrap();
+                let regions = BarRegions::new(bar.width as usize, pos, duration, None);
+                assert_eq!(regions.played, cell as usize, "{duration} ms, cell {cell}");
+            }
+        }
+    }
+
+    #[test]
+    fn every_drawn_control_is_where_its_glyph_is() {
+        let theme = Theme::default();
+        let info = info();
+        for w in [40u16, 71, 72, 100, 160] {
+            let area = Rect::new(0, 0, w, 3);
+            let mut buf = Buffer::empty(area);
+            let mut bar = TransportBar::new(Some(&info), None, PlaybackState::Playing, 0, &theme);
+            bar.favourite = Some(true);
+            let hits = bar.draw(area, &mut buf);
+            for (r, c) in &hits.controls {
+                let text: String = (r.x..r.x + r.width)
+                    .map(|x| buf[(x, r.y)].symbol())
+                    .collect();
+                assert!(
+                    !text.trim().is_empty(),
+                    "{c:?} at {r:?} is blank, width {w}"
+                );
+            }
+            assert!(
+                hits.controls.iter().any(|(_, c)| *c == Control::PlayPause),
+                "width {w}"
+            );
+            assert!(hits.seek.width > 0, "width {w}");
+        }
+    }
+
+    #[test]
+    fn the_controls_are_centred_on_a_wide_bar() {
+        let theme = Theme::default();
+        let info = info();
+        let area = Rect::new(0, 0, 120, 3);
+        let mut buf = Buffer::empty(area);
+        let hits = TransportBar::new(Some(&info), None, PlaybackState::Paused, 0, &theme)
+            .draw(area, &mut buf);
+        let xs: Vec<u16> = hits
+            .controls
+            .iter()
+            .filter(|(r, _)| r.y == 0)
+            .map(|(r, _)| r.x)
+            .collect();
+        let (first, last) = (xs[0], *xs.last().unwrap());
+        let mid = (first + last).div_ceil(2);
+        assert!(mid.abs_diff(60) <= 1, "controls span {first}..{last}");
+    }
+
+    #[test]
+    fn the_badge_reads_as_the_apps_do() {
+        let mut i = info();
+        assert_eq!(badge(&i, None), "FLAC 16/44.1");
+        assert_eq!(badge(&i, Some(48_000)), "FLAC 16/44.1 → 48");
+        i.bit_depth = None;
+        i.codec = "opus".into();
+        i.sample_rate = 48_000;
+        assert_eq!(badge(&i, Some(48_000)), "OPUS 48 kHz");
     }
 }

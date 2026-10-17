@@ -219,11 +219,13 @@ impl HistoryPage {
         let mut error = None;
         while let Ok(reply) = self.rx.try_recv() {
             error = reply.error.or(error);
-            if reply.generation == self.generation
-                && let Some(entries) = reply.entries
-            {
-                self.shown = reply.generation;
-                self.seen = reply.version;
+            if reply.generation != self.generation {
+                continue;
+            }
+            // A failed read still counts as shown, so the next play asks again.
+            self.shown = reply.generation;
+            self.seen = reply.version;
+            if let Some(entries) = reply.entries {
                 self.take(entries);
             }
         }
@@ -355,14 +357,25 @@ impl HistoryPage {
         }
     }
 
-    /// Forgets the plays picked out, or the one at `idx`.
+    /// Forgets the plays picked out, or the one at `idx`. The rows go at
+    /// once, so the next press acts on the play below them; the read that
+    /// follows the forgetting puts them back if that failed.
     fn forget(&mut self, idx: usize) {
         let ids: Vec<i64> = self.chosen(idx).iter().map(|e| e.id).collect();
-        if !ids.is_empty() {
-            self.picked.clear();
-            self.anchor = None;
-            self.ask(Some(Forget::Plays(ids)));
+        if ids.is_empty() {
+            return;
         }
+        self.picked.clear();
+        self.anchor = None;
+        let above = self.entries[..self.cursor.min(self.entries.len())]
+            .iter()
+            .filter(|e| ids.contains(&e.id))
+            .count();
+        self.entries.retain(|e| !ids.contains(&e.id));
+        self.cursor = (self.cursor - above).min(self.entries.len().saturating_sub(1));
+        self.rebuild();
+        self.keep_cursor_visible();
+        self.ask(Some(Forget::Plays(ids)));
     }
 
     /// Picks out the plays from the anchor to `idx`.
@@ -471,7 +484,7 @@ impl HistoryPage {
                 self.anchor = None;
                 self.move_to(self.cursor + 1)
             }
-            KeyCode::Char(' ') => self.toggle_pick(self.cursor),
+            KeyCode::Char('t') => self.toggle_pick(self.cursor),
             KeyCode::Char('a') if ctrl => {
                 self.picked = self.entries.iter().map(|e| e.id).collect();
             }
@@ -1074,6 +1087,54 @@ mod tests {
     }
 
     #[test]
+    fn each_forget_acts_on_the_next_play() {
+        let mut p = page();
+        let (tx, sent) = crossbeam_channel::unbounded();
+        p.tx = tx;
+        draw(&mut p, 100, 12);
+        p.handle_key(KeyEvent::from(KeyCode::Char('x')), &HashSet::new());
+        p.handle_key(KeyEvent::from(KeyCode::Char('x')), &HashSet::new());
+        let forgot: Vec<_> = sent
+            .try_iter()
+            .map(|r| match r.forget {
+                Some(Forget::Plays(ids)) => ids,
+                _ => panic!("a forget of plays"),
+            })
+            .collect();
+        assert_eq!(forgot, vec![vec![1], vec![2]]);
+        assert_eq!(p.entries.len(), 1);
+        assert_eq!(p.entries[p.cursor].id, 3);
+    }
+
+    #[test]
+    fn forgetting_the_last_play_selects_the_one_above() {
+        let mut p = page();
+        draw(&mut p, 100, 12);
+        p.move_to(2);
+        p.handle_key(KeyEvent::from(KeyCode::Char('x')), &HashSet::new());
+        assert_eq!(p.entries[p.cursor].id, 2);
+        p.handle_key(KeyEvent::from(KeyCode::Char('x')), &HashSet::new());
+        assert_eq!(p.entries[p.cursor].id, 1);
+    }
+
+    #[test]
+    fn a_failed_read_still_follows_new_plays() {
+        let mut p = page();
+        let (done, rx) = crossbeam_channel::unbounded();
+        p.rx = rx;
+        p.reload();
+        done.send(Reply {
+            generation: p.generation,
+            version: koan_core::player::history::version(),
+            entries: None,
+            error: Some("history could not be read".into()),
+        })
+        .unwrap();
+        assert!(p.poll().is_some());
+        assert_eq!(p.shown, p.generation, "the failed read is the one shown");
+    }
+
+    #[test]
     fn a_superseded_read_is_not_shown_but_its_failure_is() {
         let mut p = page();
         let (done, rx) = crossbeam_channel::unbounded();
@@ -1143,6 +1204,21 @@ mod tests {
         let asked = rx.try_recv().unwrap();
         assert!(matches!(asked.forget, Some(Forget::Plays(ids)) if ids == vec![1, 2, 3]));
         assert!(p.picked.is_empty());
+    }
+
+    #[test]
+    fn t_tags_a_play_and_space_is_left_to_pause() {
+        let mut p = page();
+        draw(&mut p, 100, 12);
+        p.handle_key(KeyEvent::from(KeyCode::Char('t')), &HashSet::new());
+        assert_eq!(p.picked.len(), 1);
+        p.handle_key(KeyEvent::from(KeyCode::Char('t')), &HashSet::new());
+        assert!(p.picked.is_empty(), "a second t lets it go");
+        assert!(
+            p.handle_key(KeyEvent::from(KeyCode::Char(' ')), &HashSet::new())
+                .is_none(),
+            "Space goes on to the app, which pauses"
+        );
     }
 
     #[test]

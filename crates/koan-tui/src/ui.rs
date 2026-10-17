@@ -1,7 +1,7 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph, Widget};
+use ratatui::widgets::Paragraph;
 
 use super::app::{App, Mode, NavTarget};
 use super::context_menu::{ContextMenuOverlay, context_menu_rect_at};
@@ -14,7 +14,7 @@ use super::picker::{PickerOverlay, picker_popup_rect};
 use super::queue::QueueView;
 use super::theme::Theme;
 use super::track_info::TrackInfoOverlay;
-use super::transport::{MINI_BARS, TransportBar};
+use super::transport::MINI_BARS;
 use super::visualizer::VisualizerWidget;
 use super::viz_picker::VizPickerOverlay;
 
@@ -64,6 +64,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     app.layout.nav_hits.clear();
     app.layout.eq_hits.clear();
     app.layout.toolbar_hits.clear();
+    app.layout.now_playing = Default::default();
 
     let has_art = app.art.now_playing_art.cached().is_some();
     // Now playing carries the cover and the spectrum itself, so the transport
@@ -76,7 +77,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     } else {
         app.art_size
     };
-    let art_height = art_cells / 2; // square via halfblock rendering
+    // The cover's height, and the spectrum's beside it; with neither a
+    // cover nor a track for the spectrum to follow, just the bar's lines.
+    let playing = app.state.track_info().is_some();
+    let art_height = if has_art || (app.viz_config.enabled && playing) {
+        app.art.gfx.rows_for(art_cells)
+    } else {
+        0
+    };
     let transport_height = art_height.max(TRANSPORT_HEIGHT_DEFAULT);
 
     // Main layout: stage (flex) | hairline | transport | hints (1)
@@ -110,13 +118,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let track_info = app.state.track_info();
 
     // Find the currently playing QueueEntry for rich metadata.
-    let playing_entry = app
-        .queue
-        .vq_cache
-        .entries
-        .iter()
-        .find(|e| e.status == koan_core::player::state::QueueEntryStatus::Playing)
-        .cloned();
+    let playing_entry = track_info.as_ref().and_then(|info| {
+        app.queue
+            .vq_cache
+            .entries
+            .iter()
+            .find(|e| e.id == info.id)
+            .cloned()
+    });
 
     // Always reserve art space — placeholder keeps layout stable.
     let art_width = art_cells.min(transport_rect.width.saturating_sub(2));
@@ -147,46 +156,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     app.layout.transport_text_area = text_area;
 
     // Seek bar metrics + transport widget — rendered once.
-    // Prefer the queue entry's DB-sourced duration over the probed duration so
-    // bar_metrics and the rendered time string agree (probing a partial streaming
-    // file returns a truncated duration).
-    let pos_ms = app.state.position_ms();
-    let dur_ms = playing_entry
-        .as_ref()
-        .and_then(|e| e.duration_ms)
-        .or_else(|| track_info.as_ref().map(|t| t.duration_ms))
-        .unwrap_or(0);
-    let (bs, bw) = TransportBar::bar_metrics(text_area, pos_ms, dur_ms);
-    app.layout.seek_bar_start = bs;
-    app.layout.seek_bar_width = bw;
-
-    let seekable_ms = app.state.seek_ceiling_ms();
     // The little spectrum stands in for the big one: only where the transport
     // has none above it and the page is not drawing its own.
     let levels = (app.viz_config.enabled
         && transport_rect.height <= TRANSPORT_HEIGHT_DEFAULT
         && app.page() != Page::NowPlaying)
         .then(|| mini_levels(&app.visualizer.spectrum));
-    let eq_hit = std::cell::Cell::new(Rect::default());
-    let transport = TransportBar::new(
-        track_info.as_ref(),
-        playing_entry.as_ref(),
-        app.state.playback_state(),
-        pos_ms,
-        &app.theme,
-    )
-    .with_ticker_offset(app.ticker_offset)
-    .with_seekable_ms(seekable_ms)
-    .with_output_rate(app.state.output_sample_rate())
-    .with_dsp(app.state.dsp())
-    .with_sleep(app.state.sleep(), app.state.sleep_fading())
-    .with_levels(levels)
-    .with_eq_hit(&eq_hit)
-    .with_controlled(app.view.controlled.as_ref());
-    frame.render_widget(transport, text_area);
-    if eq_hit.get().width > 0 {
-        app.layout.eq_hits.push(eq_hit.get());
-    }
+    let transport =
+        super::now_playing::transport_for(app, track_info.as_ref(), playing_entry.as_ref(), levels);
+    app.layout.transport = transport.draw(text_area, frame.buffer_mut());
 
     // Visualizer — renders in the space above the transport text.
 
@@ -228,6 +206,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     );
     match app.page() {
         Page::Queue => {
+            let stage = super::shell::body(stage);
             if app.lyrics_panel {
                 let panes = Layout::horizontal([
                     Constraint::Percentage(60), // queue
@@ -251,6 +230,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             super::now_playing::render(frame.buffer_mut(), app, stage);
         }
         Page::Playlists => {
+            let stage = super::shell::body(stage);
             app.layout.browse_area = stage;
             let hover = match app.hover.zone {
                 super::app::HoverZone::Playlists(h) => Some(h),
@@ -264,6 +244,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             playlists_page.render(stage, frame.buffer_mut(), theme, hover);
         }
         Page::Playlist(_) => {
+            let stage = super::shell::body(stage);
             app.layout.browse_area = stage;
             let hover = match app.hover.zone {
                 super::app::HoverZone::Playlist(h) => Some(h),
@@ -290,7 +271,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 None => {
                     frame.buffer_mut().set_string(
                         stage.x,
-                        super::shell::body(stage).y,
+                        stage.y,
                         "this playlist is gone",
                         theme.hint_desc,
                     );
@@ -432,6 +413,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             );
         }
         Page::Downloads => {
+            let stage = super::shell::body(stage);
             app.layout.browse_area = stage;
             let hover = match app.hover.zone {
                 super::app::HoverZone::Downloads(h) => Some(h),
@@ -552,6 +534,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.render_widget(overlay, area);
     }
 
+    if app.mode == Mode::ReplaceQueue
+        && let Some(ref mut dialog) = app.replace_dialog
+    {
+        app.layout.modal_area = super::replace_dialog::ReplaceDialog::rect(area);
+        let hover = dialog.hit(app.hover.column, app.hover.row);
+        dialog.render(area, frame.buffer_mut(), &app.theme, hover);
+    }
+
     if app.mode == Mode::ActionsMenu
         && let Some(ref menu) = app.actions_menu
     {
@@ -590,11 +580,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .then(|| app.state.track_info())
             .flatten();
         app.layout.track_info_area = super::track_info::popup_rect(area);
-        let cover = app
-            .art
+        let art = &mut app.art;
+        let cover = art
             .cover_art
-            .cached()
-            .map(|img| (img, app.art.gfx.squash()));
+            .cover_for(&entry.path)
+            .map(|c| (c, &mut art.gfx));
         let details = app.track_details.as_deref().cloned().unwrap_or_default();
         let groups = details.with_entry(&entry, playing.as_ref());
         let overlay =
@@ -617,31 +607,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.render_widget(overlay, area);
     }
 
-    // Cover art zoom overlay — fullscreen, 1:1 aspect ratio.
     if app.mode == Mode::CoverArtZoom && app.art.now_playing_art.cached().is_some() {
-        Clear.render(area, frame.buffer_mut());
-
-        // Use the full area minus 1 row for hint.
-        let art_area = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1));
-        // Use cached render to avoid Lanczos3 resize every frame.
-        app.art
-            .now_playing_art
-            .render_to_centered(&mut app.art.gfx, art_area, frame.buffer_mut());
-
-        // Hint at bottom.
-        let hint_area = Rect::new(
-            area.x,
-            area.y + area.height.saturating_sub(1),
-            area.width,
-            1,
-        );
-        let hint = Line::from(vec![
-            Span::styled(" [esc]", app.theme.hint_key),
-            Span::styled(" close  ", app.theme.hint_desc),
-            Span::styled("[z]", app.theme.hint_key),
-            Span::styled(" close", app.theme.hint_desc),
-        ]);
-        frame.render_widget(Paragraph::new(hint), hint_area);
+        super::now_playing::render_zoom(frame.buffer_mut(), app, area);
     }
 
     // Drop/paste import progress bar.
@@ -1062,7 +1029,6 @@ fn render_queue(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let queue_view = QueueView::new(
         app.visible_queue(),
         &app.queue.layout,
-        &app.mode,
         app.queue.cursor,
         app.queue.scroll_offset,
         &app.theme,
@@ -1148,8 +1114,10 @@ mod tests {
         let mut app = App::new(state, koan_core::audio::viz::VizSnapshot::new(), tx, 60);
         app.queue.vq_cache.entries = entries;
         app.queue.vq_version = app.state.playlist_version();
+        // Pinned so the sweep does not inherit the developer's own config,
+        // nor what another test wrote to its own.
+        app.queue.flat = false;
         app.relayout_queue();
-        // Pinned so the sweep does not inherit the developer's own config.
         app.art_size = 24;
         app.show_fps = false;
         app.viz_fullscreen = false;
@@ -1160,6 +1128,45 @@ mod tests {
     fn draw(app: &mut App, w: u16, h: u16) {
         let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
         terminal.draw(|f| render(f, app)).unwrap();
+    }
+
+    /// A row's list replaces the queue at once when nothing is queued, asks
+    /// first when something is, and an explicit play button never asks.
+    #[test]
+    fn replacing_the_queue_from_a_row_asks_only_when_it_has_something() {
+        use crate::app::PickerAction;
+        use crate::browse::Action;
+        let from_row = || Action::Play(vec![1, 2, 3], PickerAction::ReplaceFrom(1));
+
+        let mut empty = app_with_queue(0);
+        empty.apply_browse(from_row());
+        assert_eq!(
+            empty.mode,
+            Mode::Normal,
+            "nothing queued: plays straight away"
+        );
+        assert!(empty.replace_dialog.is_none());
+
+        let mut queued = app_with_queue(4);
+        queued.apply_browse(from_row());
+        assert_eq!(queued.mode, Mode::ReplaceQueue, "something queued: asks");
+        let dialog = queued.replace_dialog.as_ref().expect("the dialog");
+        assert_eq!((dialog.ids.clone(), dialog.start), (vec![1, 2, 3], 1));
+        draw(&mut queued, 80, 24);
+        queued.handle_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Esc,
+        ));
+        assert_eq!(queued.mode, Mode::Normal, "cancelled");
+        assert!(queued.replace_dialog.is_none());
+
+        let mut button = app_with_queue(4);
+        button.apply_browse(Action::Play(vec![1, 2, 3], PickerAction::ReplaceQueue));
+        assert_eq!(
+            button.mode,
+            Mode::Normal,
+            "a play button replaces without asking"
+        );
+        assert!(button.replace_dialog.is_none());
     }
 
     /// Transport geometry must come from the height the layout solver granted,
@@ -1416,22 +1423,22 @@ mod tests {
         use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
         let mut app = app_with_queue(5);
         draw(&mut app, 120, 40);
-        // `[1-6] pages` is not one key, but `[e] edit` is.
+        // `[<>] skip` is not one key, but `[p] find` is.
         let (rect, key) = app
             .layout
             .hint_hits
             .iter()
-            .find(|(_, k)| k.code == crossterm::event::KeyCode::Char('e'))
+            .find(|(_, k)| k.code == crossterm::event::KeyCode::Char('p'))
             .cloned()
-            .expect("an edit hint");
+            .expect("a find hint");
         app.handle_mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: rect.x,
             row: rect.y,
             modifiers: KeyModifiers::NONE,
         });
-        assert_eq!(key.code, crossterm::event::KeyCode::Char('e'));
-        assert_eq!(app.mode, Mode::QueueEdit);
+        assert_eq!(key.code, crossterm::event::KeyCode::Char('p'));
+        assert!(matches!(app.mode, Mode::Picker(_)), "the click was the key");
     }
 
     #[test]
@@ -1470,7 +1477,7 @@ mod tests {
     }
 
     #[test]
-    fn the_queue_draws_no_heading_of_its_own_under_the_toolbar() {
+    fn the_queue_starts_one_blank_row_under_the_toolbar() {
         let mut app = app_with_queue(3);
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal.draw(|f| render(f, &mut app)).unwrap();
@@ -1478,10 +1485,15 @@ mod tests {
         let q = app.layout.queue_area;
         let row =
             |y: u16| -> String { (q.x..q.x + q.width).map(|x| buf[(x, y)].symbol()).collect() };
-        let toolbar = row(q.y - 1);
+        let toolbar = row(q.y - 1 - crate::shell::BODY_GAP);
         assert!(
             toolbar.contains("queue") && toolbar.contains("3 tracks"),
             "{toolbar:?}"
+        );
+        assert!(
+            row(q.y - 1).trim().is_empty(),
+            "the gap: {:?}",
+            row(q.y - 1)
         );
         let first = row(q.y);
         assert!(
@@ -1549,12 +1561,12 @@ mod tests {
     }
 
     #[test]
-    fn leaving_the_queue_leaves_editing_it() {
+    fn a_selection_stays_on_the_queue() {
         use crossterm::event::KeyCode;
         let mut app = app_with_queue(5);
         draw(&mut app, 160, 40);
-        key(&mut app, KeyCode::Char('e'));
-        assert_eq!(app.mode, Mode::QueueEdit);
+        key(&mut app, KeyCode::Char('t'));
+        assert_eq!(app.queue.selected_ids.len(), 1);
         let (rect, _) = *app
             .layout
             .nav_hits
@@ -1565,24 +1577,110 @@ mod tests {
         assert_eq!(app.page(), Page::Albums);
         assert_eq!(app.mode, Mode::Normal);
         assert!(app.mode_stack.is_empty());
-        // Keys are the page's again, not the queue editor's.
+        // Keys are the page's, not the queue's.
         key(&mut app, KeyCode::Char('/'));
         key(&mut app, KeyCode::Char('x'));
         assert_eq!(app.albums_page.filter, "x");
     }
 
     #[test]
-    fn closing_track_info_returns_to_editing() {
+    fn closing_track_info_returns_to_the_queue() {
         use crossterm::event::KeyCode;
         let mut app = app_with_queue(5);
-        key(&mut app, KeyCode::Char('e'));
         key(&mut app, KeyCode::Char('i'));
         assert!(matches!(app.mode, Mode::TrackInfo(_)));
         key(&mut app, KeyCode::Esc);
-        assert_eq!(app.mode, Mode::QueueEdit);
-        key(&mut app, KeyCode::Esc);
         assert_eq!(app.mode, Mode::Normal);
         assert!(app.mode_stack.is_empty());
+    }
+
+    #[test]
+    fn a_key_does_the_same_thing_on_every_page() {
+        use crate::playlists_page::{PageAct, PlAction};
+        use crossterm::event::{KeyCode, KeyEvent};
+        let mut app = app_with_queue(3);
+        draw(&mut app, 120, 40);
+        // `v` switches the view: the queue's album runs ...
+        assert!(!app.queue.flat);
+        key(&mut app, KeyCode::Char('v'));
+        assert!(app.queue.flat, "v: a row per track on the queue");
+        // ... an album browser's tiles ...
+        app.go_page(Page::Albums);
+        let before = app.albums_page.view;
+        key(&mut app, KeyCode::Char('v'));
+        assert_ne!(app.albums_page.view, before, "v: rows or tiles on Albums");
+        // ... and a playlist's grouping.
+        let mut list = crate::playlists_page::tests::row(7, "mix", false);
+        list.grouped = Some(false);
+        let mut page = crate::playlists_page::PlaylistPage::for_test(list, Vec::new());
+        assert!(matches!(
+            page.handle_key(KeyEvent::from(KeyCode::Char('v'))),
+            Some(PlAction::Page(PageAct::Grouped(true)))
+        ));
+        // `t` tags on the queue; History's own test holds it there.
+        app.go_page(Page::Queue);
+        key(&mut app, KeyCode::Char('t'));
+        assert_eq!(
+            app.queue.selected_ids.len(),
+            1,
+            "t: the row tagged on the queue"
+        );
+        // `V` opens the visualiser picker, off first among its choices.
+        key(&mut app, KeyCode::Char('V'));
+        assert_eq!(app.mode, Mode::VizPicker);
+    }
+
+    #[test]
+    fn space_pauses_on_the_queue_and_on_history() {
+        use crossterm::event::KeyCode;
+        let (mut app, player) = app_and_player(3);
+        draw(&mut app, 120, 40);
+        let wait = std::time::Duration::from_millis(300);
+        for page in [Page::Queue, Page::History] {
+            app.go_page(page);
+            let picked = app.queue.selected_ids.len();
+            key(&mut app, KeyCode::Char(' '));
+            // Commands reach the player through the router's thread.
+            assert!(
+                matches!(
+                    player.recv_timeout(wait),
+                    Ok(koan_core::player::commands::PlayerCommand::Pause
+                        | koan_core::player::commands::PlayerCommand::Resume)
+                ),
+                "Space plays and pauses on {page:?}"
+            );
+            assert_eq!(app.queue.selected_ids.len(), picked, "and picks nothing");
+        }
+    }
+
+    #[test]
+    fn the_queue_cursor_and_selection_are_always_live() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = app_with_queue(5);
+        draw(&mut app, 120, 40);
+        let ids: Vec<_> = app.queue.vq_cache.entries.iter().map(|e| e.id).collect();
+        // Moving leaves the selection alone; `t` tags the row.
+        key(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.queue.cursor, 1);
+        assert!(app.queue.selected_ids.is_empty());
+        key(&mut app, KeyCode::Char('t'));
+        key(&mut app, KeyCode::Down);
+        key(&mut app, KeyCode::Down);
+        key(&mut app, KeyCode::Char('t'));
+        assert!(
+            app.queue.selected_ids.contains(&ids[1]) && app.queue.selected_ids.contains(&ids[3])
+        );
+        assert_eq!(app.queue.selected_ids.len(), 2, "picked, with a gap");
+        // Shift extends from where the cursor last stood.
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT));
+        assert_eq!(app.queue.selected_ids.len(), 2, "rows 3 and 4");
+        assert!(app.queue.selected_ids.contains(&ids[4]));
+        key(&mut app, KeyCode::Esc);
+        assert!(
+            app.queue.selected_ids.is_empty(),
+            "Esc lets the selection go"
+        );
+        assert_eq!(app.mode, Mode::Normal);
     }
 
     #[test]
@@ -1724,15 +1822,15 @@ mod tests {
     }
 
     #[test]
-    fn editing_the_queue_g_moves_and_ctrl_d_pages() {
+    fn on_the_queue_g_moves_and_ctrl_d_pages() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let (mut app, player) = app_and_player(5);
         draw(&mut app, 100, 30);
-        key(&mut app, KeyCode::Char('e'));
-        // As terminals send it: an uppercase letter, with Shift.
+        // As terminals send it: an uppercase letter, with Shift. It moves,
+        // and picks nothing.
         app.handle_key(KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT));
         assert_eq!(app.queue.cursor, 4);
-        assert_eq!(app.queue.selected_ids.len(), 1);
+        assert!(app.queue.selected_ids.is_empty());
         app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
         // Commands reach the player through the router's thread.
         assert!(

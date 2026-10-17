@@ -1,0 +1,1 @@
+- **The terminal UI's transport and Now playing follow the apps.** The transport has the apps' controls and links to the artist and album, and collapses to its own lines when there is nothing to show above them. Now playing lays out the cover, the signal path, loudness, the spectrum, lyrics and the EQ curve.

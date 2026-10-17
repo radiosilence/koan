@@ -489,7 +489,7 @@ impl Widget for OrganizeOverlay<'_> {
                         PlanOutcome::Move => (
                             "\u{2192} ",
                             self.theme.tokens.muted,
-                            self.theme.tokens.accent,
+                            self.theme.tokens.accent_text,
                         ),
                         // Blocked, not broken: nothing was destroyed and the
                         // file is still where it was.

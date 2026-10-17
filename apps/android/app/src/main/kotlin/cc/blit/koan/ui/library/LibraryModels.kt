@@ -268,8 +268,11 @@ class AlbumModel(read: suspend () -> AlbumPage, library: Flow<Long>) : ViewModel
 
 data class ArtistRecord(
     val artist: Artist?,
+    /** The records they are the album artist of: what the page's Play plays. */
     val albums: List<Album>,
-    /** For an artist who owns no records: the tracks credited to them elsewhere. */
+    /** The records they are credited on and someone else is the album artist of, ordered as [albums] are. */
+    val features: List<Album>,
+    /** For an artist who owns no records and features on none listed: the tracks credited to them. */
     val appearances: List<Track>,
 )
 
@@ -290,6 +293,7 @@ class ArtistModel(mirror: EngineMirror, artistId: Long) : ViewModel() {
                 ArtistRecord(
                     engine.artist(artistId),
                     albums,
+                    engine.artistFeatures(artistId),
                     if (albums.isEmpty()) engine.tracks(null, artistId, TrackSort.ALBUM, 500u, 0u) else emptyList(),
                 )
             }.getOrNull()

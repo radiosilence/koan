@@ -359,17 +359,7 @@ struct PlaylistView: View {
 
     private var layoutControls: some View {
         HStack(spacing: 10) {
-            // Both modes shown with the active one lit, the way the
-            // queue does it: a single icon has to choose between naming
-            // the mode you are in and the mode you would get.
-            KoanSegmentedPicker(
-                options: [("Group by album", true), ("One row per track", false)],
-                selection: groupedBinding,
-                title: "Playlist layout",
-                icons: [Icon.album, Icon.queueSection]
-            )
-            .fixedSize()
-            .help("Group by album, or one row per track — remembered for this playlist")
+            KoanIconToggle(icon: Icon.album, label: "Group by album", isOn: groupedBinding)
 
             Menu {
                 Button("Rename…") {

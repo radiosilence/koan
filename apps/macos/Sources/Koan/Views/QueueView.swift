@@ -352,27 +352,7 @@ struct QueueView: View {
 
             JumpToPlayingButton()
 
-            // Both modes shown with the active one lit, the way Finder switches
-            // view. A single icon has to choose between naming the mode you are
-            // in and the mode you would get, and whichever it picks the other
-            // reading is available and wrong.
-            if KoanTheme.isOn {
-                // The theme's segmented control: the options bare, the chosen
-                // one lit, no track.
-                HStack(spacing: Self.headerSpacing == 0 ? 0 : KoanTheme.Space.s) {
-                    layoutOption(true, Icon.album, "Group by album")
-                    layoutOption(false, Icon.queueSection, "One row per track")
-                }
-            } else {
-                Picker("Queue layout", selection: $grouped) { // theme: raw — the platform's look; the theme's is above
-                    Image(systemName: Icon.album).tag(true) // theme: raw
-                    Image(systemName: Icon.queueSection).tag(false) // theme: raw
-                }
-                .pickerStyle(.segmented) // theme: raw
-                .labelsHidden()
-                .fixedSize()
-                .help("Group by album, or one row per track")
-            }
+            KoanIconToggle(icon: Icon.album, label: "Group by album", isOn: $grouped)
 
             // Undo is a keyboard's idea of a control. The buttons exist to show
             // ⌘Z is available, and there is no ⌘Z on a phone.
@@ -437,24 +417,6 @@ struct QueueView: View {
         #else
         .padding(.vertical, 11)
         #endif
-    }
-
-    /// One option of the theme's segmented control, as glyphs: the chosen one
-    /// in `ink` over an accent underline, the other `muted`.
-    private func layoutOption(_ value: Bool, _ icon: String, _ label: String) -> some View {
-        Button { grouped = value } label: {
-            KoanIcon(icon)
-                .padding(.bottom, KoanTheme.Space.xs)
-                .overlay(alignment: .bottom) {
-                    if grouped == value { Rectangle().fill(.tint).frame(height: KoanTheme.hairline) }
-                }
-                .touchTarget()
-                .contentShape(Rectangle())
-        }
-            .foregroundStyle(KoanTheme.style(grouped == value ? .ink : .muted))
-            .accessibilityLabel(label)
-            .accessibilityAddTraits(grouped == value ? .isSelected : [])
-            .help(label)
     }
 
     #if os(iOS)
@@ -904,7 +866,7 @@ private struct QueueSelectionHeader: View {
 
 /// Jumps to what is playing and follows it from then on, tinted while it
 /// does; pressed again, or any scroll of the person's own, stops following.
-/// Beside the layout picker because both are about what you are looking at
+/// Beside the layout toggle because both are about what you are looking at
 /// rather than what is in the queue. Disabled rather than hidden when nothing
 /// is playing: a control that comes and goes is one you have to look for. Its
 /// own view because that read is of what is playing, which moves on every

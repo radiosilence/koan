@@ -3,12 +3,15 @@
 //! page. A preset changed since it was set is listed twice: as edited,
 //! marked, and as saved, which goes back to it.
 
+use std::cell::Cell;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
+use super::browse::scroll_to;
 use super::eq_worker::Snapshot;
 use super::text::fit;
 use super::theme::Theme;
@@ -33,6 +36,8 @@ pub struct DspSelectorState {
     pub cursor: usize,
     /// The entry the output is set to.
     pub active: Option<usize>,
+    /// The first entry shown.
+    scroll: Cell<usize>,
 }
 
 impl DspSelectorState {
@@ -86,6 +91,7 @@ impl DspSelectorState {
             cursor: active.unwrap_or(0),
             entries,
             active,
+            scroll: Cell::default(),
         }
     }
 
@@ -108,7 +114,7 @@ impl DspSelectorState {
 
     /// The first entry shown when `rows` fit: the cursor stays on screen.
     pub fn top(&self, rows: usize) -> usize {
-        (self.cursor + 1).saturating_sub(rows.max(1))
+        scroll_to(&self.scroll, self.cursor, rows)
     }
 }
 
@@ -203,6 +209,7 @@ mod tests {
                 .collect(),
             cursor: 0,
             active: Some(1),
+            scroll: Cell::default(),
         }
     }
 

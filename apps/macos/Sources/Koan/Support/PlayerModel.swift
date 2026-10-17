@@ -68,11 +68,13 @@ final class PlayerModel {
         // A renderer plays from a URL this process serves, which goes with
         // it: stop it rather than leave it to play out and stall. The session
         // was saved as playing by the autosave, so the next launch resumes
-        // there.
+        // there. Settings still being saved are waited for, or a change made
+        // just before quitting would be lost.
         terminating = NotificationCenter.default.addObserver(
             forName: .appTerminates, object: nil, queue: .main
         ) { [engine] _ in
             engine.releaseOutput()
+            engine.flushSettings()
         }
         // The two things that are not views and so have no body to invalidate:
         // where a seek asked to land, and where what is playing lives.
@@ -744,7 +746,7 @@ final class PlayerModel {
         let engine = self.engine
         Task {
             var ids: [Int64] = []
-            for item in dropped {
+            for item in dropped.inDragOrder {
                 ids += await item.trackIds(using: engine)
             }
             guard !ids.isEmpty else { return }

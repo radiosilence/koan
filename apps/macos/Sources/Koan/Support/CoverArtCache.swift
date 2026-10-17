@@ -72,9 +72,19 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     private let bookkeeping = NSLock()
 
     /// One byte fetch per record, shared by every size that wants it.
-    private var loads: [String: Task<Fetched, Never>] = [:]
+    private let loads = Flights<Fetched>()
     /// One decode per record and size, shared by everyone on screen asking.
-    private var decodes: [String: Task<PlatformImage?, Never>] = [:]
+    private let decodes = Flights<PlatformImage?>()
+
+    /// Everyone waiting on a record, at any size, and how much it matters to
+    /// each. The image lane reads the most urgent of them each time it picks.
+    private var waiters: [String: [UUID: Waiter]] = [:]
+
+    private struct Waiter {
+        var priority: ImageWork.Priority
+        /// Re-ranked by the grid as it scrolls; see `prioritise`.
+        let aimed: Bool
+    }
 
     /// Which records produced each image, by content hash.
     ///
@@ -95,6 +105,26 @@ final class CoverArtCache: Observable, @unchecked Sendable {
 
     private let engine: KoanEngine
     private let directory: URL?
+
+    /// The colour space of the display the artwork is drawn on, which is the
+    /// one Core Animation composites in. Set by whoever knows the window.
+    ///
+    /// A new display drops the bitmaps decoded for the old one: a sleeve
+    /// matched to an sRGB display has lost the colours a P3 one would show,
+    /// and one decoded before any display was known would be converted on the
+    /// main thread every time it is drawn. They decode again from the disk
+    /// cache.
+    var displaySpace: CGColorSpace? {
+        get { locked { space } }
+        set {
+            let changed: Bool = locked {
+                defer { space = newValue }
+                return space != newValue
+            }
+            if changed { memory.removeAllObjects() }
+        }
+    }
+    private var space: CGColorSpace?
 
     init(engine: KoanEngine) {
         self.engine = engine
@@ -136,39 +166,100 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// Concurrent callers share work at both layers — a grid and a transport
     /// bar showing the same record at different sizes is one round trip and two
     /// decodes, and forty tiles of the same record is one of each.
-    func image(for source: AlbumArtwork.Source, size: AlbumArtwork.Size) async -> PlatformImage? {
+    ///
+    /// Cancelling the caller gives up its claim. When nobody is left asking,
+    /// work that has not started yet is dropped, so a tile scrolled past does
+    /// not hold a place in the lane ahead of the ones on screen.
+    ///
+    /// An `aimed` request is one the grid re-ranks as it scrolls; any other
+    /// keeps the priority it asked with.
+    func image(
+        for source: AlbumArtwork.Source,
+        size: AlbumArtwork.Size,
+        priority: ImageWork.Priority = .visible,
+        aimed: Bool = false
+    ) async -> PlatformImage? {
         if let ready = cached(source, size: size) { return ready }
+        let record = Self.key(source)
+        let waiter = wait(on: record, priority, aimed: aimed)
+        defer { stopWaiting(waiter, on: record) }
         let key = Self.key(source, size)
-        if let running = locked({ decodes[key] }) { return await running.value }
+        return await withTaskCancellationHandler {
+            await decode(source, size: size, key: key, record: record)
+        } onCancel: {
+            self.stopWaiting(waiter, on: record)
+        }
+    }
 
-        let task = Task<PlatformImage?, Never> { [weak self] in
+    private func decode(
+        _ source: AlbumArtwork.Source,
+        size: AlbumArtwork.Size,
+        key: String,
+        record: String
+    ) async -> PlatformImage? {
+        await decodes.join(key) { [weak self] in
             guard let self else { return nil }
-            let data = await self.bytes(for: source)
-            guard let data, !Task.isCancelled else { return nil }
-
-            let image = await ImageWork.onCPU { Self.decode(data, to: size) }
-            guard let image else { return nil }
+            let epoch = self.locked { self.generation(of: record) }
+            guard let data = await self.bytes(for: source) else { return nil }
+            let space = self.displaySpace
+            let decoded = await ImageWork.ifWanted(priority: { [weak self] in self?.priority(of: record) ?? .ahead(.infinity) }) {
+                Self.decode(data, to: size, in: space)
+            }
+            // Dropped before it ran: nobody wants it any longer.
+            guard let decoded else { return nil }
+            guard let image = decoded else {
+                // Bytes that will not make a thumbnail will not make one next
+                // time either, so the record is taken to have no art, and the
+                // cached copy goes so a later launch asks the server again.
+                // Not for full size, which can fail on an image that
+                // thumbnails fine, nor for bytes an eviction has replaced.
+                if size != .full { self.discard(record, from: epoch) }
+                return nil
+            }
             // Full size belongs to whichever sheet asked for it and goes when
-            // that sheet does.
-            if size != .full {
+            // that sheet does. A bitmap matched to a display the window has
+            // since left, or made from bytes an eviction has since replaced,
+            // is drawn this once and not kept.
+            if size != .full, self.displaySpace == space, self.locked({ self.generation(of: record) }) == epoch {
                 self.memory.setObject(image, forKey: key as NSString, cost: Self.cost(image))
             }
             return image
         }
-        // Check and insert as one step: a caller that lost the race waits on
-        // the winner, and its own task stands down.
-        let shared = locked {
-            if let running = decodes[key] { return running }
-            decodes[key] = task
-            return task
+    }
+
+    /// Re-rank the grid's requests, as a scroll moves what is on screen and
+    /// where it is heading. Other views' requests for the same records keep
+    /// their own priority.
+    func prioritise(_ priorities: [(AlbumArtwork.Source, ImageWork.Priority)]) {
+        locked {
+            for (source, priority) in priorities {
+                let record = Self.key(source)
+                guard var waiting = waiters[record] else { continue }
+                for (id, waiter) in waiting where waiter.aimed {
+                    waiting[id]?.priority = priority
+                }
+                waiters[record] = waiting
+            }
         }
-        guard shared == task else {
-            task.cancel()
-            return await shared.value
+    }
+
+    private func priority(of record: String) -> ImageWork.Priority {
+        locked { waiters[record]?.values.map(\.priority).max() ?? .ahead(.infinity) }
+    }
+
+    private func wait(on record: String, _ priority: ImageWork.Priority, aimed: Bool = false) -> UUID {
+        let id = UUID()
+        locked { waiters[record, default: [:]][id] = Waiter(priority: priority, aimed: aimed) }
+        return id
+    }
+
+    /// Idempotent: a cancelled caller stops waiting as it is cancelled, and
+    /// again when its await returns.
+    private func stopWaiting(_ id: UUID, on record: String) {
+        locked {
+            waiters[record]?[id] = nil
+            if waiters[record]?.isEmpty == true { waiters[record] = nil }
         }
-        let image = await task.value
-        locked { if decodes[key] == task { decodes[key] = nil } }
-        return image
     }
 
     /// The colour a record reads as.
@@ -179,6 +270,8 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     func dominantColour(for source: AlbumArtwork.Source) async -> Color? {
         let key = Self.key(source)
         if let known = locked({ colours[key] }) { return known }
+        let waiter = wait(on: key, .visible)
+        defer { stopWaiting(waiter, on: key) }
         guard let data = await bytes(for: source) else { return nil }
         let colour = await ImageWork.onCPU { Color.dominant(ofEncoded: data) }
         locked { colours[key] = colour }
@@ -207,39 +300,22 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         let key = Self.key(source)
         guard !locked({ absent.contains(key) }) else { return nil }
 
-        let payload: Fetched
-        if let running = locked({ loads[key] }) {
-            payload = await running.value
-        } else {
-            let engine = self.engine
-            let file = directory?.appendingPathComponent(Self.filename(for: key))
-            let task = Task<Fetched, Never> {
-                guard !Task.isCancelled else { return .failed }
-                // Every step off both the main actor and the cooperative pool —
-                // see `ImageWork`. The hash comes back with the bytes because it
-                // is a pass over the whole payload.
-                if let file, let cached = await ImageWork.onDisk({ try? Data(contentsOf: file) }) {
-                    return .art(cached, hash: await ImageWork.onCPU { Self.digest(cached) })
+        let engine = self.engine
+        let file = directory?.appendingPathComponent(Self.filename(for: key))
+        let keep = keeper(file, of: key, from: locked { generation(of: key) })
+        let priority: @Sendable () -> ImageWork.Priority = { [weak self] in self?.priority(of: key) ?? .ahead(.infinity) }
+        let payload = await loads.join(key) {
+            guard !Task.isCancelled else { return .failed }
+            // Every step off both the main actor and the cooperative pool —
+            // see `ImageWork`. The hash comes back with the bytes because it
+            // is a pass over the whole payload.
+            if let file, let cached = await ImageWork.onDisk({ try? Data(contentsOf: file) }) {
+                guard let hash = await ImageWork.ifWanted(priority: priority, { Self.digest(cached) }) else {
+                    return .failed
                 }
-                let fetched = await Self.fetch(source, engine)
-                if case .art(let bytes, _) = fetched, let file {
-                    // Best effort: a cache that fails to write is still a cache.
-                    await ImageWork.onDisk { try? bytes.write(to: file, options: .atomic) }
-                }
-                return fetched
+                return .art(cached, hash: hash)
             }
-            let shared = locked {
-                if let running = loads[key] { return running }
-                loads[key] = task
-                return task
-            }
-            if shared == task {
-                payload = await task.value
-                locked { if loads[key] == task { loads[key] = nil } }
-            } else {
-                task.cancel()
-                payload = await shared.value
-            }
+            return await Self.fetch(source, engine, keep: keep, priority: priority)
         }
 
         // Nothing recorded: the next tile that asks tries again.
@@ -270,7 +346,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// A server that answers and says it has no art is worth remembering. One
     /// that could not be reached is not: recorded as "no art", a scroll during
     /// a blip would leave permanent holes in the grid until relaunch.
-    private enum Fetched {
+    private enum Fetched: Sendable {
         case art(Data, hash: String)
         case none
         case failed
@@ -278,7 +354,9 @@ final class CoverArtCache: Observable, @unchecked Sendable {
 
     private nonisolated static func fetch(
         _ source: AlbumArtwork.Source,
-        _ engine: KoanEngine
+        _ engine: KoanEngine,
+        keep: (@Sendable (Data) -> Void)?,
+        priority: @escaping @Sendable () -> ImageWork.Priority
     ) async -> Fetched {
         do {
             // One call either way. Asking for the record's tracks to find an id
@@ -294,7 +372,12 @@ final class CoverArtCache: Observable, @unchecked Sendable {
                 data = try await engine.artistImage(artistId: artistId)?.data
             }
             guard let data, !data.isEmpty else { return .none }
-            return .art(data, hash: await ImageWork.onCPU { digest(data) })
+            // Kept before anything else can give up on it: a download is the
+            // expensive part, and one abandoned after it arrived is still the
+            // sleeve the next request wants.
+            keep?(data)
+            guard let hash = await ImageWork.ifWanted(priority: priority, { digest(data) }) else { return .failed }
+            return .art(data, hash: hash)
         } catch {
             return .failed
         }
@@ -333,7 +416,11 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// artwork is a thousand pixels square for a row that shows it at
     /// twenty-eight points.
     /// Every size but `.full` comes back as a thumbnail sized for its use.
-    private nonisolated static func decode(_ data: Data, to size: AlbumArtwork.Size) -> PlatformImage? {
+    private nonisolated static func decode(
+        _ data: Data,
+        to size: AlbumArtwork.Size,
+        in space: CGColorSpace?
+    ) -> PlatformImage? {
         guard let cgSource = CGImageSourceCreateWithData(data as CFData, nil) else {
             return nil
         }
@@ -356,7 +443,30 @@ final class CoverArtCache: Observable, @unchecked Sendable {
                 kCGImageSourceThumbnailMaxPixelSize: limit,
             ] as CFDictionary
         ) else { return nil }
-        return .decoded(scaled, pixelSize: CGSize(width: scaled.width, height: scaled.height))
+        let native = space.flatMap { redrawn(scaled, in: $0) } ?? scaled
+        return .decoded(native, pixelSize: CGSize(width: native.width, height: native.height))
+    }
+
+    /// The bitmap in the format Core Animation draws without converting:
+    /// 32-bit BGRA, premultiplied, in the display's colour space.
+    ///
+    /// A JPEG decodes to 24-bit RGB in whatever colour space it was tagged
+    /// with. A layer handed that converts it to its own format and to the
+    /// display's colour space when the transaction commits, on the main thread
+    /// — in a scroll, every sleeve as it arrives, and the largest single cost
+    /// of a frame. Done here, it is done once, off the main thread, and the
+    /// commit has nothing to do. Only for a known display: matched to a
+    /// guessed one, a wide-gamut sleeve would lose the colours it has.
+    private nonisolated static func redrawn(_ image: CGImage, in space: CGColorSpace) -> CGImage? {
+        guard let context = CGContext(
+                  data: nil, width: image.width, height: image.height,
+                  bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+              )
+        else { return nil }
+        context.interpolationQuality = .none
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        return context.makeImage()
     }
 
     /// What holding this costs, so the budget is in bytes rather than in
@@ -436,6 +546,51 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         UserDefaults.standard.set(Int(gone.seq), forKey: mark)
     }
 
+    /// Disk-cache writes and removals, one at a time. A removal waits here for
+    /// a write already under way, and is done before it returns, so a read
+    /// after an eviction never finds the file it removed.
+    private let writes = DispatchQueue(label: "cc.blit.koan.artwork-writes", qos: .utility)
+    /// Bumped by a purge, and per record by an eviction. Work that read a
+    /// record's artwork before either may hold what is being replaced, and
+    /// is neither written to disk nor kept in memory. Both only grow, so
+    /// their sum changes whenever either does.
+    private var epoch = 0
+    private var evictions: [String: Int] = [:]
+
+    /// Call with the lock held.
+    private func generation(of record: String) -> Int {
+        epoch + evictions[record, default: 0]
+    }
+
+    private func discard(_ record: String, from generation: Int) {
+        let marked: Bool = locked {
+            guard self.generation(of: record) == generation else { return false }
+            absent.insert(record)
+            colours.removeValue(forKey: record)
+            for hash in hashOwners.keys { hashOwners[hash]?.remove(record) }
+            return true
+        }
+        guard marked, let file = directory?.appendingPathComponent(Self.filename(for: record)) else { return }
+        writes.async { [weak self] in
+            guard let self, self.locked({ self.generation(of: record) }) == generation else { return }
+            _ = try? FileManager.default.removeItem(at: file)
+        }
+    }
+
+    private func keeper(_ file: URL?, of record: String, from generation: Int) -> (@Sendable (Data) -> Void)? {
+        guard let file else { return nil }
+        return { [weak self] data in self?.store(data, to: file, of: record, from: generation) }
+    }
+
+    /// Not waited for, and best effort: a cache that fails to write is still
+    /// a cache.
+    private func store(_ data: Data, to file: URL, of record: String, from generation: Int) {
+        writes.async { [weak self] in
+            guard let self, self.locked({ self.generation(of: record) }) == generation else { return }
+            try? data.write(to: file, options: .atomic)
+        }
+    }
+
     private func evict(_ source: AlbumArtwork.Source) {
         let key = Self.key(source)
         for size in [AlbumArtwork.Size.thumb, .tile, .full] {
@@ -444,9 +599,10 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         locked {
             absent.remove(key)
             colours.removeValue(forKey: key)
+            evictions[key, default: 0] += 1
         }
         if let file = directory?.appendingPathComponent(Self.filename(for: key)) {
-            try? FileManager.default.removeItem(at: file)
+            writes.sync { _ = try? FileManager.default.removeItem(at: file) }
         }
     }
 
@@ -459,9 +615,65 @@ final class CoverArtCache: Observable, @unchecked Sendable {
             hashOwners.removeAll()
             placeholderHashes.removeAll()
             colours.removeAll()
+            epoch += 1
         }
         guard let directory else { return }
-        try? FileManager.default.removeItem(at: directory)
-        _ = Self.makeDirectory()
+        writes.sync {
+            _ = try? FileManager.default.removeItem(at: directory)
+            _ = Self.makeDirectory()
+        }
+    }
+}
+
+/// Work shared by everyone asking for the same thing, and abandoned when the
+/// last of them stops asking.
+///
+/// An unstructured task does not inherit its callers' cancellation, so one
+/// shared between them would run to the end for a tile nobody can see. Each
+/// caller holds a claim instead; the work is cancelled when the claims run out,
+/// and a caller arriving after that starts it afresh.
+private final class Flights<Value: Sendable>: @unchecked Sendable {
+    private struct Flight {
+        let task: Task<Value, Never>
+        var claims: Set<UUID>
+    }
+
+    private let lock = NSLock()
+    private var flights: [String: Flight] = [:]
+
+    func join(_ key: String, _ work: @escaping @Sendable () async -> Value) async -> Value {
+        let claim = UUID()
+        let task: Task<Value, Never> = lock.withLock {
+            if var flight = flights[key] {
+                flight.claims.insert(claim)
+                flights[key] = flight
+                return flight.task
+            }
+            let task = Task { await work() }
+            flights[key] = Flight(task: task, claims: [claim])
+            return task
+        }
+        let value = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            self.release(claim, on: key, of: task)
+        }
+        release(claim, on: key, of: task)
+        return value
+    }
+
+    private func release(_ claim: UUID, on key: String, of task: Task<Value, Never>) {
+        let abandoned: Bool = lock.withLock {
+            guard var flight = flights[key], flight.task == task,
+                  flight.claims.remove(claim) != nil
+            else { return false }
+            guard flight.claims.isEmpty else {
+                flights[key] = flight
+                return false
+            }
+            flights[key] = nil
+            return true
+        }
+        if abandoned { task.cancel() }
     }
 }

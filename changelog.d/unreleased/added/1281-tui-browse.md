@@ -1,0 +1,1 @@
+- **Browsing in the terminal UI as in the apps.** Albums, Artists and Tracks are the apps' browsers, with their filters and sorts, and Favourites, Recently played, Downloaded and Search are the apps' shelves of artists, albums and tracks. Every row offers the apps' menu, and playing from a row asks before replacing a queue that has music in it.

@@ -1273,6 +1273,7 @@ mod tests {
             beat_energy: 0.6,
             timestamp: std::time::Instant::now(),
             waveform: Vec::new(),
+            loudness: Default::default(),
         });
 
         let schema = build_schema(

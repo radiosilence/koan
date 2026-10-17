@@ -74,6 +74,7 @@ import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanDivider
 import cc.blit.koan.ui.theme.KoanEdge
 import cc.blit.koan.ui.theme.KoanIcon
+import cc.blit.koan.ui.theme.KoanIconToggle
 import cc.blit.koan.ui.theme.KoanIcons
 import cc.blit.koan.ui.theme.KoanMenu
 import cc.blit.koan.ui.theme.KoanMenuItem
@@ -506,13 +507,7 @@ private fun Header(
                 color = KoanTheme.color(if (following) KoanTone.Accent else KoanTone.Ink),
             )
         }
-        // Both layouts shown, the one in force lit.
-        KoanButton({ setGrouped(true) }, kind = KoanButtonKind.Icon) {
-            KoanIcon(KoanIcons.album, "Group by record", color = KoanTheme.color(if (grouped) KoanTone.Ink else KoanTone.Muted))
-        }
-        KoanButton({ setGrouped(false) }, kind = KoanButtonKind.Icon) {
-            KoanIcon(KoanIcons.queueSection, "One row per track", color = KoanTheme.color(if (grouped) KoanTone.Muted else KoanTone.Ink))
-        }
+        KoanIconToggle(KoanIcons.album, "Group by album", grouped, setGrouped)
         KoanButton("Select", select, kind = KoanButtonKind.Icon, icon = KoanIcons.select, enabled = items.isNotEmpty())
         var menu by remember { mutableStateOf(false) }
         Box {

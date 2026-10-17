@@ -113,6 +113,9 @@ struct HistoryView: View {
                 drag: { ids in tracks(for: ids).map { PlayableTransfer(.track($0)) } },
                 delete: { _ in forgetSelected() },
                 selectAllToken: ui.selectAllToken,
+                offset: library.historyOffset,
+                noteOffset: { library.historyOffset = $0 },
+                rewinds: nav.rewinds[.playHistory] ?? 0,
                 insets: insets
             )
         }

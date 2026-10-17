@@ -260,14 +260,15 @@ struct ArtistDetailView: View {
 
     private var artist: Artist? { record?.artist }
     private var albums: [Album] { record?.albums ?? [] }
+    private var features: [Album] { record?.features ?? [] }
     private var info: ArtistInfo? { record?.info }
 
     private let columns = GridItem.tiles(minimum: 150, maximum: 210, spacing: 18)
 
     var body: some View {
-        if let record, record.albums.isEmpty, !record.appearances.isEmpty {
-            // Credited only on other people's records: the tracks, each with
-            // the album it is on, rather than an empty grid.
+        if let record, record.albums.isEmpty, record.features.isEmpty, !record.appearances.isEmpty {
+            // Credited only on tracks no record here holds: the tracks, each
+            // with the album it is on, rather than an empty grid.
             TrackListView(
                 title: artist?.name ?? "",
                 subtitle: "Appears on \(Set(record.appearances.map(\.albumId)).count) "
@@ -298,6 +299,17 @@ struct ArtistDetailView: View {
                 }
                 .modifier(SelectionDrag(selection: library.artistSelection))
 
+                if !features.isEmpty {
+                    FeaturesOn(albums: features)
+                        .padding(.top, 10)
+                    LazyVGrid(columns: columns, spacing: 22) {
+                        ForEach(features, id: \.id) { album in
+                            AlbumGridCell(album: album, selection: library.artistSelection)
+                        }
+                    }
+                    .modifier(SelectionDrag(selection: library.artistSelection))
+                }
+
                 if width != .compact {
                     bio(collapsible: false)
                 }
@@ -319,7 +331,7 @@ struct ArtistDetailView: View {
         .onChange(of: artistId) { _, _ in library.artistSelection.end() }
         .onDisappear { library.artistSelection.end() }
         #if os(iOS)
-        .playableSelectMode(library.artistSelection, engine: library.engine, available: !albums.isEmpty)
+        .playableSelectMode(library.artistSelection, engine: library.engine, available: !albums.isEmpty || !features.isEmpty)
         #endif
     }
 
@@ -417,6 +429,43 @@ struct ArtistDetailView: View {
                     .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             }
             .transition(.opacity)
+        }
+    }
+}
+
+/// The heading over the records an artist features on, with their own play
+/// and queue. Compact and quiet beside the page's one prominent Play, which is
+/// for the artist's own records.
+private struct FeaturesOn: View {
+    let albums: [Album]
+
+    @Environment(PlayerModel.self) private var player
+    @Environment(LibraryModel.self) private var library
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Text("Features on").koanCase()
+                .font(.role(.body, system: .headline))
+            HStack(spacing: 10) {
+                Button {
+                    let engine = library.engine, ids = albums.map(\.id)
+                    player.playNow(resolving: "Features on") {
+                        (try? await engine.albumTrackIds(albumIds: ids)) ?? []
+                    }
+                } label: {
+                    Label("Play", koan: Icon.play)
+                }
+                Button {
+                    let engine = library.engine, ids = albums.map(\.id)
+                    Task {
+                        player.enqueue(trackIds: (try? await engine.albumTrackIds(albumIds: ids)) ?? [])
+                    }
+                } label: {
+                    Label("Queue", koan: Icon.queue)
+                }
+            }
+            .koanButtons(.compact)
+            Spacer(minLength: 0)
         }
     }
 }

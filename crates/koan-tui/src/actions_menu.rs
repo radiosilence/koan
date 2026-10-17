@@ -2,12 +2,14 @@
 //! that have no room in a hint bar, as a menu for a pointer. A page builds the
 //! items; choosing one runs the same action its key would.
 
+use std::cell::Cell;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
 
 use super::app::PickerAction;
-use super::browse::Action;
+use super::browse::{Action, scroll_to};
 use super::playlists_page::PlAction;
 use super::theme::Theme;
 
@@ -173,6 +175,8 @@ pub struct ActionsMenu {
     pub title: String,
     pub items: Vec<(String, Item)>,
     pub cursor: usize,
+    /// The first item shown.
+    scroll: Cell<usize>,
 }
 
 impl ActionsMenu {
@@ -181,6 +185,7 @@ impl ActionsMenu {
             title,
             items,
             cursor: 0,
+            scroll: Cell::default(),
         }
     }
 
@@ -197,7 +202,7 @@ impl ActionsMenu {
 
     /// The first item shown when `rows` fit.
     pub fn top(&self, rows: usize) -> usize {
-        (self.cursor + 1).saturating_sub(rows.max(1))
+        scroll_to(&self.scroll, self.cursor, rows)
     }
 }
 

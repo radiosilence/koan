@@ -1,0 +1,1 @@
+- **Changing the look no longer stalls the app on a slow disk.** Appearance settings are saved in the background, in the order they were changed.

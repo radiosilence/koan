@@ -51,11 +51,9 @@ See [The terminal UI](../guide/terminal-ui.md). These work from any page.
 
 | Key | Action |
 |-----|--------|
-| `e` | Enter queue edit mode |
 | `i` | Track info modal (codec, sample rate, cover art) |
 | `z` | Zoom album art |
-| `v` | Visualizer picker (22 modes with live preview) |
-| `V` | Show / hide the visualizer |
+| `V` | Visualizer picker: off, or one of 22 modes, with live preview |
 | `X` | Toggle matrix overlay on visualizer |
 | `S` | Toggle bass shake on visualizer |
 | `L` | Toggle lyrics panel |
@@ -131,6 +129,7 @@ On a playlist's page:
 | `P` | Play all (the `shuffle` button plays it shuffled) |
 | `a` / `N` | Add all to the queue / put them next |
 | `K` / `J` | Move the track up / down |
+| `v` | Albums, or a row per track |
 | `x`, `Delete` or `Backspace` | Take the track out |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / redo the last edit to this playlist |
 | `r` | Rename |
@@ -179,7 +178,7 @@ Everything on both pages is also a click: the row, `▸`, `×`, `▴`, `▾`, th
 | `A` / `O` | Open the artist / the record |
 | `x`, `Delete` or `Backspace` | Forget the play |
 | `D` | Forget every play (press again to confirm) |
-| `Space` | Pick out the play, or put it back |
+| `t` | Pick out the play, or put it back |
 | `Shift+↑` `Shift+↓` | Pick out a run of plays |
 | `Ctrl+A` | Pick out every play shown |
 | `/` | Filter by title, artist or record |
@@ -252,38 +251,39 @@ Click the arrows beside a value, or the value, to change it, or `run` to start a
 
 ---
 
-## Queue edit mode (`e`)
+## The queue's cursor and selection
+
+There is no mode to enter: the cursor and the selection are always live, and the queue's keys act on the selection, or with none on the row under the cursor.
 
 | Key | Action |
 |-----|--------|
-| `Up` / `Down` | Navigate |
-| `Shift+Up` / `Shift+Down` or `J` / `K` | Extend selection |
-| `d` | Remove selected track(s) |
-| `j` | Move selected down |
-| `k` | Move selected up |
-| `Ctrl+Z` | Undo |
-| `Ctrl+Y` | Redo |
-| `space` | Context menu (organize) |
-| `g` | Jump to start |
-| `G` | Jump to end (shift-extends selection) |
+| `↑` `↓` or `j` `k` | Move the cursor |
+| `Shift+↑` / `Shift+↓`, `Shift+PgUp` / `Shift+PgDn` | Extend the selection |
+| `t` | Tag the row under the cursor, or let it go |
+| `Ctrl+A` / `Esc` | Select everything / let the selection go |
+| `Enter` | Play the row |
+| `J` / `K` | Move the selection down / up |
+| `d`, `Delete` or `Backspace` | Remove the selection |
+| `m` | The selection's menu |
+| `v` | Albums, or a row per track |
+| `o` | Scroll to what is playing |
+| `Ctrl+Z` / `Ctrl+Y` | Undo / redo |
+| `Ctrl+X` | Clear the queue |
+| `g` / `G` | Jump to start / end |
 | `PgUp` / `PgDn` | Page up / page down |
-| `Esc` | Exit edit mode |
-
-### Mouse in edit mode
 
 | Action | Effect |
 |--------|--------|
-| Click | Select track |
-| `Option`-click | Toggle individual selection |
-| `Ctrl`-click | Range select |
-| Drag | Reorder selected tracks |
-| Drag group | Move all selected together |
+| Click | Select the track |
+| `Option`-click | Add or take away one track |
+| `Shift`- or `Ctrl`-click | Select a range |
+| Drag | Move the selection, as one block |
 
 ---
 
 ## Mouse (works in any mode)
 
-Mouse controls are always available -- keyboard modality only affects keyboard shortcuts.
+Mouse controls are always available.
 
 | Action | Effect |
 |--------|--------|
@@ -360,4 +360,4 @@ Single keys never fire while a text field has focus, so typing an `f` into the s
 | `⇧⌘R` | Rescan local folders |
 | `⌘/` | Keyboard shortcuts |
 
-Keys the TUI spends on its own modes — edit mode, the visualizer, the help overlay — have no counterpart: the queue is always editable here, and there is no visualizer.
+Keys the TUI spends on its own panels — the visualizer, the help overlay — have no counterpart: there is no visualizer here.

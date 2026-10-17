@@ -13,7 +13,7 @@ use koan_core::player::state::{
     VisibleQueueSnapshot,
 };
 
-use super::accent::{self, Accent};
+use super::accent::Accent;
 use super::actions_menu::ActionsMenu;
 use super::album_page::{AlbumHit, AlbumPage};
 use super::browse::{self, Browse, Source};
@@ -28,6 +28,7 @@ use super::queue;
 use super::settings_page::{Outcome, Setting, SettingsHit, SettingsPage, Task};
 use super::shelf_page::{ShelfHit, ShelfKind, ShelfPage};
 use super::theme::{Palette, Theme};
+use super::transport::Control;
 use super::visualizer::VisualizerState;
 
 mod mouse;
@@ -38,7 +39,6 @@ const TICKER_FPS: u8 = 8;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mode {
     Normal,
-    QueueEdit,
     Picker(PickerKind),
     TrackInfo(QueueItemId),
     /// A track's row from the library, shown from a list other than the queue.
@@ -58,8 +58,20 @@ pub enum Mode {
     ActionsMenu,
     /// What narrows the record pages.
     FilterPanel,
+    /// Asking before a row replaces a queue that has something in it.
+    ReplaceQueue,
     HelpModal,
     VizPicker,
+}
+
+/// Whether a queue entry's file is still on its way, so a cover read from it
+/// now may be missing.
+fn arriving(entry: &QueueEntry) -> bool {
+    entry.download_progress.is_some()
+        || matches!(
+            entry.status,
+            QueueEntryStatus::Downloading | QueueEntryStatus::PriorityPending
+        )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,8 +197,9 @@ pub struct LayoutRects {
     pub track_info_area: ratatui::layout::Rect,
     pub now_playing_art_area: ratatui::layout::Rect,
     pub transport_text_area: ratatui::layout::Rect,
-    pub seek_bar_start: u16,
-    pub seek_bar_width: u16,
+    /// The transport's controls and seek bar, and Now playing's.
+    pub transport: super::transport::Hits,
+    pub now_playing: super::transport::Hits,
     pub context_menu_area: ratatui::layout::Rect,
     pub organize_area: ratatui::layout::Rect,
     /// The output or EQ chooser, while one is open.
@@ -280,6 +293,7 @@ pub struct App {
     pub chooser: Option<Chooser>,
     pub actions_menu: Option<ActionsMenu>,
     pub filter_panel: Option<FilterPanel>,
+    pub replace_dialog: Option<super::replace_dialog::ReplaceDialog>,
     /// The filters on the album, artist and track browsers, shared by them
     /// as the apps' are.
     pub browse_filters: koan_core::browse::BrowseFilter,
@@ -290,9 +304,18 @@ pub struct App {
     /// The playing record's accent, easing as the record changes.
     pub accent: Accent,
     pub palette: Palette,
-    /// The path whose cover the accent was taken from.
-    accent_path: Option<PathBuf>,
     theme_accent: (u8, u8, u8),
+    /// The config as of this tick, read once for the tick and its frame.
+    pub cfg: Arc<koan_core::config::Config>,
+    /// The playing track's queue entry, as the cover needs it: its id, the
+    /// queue version it was found at, whether its file is still arriving,
+    /// and its row. Looked up again only when one of those can have moved.
+    playing_entry: Option<(QueueItemId, u64, bool, Option<i64>)>,
+    /// Whether the file of the track info popup's entry is still arriving,
+    /// so its cover is asked for again until it has.
+    info_arriving: bool,
+    /// What Now playing keeps between frames.
+    pub now_playing: super::now_playing::State,
 
     pub art: ArtState,
 
@@ -464,14 +487,18 @@ impl App {
             chooser: None,
             actions_menu: None,
             filter_panel: None,
+            replace_dialog: None,
             browse_filters: Default::default(),
             settings_page: SettingsPage::new(),
             browse_drag: false,
             thumbs: browse::Thumbs::new(),
             accent: Accent::default(),
             palette: Palette::detect(&cfg.playback.tui_theme),
-            accent_path: None,
+            now_playing: Default::default(),
             theme_accent: super::theme::MINT,
+            cfg: koan_core::config::Config::cached(),
+            playing_entry: None,
+            info_arriving: false,
             art: ArtState::default(),
             context_menu: None,
             organize: None,
@@ -523,15 +550,6 @@ impl App {
     /// Pop the previous mode from the stack (falls back to Normal).
     fn pop_mode(&mut self) {
         self.mode = self.mode_stack.pop().unwrap_or(Mode::Normal);
-    }
-
-    /// Ends queue editing, letting the selection go.
-    fn leave_queue_edit(&mut self) {
-        if self.mode == Mode::QueueEdit {
-            self.pop_mode();
-        }
-        self.queue.selected_ids.clear();
-        self.queue.anchor_id = None;
     }
 
     pub fn load_favourites(&mut self) {
@@ -614,6 +632,7 @@ impl App {
     }
 
     pub fn handle_tick(&mut self) {
+        self.cfg = koan_core::config::Config::cached();
         // Refresh visible queue cache so all tick logic sees current state.
         self.refresh_visible_queue();
         // Against the layout just drawn: what is under the pointer moves with
@@ -701,28 +720,54 @@ impl App {
             }
         }
 
-        // Update now-playing cover art cache when track changes.
-        // Clear when nothing is playing so the old image gets freed.
+        // The playing track's cover, and the accent it gives once it arrives.
         let now = std::time::Instant::now();
-        if let Some(ref info) = self.state.track_info() {
-            let art = self.art.now_playing_art.get(&info.path);
-            if self.accent_path.as_deref() != Some(info.path.as_path()) {
-                let rgb = art
-                    .and_then(accent::from_image)
-                    .unwrap_or(super::theme::MINT);
-                self.accent_path = Some(info.path.clone());
-                self.accent.set(rgb, now);
+        match self.state.track_info() {
+            Some(info) => {
+                let version = self.queue.vq_version;
+                // A file still arriving moves without the version moving.
+                let stale = self.playing_entry.is_none_or(|(id, seen, arriving, _)| {
+                    id != info.id || seen != version || arriving
+                });
+                if stale {
+                    let entry = self.queue.vq_cache.entries.iter().find(|e| e.id == info.id);
+                    self.playing_entry = Some((
+                        info.id,
+                        version,
+                        entry.is_some_and(arriving),
+                        entry.and_then(|e| e.db_id),
+                    ));
+                }
+                if let Some((_, _, arriving, track)) = self.playing_entry {
+                    self.art
+                        .now_playing_art
+                        .want(&info.path, arriving, || track);
+                }
             }
-        } else {
-            self.art.now_playing_art.clear();
-            if self.accent_path.take().is_some() {
-                self.accent.set(super::theme::MINT, now);
+            None => {
+                self.playing_entry = None;
+                self.art.now_playing_art.clear();
             }
         }
         // A zoomed cover that has gone would leave a modal showing nothing.
         if self.mode == Mode::CoverArtZoom && self.art.now_playing_art.cached().is_none() {
             self.pop_mode();
         }
+        let np = &mut self.art.now_playing_art;
+        np.poll();
+        // Taken every tick, so turning record colours on or off lands at once.
+        let colours = self.cfg.appearance.record_colours;
+        let rgb = np.cover().and_then(|c| c.accent).filter(|_| colours);
+        self.accent.set(rgb.unwrap_or(super::theme::MINT), now);
+        if let Mode::TrackInfo(id) = self.mode
+            && self.info_arriving
+            && let Some(entry) = self.queue.vq_cache.entries.iter().find(|e| e.id == id)
+        {
+            self.info_arriving = arriving(entry);
+            let (path, track) = (entry.path.clone(), entry.db_id);
+            self.art.cover_art.want(&path, self.info_arriving, || track);
+        }
+        self.art.cover_art.poll();
         let rgb = self.accent.at(now);
         if rgb != self.theme_accent {
             self.theme_accent = rgb;
@@ -899,7 +944,6 @@ impl App {
 
         match &self.mode {
             Mode::Picker(_) => self.handle_picker_key(key),
-            Mode::QueueEdit => self.handle_edit_key(key),
             Mode::TrackInfo(_) | Mode::TrackDetails => self.handle_info_key(key),
             Mode::CoverArtZoom => self.handle_zoom_key(key),
             Mode::ContextMenu => self.handle_context_menu_key(key),
@@ -911,6 +955,11 @@ impl App {
             Mode::PlaylistChooser => self.handle_chooser_key(key),
             Mode::ActionsMenu => self.handle_actions_menu_key(key),
             Mode::FilterPanel => self.handle_filter_panel_key(key),
+            Mode::ReplaceQueue => {
+                if let Some(choice) = self.replace_dialog.as_mut().and_then(|d| d.handle_key(key)) {
+                    self.answer_replace(choice);
+                }
+            }
             Mode::HelpModal => self.handle_help_modal_key(key),
             Mode::VizPicker => self.handle_viz_picker_key(key),
             Mode::Normal => self.handle_page_key(key),
@@ -1028,11 +1077,6 @@ impl App {
     }
 
     fn page_opened(&mut self) {
-        // Editing is the queue's; its keys would otherwise follow to a page
-        // that has none of what they edit.
-        if self.mode == Mode::QueueEdit && self.page() != Page::Queue {
-            self.leave_queue_edit();
-        }
         match self.page() {
             Page::Albums => self.albums_page.reload(),
             Page::Artists => self.artists_page.reload(),
@@ -1115,9 +1159,21 @@ impl App {
                 Some(p) => p.toolbar(),
                 None => Toolbar::new("album"),
             },
+            Page::NowPlaying => {
+                use super::shell::ToolItem;
+                let key = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+                Toolbar::new("now playing")
+                    .item(ToolItem::new("cover", key('z')).priority(1))
+                    .item(ToolItem::new("visualiser", key('M')).priority(2))
+                    .item(ToolItem::new("play on", key('C')).priority(3))
+                    .item(
+                        ToolItem::new("eq", key('E'))
+                            .on(self.state.dsp().is_some())
+                            .priority(4),
+                    )
+            }
             Page::Settings => self.settings_page.toolbar(),
             Page::Eq => self.eq_page.toolbar(),
-            page => Toolbar::new(page.title()),
         }
     }
 
@@ -1302,7 +1358,7 @@ impl App {
         let shared = match key.code {
             KeyCode::Char(
                 ' ' | '>' | '<' | 'n' | 's' | 'T' | 'R' | '.' | ',' | 'L' | 'V' | 'F' | 'M' | 'X'
-                | 'S' | 'v' | 'D' | 'C' | 'E' | 'B' | 'p' | 'q' | '?' | 'z',
+                | 'S' | 'D' | 'C' | 'E' | 'B' | 'p' | 'q' | '?' | 'z',
             ) => !ctrl,
             // What is playing, put in a playlist; elsewhere the page's own
             // `w` does that with what it shows.
@@ -1526,6 +1582,21 @@ impl App {
         }
     }
 
+    /// Does what the replace dialog was answered with, and closes it.
+    pub(super) fn answer_replace(&mut self, choice: super::replace_dialog::Choice) {
+        use super::replace_dialog::Choice;
+        let dialog = self.replace_dialog.take();
+        self.pop_mode();
+        let Some(d) = dialog else {
+            return;
+        };
+        match choice {
+            Choice::Play => self.enqueue(d.ids, PickerAction::ReplaceFrom(d.start)),
+            Choice::Add => self.enqueue(d.ids, PickerAction::Append),
+            Choice::Cancel => {}
+        }
+    }
+
     fn handle_filter_panel_key(&mut self, key: KeyEvent) {
         let Some(panel) = self.filter_panel.as_mut() else {
             self.pop_mode();
@@ -1642,9 +1713,8 @@ impl App {
         }
     }
 
-    /// The tracks the queue's selection stands for; without one, the track
-    /// under the edit cursor, or else the one playing. Now playing always
-    /// means the one playing.
+    /// The tracks the queue's selection stands for, or without one the track
+    /// under the cursor. Now playing always means the one playing.
     fn queue_choice(&self) -> Vec<i64> {
         let entries = &self.queue.vq_cache.entries;
         let on_queue = self.page() != Page::NowPlaying;
@@ -1655,7 +1725,7 @@ impl App {
                 .filter_map(|e| e.db_id)
                 .collect();
         }
-        let one = if on_queue && self.mode == Mode::QueueEdit {
+        let one = if on_queue {
             entries.get(self.queue.cursor)
         } else {
             entries
@@ -1810,9 +1880,20 @@ impl App {
         }
     }
 
-    fn apply_browse(&mut self, action: browse::Action) {
+    pub(crate) fn apply_browse(&mut self, action: browse::Action) {
         match action {
             browse::Action::None => {}
+            // A list played from a row takes the queue's place: asked first
+            // when there is something in it, as the apps ask.
+            browse::Action::Play(ids, PickerAction::ReplaceFrom(start))
+                if !self.visible_queue().is_empty() =>
+            {
+                let queued = self.visible_queue().len();
+                self.replace_dialog = Some(super::replace_dialog::ReplaceDialog::new(
+                    ids, start, queued,
+                ));
+                self.push_mode(Mode::ReplaceQueue);
+            }
             browse::Action::Play(ids, how) => self.enqueue(ids, how),
             browse::Action::Favourite(id) => {
                 self.toggle_favourite(id);
@@ -1922,6 +2003,9 @@ impl App {
     }
 
     fn handle_normal_key(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        let len = self.queue.vq_cache.entries.len();
         match key.code {
             KeyCode::Esc => {
                 if self.status_message.is_some() {
@@ -1935,67 +2019,26 @@ impl App {
                 self.quit = true;
             }
             KeyCode::Char(' ') => self.toggle_pause(),
+            // `t` tags the row under the cursor, as in mutt.
+            KeyCode::Char('t') if self.page() == Page::Queue => {
+                let cursor = self.queue.cursor;
+                self.toggle_selection(cursor);
+            }
             KeyCode::Char('>') | KeyCode::Char('n') => self.skip(PlayerCommand::NextTrack),
             KeyCode::Char('<') => self.skip(PlayerCommand::PrevTrack),
-            KeyCode::Char('s') => {
-                let on = !self.state.play_mode().shuffle;
-                self.tx.send(PlayerCommand::SetShuffle(on)).ok();
-                self.say(if on { "shuffle on" } else { "shuffle off" });
-            }
-            KeyCode::Char('T') => {
-                use koan_core::player::state::{Sleep, SleepTimer};
-                // Off, then each choice in turn, then off again.
-                let next = match self.state.sleep() {
-                    None => Some(SleepTimer::After { minutes: 15 }),
-                    Some(Sleep::At { unix_ms }) => {
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis() as u64;
-                        // The choice it was set from: what is left, rounded up.
-                        match unix_ms.saturating_sub(now).div_ceil(60_000) {
-                            0..=15 => Some(SleepTimer::After { minutes: 30 }),
-                            16..=30 => Some(SleepTimer::After { minutes: 45 }),
-                            31..=45 => Some(SleepTimer::After { minutes: 60 }),
-                            _ => Some(SleepTimer::EndOfTrack),
-                        }
-                    }
-                    Some(Sleep::EndOfTrack) => Some(SleepTimer::EndOfRecord),
-                    Some(Sleep::EndOfRecord) => None,
-                };
-                self.tx.send(PlayerCommand::SetSleepTimer(next)).ok();
-                self.say(match next {
-                    None => "sleep timer off".into(),
-                    Some(SleepTimer::After { minutes }) => format!("sleep in {minutes} min"),
-                    Some(SleepTimer::EndOfTrack) => "sleep at the end of the track".into(),
-                    Some(SleepTimer::EndOfRecord) => "sleep at the end of the record".into(),
-                });
-            }
-            KeyCode::Char('R') => {
-                let repeat = self.state.play_mode().repeat.cycled();
-                self.tx.send(PlayerCommand::SetRepeat(repeat)).ok();
-                self.say(format!("repeat {}", repeat.as_str()));
-            }
+            KeyCode::Char('s') => self.toggle_shuffle(),
+            KeyCode::Char('T') => self.cycle_sleep(),
+            KeyCode::Char('R') => self.cycle_repeat(),
             KeyCode::Char('.') | KeyCode::Right => {
                 self.seek_to(self.state.position_ms().saturating_add(10_000));
             }
             KeyCode::Char(',') | KeyCode::Left => {
                 self.seek_to(self.state.position_ms().saturating_sub(10_000));
             }
-            KeyCode::Char('e') => {
-                self.push_mode(Mode::QueueEdit);
-                // Sync selection to cursor so j/k work immediately.
-                if self.queue.selected_ids.len() <= 1 {
-                    self.select_single(self.queue.cursor);
-                }
-            }
             KeyCode::Char('p') => {
                 self.open_picker(PickerKind::Track);
             }
-            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.push_mode(Mode::QueueEdit);
-                self.select_all();
-            }
+            KeyCode::Char('a') if ctrl => self.select_all(),
             KeyCode::Char('a') => {
                 self.open_picker(PickerKind::Album);
             }
@@ -2015,16 +2058,13 @@ impl App {
             }
             KeyCode::Char('L') => self.lyrics_panel = !self.lyrics_panel,
             KeyCode::Char('V') => {
-                self.viz_config.enabled = !self.viz_config.enabled;
-                self.say(if self.viz_config.enabled {
-                    "visualiser on"
-                } else {
-                    "visualiser off"
-                });
-                let viz_enabled = self.viz_config.enabled;
-                let _ = koan_core::config::Config::persist(|cfg| {
-                    cfg.visualizer.enabled = viz_enabled;
-                });
+                self.viz_picker = Some(super::viz_picker::VizPickerState::new(
+                    self.visualizer.mode,
+                    self.viz_config.enabled,
+                ));
+                // Full screen while it is open, so the preview is seen.
+                self.viz_fullscreen = true;
+                self.push_mode(Mode::VizPicker);
             }
             KeyCode::Char('F') => {
                 self.viz_fullscreen = !self.viz_fullscreen;
@@ -2061,54 +2101,42 @@ impl App {
                     cfg.visualizer.bass_shake = shake;
                 });
             }
-            KeyCode::Char('v') => {
-                self.viz_picker =
-                    Some(super::viz_picker::VizPickerState::new(self.visualizer.mode));
-                self.viz_config.enabled = true;
-                self.viz_fullscreen = true;
-                self.push_mode(Mode::VizPicker);
+            // The cursor and the selection, always live: Shift extends.
+            KeyCode::Up | KeyCode::Char('k') if len > 0 => {
+                let to = self.queue.cursor.checked_sub(1).unwrap_or(len - 1);
+                self.move_cursor(to, shift);
             }
-            KeyCode::Up => {
-                let visible = self.visible_queue();
-                if !visible.is_empty() {
-                    if self.queue.cursor == 0 {
-                        self.queue.cursor = visible.len() - 1;
-                    } else {
-                        self.queue.cursor -= 1;
-                    }
-                    self.select_single(self.queue.cursor);
-                    self.update_scroll();
-                }
+            KeyCode::Down | KeyCode::Char('j') if len > 0 => {
+                let to = (self.queue.cursor + 1) % len;
+                self.move_cursor(to, shift);
             }
-            KeyCode::Down => {
-                let visible = self.visible_queue();
-                if !visible.is_empty() {
-                    if self.queue.cursor + 1 >= visible.len() {
-                        self.queue.cursor = 0;
-                    } else {
-                        self.queue.cursor += 1;
-                    }
-                    self.select_single(self.queue.cursor);
-                    self.update_scroll();
-                }
+            // The selection, or the track under the cursor, moved a place.
+            KeyCode::Char('K') => self.move_selected(false),
+            KeyCode::Char('J') => self.move_selected(true),
+            KeyCode::PageUp => {
+                let page = self.queue_visible_height().max(1);
+                self.move_cursor(self.queue.cursor.saturating_sub(page), shift);
             }
-            // Vim: page up/down, home/end.
-            KeyCode::PageUp | KeyCode::Char('u')
-                if key.code == KeyCode::PageUp || key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                self.page_up(false);
+            KeyCode::Char('u') if ctrl => {
+                let page = self.queue_visible_height().max(1);
+                self.move_cursor(self.queue.cursor.saturating_sub(page), false);
             }
-            KeyCode::PageDown | KeyCode::Char('d')
-                if key.code == KeyCode::PageDown
-                    || key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                self.page_down(false);
+            KeyCode::PageDown => {
+                let page = self.queue_visible_height().max(1);
+                self.move_cursor(self.queue.cursor + page, shift);
             }
-            KeyCode::Home | KeyCode::Char('g') => {
-                self.jump_to_start(false);
+            KeyCode::Char('d') if ctrl => {
+                let page = self.queue_visible_height().max(1);
+                self.move_cursor(self.queue.cursor + page, false);
             }
-            KeyCode::End | KeyCode::Char('G') => {
-                self.jump_to_end(false);
+            KeyCode::Char('d') | KeyCode::Delete | KeyCode::Backspace => self.delete_selected(),
+            KeyCode::Home => self.move_cursor(0, shift),
+            KeyCode::End => self.move_cursor(usize::MAX, shift),
+            KeyCode::Char('g') => self.move_cursor(0, false),
+            KeyCode::Char('G') => self.move_cursor(usize::MAX, false),
+            KeyCode::Char('m') if self.page() == Page::Queue => self.open_context_menu(None, false),
+            KeyCode::Char('y') if ctrl => {
+                self.tx.send(PlayerCommand::Redo).ok();
             }
             KeyCode::Enter => {
                 self.play_at_cursor();
@@ -2146,17 +2174,14 @@ impl App {
                     self.open_device_selector();
                 }
             }
-            KeyCode::Char('C') => {
-                self.play_on = Some(super::control::PlayOnState::new(&self.view.local));
-                self.push_mode(Mode::PlayOn);
-            }
+            KeyCode::Char('C') => self.open_play_on(),
             KeyCode::Char('E') => self.open_eq_page(),
             KeyCode::Char('w') => {
                 let ids = self.queue_choice();
                 self.open_chooser(ids);
             }
             KeyCode::Char('W') => self.queue_control(queue::Control::Save),
-            KeyCode::Char('t') if self.page() == Page::Queue => {
+            KeyCode::Char('v') if self.page() == Page::Queue => {
                 self.queue_control(queue::Control::Grouped(self.queue.flat));
             }
             KeyCode::Char('o') if self.page() == Page::Queue => {
@@ -2164,9 +2189,6 @@ impl App {
             }
             KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.queue_control(queue::Control::ClearQueue);
-            }
-            KeyCode::Delete if !self.queue.selected_ids.is_empty() => {
-                self.queue_control(queue::Control::RemoveSelected);
             }
             KeyCode::Char('B') => self.toggle_eq(),
             KeyCode::Char('/') => {
@@ -2270,6 +2292,90 @@ impl App {
             };
             report.send(super::tasks::Report::Work(line)).ok();
         });
+    }
+
+    fn open_play_on(&mut self) {
+        self.play_on = Some(super::control::PlayOnState::new(&self.view.local));
+        self.push_mode(Mode::PlayOn);
+    }
+
+    fn toggle_shuffle(&mut self) {
+        let on = !self.state.play_mode().shuffle;
+        self.tx.send(PlayerCommand::SetShuffle(on)).ok();
+        self.say(if on { "shuffle on" } else { "shuffle off" });
+    }
+
+    /// Off, then each choice in turn, then off again.
+    fn cycle_sleep(&mut self) {
+        use koan_core::player::state::{Sleep, SleepTimer};
+        let next = match self.state.sleep() {
+            None => Some(SleepTimer::After { minutes: 15 }),
+            Some(Sleep::At { unix_ms }) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                // The choice it was set from: what is left, rounded up.
+                match unix_ms.saturating_sub(now).div_ceil(60_000) {
+                    0..=15 => Some(SleepTimer::After { minutes: 30 }),
+                    16..=30 => Some(SleepTimer::After { minutes: 45 }),
+                    31..=45 => Some(SleepTimer::After { minutes: 60 }),
+                    _ => Some(SleepTimer::EndOfTrack),
+                }
+            }
+            Some(Sleep::EndOfTrack) => Some(SleepTimer::EndOfRecord),
+            Some(Sleep::EndOfRecord) => None,
+        };
+        self.tx.send(PlayerCommand::SetSleepTimer(next)).ok();
+        self.say(match next {
+            None => "sleep timer off".into(),
+            Some(SleepTimer::After { minutes }) => format!("sleep in {minutes} min"),
+            Some(SleepTimer::EndOfTrack) => "sleep at the end of the track".into(),
+            Some(SleepTimer::EndOfRecord) => "sleep at the end of the album".into(),
+        });
+    }
+
+    fn cycle_repeat(&mut self) {
+        let repeat = self.state.play_mode().repeat.cycled();
+        self.tx.send(PlayerCommand::SetRepeat(repeat)).ok();
+        self.say(format!("repeat {}", repeat.as_str()));
+    }
+
+    /// What a click on a control of the transport or Now playing does.
+    fn press(&mut self, control: Control) {
+        let playing = self.state.track_info().and_then(|info| {
+            self.queue
+                .vq_cache
+                .entries
+                .iter()
+                .find(|e| e.id == info.id)
+                .and_then(|e| e.db_id)
+        });
+        match control {
+            Control::PlayPause => self.toggle_pause(),
+            Control::Previous => self.skip(PlayerCommand::PrevTrack),
+            Control::Next => self.skip(PlayerCommand::NextTrack),
+            Control::Shuffle => self.toggle_shuffle(),
+            Control::Repeat => self.cycle_repeat(),
+            Control::Sleep => self.cycle_sleep(),
+            Control::Favourite => {
+                if let Some(id) = playing {
+                    self.toggle_favourite(id);
+                }
+            }
+            Control::Output => {
+                if self.this_device_shown() {
+                    self.open_device_selector();
+                }
+            }
+            Control::PlayOn => self.open_play_on(),
+            Control::Eq => self.open_dsp_selector(),
+            Control::Cover => {
+                if self.art.now_playing_art.cached().is_some() {
+                    self.push_mode(Mode::CoverArtZoom);
+                }
+            }
+        }
     }
 
     fn open_device_selector(&mut self) {
@@ -2437,41 +2543,42 @@ impl App {
         };
 
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('v') => {
-                // Restore the original mode (revert preview).
-                let original = picker.current_mode;
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('V') => {
+                // Back to what was shown before the picker previewed others.
+                let (mode, on) = (picker.current_mode, picker.was_on);
                 self.viz_picker = None;
                 self.viz_fullscreen = false;
                 self.pop_mode();
-                self.apply_viz_mode(original);
+                self.visualizer.mode = mode;
+                self.viz_config.enabled = on;
             }
-            KeyCode::Up | KeyCode::Char('k') => {
-                let len = super::viz_picker::ALL_MODES.len();
-                picker.cursor = if picker.cursor == 0 {
-                    len - 1
-                } else {
-                    picker.cursor - 1
-                };
+            KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+                let up = matches!(key.code, KeyCode::Up | KeyCode::Char('k'));
+                picker.move_by(if up { -1 } else { 1 });
                 // Live preview.
-                let mode = picker.selected_mode();
-                self.visualizer.mode = mode;
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                let len = super::viz_picker::ALL_MODES.len();
-                picker.cursor = if picker.cursor + 1 >= len {
-                    0
-                } else {
-                    picker.cursor + 1
-                };
-                let mode = picker.selected_mode();
-                self.visualizer.mode = mode;
+                match picker.selected() {
+                    Some(mode) => {
+                        self.visualizer.mode = mode;
+                        self.viz_config.enabled = true;
+                    }
+                    None => self.viz_config.enabled = false,
+                }
             }
             KeyCode::Enter => {
-                let selected = picker.selected_mode();
+                let selected = picker.selected();
                 self.viz_picker = None;
                 self.viz_fullscreen = false;
                 self.pop_mode();
-                self.apply_viz_mode(selected);
+                match selected {
+                    Some(mode) => self.apply_viz_mode(mode),
+                    None => {
+                        self.viz_config.enabled = false;
+                        self.say("visualiser off");
+                        let _ = koan_core::config::Config::persist(|cfg| {
+                            cfg.visualizer.enabled = false;
+                        });
+                    }
+                }
             }
             _ => {}
         }
@@ -2486,109 +2593,8 @@ impl App {
         let mode_str = mode.as_str().to_string();
         let _ = koan_core::config::Config::persist(|cfg| {
             cfg.visualizer.mode = mode_str.clone();
+            cfg.visualizer.enabled = true;
         });
-    }
-
-    fn handle_edit_key(&mut self, key: KeyEvent) {
-        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
-        match key.code {
-            KeyCode::Esc => self.leave_queue_edit(),
-            KeyCode::Char('q') => {
-                self.quit = true;
-            }
-            KeyCode::Up => {
-                let visible = self.visible_queue();
-                if !visible.is_empty() {
-                    if self.queue.cursor == 0 {
-                        self.queue.cursor = visible.len() - 1;
-                    } else {
-                        self.queue.cursor -= 1;
-                    }
-                }
-                if shift {
-                    self.extend_selection_to(self.queue.cursor);
-                } else {
-                    self.select_single(self.queue.cursor);
-                }
-                self.update_scroll();
-            }
-            KeyCode::Down => {
-                let visible = self.visible_queue();
-                if !visible.is_empty() {
-                    if self.queue.cursor + 1 >= visible.len() {
-                        self.queue.cursor = 0;
-                    } else {
-                        self.queue.cursor += 1;
-                    }
-                }
-                if shift {
-                    self.extend_selection_to(self.queue.cursor);
-                } else {
-                    self.select_single(self.queue.cursor);
-                }
-                self.update_scroll();
-            }
-            // Ctrl+D pages, as everywhere else; it never deletes.
-            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.page_down(false);
-            }
-            KeyCode::Char('d') | KeyCode::Delete => {
-                self.delete_selected();
-            }
-            KeyCode::Char('j') => {
-                self.move_selected(true);
-            }
-            KeyCode::Char('k') => {
-                self.move_selected(false);
-            }
-            KeyCode::Char('J') => {
-                let visible_len = self.visible_queue().len();
-                if self.queue.cursor + 1 < visible_len {
-                    self.queue.cursor += 1;
-                    self.extend_selection_to(self.queue.cursor);
-                    self.update_scroll();
-                }
-            }
-            KeyCode::Char('K') if self.queue.cursor > 0 => {
-                self.queue.cursor -= 1;
-                self.extend_selection_to(self.queue.cursor);
-                self.update_scroll();
-            }
-            KeyCode::Char('i') => {
-                self.open_track_info(self.queue.cursor);
-            }
-            KeyCode::Char(' ') if !self.queue.selected_ids.is_empty() => {
-                self.open_context_menu(None, false);
-            }
-            // Shift with the paging keys extends the selection. `g` and `G`
-            // only move: the terminal reports Shift with `G` itself.
-            KeyCode::PageUp => self.page_up(shift),
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.page_up(false);
-            }
-            KeyCode::PageDown => self.page_down(shift),
-            KeyCode::Home => self.jump_to_start(shift),
-            KeyCode::End => self.jump_to_end(shift),
-            KeyCode::Char('g') => self.jump_to_start(false),
-            KeyCode::Char('G') => self.jump_to_end(false),
-            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.select_all();
-            }
-            KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.tx.send(PlayerCommand::Undo).ok();
-            }
-            KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.tx.send(PlayerCommand::Redo).ok();
-            }
-            KeyCode::Char('Z')
-                if key
-                    .modifiers
-                    .contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) =>
-            {
-                self.tx.send(PlayerCommand::Redo).ok();
-            }
-            _ => {}
-        }
     }
 
     fn handle_context_menu_key(&mut self, key: KeyEvent) {
@@ -3064,15 +3070,14 @@ impl App {
         let Some(entry) = self.queue.vq_cache.entries.get(idx) else {
             return;
         };
-        let (id, path) = (entry.id, entry.path.clone());
-        let details = entry
-            .db_id
+        let (id, track, path) = (entry.id, entry.db_id, entry.path.clone());
+        self.info_arriving = arriving(entry);
+        let details = track
             .and_then(super::track_info::Details::load)
             .unwrap_or_default();
         self.track_details = Some(Box::new(details));
         self.push_mode(Mode::TrackInfo(id));
-        // Prime the cache for this track's path.
-        self.art.cover_art.get(&path);
+        self.art.cover_art.want(&path, self.info_arriving, || track);
     }
 
     /// Opens the album, or the artist, of the library track `db_id`.
@@ -3333,54 +3338,24 @@ impl App {
         self.push_mode(Mode::Picker(PickerKind::QueueJump));
     }
 
-    /// Move cursor up by one page.
-    fn page_up(&mut self, extend: bool) {
-        let page_size = self.queue_visible_height().max(1);
-        self.queue.cursor = self.queue.cursor.saturating_sub(page_size);
+    /// Puts the queue's cursor on `to`. With `extend` the selection runs
+    /// from its anchor to there; otherwise it is left as it is, and the
+    /// cursor's row is where the next extension starts.
+    fn move_cursor(&mut self, to: usize, extend: bool) {
+        let len = self.queue.vq_cache.entries.len();
+        if len == 0 {
+            return;
+        }
+        self.queue.cursor = to.min(len - 1);
         if extend {
             self.extend_selection_to(self.queue.cursor);
         } else {
-            self.select_single(self.queue.cursor);
-        }
-        self.update_scroll();
-    }
-
-    /// Move cursor down by one page.
-    fn page_down(&mut self, extend: bool) {
-        let visible_len = self.visible_queue().len();
-        let page_size = self.queue_visible_height().max(1);
-        if visible_len > 0 {
-            self.queue.cursor = (self.queue.cursor + page_size).min(visible_len - 1);
-        }
-        if extend {
-            self.extend_selection_to(self.queue.cursor);
-        } else {
-            self.select_single(self.queue.cursor);
-        }
-        self.update_scroll();
-    }
-
-    /// Jump cursor to start of queue.
-    fn jump_to_start(&mut self, extend: bool) {
-        self.queue.cursor = 0;
-        if extend {
-            self.extend_selection_to(self.queue.cursor);
-        } else {
-            self.select_single(self.queue.cursor);
-        }
-        self.update_scroll();
-    }
-
-    /// Jump cursor to end of queue.
-    fn jump_to_end(&mut self, extend: bool) {
-        let visible_len = self.visible_queue().len();
-        if visible_len > 0 {
-            self.queue.cursor = visible_len - 1;
-        }
-        if extend {
-            self.extend_selection_to(self.queue.cursor);
-        } else {
-            self.select_single(self.queue.cursor);
+            self.queue.anchor_id = self
+                .queue
+                .vq_cache
+                .entries
+                .get(self.queue.cursor)
+                .map(|e| e.id);
         }
         self.update_scroll();
     }

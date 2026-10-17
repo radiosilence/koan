@@ -16,9 +16,11 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use unicode_width::UnicodeWidthStr;
 
+use super::actions_menu::{Playable, playable};
 use super::app::PickerAction;
 use super::browse::{
     Action, SeeAll, Source, Thumbs, Tile, View, album_tracks, album_year, artist_tracks, tile_grid,
+    track_playable,
 };
 use super::cover_art::Gfx;
 use super::rows::{self, Columns, Emphasis, Row, Target};
@@ -146,7 +148,10 @@ pub struct ShelfPage {
     layout: Layout,
     geom: Geom,
     last_click: Option<(usize, Instant)>,
+    /// What is a favourite, for the hearts and the menu.
     fav_albums: HashSet<i64>,
+    fav_artists: HashSet<i64>,
+    fav_tracks: HashSet<i64>,
     /// The last read asked for and the one shown; a summary from any but the
     /// last is dropped.
     generation: u64,
@@ -219,6 +224,8 @@ impl ShelfPage {
             geom: Geom::default(),
             last_click: None,
             fav_albums: HashSet::new(),
+            fav_artists: HashSet::new(),
+            fav_tracks: HashSet::new(),
             generation: 0,
             shown: 0,
             tx,
@@ -244,8 +251,10 @@ impl ShelfPage {
     pub fn reload(&mut self) {
         self.generation += 1;
         if let Ok(db) = koan_core::db::pool::shared().get() {
-            self.fav_albums =
-                queries::favourite_album_id_set(&db.conn, queries::LOCAL_USER).unwrap_or_default();
+            let user = queries::LOCAL_USER;
+            self.fav_albums = queries::favourite_album_id_set(&db.conn, user).unwrap_or_default();
+            self.fav_artists = queries::favourite_artist_id_set(&db.conn, user).unwrap_or_default();
+            self.fav_tracks = queries::load_favourites(&db.conn, user).unwrap_or_default();
         }
         let q = self.query.trim().to_string();
         if self.searching() && q.is_empty() {
@@ -588,7 +597,6 @@ impl ShelfPage {
 
     /// What can be done with the item at `idx`.
     fn menu(&self, idx: usize) -> Action {
-        use PickerAction::{Append, AppendAndPlay, PlayNext, ReplaceQueue};
         let Some(s) = &self.summary else {
             return Action::None;
         };
@@ -596,63 +604,34 @@ impl ShelfPage {
         if ids.is_empty() {
             return Action::None;
         }
-        let title = match self.item(idx) {
-            Some(Item::Artist(i)) => s.artists.preview[i].name.clone(),
-            Some(Item::Album(i)) => s.albums.preview[i].title.clone(),
-            Some(Item::Track(i)) => s.tracks.preview[i].title.clone(),
+        let (title, thing) = match self.item(idx) {
+            Some(Item::Artist(i)) => {
+                let a = &s.artists.preview[i];
+                let thing = Playable::Artist {
+                    id: a.id,
+                    tracks: ids,
+                    favourite: self.fav_artists.contains(&a.id),
+                };
+                (a.name.clone(), thing)
+            }
+            Some(Item::Album(i)) => {
+                let a = &s.albums.preview[i];
+                let thing = Playable::Album {
+                    id: a.id,
+                    tracks: ids,
+                    favourite: self.fav_albums.contains(&a.id),
+                    artist: a.artist_id,
+                };
+                (a.title.clone(), thing)
+            }
+            Some(Item::Track(i)) => {
+                let t = &s.tracks.preview[i];
+                let thing = track_playable(t, self.fav_tracks.contains(&t.id));
+                (t.title.clone(), thing)
+            }
             _ => return Action::None,
         };
-        let mut items = vec![
-            ("Play".to_string(), Action::Play(ids.clone(), AppendAndPlay)),
-            ("Add to the queue".into(), Action::Play(ids.clone(), Append)),
-            ("Play next".into(), Action::Play(ids.clone(), PlayNext)),
-            (
-                "Replace the queue".into(),
-                Action::Play(ids.clone(), ReplaceQueue),
-            ),
-            (
-                "Add to a playlist\u{2026}".into(),
-                Action::Choose(ids.clone()),
-            ),
-            ("Favourite or unfavourite".into(), self.favourite_at(idx)),
-        ];
-        if let Some(album) = self.album_of(idx)
-            && !matches!(self.item(idx), Some(Item::Album(_)))
-        {
-            items.push(("Go to the album".into(), Action::OpenAlbum(album)));
-        }
-        match self.item(idx) {
-            Some(Item::Album(i)) => {
-                items.insert(
-                    0,
-                    (
-                        "Open the album".into(),
-                        Action::OpenAlbum(s.albums.preview[i].id),
-                    ),
-                );
-            }
-            Some(Item::Artist(i)) => {
-                items.insert(
-                    0,
-                    (
-                        "Open the artist".into(),
-                        Action::OpenArtist(s.artists.preview[i].id),
-                    ),
-                );
-            }
-            _ => {}
-        }
-        if let Some(artist) = self.artist_of(idx)
-            && !matches!(self.item(idx), Some(Item::Artist(_)))
-        {
-            items.push(("Go to the artist".into(), Action::OpenArtist(artist)));
-        }
-        if let Some(Item::Track(i)) = self.item(idx) {
-            items.push(("Track info".into(), Action::Info(s.tracks.preview[i].id)));
-        }
-        items.push(("Download".into(), Action::Download(ids.clone())));
-        items.push(("Remove the download".into(), Action::RemoveDownload(ids)));
-        Action::Menu(title, items)
+        Action::Menu(title, playable(&thing))
     }
 
     fn set_query(&mut self, query: String) {
@@ -914,8 +893,7 @@ impl ShelfPage {
         }
         thumbs.begin_frame();
         gfx.begin_frame();
-        // A row clear under the shell's toolbar.
-        let mut top = area.y + 1;
+        let mut top = super::shell::body(area).y;
         if self.searching() {
             self.render_box(Rect::new(area.x, top, area.width, 1), buf, theme, hover);
             top += 2;

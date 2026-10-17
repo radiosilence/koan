@@ -349,7 +349,12 @@ impl AlbumFilter<'_> {
 pub struct AlbumQuery<'a> {
     /// Only these albums.
     pub ids: Option<&'a [i64]>,
+    /// Only this artist's own records: those they are the album artist of.
     pub artist_id: Option<i64>,
+    /// Only the records this artist features on: a track is credited to them
+    /// and the album artist is someone else. Never one of their own, however
+    /// many guests it has.
+    pub features_of: Option<i64>,
     /// Case-insensitive substring over the album title and the artist name.
     /// When no album holds it, the closest fuzzy matches instead
     /// (`search::fuzzy_ids`).
@@ -529,6 +534,15 @@ fn album_body(
     if let Some(id) = q.artist_id {
         params.push(Box::new(id));
         wheres.push("al.artist_id = ?".into());
+    }
+    if let Some(id) = q.features_of {
+        params.push(Box::new(id));
+        params.push(Box::new(id));
+        wheres.push(
+            "al.id IN (SELECT album_id FROM tracks WHERE artist_id = ?)
+             AND al.artist_id IS NOT ?"
+                .into(),
+        );
     }
     if let Some(query) = q.search {
         let pattern = format!("%{}%", super::artists::escape_like(query));
@@ -761,6 +775,77 @@ mod tests {
             crate::db::queries::upsert_track(&db.conn, &meta).unwrap();
         }
         db
+    }
+
+    /// An artist's own records and the ones they feature on are two lists
+    /// that never share a record, each in the page's order.
+    #[test]
+    fn own_records_and_features_split() {
+        let db = test_db();
+        for (title, artist, album_artist, album, date) in [
+            // Own records, one with a guest on it and one with the artist
+            // credited as featuring under their own name.
+            ("Own A", "Ayla", "Ayla", "First", "2001"),
+            ("Own B", "Bryn", "Ayla", "First", "2001"),
+            ("Own C", "Ayla", "Ayla", "Second", "2008"),
+            // On compilations and on somebody else's record.
+            ("Comp A", "Ayla", "Various Artists", "Comp", "2004"),
+            ("Comp B", "Cato", "Various Artists", "Comp", "2004"),
+            ("Guest", "Ayla", "Bryn", "Tide", "2012"),
+            ("Bryn", "Bryn", "Bryn", "Tide", "2012"),
+            // Only ever on a compilation.
+            ("Comp C", "Cato", "Various Artists", "Later Comp", "2015"),
+        ] {
+            let mut meta = crate::db::queries::sample_meta(title, artist, album);
+            meta.album_artist = Some(album_artist.into());
+            meta.date = Some(date.into());
+            crate::db::queries::upsert_track(&db.conn, &meta).unwrap();
+        }
+        let artist = |name| get_or_create_artist(&db.conn, name, None).unwrap();
+        let titles = |q: AlbumQuery| -> Vec<String> {
+            list_albums(&db.conn, &q)
+                .unwrap()
+                .into_iter()
+                .map(|a| a.title)
+                .collect()
+        };
+        let page = |id| {
+            (
+                titles(AlbumQuery {
+                    artist_id: Some(id),
+                    order: AlbumOrder::YearDesc,
+                    ..Default::default()
+                }),
+                titles(AlbumQuery {
+                    features_of: Some(id),
+                    order: AlbumOrder::YearDesc,
+                    ..Default::default()
+                }),
+            )
+        };
+
+        assert_eq!(
+            page(artist("Ayla")),
+            (
+                vec!["Second".into(), "First".into()],
+                vec!["Tide".into(), "Comp".into()]
+            )
+        );
+        assert_eq!(
+            page(artist("Bryn")),
+            (vec!["Tide".into()], vec!["First".into()])
+        );
+        assert_eq!(
+            page(artist("Cato")),
+            (vec![], vec!["Later Comp".into(), "Comp".into()]),
+            "only on compilations: nothing of their own"
+        );
+
+        let features = AlbumQuery {
+            features_of: Some(artist("Ayla")),
+            ..Default::default()
+        };
+        assert_eq!(count_albums(&db.conn, &features).unwrap(), 2);
     }
 
     /// A record fully downloaded comes before one half there, and a record

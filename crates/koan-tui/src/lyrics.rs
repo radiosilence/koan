@@ -6,6 +6,7 @@ use ratatui::widgets::{Block, Borders, Widget};
 
 use koan_core::lyrics::{LrcLine, Lyrics, current_line_index, parse_lrc};
 
+use super::text::fit;
 use super::theme::Theme;
 
 /// Lyrics display state, held by App.
@@ -139,7 +140,7 @@ fn render_synced(lines: &[LrcLine], position_ms: u64, area: Rect, buf: &mut Buff
         };
 
         let prefix = if is_current { "> " } else { "  " };
-        let text = truncate_to_width(&lines[i].text, area.width.saturating_sub(2) as usize);
+        let text = fit(&lines[i].text, area.width.saturating_sub(2) as usize);
         let line = Line::from(Span::styled(format!("{}{}", prefix, text), style));
         buf.set_line(area.x, area.y + row as u16, &line, area.width);
     }
@@ -153,18 +154,8 @@ fn render_plain(content: &str, area: Rect, buf: &mut Buffer, theme: &Theme) {
         if row >= visible_height {
             break;
         }
-        let text = truncate_to_width(text, area.width.saturating_sub(2) as usize);
+        let text = fit(text, area.width.saturating_sub(2) as usize);
         let line = Line::from(Span::styled(format!("  {}", text), theme.track_normal));
         buf.set_line(area.x, area.y + row as u16, &line, area.width);
     }
-}
-
-/// `s` cut to `max_width` cells, with an ellipsis where it was cut.
-fn truncate_to_width(s: &str, max_width: usize) -> String {
-    if s.chars().count() <= max_width {
-        return s.to_string();
-    }
-    let mut cut: String = s.chars().take(max_width.saturating_sub(1)).collect();
-    cut.push('\u{2026}');
-    cut
 }

@@ -30,7 +30,7 @@ final class LibraryModel {
         visibleAlbums.map(Playable.album)
     }
     @ObservationIgnored private(set) lazy var artistSelection = PlayableSelection { [unowned self] in
-        (detailArtist?.albums ?? []).map(Playable.album)
+        ((detailArtist?.albums ?? []) + (detailArtist?.features ?? [])).map(Playable.album)
     }
 
     /// What is on screen. Written only by the navigator, which owns it — the
@@ -58,11 +58,15 @@ final class LibraryModel {
     /// to re-read it or to throw their narrowing away. A library change reloads
     /// it where it is drawn instead.
     func prepare(section: Section) async -> Listing? {
-        guard section != self.section else { return nil }
-        // Nothing carries over: a filter you left behind on another view is
-        // invisible here, and an apparently empty library is the result. The
-        // one exception is a shelf's heading, which arrives with the shelf's query.
-        let filter = carried ?? ""
+        guard section != self.section else {
+            carried = nil
+            return nil
+        }
+        // Nothing carries over from another section: a filter left behind on
+        // another view is invisible here, and an apparently empty library is
+        // the result. A section comes back with its own, as it was left, unless
+        // a shelf's heading arrives with the shelf's query.
+        let filter = carried ?? leftFilters[section] ?? ""
         carried = nil
         return await Listing(
             section: section,
@@ -77,6 +81,9 @@ final class LibraryModel {
     /// Adopt a listing, at the moment the navigator moves to it.
     func show(_ listing: Listing) {
         loading?.cancel()
+        // Only where there is a field to show it and clear it: a playlist has
+        // none, and its row id goes to the next one made once it is deleted.
+        leftFilters[section] = section.filterPlaceholder == nil ? nil : filter
         section = listing.section
         // Quietly: the rows for this section are already in hand, so emptying
         // the filter it arrives with is not a reason to ask for them again.
@@ -107,6 +114,10 @@ final class LibraryModel {
     /// all, and spent by the move it makes.
     @ObservationIgnored private var carried: String?
 
+    /// Each section's name filter as it was when the section was left, for
+    /// the session.
+    @ObservationIgnored private var leftFilters: [Section: String] = [:]
+
     /// Point a browser at a shelf: its filters and sort set to the shelf's, so
     /// the listing it opens on is the one the shelf's preview is the head of
     /// and its count is the one the shelf gave. Returns the section to show.
@@ -117,6 +128,14 @@ final class LibraryModel {
         seeding = true
         defer { seeding = false }
         var filter = BrowseFilter.none
+        // The listing the shelf's count is for: no name filter but its own,
+        // and from the top.
+        carried = ""
+        switch list {
+        case .albums: albumsOffset = nil
+        case .artists: artistsOffset = nil
+        case .tracks: tracksOffset = nil
+        }
         switch shelf {
         case .favourites:
             filter.favourites = true
@@ -136,6 +155,15 @@ final class LibraryModel {
             trackSort = .artist
         }
         browseFilter = filter
+        // Already there, the navigator does not move, so nothing prepares the
+        // section: the shelf's query and filters apply to the rows in place.
+        if list.section == section {
+            adopting = true
+            self.filter = carried ?? ""
+            adopting = false
+            carried = nil
+            reload()
+        }
         return list.section
     }
 
@@ -233,6 +261,8 @@ final class LibraryModel {
     /// How many rows above the visible ones the list keeps ready, so the top
     /// of what was on screen can be told from the top of what was built.
     @ObservationIgnored var artistsOverscan = 0
+    @ObservationIgnored var tracksOffset: CGFloat?
+    @ObservationIgnored var historyOffset: CGFloat?
 
     /// What the section on screen is showing, as the database handed it over.
     /// Stored rather than computed because a `List` reads its collection far
@@ -248,6 +278,9 @@ final class LibraryModel {
     /// at a time — see `continueTracks()`.
     private(set) var visibleTracks: [Track] = []
     private(set) var trackTotal: UInt64 = 0
+    /// Whether more of the track browser's pages are on their way. A page
+    /// that fails to arrive ends the listing short of `trackTotal`.
+    private(set) var pagingTracks = false
 
     // Favourite state is read from here rather than from the copy baked into
     // each Track when it was fetched. A track appears in the album view, the
@@ -339,10 +372,14 @@ final class LibraryModel {
     /// appended as it lands. Part of the load it follows: anything that
     /// reloads cancels it, so a page of the old listing never lands on the new.
     private func continueTracks() {
+        if pagingTracks { pagingTracks = false }
         guard section == .tracks, UInt64(visibleTracks.count) < trackTotal else { return }
         let request = self.request
         let from = visibleTracks.count
+        pagingTracks = true
         loading = Task {
+            // A cancelled load is followed by the one that replaced it.
+            defer { if !Task.isCancelled { pagingTracks = false } }
             var offset = from
             while !Task.isCancelled, UInt64(offset) < trackTotal {
                 guard let page = await request.tracks(offset: UInt32(offset)), !page.tracks.isEmpty
@@ -520,9 +557,14 @@ final class LibraryModel {
         /// already on screen is free and asking after a scan is a real read.
         let stamp: UInt64
         var artist: Artist?
+        /// The records they are the album artist of: what the page's Play plays.
         var albums: [Album]
-        /// For an artist who owns no albums (a guest, a compilation track):
-        /// the tracks credited to them, which are then the whole page.
+        /// The records they are credited on and someone else is the album
+        /// artist of, ordered as `albums` are.
+        var features: [Album] = []
+        /// For an artist who owns no albums and features on none listed (offline,
+        /// or credits without a record): the tracks credited to them, which
+        /// are then the whole page.
         var appearances: [Track] = []
         /// Biography and photograph, as cached. Filled in from the network
         /// after the page is up — see `enrich(artist:)`.
@@ -544,6 +586,7 @@ final class LibraryModel {
                 async let albums = try? await engine.albums(
                     artistId: id, sort: .year, seed: 0, search: nil, filter: .none
                 )
+                async let features = try? await engine.artistFeatures(artistId: id)
                 async let info = try? await engine.artistInfo(artistId: id)
                 let cached = await info ?? nil
                 let owned = await albums ?? []
@@ -560,6 +603,7 @@ final class LibraryModel {
                     stamp: stamp,
                     artist: await artist ?? nil,
                     albums: owned,
+                    features: await features ?? [],
                     appearances: appearances,
                     info: cached,
                     infoLoading: cached == nil
@@ -597,7 +641,8 @@ final class LibraryModel {
         let needsColour = art.cachedColour(for: source) == nil
         guard needsImage || needsColour else { return }
         Task.detached {
-            if needsImage { _ = await art.image(for: source, size: .tile) }
+            // Ahead of need, so behind anything on screen.
+            if needsImage { _ = await art.image(for: source, size: .tile, priority: .ahead(.infinity)) }
             if needsColour { _ = await art.dominantColour(for: source) }
         }
     }

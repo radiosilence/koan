@@ -1,0 +1,1 @@
+- **The Mac album grid keeps up with ProMotion.** Covers are fetched ahead of the scroll, towards where a flick will land, and decoded off the main thread in the format the display draws, so sleeves are on their tiles before the tiles scroll in and a fast scroll holds 120 fps.
