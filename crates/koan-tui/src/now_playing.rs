@@ -70,14 +70,7 @@ fn db_label(level: f32) -> String {
 /// zero line, dB labels down the side and a frequency axis under it. The
 /// vertical range is the curve's own, at least ±6 dB. The first row says what
 /// the curve is.
-fn eq_plot(
-    area: Rect,
-    buf: &mut Buffer,
-    theme: &Theme,
-    title: &str,
-    freqs: &[f64],
-    db: &[f64],
-) {
+fn eq_plot(area: Rect, buf: &mut Buffer, theme: &Theme, title: &str, freqs: &[f64], db: &[f64]) {
     if area.width < 14 || area.height < 5 || db.is_empty() {
         return;
     }

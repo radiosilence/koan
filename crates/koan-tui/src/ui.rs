@@ -1270,19 +1270,29 @@ mod tests {
     }
 
     #[test]
-    fn the_eq_chooser_opens_and_closes_by_key_and_by_click() {
+    fn the_eq_page_and_the_preset_menu_open_and_close() {
         use crossterm::event::{
             KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
         };
         let mut app = app_with_queue(3);
         app.handle_key(KeyEvent::from(KeyCode::Char('E')));
+        assert_eq!(app.page(), Page::Eq);
+        for (w, h) in [(120u16, 40u16), (60, 20), (30, 10), (5, 3)] {
+            draw(&mut app, w, h);
+        }
+        app.handle_key(KeyEvent::from(KeyCode::Esc));
+        assert_ne!(app.page(), Page::Eq);
+        // The preset menu, once the EQ has been read.
+        let start = std::time::Instant::now();
+        while app.eq_page.snap.is_none() {
+            app.eq_page.poll();
+            assert!(start.elapsed().as_secs() < 10, "the eq was never read");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        app.open_dsp_selector();
         assert_eq!(app.mode, Mode::DspSelector);
         draw(&mut app, 100, 30);
         assert!(app.layout.selector_area.width > 0);
-        app.handle_key(KeyEvent::from(KeyCode::Esc));
-        assert_eq!(app.mode, Mode::Normal);
-        app.handle_key(KeyEvent::from(KeyCode::Char('E')));
-        draw(&mut app, 100, 30);
         // A click outside the popup closes it.
         app.handle_mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
@@ -1291,6 +1301,12 @@ mod tests {
             modifiers: KeyModifiers::NONE,
         });
         assert_eq!(app.mode, Mode::Normal);
+        // Its last row is the EQ page.
+        app.open_dsp_selector();
+        app.handle_key(KeyEvent::from(KeyCode::End));
+        app.handle_key(KeyEvent::from(KeyCode::Enter));
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.page(), Page::Eq);
     }
 
     #[test]

@@ -52,6 +52,8 @@ pub struct Snapshot {
     pub in_use_preset: Option<(String, bool)>,
     pub in_use_flat: bool,
     pub profile: Option<ProfileView>,
+    /// The profile the page asked for, whether or not it is there.
+    pub asked: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -138,7 +140,10 @@ pub enum Job {
 
 pub enum Done {
     Snapshot(Box<Snapshot>),
-    Reply { seq: u64, result: Result<Reply, String> },
+    Reply {
+        seq: u64,
+        result: Result<Reply, String>,
+    },
     Playing(Option<Playing>),
 }
 
@@ -334,6 +339,7 @@ fn load(v: &ViewReq, seq: u64) -> Snapshot {
         in_use_preset,
         in_use_flat,
         profile,
+        asked: v.profile.clone(),
     }
 }
 

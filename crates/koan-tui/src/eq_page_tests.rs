@@ -34,7 +34,11 @@ const RENDERER: &str = "uuid:test";
 
 /// A page over a config of its own: an EQ of eight bands in the device's
 /// filters. The guard holds the config directory for the test.
-fn page() -> (std::sync::MutexGuard<'static, ()>, tempfile::TempDir, EqPage) {
+fn page() -> (
+    std::sync::MutexGuard<'static, ()>,
+    tempfile::TempDir,
+    EqPage,
+) {
     let guard = koan_core::config::SWITCHING
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -57,10 +61,13 @@ fn settle(page: &mut EqPage, device: &str) {
     let start = std::time::Instant::now();
     loop {
         page.poll();
-        let caught = page
-            .snap
-            .as_ref()
-            .is_some_and(|s| s.seq >= page.seq && s.device.as_deref() == Some(device));
+        let profile = match page.view() {
+            View::Profile(name) => Some(name.clone()),
+            _ => None,
+        };
+        let caught = page.snap.as_ref().is_some_and(|s| {
+            s.seq >= page.seq && s.device.as_deref() == Some(device) && s.asked == profile
+        });
         if caught {
             std::thread::sleep(std::time::Duration::from_millis(30));
             page.poll();
@@ -134,7 +141,10 @@ fn the_chain_shows_the_device_its_eq_and_the_curve() {
     page.cursor = row_of(&page, Row::Eq(0));
     key(&mut page, KeyCode::Char(' '));
     settle(&mut page, DEVICE);
-    assert_eq!(profiles::tunings_for(DEVICE), vec![("Warm".to_owned(), false)]);
+    assert_eq!(
+        profiles::tunings_for(DEVICE),
+        vec![("Warm".to_owned(), false)]
+    );
     dump(&mut page, "chain-off");
 }
 
@@ -259,9 +269,9 @@ fn a_file_is_imported_and_asked_about() {
     key(&mut page, KeyCode::Enter);
     settle(&mut page, DEVICE);
     let o = &page.snap.as_ref().unwrap().overview;
-    assert_eq!(o.active.as_deref(), Some("hd650 ParametricEQ"));
+    assert_eq!(o.active.as_deref(), Some("hd650"));
     let text = dump(&mut page, "corrected");
-    assert!(text.contains("hd650 ParametricEQ"), "{text}");
+    assert!(text.contains("hd650"), "{text}");
 }
 
 #[test]
@@ -294,7 +304,10 @@ fn presets_are_saved_chosen_and_marked_edited() {
         .unwrap();
     page.pick(at);
     settle(&mut page, DEVICE);
-    assert_eq!(profiles::tunings_for(DEVICE), vec![("Warm".to_owned(), true)]);
+    assert_eq!(
+        profiles::tunings_for(DEVICE),
+        vec![("Warm".to_owned(), true)]
+    );
 }
 
 #[test]
@@ -310,7 +323,10 @@ fn bypass_keeps_what_played_as_a_preset_and_puts_it_back() {
     assert_eq!(profiles::preset_for(RENDERER), None);
     assert_eq!(page.bypass(), None);
     settle(&mut page, RENDERER);
-    assert_eq!(profiles::tunings_for(RENDERER), vec![("Warm".to_owned(), true)]);
+    assert_eq!(
+        profiles::tunings_for(RENDERER),
+        vec![("Warm".to_owned(), true)]
+    );
     assert_eq!(
         profiles::preset_for(RENDERER),
         Some(("Test renderer".into(), false))

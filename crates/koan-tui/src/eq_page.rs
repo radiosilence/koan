@@ -344,7 +344,8 @@ impl EqPage {
                     // A profile renamed or deleted elsewhere: back to the chain.
                     if let View::Profile(name) = self.view()
                         && s.seq >= self.seq
-                        && s.profile.as_ref().is_none_or(|p| &p.detail.name != name)
+                        && s.asked.as_ref() == Some(name)
+                        && s.profile.is_none()
                     {
                         self.views.retain(|v| !matches!(v, View::Profile(_)));
                         self.cursor = 0;
@@ -405,7 +406,11 @@ impl EqPage {
         Some(format!("{} \u{b7} {set}", s.label(device)))
     }
 
-    fn act(&mut self, key: Option<(String, usize)>, run: impl FnOnce() -> Result<Reply, String> + Send + 'static) {
+    fn act(
+        &mut self,
+        key: Option<(String, usize)>,
+        run: impl FnOnce() -> Result<Reply, String> + Send + 'static,
+    ) {
         self.seq += 1;
         self.worker.send(Job::Act(Act {
             seq: self.seq,
@@ -671,7 +676,15 @@ impl EqPage {
     }
 
     /// Band `index` of `name` set to `band`: shown at once, saved behind.
-    fn set_band(&mut self, name: &str, index: usize, kind: EqFilterKind, freq: f64, gain: f64, q: f64) {
+    fn set_band(
+        &mut self,
+        name: &str,
+        index: usize,
+        kind: EqFilterKind,
+        freq: f64,
+        gain: f64,
+        q: f64,
+    ) {
         let mut filters = self.filters().to_vec();
         if let Some(DspFilter::Band(b)) = filters.get_mut(index) {
             (b.kind, b.freq, b.gain_db, b.q) = (kind, freq, gain, q);
@@ -753,7 +766,8 @@ impl EqPage {
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         match key.code {
             KeyCode::Esc | KeyCode::Left | KeyCode::Char('h')
-                if !matches!(row, Some(Row::Band(_)) | Some(Row::Device)) || key.code == KeyCode::Esc =>
+                if !matches!(row, Some(Row::Band(_)) | Some(Row::Device))
+                    || key.code == KeyCode::Esc =>
             {
                 if self.views.len() > 1 {
                     self.back();
@@ -838,32 +852,20 @@ impl EqPage {
             KeyCode::Char('d') if *self.view() == View::Chain => self.cycle_device(1),
             KeyCode::Char('a') if self.editable() => self.add_band(),
             KeyCode::Char('r') => {
-                if let Some(name) = self.target_name(row.as_ref()) {
-                    self.ask_rename(name);
-                } else {
-                    return None;
-                }
+                let name = self.target_name(row.as_ref())?;
+                self.ask_rename(name);
             }
             KeyCode::Char('c') => {
-                if let Some(name) = self.target_name(row.as_ref()) {
-                    self.ask_copy(name);
-                } else {
-                    return None;
-                }
+                let name = self.target_name(row.as_ref())?;
+                self.ask_copy(name);
             }
             KeyCode::Char('D') => {
-                if let Some(name) = self.target_name(row.as_ref()) {
-                    self.confirm_delete(name);
-                } else {
-                    return None;
-                }
+                let name = self.target_name(row.as_ref())?;
+                self.confirm_delete(name);
             }
             KeyCode::Char('R') => {
-                if let Some(name) = self.target_name(row.as_ref()) {
-                    self.simple(move || profiles::revert(&name));
-                } else {
-                    return None;
-                }
+                let name = self.target_name(row.as_ref())?;
+                self.simple(move || profiles::revert(&name));
             }
             KeyCode::Char('u') => match row {
                 Some(Row::Profile(name)) => self.use_profile(&name),
@@ -1029,12 +1031,18 @@ impl EqPage {
         match self.field {
             Field::Kind => {
                 let at = KINDS.iter().position(|(k, _)| *k == kind).unwrap_or(0);
-                kind = KINDS[(at as isize + sign as isize).rem_euclid(KINDS.len() as isize) as usize].0;
+                kind = KINDS
+                    [(at as isize + sign as isize).rem_euclid(KINDS.len() as isize) as usize]
+                    .0;
             }
             Field::Freq => {
                 let octaves = if coarse { 1.0 / 3.0 } else { 1.0 / 12.0 };
                 freq = (freq * 2f64.powf(sign * octaves)).clamp(10.0, 22_000.0);
-                freq = if freq >= 1000.0 { freq.round() } else { (freq * 10.0).round() / 10.0 };
+                freq = if freq >= 1000.0 {
+                    freq.round()
+                } else {
+                    (freq * 10.0).round() / 10.0
+                };
             }
             Field::Gain => {
                 let step = if coarse { 1.0 } else { 0.1 };
@@ -1072,7 +1080,9 @@ impl EqPage {
         let Some(p) = s.overview.profiles.iter().find(|p| p.name == name) else {
             return;
         };
-        let Some(device) = s.device.clone() else { return };
+        let Some(device) = s.device.clone() else {
+            return;
+        };
         if p.preset {
             self.apply_preset(device, Some(name.to_owned()));
         } else if p.role == DspRole::Tuning && p.rates.is_empty() {
@@ -1223,9 +1233,11 @@ impl EqPage {
         let Some(s) = self.snap.as_ref() else { return };
         let o = &s.overview;
         let flat = o.active.is_none() && o.chain.is_empty();
-        let mut items = vec![Item::new("flat", Pick::Preset(None))
-            .detail("plays untouched, bit for bit")
-            .chosen(o.preset.is_none() && flat)];
+        let mut items = vec![
+            Item::new("flat", Pick::Preset(None))
+                .detail("plays untouched, bit for bit")
+                .chosen(o.preset.is_none() && flat),
+        ];
         if o.preset.is_none() && !flat {
             items.push(Item::new("unsaved", Pick::Nothing).chosen(true));
         }
@@ -1256,7 +1268,11 @@ impl EqPage {
                         .detail("no correction: the device as it is")
                         .chosen(o.active.is_none()),
                 );
-                for p in o.profiles.iter().filter(|p| !p.preset && p.role != DspRole::Tuning) {
+                for p in o
+                    .profiles
+                    .iter()
+                    .filter(|p| !p.preset && p.role != DspRole::Tuning)
+                {
                     items.push(
                         Item::new(p.name.clone(), Pick::Correction(Some(p.name.clone())))
                             .detail(describe(p))
@@ -1286,7 +1302,9 @@ impl EqPage {
                         };
                         detail = format!("made for {made}{mark} \u{b7} {detail}");
                     }
-                    items.push(Item::new(p.name.clone(), Pick::AddEq(p.name.clone())).detail(detail));
+                    items.push(
+                        Item::new(p.name.clone(), Pick::AddEq(p.name.clone())).detail(detail),
+                    );
                 }
                 if items.is_empty() {
                     items.push(
@@ -1318,8 +1336,14 @@ impl EqPage {
         let role = p.detail.role;
         let items = [
             (DspRole::Correction, "makes headphones or speakers neutral"),
-            (DspRole::Baked, "corrects and adds taste in one, as most finished presets do"),
-            (DspRole::Tuning, "taste on top of a correction: more bass, a darker treble"),
+            (
+                DspRole::Baked,
+                "corrects and adds taste in one, as most finished presets do",
+            ),
+            (
+                DspRole::Tuning,
+                "taste on top of a correction: more bass, a darker treble",
+            ),
         ]
         .into_iter()
         .map(|(r, what)| {
@@ -1341,8 +1365,11 @@ impl EqPage {
                 .chosen(current.is_none()),
         ];
         items.extend(p.made_against.iter().map(|(id, label)| {
-            Item::new(label.clone(), Pick::MadeAgainst(name.clone(), Some(id.clone())))
-                .chosen(current.as_ref() == Some(id))
+            Item::new(
+                label.clone(),
+                Pick::MadeAgainst(name.clone(), Some(id.clone())),
+            )
+            .chosen(current.as_ref() == Some(id))
         }));
         self.open_choice(
             "made against",
@@ -1394,8 +1421,11 @@ impl EqPage {
             .layers
             .iter()
             .map(|l| {
-                Item::new(l.profile.clone(), Pick::Member(name.clone(), l.profile.clone()))
-                    .chosen(playing.as_ref() == Some(&l.profile))
+                Item::new(
+                    l.profile.clone(),
+                    Pick::Member(name.clone(), l.profile.clone()),
+                )
+                .chosen(playing.as_ref() == Some(&l.profile))
             })
             .collect();
         self.open_choice("playing", Some("one member plays at a time".into()), items);
@@ -1408,7 +1438,9 @@ impl EqPage {
         let name = self.name();
         let items = KINDS
             .iter()
-            .map(|(k, label)| Item::new(*label, Pick::Kind(name.clone(), index, *k)).chosen(*k == b.kind))
+            .map(|(k, label)| {
+                Item::new(*label, Pick::Kind(name.clone(), index, *k)).chosen(*k == b.kind)
+            })
             .collect();
         self.open_choice("band type", None, items);
     }
@@ -1451,7 +1483,10 @@ impl EqPage {
         if let Some(p) = p {
             if !p.used_on.is_empty() {
                 let on: Vec<String> = p.used_on.iter().map(|d| s.label(d)).collect();
-                note.push(format!("used on {}, which will play without it.", on.join(", ")));
+                note.push(format!(
+                    "used on {}, which will play without it.",
+                    on.join(", ")
+                ));
             }
             if !p.held_by.is_empty() {
                 note.push(format!("it is taken out of {}.", p.held_by.join(", ")));
@@ -1478,7 +1513,9 @@ impl EqPage {
     }
 
     fn choice_key(&mut self, key: KeyEvent) {
-        let Some(c) = self.choice.as_mut() else { return };
+        let Some(c) = self.choice.as_mut() else {
+            return;
+        };
         let n = c.items.len();
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => self.choice = None,
@@ -1586,7 +1623,9 @@ impl EqPage {
         let device = s.device.as_deref().map(|d| s.label(d)).unwrap_or_default();
         self.ask(
             "save as preset",
-            &format!("the correction and filters, to switch {device} back to, or another device to"),
+            &format!(
+                "the correction and filters, to switch {device} back to, or another device to"
+            ),
             String::new(),
             Ask::SavePreset,
         );
@@ -1627,7 +1666,9 @@ impl EqPage {
     }
 
     fn prompt_key(&mut self, key: KeyEvent) {
-        let Some(p) = self.prompt.as_mut() else { return };
+        let Some(p) = self.prompt.as_mut() else {
+            return;
+        };
         match key.code {
             KeyCode::Esc => self.prompt = None,
             KeyCode::Enter => self.confirm_prompt(),
@@ -1661,11 +1702,17 @@ impl EqPage {
                 let items = [
                     ("flat", Starter::Flat, "every band at 0 dB"),
                     ("bass boost", Starter::BassBoost, "+4 dB low shelf"),
-                    ("warm", Starter::Warm, "a little more bass, a little less treble"),
+                    (
+                        "warm",
+                        Starter::Warm,
+                        "a little more bass, a little less treble",
+                    ),
                     ("bright", Starter::Bright, "more treble and presence"),
                 ]
                 .into_iter()
-                .map(|(label, s, what)| Item::new(label, Pick::Starter(text.clone(), s)).detail(what))
+                .map(|(label, s, what)| {
+                    Item::new(label, Pick::Starter(text.clone(), s)).detail(what)
+                })
                 .collect();
                 self.open_choice(
                     "start from",
@@ -1723,7 +1770,9 @@ impl EqPage {
     }
 
     fn typing_key(&mut self, key: KeyEvent) {
-        let Some(t) = self.typing.as_mut() else { return };
+        let Some(t) = self.typing.as_mut() else {
+            return;
+        };
         match key.code {
             KeyCode::Esc => self.typing = None,
             KeyCode::Enter => self.commit_typing(0),
@@ -1877,7 +1926,8 @@ impl EqPage {
             return;
         }
         let n = self.row_list().len();
-        self.cursor = (self.cursor as isize + delta).clamp(0, n.saturating_sub(1) as isize) as usize;
+        self.cursor =
+            (self.cursor as isize + delta).clamp(0, n.saturating_sub(1) as isize) as usize;
     }
 
     /// The wheel over a band's figure nudges it.
@@ -1915,7 +1965,10 @@ impl EqPage {
 
     fn lines(&self, theme: &Theme) -> Vec<Line> {
         let Some(s) = self.snap.as_deref() else {
-            return vec![Line::text(vec![("reading the eq\u{2026}".into(), theme.hint_desc)])];
+            return vec![Line::text(vec![(
+                "reading the eq\u{2026}".into(),
+                theme.hint_desc,
+            )])];
         };
         match self.view() {
             View::Chain => self.chain_lines(s, theme),
@@ -1947,7 +2000,14 @@ impl EqPage {
                 vec![
                     key("device"),
                     (label.clone(), ink.add_modifier(Modifier::BOLD)),
-                    (if in_use { "  in use".into() } else { String::new() }, muted),
+                    (
+                        if in_use {
+                            "  in use".into()
+                        } else {
+                            String::new()
+                        },
+                        muted,
+                    ),
                 ],
             )
             .right(if s.devices.len() > 1 {
@@ -1962,11 +2022,17 @@ impl EqPage {
             None if flat => vec![("flat".into(), ink), ("  plays untouched".into(), muted)],
             None => vec![("unsaved".into(), ink)],
         };
-        out.push(Line::row(Row::Preset, [vec![key("preset")], preset].concat()));
+        out.push(Line::row(
+            Row::Preset,
+            [vec![key("preset")], preset].concat(),
+        ));
         let check = if o.filters_only { "[ ]" } else { "[x]" };
         out.push(Line::row(
             Row::Correct,
-            vec![key(""), (format!("{check} correct for a headphone profile"), ink)],
+            vec![
+                key(""),
+                (format!("{check} correct for a headphone profile"), ink),
+            ],
         ));
         match &o.preset {
             Some((p, true)) => {
@@ -1996,7 +2062,10 @@ impl EqPage {
             ("\u{266a} ".into(), muted),
             ("music in".into(), muted),
         ]));
-        let correction = o.profiles.iter().find(|p| Some(&p.name) == o.active.as_ref());
+        let correction = o
+            .profiles
+            .iter()
+            .find(|p| Some(&p.name) == o.active.as_ref());
         if !o.filters_only {
             let mut l = match correction {
                 Some(c) => {
@@ -2006,7 +2075,11 @@ impl EqPage {
                     } else if let Some(aim) = &o.aim {
                         detail.push(format!("to {aim}"));
                     }
-                    let detail = detail.into_iter().filter(|d| !d.is_empty()).collect::<Vec<_>>().join(" \u{b7} ");
+                    let detail = detail
+                        .into_iter()
+                        .filter(|d| !d.is_empty())
+                        .collect::<Vec<_>>()
+                        .join(" \u{b7} ");
                     let mut l = Line::row(
                         Row::Correction,
                         vec![
@@ -2038,7 +2111,9 @@ impl EqPage {
         let baked = correction.is_some_and(|c| c.role == DspRole::Baked);
         for (i, (name, on)) in o.chain.iter().enumerate() {
             let join = o.joins.get(i);
-            if !o.filters_only && let Some(j) = join {
+            if !o.filters_only
+                && let Some(j) = join
+            {
                 let said = match &j.join {
                     Some(Join::Converted { from, to }) => {
                         Some((format!("target difference: {from} \u{2192} {to}"), muted))
@@ -2061,7 +2136,10 @@ impl EqPage {
                 if let Some(note) = &j.note {
                     out.push(Line::text(vec![
                         ("\u{2502}     ".into(), line_style),
-                        (format!("\u{26a0} {note}"), Style::new().fg(theme.tokens.bad)),
+                        (
+                            format!("\u{26a0} {note}"),
+                            Style::new().fg(theme.tokens.bad),
+                        ),
                     ]));
                 }
             }
@@ -2072,7 +2150,9 @@ impl EqPage {
             } else if left_out {
                 detail.push("left out".to_owned());
             }
-            if !o.filters_only && let Some(made) = join.and_then(|j| j.made_for.as_ref()) {
+            if !o.filters_only
+                && let Some(made) = join.and_then(|j| j.made_for.as_ref())
+            {
                 let mark = if join.and_then(|j| j.join.as_ref()) == Some(&Join::Matched) {
                     " \u{2713}"
                 } else {
@@ -2131,7 +2211,10 @@ impl EqPage {
         out.push(Line::text(Vec::new()));
         out.push(Line::row(
             Row::Manage,
-            vec![("manage EQ\u{2026}".into(), accent), ("  every correction, EQ and preset".into(), muted)],
+            vec![
+                ("manage EQ\u{2026}".into(), accent),
+                ("  every correction, EQ and preset".into(), muted),
+            ],
         ));
         out
     }
@@ -2152,11 +2235,21 @@ impl EqPage {
             out.push(Line::text(vec![
                 key("corrects"),
                 (c.clone(), ink),
-                (if d.corrects_baked { "  with a tuning in it".into() } else { String::new() }, muted),
+                (
+                    if d.corrects_baked {
+                        "  with a tuning in it".into()
+                    } else {
+                        String::new()
+                    },
+                    muted,
+                ),
             ]));
         }
         if !d.tunings.is_empty() {
-            out.push(Line::text(vec![key("tuned with"), (d.tunings.join(", "), ink)]));
+            out.push(Line::text(vec![
+                key("tuned with"),
+                (d.tunings.join(", "), ink),
+            ]));
         }
         if let Some(twice) = &d.corrects_twice {
             out.push(Line::text(vec![(format!("\u{26a0} {twice}"), bad)]));
@@ -2166,7 +2259,10 @@ impl EqPage {
         }
         let own = d.layers.is_empty() || !d.filters.is_empty() || !d.impulses.is_empty();
         if own {
-            out.push(Line::row(Row::Role, vec![key("this is"), (role_label(d.role).into(), ink)]));
+            out.push(Line::row(
+                Row::Role,
+                vec![key("this is"), (role_label(d.role).into(), ink)],
+            ));
             if d.role == DspRole::Tuning {
                 let made = d
                     .tuned_for
@@ -2178,18 +2274,27 @@ impl EqPage {
                             .map_or_else(|| id.clone(), |(_, n)| n.clone())
                     })
                     .unwrap_or_else(|| "unknown".into());
-                out.push(Line::row(Row::MadeAgainst, vec![key("made against"), (made, ink)]));
+                out.push(Line::row(
+                    Row::MadeAgainst,
+                    vec![key("made against"), (made, ink)],
+                ));
             }
             if d.role == DspRole::Correction
                 && let Some(t) = &p.targets
             {
-                let id = t.chosen.clone().or_else(|| t.made_for.map(|m| m.id.to_owned()));
+                let id = t
+                    .chosen
+                    .clone()
+                    .or_else(|| t.made_for.map(|m| m.id.to_owned()));
                 let name = t
                     .choices
                     .iter()
                     .find(|c| Some(&c.id) == id.as_ref())
                     .map_or_else(|| "unknown".into(), |c| c.name.clone());
-                out.push(Line::row(Row::CorrectedTo, vec![key("corrected to"), (name, ink)]));
+                out.push(Line::row(
+                    Row::CorrectedTo,
+                    vec![key("corrected to"), (name, ink)],
+                ));
             }
         }
         if d.group {
@@ -2200,27 +2305,54 @@ impl EqPage {
                 .or(d.layers.first())
                 .map(|l| l.profile.clone())
                 .unwrap_or_default();
-            out.push(Line::row(Row::Member, vec![key("playing"), (playing, ink), ("  one of the group at a time".into(), muted)]));
+            out.push(Line::row(
+                Row::Member,
+                vec![
+                    key("playing"),
+                    (playing, ink),
+                    ("  one of the group at a time".into(), muted),
+                ],
+            ));
         } else if !d.layers.is_empty() {
             let layers: Vec<String> = d
                 .layers
                 .iter()
-                .map(|l| if l.on { l.profile.clone() } else { format!("{} (off)", l.profile) })
+                .map(|l| {
+                    if l.on {
+                        l.profile.clone()
+                    } else {
+                        format!("{} (off)", l.profile)
+                    }
+                })
                 .collect();
-            out.push(Line::text(vec![key("plays first"), (layers.join(", "), ink)]));
+            out.push(Line::text(vec![
+                key("plays first"),
+                (layers.join(", "), ink),
+            ]));
         }
         if let Some(layout) = d.channels.filter(|_| !d.read_only) {
             out.push(Line::row(
                 Row::Channels,
                 vec![
                     key("channels"),
-                    (if layout.stereo { "stereo: bands for each channel" } else { "mono: one list for both" }.into(), ink),
+                    (
+                        if layout.stereo {
+                            "stereo: bands for each channel"
+                        } else {
+                            "mono: one list for both"
+                        }
+                        .into(),
+                        ink,
+                    ),
                 ],
             ));
             if layout.stereo {
                 out.push(Line::row(
                     Row::Editing,
-                    vec![key("editing"), (if self.channel == 0 { "left" } else { "right" }.into(), ink)],
+                    vec![
+                        key("editing"),
+                        (if self.channel == 0 { "left" } else { "right" }.into(), ink),
+                    ],
                 ));
             }
         }
@@ -2228,7 +2360,10 @@ impl EqPage {
         let filters = self.filters();
         if !filters.is_empty() {
             out.push(Line::text(vec![(
-                format!(" {:<3} {:<12} {:>8} {:>7} {:>6}", "#", "type", "Hz", "dB", "Q"),
+                format!(
+                    " {:<3} {:<12} {:>8} {:>7} {:>6}",
+                    "#", "type", "Hz", "dB", "Q"
+                ),
                 muted,
             )]));
         }
@@ -2248,7 +2383,10 @@ impl EqPage {
             out.push(Line::row(Row::Band(i), vec![(text, ink)]));
         }
         if !d.read_only && d.impulses.is_empty() && (d.layers.is_empty() || !d.filters.is_empty()) {
-            out.push(Line::row(Row::AddBand, vec![("+ add a band".into(), accent)]));
+            out.push(Line::row(
+                Row::AddBand,
+                vec![("+ add a band".into(), accent)],
+            ));
         }
         if d.read_only && !filters.is_empty() {
             out.push(Line::text(vec![(
@@ -2265,7 +2403,14 @@ impl EqPage {
             };
             out.push(Line::text(vec![
                 key("impulse"),
-                (format!("{} kHz \u{b7} {channels} \u{b7} {} taps", khz(ir.rate), ir.taps), ink),
+                (
+                    format!(
+                        "{} kHz \u{b7} {channels} \u{b7} {} taps",
+                        khz(ir.rate),
+                        ir.taps
+                    ),
+                    ink,
+                ),
                 (format!("  {}", ir.file), muted),
             ]));
         }
@@ -2276,7 +2421,10 @@ impl EqPage {
                 if d.preamp_set {
                     "  set in this EQ".into()
                 } else {
-                    format!("  derived at {} kHz so nothing it boosts can clip", khz(d.preamp_rate))
+                    format!(
+                        "  derived at {} kHz so nothing it boosts can clip",
+                        khz(d.preamp_rate)
+                    )
                 },
                 muted,
             ),
@@ -2293,7 +2441,14 @@ impl EqPage {
                 Row::Use,
                 vec![
                     key("used for"),
-                    (if used.is_empty() { "no output yet".into() } else { used.join(", ") }, ink),
+                    (
+                        if used.is_empty() {
+                            "no output yet".into()
+                        } else {
+                            used.join(", ")
+                        },
+                        ink,
+                    ),
                     (
                         if using && d.role != DspRole::Tuning {
                             format!("  stop using for {label}")
@@ -2311,7 +2466,15 @@ impl EqPage {
             Row::Sync,
             vec![
                 key("sync"),
-                (if d.everywhere { "every device" } else { "this device" }.into(), ink),
+                (
+                    if d.everywhere {
+                        "every device"
+                    } else {
+                        "this device"
+                    }
+                    .into(),
+                    ink,
+                ),
                 (
                     if d.everywhere {
                         "  kept on every device signed in to your koan server"
@@ -2324,13 +2487,25 @@ impl EqPage {
             ],
         ));
         if !d.source.is_empty() {
-            out.push(Line::text(vec![key("imported from"), (d.source.join(", "), muted)]));
+            out.push(Line::text(vec![
+                key("imported from"),
+                (d.source.join(", "), muted),
+            ]));
         }
         out.push(Line::text(Vec::new()));
-        out.push(Line::row(Row::Rename, vec![("rename\u{2026}".into(), accent)]));
-        out.push(Line::row(Row::Copy, vec![("save as new\u{2026}".into(), accent)]));
+        out.push(Line::row(
+            Row::Rename,
+            vec![("rename\u{2026}".into(), accent)],
+        ));
+        out.push(Line::row(
+            Row::Copy,
+            vec![("save as new\u{2026}".into(), accent)],
+        ));
         if d.can_revert && d.edited {
-            out.push(Line::row(Row::Reset, vec![("reset to file".into(), accent)]));
+            out.push(Line::row(
+                Row::Reset,
+                vec![("reset to file".into(), accent)],
+            ));
         }
         out.push(Line::row(Row::Delete, vec![("delete\u{2026}".into(), bad)]));
         out
@@ -2367,7 +2542,10 @@ impl EqPage {
         };
         super::ui::heading(buf, area, theme, &title, &note);
         if self.views.len() > 1 {
-            self.hits.push((Rect::new(area.x, area.y, title.chars().count() as u16, 1), Hit::Back));
+            self.hits.push((
+                Rect::new(area.x, area.y, title.chars().count() as u16, 1),
+                Hit::Back,
+            ));
         }
         let body = Rect::new(
             area.x + 1,
@@ -2380,7 +2558,11 @@ impl EqPage {
         }
         let lines = self.lines(theme);
         let footer = self.footer(theme);
-        let footer_h = if body.height >= 14 { footer.len().min(3) as u16 } else { 0 };
+        let footer_h = if body.height >= 14 {
+            footer.len().min(3) as u16
+        } else {
+            0
+        };
         // The graph, when the page has room for it and the rows.
         let graph_h = {
             let spare = body.height.saturating_sub(footer_h + 6);
@@ -2394,7 +2576,8 @@ impl EqPage {
             body.x,
             body.y + graph_h + u16::from(graph_h > 0),
             body.width,
-            body.height.saturating_sub(graph_h + u16::from(graph_h > 0) + footer_h),
+            body.height
+                .saturating_sub(graph_h + u16::from(graph_h > 0) + footer_h),
         );
         self.render_lines(&lines, list, buf, theme);
         if footer_h > 0 {
@@ -2434,7 +2617,9 @@ impl EqPage {
     }
 
     fn render_graph(&self, area: Rect, buf: &mut Buffer, theme: &Theme) {
-        let Some(s) = self.snap.as_deref() else { return };
+        let Some(s) = self.snap.as_deref() else {
+            return;
+        };
         let flat_db = [0.0, 0.0];
         let flat_hz = [20.0, 20_000.0];
         match self.view() {
@@ -2454,7 +2639,13 @@ impl EqPage {
                 let local_band: Vec<f64> = selected
                     .and_then(|i| filters.get(i))
                     .filter(|f| matches!(f, DspFilter::Band(b) if b.kind != EqFilterKind::Gain))
-                    .map(|f| koan_core::audio::dsp::response(std::slice::from_ref(f), &r.freqs, super::eq_worker::RATE))
+                    .map(|f| {
+                        koan_core::audio::dsp::response(
+                            std::slice::from_ref(f),
+                            &r.freqs,
+                            super::eq_worker::RATE,
+                        )
+                    })
                     .unwrap_or_default();
                 let level = r.preamp_db + r.gain_db;
                 let total: Vec<f64> = r.total.iter().map(|v| v + r.preamp_db).collect();
@@ -2474,7 +2665,11 @@ impl EqPage {
                 }
                 if stereo && !right.is_empty() {
                     curves.push(Curve {
-                        db: if self.channel == 0 { right.as_slice() } else { total.as_slice() },
+                        db: if self.channel == 0 {
+                            right.as_slice()
+                        } else {
+                            total.as_slice()
+                        },
                         color: theme.tokens.muted,
                         dash: eq_graph::DASHES[0],
                     });
@@ -2498,8 +2693,11 @@ impl EqPage {
                             DspFilter::Band(b)
                                 if matches!(
                                     b.kind,
-                                    EqFilterKind::Peaking | EqFilterKind::LowShelf | EqFilterKind::HighShelf
-                                ) && (b.channels.is_empty() || b.channels.contains(&self.channel)) =>
+                                    EqFilterKind::Peaking
+                                        | EqFilterKind::LowShelf
+                                        | EqFilterKind::HighShelf
+                                ) && (b.channels.is_empty()
+                                    || b.channels.contains(&self.channel)) =>
                             {
                                 Some(Handle {
                                     hz: b.freq,
@@ -2534,7 +2732,10 @@ impl EqPage {
                             .map(|(i, (n, _))| (i, n.as_str()))
                             .collect();
                         if o.active.is_some()
-                            && let Some(db) = r.correction.as_deref().or((playing.is_empty()).then_some(r.total.as_slice()))
+                            && let Some(db) = r
+                                .correction
+                                .as_deref()
+                                .or((playing.is_empty()).then_some(r.total.as_slice()))
                         {
                             curves.push(Curve {
                                 db,
@@ -2617,15 +2818,29 @@ impl EqPage {
             .unwrap_or_default();
         for (i, line) in lines.iter().enumerate().skip(self.scroll).take(h) {
             let y = area.y + (i - self.scroll) as u16;
-            let selected = line.row.is_some() && i == cursor_line && self.choice.is_none() && self.prompt.is_none();
+            let selected = line.row.is_some()
+                && i == cursor_line
+                && self.choice.is_none()
+                && self.prompt.is_none();
             if selected {
                 for x in area.x..area.x + area.width {
                     buf[(x, y)].set_style(selected_style);
                 }
             }
-            let right_w: u16 = line.right.iter().map(|(t, _)| t.chars().count() as u16).sum();
-            let thumb_w = if line.thumb.is_some() && area.width >= 50 { 10u16 } else { 0 };
-            let end = area.x + area.width.saturating_sub(right_w + thumb_w + u16::from(right_w + thumb_w > 0));
+            let right_w: u16 = line
+                .right
+                .iter()
+                .map(|(t, _)| t.chars().count() as u16)
+                .sum();
+            let thumb_w = if line.thumb.is_some() && area.width >= 50 {
+                10u16
+            } else {
+                0
+            };
+            let end = area.x
+                + area
+                    .width
+                    .saturating_sub(right_w + thumb_w + u16::from(right_w + thumb_w > 0));
             let mut x = area.x;
             for (text, style) in &line.spans {
                 if x >= end {
@@ -2633,18 +2848,32 @@ impl EqPage {
                 }
                 let w = (end - x) as usize;
                 let t = fit(text, w);
-                let style = if selected { style.patch(selected_style) } else { *style };
+                let style = if selected {
+                    style.patch(selected_style)
+                } else {
+                    *style
+                };
                 buf.set_stringn(x, y, &t, w, style);
                 x += t.chars().count() as u16;
             }
             if let (Some((name, color)), true) = (&line.thumb, thumb_w > 0)
                 && let Some(db) = self.snap.as_ref().and_then(|s| s.curve(name))
             {
-                eq_graph::thumb(Rect::new(end + 1, y, thumb_w - 2, 1), buf, &freqs, db, *color);
+                eq_graph::thumb(
+                    Rect::new(end + 1, y, thumb_w - 2, 1),
+                    buf,
+                    &freqs,
+                    db,
+                    *color,
+                );
             }
             let mut rx = area.x + area.width - right_w;
             for (text, style) in &line.right {
-                let style = if selected { style.patch(selected_style) } else { *style };
+                let style = if selected {
+                    style.patch(selected_style)
+                } else {
+                    *style
+                };
                 buf.set_string(rx, y, text, style);
                 rx += text.chars().count() as u16;
             }
@@ -2665,10 +2894,19 @@ impl EqPage {
                     if editable {
                         self.hits.push((cell, Hit::Field(i, index, field)));
                     }
-                    let typing = self.typing.as_ref().filter(|t| t.index == index && t.field == field);
+                    let typing = self
+                        .typing
+                        .as_ref()
+                        .filter(|t| t.index == index && t.field == field);
                     if let Some(t) = typing {
                         let text = format!("{:>w$}", format!("{}\u{2581}", t.text), w = w as usize);
-                        buf.set_stringn(cell.x, y, fit(&text, w as usize), w as usize, theme.picker_cursor.add_modifier(Modifier::BOLD));
+                        buf.set_stringn(
+                            cell.x,
+                            y,
+                            fit(&text, w as usize),
+                            w as usize,
+                            theme.picker_cursor.add_modifier(Modifier::BOLD),
+                        );
                     } else if selected && editable && self.field == field {
                         for cx in cell.x..cell.x + cell.width {
                             buf[(cx, y)].set_style(theme.picker_cursor);
@@ -2683,10 +2921,20 @@ impl EqPage {
     }
 
     fn render_choice(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme) {
-        let Some(c) = self.choice.as_ref() else { return };
+        let Some(c) = self.choice.as_ref() else {
+            return;
+        };
         let w = 64u16.min(area.width.saturating_sub(2));
-        let note_lines = c.note.as_deref().map(|n| wrap(n, w.saturating_sub(4) as usize)).unwrap_or_default();
-        let item_h: u16 = c.items.iter().map(|i| 1 + u16::from(!i.detail.is_empty())).sum();
+        let note_lines = c
+            .note
+            .as_deref()
+            .map(|n| wrap(n, w.saturating_sub(4) as usize))
+            .unwrap_or_default();
+        let item_h: u16 = c
+            .items
+            .iter()
+            .map(|i| 1 + u16::from(!i.detail.is_empty()))
+            .sum();
         let h = (2 + note_lines.len() as u16 + u16::from(!note_lines.is_empty()) + item_h)
             .min(area.height.saturating_sub(1));
         if w < 12 || h < 3 {
@@ -2712,7 +2960,11 @@ impl EqPage {
             cy += 1;
         }
         // Keep the cursor's item in view.
-        let heights: Vec<u16> = c.items.iter().map(|i| 1 + u16::from(!i.detail.is_empty())).collect();
+        let heights: Vec<u16> = c
+            .items
+            .iter()
+            .map(|i| 1 + u16::from(!i.detail.is_empty()))
+            .collect();
         let room = (inner.y + inner.height).saturating_sub(cy);
         let mut first = 0;
         let last = c.cursor.min(heights.len().saturating_sub(1));
@@ -2725,7 +2977,11 @@ impl EqPage {
                 break;
             }
             let selected = i == c.cursor;
-            let style = if selected { theme.picker_cursor } else { theme.track_normal };
+            let style = if selected {
+                theme.picker_cursor
+            } else {
+                theme.track_normal
+            };
             if selected {
                 for row in cy..cy + ih {
                     for cx in popup.x + 1..popup.x + popup.width - 1 {
@@ -2734,7 +2990,11 @@ impl EqPage {
                 }
             }
             let mark = if item.chosen { "\u{2713} " } else { "  " };
-            let mark_style = if selected { style } else { Style::new().fg(theme.tokens.accent) };
+            let mark_style = if selected {
+                style
+            } else {
+                Style::new().fg(theme.tokens.accent)
+            };
             buf.set_string(inner.x, cy, mark, mark_style);
             let lw = inner.width.saturating_sub(2) as usize;
             buf.set_stringn(inner.x + 2, cy, fit(&item.label, lw), lw, style);
@@ -2742,7 +3002,10 @@ impl EqPage {
                 let dstyle = if selected { style } else { theme.hint_desc };
                 buf.set_stringn(inner.x + 2, cy + 1, fit(&item.detail, lw), lw, dstyle);
             }
-            items.push((Rect::new(popup.x + 1, cy, popup.width - 2, ih), Hit::Item(i)));
+            items.push((
+                Rect::new(popup.x + 1, cy, popup.width - 2, ih),
+                Hit::Item(i),
+            ));
             cy += ih;
         }
         self.hits.extend(items);
@@ -2776,7 +3039,13 @@ impl EqPage {
                 let keep = inner_w.saturating_sub(1);
                 chars[chars.len().saturating_sub(keep)..].iter().collect()
             };
-            buf.set_stringn(x + 2, cy, format!("{shown}\u{2581}"), inner_w, theme.track_normal.add_modifier(Modifier::BOLD));
+            buf.set_stringn(
+                x + 2,
+                cy,
+                format!("{shown}\u{2581}"),
+                inner_w,
+                theme.track_normal.add_modifier(Modifier::BOLD),
+            );
         }
     }
 }
@@ -2788,7 +3057,10 @@ fn box_frame(area: Rect, buf: &mut Buffer, theme: &Theme, title: &str) {
     Block::default()
         .borders(Borders::ALL)
         .border_style(theme.rule)
-        .title(ratatui::text::Span::styled(format!(" {title} "), theme.heading))
+        .title(ratatui::text::Span::styled(
+            format!(" {title} "),
+            theme.heading,
+        ))
         .render(area, buf);
 }
 
@@ -2806,7 +3078,11 @@ fn profiles_chain_with(chain: &[(String, bool)], name: &str) -> Vec<(String, boo
 /// the accent.
 fn chain_matched(s: &Snapshot) -> bool {
     let o = &s.overview;
-    let Some(c) = o.profiles.iter().find(|p| Some(&p.name) == o.active.as_ref()) else {
+    let Some(c) = o
+        .profiles
+        .iter()
+        .find(|p| Some(&p.name) == o.active.as_ref())
+    else {
         return false;
     };
     if c.role == DspRole::Baked || !o.tuning_plays {
@@ -2819,7 +3095,9 @@ fn chain_matched(s: &Snapshot) -> bool {
         .filter(|((n, on), _)| *on && !o.left_out_eqs.contains(n))
         .map(|(_, j)| j.join.as_ref());
     match playing.next() {
-        Some(Some(Join::Matched)) => playing.all(|j| matches!(j, Some(Join::Matched) | Some(Join::Unknown))),
+        Some(Some(Join::Matched)) => {
+            playing.all(|j| matches!(j, Some(Join::Matched) | Some(Join::Unknown)))
+        }
         _ => false,
     }
 }
@@ -2859,7 +3137,14 @@ fn manage_lines(s: &Snapshot, theme: &Theme) -> Vec<Line> {
             vec![
                 ("  ".into(), ink),
                 (p.name.clone(), ink.add_modifier(Modifier::BOLD)),
-                (if p.edited { "  edited".into() } else { String::new() }, muted),
+                (
+                    if p.edited {
+                        "  edited".into()
+                    } else {
+                        String::new()
+                    },
+                    muted,
+                ),
                 (format!("  {}", what.0), what.1),
             ],
         )
@@ -2873,8 +3158,24 @@ fn manage_lines(s: &Snapshot, theme: &Theme) -> Vec<Line> {
         out.extend(items.into_iter().map(row));
         out.push(Line::text(Vec::new()));
     };
-    section("corrections", loose.iter().copied().filter(|p| p.role != DspRole::Tuning).collect(), &mut out);
-    section("EQs", loose.iter().copied().filter(|p| p.role == DspRole::Tuning).collect(), &mut out);
+    section(
+        "corrections",
+        loose
+            .iter()
+            .copied()
+            .filter(|p| p.role != DspRole::Tuning)
+            .collect(),
+        &mut out,
+    );
+    section(
+        "EQs",
+        loose
+            .iter()
+            .copied()
+            .filter(|p| p.role == DspRole::Tuning)
+            .collect(),
+        &mut out,
+    );
     for g in o.profiles.iter().filter(|p| !p.members.is_empty()) {
         let members: Vec<&Summary> = g
             .members
@@ -2889,15 +3190,25 @@ fn manage_lines(s: &Snapshot, theme: &Theme) -> Vec<Line> {
         }));
         out.push(Line::text(Vec::new()));
     }
-    section("presets", o.profiles.iter().filter(|p| p.preset).collect(), &mut out);
+    section(
+        "presets",
+        o.profiles.iter().filter(|p| p.preset).collect(),
+        &mut out,
+    );
     if o.profiles.is_empty() {
         out.push(Line::text(vec![("no EQ yet".into(), muted)]));
         out.push(Line::text(Vec::new()));
     }
-    out.push(Line::row(Row::New, vec![("+ new EQ\u{2026}".into(), accent)]));
+    out.push(Line::row(
+        Row::New,
+        vec![("+ new EQ\u{2026}".into(), accent)],
+    ));
     out.push(Line::row(
         Row::Import,
-        vec![("+ import a file\u{2026}".into(), accent), ("  or drop one on the terminal".into(), muted)],
+        vec![
+            ("+ import a file\u{2026}".into(), accent),
+            ("  or drop one on the terminal".into(), muted),
+        ],
     ));
     out
 }
@@ -2911,7 +3222,11 @@ fn describe(p: &Summary) -> String {
     if !p.members.is_empty() {
         parts.push(format!("{} to pick from", p.members.len()));
     } else if p.preset {
-        parts.push(if p.layers == 1 { "1 part".into() } else { format!("{} parts", p.layers) });
+        parts.push(if p.layers == 1 {
+            "1 part".into()
+        } else {
+            format!("{} parts", p.layers)
+        });
     } else if p.layers > 0 {
         parts.push(format!(
             "plays {} {} in order",
@@ -2928,7 +3243,10 @@ fn describe(p: &Summary) -> String {
     }
     let bands = p.bands - p.graphics;
     if bands > 0 {
-        parts.push(format!("{bands} {}", if bands == 1 { "band" } else { "bands" }));
+        parts.push(format!(
+            "{bands} {}",
+            if bands == 1 { "band" } else { "bands" }
+        ));
     }
     if !p.rates.is_empty() {
         let rates: Vec<String> = p.rates.iter().map(|r| khz(*r)).collect();
@@ -2955,7 +3273,12 @@ fn kind_label(kind: EqFilterKind) -> &'static str {
 /// Each EQ of the chain drawn in a colour of its own, the same in its row
 /// and on the graph.
 fn stage_color(theme: &Theme, i: usize) -> Color {
-    [theme.tokens.ink, theme.warning, theme.tokens.muted, theme.tokens.strong][i % 4]
+    [
+        theme.tokens.ink,
+        theme.warning,
+        theme.tokens.muted,
+        theme.tokens.strong,
+    ][i % 4]
 }
 
 fn khz(hz: u32) -> String {
@@ -2987,7 +3310,13 @@ fn filter_label(f: &DspFilter) -> String {
         if chs.is_empty() {
             String::new()
         } else {
-            format!(" \u{b7} {}", chs.iter().map(|c| channel(*c)).collect::<Vec<_>>().join(" "))
+            format!(
+                " \u{b7} {}",
+                chs.iter()
+                    .map(|c| channel(*c))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
         }
     };
     match f {
@@ -3003,7 +3332,12 @@ fn filter_label(f: &DspFilter) -> String {
             };
             match b.kind {
                 EqFilterKind::Gain => format!("{name}  {:+.1} dB{}", b.gain_db, on(&b.channels)),
-                _ => format!("{name}  {} Hz  {:+.1} dB{}", hz_label(b.freq), b.gain_db, on(&b.channels)),
+                _ => format!(
+                    "{name}  {} Hz  {:+.1} dB{}",
+                    hz_label(b.freq),
+                    b.gain_db,
+                    on(&b.channels)
+                ),
             }
         }
         DspFilter::Delay(d) => {
@@ -3025,9 +3359,23 @@ fn filter_label(f: &DspFilter) -> String {
                 .map(|(o, s)| {
                     let src: Vec<String> = s
                         .iter()
-                        .map(|(c, g)| if *g == 1.0 { channel(*c) } else { format!("{g}\u{d7}{}", channel(*c)) })
+                        .map(|(c, g)| {
+                            if *g == 1.0 {
+                                channel(*c)
+                            } else {
+                                format!("{g}\u{d7}{}", channel(*c))
+                            }
+                        })
                         .collect();
-                    format!("{} = {}", channel(o as u16), if src.is_empty() { "0".into() } else { src.join(" + ") })
+                    format!(
+                        "{} = {}",
+                        channel(o as u16),
+                        if src.is_empty() {
+                            "0".into()
+                        } else {
+                            src.join(" + ")
+                        }
+                    )
                 })
                 .collect();
             format!("mix  {}", terms.join("   "))
@@ -3036,11 +3384,17 @@ fn filter_label(f: &DspFilter) -> String {
             let (lo, hi) = g
                 .points
                 .iter()
-                .fold((f64::MAX, f64::MIN), |(lo, hi), (_, db)| (lo.min(*db), hi.max(*db)));
+                .fold((f64::MAX, f64::MIN), |(lo, hi), (_, db)| {
+                    (lo.min(*db), hi.max(*db))
+                });
             if g.points.is_empty() {
                 "graphic EQ".into()
             } else {
-                format!("graphic EQ  {} points  {lo:+.1} to {hi:+.1} dB{}", g.points.len(), on(&g.channels))
+                format!(
+                    "graphic EQ  {} points  {lo:+.1} to {hi:+.1} dB{}",
+                    g.points.len(),
+                    on(&g.channels)
+                )
             }
         }
     }
@@ -3054,7 +3408,10 @@ fn parse_hz(text: &str) -> Option<f64> {
         Some(n) => (n, 1000.0),
         None => (t, 1.0),
     };
-    num.parse::<f64>().ok().filter(|v| v.is_finite()).map(|v| v * mul)
+    num.parse::<f64>()
+        .ok()
+        .filter(|v| v.is_finite())
+        .map(|v| v * mul)
 }
 
 /// A number typed, with its unit, if any, after it.

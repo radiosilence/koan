@@ -1042,7 +1042,9 @@ impl App {
             Page::Playlists => self.playlists_page.reload(),
             Page::Playlist(id) => self.playlist_page = PlaylistPage::load(id),
             Page::Settings => self.settings_page.reload(),
-            Page::Eq => self.eq_page.open(self.state.renderer().map(|r| (r.udn, r.name))),
+            Page::Eq => self
+                .eq_page
+                .open(self.state.renderer().map(|r| (r.udn, r.name))),
             Page::Artists => {
                 if self.library.is_none() {
                     self.library = Some(LibraryState::load());

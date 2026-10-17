@@ -76,10 +76,10 @@ impl DspSelectorState {
             choose: Choose::Edit,
             label: "edit eq\u{2026}".into(),
         });
-        let title = snap
-            .in_use
-            .as_deref()
-            .map_or_else(|| "preset".into(), |d| format!("preset \u{b7} {}", snap.label(d)));
+        let title = snap.in_use.as_deref().map_or_else(
+            || "preset".into(),
+            |d| format!("preset \u{b7} {}", snap.label(d)),
+        );
         Self {
             title,
             cursor: active.unwrap_or(0),
@@ -137,7 +137,10 @@ impl Widget for DspSelectorOverlay<'_> {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(self.theme.rule)
-            .title(Span::styled(format!(" {} ", self.state.title), self.theme.heading));
+            .title(Span::styled(
+                format!(" {} ", self.state.title),
+                self.theme.heading,
+            ));
         let inner = block.inner(popup);
         block.render(popup, buf);
         let top = self.state.top(inner.height as usize);
