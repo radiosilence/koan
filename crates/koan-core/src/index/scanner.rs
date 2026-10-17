@@ -34,9 +34,11 @@ pub struct ScanResult {
     pub errors: Vec<(PathBuf, String)>,
     /// Stopped early because someone asked. What it had done is still done.
     pub cancelled: bool,
-    /// Files were found that the scan could not write: the reader could not
-    /// start, or a transaction failed to begin or commit. Nothing is removed against such a scan, in any of its folders,
-    /// since a file it lost may be one moved from another.
+    /// The scan stopped short of writing what it found: the reader could not
+    /// start or panicked, or a transaction failed to begin or commit. A file
+    /// that alone could not be read or stored is an error against that file
+    /// instead. Nothing is removed against an incomplete scan, in any of its
+    /// folders, since a file it lost may be one moved from another.
     pub incomplete: bool,
     /// Tracks this scan made, which a file gone from elsewhere may turn out to
     /// be (see `queries::adopt_moved_files`).
@@ -142,13 +144,14 @@ fn scan_folders_in_lane(
     // library folder to another is found at its new path before it is missed
     // at its old one, and keeps its track.
     let mut indexed = Vec::new();
-    let mut cancelled = false;
+    let (mut cancelled, mut stopped) = (false, false);
     for (path, found, mut result) in walked {
         let seen = stored_paths(&found.audio);
-        if cancelled {
+        if cancelled || stopped {
             // Not indexed, but its rows may have moved into a folder that was:
             // they are adopted with the rest.
-            result.cancelled = true;
+            result.cancelled = cancelled;
+            result.incomplete = stopped;
             let prune = !found.audio.is_empty();
             indexed.push((path, found.playlists, Vec::new(), prune, seen, result));
             continue;
@@ -162,6 +165,9 @@ fn scan_folders_in_lane(
         };
         let prune = index_folder(db, &path, found.audio, opts, on_track, &mut result);
         cancelled |= result.cancelled;
+        // A database that would not take one folder's writes is not asked
+        // for the next one's.
+        stopped |= result.incomplete;
         indexed.push((path, found.playlists, settled, prune, seen, result));
     }
 
@@ -318,19 +324,18 @@ pub fn scan_dirs(
     let remove = !result.incomplete && !result.cancelled;
     for dir in &settled {
         remove_stale(db, dir, true, remove, &arrived, &seen, &mut result);
-        if result.cancelled {
-            continue;
-        }
+    }
+    result.added = result.added.saturating_sub(result.moved);
+    if result.cancelled {
+        return result;
+    }
+    for dir in &settled {
         // A cover image changing is a reason to be here that no row records.
         if let Err(e) = queries::evict_art_under(&db.conn, dir) {
             log::warn!("cover art under {} not refreshed: {e}", dir.display());
         }
     }
-    if result.cancelled {
-        return result;
-    }
     result.playlists += super::playlist_files::import(db, &playlists, &settled);
-    result.added = result.added.saturating_sub(result.moved);
     if result.added > 0 {
         super::playlist_files::refresh_m3u(db);
     }
@@ -893,6 +898,22 @@ mod tests {
     use crate::db::queries;
     use crate::test_utils;
 
+    /// Make the commit of any batch storing a path `LIKE` `pattern` fail,
+    /// after every statement in it has succeeded: a deferred foreign key,
+    /// broken by a trigger on `scan_cache`.
+    fn fail_commits_for(db: &Database, pattern: &str) {
+        db.conn
+            .execute_batch(&format!(
+                "CREATE TABLE trap_parent (id INTEGER PRIMARY KEY);
+                 CREATE TABLE trap (parent INTEGER
+                     REFERENCES trap_parent(id) DEFERRABLE INITIALLY DEFERRED);
+                 CREATE TRIGGER spring AFTER INSERT ON scan_cache
+                     WHEN NEW.path LIKE '{pattern}'
+                     BEGIN INSERT INTO trap VALUES (1); END;"
+            ))
+            .unwrap();
+    }
+
     fn test_db(dir: &Path) -> Database {
         let db_path = dir.join("test.db");
         Database::open(&db_path).unwrap()
@@ -916,18 +937,8 @@ mod tests {
         assert_eq!(first.added, 3);
 
         std::fs::rename(b.join("moved.wav"), a.join("moved.wav")).unwrap();
-        // A deferred foreign key broken by the moved file's batch makes its
-        // commit fail, after every statement in it has succeeded.
-        db.conn
-            .execute_batch(
-                "CREATE TABLE trap_parent (id INTEGER PRIMARY KEY);
-                 CREATE TABLE trap (parent INTEGER
-                     REFERENCES trap_parent(id) DEFERRABLE INITIALLY DEFERRED);
-                 CREATE TRIGGER spring AFTER INSERT ON scan_cache
-                     WHEN NEW.path LIKE '%moved.wav'
-                     BEGIN INSERT INTO trap VALUES (1); END;",
-            )
-            .unwrap();
+        // The moved file's batch will not commit.
+        fail_commits_for(&db, "%moved.wav");
 
         let events = std::sync::Mutex::new(Vec::new());
         let on_track = |e: ScanEvent| events.lock().unwrap().push(e.path.to_path_buf());
@@ -976,16 +987,7 @@ mod tests {
         std::fs::rename(one.join("Album"), two.join("Album")).unwrap();
         // A new file in the last folder, whose batch will not commit.
         test_utils::generate_wav(&three.join("fail.wav"), 44100, 1, 0.6, 16);
-        db.conn
-            .execute_batch(
-                "CREATE TABLE trap_parent (id INTEGER PRIMARY KEY);
-                 CREATE TABLE trap (parent INTEGER
-                     REFERENCES trap_parent(id) DEFERRABLE INITIALLY DEFERRED);
-                 CREATE TRIGGER spring AFTER INSERT ON scan_cache
-                     WHEN NEW.path LIKE '%fail.wav'
-                     BEGIN INSERT INTO trap VALUES (1); END;",
-            )
-            .unwrap();
+        fail_commits_for(&db, "%fail.wav");
         let r = scan_folders(&db, &folders, ScanOptions::default(), None, None);
 
         assert!(r.incomplete);
