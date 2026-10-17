@@ -1807,6 +1807,43 @@ mod tests {
                 std::fs::write(dir.join(name), dump(&mut app, w, h)).unwrap();
             }
         }
+        app.go_page(Page::Queue);
+        app.status_message = Some((
+            "a status line long enough to be cut at the edge of a narrow terminal".into(),
+            std::time::Instant::now(),
+        ));
+        let modals: [(&str, fn(&mut App)); 5] = [
+            ("status", |_| {}),
+            ("help", |a| {
+                a.handle_key(crossterm::event::KeyEvent::from(
+                    crossterm::event::KeyCode::Char('?'),
+                ))
+            }),
+            ("chooser", |a| a.open_chooser(vec![1, 2])),
+            ("prompt", |a| {
+                a.open_chooser(vec![1]);
+                a.handle_key(crossterm::event::KeyEvent::from(
+                    crossterm::event::KeyCode::Enter,
+                ));
+            }),
+            ("eq", |a| {
+                a.handle_key(crossterm::event::KeyEvent::from(
+                    crossterm::event::KeyCode::Char('E'),
+                ))
+            }),
+        ];
+        for (name, open) in modals {
+            open(&mut app);
+            for (w, h) in [(50u16, 20u16), (120, 40)] {
+                std::fs::write(
+                    dir.join(format!("modal-{name}-{w}x{h}.txt")),
+                    dump(&mut app, w, h),
+                )
+                .unwrap();
+            }
+            app.mode_stack.clear();
+            app.mode = Mode::Normal;
+        }
     }
 
     #[test]
