@@ -337,6 +337,7 @@ impl Browse {
         };
         let now = shelves::now();
         let user = queries::LOCAL_USER;
+        let offline = koan_core::remote::offline::active();
         let mut query = match (self.source.shelf(), self.source) {
             (Some(shelf), _) => shelf.albums(user, now),
             (None, Source::Artist(id)) => AlbumQuery {
@@ -352,6 +353,7 @@ impl Browse {
         if self.filterable() {
             query.filter = self.filters.album_filter();
         }
+        query.filter.on_device |= offline;
         self.albums = queries::list_albums(&db.conn, &query).unwrap_or_default();
         if let Source::Artist(id) = self.source {
             if self.header.is_none() {
@@ -364,10 +366,11 @@ impl Browse {
                 .unwrap_or_default();
         }
         self.tracks = match self.source.shelf() {
-            Some(shelf) => shelf
-                .tracks(user, now)
-                .page(&db.conn, 5000, 0)
-                .unwrap_or_default(),
+            Some(shelf) => {
+                let mut listing = shelf.tracks(user, now);
+                listing.filter.on_device |= offline;
+                listing.page(&db.conn, 5000, 0).unwrap_or_default()
+            }
             None => Vec::new(),
         };
         self.loaded = true;
@@ -695,7 +698,13 @@ impl Browse {
             }
             KeyCode::Char('a') => return Some(self.play(self.cursor, PickerAction::Append)),
             KeyCode::Char('N') => return Some(self.play(self.cursor, PickerAction::PlayNext)),
-            KeyCode::Char('f') if ctrl && self.filterable() => return Some(Action::OpenFilters),
+            KeyCode::Char('f') if ctrl => {
+                return Some(if self.filterable() {
+                    Action::OpenFilters
+                } else {
+                    Action::None
+                });
+            }
             KeyCode::Char('f') if self.tracks_in_list() => {
                 return Some(
                     self.track_at_cursor()
@@ -1474,6 +1483,20 @@ mod tests {
         let Some(Hit::Menu) = b.hit(b.geom.menu.x, b.geom.menu.y) else {
             panic!("the actions control is a hit");
         };
+    }
+
+    #[test]
+    fn ctrl_f_opens_the_filters_only_where_they_apply() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let ctrl_f = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL);
+        let mut b = browse(3);
+        assert_eq!(b.handle_key(ctrl_f), Some(Action::OpenFilters));
+        b.source = Source::Favourites;
+        b.view = View::List;
+        assert_eq!(b.handle_key(ctrl_f), Some(Action::None));
+        b.source = Source::Artist(1);
+        b.view = View::Tiles;
+        assert_eq!(b.handle_key(ctrl_f), Some(Action::None));
     }
 
     #[test]
