@@ -484,7 +484,7 @@ impl HistoryPage {
                 self.anchor = None;
                 self.move_to(self.cursor + 1)
             }
-            KeyCode::Char('v') => self.toggle_pick(self.cursor),
+            KeyCode::Char('t') => self.toggle_pick(self.cursor),
             KeyCode::Char('a') if ctrl => {
                 self.picked = self.entries.iter().map(|e| e.id).collect();
             }
@@ -1204,6 +1204,21 @@ mod tests {
         let asked = rx.try_recv().unwrap();
         assert!(matches!(asked.forget, Some(Forget::Plays(ids)) if ids == vec![1, 2, 3]));
         assert!(p.picked.is_empty());
+    }
+
+    #[test]
+    fn t_tags_a_play_and_space_is_left_to_pause() {
+        let mut p = page();
+        draw(&mut p, 100, 12);
+        p.handle_key(KeyEvent::from(KeyCode::Char('t')), &HashSet::new());
+        assert_eq!(p.picked.len(), 1);
+        p.handle_key(KeyEvent::from(KeyCode::Char('t')), &HashSet::new());
+        assert!(p.picked.is_empty(), "a second t lets it go");
+        assert!(
+            p.handle_key(KeyEvent::from(KeyCode::Char(' ')), &HashSet::new())
+                .is_none(),
+            "Space goes on to the app, which pauses"
+        );
     }
 
     #[test]

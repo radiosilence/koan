@@ -1306,7 +1306,7 @@ impl App {
         let shared = match key.code {
             KeyCode::Char(
                 ' ' | '>' | '<' | 'n' | 's' | 'T' | 'R' | '.' | ',' | 'L' | 'V' | 'F' | 'M' | 'X'
-                | 'S' | 'v' | 'D' | 'C' | 'E' | 'B' | 'p' | 'q' | '?' | 'z',
+                | 'S' | 'D' | 'C' | 'E' | 'B' | 'p' | 'q' | '?' | 'z',
             ) => !ctrl,
             // What is playing, put in a playlist; elsewhere the page's own
             // `w` does that with what it shows.
@@ -1967,9 +1967,8 @@ impl App {
                 self.quit = true;
             }
             KeyCode::Char(' ') => self.toggle_pause(),
-            // On the queue `v` picks the row under the cursor, as vim's
-            // visual mode starts one.
-            KeyCode::Char('v') if self.page() == Page::Queue => {
+            // `t` tags the row under the cursor, as in mutt.
+            KeyCode::Char('t') if self.page() == Page::Queue => {
                 let cursor = self.queue.cursor;
                 self.toggle_selection(cursor);
             }
@@ -2043,16 +2042,13 @@ impl App {
             }
             KeyCode::Char('L') => self.lyrics_panel = !self.lyrics_panel,
             KeyCode::Char('V') => {
-                self.viz_config.enabled = !self.viz_config.enabled;
-                self.say(if self.viz_config.enabled {
-                    "visualiser on"
-                } else {
-                    "visualiser off"
-                });
-                let viz_enabled = self.viz_config.enabled;
-                let _ = koan_core::config::Config::persist(|cfg| {
-                    cfg.visualizer.enabled = viz_enabled;
-                });
+                self.viz_picker = Some(super::viz_picker::VizPickerState::new(
+                    self.visualizer.mode,
+                    self.viz_config.enabled,
+                ));
+                // Full screen while it is open, so the preview is seen.
+                self.viz_fullscreen = true;
+                self.push_mode(Mode::VizPicker);
             }
             KeyCode::Char('F') => {
                 self.viz_fullscreen = !self.viz_fullscreen;
@@ -2088,13 +2084,6 @@ impl App {
                 let _ = koan_core::config::Config::persist(|cfg| {
                     cfg.visualizer.bass_shake = shake;
                 });
-            }
-            KeyCode::Char('v') => {
-                self.viz_picker =
-                    Some(super::viz_picker::VizPickerState::new(self.visualizer.mode));
-                self.viz_config.enabled = true;
-                self.viz_fullscreen = true;
-                self.push_mode(Mode::VizPicker);
             }
             // The cursor and the selection, always live: Shift extends.
             KeyCode::Up | KeyCode::Char('k') if len > 0 => {
@@ -2179,7 +2168,7 @@ impl App {
                 self.open_chooser(ids);
             }
             KeyCode::Char('W') => self.queue_control(queue::Control::Save),
-            KeyCode::Char('t') if self.page() == Page::Queue => {
+            KeyCode::Char('v') if self.page() == Page::Queue => {
                 self.queue_control(queue::Control::Grouped(self.queue.flat));
             }
             KeyCode::Char('o') if self.page() == Page::Queue => {
@@ -2478,41 +2467,42 @@ impl App {
         };
 
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('v') => {
-                // Restore the original mode (revert preview).
-                let original = picker.current_mode;
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('V') => {
+                // Back to what was shown before the picker previewed others.
+                let (mode, on) = (picker.current_mode, picker.was_on);
                 self.viz_picker = None;
                 self.viz_fullscreen = false;
                 self.pop_mode();
-                self.apply_viz_mode(original);
+                self.visualizer.mode = mode;
+                self.viz_config.enabled = on;
             }
-            KeyCode::Up | KeyCode::Char('k') => {
-                let len = super::viz_picker::ALL_MODES.len();
-                picker.cursor = if picker.cursor == 0 {
-                    len - 1
-                } else {
-                    picker.cursor - 1
-                };
+            KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+                let up = matches!(key.code, KeyCode::Up | KeyCode::Char('k'));
+                picker.move_by(if up { -1 } else { 1 });
                 // Live preview.
-                let mode = picker.selected_mode();
-                self.visualizer.mode = mode;
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                let len = super::viz_picker::ALL_MODES.len();
-                picker.cursor = if picker.cursor + 1 >= len {
-                    0
-                } else {
-                    picker.cursor + 1
-                };
-                let mode = picker.selected_mode();
-                self.visualizer.mode = mode;
+                match picker.selected() {
+                    Some(mode) => {
+                        self.visualizer.mode = mode;
+                        self.viz_config.enabled = true;
+                    }
+                    None => self.viz_config.enabled = false,
+                }
             }
             KeyCode::Enter => {
-                let selected = picker.selected_mode();
+                let selected = picker.selected();
                 self.viz_picker = None;
                 self.viz_fullscreen = false;
                 self.pop_mode();
-                self.apply_viz_mode(selected);
+                match selected {
+                    Some(mode) => self.apply_viz_mode(mode),
+                    None => {
+                        self.viz_config.enabled = false;
+                        self.say("visualiser off");
+                        let _ = koan_core::config::Config::persist(|cfg| {
+                            cfg.visualizer.enabled = false;
+                        });
+                    }
+                }
             }
             _ => {}
         }
@@ -2527,6 +2517,7 @@ impl App {
         let mode_str = mode.as_str().to_string();
         let _ = koan_core::config::Config::persist(|cfg| {
             cfg.visualizer.mode = mode_str.clone();
+            cfg.visualizer.enabled = true;
         });
     }
 

@@ -548,7 +548,7 @@ fn cover_art_halfblock_fills_expected_cells() {
 #[test]
 fn overlays_survive_every_size() {
     let theme = Theme::default();
-    let viz = VizPickerState::new(VisualizerMode::Bars);
+    let viz = VizPickerState::new(VisualizerMode::Bars, true);
     for &(w, h) in SIZES {
         for scroll in [0, usize::MAX] {
             render_widget(HelpModalOverlay::new(&theme, scroll), w, h);

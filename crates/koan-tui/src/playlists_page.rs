@@ -896,7 +896,7 @@ impl PlaylistPage {
             KeyCode::Char('N') => {
                 return Some(PlAction::Tracks(self.all_tracks(), PickerAction::PlayNext));
             }
-            KeyCode::Char('t') => return act(PageAct::Grouped(!self.grouped())),
+            KeyCode::Char('v') => return act(PageAct::Grouped(!self.grouped())),
             KeyCode::Char('m') => return Some(self.menu(self.cursor)),
             KeyCode::Char('w') => {
                 return Some(here.map_or(PlAction::None, |(_, t)| PlAction::Choose(vec![t.id])));
@@ -1035,7 +1035,7 @@ impl PlaylistPage {
                 } else {
                     "by track"
                 },
-                key('t'),
+                key('v'),
             )
             .priority(5),
         );
@@ -1206,7 +1206,7 @@ impl PlaylistPage {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent};
     use koan_core::db::queries::TrackRow;
@@ -1240,7 +1240,7 @@ mod tests {
         }
     }
 
-    fn row(id: i64, name: &str, readonly: bool) -> PlaylistRow {
+    pub(crate) fn row(id: i64, name: &str, readonly: bool) -> PlaylistRow {
         PlaylistRow {
             id,
             uid: id.to_string(),

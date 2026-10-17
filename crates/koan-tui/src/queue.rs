@@ -235,7 +235,7 @@ pub fn toolbar(entries: &[QueueEntry], layout: &Layout, facts: &Facts, selected:
                 } else {
                     "by track"
                 },
-                key('t'),
+                key('v'),
             )
             .on(true)
             .priority(7),

@@ -35,13 +35,13 @@ pub fn hints(mode: &Mode, page: Page, filterable: bool) -> Vec<(&'static str, &'
             Mode::Normal => match page {
                 Page::Queue => vec![
                     ("space", "pause"),
-                    ("v", "pick"),
+                    ("t", "pick"),
                     ("ret", "play"),
                     ("p", "find"),
                     ("m", "actions"),
                     ("J/K", "reorder"),
                     ("d", "remove"),
-                    ("t", "view"),
+                    ("v", "view"),
                     ("?", "help"),
                 ],
                 Page::NowPlaying => vec![
@@ -122,7 +122,7 @@ pub fn hints(mode: &Mode, page: Page, filterable: bool) -> Vec<(&'static str, &'
                     ("ret", "play"),
                     ("a", "add"),
                     ("N", "next"),
-                    ("v", "pick"),
+                    ("t", "pick"),
                     ("S-\u{2191}\u{2193}", "pick run"),
                     ("m", "actions"),
                     ("x", "forget"),
@@ -158,7 +158,7 @@ pub fn hints(mode: &Mode, page: Page, filterable: bool) -> Vec<(&'static str, &'
                     ("x", "remove"),
                     ("C-z/y", "undo/redo"),
                     ("m", "actions"),
-                    ("t", "view"),
+                    ("v", "view"),
                     ("w", "playlist"),
                     ("esc", "back"),
                 ],

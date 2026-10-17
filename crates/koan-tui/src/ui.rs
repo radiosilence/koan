@@ -1154,8 +1154,10 @@ mod tests {
         let mut app = App::new(state, koan_core::audio::viz::VizSnapshot::new(), tx, 60);
         app.queue.vq_cache.entries = entries;
         app.queue.vq_version = app.state.playlist_version();
+        // Pinned so the sweep does not inherit the developer's own config,
+        // nor what another test wrote to its own.
+        app.queue.flat = false;
         app.relayout_queue();
-        // Pinned so the sweep does not inherit the developer's own config.
         app.art_size = 24;
         app.show_fps = false;
         app.viz_fullscreen = false;
@@ -1587,7 +1589,7 @@ mod tests {
         use crossterm::event::KeyCode;
         let mut app = app_with_queue(5);
         draw(&mut app, 160, 40);
-        key(&mut app, KeyCode::Char('v'));
+        key(&mut app, KeyCode::Char('t'));
         assert_eq!(app.queue.selected_ids.len(), 1);
         let (rect, _) = *app
             .layout
@@ -1614,6 +1616,42 @@ mod tests {
         key(&mut app, KeyCode::Esc);
         assert_eq!(app.mode, Mode::Normal);
         assert!(app.mode_stack.is_empty());
+    }
+
+    #[test]
+    fn a_key_does_the_same_thing_on_every_page() {
+        use crate::playlists_page::{PageAct, PlAction};
+        use crossterm::event::{KeyCode, KeyEvent};
+        let mut app = app_with_queue(3);
+        draw(&mut app, 120, 40);
+        // `v` switches the view: the queue's album runs ...
+        assert!(!app.queue.flat);
+        key(&mut app, KeyCode::Char('v'));
+        assert!(app.queue.flat, "v: a row per track on the queue");
+        // ... an album browser's tiles ...
+        app.go_page(Page::Albums);
+        let before = app.albums_page.view;
+        key(&mut app, KeyCode::Char('v'));
+        assert_ne!(app.albums_page.view, before, "v: rows or tiles on Albums");
+        // ... and a playlist's grouping.
+        let mut list = crate::playlists_page::tests::row(7, "mix", false);
+        list.grouped = Some(false);
+        let mut page = crate::playlists_page::PlaylistPage::for_test(list, Vec::new());
+        assert!(matches!(
+            page.handle_key(KeyEvent::from(KeyCode::Char('v'))),
+            Some(PlAction::Page(PageAct::Grouped(true)))
+        ));
+        // `t` tags on the queue; History's own test holds it there.
+        app.go_page(Page::Queue);
+        key(&mut app, KeyCode::Char('t'));
+        assert_eq!(
+            app.queue.selected_ids.len(),
+            1,
+            "t: the row tagged on the queue"
+        );
+        // `V` opens the visualiser picker, off first among its choices.
+        key(&mut app, KeyCode::Char('V'));
+        assert_eq!(app.mode, Mode::VizPicker);
     }
 
     #[test]
@@ -1645,14 +1683,14 @@ mod tests {
         let mut app = app_with_queue(5);
         draw(&mut app, 120, 40);
         let ids: Vec<_> = app.queue.vq_cache.entries.iter().map(|e| e.id).collect();
-        // Moving leaves the selection alone; `v` picks the row.
+        // Moving leaves the selection alone; `t` tags the row.
         key(&mut app, KeyCode::Char('j'));
         assert_eq!(app.queue.cursor, 1);
         assert!(app.queue.selected_ids.is_empty());
-        key(&mut app, KeyCode::Char('v'));
+        key(&mut app, KeyCode::Char('t'));
         key(&mut app, KeyCode::Down);
         key(&mut app, KeyCode::Down);
-        key(&mut app, KeyCode::Char('v'));
+        key(&mut app, KeyCode::Char('t'));
         assert!(
             app.queue.selected_ids.contains(&ids[1]) && app.queue.selected_ids.contains(&ids[3])
         );
