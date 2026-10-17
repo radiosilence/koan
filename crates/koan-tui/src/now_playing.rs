@@ -217,6 +217,7 @@ pub fn transport_for<'a>(
         .and_then(|e| e.db_id)
         .map(|id| app.favourites.contains(&id));
     bar.output = Some(output_name(app));
+    bar.controlled = app.view.controlled.as_ref().map(|(n, r)| (n.as_str(), r));
     bar.links = (album.is_some(), artist.is_some());
     bar.levels = levels;
     bar

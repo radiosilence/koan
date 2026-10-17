@@ -422,6 +422,16 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.render_widget(overlay, area);
     }
 
+    // Play on overlay.
+    if app.mode == Mode::PlayOn
+        && let Some(ref play_on) = app.play_on
+    {
+        app.layout.selector_area =
+            super::device_selector::play_on_rect(area, play_on.choices.len());
+        let overlay = super::device_selector::PlayOnOverlay::new(play_on, &app.theme);
+        frame.render_widget(overlay, area);
+    }
+
     // EQ chooser overlay.
     if app.mode == Mode::DspSelector
         && let Some(ref selector) = app.dsp_selector

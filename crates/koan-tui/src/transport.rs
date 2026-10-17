@@ -14,6 +14,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use koan_core::audio::dsp::DspStatus;
 use koan_core::player::state::{PlaybackState, QueueEntry, Repeat, Sleep, TrackInfo};
+use koan_core::remote::devices::Reach;
 
 use super::theme::Theme;
 
@@ -53,6 +54,10 @@ pub fn dsp_label(d: &DspStatus) -> &'static str {
 /// The format badge the apps show: codec, depth over rate in kHz, and the
 /// rate the device was given where it differs.
 pub fn badge(info: &TrackInfo, output_rate: Option<u32>) -> String {
+    // Another device's track, which says only where it plays.
+    if info.sample_rate == 0 {
+        return info.codec.clone();
+    }
     let mut s = info.codec.to_uppercase();
     match info.bit_depth {
         Some(depth) => s.push_str(&format!(" {depth}/{}", khz(info.sample_rate))),
@@ -92,6 +97,10 @@ fn rate_label(rate: u32) -> String {
 }
 
 fn format_source(info: &TrackInfo) -> String {
+    // Another device's track, which says only where it plays.
+    if info.sample_rate == 0 {
+        return info.codec.clone();
+    }
     let rate = info.sample_rate;
     let ch = info.channels;
     let rate_str = rate_label(rate);
@@ -274,6 +283,8 @@ pub enum Control {
     Sleep,
     /// The output chooser.
     Output,
+    /// The chooser of which device to control.
+    PlayOn,
     /// The EQ chooser.
     Eq,
     Artist,
@@ -407,6 +418,39 @@ pub(crate) fn sleep_label(sleep: Option<Sleep>, fading: bool) -> String {
     format!("\u{263E} {what}")
 }
 
+/// Play on: the device being controlled, named and lit, with how it can be
+/// reached when it cannot be at once; this one's own glyph otherwise.
+pub(crate) fn play_on(
+    theme: &Theme,
+    controlled: Option<(&str, &Reach)>,
+) -> (Span<'static>, Option<Control>) {
+    let Some((name, reach)) = controlled else {
+        return (
+            Span::styled("\u{21C6}", theme.hint_desc),
+            Some(Control::PlayOn),
+        );
+    };
+    let soft = Style::new().fg(theme.warning);
+    let (text, style) = match reach {
+        Reach::Connected => (
+            format!("\u{21C6} {name}"),
+            Style::new().fg(theme.tokens.accent),
+        ),
+        Reach::Asleep => (format!("\u{263E} {name} asleep; a command wakes it"), soft),
+        Reach::Waking => (format!("\u{263E} waking {name}"), soft),
+        Reach::Reconnecting => (format!("\u{26A0} {name} reconnecting"), soft),
+        Reach::OutOfReach(Some(why)) => (
+            format!("\u{26A0} {name} out of reach: {why}"),
+            theme.failed.add_modifier(Modifier::BOLD),
+        ),
+        Reach::OutOfReach(None) => (
+            format!("\u{26A0} {name} out of reach"),
+            theme.failed.add_modifier(Modifier::BOLD),
+        ),
+    };
+    (Span::styled(text, style), Some(Control::PlayOn))
+}
+
 /// How many bars the transport's own spectrum has.
 pub const MINI_BARS: usize = 12;
 
@@ -435,6 +479,8 @@ pub struct TransportBar<'a> {
     pub favourite: Option<bool>,
     /// What the output is called, when it is worth naming.
     pub output: Option<String>,
+    /// The device being controlled, by name, and whether it can be reached.
+    pub controlled: Option<(&'a str, &'a Reach)>,
     /// Whether the artist and album have pages to open.
     pub links: (bool, bool),
     pub levels: Option<[f32; MINI_BARS]>,
@@ -463,6 +509,7 @@ impl<'a> TransportBar<'a> {
             repeat: Repeat::Off,
             favourite: None,
             output: None,
+            controlled: None,
             links: (false, false),
             levels: None,
         }
@@ -558,7 +605,9 @@ impl<'a> TransportBar<'a> {
             ),
             Some(Control::Sleep),
         )];
-        if let Some(output) = &self.output {
+        route.push((Span::raw("  "), None));
+        route.push(play_on(theme, self.controlled));
+        if let (Some(output), None) = (&self.output, self.controlled) {
             route.push((Span::raw("  "), None));
             route.push((
                 Span::styled(format!("\u{25D4} {output}"), theme.hint_desc),

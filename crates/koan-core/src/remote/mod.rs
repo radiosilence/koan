@@ -2,6 +2,7 @@ pub mod acks;
 pub mod airplay;
 pub mod client;
 pub mod connections;
+pub mod control;
 pub mod devices;
 pub mod download;
 pub mod downloads;

@@ -225,6 +225,13 @@ pub fn hints(mode: &Mode, page: Page, filterable: bool) -> Vec<(&'static str, &'
                 ("ret", "select"),
                 ("esc", "cancel"),
             ],
+            Mode::PlayOn => vec![
+                ("\u{2191}\u{2193}", "navigate"),
+                ("ret", "control"),
+                ("m", "move music here"),
+                ("x", "forget"),
+                ("esc", "close"),
+            ],
             Mode::Picker(_) => vec![
                 ("\u{2191}\u{2193}", "navigate"),
                 ("ret", "append"),
