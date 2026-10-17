@@ -534,7 +534,7 @@ pub fn control(
 /// How `move_music` moved the music.
 pub enum Moved {
     /// This device's own, sent by `hand_off`; `then` hears the destination.
-    Sent(HandOff),
+    Sent(Box<HandOff>),
     /// The device being controlled was asked to send its music on; `then`
     /// hears whether it did.
     Asked,
@@ -554,13 +554,13 @@ pub fn move_music(
         return Ok(None);
     }
     let moved = match (&from, &to) {
-        (None, Some(to)) => Some(Moved::Sent(hand_off(
+        (None, Some(to)) => Some(Moved::Sent(Box::new(hand_off(
             to,
             CommandSource::Account,
             tx,
             state,
             then,
-        )?)),
+        )?))),
         (Some(from), to) => {
             let to = match to {
                 Some(to) => to.clone(),
