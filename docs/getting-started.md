@@ -40,7 +40,7 @@ Recently Played and Favourites show the first few of each kind. Each section's h
 
 ## Artist pages
 
-An artist's page holds the records they are the album artist of, and below them, under **Features on**, the records someone else is the album artist of that they are credited on: compilations, splits, guest spots. The page's Play, Shuffle and Queue act on the artist's own records only, and Play on an artist anywhere else (a row, a menu, the terminal UI) plays the same. Features on has its own smaller Play and Queue for those records, so everything they appear on is their records queued and then the features. An artist with no records of their own has their credited tracks as the page instead, and playing them plays those tracks.
+An artist's page holds the records they are the album artist of, and below them, under **Features on**, the records someone else is the album artist of that they are credited on: compilations, splits, guest spots. The page's Play, Shuffle and Queue act on the artist's own records only, and Play on an artist elsewhere in the apps and the terminal UI (a row, a menu) plays the same. Features on has its own smaller Play and Queue for those records, so everything they appear on is their records queued and then the features. Records picked with Select can come from both sections. An artist with no records of their own has their credited tracks as the page instead, and playing them plays those tracks.
 
 ## Downloaded and offline
 

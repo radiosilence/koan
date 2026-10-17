@@ -539,7 +539,7 @@ fn album_body(
         params.push(Box::new(id));
         params.push(Box::new(id));
         wheres.push(
-            "EXISTS (SELECT 1 FROM tracks ft WHERE ft.album_id = al.id AND ft.artist_id = ?)
+            "al.id IN (SELECT album_id FROM tracks WHERE artist_id = ?)
              AND al.artist_id IS NOT ?"
                 .into(),
         );

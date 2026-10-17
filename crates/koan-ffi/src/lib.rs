@@ -1193,6 +1193,7 @@ impl KoanEngine {
                 &queries::AlbumQuery {
                     features_of: Some(artist_id),
                     order: album_order(AlbumSort::Year, 0),
+                    filter: offline_filter(),
                     ..Default::default()
                 },
             )

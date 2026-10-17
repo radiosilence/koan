@@ -293,7 +293,8 @@ class ArtistModel(mirror: EngineMirror, artistId: Long) : ViewModel() {
                 ArtistRecord(
                     engine.artist(artistId),
                     albums,
-                    engine.artistFeatures(artistId),
+                    // The appearances page shows no features, and a failed read leaves the page without them.
+                    if (albums.isEmpty()) emptyList() else runCatching { engine.artistFeatures(artistId) }.getOrDefault(emptyList()),
                     if (albums.isEmpty()) engine.tracks(null, artistId, TrackSort.ALBUM, 500u, 0u) else emptyList(),
                 )
             }.getOrNull()
