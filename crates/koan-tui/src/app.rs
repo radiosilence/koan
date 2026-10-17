@@ -631,7 +631,7 @@ impl App {
             &mut self.artists_page,
             &mut self.artist_page,
         ] {
-            page.reload_favourites();
+            page.reload();
         }
         // A shelf of favourites loses what was just let go; the others
         // show the hearts.
