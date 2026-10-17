@@ -203,8 +203,9 @@ final class CoverArtCache: Observable, @unchecked Sendable {
             }
             guard let decoded, let image = decoded else { return nil }
             // Full size belongs to whichever sheet asked for it and goes when
-            // that sheet does.
-            if size != .full {
+            // that sheet does. A bitmap matched to a display the window has
+            // since left is drawn this once and not kept.
+            if size != .full, self.displaySpace == space {
                 self.memory.setObject(image, forKey: key as NSString, cost: Self.cost(image))
             }
             return image
@@ -286,6 +287,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
 
         let engine = self.engine
         let file = directory?.appendingPathComponent(Self.filename(for: key))
+        let keep = keeper(file, from: locked { epoch })
         let priority: @Sendable () -> ImageWork.Priority = { [weak self] in self?.priority(of: key) ?? .ahead(.infinity) }
         let payload = await loads.join(key) {
             guard !Task.isCancelled else { return .failed }
@@ -298,7 +300,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
                 }
                 return .art(cached, hash: hash)
             }
-            return await Self.fetch(source, engine, into: file, priority: priority)
+            return await Self.fetch(source, engine, keep: keep, priority: priority)
         }
 
         // Nothing recorded: the next tile that asks tries again.
@@ -338,7 +340,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     private nonisolated static func fetch(
         _ source: AlbumArtwork.Source,
         _ engine: KoanEngine,
-        into file: URL?,
+        keep: (@Sendable (Data) -> Void)?,
         priority: @escaping @Sendable () -> ImageWork.Priority
     ) async -> Fetched {
         do {
@@ -357,11 +359,8 @@ final class CoverArtCache: Observable, @unchecked Sendable {
             guard let data, !data.isEmpty else { return .none }
             // Kept before anything else can give up on it: a download is the
             // expensive part, and one abandoned after it arrived is still the
-            // sleeve the next request wants. Not waited for, and best effort:
-            // a cache that fails to write is still a cache.
-            if let file {
-                ImageWork.inBackground { try? data.write(to: file, options: .atomic) }
-            }
+            // sleeve the next request wants.
+            keep?(data)
             guard let hash = await ImageWork.ifWanted(priority: priority, { digest(data) }) else { return .failed }
             return .art(data, hash: hash)
         } catch {
@@ -532,6 +531,27 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         UserDefaults.standard.set(Int(gone.seq), forKey: mark)
     }
 
+    /// Disk-cache writes and removals, one at a time in the order asked for,
+    /// so a removal is never overtaken by a write queued before it.
+    private let writes = DispatchQueue(label: "cc.blit.koan.artwork-writes", qos: .utility)
+    /// Bumped by every eviction. A download that began before one may hold
+    /// the artwork being replaced, and is not written.
+    private var epoch = 0
+
+    private func keeper(_ file: URL?, from epoch: Int) -> (@Sendable (Data) -> Void)? {
+        guard let file else { return nil }
+        return { [weak self] data in self?.store(data, to: file, from: epoch) }
+    }
+
+    /// Not waited for, and best effort: a cache that fails to write is still
+    /// a cache.
+    private func store(_ data: Data, to file: URL, from epoch: Int) {
+        writes.async { [weak self] in
+            guard let self, self.locked({ self.epoch }) == epoch else { return }
+            try? data.write(to: file, options: .atomic)
+        }
+    }
+
     private func evict(_ source: AlbumArtwork.Source) {
         let key = Self.key(source)
         for size in [AlbumArtwork.Size.thumb, .tile, .full] {
@@ -540,9 +560,10 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         locked {
             absent.remove(key)
             colours.removeValue(forKey: key)
+            epoch += 1
         }
         if let file = directory?.appendingPathComponent(Self.filename(for: key)) {
-            try? FileManager.default.removeItem(at: file)
+            writes.async { try? FileManager.default.removeItem(at: file) }
         }
     }
 
@@ -555,10 +576,13 @@ final class CoverArtCache: Observable, @unchecked Sendable {
             hashOwners.removeAll()
             placeholderHashes.removeAll()
             colours.removeAll()
+            epoch += 1
         }
         guard let directory else { return }
-        try? FileManager.default.removeItem(at: directory)
-        _ = Self.makeDirectory()
+        writes.async {
+            try? FileManager.default.removeItem(at: directory)
+            _ = Self.makeDirectory()
+        }
     }
 }
 

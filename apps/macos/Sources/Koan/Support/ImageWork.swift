@@ -23,11 +23,6 @@ enum ImageWork {
         attributes: .concurrent
     )
 
-    /// Blocking file work nobody waits on, such as filling the disk cache.
-    static func inBackground(_ body: @escaping @Sendable () -> Void) {
-        DispatchQueue.global(qos: .utility).async(execute: body)
-    }
-
     /// Decoding, resampling and hashing. Bounded, because it is CPU-bound:
     /// more of it in flight than the machine can run finishes no sooner and
     /// delays whatever is behind it. Two cores are left for the main thread
@@ -45,6 +40,9 @@ enum ImageWork {
             case landing
             /// On screen now.
             case visible
+            /// Asked for outside a scroll, such as the window's wash, by
+            /// something that is waiting on it.
+            case immediate
         }
 
         let tier: Tier
@@ -54,6 +52,7 @@ enum ImageWork {
         var distance: CGFloat = 0
 
         static let visible = Priority(tier: .visible)
+        static let immediate = Priority(tier: .immediate)
         static func landing(_ distance: CGFloat) -> Priority { Priority(tier: .landing, distance: distance) }
         static func ahead(_ distance: CGFloat) -> Priority { Priority(tier: .ahead, distance: distance) }
 
@@ -69,10 +68,11 @@ enum ImageWork {
     }
 
     /// Work already started is not abandoned when the caller goes away — the
-    /// wash still finishes, and the result is still worth keeping.
+    /// wash still finishes, and the result is still worth keeping. It goes
+    /// ahead of a scroll's sleeves, because whoever asked is waiting on it.
     static func onCPU<T: Sendable>(_ body: @escaping @Sendable () -> T) async -> T {
         await withCheckedContinuation { continuation in
-            cpu.submit(priority: { .visible }, run: { continuation.resume(returning: body()) }, drop: {})
+            cpu.submit(priority: { .immediate }, run: { continuation.resume(returning: body()) }, drop: {})
         }
     }
 

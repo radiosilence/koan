@@ -202,6 +202,10 @@ struct AlbumCollection: NSViewRepresentable {
                 var seen = Set<Int64>()
                 snapshot.appendItems(ids.filter { seen.insert($0).inserted })
                 source?.apply(snapshot, animatingDifferences: false)
+                // The tiles for these records are made in the layout that
+                // follows, after the `aim` below, so their requests are ranked
+                // again once they exist.
+                DispatchQueue.main.async { [weak self] in self?.aim() }
             }
             if restyled || !changed.isEmpty { refreshVisible(reshow: Set(changed)) }
             aim()
