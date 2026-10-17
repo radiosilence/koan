@@ -1,0 +1,1 @@
+- **The Mac follows the kōan theme in three more places.** The toolbar filter is the sidebar search's field with a lowercase prompt; album, artist and playlist pages and the library's own pages share one header, with the count under the title; the queue's undo and redo are ink like the controls beside them.
