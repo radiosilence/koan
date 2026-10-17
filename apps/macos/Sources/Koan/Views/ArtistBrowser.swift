@@ -260,6 +260,7 @@ struct ArtistDetailView: View {
 
     private var artist: Artist? { record?.artist }
     private var albums: [Album] { record?.albums ?? [] }
+    private var features: [Album] { record?.features ?? [] }
     private var info: ArtistInfo? { record?.info }
 
     private let columns = GridItem.tiles(minimum: 150, maximum: 210, spacing: 18)
@@ -297,6 +298,17 @@ struct ArtistDetailView: View {
                     }
                 }
                 .modifier(SelectionDrag(selection: library.artistSelection))
+
+                if !features.isEmpty {
+                    FeaturesOn(albums: features)
+                        .padding(.top, 10)
+                    LazyVGrid(columns: columns, spacing: 22) {
+                        ForEach(features, id: \.id) { album in
+                            AlbumGridCell(album: album, selection: library.artistSelection)
+                        }
+                    }
+                    .modifier(SelectionDrag(selection: library.artistSelection))
+                }
 
                 if width != .compact {
                     bio(collapsible: false)
@@ -417,6 +429,43 @@ struct ArtistDetailView: View {
                     .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             }
             .transition(.opacity)
+        }
+    }
+}
+
+/// The heading over the records an artist features on, with their own play
+/// and queue. Compact and quiet beside the page's one prominent Play, which is
+/// for the artist's own records.
+private struct FeaturesOn: View {
+    let albums: [Album]
+
+    @Environment(PlayerModel.self) private var player
+    @Environment(LibraryModel.self) private var library
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Text("Features on").koanCase()
+                .font(.role(.body, system: .headline))
+            HStack(spacing: 10) {
+                Button {
+                    let engine = library.engine, ids = albums.map(\.id)
+                    player.playNow(resolving: "Features on") {
+                        (try? await engine.albumTrackIds(albumIds: ids)) ?? []
+                    }
+                } label: {
+                    Label("Play", koan: Icon.play)
+                }
+                Button {
+                    let engine = library.engine, ids = albums.map(\.id)
+                    Task {
+                        player.enqueue(trackIds: (try? await engine.albumTrackIds(albumIds: ids)) ?? [])
+                    }
+                } label: {
+                    Label("Queue", koan: Icon.queue)
+                }
+            }
+            .koanButtons(.compact)
+            Spacer(minLength: 0)
         }
     }
 }

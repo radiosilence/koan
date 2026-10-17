@@ -30,7 +30,7 @@ final class LibraryModel {
         visibleAlbums.map(Playable.album)
     }
     @ObservationIgnored private(set) lazy var artistSelection = PlayableSelection { [unowned self] in
-        (detailArtist?.albums ?? []).map(Playable.album)
+        ((detailArtist?.albums ?? []) + (detailArtist?.features ?? [])).map(Playable.album)
     }
 
     /// What is on screen. Written only by the navigator, which owns it — the
@@ -557,7 +557,11 @@ final class LibraryModel {
         /// already on screen is free and asking after a scan is a real read.
         let stamp: UInt64
         var artist: Artist?
+        /// The records they are the album artist of: what the page's Play plays.
         var albums: [Album]
+        /// The records they are credited on and someone else is the album
+        /// artist of, ordered as `albums` are.
+        var features: [Album] = []
         /// For an artist who owns no albums (a guest, a compilation track):
         /// the tracks credited to them, which are then the whole page.
         var appearances: [Track] = []
@@ -581,6 +585,7 @@ final class LibraryModel {
                 async let albums = try? await engine.albums(
                     artistId: id, sort: .year, seed: 0, search: nil, filter: .none
                 )
+                async let features = try? await engine.artistFeatures(artistId: id)
                 async let info = try? await engine.artistInfo(artistId: id)
                 let cached = await info ?? nil
                 let owned = await albums ?? []
@@ -597,6 +602,7 @@ final class LibraryModel {
                     stamp: stamp,
                     artist: await artist ?? nil,
                     albums: owned,
+                    features: await features ?? [],
                     appearances: appearances,
                     info: cached,
                     infoLoading: cached == nil

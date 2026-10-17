@@ -486,7 +486,11 @@ pub fn adopt_moved_files(
     Ok(adopted)
 }
 
-/// Get all tracks for an artist, ordered chronologically (album date, disc, track#).
+/// What playing an artist plays: every track on the records they are the album
+/// artist of, ordered chronologically (album date, disc, track#). The records
+/// they only feature on are left out — see `AlbumQuery::features_of`. An
+/// artist with no records of their own has the tracks credited to them
+/// instead, so playing them always plays something.
 ///
 /// The album-artist half is a subquery on `albums` rather than `al.artist_id =
 /// ?1` on the join: SQLite can only use an index for an `OR` when both sides
@@ -502,8 +506,9 @@ pub fn tracks_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<TrackR
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
          LEFT JOIN artists aa ON al.artist_id = aa.id
-         WHERE t.artist_id = ?1
-                OR t.album_id IN (SELECT id FROM albums WHERE artist_id = ?1)
+         WHERE t.album_id IN (SELECT id FROM albums WHERE artist_id = ?1)
+            OR (t.artist_id = ?1
+                AND NOT EXISTS (SELECT 1 FROM albums WHERE artist_id = ?1))
          ORDER BY al.date, al.title COLLATE LIBRARY, t.disc, t.track_number",
     )?;
     let rows = stmt
@@ -1442,7 +1447,7 @@ mod tests {
     /// A track belongs to an artist by its own credit or its album's, and a
     /// compilation is the case where only the second one holds.
     #[test]
-    fn tracks_for_artist_counts_the_album_credit() {
+    fn tracks_for_artist_plays_their_own_records() {
         let db = test_db();
         db.conn
             .execute_batch(
@@ -1470,7 +1475,33 @@ mod tests {
             .map(|t| t.id)
             .collect::<Vec<_>>();
         ids.sort();
-        assert_eq!(ids, [1, 2, 3]);
+        assert_eq!(ids, [1, 3], "their compilation track is a feature");
+
+        // Credited only on somebody else's record: those tracks.
+        let mut ids = tracks_for_artist(&db.conn, 2)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect::<Vec<_>>();
+        ids.sort();
+        assert_eq!(
+            ids,
+            [2, 4],
+            "the album artist's own record, whoever is credited"
+        );
+        db.conn
+            .execute_batch(
+                "INSERT INTO artists (id, name) VALUES (3, 'Guest');
+                 INSERT INTO tracks (id, title, artist_id, album_id, source, path)
+                   VALUES (5, 'Guest Spot', 3, 2, 'local', '/music/guest.flac');",
+            )
+            .unwrap();
+        let ids = tracks_for_artist(&db.conn, 3)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect::<Vec<_>>();
+        assert_eq!(ids, [5], "no records of their own: their credits");
     }
 
     #[test]

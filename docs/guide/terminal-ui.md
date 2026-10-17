@@ -19,7 +19,7 @@ The TUI follows the shape of the Mac and mobile apps: pages you move between, a 
 | `9` | Settings | The settings that otherwise mean editing `config.toml` |
 | `0` | Search | Artists, records and tracks that match what you type |
 
-The wheel and the scrollbars (which can be dragged) scroll every page. Opening a record or an artist (from a tile, a link, or the keys below) goes to the **album page** and the **artist page**. The album page holds the cover, who it is by, its facts and its tracks; the artist page is that artist's photograph and the opening of their Wikipedia article (with `play` and `shuffle`, and a link to the article), above their records as tiles. Both sit under Albums and Artists in the sidebar and in history.
+The wheel and the scrollbars (which can be dragged) scroll every page. Opening a record or an artist (from a tile, a link, or the keys below) goes to the **album page** and the **artist page**. The album page holds the cover, who it is by, its facts and its tracks; the artist page is that artist's photograph and the opening of their Wikipedia article (with `play` and `shuffle`, and a link to the article), above their records as tiles. Playing an artist plays the records they are the album artist of, not the ones they only feature on. Both sit under Albums and Artists in the sidebar and in history.
 
 ![An artist page: the photograph, the start of their Wikipedia article, play and shuffle, and their records](../../site/public/screens/tui-artist.webp)
 

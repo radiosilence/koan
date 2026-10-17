@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cc.blit.koan.art.Art
+import cc.blit.koan.ffi.Album
 import cc.blit.koan.ffi.Artist
 import cc.blit.koan.ffi.ArtistInfo
 import cc.blit.koan.ui.koanApp
@@ -108,6 +109,12 @@ fun ArtistPage(artistId: Long) {
                         Header(artistId, artist, count(held.albums.size.toLong(), "album"), info, looking, Modifier.padding(horizontal = 4.dp))
                     }
                     items(held.albums, key = { it.id }, contentType = { "album" }) { AlbumTile(it, selection = selection, showArtist = false) }
+                    if (held.features.isNotEmpty()) {
+                        item(key = "features", span = { GridItemSpan(maxLineSpan) }) {
+                            FeaturesOn(held.features, Modifier.padding(start = 4.dp, end = 4.dp, top = KoanSpace.l))
+                        }
+                        items(held.features, key = { "feature-${it.id}" }, contentType = { "album" }) { AlbumTile(it, selection = selection) }
+                    }
                 }
             }
         }
@@ -144,6 +151,22 @@ private fun Header(artistId: Long, artist: Artist, counts: String, info: ArtistI
             bio != null -> Bio(bio, info.bioUrl, info.imageCredit)
             looking -> KoanText("Looking up biography…", Modifier.padding(bottom = KoanSpace.m), role = KoanType.Meta, tone = KoanTone.Muted, appText = true)
         }
+    }
+}
+
+/**
+ * The heading over the records an artist features on, with their own play and
+ * queue: compact beside the page's one prominent Play, which is for the
+ * artist's own records.
+ */
+@Composable
+private fun FeaturesOn(albums: List<Album>, modifier: Modifier) {
+    val app = koanApp()
+    val ids = albums.map { it.id }
+    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(KoanSpace.s), verticalAlignment = Alignment.CenterVertically) {
+        KoanText("Features on", Modifier.weight(1f), role = KoanType.Control, appText = true)
+        KoanButton("Play", { app.player.playNow("Features on") { albumTrackIds(ids) } }, kind = KoanButtonKind.Compact, icon = KoanIcons.play)
+        KoanButton("Queue", { app.mirror.launch { addToQueue(albumTrackIds(ids)) } }, kind = KoanButtonKind.Compact, icon = KoanIcons.queue)
     }
 }
 

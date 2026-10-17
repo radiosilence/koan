@@ -1183,6 +1183,25 @@ impl KoanEngine {
         .await
     }
 
+    /// The records an artist features on and is not the album artist of, as
+    /// their page orders their own: the "Features on" below them.
+    pub async fn artist_features(self: Arc<Self>, artist_id: i64) -> Result<Vec<Album>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let rows = queries::list_albums(
+                &db.conn,
+                &queries::AlbumQuery {
+                    features_of: Some(artist_id),
+                    order: album_order(AlbumSort::Year, 0),
+                    ..Default::default()
+                },
+            )
+            .map_err(db_err)?;
+            Ok(rows.into_iter().map(Album::from).collect())
+        })
+        .await
+    }
+
     /// What the browsers' codec and genre filters offer.
     pub async fn browse_choices(self: Arc<Self>) -> Result<BrowseChoices, KoanError> {
         offload::offload(move || {
@@ -4840,6 +4859,25 @@ impl KoanEngine {
             Ok(self
                 .tracks_blocking(album_id, artist_id, TrackSort::Album, 2000, 0)?
                 .into_iter()
+                .map(|t| t.id)
+                .collect())
+        })
+        .await
+    }
+
+    /// Track IDs for several records, each in running order and the records
+    /// in the order given. One read for a section's worth of albums.
+    pub async fn album_track_ids(
+        self: Arc<Self>,
+        album_ids: Vec<i64>,
+    ) -> Result<Vec<i64>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let mut by_album = queries::tracks_for_albums(&db.conn, &album_ids).map_err(db_err)?;
+            Ok(album_ids
+                .iter()
+                .filter_map(|id| by_album.remove(id))
+                .flatten()
                 .map(|t| t.id)
                 .collect())
         })
