@@ -218,8 +218,9 @@ final class CoverArtCache: Observable, @unchecked Sendable {
             }
             // Full size belongs to whichever sheet asked for it and goes when
             // that sheet does. A bitmap matched to a display the window has
-            // since left is drawn this once and not kept.
-            if size != .full, self.displaySpace == space {
+            // since left, or made from bytes an eviction has since replaced,
+            // is drawn this once and not kept.
+            if size != .full, self.displaySpace == space, self.locked({ self.epoch }) == epoch {
                 self.memory.setObject(image, forKey: key as NSString, cost: Self.cost(image))
             }
             return image
