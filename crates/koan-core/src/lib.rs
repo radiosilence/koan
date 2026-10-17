@@ -1,6 +1,7 @@
 pub mod artist_info;
 pub mod audio;
 pub mod auth;
+pub mod browse;
 pub mod config;
 pub mod db;
 pub mod graphql_client;
