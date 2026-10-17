@@ -53,7 +53,7 @@ Settings holds the playback, terminal, server and device settings that are a cho
 
 The layout follows the width of the terminal.
 
-- **100 columns or more:** a sidebar beside the page, laid out as in the apps: the queue and Now playing; the library's pages (albums, artists, tracks, favourites, recently played, downloaded, history, downloads); your playlists, with a row for a new one; and search and settings at its foot.
+- **100 columns or more:** a sidebar beside the page, laid out as in the apps: the queue and Now playing; the library's pages (albums, artists, tracks, favourites, recently played, downloaded, history, downloads); your playlists, with a row for a new one; and search and settings at its foot. While a scan, a sync or downloads run, each shows above those with how far it has got; `×` stops a scan, keeping what it has read.
 - **56 to 99 columns:** a tab bar over the page, a tab for each page with a number. Page names shorten to fit.
 - **Under 56 columns:** the tab bar shows page numbers and names only the current page.
 
