@@ -618,16 +618,11 @@ fn index_files(
         match handle.join() {
             // A cancel that lands while the channel is empty stops the
             // readers before they send again, and the loop above ends on an
-            // empty batch as though every file had been read.
-            Ok(true)
-                if opts
-                    .cancel
-                    .as_ref()
-                    .is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) =>
-            {
-                result.cancelled = true;
-            }
-            Ok(_) => {}
+            // empty batch as though every file had been read. A send fails
+            // only once the loop has left, on a cancel or with the readers
+            // done, so stopping short means cancelled.
+            Ok(true) => result.cancelled = true,
+            Ok(false) => {}
             Err(_) => log::error!("scan reader thread panicked"),
         }
     }
@@ -889,6 +884,26 @@ mod tests {
         let result = scan_folder(&db, &music, ScanOptions::default(), Some(&on_track));
         assert!(result.cancelled);
         assert!(result.added < CHUNK_SIZE * 6);
+    }
+
+    /// The readers see the cancel before any of them sends, so the consumer's
+    /// first batch is empty: the scan is still cancelled, not finished.
+    #[test]
+    fn a_scan_cancelled_before_any_file_is_read_is_cancelled() {
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("music");
+        std::fs::create_dir_all(&music).unwrap();
+        for i in 0..CHUNK_SIZE * 2 {
+            test_utils::generate_wav(&music.join(format!("{i:03}.wav")), 8000, 1, 0.01, 16);
+        }
+        let db = test_db(dir.path());
+        let opts = ScanOptions {
+            cancel: Some(Arc::new(AtomicBool::new(true))),
+            ..Default::default()
+        };
+        let result = scan_folder(&db, &music, opts, None);
+        assert!(result.cancelled);
+        assert_eq!(result.added, 0);
     }
 
     /// Forgetting a folder stops a scan of it, and only of it.
