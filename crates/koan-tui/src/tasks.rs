@@ -8,6 +8,71 @@ use koan_core::helpers;
 use koan_core::index::scanner::{self, ScanOptions};
 
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+/// A job running, as the sidebar shows it: what it is doing and how far it
+/// has got. Written by the job's thread, read by the frame.
+pub struct Activity {
+    label: parking_lot::Mutex<String>,
+    pub done: AtomicU64,
+    /// Zero until the job knows how much there is.
+    pub total: AtomicU64,
+    /// Set to stop it, for a job that can stop: what it did is kept.
+    pub cancel: Option<Arc<AtomicBool>>,
+}
+
+impl Activity {
+    pub fn new(label: impl Into<String>, cancellable: bool) -> Arc<Self> {
+        Arc::new(Self {
+            label: parking_lot::Mutex::new(label.into()),
+            done: AtomicU64::new(0),
+            total: AtomicU64::new(0),
+            cancel: cancellable.then(|| Arc::new(AtomicBool::new(false))),
+        })
+    }
+
+    pub fn label(&self) -> String {
+        self.label.lock().clone()
+    }
+
+    fn relabel(&self, label: &str) {
+        let mut l = self.label.lock();
+        if *l != label {
+            *l = label.into();
+        }
+    }
+
+    /// "1,204 / 4,000", or the count alone before the total is known.
+    pub fn counts(&self) -> Option<String> {
+        let done = self.done.load(Ordering::Relaxed);
+        let total = self.total.load(Ordering::Relaxed);
+        match (done, total) {
+            (0, 0) => None,
+            (d, 0) => Some(thousands(d)),
+            (d, t) => Some(format!("{} / {}", thousands(d), thousands(t))),
+        }
+    }
+
+    /// How far along, when there is a total.
+    pub fn fraction(&self) -> Option<f64> {
+        let total = self.total.load(Ordering::Relaxed);
+        (total > 0).then(|| (self.done.load(Ordering::Relaxed) as f64 / total as f64).min(1.0))
+    }
+}
+
+/// `n` with a comma every three digits.
+pub fn thousands(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
 
 /// What a thread the TUI started sends back.
 pub enum Report {
@@ -38,7 +103,7 @@ pub fn needs_fetch(t: &koan_core::db::queries::TrackRow) -> bool {
     t.remote_id.is_some() && t.path.is_none() && t.cached_path.is_none()
 }
 
-pub fn scan() -> String {
+pub fn scan(activity: &Activity) -> String {
     let cfg = Config::cached();
     if cfg.library.folders.is_empty() {
         return "no library folders to scan".into();
@@ -51,9 +116,17 @@ pub fn scan() -> String {
     let opts = ScanOptions {
         force: false,
         force_remove: false,
-        cancel: None,
+        cancel: activity.cancel.clone(),
     };
-    let r = scanner::scan_folders(&db, &cfg.library.folders, opts, None, None);
+    let r = scanner::scan_folders(
+        &db,
+        &cfg.library.folders,
+        opts,
+        Some(&|total| activity.total.store(total, Ordering::Relaxed)),
+        Some(&|_| {
+            activity.done.fetch_add(1, Ordering::Relaxed);
+        }),
+    );
     let mut line = format!(
         "scanned: {} added, {} updated, {} removed",
         r.added, r.updated, r.removed
@@ -64,7 +137,7 @@ pub fn scan() -> String {
     line
 }
 
-pub fn sync() -> String {
+pub fn sync(activity: &Activity) -> String {
     let cfg = Config::cached();
     let Some(client) = helpers::subsonic_client(&cfg) else {
         return "no server to sync with".into();
@@ -78,7 +151,19 @@ pub fn sync() -> String {
         helpers::Walk::Always,
         &cfg.remote.url,
         &cfg.remote.username,
-        &|_| {},
+        &|p| {
+            use koan_core::remote::sync::SyncPhase;
+            activity.relabel(match p.phase {
+                SyncPhase::Albums => "syncing albums",
+                SyncPhase::Tracks => "syncing tracks",
+                SyncPhase::Artists => "syncing artists",
+                SyncPhase::Finishing => "finishing the sync",
+            });
+            activity.done.store(p.done, Ordering::Relaxed);
+            activity
+                .total
+                .store(p.total.unwrap_or(0), Ordering::Relaxed);
+        },
     ) {
         Ok(s) => format!(
             "synced: {} tracks, {} albums, {} artists",
@@ -129,6 +214,19 @@ mod tests {
             remote_id: remote.map(Into::into),
             cached_path: cached.map(Into::into),
         }
+    }
+
+    #[test]
+    fn counts_read_as_numbers_do() {
+        assert_eq!(thousands(7), "7");
+        assert_eq!(thousands(1204), "1,204");
+        assert_eq!(thousands(1_000_000), "1,000,000");
+        let a = Activity::new("scanning", true);
+        assert_eq!(a.counts(), None);
+        a.done.store(1204, Ordering::Relaxed);
+        assert_eq!(a.counts().as_deref(), Some("1,204"));
+        a.total.store(4000, Ordering::Relaxed);
+        assert_eq!(a.counts().as_deref(), Some("1,204 / 4,000"));
     }
 
     #[test]

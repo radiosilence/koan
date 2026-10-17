@@ -859,8 +859,11 @@ fn render_sidebar(
         SideRow::Target("+ new playlist", None, NavTarget::NewPlaylist),
     ];
     let foot = [page(Page::Search), page(Page::Settings)];
+    let busy = busy(app);
+    // Each running job takes its label and its bar, and a gap above them.
+    let busy_rows = if busy.is_empty() { 0 } else { 3 * busy.len() };
     // The playlists fill what is left between the two, as many as fit.
-    let room = (side.height as usize).saturating_sub(top.len() + 1 + foot.len());
+    let room = (side.height as usize).saturating_sub(top.len() + 1 + foot.len() + busy_rows);
     top.extend(app.sidebar_playlists.iter().take(room).map(|(id, name)| {
         SideRow::Target(name.as_str(), None, NavTarget::Page(Page::Playlist(*id)))
     }));
@@ -911,9 +914,10 @@ fn render_sidebar(
         }
     };
     let bottom = side.y + side.height;
+    let below = (foot.len() + busy_rows) as u16;
     for (i, row) in top.iter().enumerate() {
         let y = side.y + super::shell::TOP_GUTTER + i as u16;
-        if y + foot.len() as u16 >= bottom {
+        if y + below >= bottom {
             break;
         }
         draw(row, y, &mut hits);
@@ -924,7 +928,88 @@ fn render_sidebar(
             draw(row, y, &mut hits);
         }
     }
+    let mut y = bottom.saturating_sub(below);
+    for job in &busy {
+        y += 1;
+        if y <= side.y || y + 1 >= bottom {
+            break;
+        }
+        let w = SIDEBAR_WIDTH - 2;
+        let counts = job.counts.as_deref().unwrap_or("");
+        let counts_w = super::shell::width(counts) as u16;
+        let label_room = w.saturating_sub(counts_w + 1) as usize;
+        buf.set_stringn(
+            side.x + 1,
+            y,
+            super::shell::fit(&job.label, label_room),
+            label_room,
+            theme.hint_desc,
+        );
+        buf.set_stringn(
+            side.x + 1 + w - counts_w.min(w),
+            y,
+            counts,
+            w as usize,
+            theme.rule,
+        );
+        hits.push((Rect::new(side.x, y, SIDEBAR_WIDTH - 1, 1), job.open));
+        // The bar: as far as it has got, or dashed while there is no total.
+        let bar_w = if job.cancellable { w - 2 } else { w };
+        let filled = job.fraction.map(|f| (f * bar_w as f64).round() as u16);
+        for i in 0..bar_w {
+            let (c, style) = match filled {
+                Some(n) if i < n => ('\u{2501}', theme.bar),
+                Some(_) => ('\u{2500}', theme.rule),
+                None => ('\u{254c}', theme.rule),
+            };
+            buf[(side.x + 1 + i, y + 1)].set_char(c).set_style(style);
+        }
+        if job.cancellable {
+            let x = side.x + 1 + w - 1;
+            buf.set_string(x, y + 1, "\u{d7}", theme.hint_desc);
+            hits.push((Rect::new(x, y + 1, 1, 1), NavTarget::CancelTask));
+        }
+        y += 2;
+    }
     hits
+}
+
+/// A job the sidebar shows running.
+struct Busy {
+    label: String,
+    counts: Option<String>,
+    fraction: Option<f64>,
+    cancellable: bool,
+    /// Where a click on it goes.
+    open: NavTarget,
+}
+
+/// What this device is busy with: the scan or sync the TUI started, and the
+/// downloads in flight. Nothing when idle.
+fn busy(app: &App) -> Vec<Busy> {
+    let mut out = Vec::new();
+    if let Some(a) = app.activity.as_ref() {
+        out.push(Busy {
+            label: a.label(),
+            counts: a.counts(),
+            fraction: a.fraction(),
+            cancellable: a.cancel.is_some(),
+            open: NavTarget::Page(Page::Settings),
+        });
+    }
+    let readings = app.view.local.downloads().readings();
+    if !readings.is_empty() {
+        let written: u64 = readings.iter().map(|r| r.written).sum();
+        let total: u64 = readings.iter().map(|r| r.total).sum();
+        out.push(Busy {
+            label: format!("downloading {}", readings.len()),
+            counts: (total > 0).then(|| format!("{} / {} MB", written >> 20, total >> 20)),
+            fraction: (total > 0).then(|| (written as f64 / total as f64).min(1.0)),
+            cancellable: false,
+            open: NavTarget::Page(Page::Downloads),
+        });
+    }
+    out
 }
 
 /// FPS + beat-energy counter, right-aligned on the top row of `area`.
@@ -1663,6 +1748,45 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    #[test]
+    fn a_running_scan_has_a_row_and_a_stop_button_in_the_sidebar() {
+        let mut app = app_with_queue(3);
+        let activity = crate::tasks::Activity::new("scanning the library", true);
+        activity
+            .total
+            .store(4000, std::sync::atomic::Ordering::Relaxed);
+        activity
+            .done
+            .store(1204, std::sync::atomic::Ordering::Relaxed);
+        app.activity = Some(activity.clone());
+        let text = dump(&mut app, 160, 40);
+        assert!(text.contains("1,204 / 4,000"), "{text}");
+        let stop = app
+            .layout
+            .nav_hits
+            .iter()
+            .find(|(_, t)| *t == NavTarget::CancelTask)
+            .expect("a stop button")
+            .0;
+        click(&mut app, stop.x, stop.y);
+        assert!(
+            activity
+                .cancel
+                .as_ref()
+                .unwrap()
+                .load(std::sync::atomic::Ordering::Relaxed)
+        );
+        // Idle, nothing shows.
+        app.activity = None;
+        draw(&mut app, 160, 40);
+        assert!(
+            !app.layout
+                .nav_hits
+                .iter()
+                .any(|(_, t)| *t == NavTarget::CancelTask)
+        );
     }
 
     /// Writes every page at four sizes to `target/tui-dumps`, to read.

@@ -160,6 +160,8 @@ pub enum NavTarget {
     Forward,
     /// The sidebar's "new playlist" row.
     NewPlaylist,
+    /// The stop button on the running scan's row.
+    CancelTask,
 }
 
 /// Tracks the current mouse hover position and zone.
@@ -275,7 +277,8 @@ pub struct App {
     pub recent_page: Browse,
     pub artist_page: Browse,
     pub album_page: Option<AlbumPage>,
-    task_running: bool,
+    /// The scan, sync or forgetting running, one at a time.
+    pub activity: Option<Arc<super::tasks::Activity>>,
     task_tx: crossbeam_channel::Sender<super::tasks::Report>,
     task_rx: crossbeam_channel::Receiver<super::tasks::Report>,
     pub track_details: Option<Box<koan_core::db::queries::TrackRow>>,
@@ -452,7 +455,7 @@ impl App {
             recent_page: Browse::new(Source::Recent),
             artist_page: Browse::new(Source::Artist(0)),
             album_page: None,
-            task_running: false,
+            activity: None,
             task_tx: task_channel.0,
             task_rx: task_channel.1,
             track_details: None,
@@ -736,7 +739,7 @@ impl App {
         while let Ok(report) = self.task_rx.try_recv() {
             let line = match report {
                 super::tasks::Report::Task(line) => {
-                    self.task_running = false;
+                    self.activity = None;
                     self.reload_library_pages();
                     line
                 }
@@ -1002,6 +1005,7 @@ impl App {
             NavTarget::NewPlaylist => {
                 self.open_name_prompt(Purpose::New(Vec::new()), String::new())
             }
+            NavTarget::CancelTask => self.cancel_task(),
         }
     }
 
@@ -1563,8 +1567,8 @@ impl App {
     /// Starts a scan or a sync on a thread of its own and says how it went.
     fn run_task(&mut self, task: Task) {
         match task {
-            Task::Scan => self.spawn_task("scanning the library...", super::tasks::scan),
-            Task::Sync => self.spawn_task("syncing with the server...", super::tasks::sync),
+            Task::Scan => self.spawn_task("scanning the library", true, super::tasks::scan),
+            Task::Sync => self.spawn_task("syncing with the server", false, super::tasks::sync),
             Task::AddFolder => self.open_name_prompt(Purpose::Folder, String::new()),
         }
     }
@@ -1572,14 +1576,14 @@ impl App {
     /// Takes a library folder out of the config, then forgets its tracks in
     /// the background: a scan never prunes a folder it is no longer given.
     fn remove_folder(&mut self, i: usize) {
-        if self.task_running {
+        if self.activity.is_some() {
             self.say("a scan or sync is already running");
             return;
         }
         match super::settings_page::remove_folder(i) {
             Ok(path) => {
                 self.settings_page.reload();
-                self.spawn_task("removing the folder's tracks...", move || {
+                self.spawn_task("forgetting a folder", false, move |_| {
                     super::tasks::forget(&path)
                 });
             }
@@ -1587,20 +1591,36 @@ impl App {
         }
     }
 
-    fn spawn_task(&mut self, said: &str, work: impl FnOnce() -> String + Send + 'static) {
-        if self.task_running {
+    /// One at a time; the sidebar shows how it is going.
+    fn spawn_task(
+        &mut self,
+        label: &str,
+        cancellable: bool,
+        work: impl FnOnce(&super::tasks::Activity) -> String + Send + 'static,
+    ) {
+        if self.activity.is_some() {
             self.say("a scan or sync is already running");
             return;
         }
-        self.task_running = true;
-        self.say(said);
-        let tx = self.task_tx.clone();
-        std::thread::Builder::new()
+        let activity = super::tasks::Activity::new(label, cancellable);
+        let (tx, running) = (self.task_tx.clone(), activity.clone());
+        let spawned = std::thread::Builder::new()
             .name("koan-task".into())
             .spawn(move || {
-                tx.send(super::tasks::Report::Task(work())).ok();
-            })
-            .ok();
+                tx.send(super::tasks::Report::Task(work(&running))).ok();
+            });
+        if spawned.is_ok() {
+            self.activity = Some(activity);
+            self.say(format!("{label}..."));
+        }
+    }
+
+    /// Stops the running scan, keeping what it has read.
+    fn cancel_task(&mut self) {
+        if let Some(cancel) = self.activity.as_ref().and_then(|a| a.cancel.as_ref()) {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.say("stopping...");
+        }
     }
 
     /// Has the page on screen, and the artist tree when it is next opened,
