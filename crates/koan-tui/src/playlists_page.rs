@@ -186,13 +186,13 @@ impl PlaylistsPage {
             .is_some_and(|(armed, at)| armed == id && at.elapsed() < CONFIRM)
     }
 
-    /// Plays the playlist at `idx`, shuffled or not.
-    fn play(&self, idx: usize, shuffled: bool) -> PlAction {
+    /// Plays the playlist at `idx`.
+    fn play(&self, idx: usize) -> PlAction {
         let Some(list) = self.at(idx) else {
             return PlAction::None;
         };
         let entries = ops::entries(list.id);
-        match ops::queue_command(&entries, None, shuffled) {
+        match ops::queue_command(&entries, None, false) {
             Some(cmd) => PlAction::Command(cmd),
             None => PlAction::Say(format!("'{}' has nothing to play", list.name)),
         }
@@ -264,8 +264,8 @@ impl PlaylistsPage {
                         .map_or(PlAction::None, |p| PlAction::Open(p.id)),
                 );
             }
-            KeyCode::Char('P') => return Some(self.play(self.cursor, false)),
-            KeyCode::Char('s') => return Some(self.play(self.cursor, true)),
+            KeyCode::Char('P') => return Some(self.play(self.cursor)),
+            KeyCode::Char('w') => return Some(PlAction::Choose(self.track_ids(self.cursor))),
             KeyCode::Char('a') => {
                 return Some(PlAction::Tracks(
                     self.track_ids(self.cursor),
@@ -324,7 +324,7 @@ impl PlaylistsPage {
             }
             ListHit::Play(i) => {
                 self.move_to(i);
-                self.play(i, false)
+                self.play(i)
             }
             ListHit::Delete(i) => {
                 self.move_to(i);
@@ -407,7 +407,7 @@ impl PlaylistsPage {
             let msg = if !self.filter.is_empty() {
                 "no match"
             } else {
-                "no playlists yet: + new makes one, and + on a record or track adds to one"
+                "no playlists yet: + new makes one, and w on a record or track adds to one"
             };
             buf.set_stringn(
                 list.x + 1,
@@ -670,14 +670,13 @@ impl PlaylistPage {
             KeyCode::End | KeyCode::Char('G') => self.move_to(usize::MAX),
             KeyCode::Enter => return Some(self.command(here, false)),
             KeyCode::Char('P') => return Some(self.command(None, false)),
-            KeyCode::Char('s') => return Some(self.command(None, true)),
             KeyCode::Char('a') => {
                 return Some(PlAction::Tracks(self.all_tracks(), PickerAction::Append));
             }
             KeyCode::Char('N') => {
                 return Some(PlAction::Tracks(self.all_tracks(), PickerAction::PlayNext));
             }
-            KeyCode::Char('+') => {
+            KeyCode::Char('w') => {
                 return Some(
                     self.entries
                         .get(self.cursor)
@@ -863,7 +862,7 @@ impl PlaylistPage {
             buf.set_stringn(
                 list.x + 1,
                 list.y,
-                "empty: + on a record or a track puts it here",
+                "empty: w on a record or a track puts it here",
                 list.width as usize,
                 theme.hint_desc,
             );
@@ -1173,14 +1172,32 @@ mod tests {
     }
 
     #[test]
-    fn plus_chooses_a_playlist_for_the_track_under_the_cursor() {
+    fn w_chooses_a_playlist_for_the_track_under_the_cursor() {
         let mut p = page(false);
         draw(&mut p, 100, 14);
         p.handle_key(KeyEvent::from(KeyCode::Down));
         assert!(matches!(
-            p.handle_key(KeyEvent::from(KeyCode::Char('+'))),
+            p.handle_key(KeyEvent::from(KeyCode::Char('w'))),
             Some(PlAction::Choose(ids)) if ids == vec![2]
         ));
+    }
+
+    #[test]
+    fn s_and_m_are_left_to_the_app() {
+        let mut p = page(false);
+        draw(&mut p, 100, 14);
+        let mut l = list_page();
+        draw_list(&mut l, 100, 14);
+        for c in ['s', 'm'] {
+            assert!(
+                p.handle_key(KeyEvent::from(KeyCode::Char(c))).is_none(),
+                "{c}"
+            );
+            assert!(
+                l.handle_key(KeyEvent::from(KeyCode::Char(c))).is_none(),
+                "{c}"
+            );
+        }
     }
 
     #[test]

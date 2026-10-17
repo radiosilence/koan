@@ -29,7 +29,8 @@ See [The terminal UI](../guide/terminal-ui.md). These work from any page.
 | `[` / `]` or `Alt+Left` / `Alt+Right` | Back / forward through the pages visited |
 | `Esc` | Leave the page for the one before it |
 | `I` | Draw covers as images or in half blocks |
-| `E` | Choose the EQ the output plays through |
+| `E` | Choose the EQ the output plays through (also a click on `EQ` in the transport bar, or on the signal path's `dsp` row or the curve on Now playing) |
+| `B` | Bypass the EQ, or put back the one bypassed |
 | `A` / `O` | Open the artist / the record of the selection |
 
 ### Navigation
@@ -114,8 +115,9 @@ Tree view: artist -> album -> track.
 |-----|--------|
 | `↑` `↓` or `j` `k` | Move |
 | `Enter` or `→` | Open the playlist |
-| `P` / `s` | Play it / play it shuffled |
+| `P` | Play it |
 | `a` / `N` | Add it to the queue / put it next |
+| `w` | Put its tracks in another playlist |
 | `c` or `+` | New playlist |
 | `r` | Rename |
 | `x` or `Delete` | Delete (press again to confirm) |
@@ -126,7 +128,7 @@ On a playlist's page:
 | Key | Action |
 |-----|--------|
 | `Enter` | Play from the track under the cursor |
-| `P` / `s` | Play all / shuffled |
+| `P` | Play all (the `shuffle` button plays it shuffled) |
 | `a` / `N` | Add all to the queue / put them next |
 | `K` / `J` | Move the track up / down |
 | `x`, `Delete` or `Backspace` | Take the track out |
@@ -141,7 +143,7 @@ Everything on both pages is also a click: the row, `▸`, `×`, `▴`, `▾`, th
 
 ## Add to a playlist (`w`, `W`)
 
-`w` on the queue (the cursor or the selection), on Now playing (the playing track), on the Albums, Favourites, Recent and artist pages, on an album page, in History and in the Artists tree opens a list of playlists that can be filled, headed by `+ new playlist…`; `Enter` or a click chooses one, `Esc` or a click outside cancels. `W` in the queue asks for a name and saves the whole queue as a playlist.
+`w` on the queue (the cursor or the selection), on Now playing (the playing track), on the Albums, Favourites, Recent and artist pages, on an album page, on the Playlists page (the playlist's tracks) and a playlist's page, in History and in the Artists tree opens a list of playlists that can be filled, headed by `+ new playlist…`; `Enter` or a click chooses one, `Esc` or a click outside cancels. `W` in the queue asks for a name and saves the whole queue as a playlist.
 
 ---
 
@@ -174,7 +176,7 @@ Click a play to select it and again to play it; click the artist or the record t
 | `→`, `Enter` or `Space` | Next value (flips a toggle), or run the task on the row |
 | `←` | Previous value |
 
-Click the arrows beside a value, or the value, to change it, or `run` to start a task. Changes apply at once, except the frame rate, which applies at the next start. `scan library` and `sync now` run in the background and report how they went in the status line; offline mode narrows the library to what is on this device.
+Click the arrows beside a value, or the value, to change it, or `run` to start a task. Changes apply at once, except the frame rate, which applies at the next start. `scan library` and `sync now` run in the background and report how they went in the status line; offline mode narrows the browsing pages, the Artists tree and the pickers to what is on this device.
 
 ---
 
