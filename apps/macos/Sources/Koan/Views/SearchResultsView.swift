@@ -311,7 +311,7 @@ private struct SearchTrackRow: View {
         .padding(.vertical, 5)
         .background {
             RoundedRectangle(cornerRadius: KoanTheme.radius(6))
-                .fill(hovering ? KoanTheme.style(.hover, system: .quaternary.opacity(0.5)) : AnyShapeStyle(.clear))
+                .fill(hovering ? KoanTheme.style(.hover) : AnyShapeStyle(.clear))
         }
         .rowBehaviour()
         .modifier(SelectableDrag(playable: .track(track), inContainer: true))
