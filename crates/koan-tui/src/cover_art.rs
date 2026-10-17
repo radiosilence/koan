@@ -128,6 +128,19 @@ impl Gfx {
         }
     }
 
+    /// The half-block pixel's height over its width, against a cell twice as
+    /// tall as wide, from the cell size the terminal reported.
+    fn squash(&self) -> f32 {
+        self.picker
+            .as_ref()
+            .map(|p| {
+                let font = p.font_size();
+                2.0 * f32::from(font.width) / f32::from(font.height)
+            })
+            .filter(|s| s.is_finite() && *s > 0.0)
+            .unwrap_or(1.0)
+    }
+
     /// Whether covers are drawn as real images.
     pub fn graphics(&self) -> bool {
         self.graphics
@@ -182,7 +195,13 @@ impl Gfx {
             let made = if self.graphics {
                 self.protocol(img, area)
             } else {
-                Drawn::Cells(pre_render(img, area.width, area.height, center))
+                Drawn::Cells(pre_render(
+                    img,
+                    area.width,
+                    area.height,
+                    center,
+                    self.squash(),
+                ))
             };
             self.drawn.insert(slot, (self.tick, made));
         }
@@ -306,7 +325,13 @@ impl Gfx {
                 slot,
                 (
                     self.tick,
-                    Drawn::Cells(pre_render(img, area.width, area.height, true)),
+                    Drawn::Cells(pre_render(
+                        img,
+                        area.width,
+                        area.height,
+                        true,
+                        self.squash(),
+                    )),
                 ),
             );
         }
@@ -404,11 +429,26 @@ impl CoverArtCache {
 
 /// Pre-render a DynamicImage into halfblock cells at a given cell size.
 /// When `center` is true, the image is centered in the area; otherwise top-left aligned.
-fn pre_render(img: &DynamicImage, width: u16, height: u16, center: bool) -> RenderedArt {
-    let target_w = width as u32;
-    let target_h = (height as u32) * 2;
-
-    let resized = img.resize(target_w, target_h, image::imageops::FilterType::Lanczos3);
+/// `squash` is how much shorter a half-block pixel is than it is wide: 1.0 for
+/// a cell exactly twice as tall as wide, less for a taller cell. With it the
+/// half blocks take the shape the terminal's own image would.
+fn pre_render(
+    img: &DynamicImage,
+    width: u16,
+    height: u16,
+    center: bool,
+    squash: f32,
+) -> RenderedArt {
+    let aspect = img.height() as f32 / img.width().max(1) as f32 * squash;
+    let cols = (width as f32)
+        .min(f32::from(height) * 2.0 / aspect)
+        .max(1.0);
+    let rows = (aspect * cols).round().clamp(1.0, f32::from(height) * 2.0);
+    let resized = img.resize_exact(
+        cols.round() as u32,
+        rows as u32,
+        image::imageops::FilterType::Lanczos3,
+    );
     // Force even pixel height — halfblocks need pixel pairs, odd heights cause
     // a black bar on the last row.
     let rgba = if !resized.height().is_multiple_of(2) {
@@ -483,7 +523,7 @@ impl Widget for CoverArt<'_> {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        let rendered = pre_render(self.image, area.width, area.height, self.center);
+        let rendered = pre_render(self.image, area.width, area.height, self.center, 1.0);
         for cell in &rendered.cells {
             if let Some(c) = buf.cell_mut(ratatui::layout::Position::new(
                 area.x + cell.rx,
@@ -612,5 +652,18 @@ mod tests {
                 .iter()
                 .any(|c| c.symbol().contains('\u{10EEEE}'))
         );
+    }
+
+    #[test]
+    fn half_blocks_take_the_shape_of_the_terminal_cell() {
+        let square =
+            DynamicImage::ImageRgb8(image::RgbImage::from_pixel(300, 300, image::Rgb([200; 3])));
+        let rows = |squash| {
+            let drawn = pre_render(&square, 22, 11, false, squash);
+            drawn.cells.iter().map(|c| c.ry).max().map_or(0, |r| r + 1)
+        };
+        // A 13x29 px cell: 22 columns are 286 px, which is ten rows of 29.
+        assert_eq!(rows(2.0 * 13.0 / 29.0), 10);
+        assert_eq!(rows(1.0), 11);
     }
 }
