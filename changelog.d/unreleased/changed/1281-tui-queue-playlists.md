@@ -1,0 +1,1 @@
+- **The terminal UI's queue and playlists follow the apps.** The queue and a playlist's page share the apps' rows and toolbar, grouped by album or a row per track, with each row's menu, and the playlists page lists playlists as the apps do.
