@@ -122,7 +122,7 @@ What it creates:
 | `config.local.toml` | Template for machine-specific settings (library folders, remote server) |
 | `.gitignore` | Ignores `*.log`, `*.db`, `config.local.toml`, `cache/` |
 | `koan.db` | SQLite database (created if missing) |
-| `cache/` | Download cache directory |
+| `cache/` | Download cache directory; `cache/thumbs/` holds the TUI's album thumbnails, capped at 256 MB with the oldest dropped first, and is safe to delete |
 
 Running `koan config init` on an existing setup is safe -- it merges new defaults without touching values you've changed, and skips `config.local.toml` if it exists.
 

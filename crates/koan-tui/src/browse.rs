@@ -22,6 +22,7 @@ use super::artist_header::{ArtistHeader, HeaderHit};
 use super::browse_filter::Filters;
 use super::cover_art::{Gfx, album_key};
 use super::theme::Theme;
+use super::thumb_cache;
 use super::transport::format_time;
 
 /// The widest a tile gets, in columns. Wider screens get more tiles.
@@ -227,25 +228,41 @@ impl Thumbs {
     }
 }
 
-/// A record's cover as a thumbnail: from a file beside or inside one of its
-/// tracks, else from the server, as the apps do. A library synced from a
-/// server has no files to read.
+/// A record's cover as a thumbnail, from the disk cache when it has one, else
+/// from a file beside or inside one of its tracks or from the server, as the
+/// apps do. A library synced from a server has no files to read.
 fn load(album: i64) -> Option<DynamicImage> {
     let db = koan_core::db::pool::shared().get().ok()?;
     let row = queries::cover_track_for_album(&db.conn, album).ok()??;
     let local = row.path.as_deref().or(row.cached_path.as_deref());
+    let uid = queries::uids::uids_for(&db.conn, queries::uids::UidKind::Album, [album])
+        .ok()
+        .and_then(|mut uids| uids.remove(&album));
+    if let Some(uid) = &uid
+        && let Some(img) = thumb_cache::read(uid, local.map(Path::new))
+    {
+        return Some(img);
+    }
+    let img = fetch(&row, local)?;
+    if let Some(uid) = &uid {
+        thumb_cache::write(uid, &img);
+    }
+    Some(img)
+}
+
+fn fetch(row: &queries::TrackRow, local: Option<&str>) -> Option<DynamicImage> {
     if let Some(bytes) = local.and_then(|p| koan_core::index::folder_art::cover_art(Path::new(p)))
         && let Ok(img) = image::load_from_memory(&bytes)
     {
         return Some(img.thumbnail(256, 256));
     }
-    let remote_id = row.remote_id?;
+    let remote_id = row.remote_id.as_deref()?;
     let cfg = koan_core::config::Config::cached();
     if !cfg.remote.enabled {
         return None;
     }
     let client = koan_core::helpers::subsonic_client(&cfg)?;
-    let bytes = client.get_cover_art(&remote_id, Some(320)).ok()?;
+    let bytes = client.get_cover_art(remote_id, Some(320)).ok()?;
     Some(image::load_from_memory(&bytes).ok()?.thumbnail(256, 256))
 }
 
