@@ -34,6 +34,12 @@ pub struct ScanResult {
     pub errors: Vec<(PathBuf, String)>,
     /// Stopped early because someone asked. What it had done is still done.
     pub cancelled: bool,
+    /// The scan stopped short of writing what it found: the reader could not
+    /// start or panicked, or a transaction failed to begin or commit. A file
+    /// that alone could not be read or stored is an error against that file
+    /// instead. Nothing is removed against an incomplete scan, in any of its
+    /// folders, since a file it lost may be one moved from another.
+    pub incomplete: bool,
     /// Tracks this scan made, which a file gone from elsewhere may turn out to
     /// be (see `queries::adopt_moved_files`).
     arrived: Vec<i64>,
@@ -138,10 +144,18 @@ fn scan_folders_in_lane(
     // library folder to another is found at its new path before it is missed
     // at its old one, and keeps its track.
     let mut indexed = Vec::new();
-    let mut cancelled = false;
+    let (mut cancelled, mut stopped) = (false, false);
     for (path, found, mut result) in walked {
-        if cancelled {
-            break;
+        let seen = stored_paths(&found.audio);
+        if cancelled || stopped {
+            // Not indexed, but its rows may have moved into a folder that was:
+            // they are adopted with the rest.
+            result.cancelled = cancelled;
+            result.incomplete = stopped;
+            let prune = !found.audio.is_empty();
+            // Its playlists wait for a scan that reads the tracks they name.
+            indexed.push((path, Vec::new(), Vec::new(), prune, seen, result));
+            continue;
         }
         // A folder with no audio is taken for one not mounted, as stale
         // removal takes it: its playlists are read but none forgotten.
@@ -150,9 +164,11 @@ fn scan_folders_in_lane(
         } else {
             vec![path.clone()]
         };
-        let seen = stored_paths(&found.audio);
         let prune = index_folder(db, &path, found.audio, opts, on_track, &mut result);
         cancelled |= result.cancelled;
+        // A database that would not take one folder's writes is not asked
+        // for the next one's.
+        stopped |= result.incomplete;
         indexed.push((path, found.playlists, settled, prune, seen, result));
     }
 
@@ -160,10 +176,24 @@ fn scan_folders_in_lane(
         .iter()
         .flat_map(|(.., result)| result.arrived.iter().copied())
         .collect();
+    let incomplete = indexed.iter().any(|(.., result)| result.incomplete);
     let mut total = ScanResult::default();
     for (path, playlists, settled, prune, seen, mut result) in indexed {
-        if prune && !cancelled {
-            remove_stale(db, &path, opts.force_remove, &arrived, &seen, &mut result);
+        // Stale removal decides what is missing by what the scan did *not*
+        // see. After a cancellation that is most of the library, so it would
+        // delete a library rather than tidy one; after lost writes, a file
+        // lost in one folder may be one moved from another. Moves are adopted
+        // all the same: see `remove_stale`.
+        if prune {
+            remove_stale(
+                db,
+                &path,
+                opts.force_remove,
+                !cancelled && !incomplete,
+                &arrived,
+                &seen,
+                &mut result,
+            );
         }
         if !result.cancelled {
             result.playlists += super::playlist_files::import(db, &playlists, &settled);
@@ -192,16 +222,7 @@ fn index_folder(
     log::info!("found {} audio files in {}", total_files, path.display());
 
     let scope = [path.to_path_buf()];
-    if !index_files(db, audio_files, &scope, opts, on_track, result, path) {
-        return false;
-    }
-
-    if result.cancelled {
-        // Stale removal decides what is missing by what the scan did *not* see.
-        // After a cancellation that is most of the folder, so it would delete a
-        // library rather than tidy one.
-        return false;
-    }
+    index_files(db, audio_files, &scope, opts, on_track, result, path);
 
     // Remove tracks for files that no longer exist. A folder that yielded nothing
     // is far more likely to be an unmounted volume than a library someone emptied,
@@ -291,7 +312,7 @@ pub fn scan_dirs(
     }
 
     let seen = stored_paths(&files);
-    let indexed = index_files(
+    index_files(
         db,
         files,
         &walked,
@@ -300,19 +321,24 @@ pub fn scan_dirs(
         &mut result,
         Path::new(""),
     );
-    if !indexed || result.cancelled {
+    let arrived = std::mem::take(&mut result.arrived);
+    let remove = !result.incomplete && !result.cancelled;
+    // A library root scanned above has already taken its moves off `added`.
+    let counted = result.moved;
+    for dir in &settled {
+        remove_stale(db, dir, true, remove, &arrived, &seen, &mut result);
+    }
+    result.added = result.added.saturating_sub(result.moved - counted);
+    if result.cancelled {
         return result;
     }
-    let arrived = std::mem::take(&mut result.arrived);
     for dir in &settled {
-        remove_stale(db, dir, true, &arrived, &seen, &mut result);
         // A cover image changing is a reason to be here that no row records.
         if let Err(e) = queries::evict_art_under(&db.conn, dir) {
             log::warn!("cover art under {} not refreshed: {e}", dir.display());
         }
     }
     result.playlists += super::playlist_files::import(db, &playlists, &settled);
-    result.added = result.added.saturating_sub(result.moved);
     if result.added > 0 {
         super::playlist_files::refresh_m3u(db);
     }
@@ -372,6 +398,7 @@ fn is_populated(root: &Path) -> bool {
 
 fn merge(total: &mut ScanResult, r: ScanResult) {
     total.cancelled |= r.cancelled;
+    total.incomplete |= r.incomplete;
     total.added += r.added;
     total.updated += r.updated;
     total.removed += r.removed;
@@ -432,8 +459,9 @@ fn walk(path: &Path, result: &mut ScanResult) -> Walked {
 /// `scope` holds the directories and files they were walked from: the scan
 /// cache is read for those alone.
 ///
-/// Returns false when the scan could not run at all, with the reason in
-/// `result.errors` against `context`.
+/// A run it could not finish marks the result `incomplete`, with the reason
+/// in `result.errors` against `context`. A transaction that will not begin or
+/// commit ends the run; batches committed before it stay committed.
 fn index_files(
     db: &Database,
     mut audio_files: Vec<PathBuf>,
@@ -442,10 +470,10 @@ fn index_files(
     on_track: Option<&dyn Fn(ScanEvent)>,
     result: &mut ScanResult,
     context: &Path,
-) -> bool {
+) {
     let total_files = audio_files.len();
     if total_files == 0 {
-        return true;
+        return;
     }
 
     // The scope's cache entries in one read, rather than a lookup per file.
@@ -523,9 +551,12 @@ fn index_files(
         result
             .errors
             .push((context.to_path_buf(), format!("scan error: {}", e)));
-        return false;
+        result.incomplete = true;
+        return;
     }
 
+    // Set when a transaction fails and the loop leaves with files unread.
+    let mut stopped = false;
     loop {
         // Blocks until a full batch is ready or the readers have finished.
         let batch: Vec<(PathBuf, Result<TrackMeta, String>)> =
@@ -550,12 +581,16 @@ fn index_files(
                 result
                     .errors
                     .push((context.to_path_buf(), format!("db error: {}", e)));
-                return false;
+                result.incomplete = true;
+                stopped = true;
+                break;
             }
         };
 
         let (mut added, mut updated) = (0usize, 0usize);
         let mut arrived = Vec::new();
+        // Told once the batch is committed: a rolled-back track was never added.
+        let mut stored = Vec::new();
         for (file_path, meta_result) in batch {
             match meta_result {
                 Ok(meta) => match queries::upsert_track_status(&tx, &meta) {
@@ -566,15 +601,6 @@ fn index_files(
                         } else {
                             updated += 1;
                         }
-                        if let Some(cb) = &on_track {
-                            cb(ScanEvent {
-                                artist: &meta.artist,
-                                album: &meta.album,
-                                title: &meta.title,
-                                path: &file_path,
-                                is_new,
-                            });
-                        }
                         if let Err(e) = queries::update_scan_cache(
                             &tx,
                             meta.path.as_deref().unwrap_or(""),
@@ -584,6 +610,9 @@ fn index_files(
                         ) {
                             // Not fatal, but every future scan re-reads this file's tags.
                             log::warn!("failed to cache {}: {}", file_path.display(), e);
+                        }
+                        if on_track.is_some() {
+                            stored.push((file_path, meta, is_new));
                         }
                     }
                     Err(e) => {
@@ -601,12 +630,26 @@ fn index_files(
                 result.added += added;
                 result.updated += updated;
                 result.arrived.extend(arrived);
+                if let Some(cb) = &on_track {
+                    for (file_path, meta, is_new) in &stored {
+                        cb(ScanEvent {
+                            artist: &meta.artist,
+                            album: &meta.album,
+                            title: &meta.title,
+                            path: file_path,
+                            is_new: *is_new,
+                        });
+                    }
+                }
             }
             Err(e) => {
                 log::error!("failed to commit scan transaction: {}", e);
                 result
                     .errors
                     .push((context.to_path_buf(), format!("db error: {}", e)));
+                result.incomplete = true;
+                stopped = true;
+                break;
             }
         }
     }
@@ -619,28 +662,39 @@ fn index_files(
             // A cancel that lands while the channel is empty stops the
             // readers before they send again, and the loop above ends on an
             // empty batch as though every file had been read. A send fails
-            // only once the loop has left, on a cancel or with the readers
-            // done, so stopping short means cancelled.
-            Ok(true) => result.cancelled = true,
-            Ok(false) => {}
-            Err(_) => log::error!("scan reader thread panicked"),
+            // only once the loop has left, on a cancel, a failed transaction
+            // or with the readers done, so stopping short of a scan that was
+            // not stopped means cancelled.
+            Ok(true) if !stopped => result.cancelled = true,
+            Ok(_) => {}
+            Err(_) => {
+                log::error!("scan reader thread panicked");
+                result.incomplete = true;
+            }
         }
     }
-    true
 }
 
 /// Remove the rows under `path` whose files are gone, in one transaction,
 /// after giving those that moved (to one of `arrived`) their tracks back.
+/// Without `remove`, only the moves: a scan that was cancelled or lost writes
+/// cannot say what is gone, but a track it made for a moved file must find
+/// the old row now, since the next scan finds that file cached and does not
+/// count it arrived.
 /// `walked` is every audio file the walk under `path` found, as stored: those
 /// are present without asking the filesystem again.
 fn remove_stale(
     db: &Database,
     path: &Path,
     force_remove: bool,
+    remove: bool,
     arrived: &[i64],
     walked: &HashSet<String>,
     result: &mut ScanResult,
 ) {
+    if !remove && arrived.is_empty() {
+        return;
+    }
     let tx = match crate::db::queries::write_transaction(&db.conn) {
         Ok(tx) => tx,
         Err(e) => {
@@ -660,6 +714,16 @@ fn remove_stale(
         }
     };
     result.moved += moved;
+    if !remove {
+        if let Err(e) = tx.commit() {
+            log::error!("failed to commit moved files: {}", e);
+            result
+                .errors
+                .push((path.to_path_buf(), format!("db error: {}", e)));
+            result.moved -= moved;
+        }
+        return;
+    }
     match queries::remove_stale_tracks_walked(&tx, path, force_remove, Some(walked)) {
         Ok(removed) => {
             if let Err(e) = tx.commit() {
@@ -667,6 +731,7 @@ fn remove_stale(
                 result
                     .errors
                     .push((path.to_path_buf(), format!("db error: {}", e)));
+                result.moved -= moved;
                 return;
             }
             result.removed += removed.len();
@@ -681,6 +746,10 @@ fn remove_stale(
                 && let Err(e) = tx.commit()
             {
                 log::error!("failed to commit moved files: {}", e);
+                result
+                    .errors
+                    .push((path.to_path_buf(), format!("db error: {}", e)));
+                result.moved -= moved;
             }
         }
     }
@@ -832,9 +901,154 @@ mod tests {
     use crate::db::queries;
     use crate::test_utils;
 
+    /// Make the commit of any batch storing a path `LIKE` `pattern` fail,
+    /// after every statement in it has succeeded: a deferred foreign key,
+    /// broken by a trigger on `scan_cache`.
+    fn fail_commits_for(db: &Database, pattern: &str) {
+        db.conn
+            .execute_batch(&format!(
+                "CREATE TABLE trap_parent (id INTEGER PRIMARY KEY);
+                 CREATE TABLE trap (parent INTEGER
+                     REFERENCES trap_parent(id) DEFERRABLE INITIALLY DEFERRED);
+                 CREATE TRIGGER spring AFTER INSERT ON scan_cache
+                     WHEN NEW.path LIKE '{pattern}'
+                     BEGIN INSERT INTO trap VALUES (1); END;"
+            ))
+            .unwrap();
+    }
+
     fn test_db(dir: &Path) -> Database {
         let db_path = dir.join("test.db");
         Database::open(&db_path).unwrap()
+    }
+
+    /// A batch lost to a failed commit may hold a file moved in from another
+    /// library folder; that folder must not remove the file's track as gone.
+    #[test]
+    fn a_failed_commit_prunes_no_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        test_utils::generate_wav(&a.join("kept.wav"), 8000, 1, 0.1, 16);
+        test_utils::generate_wav(&b.join("moved.wav"), 8000, 1, 0.1, 16);
+        // So the folder the file leaves is not taken for an unmounted one.
+        test_utils::generate_wav(&b.join("stays.wav"), 8000, 1, 0.1, 16);
+        let db = test_db(dir.path());
+        let folders = [a.clone(), b.clone()];
+        let first = scan_folders(&db, &folders, ScanOptions::default(), None, None);
+        assert_eq!(first.added, 3);
+
+        std::fs::rename(b.join("moved.wav"), a.join("moved.wav")).unwrap();
+        // The moved file's batch will not commit.
+        fail_commits_for(&db, "%moved.wav");
+
+        let events = std::sync::Mutex::new(Vec::new());
+        let on_track = |e: ScanEvent| events.lock().unwrap().push(e.path.to_path_buf());
+        let second = scan_folders(&db, &folders, ScanOptions::default(), None, Some(&on_track));
+
+        assert!(second.incomplete);
+        assert!(!second.errors.is_empty());
+        assert_eq!(second.removed, 0, "pruned against a lost batch");
+        let tracks: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM tracks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(tracks, 3);
+        assert!(
+            !events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|p| p.ends_with("moved.wav")),
+            "a rolled-back track was reported"
+        );
+    }
+
+    /// A scan that lost a batch elsewhere still gives a moved file its track:
+    /// the next scan finds it cached and would no longer count it arrived.
+    #[test]
+    fn an_incomplete_scan_still_adopts_moves() {
+        let dir = tempfile::tempdir().unwrap();
+        let (one, two, three) = (
+            dir.path().join("one"),
+            dir.path().join("two"),
+            dir.path().join("three"),
+        );
+        std::fs::create_dir_all(one.join("Album")).unwrap();
+        std::fs::create_dir_all(&two).unwrap();
+        std::fs::create_dir_all(&three).unwrap();
+        test_utils::generate_wav(&one.join("Album/a.wav"), 44100, 1, 0.2, 16);
+        test_utils::generate_wav(&one.join("b.wav"), 44100, 1, 0.3, 16);
+        test_utils::generate_wav(&two.join("c.wav"), 44100, 1, 0.4, 16);
+        test_utils::generate_wav(&three.join("d.wav"), 44100, 1, 0.5, 16);
+        let db = test_db(dir.path());
+        let folders = [one.clone(), two.clone(), three.clone()];
+        scan_folders(&db, &folders, ScanOptions::default(), None, None);
+        let before = tracks_with_uids(&db);
+
+        std::fs::rename(one.join("Album"), two.join("Album")).unwrap();
+        // A new file in the last folder, whose batch will not commit.
+        test_utils::generate_wav(&three.join("fail.wav"), 44100, 1, 0.6, 16);
+        fail_commits_for(&db, "%fail.wav");
+        let r = scan_folders(&db, &folders, ScanOptions::default(), None, None);
+
+        assert!(r.incomplete);
+        assert_eq!((r.removed, r.moved), (0, 1), "{:?}", r.errors);
+        let after = tracks_with_uids(&db);
+        assert_eq!(
+            before.iter().map(|t| (t.0, &t.1)).collect::<Vec<_>>(),
+            after.iter().map(|t| (t.0, &t.1)).collect::<Vec<_>>()
+        );
+        assert!(after.iter().any(|t| t.2.ends_with("two/Album/a.wav")));
+    }
+
+    /// A scan that cannot write still waits for its readers, so the next scan
+    /// in the lane never overlaps them.
+    #[test]
+    fn a_failed_transaction_joins_the_readers() {
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("music");
+        std::fs::create_dir_all(&music).unwrap();
+        // More than the channel holds, so readers are parked when it fails.
+        let files: Vec<PathBuf> = (0..CHUNK_SIZE * 12)
+            .map(|i| {
+                let path = music.join(format!("{i:03}.wav"));
+                test_utils::generate_wav(&path, 8000, 1, 0.01, 16);
+                path
+            })
+            .collect();
+        let db = test_db(dir.path());
+        // An open transaction makes the scan's own fail to begin.
+        db.conn.execute_batch("BEGIN").unwrap();
+
+        // The reader holds a clone of the cancel flag until it is done.
+        let cancel = Arc::new(AtomicBool::new(false));
+        let opts = ScanOptions {
+            cancel: Some(cancel.clone()),
+            force: true,
+            ..Default::default()
+        };
+        let mut result = ScanResult::default();
+        index_files(
+            &db,
+            files,
+            std::slice::from_ref(&music),
+            &opts,
+            None,
+            &mut result,
+            &music,
+        );
+        drop(opts);
+
+        assert!(result.incomplete);
+        assert!(!result.cancelled);
+        assert_eq!(result.errors.len(), 1);
+        assert_eq!(
+            Arc::strong_count(&cancel),
+            1,
+            "returned before the reader ended"
+        );
     }
 
     #[test]
@@ -1816,18 +2030,15 @@ mod tests {
 
         let db = test_db(dir.path());
 
-        // Abort partway through the second chunk, the way Ctrl-C would.
-        let seen = std::cell::Cell::new(0usize);
-        let abort = |_: ScanEvent| {
-            seen.set(seen.get() + 1);
-            assert!(seen.get() <= CHUNK_SIZE, "simulated interrupt");
-        };
+        // Abort once the first chunk is in, the way Ctrl-C would: tracks are
+        // reported only after their chunk commits.
+        let abort = |_: ScanEvent| panic!("simulated interrupt");
         let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             scan_folder(&db, &music_dir, ScanOptions::default(), Some(&abort));
         }));
         assert!(panicked.is_err());
 
-        // The first chunk is on disk; the interrupted one is not.
+        // The first chunk is on disk; the next is not.
         assert_eq!(
             queries::library_stats(&db.conn).unwrap().total_tracks,
             CHUNK_SIZE as i64

@@ -30,9 +30,12 @@ fun editable(kind: String) = bandKinds.any { it.id == kind }
 /** A band the graph draws a handle for: one with a gain to drag. */
 data class Handle(val index: Int, val hz: Double, val db: Double, val q: Double)
 
+/** Whether the band plays on `channel`: an empty list is every channel. */
+fun DspBand.on(channel: Int) = channels.isEmpty() || channel.toUShort() in channels
+
 /** The handles for `bands` on `channel`: peaks and shelves, each with its index among all the filters. */
-fun handles(bands: List<DspBand>, channel: UShort = 0u) = bands.mapIndexedNotNull { i, b ->
-    if (b.kind in setOf("peaking", "low_shelf", "high_shelf") && (b.channels.isEmpty() || channel in b.channels)) {
+fun handles(bands: List<DspBand>, channel: Int = 0) = bands.mapIndexedNotNull { i, b ->
+    if (b.kind in setOf("peaking", "low_shelf", "high_shelf") && b.on(channel)) {
         Handle(i, b.freq, b.gainDb, b.q)
     } else {
         null
@@ -40,7 +43,7 @@ fun handles(bands: List<DspBand>, channel: UShort = 0u) = bands.mapIndexedNotNul
 }
 
 /** The graphic curve a drag away from the handles paints: the first one, on the left channel. */
-fun curveIndex(bands: List<DspBand>) = bands.indexOfFirst { it.kind == "graphic" && (it.channels.isEmpty() || 0.toUShort() in it.channels) }
+fun curveIndex(bands: List<DspBand>) = bands.indexOfFirst { it.kind == "graphic" && it.on(0) }
     .takeIf { it >= 0 }
 
 /** How far a brush reaches: the nearest point alone, a third of an octave, or an octave. */

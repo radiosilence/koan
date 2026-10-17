@@ -5,6 +5,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
+use unicode_width::UnicodeWidthChar;
 
 use koan_core::audio::dsp::DspStatus;
 use koan_core::player::state::{PlaybackState, QueueEntry, Sleep, TrackInfo};
@@ -21,7 +22,6 @@ use super::theme::Theme;
 /// resampled audio, and the one claim this player cannot afford to leave
 /// unqualified is the one about what reaches the DAC. DSP is named for the
 /// same reason.
-#[allow(clippy::manual_is_multiple_of)]
 pub fn format_quality(
     info: &TrackInfo,
     output_rate: Option<u32>,
@@ -323,7 +323,8 @@ impl<'a> TransportBar<'a> {
         if click_x < bar_start || click_x >= bar_end || bar_width == 0 {
             return None;
         }
-        let frac = (click_x - bar_start) as f64 / bar_width as f64;
+        // The middle of the cell, so the head lands on the cell clicked.
+        let frac = (f64::from(click_x - bar_start) + 0.5) / f64::from(bar_width);
         let pos = (frac * duration_ms as f64) as u64;
         Some(pos.min(seekable_ms.unwrap_or(u64::MAX)))
     }
@@ -402,80 +403,56 @@ impl TransportBar<'_> {
         // Line 2: Artist — Title (from QueueEntry metadata, or fallback to filename)
         if let Some(entry) = self.playing_entry {
             let mut spans = Vec::new();
-
             if !entry.artist.is_empty() {
-                spans.push(StyledSegment {
-                    text: entry.artist.clone(),
-                    style: self.theme.track_playing,
-                });
-                spans.push(StyledSegment {
-                    text: " \u{2014} ".into(),
-                    style: self.theme.hint_desc,
-                });
+                spans.push(Span::styled(
+                    entry.artist.as_str(),
+                    self.theme.track_playing,
+                ));
+                spans.push(Span::styled(" \u{2014} ", self.theme.hint_desc));
             }
+            spans.push(Span::styled(
+                entry.title.as_str(),
+                self.theme.track_normal.add_modifier(Modifier::BOLD),
+            ));
 
-            spans.push(StyledSegment {
-                text: entry.title.clone(),
-                style: self.theme.track_normal.add_modifier(Modifier::BOLD),
-            });
-
-            let total_width: usize = spans.iter().map(|s| s.text.chars().count()).sum();
+            let total_width: usize = spans.iter().map(Span::width).sum();
             let avail = area.width.saturating_sub(1) as usize; // -1 for leading space
 
             if total_width <= avail {
-                // Fits — render normally.
-                let mut ratatui_spans = vec![Span::raw(" ")];
-                for seg in &spans {
-                    ratatui_spans.push(Span::styled(seg.text.clone(), seg.style));
-                }
-                let title_line = Line::from(ratatui_spans);
-                buf.set_line(area.x, area.y + 1, &title_line, area.width);
+                let mut line = vec![Span::raw(" ")];
+                line.extend(spans);
+                buf.set_line(area.x, area.y + 1, &Line::from(line), area.width);
             } else {
-                // Ticker mode — scroll the title text.
-                let separator = "   \u{00B7}   "; // " · "
-                let sep_len = separator.chars().count();
-                let cycle_len = total_width + sep_len;
-                let offset = self.ticker_offset % cycle_len;
+                // Ticker mode: the text scrolls by a character a step, round
+                // and round with a separator between.
+                let mut chars: Vec<(char, Style)> = spans
+                    .iter()
+                    .flat_map(|seg| seg.content.chars().map(move |c| (c, seg.style)))
+                    .collect();
+                chars.extend("   \u{00B7}   ".chars().map(|c| (c, self.theme.hint_desc)));
+                let offset = self.ticker_offset % chars.len();
 
-                // Build full ticker character buffer with styles.
-                let mut chars: Vec<(char, Style)> = Vec::with_capacity(cycle_len);
-                for seg in &spans {
-                    for c in seg.text.chars() {
-                        chars.push((c, seg.style));
+                let mut line = vec![Span::raw(" ")];
+                let mut run = String::new();
+                let mut run_style = None;
+                let mut used = 0;
+                for &(ch, style) in chars.iter().cycle().skip(offset) {
+                    used += ch.width().unwrap_or(0);
+                    if used > avail {
+                        break;
                     }
-                }
-                for c in separator.chars() {
-                    chars.push((c, self.theme.hint_desc));
-                }
-
-                // Extract a window of `avail` characters starting at `offset`.
-                let mut ratatui_spans = vec![Span::raw(" ")];
-                let mut run_text = String::new();
-                let mut run_style: Option<Style> = None;
-
-                for i in 0..avail {
-                    let idx = (offset + i) % cycle_len;
-                    let (ch, style) = chars[idx];
-
-                    if run_style == Some(style) {
-                        run_text.push(ch);
-                    } else {
+                    if run_style != Some(style) {
                         if let Some(s) = run_style {
-                            ratatui_spans.push(Span::styled(run_text.clone(), s));
+                            line.push(Span::styled(std::mem::take(&mut run), s));
                         }
-                        run_text.clear();
-                        run_text.push(ch);
                         run_style = Some(style);
                     }
+                    run.push(ch);
                 }
-                if let Some(s) = run_style
-                    && !run_text.is_empty()
-                {
-                    ratatui_spans.push(Span::styled(run_text, s));
+                if let Some(s) = run_style {
+                    line.push(Span::styled(run, s));
                 }
-
-                let title_line = Line::from(ratatui_spans);
-                buf.set_line(area.x, area.y + 1, &title_line, area.width);
+                buf.set_line(area.x, area.y + 1, &Line::from(line), area.width);
             }
 
             // Line 3: Album (Year) · codec info (if we have enough height)
@@ -573,12 +550,6 @@ impl TransportBar<'_> {
             buf.set_line(area.x, area.y + 1, &info_line, area.width);
         }
     }
-}
-
-/// Internal helper for ticker: a piece of text with a style.
-struct StyledSegment {
-    text: String,
-    style: Style,
 }
 
 pub fn format_time(ms: u64) -> String {
@@ -697,5 +668,18 @@ mod tests {
     fn a_bar_with_no_room_draws_nothing() {
         let b = BarRegions::new(0, 30_000, 100_000, None);
         assert_eq!((b.played, b.reachable, b.pending), (0, 0, 0));
+    }
+
+    #[test]
+    fn a_click_puts_the_head_on_the_cell_clicked() {
+        let (start, width) = (4u16, 37u16);
+        for duration in [1_000u64, 213_000, NINE_HOURS] {
+            for cell in 0..width {
+                let pos = TransportBar::seek_from_click(start, width, start + cell, duration, None)
+                    .unwrap();
+                let bar = BarRegions::new(width as usize, pos, duration, None);
+                assert_eq!(bar.played, cell as usize, "{duration} ms, cell {cell}");
+            }
+        }
     }
 }

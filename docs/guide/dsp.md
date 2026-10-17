@@ -263,7 +263,8 @@ after asking. **Add EQ** adds another, and **New EQ…** there makes one: eight
 bands (a low shelf at 100 Hz, six peaks an octave apart from 200 Hz, a high
 shelf at 10 kHz), flat or from a bass boost, warm or bright starting curve,
 named before it is made, added to the filters and opened to edit. An empty
-stage is a dashed place to add one.
+stage is a dashed place to add one. On Android, **New EQ…** is under **Add**
+on the EQ page and in **Add a tuning**.
 
 On Apple TV the correction and **Add EQ** choose from the corrections and EQs
 already on the TV, which include those the account's other devices sync

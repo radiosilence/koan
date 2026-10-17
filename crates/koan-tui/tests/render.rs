@@ -20,7 +20,7 @@ use koan_core::player::state::{
 
 use koan_tui::app::{HoverZone, Mode};
 use koan_tui::context_menu::context_menu_rect_at;
-use koan_tui::cover_art::CoverArt;
+use koan_tui::cover_art::Gfx;
 use koan_tui::help_modal::HelpModalOverlay;
 use koan_tui::lyrics::{LyricsPanel, LyricsState};
 use koan_tui::organize::organize_popup_rect;
@@ -522,13 +522,19 @@ fn cover_art_halfblock_fills_expected_cells() {
         image::Rgba([200, 30, 90, 255]),
     ));
 
+    let mut gfx = Gfx::halfblocks();
+    let mut draw = |w: u16, h: u16| {
+        let area = Rect::new(0, 0, w, h);
+        let mut buf = Buffer::empty(area);
+        gfx.draw(1, &img, area, &mut buf, true);
+        buf
+    };
     for &(w, h) in SIZES {
-        let buf = render_widget(CoverArt::new(&img), w, h);
-        assert_eq!(buf.area, Rect::new(0, 0, w, h), "size=({w},{h})");
+        assert_eq!(draw(w, h).area, Rect::new(0, 0, w, h), "size=({w},{h})");
     }
 
     // At a comfortable size the art must actually paint halfblocks, not spaces.
-    let buf = render_widget(CoverArt::new(&img), 20, 10);
+    let buf = draw(20, 10);
     let painted = (0..10)
         .flat_map(|y| (0..20).map(move |x| (x, y)))
         .filter(|&(x, y)| buf[(x, y)].symbol() == "\u{2580}")

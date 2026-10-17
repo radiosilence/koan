@@ -7,6 +7,7 @@
 //! Listings are read off the UI thread, narrowed and ordered in SQL, and
 //! arrive whole; a read asked for after another always wins over it.
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -1725,6 +1726,21 @@ impl Tile<'_> {
             }
         }
     }
+}
+
+/// The first of `rows` shown in a list scrolled to `scroll`, moved only as
+/// far as brings `cursor` into view, and kept for the next frame and the
+/// pointer.
+pub(super) fn scroll_to(scroll: &Cell<usize>, cursor: usize, rows: usize) -> usize {
+    let rows = rows.max(1);
+    let mut top = scroll.get();
+    if cursor < top {
+        top = cursor;
+    } else if cursor >= top + rows {
+        top = cursor + 1 - rows;
+    }
+    scroll.set(top);
+    top
 }
 
 /// An album row's tail: the year, a gap, the codec.

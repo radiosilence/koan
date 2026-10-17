@@ -284,7 +284,7 @@ final class PlaylistsModel {
 
     private func resolve(_ dropped: [PlayableTransfer]) async -> [Int64] {
         var ids: [Int64] = []
-        for item in dropped {
+        for item in dropped.inDragOrder {
             ids += await item.trackIds(using: engine)
         }
         return ids

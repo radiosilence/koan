@@ -277,7 +277,7 @@ struct SelectionDrag: ViewModifier {
             let items = grabbed.contains(where: selection.contains)
                 ? selection.picked
                 : selection.grid().filter { grabbed.contains($0.key) }
-            return items.map(PlayableTransfer.init)
+            return PlayableTransfer.dragging(items)
         }
         #else
         content

@@ -588,8 +588,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         let cover = app
             .art
             .cover_art
-            .cached()
-            .map(|img| (img, app.art.gfx.squash()));
+            .cover_for(&entry.path)
+            .map(|c| (c, &mut app.art.gfx));
         let details = app.track_details.as_deref().cloned().unwrap_or_default();
         let groups = details.with_entry(&entry, playing.as_ref());
         let overlay =
