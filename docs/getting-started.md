@@ -38,6 +38,10 @@ Both apps keep what you play. **History** lists every play by day, and is where 
 
 Recently Played and Favourites show the first few of each kind. Each section's heading gives how many there are in all and opens the Albums, Artists or Tracks browser filtered to the shelf, in the shelf's order; the filter shows in the browser's filter control and is cleared there. Search's sections do the same. On the Mac, **Tracks**, beside Albums and Artists, lists every track in the library with the same filters; the iOS and Apple TV apps reach the track listing only filtered, from a "See all", since the whole library as one list is more than a phone or a television should draw and queue at once. On Apple TV the Albums, Artists, History and Playlists pages narrow by name from a field above the listing, as the other apps' filter fields do.
 
+## Artist pages
+
+An artist's page holds the records they are the album artist of, and below them, under **Features on**, the records someone else is the album artist of that they are credited on: compilations, splits, guest spots. The page's Play, Shuffle and Queue act on the artist's own records only, and Play on an artist elsewhere in the apps and the terminal UI (a row, a menu) plays the same. Features on has its own smaller Play and Queue for those records, so everything they appear on is their records queued and then the features. Records picked with Select can come from both sections. An artist with no records of their own has only Features on, and the page's Play plays the tracks credited to them.
+
 ## Downloaded and offline
 
 **Downloaded**, in the Mac's and the iPad's sidebar and the iPhone's Library tab, is a shelf like Favourites: the artists, records and tracks with files on this device, records fully there first, each with a bar along the foot of its sleeve showing how much of it is. On the Mac every record in the library folder is whole.

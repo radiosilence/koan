@@ -24,12 +24,14 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 /**
  * Where the playhead was at `atMs` (`SystemClock.elapsedRealtime`), and
@@ -170,12 +172,36 @@ class EngineMirror(deviceName: String) {
      */
     val appearance: StateFlow<Appearance?> = _appearance.asStateFlow()
 
+    /**
+     * Appearance changes, handed to the engine in the order they were made,
+     * which is the order it saves them in. The one coroutine that reads them
+     * is also the only writer of [appearance], so the first read cannot land
+     * over a change.
+     */
+    private val appearanceChanges = Channel<KoanEngine.() -> Unit>(Channel.UNLIMITED).also { changes ->
+        // On IO: a read after a change waits for it to reach the disk.
+        scope.launch(Dispatchers.IO) {
+            val engine = opened.await()
+            var change: (KoanEngine.() -> Unit)? = null
+            while (true) {
+                try {
+                    change?.invoke(engine)
+                    _appearance.value = engine.appearance()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    report(e)
+                }
+                change = changes.receive()
+            }
+        }
+    }
+
     /** The queue as last sent whole, and where each row sits in it. */
     private var base = QueueState(emptyList(), 0)
     private var baseIndex = emptyMap<String, Int>()
 
     init {
-        scope.launch { _appearance.value = opened.await().appearance() }
         scope.launch {
             val stream = opened.await().observe()
             while (true) {
@@ -183,6 +209,16 @@ class EngineMirror(deviceName: String) {
                 slices.forEach(::apply)
             }
         }
+    }
+
+    /**
+     * Wait, two seconds at most, for appearance changes still being saved: for
+     * when the process may be about to go. Nothing to wait for if the engine
+     * never opened.
+     */
+    fun flushSettings() {
+        if (!opened.isCompleted) return
+        runCatching { runBlocking { opened.await() }.flushSettings() }
     }
 
     /** The engine, once it has opened the library and started the player. */
@@ -214,11 +250,7 @@ class EngineMirror(deviceName: String) {
 
     /** Change an appearance setting (`setTheme`, `setThemeIcons`, `setRecordColours`), and redraw in it. */
     fun setAppearance(change: KoanEngine.() -> Unit) {
-        scope.launch {
-            val engine = opened.await()
-            engine.change()
-            _appearance.value = engine.appearance()
-        }
+        appearanceChanges.trySend(change)
     }
 
     private fun apply(slice: StateSlice) {

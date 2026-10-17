@@ -36,6 +36,7 @@ final class AppState {
     let residency = Residency()
     #endif
     private var nowPlaying: NowPlayingCentre?
+    private let network: NetworkWatch
 
     init() async throws {
         // The name the person gave the phone needs Apple's
@@ -74,6 +75,7 @@ final class AppState {
         self.levels = PlayingLevels(engine: engine)
         self.meter = TransferMeter(engine: engine, mirror: mirror)
         self.dsp = DspModel(engine: engine)
+        self.network = NetworkWatch(engine: engine)
         library.activity = activity
         library.art = art
         library.mirror = mirror

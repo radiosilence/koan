@@ -10,8 +10,13 @@
 //! the core count — a thread waiting on a socket costs a kernel stack and
 //! address space it never touches, not CPU, and capping blocking work at the
 //! core count queues it behind nothing.
+//!
+//! Beside the pool are three lanes, each one thread running its work in the
+//! order it was handed over: player commands, commands from other devices, and
+//! settings writes.
 
 use std::sync::LazyLock;
+use std::time::Duration;
 
 use crossbeam_channel::Sender;
 use tokio::runtime::Runtime;
@@ -85,18 +90,7 @@ where
     }
 }
 
-static LANE: LazyLock<Sender<Job>> = LazyLock::new(|| {
-    let (tx, rx) = crossbeam_channel::unbounded::<Job>();
-    std::thread::Builder::new()
-        .name("koan-commands".into())
-        .spawn(move || {
-            for job in rx {
-                job();
-            }
-        })
-        .expect("the command lane needs one thread");
-    tx
-});
+static LANE: LazyLock<Sender<Job>> = LazyLock::new(|| lane("koan-commands"));
 
 /// Run `f` on the lane for commands from other devices, in arrival order,
 /// without waiting for it. The link's and the network's socket threads hand
@@ -109,27 +103,102 @@ pub fn from_another_device<F>(f: F)
 where
     F: FnOnce() + Send + 'static,
 {
-    REMOTE_LANE
-        .send(Box::new(move || {
-            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_err() {
-                log::error!("a command from another device panicked");
-            }
-        }))
-        .expect("the remote command lane outlives the engine");
+    fire(&REMOTE_LANE, "a command from another device", f);
 }
 
-static REMOTE_LANE: LazyLock<Sender<Job>> = LazyLock::new(|| {
+static REMOTE_LANE: LazyLock<Sender<Job>> = LazyLock::new(|| lane("koan-remote-commands"));
+
+/// Changes saved off the caller's thread, in batches. Each write reads and
+/// rewrites the config files, which on a slow disk is long enough to stall the
+/// UI thread that made the change; the change itself is already drawn from the
+/// app's own copy. Changes made while a write is waiting join it, so a run of
+/// them (View → Bigger held down) costs one write, applied in the order they
+/// were made.
+pub struct Batches<T> {
+    pending: parking_lot::Mutex<Vec<T>>,
+    /// Held while a batch is taken and written, so batches land in order.
+    writing: parking_lot::Mutex<()>,
+    write: fn(Vec<T>),
+}
+
+impl<T: Send + 'static> Batches<T> {
+    pub const fn new(write: fn(Vec<T>)) -> Self {
+        Self {
+            pending: parking_lot::Mutex::new(Vec::new()),
+            writing: parking_lot::Mutex::new(()),
+            write,
+        }
+    }
+
+    /// Queue `change` and return at once. The first change of a batch sends
+    /// its write to the settings lane; a panic there is logged.
+    pub fn add(&'static self, change: T) {
+        let first = {
+            let mut pending = self.pending.lock();
+            pending.push(change);
+            pending.len() == 1
+        };
+        if first {
+            fire(&SETTINGS_LANE, "a settings write", || self.settle());
+        }
+    }
+
+    /// Write whatever is queued, here, after any write in progress: for a read
+    /// that must see every change made. Nothing queued and nothing writing
+    /// costs two uncontended locks.
+    pub fn settle(&self) {
+        let _writing = self.writing.lock();
+        let batch = std::mem::take(&mut *self.pending.lock());
+        if !batch.is_empty() {
+            (self.write)(batch);
+        }
+    }
+
+    /// Wait up to `within` for everything queued to be written, as the process
+    /// exits; false if it was not. The write runs on the lane, so a disk that
+    /// has gone away holds the lane and not the caller.
+    pub fn settle_within(&'static self, within: Duration) -> bool {
+        if self.pending.lock().is_empty() && !self.writing.is_locked() {
+            return true;
+        }
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        fire(&SETTINGS_LANE, "a settings write", move || {
+            self.settle();
+            let _ = tx.send(());
+        });
+        rx.recv_timeout(within).is_ok()
+    }
+}
+
+static SETTINGS_LANE: LazyLock<Sender<Job>> = LazyLock::new(|| lane("koan-settings"));
+
+/// Send `f` down `lane` without waiting for it. A panic in `f` is logged as
+/// `what` and the lane goes on.
+fn fire<F>(lane: &Sender<Job>, what: &'static str, f: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    lane.send(Box::new(move || {
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_err() {
+            log::error!("{what} panicked");
+        }
+    }))
+    .expect("a lane outlives the engine");
+}
+
+/// One thread running whatever is sent to it, in the order it was sent.
+fn lane(name: &str) -> Sender<Job> {
     let (tx, rx) = crossbeam_channel::unbounded::<Job>();
     std::thread::Builder::new()
-        .name("koan-remote-commands".into())
+        .name(name.into())
         .spawn(move || {
             for job in rx {
                 job();
             }
         })
-        .expect("the remote command lane needs one thread");
+        .unwrap_or_else(|e| panic!("{name} needs a thread: {e}"));
     tx
-});
+}
 
 #[cfg(test)]
 mod tests {
@@ -228,5 +297,32 @@ mod tests {
         }));
         assert!(escaped.is_err(), "the panicking call fails to its caller");
         assert_eq!(7, sequenced(|| 7).await, "and the next command still runs");
+    }
+
+    type Signal = (Sender<()>, crossbeam_channel::Receiver<()>);
+    static WRITTEN: parking_lot::Mutex<Vec<Vec<u32>>> = parking_lot::Mutex::new(Vec::new());
+    static ENTERED: LazyLock<Signal> = LazyLock::new(|| crossbeam_channel::bounded(1));
+    static GATE: LazyLock<Signal> = LazyLock::new(|| crossbeam_channel::bounded(1));
+    static BATCHES: Batches<u32> = Batches::new(|batch| {
+        // The first write is a slow disk, held until the test lets it go.
+        if batch == [1] {
+            ENTERED.0.send(()).unwrap();
+            GATE.1.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+        WRITTEN.lock().push(batch);
+    });
+
+    #[test]
+    fn changes_return_at_once_join_a_waiting_write_and_land_in_order() {
+        BATCHES.add(1);
+        ENTERED.1.recv_timeout(Duration::from_secs(5)).unwrap();
+        // The lane is writing [1]: these return at once and make one batch.
+        BATCHES.add(2);
+        BATCHES.add(3);
+        assert!(!BATCHES.settle_within(Duration::ZERO));
+        GATE.0.send(()).unwrap();
+        BATCHES.settle();
+        assert_eq!(*WRITTEN.lock(), vec![vec![1], vec![2, 3]]);
+        assert!(BATCHES.settle_within(Duration::from_secs(5)));
     }
 }

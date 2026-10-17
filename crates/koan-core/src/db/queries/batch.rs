@@ -224,7 +224,8 @@ pub fn artist_stats(
         out.entry(id).or_default().album_count = count;
     }
 
-    // Mirrors `tracks_for_artist`: own artist or album artist, counted once.
+    // Every track the artist is on, own credit or album artist, counted once:
+    // what they appear on, which is more than `tracks_for_artist` plays.
     let track_sql = format!(
         "SELECT k.id, COUNT(DISTINCT t.id)
          FROM artists k

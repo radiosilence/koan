@@ -36,6 +36,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
@@ -215,6 +216,43 @@ fun KoanButton(
             icon != null -> KoanLabel(text, icon, style = if (compact) KoanLabelStyle.Compact else KoanLabelStyle.Full)
             else -> Text(KoanTheme.label(text), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
+    }
+}
+
+/**
+ * A glyph that switches one thing on and off, for a toolbar short of room. The glyph never
+ * changes, so it reads one way, where a glyph that swapped would have to name either the state
+ * in force or the one a tap gives. In the theme, `ink` underlined in the accent on and `muted`
+ * off, in a 48-dp target; Material's icon toggle otherwise. A switch to TalkBack.
+ */
+@Composable
+fun KoanIconToggle(icon: Int, label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    if (!KoanTheme.isOn) {
+        IconToggleButton(checked, onCheckedChange) { KoanIcon(icon, label) }
+        return
+    }
+    val c = KoanTheme.colors
+    val accent = KoanTheme.look.accent
+    val colour by animateColorAsState(if (checked) c.ink else c.muted, KoanMotion.fast(), label = "icon-toggle")
+    Box(
+        Modifier
+            .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+            .toggleable(checked, role = Role.Switch, onValueChange = onCheckedChange),
+        contentAlignment = Alignment.Center,
+    ) {
+        KoanIcon(
+            icon,
+            label,
+            Modifier
+                .padding(bottom = 5.dp)
+                .drawBehind {
+                    if (checked) {
+                        val w = KoanHairline.toPx()
+                        drawRect(accent, Offset(0f, size.height - w), Size(size.width, w))
+                    }
+                },
+            color = colour,
+        )
     }
 }
 
