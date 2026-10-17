@@ -508,9 +508,9 @@ fn explain(error: &str) -> String {
     }
 }
 
-/// The app is in front again: whatever iOS closed while it was suspended is
-/// opened again, and every device is dialled now rather than when its backoff
-/// runs out.
+/// The app is in front again, or the network changed: whatever iOS closed
+/// while it was suspended is opened again, and every device is dialled now
+/// rather than when its backoff runs out.
 pub fn refresh() {
     let listener = RUNNING.lock().as_mut().and_then(|r| r.listener.take());
     if let Some(stop) = listener {
@@ -518,8 +518,12 @@ pub fn refresh() {
     }
     reconfigure();
     redial_all();
+    // A network change reaches here too, and must not end a pause that
+    // `suspend` or `devices.nearby` set.
     #[cfg(any(target_vendor = "apple", target_os = "android"))]
-    discovery::restart();
+    if crate::quiet::awake() && enabled() {
+        discovery::restart();
+    }
 }
 
 /// Whether a dialer here could reach `id`: nearby is running and the device
