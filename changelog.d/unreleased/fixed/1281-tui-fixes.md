@@ -1,2 +1,1 @@
 - **Terminal UI modes, pointer and keys.** Closing an overlay returns to where it was opened; a picker closes before its items arrive; clicks no longer reach what the fullscreen visualiser, the help or a menu's border hide; a double click must land on the same row twice; a paste goes into the text field that has the keys; and the session is saved and Now Playing updated off the frame rather than on every one.
-- Importing several presets keeps them imported and playing when their group cannot be made.
