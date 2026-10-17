@@ -29,6 +29,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     app.refresh_visible_queue();
 
     let area = frame.area();
+    app.links.begin((app.hover.column, app.hover.row));
 
     // Below this the transport/queue geometry has no room to lay out.
     if area.height < 5 || area.width < 20 {
@@ -63,6 +64,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     app.layout.now_playing_art_area = Rect::default();
     app.layout.nav_hits.clear();
     app.layout.eq_hits.clear();
+    app.layout.toolbar_hits.clear();
 
     let has_art = app.art.now_playing_art.cached().is_some();
     // Now playing carries the cover and the spectrum itself, so the transport
@@ -95,6 +97,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .set_style(app.theme.rule);
     }
     app.layout.transport_rule_y = Some(rule_row.y);
+    // On the hairline: a readout, nowhere near a page's controls.
+    if app.show_fps {
+        render_fps(frame, app, rule_row);
+    }
 
     // The solver shrinks the transport when the terminal is short — every
     // rect below is derived from what it actually granted, not the request.
@@ -202,6 +208,25 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // The stage: a sidebar or a tab bar, and the page beside or under it.
     let stage = render_nav(frame, app, stage_all);
     app.layout.stage_area = stage;
+    // The toolbar row and the page under it, inside the gutters.
+    let content = super::shell::content(stage);
+    let bar_row = Rect::new(content.x, content.y, content.width, content.height.min(1));
+    let toolbar = app.toolbar();
+    app.layout.toolbar_hits = super::shell::draw_toolbar(
+        frame.buffer_mut(),
+        bar_row,
+        &app.theme,
+        &toolbar,
+        app.nav.can_back(),
+        app.nav.can_forward(),
+        (app.hover.column, app.hover.row),
+    );
+    let stage = Rect::new(
+        content.x,
+        content.y + bar_row.height,
+        content.width,
+        content.height - bar_row.height,
+    );
     match app.page() {
         Page::Queue => {
             if app.lyrics_panel {
@@ -374,6 +399,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 favourites,
                 hover,
             );
+        }
+        Page::Tracks | Page::Downloaded | Page::Downloads => {
+            app.layout.browse_area = stage;
         }
         Page::Artists => {
             app.layout.library_area = stage;
@@ -627,11 +655,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         }
     }
 
-    // FPS counter overlay (top-right corner).
-    if app.show_fps {
-        render_fps(frame, app, area);
-    }
-
     // Loading overlay with braille spinner.
     if let Some(ref msg) = app.loading_message {
         const SPINNER: &[char] = &[
@@ -700,7 +723,7 @@ pub enum Width {
     Compact,
 }
 
-const SIDEBAR_WIDTH: u16 = 18;
+const SIDEBAR_WIDTH: u16 = 20;
 
 impl Width {
     pub fn of(area: Rect) -> Self {
@@ -717,67 +740,8 @@ impl Width {
 /// Draws the sidebar or the tab bar into `area`, registers what each part
 /// opens, and returns the rest of `area` for the page.
 fn render_nav(frame: &mut Frame, app: &mut App, area: Rect) -> Rect {
-    let width = Width::of(area);
-    let theme = &app.theme;
-    let current = app.nav.current().tab();
-    let can_back = app.nav.can_back();
-    let can_forward = app.nav.can_forward();
-    let buf = frame.buffer_mut();
-    let mut hits = Vec::new();
-
-    if width == Width::Wide {
-        let side = Rect::new(area.x, area.y, SIDEBAR_WIDTH, area.height);
-        for y in side.y..side.y + side.height {
-            buf[(side.x + SIDEBAR_WIDTH - 1, y)]
-                .set_char('\u{2502}')
-                .set_style(theme.rule);
-        }
-        buf.set_stringn(side.x + 1, side.y, "koan", 8, theme.heading);
-        for (i, page) in Page::ALL.into_iter().enumerate() {
-            let y = side.y + 2 + i as u16;
-            if y >= side.y + side.height {
-                break;
-            }
-            let active = page == current;
-            let hovered = app.hover.zone == super::app::HoverZone::Nav(NavTarget::Page(page));
-            let label_style = if active {
-                theme.heading
-            } else if hovered {
-                theme.track_normal
-            } else {
-                theme.hint_desc
-            };
-            if active {
-                buf[(side.x, y)].set_char('\u{258c}').set_style(theme.bar);
-            }
-            buf.set_stringn(side.x + 1, y, page.title(), 13, label_style);
-            buf.set_string(
-                side.x + SIDEBAR_WIDTH - 3,
-                y,
-                page.key().to_string(),
-                theme.hint_desc,
-            );
-            hits.push((
-                Rect::new(side.x, y, SIDEBAR_WIDTH - 1, 1),
-                NavTarget::Page(page),
-            ));
-        }
-        let y = side.y + side.height - 1;
-        let back_style = if can_back {
-            theme.track_normal
-        } else {
-            theme.rule
-        };
-        let fwd_style = if can_forward {
-            theme.track_normal
-        } else {
-            theme.rule
-        };
-        buf.set_string(side.x + 1, y, "\u{2039} back", back_style);
-        buf.set_string(side.x + 9, y, "fwd \u{203a}", fwd_style);
-        hits.push((Rect::new(side.x, y, 8, 1), NavTarget::Back));
-        hits.push((Rect::new(side.x + 8, y, 8, 1), NavTarget::Forward));
-        app.layout.nav_hits = hits;
+    if Width::of(area) == Width::Wide {
+        app.layout.nav_hits = render_sidebar(frame.buffer_mut(), app, area);
         return Rect::new(
             area.x + SIDEBAR_WIDTH,
             area.y,
@@ -786,14 +750,23 @@ fn render_nav(frame: &mut Frame, app: &mut App, area: Rect) -> Rect {
         );
     }
 
-    // Tab bar: back and forward, then a tab a page. Titles when they fit,
-    // the short names when they do not, and numbers when not even those.
+    // Tab bar: a tab for each page with a digit. Titles when they fit, the
+    // short names when they do not, and numbers when not even those.
+    let theme = &app.theme;
+    let current = app.nav.current().tab();
+    let buf = frame.buffer_mut();
+    let mut hits = Vec::new();
     let bar = Rect::new(area.x, area.y, area.width, 1.min(area.height));
-    let usable = bar.width.saturating_sub(5) as usize;
+    let mut tabs: Vec<(Page, char)> = Page::ALL
+        .into_iter()
+        .filter_map(|p| p.key().map(|k| (p, k)))
+        .collect();
+    // In the keyboard's order: 1 to 9, then 0.
+    tabs.sort_by_key(|(_, k)| (*k == '0', *k));
+    let usable = bar.width.saturating_sub(1) as usize;
     let cost = |label: fn(Page) -> &'static str| {
-        Page::ALL
-            .iter()
-            .map(|p| label(*p).chars().count() + 2)
+        tabs.iter()
+            .map(|(p, _)| label(*p).chars().count() + 2)
             .sum::<usize>()
     };
     let label: fn(Page) -> &'static str = if cost(Page::title) <= usable {
@@ -804,28 +777,14 @@ fn render_nav(frame: &mut Frame, app: &mut App, area: Rect) -> Rect {
         |_| ""
     };
     let numbers_only = label(Page::Queue).is_empty();
-    let back_style = if can_back {
-        theme.track_normal
-    } else {
-        theme.rule
-    };
-    let fwd_style = if can_forward {
-        theme.track_normal
-    } else {
-        theme.rule
-    };
-    buf.set_string(bar.x + 1, bar.y, "\u{2039}", back_style);
-    buf.set_string(bar.x + 3, bar.y, "\u{203a}", fwd_style);
-    hits.push((Rect::new(bar.x, bar.y, 3, 1), NavTarget::Back));
-    hits.push((Rect::new(bar.x + 3, bar.y, 2, 1), NavTarget::Forward));
-    let mut x = bar.x + 5;
+    let mut x = bar.x + 1;
     let end = bar.x + bar.width;
-    for page in Page::ALL {
+    for (page, key) in tabs {
         let text = if numbers_only {
             if page == current {
-                format!(" {} {} ", page.key(), page.title())
+                format!(" {key} {} ", page.short())
             } else {
-                format!(" {} ", page.key())
+                format!(" {key} ")
             }
         } else {
             format!(" {} ", label(page))
@@ -854,7 +813,121 @@ fn render_nav(frame: &mut Frame, app: &mut App, area: Rect) -> Rect {
     Rect::new(area.x, area.y + 1, area.width, area.height - 1)
 }
 
-/// FPS + beat-energy counter, right-aligned on the top row.
+/// One row of the sidebar.
+enum SideRow<'a> {
+    Heading(&'static str),
+    Gap,
+    Target(&'a str, Option<char>, NavTarget),
+}
+
+/// The sidebar, as the apps lay it out: the queue and what is playing; the
+/// library's pages; the playlists, with a row for a new one; then search and
+/// settings at the foot. Returns what each row opens.
+fn render_sidebar(
+    buf: &mut ratatui::buffer::Buffer,
+    app: &App,
+    area: Rect,
+) -> Vec<(Rect, NavTarget)> {
+    let theme = &app.theme;
+    let current = app.nav.current();
+    let side = Rect::new(area.x, area.y, SIDEBAR_WIDTH, area.height);
+    for y in side.y..side.y + side.height {
+        buf[(side.x + SIDEBAR_WIDTH - 1, y)]
+            .set_char('\u{2502}')
+            .set_style(theme.rule);
+    }
+    let page = |p: Page| SideRow::Target(p.title(), p.key(), NavTarget::Page(p));
+    let mut top = vec![
+        page(Page::Queue),
+        page(Page::NowPlaying),
+        SideRow::Gap,
+        SideRow::Heading("library"),
+        page(Page::Albums),
+        page(Page::Artists),
+        page(Page::Tracks),
+        page(Page::Favourites),
+        page(Page::Recent),
+        page(Page::Downloaded),
+        page(Page::History),
+        page(Page::Downloads),
+        SideRow::Gap,
+        SideRow::Target(
+            "playlists",
+            Page::Playlists.key(),
+            NavTarget::Page(Page::Playlists),
+        ),
+        SideRow::Target("+ new playlist", None, NavTarget::NewPlaylist),
+    ];
+    let foot = [page(Page::Search), page(Page::Settings)];
+    // The playlists fill what is left between the two, as many as fit.
+    let room = (side.height as usize).saturating_sub(top.len() + 1 + foot.len());
+    top.extend(app.sidebar_playlists.iter().take(room).map(|(id, name)| {
+        SideRow::Target(name.as_str(), None, NavTarget::Page(Page::Playlist(*id)))
+    }));
+
+    let mut hits = Vec::new();
+    let label_w = (SIDEBAR_WIDTH - 5) as usize;
+    let mut draw = |row: &SideRow, y: u16, hits: &mut Vec<(Rect, NavTarget)>| match row {
+        SideRow::Gap => {}
+        SideRow::Heading(text) => {
+            buf.set_stringn(side.x + 1, y, text, label_w, theme.rule);
+        }
+        SideRow::Target(text, key, target) => {
+            let active = match target {
+                NavTarget::Page(Page::Playlist(id)) => current == Page::Playlist(*id),
+                NavTarget::Page(p) => *p == current.tab() && !matches!(current, Page::Playlist(_)),
+                _ => false,
+            } || matches!(
+                (target, current),
+                (NavTarget::Page(Page::Playlists), Page::Playlist(_))
+            );
+            let hovered = app.hover.zone == super::app::HoverZone::Nav(*target);
+            let style = if active {
+                theme.heading
+            } else if hovered {
+                theme.track_normal
+            } else {
+                theme.hint_desc
+            };
+            if active {
+                buf[(side.x, y)].set_char('\u{258c}').set_style(theme.bar);
+            }
+            buf.set_stringn(
+                side.x + 1,
+                y,
+                super::shell::fit(text, label_w),
+                label_w,
+                style,
+            );
+            if let Some(k) = key {
+                buf.set_string(
+                    side.x + SIDEBAR_WIDTH - 3,
+                    y,
+                    k.to_string(),
+                    theme.hint_desc,
+                );
+            }
+            hits.push((Rect::new(side.x, y, SIDEBAR_WIDTH - 1, 1), *target));
+        }
+    };
+    let bottom = side.y + side.height;
+    for (i, row) in top.iter().enumerate() {
+        let y = side.y + super::shell::TOP_GUTTER + i as u16;
+        if y + foot.len() as u16 >= bottom {
+            break;
+        }
+        draw(row, y, &mut hits);
+    }
+    for (i, row) in foot.iter().enumerate() {
+        let y = bottom - foot.len() as u16 + i as u16;
+        if y > side.y {
+            draw(row, y, &mut hits);
+        }
+    }
+    hits
+}
+
+/// FPS + beat-energy counter, right-aligned on the top row of `area`.
 fn render_fps(frame: &mut Frame, app: &App, area: Rect) {
     let beat = app.visualizer.beat_energy;
     let beat_tag = if beat > 0.3 { " BEAT" } else { "" };
@@ -1127,9 +1200,9 @@ mod tests {
         app.handle_key(KeyEvent::from(KeyCode::Char(']')));
         assert_eq!(app.page(), Page::Favourites);
         app.handle_key(KeyEvent::from(KeyCode::Tab));
-        assert_eq!(app.page(), Page::Playlists);
-        app.handle_key(KeyEvent::from(KeyCode::Tab));
         assert_eq!(app.page(), Page::Recent);
+        app.handle_key(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.page(), Page::Downloaded);
         app.handle_key(KeyEvent::from(KeyCode::Char('1')));
         assert_eq!(app.page(), Page::Queue);
     }
@@ -1307,6 +1380,121 @@ mod tests {
         app.handle_key(KeyEvent::from(KeyCode::Enter));
         assert_eq!(app.mode, Mode::Normal);
         assert_eq!(app.page(), Page::Eq);
+    }
+
+    #[test]
+    fn the_toolbar_sits_below_the_top_gutter_and_goes_back() {
+        use crate::shell::{TOP_GUTTER, ToolHit};
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let mut app = app_with_queue(3);
+        app.go_page(Page::Albums);
+        for (w, top) in [(160u16, TOP_GUTTER), (80, 1 + TOP_GUTTER)] {
+            draw(&mut app, w, 40);
+            assert!(!app.layout.toolbar_hits.is_empty(), "width {w}");
+            for (r, _) in &app.layout.toolbar_hits {
+                assert_eq!(r.y, top, "width {w}");
+                assert!(r.x + r.width <= w, "width {w}");
+            }
+        }
+        let back = app
+            .layout
+            .toolbar_hits
+            .iter()
+            .find(|(_, h)| *h == ToolHit::Nav(NavTarget::Back))
+            .expect("a back button")
+            .0;
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: back.x,
+            row: back.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.page(), Page::Queue);
+    }
+
+    #[test]
+    fn a_link_drawn_anywhere_opens_its_page() {
+        use crate::shell::Link;
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let mut app = app_with_queue(3);
+        draw(&mut app, 120, 40);
+        let mut buf = ratatui::buffer::Buffer::empty(Rect::new(0, 0, 120, 40));
+        app.links.draw(
+            &mut buf,
+            60,
+            20,
+            "Selected Ambient Works",
+            30,
+            ratatui::style::Style::default(),
+            Link::Album(999),
+        );
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 62,
+            row: 20,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.page(), Page::Album(999));
+    }
+
+    #[test]
+    fn the_sidebar_lists_every_page_and_the_playlists() {
+        let mut app = app_with_queue(3);
+        app.sidebar_playlists = vec![(41, "road trip".into()), (42, "東京事変 best".into())];
+        draw(&mut app, 160, 40);
+        let targets: Vec<_> = app.layout.nav_hits.iter().map(|(_, t)| *t).collect();
+        for page in Page::ALL {
+            assert!(targets.contains(&NavTarget::Page(page)), "{page:?}");
+        }
+        assert!(targets.contains(&NavTarget::NewPlaylist));
+        assert!(targets.contains(&NavTarget::Page(Page::Playlist(42))));
+        // Short: the playlists give way, the pages do not.
+        draw(&mut app, 160, 26);
+        let targets: Vec<_> = app.layout.nav_hits.iter().map(|(_, t)| *t).collect();
+        assert!(targets.contains(&NavTarget::Page(Page::Settings)));
+    }
+
+    /// The buffer as text, a line a row, the second cell of a wide
+    /// character left out.
+    fn dump(app: &mut App, w: u16, h: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+        terminal.draw(|f| render(f, app)).unwrap();
+        let buf = terminal.backend().buffer();
+        let mut out = String::new();
+        for y in 0..h {
+            let mut skip = 0;
+            for x in 0..w {
+                if skip > 0 {
+                    skip -= 1;
+                    continue;
+                }
+                let sym = buf[(x, y)].symbol();
+                skip = crate::shell::width(sym).saturating_sub(1);
+                out.push_str(sym);
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    /// Writes every page at four sizes to `target/tui-dumps`, to read.
+    #[test]
+    #[ignore]
+    fn dump_the_shell() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tui-dumps");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut app = app_with_queue(12);
+        app.sidebar_playlists = vec![
+            (41, "road trip".into()),
+            (42, "東京事変 best of everything".into()),
+        ];
+        for page in Page::ALL {
+            app.go_page(page);
+            for (w, h) in [(50u16, 20u16), (80, 24), (120, 40), (200, 60)] {
+                let name = format!("{}-{w}x{h}.txt", page.title().replace(' ', "-"));
+                std::fs::write(dir.join(name), dump(&mut app, w, h)).unwrap();
+            }
+        }
     }
 
     #[test]

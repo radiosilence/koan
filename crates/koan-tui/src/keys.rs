@@ -158,6 +158,9 @@ pub fn hints(mode: &Mode, page: Page, filterable: bool) -> Vec<(&'static str, &'
                     ("B", "bypass"),
                     ("esc", "back"),
                 ],
+                Page::Tracks | Page::Downloaded | Page::Downloads => {
+                    vec![("0-9", "pages"), ("esc", "back"), ("?", "help")]
+                }
                 Page::Settings => vec![
                     ("\u{2191}\u{2193}", "move"),
                     ("\u{2190}\u{2192}", "change"),
