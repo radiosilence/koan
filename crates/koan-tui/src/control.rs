@@ -14,7 +14,7 @@ use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{
     ItemState, PlayMode, PlaybackState, PlaylistItem, QueueItemId, SharedPlayerState, TrackInfo,
 };
-use koan_core::remote::devices::{self, Device};
+use koan_core::remote::devices::{self, Device, Reach};
 use koan_core::remote::link::{LinkQueueEntry, LinkState};
 
 /// A channel that sends each command where the terminal is pointed. What
@@ -36,32 +36,6 @@ pub fn router(
         })
         .expect("failed to spawn the control thread");
     tx
-}
-
-/// How the device being controlled can be reached, for the transport to
-/// warn of before anything is pressed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Reach {
-    Connected,
-    /// Asleep, and a command wakes it.
-    Asleep,
-    /// Its connection dropped a moment ago.
-    Reconnecting,
-    /// Gone, or found and not connectable.
-    OutOfReach,
-}
-
-impl Reach {
-    fn of(device: Option<&Device>) -> Self {
-        match device {
-            None => Self::OutOfReach,
-            Some(d) if d.problem.is_some() => Self::OutOfReach,
-            Some(d) if d.awake => Self::Connected,
-            Some(d) if !d.asleep => Self::Reconnecting,
-            Some(d) if d.wakeable => Self::Asleep,
-            Some(_) => Self::OutOfReach,
-        }
-    }
 }
 
 /// The state the pages draw, kept up with the device being controlled.
@@ -104,7 +78,9 @@ impl View {
             );
             self.controlled = Some((
                 name.unwrap_or_else(|| "the device".into()),
-                Reach::of(device.as_ref()),
+                device
+                    .as_ref()
+                    .map_or(Reach::OutOfReach(None), Device::reach),
             ));
             self.seen = Some((version, target));
             self.mirror(device.as_ref());

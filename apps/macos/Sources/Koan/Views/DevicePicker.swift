@@ -610,13 +610,15 @@ struct ControlButton: View {
             open = true
         } label: {
             HStack(spacing: 5) {
-                KoanIcon(Action.control.glyph)
+                KoanIcon(player.controlledOutOfReach ? Icon.warning : Action.control.glyph)
                     .font(iconSize.map { .system(size: $0) })
-                    .foregroundStyle(player.isControllingAnother ? AnyShapeStyle(.tint) : KoanTheme.style(.ink, system: .primary))
+                    .foregroundStyle(iconStyle)
                 if labelled, let name = controlled {
                     Text(name)
                         .lineLimit(1)
-                        .foregroundStyle(KoanTheme.style(.ink, system: .primary))
+                        .foregroundStyle(
+                            player.controlledOutOfReach
+                                ? KoanTheme.style(.bad, system: .orange) : KoanTheme.style(.ink, system: .primary))
                 }
             }
             .frame(minWidth: target, minHeight: target)
@@ -634,8 +636,14 @@ struct ControlButton: View {
         player.isControllingAnother ? player.controlled?.name ?? "another device" : nil
     }
 
+    private var iconStyle: AnyShapeStyle {
+        if player.controlledOutOfReach { return KoanTheme.style(.bad, system: .orange) }
+        return player.isControllingAnother ? AnyShapeStyle(.tint) : KoanTheme.style(.ink, system: .primary)
+    }
+
     private var help: String {
-        controlled.map { "Controlling \($0)" } ?? "Control another kōan"
+        if let note = player.controlledReachNote { return note }
+        return controlled.map { "Controlling \($0)" } ?? "Control another kōan"
     }
 }
 
@@ -687,7 +695,9 @@ struct OutputButton: View {
     /// the help text, where its name beside the button would be noise.
     private var elsewhere: String? {
         guard let outputs = player.outputs, case .renderer(let udn) = outputs.current else { return nil }
-        return outputs.renderers.first { $0.id == udn }?.name ?? player.renderer?.name
+        let listed = outputs.renderers.first { $0.id == udn }?.name
+        // This device's renderer stands in only for this device's outputs.
+        return outputs.owner == nil ? listed ?? player.renderer?.name : listed
     }
 
     /// "Controlling MacBook · playing through Arcam", or where this device

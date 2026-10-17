@@ -19,8 +19,8 @@ use std::sync::{Arc, Weak};
 use std::time::Instant;
 
 use crate::types::{
-    ConnectionInfo, DeviceInfo, NowPlaying, OutputsInfo, QueueItem, QueueLock, RendererInfo,
-    RendererOutput, SyncProgress, Transfer, TransferFigure,
+    ConnectionInfo, DeviceInfo, DeviceReach, NowPlaying, OutputsInfo, QueueItem, QueueLock,
+    RendererInfo, RendererOutput, SyncProgress, Transfer, TransferFigure,
 };
 
 /// One slice of engine state, whole.
@@ -111,9 +111,14 @@ pub enum StateSlice {
     /// controlling: `None` for this one. While it is another, `Playback`,
     /// `Playhead` and `Queue` describe that device rather than this one, so
     /// every page that shows what is playing shows it without knowing.
+    ///
+    /// `target_reach` is how the controlled device can be reached, from its
+    /// connections rather than a failed command, so a client can mark it out
+    /// of reach before anything is pressed. `None` while this one is in view.
     Devices {
         devices: Vec<DeviceInfo>,
         target: Option<String>,
+        target_reach: Option<DeviceReach>,
     },
     /// The server and the network, as far as devices are concerned.
     Connection { connection: ConnectionInfo },

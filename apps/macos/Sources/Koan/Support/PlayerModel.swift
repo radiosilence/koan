@@ -517,6 +517,18 @@ final class PlayerModel {
 
     /// Controlling another device, whether or not it is still listed.
     var isControllingAnother: Bool { mirror.target != nil }
+    /// The device being controlled can be reached by nothing now: its
+    /// commands fail until it is back. Read from its connections, so it shows
+    /// before anything is pressed.
+    var controlledOutOfReach: Bool {
+        if case .outOfReach = mirror.targetReach { true } else { false }
+    }
+    /// What the person is told about it, while it is out of reach.
+    var controlledReachNote: String? {
+        guard case .outOfReach(let why) = mirror.targetReach else { return nil }
+        let name = controlled?.name ?? "The device"
+        return why.map { "\(name) is out of reach: \($0)" } ?? "\(name) is out of reach"
+    }
 
     /// Show and command `id`, or this device with `nil`. Nothing moves.
     func control(_ id: String?) {

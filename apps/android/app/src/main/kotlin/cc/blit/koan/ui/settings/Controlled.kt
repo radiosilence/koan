@@ -1,6 +1,7 @@
 package cc.blit.koan.ui.settings
 
 import cc.blit.koan.engine.Devices
+import cc.blit.koan.ffi.DeviceReach
 
 /** How the device being controlled can be reached. */
 sealed interface Reach {
@@ -12,7 +13,10 @@ sealed interface Reach {
     /** Asleep, and a command wakes it. */
     data object Asleep : Reach
 
-    /** Not reachable: commands go nowhere until it is back, or this phone plays. */
+    /** Not heard from for a moment, and wakeable: the connection coming back. */
+    data object Reconnecting : Reach
+
+    /** Not reachable: commands fail until it is back. */
     data class OutOfReach(val why: String?) : Reach
 }
 
@@ -24,26 +28,25 @@ data class Controlled(val name: String, val reach: Reach) {
             Reach.Connected -> "Playing on $name"
             is Reach.Waking -> "Waking $name…"
             Reach.Asleep -> "Playing on $name, asleep"
+            Reach.Reconnecting -> "Reconnecting to $name…"
             is Reach.OutOfReach -> "$name is out of reach"
         }
 }
 
 /**
- * The device being controlled, if one is: `null` while this phone plays. A
- * target no longer in the list is out of reach, by its id since nothing
- * else of it is known.
+ * The device being controlled, if one is: `null` while this phone plays. How
+ * it can be reached is the engine's reading of its connections.
  */
 fun controlled(devices: Devices): Controlled? {
     val target = devices.target ?: return null
-    val d = devices.devices.firstOrNull { it.id == target } ?: return Controlled("Another device", Reach.OutOfReach(null))
-    val reach = when {
-        d.problem != null -> Reach.OutOfReach(d.problem)
-        d.waking != null -> Reach.Waking(d.waking!!)
-        d.awake -> Reach.Connected
-        // A phone asleep that a push wakes; anything else not awake, a
-        // departed Mac among them, is out of reach.
-        d.wakeable -> Reach.Asleep
-        else -> Reach.OutOfReach(d.wakeFailed)
+    val d = devices.devices.firstOrNull { it.id == target }
+    val reach = when (val r = devices.targetReach) {
+        DeviceReach.Connected -> Reach.Connected
+        DeviceReach.Reconnecting -> Reach.Reconnecting
+        DeviceReach.Waking -> Reach.Waking(d?.waking ?: "network")
+        DeviceReach.Asleep -> Reach.Asleep
+        is DeviceReach.OutOfReach -> Reach.OutOfReach(r.why)
+        null -> Reach.OutOfReach(null)
     }
-    return Controlled(d.name, reach)
+    return Controlled(d?.name ?: "Another device", reach)
 }

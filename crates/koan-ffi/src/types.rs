@@ -2326,6 +2326,33 @@ pub struct CommandNotice {
     pub detail: String,
 }
 
+/// How the device being controlled can be reached: see
+/// `koan_core::remote::devices::Reach`.
+#[derive(uniffi::Enum, Debug, Clone, PartialEq, Eq)]
+pub enum DeviceReach {
+    Connected,
+    Reconnecting,
+    Waking,
+    Asleep,
+    /// Nothing reaches it: commands fail until it is back. `why`, where known.
+    OutOfReach {
+        why: Option<String>,
+    },
+}
+
+impl From<koan_core::remote::devices::Reach> for DeviceReach {
+    fn from(r: koan_core::remote::devices::Reach) -> Self {
+        use koan_core::remote::devices::Reach;
+        match r {
+            Reach::Connected => Self::Connected,
+            Reach::Reconnecting => Self::Reconnecting,
+            Reach::Waking => Self::Waking,
+            Reach::Asleep => Self::Asleep,
+            Reach::OutOfReach(why) => Self::OutOfReach { why },
+        }
+    }
+}
+
 /// Another device koan can play on: one on the same account, or one on the
 /// local network.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]

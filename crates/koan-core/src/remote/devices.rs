@@ -82,6 +82,52 @@ impl Device {
             pos
         }
     }
+
+    /// Whether a command sent now can reach it.
+    pub fn reach(&self) -> Reach {
+        if let Some(problem) = &self.problem {
+            return Reach::OutOfReach(Some(problem.clone()));
+        }
+        if self.awake {
+            return Reach::Connected;
+        }
+        match &self.waking {
+            Some(Waking::Failed(_)) | None => {}
+            Some(_) => return Reach::Waking,
+        }
+        // Not heard from, and nothing to wake it: a command finds no way
+        // there, however recently it was last heard.
+        if self.wakeable {
+            return if self.asleep {
+                Reach::Asleep
+            } else {
+                Reach::Reconnecting
+            };
+        }
+        Reach::OutOfReach(match &self.waking {
+            Some(Waking::Failed(why)) => Some(why.clone()),
+            _ => None,
+        })
+    }
+}
+
+/// How a device can be reached, as every front end shows it. Derived from
+/// the device's connections, not from a command failing, so a front end can
+/// say a device is out of reach before anything is sent to it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reach {
+    /// Over the local network or the server's link, now.
+    Connected,
+    /// Not heard from for less than a heartbeat, and wakeable: a dropped
+    /// connection being made again, as far as anyone can tell.
+    Reconnecting,
+    /// Being woken, by the network, a push or a notification to tap.
+    Waking,
+    /// Suspended, and a command wakes it: it is queued for the device.
+    Asleep,
+    /// Nothing reaches it and nothing can wake it: a command goes nowhere.
+    /// Why, where that is known.
+    OutOfReach(Option<String>),
 }
 
 #[derive(Default)]
@@ -1410,6 +1456,20 @@ pub fn target_device() -> Option<Device> {
     list().into_iter().find(|d| d.id == id)
 }
 
+/// How the device being controlled can be reached; `None` while this device
+/// is in view. A target no longer listed is out of reach.
+pub fn target_reach() -> Option<Reach> {
+    let id = target()?;
+    Some(reach_of(&list(), &id))
+}
+
+/// How the device `id` in `list` can be reached.
+pub fn reach_of(list: &[Device], id: &str) -> Reach {
+    list.iter()
+        .find(|d| d.id == id)
+        .map_or(Reach::OutOfReach(None), Device::reach)
+}
+
 /// Get `cmd` to the device `id` over a connection that is up now: the local
 /// network's, else the link. Never queued, never a push, never the HTTP
 /// fallback `send` has: for what is only worth saying while someone is there
@@ -1440,12 +1500,6 @@ pub fn send(id: &str, cmd: LinkCommand) -> Result<(), String> {
 /// app's notice. Returns as soon as the command is on its way.
 pub fn send_then(id: &str, cmd: LinkCommand, then: Option<Then>) -> Result<(), String> {
     reach(id, cmd, then).map_err(Missed::into_message)
-}
-
-/// `send`, saying whether a command that did not go out failed for want of
-/// any way to the device: what lets a front end play here instead.
-pub fn send_reaching(id: &str, cmd: LinkCommand) -> Result<(), Missed> {
-    reach(id, cmd, None)
 }
 
 /// Every way to `id` in turn. A device listed asleep or reconnecting is
@@ -1741,42 +1795,6 @@ fn relay_error(id: &str, e: crate::remote::client::SubsonicError) -> Missed {
     }
 }
 
-/// Stop controlling `id`, which a command could not reach, so that this
-/// device plays instead; the app is told why. Only for a command that asks
-/// for music: one that pauses or seeks has nothing here to act on.
-pub fn fall_back(id: &str, playing: bool) {
-    let name = list()
-        .into_iter()
-        .find(|d| d.id == id)
-        .map_or_else(|| "That device".to_owned(), |d| d.name);
-    log::info!("devices: {id} is out of reach; acting here instead");
-    let here = this_word();
-    let error = if playing {
-        format!("{name} is out of reach, so this {here} is playing.")
-    } else {
-        format!("{name} is out of reach, so it is queued on this {here}.")
-    };
-    // Told while the device is still listed, so the notice has its name.
-    notify(id, acks::AckOutcome::Failed { error }, true);
-    set_target(None);
-}
-
-/// What this device is called in a sentence: its kind, as the person would
-/// say it.
-fn this_word() -> &'static str {
-    if cfg!(target_os = "ios") {
-        "iPhone"
-    } else if cfg!(target_os = "tvos") {
-        "Apple TV"
-    } else if cfg!(target_os = "macos") {
-        "Mac"
-    } else if cfg!(target_os = "android") {
-        "phone"
-    } else {
-        "computer"
-    }
-}
-
 /// `send`, by the server first: for the lock screen's buttons. iOS runs
 /// their intent without waking the app's scene, so the link the app left
 /// open is most likely dead, and `send` would put the command into it and
@@ -1830,6 +1848,54 @@ pub fn this_id() -> Option<String> {
 pub(crate) mod tests {
     use super::*;
 
+    /// Reach follows the device's connections: one not heard from is out of
+    /// reach unless something can wake it, and then reconnecting until a
+    /// heartbeat has passed and asleep after.
+    #[test]
+    fn reach_is_read_from_the_connections() {
+        let device = |awake, asleep, wakeable| Device {
+            id: "tv".into(),
+            name: "TV".into(),
+            platform: "tvos".into(),
+            account: true,
+            owner: None,
+            nearby: false,
+            awake,
+            asleep,
+            wakeable,
+            last_seen: None,
+            waking: None,
+            same_library: true,
+            state: None,
+            heard: Instant::now(),
+            problem: None,
+        };
+        assert_eq!(device(true, false, false).reach(), Reach::Connected);
+        assert_eq!(device(false, false, true).reach(), Reach::Reconnecting);
+        assert_eq!(device(false, false, false).reach(), Reach::OutOfReach(None));
+        assert_eq!(device(false, true, true).reach(), Reach::Asleep);
+        assert_eq!(device(false, true, false).reach(), Reach::OutOfReach(None));
+        let waking = Device {
+            waking: Some(Waking::Push),
+            ..device(false, true, true)
+        };
+        assert_eq!(waking.reach(), Reach::Waking);
+        let failed = Device {
+            waking: Some(Waking::Failed("no answer".into())),
+            ..device(false, true, false)
+        };
+        assert_eq!(failed.reach(), Reach::OutOfReach(Some("no answer".into())));
+        let problem = Device {
+            problem: Some("Out of reach".into()),
+            ..device(true, false, false)
+        };
+        assert_eq!(
+            problem.reach(),
+            Reach::OutOfReach(Some("Out of reach".into()))
+        );
+        assert_eq!(reach_of(&[], "tv"), Reach::OutOfReach(None));
+    }
+
     /// The device controlled, restored on a network it is not on: a server
     /// that cannot relay to it says so by the device's name, and one that
     /// answers keeps its own words.
@@ -1881,11 +1947,11 @@ pub(crate) mod tests {
     }
 
     /// Off the network the controlled device is on, with no server to relay:
-    /// the command is out of reach, and falling back stops controlling it and
-    /// says this device is playing. A device that answered, however it
-    /// answered, is not fallen back from.
+    /// the command is out of reach and the device stays controlled, since
+    /// acting here instead would play on a device nobody asked for. A device
+    /// that answered, however it answered, is told apart from one unreached.
     #[test]
-    fn an_unreachable_target_is_let_go_and_a_refusal_is_not() {
+    fn an_unreachable_target_stays_controlled_and_a_refusal_is_said() {
         use crate::remote::client::SubsonicError;
         let _held = STORE_LOCK.lock();
         crate::config::isolate_config_for_tests();
@@ -1898,27 +1964,9 @@ pub(crate) mod tests {
             })
         });
 
-        let missed = send_reaching("mac", LinkCommand::Resume).unwrap_err();
+        let missed = reach("mac", LinkCommand::Resume, None).unwrap_err();
         assert!(matches!(missed, Missed::OutOfReach(_)), "{missed:?}");
-        assert_eq!(
-            target().as_deref(),
-            Some("mac"),
-            "a miss alone keeps the target"
-        );
-
-        fall_back("mac", true);
-        assert_eq!(target(), None, "this device plays now");
-        let notice = notice().expect("the person is told");
-        assert!(notice.unreached);
-        assert_eq!(
-            notice.outcome,
-            acks::AckOutcome::Failed {
-                error: format!(
-                    "Studio Mac is out of reach, so this {} is playing.",
-                    this_word()
-                ),
-            }
-        );
+        assert_eq!(target().as_deref(), Some("mac"), "a miss keeps the target");
 
         let refused = relay_error(
             "mac",
@@ -1930,7 +1978,7 @@ pub(crate) mod tests {
         assert_eq!(
             refused,
             Missed::Said("Studio Mac is shared for playback only.".into()),
-            "the server answered: no falling back"
+            "the server answered"
         );
         with(|s| *s = Store::default());
     }

@@ -21,7 +21,7 @@ use crate::player::state::{
     PlaybackState, PlaylistItem, QueueItemId, QueueMode, SharedPlayerState,
 };
 use crate::remote::acks::{AckOutcome, Pending};
-use crate::remote::devices::{self, Missed};
+use crate::remote::devices;
 use crate::remote::link::{
     CommandSource, LinkCommand, LinkIdentity, LinkQueueEntry, LinkState, Local,
 };
@@ -571,28 +571,17 @@ impl std::fmt::Display for SendError {
 }
 
 /// Send `cmd` to the device being controlled, as the link carries it, or to
-/// this device's player when none is. A command for music that cannot reach
-/// that device plays here instead, and control comes back here.
+/// this device's player when none is. A device out of reach is an error, and
+/// stays the one controlled: nothing meant for it plays here instead.
 pub fn send(cmd: PlayerCommand, tx: &Sender<PlayerCommand>) -> Result<(), SendError> {
     let here_now = |cmd| tx.send(cmd).map_err(|_| SendError::Stopped);
     let Some(to) = devices::target() else {
         return here_now(cmd);
     };
-    let here = cmd.instead_here();
-    let link = match to_link(cmd).map_err(SendError::Unplayable)? {
-        Routed::There(link) => link,
-        Routed::Here(local) => return here_now(local),
-        Routed::Dropped => return Ok(()),
-    };
-    match (devices::send_reaching(&to, link), here) {
-        (Ok(()), _) => Ok(()),
-        // Asked for music the controlled device cannot be reached to play:
-        // this device plays it, and stops controlling that one.
-        (Err(Missed::OutOfReach(_)), Some(here)) => {
-            devices::fall_back(&to, here.asks_to_play());
-            here_now(here)
-        }
-        (Err(missed), _) => Err(SendError::Missed(missed.into_message())),
+    match to_link(cmd).map_err(SendError::Unplayable)? {
+        Routed::There(link) => devices::send(&to, link).map_err(SendError::Missed),
+        Routed::Here(local) => here_now(local),
+        Routed::Dropped => Ok(()),
     }
 }
 

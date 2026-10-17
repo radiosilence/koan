@@ -8,8 +8,8 @@ use ratatui::widgets::Widget;
 
 use koan_core::audio::dsp::DspStatus;
 use koan_core::player::state::{PlaybackState, QueueEntry, Sleep, TrackInfo};
+use koan_core::remote::devices::Reach;
 
-use super::control::Reach;
 use super::theme::Theme;
 
 /// Format audio quality info as a human-readable string.
@@ -237,17 +237,20 @@ impl<'a> TransportBar<'a> {
         if area.height < 2 {
             return;
         }
+        let soft = Style::new().fg(self.theme.warning);
         let (text, style) = match reach {
+            Reach::Connected => return,
             Reach::Asleep => (
                 format!(" \u{263E} {name} asleep; a command wakes it "),
-                Style::new().fg(self.theme.warning),
+                soft,
             ),
-            Reach::Reconnecting => (
-                format!(" \u{26A0} {name} reconnecting "),
-                self.theme.failed.add_modifier(Modifier::BOLD),
-            ),
-            _ => (
-                format!(" \u{26A0} {name} out of reach "),
+            Reach::Waking => (format!(" \u{263E} waking {name} "), soft),
+            Reach::Reconnecting => (format!(" \u{26A0} {name} reconnecting "), soft),
+            Reach::OutOfReach(why) => (
+                match why {
+                    Some(why) => format!(" \u{26A0} {name} out of reach: {why} "),
+                    None => format!(" \u{26A0} {name} out of reach "),
+                },
                 self.theme.failed.add_modifier(Modifier::BOLD),
             ),
         };

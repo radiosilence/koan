@@ -62,7 +62,7 @@ fun PlayOnButton(modifier: Modifier = Modifier, labelled: Boolean = true) {
     }
     KoanButton(
         { open = true },
-        modifier.semantics { contentDescription = c?.let { "Controlling ${it.name}" } ?: "Play on" },
+        modifier.semantics { contentDescription = c?.let { if (it.reach is Reach.OutOfReach) it.headline else "Controlling ${it.name}" } ?: "Play on" },
         kind = if (labelled) KoanButtonKind.Text else KoanButtonKind.Icon,
     ) {
         KoanIcon(KoanIcons.devices, contentDescription = null, color = KoanTheme.color(tone))
