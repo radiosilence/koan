@@ -123,7 +123,8 @@ enum KoanTheme {
     /// from layer code as well.
     nonisolated(unsafe) private(set) static var textScale: CGFloat = 1
     /// Spacing's scale: half of the type's change, so the theme stays as open
-    /// as it was while the type comes down to the system's.
+    /// as it was while the type comes down to the system's. Always 1 in the
+    /// platform's look, which `RowMetrics.padding` relies on.
     nonisolated(unsafe) private(set) static var spaceScale: CGFloat = 1
     /// The text size chosen, in percent, which row heights follow.
     nonisolated(unsafe) private(set) static var sizeScale: CGFloat = 1
@@ -848,8 +849,8 @@ extension KoanTheme {
     /// A value that differs between the looks: a thickness, a size, a
     /// margin, or a colour, symbol or shape where a view takes one rather
     /// than a role. The theme's in the theme, the platform's otherwise.
-    nonisolated static func metric<T>(_ theme: T, system: T) -> T {
-        isOn ? theme : system
+    nonisolated static func metric<T>(_ theme: @autoclosure () -> T, system: @autoclosure () -> T) -> T {
+        isOn ? theme() : system()
     }
 
     /// Whether the wash runs under the whole window, every region clear over
