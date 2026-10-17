@@ -2,7 +2,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph, Widget};
+use ratatui::widgets::{Paragraph, Widget};
 
 use super::theme::Theme;
 
@@ -161,7 +161,7 @@ impl Widget for HelpModalOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         use crate::shell::{fit, fit_pad_right, width};
         let (popup, col_height) = layout(area);
-        Clear.render(popup, buf);
+        crate::shell::clear(buf, popup);
         let block = crate::shell::frame("keys", self.theme);
         let inner = block.inner(popup);
         block.render(popup, buf);

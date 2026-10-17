@@ -634,7 +634,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             let x = area.x + (area.width.saturating_sub(w)) / 2;
             let y = area.y + area.height / 2;
             let popup = Rect::new(x, y, w, 1);
-            Clear.render(popup, frame.buffer_mut());
+            super::shell::clear(frame.buffer_mut(), popup);
 
             // Progress bar: filled portion. `total > 0` is guaranteed by the
             // checked_div above, so this division cannot trap.
@@ -651,7 +651,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
             // Label below.
             let label_area = Rect::new(x, y.saturating_sub(1), w, 1);
-            Clear.render(label_area, frame.buffer_mut());
+            super::shell::clear(frame.buffer_mut(), label_area);
             let label_line = Line::from(Span::styled(label, app.theme.spinner));
             frame.render_widget(Paragraph::new(label_line), label_area);
         }
@@ -671,7 +671,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         let x = area.x + (area.width.saturating_sub(w)) / 2;
         let y = area.y + area.height / 2;
         let popup = Rect::new(x, y, w, 1);
-        Clear.render(popup, frame.buffer_mut());
+        super::shell::clear(frame.buffer_mut(), popup);
         let line = Line::from(vec![
             Span::styled("  ", app.theme.hint_desc),
             Span::styled(display, app.theme.spinner),
