@@ -1,0 +1,1 @@
+- **Mac: durations of an hour or more show in full** in track and queue rows, rather than truncating to "1:02:…".

@@ -23,13 +23,28 @@ struct ArtistBrowser: View {
             list
             #endif
         }
-        // Once narrowed, how many: the count a shelf's heading gave.
+        // Once narrowed, how many: the count a shelf's heading gave. The Mac's
+        // header says it already.
+        #if !os(macOS)
         .pageSubtitle(library.isNarrowed ? Format.count(Int64(library.visibleArtists.count), "artist") : "")
+        #endif
     }
 
     #if os(macOS)
     /// A `KoanTable` — see there for why the Mac's lists are AppKit.
     private var table: some View {
+        VStack(spacing: 0) {
+            PageHeader(
+                "Artists", appWords: true,
+                detail: { Text(Format.count(Int64(library.visibleArtists.count), "artist")) }
+            )
+            .padding([.horizontal, .top], RowMetrics.pageEdge)
+            .padding(.bottom, RowMetrics.headerGap)
+            rows
+        }
+    }
+
+    private var rows: some View {
         SafeAreaReader { insets in
             KoanTable(
                 items: library.visibleArtists,
@@ -336,46 +351,31 @@ struct ArtistDetailView: View {
     }
 
     private var header: some View {
-        // The play button reads as part of the title, so it sits on the
-        // title's line. Everything below is full width rather than
-        // indented into a column beside it.
-        // Top-aligned, as a record's header is: the photo's top edge
-        // meets the name's first line.
-        HStack(alignment: .top, spacing: 20) {
+        // The album page's title size, on each platform; a television's
+        // artist name in its display type.
+        #if os(tvOS)
+        let role = KoanType.display
+        #else
+        let role = KoanType.title
+        #endif
+        return PageHeader(artist?.name ?? "Artist", role: role) {
             if info?.hasImage == true {
                 AlbumArtwork(source: .artist(artistId), size: .tile, cornerRadius: KoanTheme.radius(56))
                     .frame(width: 112, height: 112)
                     .transition(.opacity)
             }
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .headerCentre, spacing: 14) {
-                    #if !os(tvOS)
-                    if let artist {
-                        PlayableHeaderButton(
-                            playable: .artist(id: artist.id, name: artist.name)
-                        )
-                        ShuffleHeaderButton(playable: .artist(id: artist.id, name: artist.name))
-                    }
-                    #endif
-                    Text(artist?.name ?? "Artist")
-                        // The album page's title size, on each platform.
-                        #if os(tvOS)
-                        .font(.role(.display, system: .system(size: 48, weight: .semibold)))
-                        .headerTitleCentre(.display, systemSize: 48)
-                        #else
-                        .font(.role(.title, system: .system(size: 26, weight: .semibold)))
-                        .headerTitleCentre(.title, systemSize: 26)
-                        #endif
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Text(Format.count(Int64(albums.count), "album"))
-                    .font(.role(.control, system: .callout))
-                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                if let artist {
-                    let playable = Playable.artist(id: artist.id, name: artist.name)
-                    HeaderActions(playable: playable)
-                        .padding(.top, 4)
-                }
+        } lead: {
+            #if !os(tvOS)
+            if let artist {
+                PlayableHeaderButton(playable: .artist(id: artist.id, name: artist.name))
+                ShuffleHeaderButton(playable: .artist(id: artist.id, name: artist.name))
+            }
+            #endif
+        } detail: {
+            Text(Format.count(Int64(albums.count), "album"))
+        } actions: {
+            if let artist {
+                HeaderActions(playable: .artist(id: artist.id, name: artist.name))
             }
         }
         .animation(.easeOut(duration: 0.2), value: info?.hasImage)

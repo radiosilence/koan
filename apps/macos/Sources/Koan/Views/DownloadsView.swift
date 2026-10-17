@@ -327,7 +327,7 @@ final class TransferBarView: LayerView, TransferGauge {
     }
 
     override func appearanceChanged() {
-        track.backgroundColor = resolved(.quaternaryLabel)
-        filled.backgroundColor = resolved(.label)
+        track.backgroundColor = resolved(.koanQuaternaryLabel)
+        filled.backgroundColor = resolved(.koanLabel)
     }
 }

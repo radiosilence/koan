@@ -32,10 +32,9 @@ struct TrackBrowser: View {
     var body: some View {
         VStack(spacing: 0) {
             #if os(macOS)
-            header
-                .padding(.horizontal, 24)
-                .padding(.top, 18)
-                .padding(.bottom, 16)
+            PageHeader("Tracks", appWords: true, detail: { Text(count) })
+                .padding([.horizontal, .top], RowMetrics.pageEdge)
+                .padding(.bottom, RowMetrics.headerGap)
             #endif
 
             if tracks.isEmpty {
@@ -65,17 +64,6 @@ struct TrackBrowser: View {
     private var count: String { Format.count(Int64(library.trackTotal), "track") }
 
     #if os(macOS)
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text("Tracks").koanCase()
-                .font(.role(.titleSmall, system: .title2.weight(.semibold)))
-            Text(count)
-                .font(.role(.fine, system: .caption))
-                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
     /// A `KoanTable` — see there for why the Mac's lists are AppKit.
     private var table: some View {
         let lines = tracks.enumerated().map { TrackLine(id: $1.id, kind: .track($1), lead: "\($0 + 1)", position: $0) }

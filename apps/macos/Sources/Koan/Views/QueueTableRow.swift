@@ -79,9 +79,7 @@ final class QueueTableRow: TableCell, TableRow {
     }
     /// Wide enough for an hour or more ("1:02:34") in whichever face the rows
     /// are drawn in; never narrower than the column was.
-    private static var durationWidth: CGFloat {
-        max(44, ceil(("0:00:00" as NSString).size(withAttributes: [.font: numberFont]).width) + 2)
-    }
+    private static var durationWidth: CGFloat { max(44, TrackTableRow.measure("0:00:00", numberFont)) }
     private static var headingFont: NSFont { NSFont.role(.body, system: NSFont.systemFont(ofSize: 14, weight: .semibold)) }
     private static var detailFont: NSFont { NSFont.role(.fine, system: NSFont.monospacedDigitSystemFont(
         ofSize: NSFont.preferredFont(forTextStyle: .caption2).pointSize, weight: .regular

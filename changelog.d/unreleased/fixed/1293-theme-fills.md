@@ -1,0 +1,1 @@
+- **Artist chips, empty sleeves, the search row under the pointer and the downloads bar are drawn in the kōan theme's tokens**, and the chips square, rather than in the platform's grey.

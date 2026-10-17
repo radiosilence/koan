@@ -16,11 +16,7 @@ struct WashLayer: View {
         // background rather than sitting on it — a half-transparent wash on its
         // own leaves you looking through the app at whatever is behind it.
         ZStack {
-            if KoanTheme.isOn {
-                Rectangle().fill(Color.koanBg)
-            } else {
-                Rectangle().fill(.background)
-            }
+            Rectangle().fill(KoanTheme.ground(.background))
             ArtworkBleed(source: source, drifts: player.isPlaying)
                 .environment(art)
             #if os(tvOS)
