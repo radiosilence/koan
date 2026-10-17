@@ -824,9 +824,10 @@ enum SideRow<'a> {
     Target(&'a str, Option<char>, NavTarget),
 }
 
-/// The sidebar, as the apps lay it out: the queue and what is playing; the
-/// library's pages; the playlists, with a row for a new one; then search and
-/// settings at the foot. Returns what each row opens.
+/// The sidebar, as the apps lay it out: search at the top; the queue and
+/// what is playing; the library's pages; the playlists, with a row for a new
+/// one; then what is running, and settings at the foot. The digits run down
+/// it in order. Returns what each row opens.
 fn render_sidebar(
     buf: &mut ratatui::buffer::Buffer,
     app: &App,
@@ -842,6 +843,13 @@ fn render_sidebar(
     }
     let page = |p: Page| SideRow::Target(p.title(), p.key(), NavTarget::Page(p));
     let mut top = vec![
+        // The search field, as the apps head their sidebar with it.
+        SideRow::Target(
+            "/ search",
+            Page::Search.key(),
+            NavTarget::Page(Page::Search),
+        ),
+        SideRow::Gap,
         page(Page::Queue),
         page(Page::NowPlaying),
         SideRow::Gap,
@@ -862,7 +870,7 @@ fn render_sidebar(
         ),
         SideRow::Target("+ new playlist", None, NavTarget::NewPlaylist),
     ];
-    let foot = [page(Page::Search), page(Page::Settings)];
+    let foot = [page(Page::Settings)];
     let busy = busy(app);
     // Each running job takes its label and its bar, and a gap above them.
     let busy_rows = if busy.is_empty() { 0 } else { 3 * busy.len() };

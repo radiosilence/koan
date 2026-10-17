@@ -24,7 +24,7 @@ See [The terminal UI](../guide/terminal-ui.md). These work from any page.
 
 | Key | Action |
 |-----|--------|
-| `1` to `9`, `0` | Queue, Now playing, Albums, Artists, Favourites, Playlists, Recent, History, Settings, Search |
+| `1` to `9`, `0` | Queue, Now playing, Albums, Artists, Favourites, Recent, History, Playlists, Settings, Search: the sidebar's order, Search at its top |
 | `Tab` / `Shift+Tab` | Next / previous page |
 | `[` / `]` or `Alt+Left` / `Alt+Right` | Back / forward through the pages visited |
 | `Esc` | Leave the page for the one before it |
@@ -109,7 +109,7 @@ Tree view: artist -> album -> track.
 
 ---
 
-## Playlists (`6`)
+## Playlists (`8`)
 
 | Key | Action |
 |-----|--------|
@@ -164,7 +164,7 @@ Everything on both pages is also a click: the row, `▸`, `×`, `▴`, `▾`, th
 
 ---
 
-## History (`8`)
+## History (`7`)
 
 | Key | Action |
 |-----|--------|
@@ -212,7 +212,7 @@ Click the arrows beside a value, or the value, to change it, or `run` to start a
 
 ---
 
-## Albums, Favourites and Recent (`3`, `5`, `7`)
+## Albums, Favourites and Recent (`3`, `5`, `6`)
 
 | Key | Action |
 |-----|--------|

@@ -13,9 +13,9 @@ The TUI follows the shape of the Mac and mobile apps: pages you move between, a 
 | `3` | Albums | Every album in the library, as tiles of cover art or as rows |
 | `4` | Artists | Every artist, with how many albums and tracks each has |
 | `5` | Favourites | The artists, albums and tracks you have favourited |
-| `6` | Playlists | Your playlists, and each one's tracks |
-| `7` | Recent | The artists, albums and tracks played in the last 30 days |
-| `8` | History | Every play, newest first, under the day it was played |
+| `6` | Recent | The artists, albums and tracks played in the last 30 days |
+| `7` | History | Every play, newest first, under the day it was played |
+| `8` | Playlists | Your playlists, and each one's tracks |
 | `9` | Settings | The settings that otherwise mean editing `config.toml` |
 | `0` | Search | Artists, albums and tracks that match what you type |
 
@@ -43,7 +43,7 @@ Favourites, Recent and Downloaded are shelves, as in the apps: the first few art
 
 ## Playlists
 
-Playlists are the apps' playlists, the same rows and the same server copies: an edit is written here and pushed to the server in the background. `6` lists them; `Enter` or a second click opens one, `P` or the `▸` plays it, `a` and `N` add it to the queue or put it next, `c` or `+ new` makes one, `r` renames, `w` puts its tracks in another playlist, and `x` or the `×` deletes on a second press. On a playlist's page `Enter` plays from the track under the cursor, the `shuffle` button plays it shuffled, `K` and `J` (or the `▴` and `▾` at the end of a row) move a track up or down, and `x` or `×` takes it out; `Ctrl+Z` and `Ctrl+Y`, or `undo` and `redo` under the name, step back and forward through the edits made to that playlist this session. While the queue is exactly a playlist, an edit to the playlist is made to the queue as well, keeping what is playing. Playlists that a file in the library or a server decides, and smart playlists, are shown with `(read-only)` and refuse edits.
+Playlists are the apps' playlists, the same rows and the same server copies: an edit is written here and pushed to the server in the background. `8` lists them; `Enter` or a second click opens one, `P` or the `▸` plays it, `a` and `N` add it to the queue or put it next, `c` or `+ new` makes one, `r` renames, `w` puts its tracks in another playlist, and `x` or the `×` deletes on a second press. On a playlist's page `Enter` plays from the track under the cursor, the `shuffle` button plays it shuffled, `K` and `J` (or the `▴` and `▾` at the end of a row) move a track up or down, and `x` or `×` takes it out; `Ctrl+Z` and `Ctrl+Y`, or `undo` and `redo` under the name, step back and forward through the edits made to that playlist this session. While the queue is exactly a playlist, an edit to the playlist is made to the queue as well, keeping what is playing. Playlists that a file in the library or a server decides, and smart playlists, are shown with `(read-only)` and refuse edits.
 
 `w` puts a record, a track or whatever the cursor is on into a playlist from any page that has `a`, and from the queue and Now playing, by choosing one in a list that starts with `+ new playlist…`. `W` in the queue saves the whole queue as a new playlist.
 
@@ -79,7 +79,7 @@ Whether a device's queue is kept on the server is set in the apps: the terminal 
 
 The layout follows the width of the terminal.
 
-- **100 columns or more:** a sidebar beside the page, laid out as in the apps: the queue and Now playing; the library's pages (albums, artists, tracks, favourites, recently played, downloaded, history, downloads); your playlists, with a row for a new one; and search and settings at its foot. While a scan, a sync or downloads run, each shows above those with how far it has got; `×` stops a scan, keeping what it has read.
+- **100 columns or more:** a sidebar beside the page, laid out as in the apps: search at the top; the queue and Now playing; the library's pages (albums, artists, tracks, favourites, recently played, downloaded, history, downloads); your playlists, with a row for a new one; and settings at its foot. The page numbers run down it in order, `0` for search to `9` for settings. While a scan, a sync or downloads run, each shows above those with how far it has got; `×` stops a scan, keeping what it has read.
 - **56 to 99 columns:** a tab bar over the page, a tab for each page with a number. Page names shorten to fit.
 - **Under 56 columns:** the tab bar shows page numbers and names only the current page.
 
