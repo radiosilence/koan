@@ -21,9 +21,11 @@ use koan_core::player::state::{PlaybackState, QueueEntry, QueueItemId, TrackInfo
 
 use super::app::App;
 use super::lyrics::LyricsPanel;
+use super::shell::Link;
 use super::theme::Theme;
 use super::transport::{
-    self, Control, MINI_BARS, TransportBar, badge, dsp_label, format_quality, place, width_of,
+    self, Act, Control, MINI_BARS, TransportBar, badge, dsp_label, format_quality, place, press,
+    width_of,
 };
 use super::visualizer::{BrailleGrid, VisualizerWidget, render_spectrogram};
 
@@ -198,7 +200,6 @@ pub fn transport_for<'a>(
     levels: Option<[f32; MINI_BARS]>,
 ) -> TransportBar<'a> {
     let mode = app.state.play_mode();
-    let (album, artist) = app.art.now_playing_art.links();
     let mut bar = TransportBar::new(
         info,
         entry,
@@ -218,7 +219,7 @@ pub fn transport_for<'a>(
         .map(|id| app.favourites.contains(&id));
     bar.output = Some(output_name(app));
     bar.controlled = app.view.controlled.as_ref().map(|(n, r)| (n.as_str(), r));
-    bar.links = (album.is_some(), artist.is_some());
+    bar.links = Some(&app.links);
     bar.levels = levels;
     bar
 }
@@ -268,12 +269,7 @@ fn dbtp(peak: f64) -> String {
 }
 
 pub fn render(buf: &mut Buffer, app: &mut App, area: Rect) {
-    let page = Rect::new(
-        area.x + 1,
-        area.y + 1,
-        area.width.saturating_sub(2),
-        area.height.saturating_sub(1),
-    );
+    let page = area;
     if page.width < 12 || page.height < 3 {
         return;
     }
@@ -491,7 +487,7 @@ pub fn render_zoom(buf: &mut Buffer, app: &mut App, area: Rect) {
         ),
         (cover.y + rows + 2, subtitle.as_str(), theme.hint_desc),
     ] {
-        let text = transport::fit(text, area.width.saturating_sub(4) as usize);
+        let text = super::shell::fit(text, area.width.saturating_sub(4) as usize);
         let w = unicode_width::UnicodeWidthStr::width(text.as_ref()) as u16;
         if y < area.y + area.height {
             buf.set_string(area.x + (area.width - w) / 2, y, &text, style);
@@ -526,7 +522,8 @@ fn draw_words(
         y += 1 + gap;
         (at < bottom).then_some(at)
     };
-    let (album_id, artist_id) = app.art.now_playing_art.links();
+    let links = &app.links;
+    let track = entry.and_then(|e| e.db_id);
     let w = area.width;
 
     // The track: its title and heart, then the artist and the album.
@@ -547,12 +544,12 @@ fn draw_words(
             if on {
                 (
                     Span::styled("\u{2665}", Style::new().fg(theme.tokens.accent)),
-                    Some(Control::Favourite),
+                    press(Control::Favourite),
                 )
             } else {
                 (
                     Span::styled("\u{2661}", theme.hint_desc),
-                    Some(Control::Favourite),
+                    press(Control::Favourite),
                 )
             }
         });
@@ -560,8 +557,8 @@ fn draw_words(
         place(
             buf,
             &mut hits.controls,
-            area.x,
-            row,
+            links,
+            (area.x, row),
             room,
             &[(
                 Span::styled(title, theme.heading.add_modifier(Modifier::BOLD)),
@@ -569,7 +566,14 @@ fn draw_words(
             )],
         );
         if let Some(heart) = heart {
-            place(buf, &mut hits.controls, area.x + w - 1, row, 1, &[heart]);
+            place(
+                buf,
+                &mut hits.controls,
+                links,
+                (area.x + w - 1, row),
+                1,
+                &[heart],
+            );
         }
     }
     if let Some(e) = entry {
@@ -577,19 +581,19 @@ fn draw_words(
             place(
                 buf,
                 &mut hits.controls,
-                area.x,
-                row,
+                links,
+                (area.x, row),
                 w,
                 &[(
                     Span::styled(e.artist.as_str(), Style::new().fg(theme.tokens.accent)),
-                    artist_id.map(|_| Control::Artist),
+                    track.map(|id| Act::Go(Link::ArtistOfTrack(id))),
                 )],
             );
         }
         if let Some(row) = next(1) {
             let mut parts = vec![(
                 Span::styled(e.album.as_str(), theme.track_normal),
-                album_id.map(|_| Control::Album),
+                track.map(|id| Act::Go(Link::AlbumOfTrack(id))),
             )];
             if let Some(year) = e.year.as_deref().filter(|y| !y.is_empty()) {
                 parts.push((
@@ -597,7 +601,7 @@ fn draw_words(
                     None,
                 ));
             }
-            place(buf, &mut hits.controls, area.x, row, w, &parts);
+            place(buf, &mut hits.controls, links, (area.x, row), w, &parts);
         }
     } else {
         next(1);
@@ -624,8 +628,8 @@ fn draw_words(
         place(
             buf,
             &mut hits.controls,
-            area.x + w.saturating_sub(ctl_w) / 2,
-            row,
+            links,
+            (area.x + w.saturating_sub(ctl_w) / 2, row),
             w,
             &ctl,
         );
@@ -680,22 +684,22 @@ fn draw_words(
                         theme.hint_desc
                     },
                 ),
-                Some(Control::Sleep),
+                press(Control::Sleep),
             ),
             (Span::raw("   "), None),
             transport::play_on(theme, controlled),
             (Span::raw("   "), None),
             (
                 Span::styled(format!("\u{25D4} {output}"), theme.hint_desc),
-                Some(Control::Output),
+                press(Control::Output),
             ),
         ];
         field(buf, area.x, row, w, "play", Vec::new(), theme);
         place(
             buf,
             &mut hits.controls,
-            area.x + 10,
-            row,
+            links,
+            (area.x + 10, row),
             w.saturating_sub(10),
             &parts,
         );

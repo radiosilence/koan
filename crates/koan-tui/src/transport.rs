@@ -3,19 +3,18 @@
 //! output is handed and where it goes. Every part of it is a click as well as
 //! a key.
 
-use std::borrow::Cow;
-
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthStr;
 
 use koan_core::audio::dsp::DspStatus;
 use koan_core::player::state::{PlaybackState, QueueEntry, Repeat, Sleep, TrackInfo};
 use koan_core::remote::devices::Reach;
 
+use super::shell::{Link, Links, fit};
 use super::theme::Theme;
 
 /// Format audio quality info as a human-readable string.
@@ -130,27 +129,6 @@ fn format_source(info: &TrackInfo) -> String {
     };
 
     format!("{} {}{} {}", info.codec, rate_str, detail, ch_str)
-}
-
-/// `s` cut to `width` cells, with an ellipsis where it was cut.
-pub fn fit(s: &str, width: usize) -> Cow<'_, str> {
-    if s.width() <= width {
-        return Cow::Borrowed(s);
-    }
-    if width == 0 {
-        return Cow::Borrowed("");
-    }
-    let mut cut = String::new();
-    let mut used = 0;
-    for c in s.chars() {
-        used += c.width().unwrap_or(0);
-        if used >= width {
-            break;
-        }
-        cut.push(c);
-    }
-    cut.push('\u{2026}');
-    Cow::Owned(cut)
 }
 
 /// The playhead. A cell of its own rather than the end of the played run:
@@ -287,8 +265,6 @@ pub enum Control {
     PlayOn,
     /// The EQ chooser.
     Eq,
-    Artist,
-    Album,
     /// The cover, full size.
     Cover,
 }
@@ -309,38 +285,55 @@ impl Hits {
     }
 }
 
-/// A row's pieces, each optionally a control.
-pub(crate) type Parts<'a> = Vec<(Span<'a>, Option<Control>)>;
+/// What a piece of a row does when clicked: presses a control, or follows a
+/// link to a page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Act {
+    Press(Control),
+    Go(Link),
+}
+
+pub(crate) fn press(c: Control) -> Option<Act> {
+    Some(Act::Press(c))
+}
+
+/// A row's pieces, each optionally a control or a link.
+pub(crate) type Parts<'a> = Vec<(Span<'a>, Option<Act>)>;
 
 /// Spans laid along a row from `x`, each optionally a control. Returns the
 /// row's width.
 pub(crate) fn place(
     buf: &mut Buffer,
     hits: &mut Vec<(Rect, Control)>,
-    x: u16,
-    y: u16,
+    links: &Links,
+    (x, y): (u16, u16),
     max: u16,
-    parts: &[(Span<'_>, Option<Control>)],
+    parts: &[(Span<'_>, Option<Act>)],
 ) -> u16 {
     let mut at = x;
-    for (span, control) in parts {
+    for (span, act) in parts {
         let room = (x + max).saturating_sub(at);
         if room == 0 {
             break;
         }
-        let text = fit(&span.content, room as usize);
-        let w = text.width() as u16;
-        buf.set_stringn(at, y, &text, room as usize, span.style);
-        if let Some(c) = control {
-            hits.push((Rect::new(at, y, w, 1), *c));
-        }
-        at += w;
+        at += match act {
+            Some(Act::Go(link)) => links.draw(buf, at, y, &span.content, room, span.style, *link),
+            _ => {
+                let text = fit(&span.content, room as usize);
+                let w = text.width() as u16;
+                buf.set_stringn(at, y, &text, room as usize, span.style);
+                if let Some(Act::Press(c)) = act {
+                    hits.push((Rect::new(at, y, w, 1), *c));
+                }
+                w
+            }
+        };
     }
     at - x
 }
 
 /// The width `parts` take.
-pub(crate) fn width_of(parts: &[(Span<'_>, Option<Control>)]) -> u16 {
+pub(crate) fn width_of(parts: &[(Span<'_>, Option<Act>)]) -> u16 {
     parts.iter().map(|(s, _)| s.width() as u16).sum()
 }
 
@@ -369,12 +362,12 @@ pub(crate) fn controls(
     vec![
         (
             Span::styled("\u{21C4}", lit(shuffle)),
-            Some(Control::Shuffle),
+            press(Control::Shuffle),
         ),
         (Span::raw(gap), None),
         (
             Span::styled("|\u{25C2}", theme.track_normal),
-            Some(Control::Previous),
+            press(Control::Previous),
         ),
         (Span::raw(gap), None),
         (
@@ -384,17 +377,17 @@ pub(crate) fn controls(
                     .fg(theme.tokens.accent)
                     .add_modifier(Modifier::BOLD),
             ),
-            Some(Control::PlayPause),
+            press(Control::PlayPause),
         ),
         (Span::raw(gap), None),
         (
             Span::styled("\u{25B8}|", theme.track_normal),
-            Some(Control::Next),
+            press(Control::Next),
         ),
         (Span::raw(gap), None),
         (
             Span::styled(repeat_glyph, lit(repeat != Repeat::Off)),
-            Some(Control::Repeat),
+            press(Control::Repeat),
         ),
     ]
 }
@@ -423,11 +416,11 @@ pub(crate) fn sleep_label(sleep: Option<Sleep>, fading: bool) -> String {
 pub(crate) fn play_on(
     theme: &Theme,
     controlled: Option<(&str, &Reach)>,
-) -> (Span<'static>, Option<Control>) {
+) -> (Span<'static>, Option<Act>) {
     let Some((name, reach)) = controlled else {
         return (
             Span::styled("\u{21C6}", theme.hint_desc),
-            Some(Control::PlayOn),
+            press(Control::PlayOn),
         );
     };
     let soft = Style::new().fg(theme.warning);
@@ -448,7 +441,7 @@ pub(crate) fn play_on(
             theme.failed.add_modifier(Modifier::BOLD),
         ),
     };
-    (Span::styled(text, style), Some(Control::PlayOn))
+    (Span::styled(text, style), press(Control::PlayOn))
 }
 
 /// How many bars the transport's own spectrum has.
@@ -481,8 +474,8 @@ pub struct TransportBar<'a> {
     pub output: Option<String>,
     /// The device being controlled, by name, and whether it can be reached.
     pub controlled: Option<(&'a str, &'a Reach)>,
-    /// Whether the artist and album have pages to open.
-    pub links: (bool, bool),
+    /// Where the artist and album links are drawn and looked up.
+    pub links: Option<&'a Links>,
     pub levels: Option<[f32; MINI_BARS]>,
 }
 
@@ -510,7 +503,7 @@ impl<'a> TransportBar<'a> {
             favourite: None,
             output: None,
             controlled: None,
-            links: (false, false),
+            links: None,
             levels: None,
         }
     }
@@ -529,23 +522,23 @@ impl<'a> TransportBar<'a> {
             .unwrap_or(0)
     }
 
-    fn heart(&self) -> Option<(Span<'static>, Option<Control>)> {
+    fn heart(&self) -> Option<(Span<'static>, Option<Act>)> {
         let on = self.favourite?;
         Some(if on {
             (
                 Span::styled("\u{2665}", Style::new().fg(self.theme.tokens.accent)),
-                Some(Control::Favourite),
+                press(Control::Favourite),
             )
         } else {
             (
                 Span::styled("\u{2661}", self.theme.hint_desc),
-                Some(Control::Favourite),
+                press(Control::Favourite),
             )
         })
     }
 
     /// The title, then the artist and the album as links.
-    fn names(&self) -> (String, Vec<(Span<'a>, Option<Control>)>) {
+    fn names(&self) -> (String, Vec<(Span<'a>, Option<Act>)>) {
         let theme = self.theme;
         let Some(entry) = self.entry else {
             let title = self
@@ -555,12 +548,12 @@ impl<'a> TransportBar<'a> {
                 .unwrap_or_default();
             return (title, Vec::new());
         };
-        let link = |on: bool| on.then_some(());
+        let go = |link: fn(i64) -> Link| entry.db_id.map(|id| Act::Go(link(id)));
         let mut by = Vec::new();
         if !entry.artist.is_empty() {
             by.push((
                 Span::styled(entry.artist.as_str(), theme.track_normal),
-                link(self.links.1).map(|_| Control::Artist),
+                go(Link::ArtistOfTrack),
             ));
         }
         if !entry.album.is_empty() {
@@ -569,7 +562,7 @@ impl<'a> TransportBar<'a> {
             }
             by.push((
                 Span::styled(entry.album.as_str(), theme.track_normal),
-                link(self.links.0).map(|_| Control::Album),
+                go(Link::AlbumOfTrack),
             ));
         }
         (entry.title.clone(), by)
@@ -590,7 +583,7 @@ impl<'a> TransportBar<'a> {
             format.push((Span::styled(" \u{b7} ", theme.hint_desc), None));
             format.push((
                 Span::styled(dsp_label(d), Style::new().fg(theme.tokens.accent)),
-                Some(Control::Eq),
+                press(Control::Eq),
             ));
         }
         let set = self.sleep.is_some() || self.sleep_fading;
@@ -603,7 +596,7 @@ impl<'a> TransportBar<'a> {
                     theme.hint_desc
                 },
             ),
-            Some(Control::Sleep),
+            press(Control::Sleep),
         )];
         route.push((Span::raw("  "), None));
         route.push(play_on(theme, self.controlled));
@@ -611,7 +604,7 @@ impl<'a> TransportBar<'a> {
             route.push((Span::raw("  "), None));
             route.push((
                 Span::styled(format!("\u{25D4} {output}"), theme.hint_desc),
-                Some(Control::Output),
+                press(Control::Output),
             ));
         }
         (format, route)
@@ -623,6 +616,8 @@ impl<'a> TransportBar<'a> {
         if area.width == 0 || area.height == 0 {
             return hits;
         }
+        let unlinked = Links::default();
+        let links = self.links.unwrap_or(&unlinked);
         let theme = self.theme;
         let Some(_) = self.track_info else {
             buf.set_stringn(
@@ -637,7 +632,7 @@ impl<'a> TransportBar<'a> {
         let playing = self.playback_state == PlaybackState::Playing;
         let duration = self.duration_ms();
         let (title, by) = self.names();
-        let mut lead: Vec<(Span<'_>, Option<Control>)> = vec![(
+        let mut lead: Vec<(Span<'_>, Option<Act>)> = vec![(
             Span::styled(title, theme.heading.add_modifier(Modifier::BOLD)),
             None,
         )];
@@ -665,8 +660,8 @@ impl<'a> TransportBar<'a> {
             place(
                 buf,
                 &mut hits.controls,
-                left,
-                y(0),
+                links,
+                (left, y(0)),
                 side.saturating_sub(heart_w),
                 &lead[..1],
             );
@@ -674,13 +669,13 @@ impl<'a> TransportBar<'a> {
             place(
                 buf,
                 &mut hits.controls,
-                left + title_w,
-                y(0),
+                links,
+                (left + title_w, y(0)),
                 heart_w,
                 &lead[1..],
             );
             if rows >= 2 {
-                place(buf, &mut hits.controls, left, y(1), side, &by);
+                place(buf, &mut hits.controls, links, (left, y(1)), side, &by);
             }
 
             let ctl = controls(theme, playing, self.shuffle, self.repeat, "   ");
@@ -688,8 +683,8 @@ impl<'a> TransportBar<'a> {
             place(
                 buf,
                 &mut hits.controls,
-                centre + centre_w.saturating_sub(ctl_w) / 2,
-                y(0),
+                links,
+                (centre + centre_w.saturating_sub(ctl_w) / 2, y(0)),
                 centre_w,
                 &ctl,
             );
@@ -708,7 +703,14 @@ impl<'a> TransportBar<'a> {
             for (row, parts) in [(0, &format), (1, &route)] {
                 let w = width_of(parts);
                 if w <= side && rows > row {
-                    place(buf, &mut hits.controls, right_end - w, y(row), w, parts);
+                    place(
+                        buf,
+                        &mut hits.controls,
+                        links,
+                        (right_end - w, y(row)),
+                        w,
+                        parts,
+                    );
                 }
             }
             if rows >= 3
@@ -724,13 +726,13 @@ impl<'a> TransportBar<'a> {
             let ctl = controls(theme, playing, self.shuffle, self.repeat, "  ");
             let ctl_w = width_of(&ctl);
             let room = inner.saturating_sub(ctl_w + 2);
-            place(buf, &mut hits.controls, left, y(0), room, &lead);
+            place(buf, &mut hits.controls, links, (left, y(0)), room, &lead);
             if inner >= ctl_w {
                 place(
                     buf,
                     &mut hits.controls,
-                    left + inner - ctl_w,
-                    y(0),
+                    links,
+                    (left + inner - ctl_w, y(0)),
                     ctl_w,
                     &ctl,
                 );
@@ -751,8 +753,8 @@ impl<'a> TransportBar<'a> {
                     place(
                         buf,
                         &mut hits.controls,
-                        left + inner - fmt_w,
-                        y(2),
+                        links,
+                        (left + inner - fmt_w, y(2)),
                         fmt_w,
                         &format,
                     );
@@ -760,7 +762,7 @@ impl<'a> TransportBar<'a> {
                 } else {
                     inner
                 };
-                place(buf, &mut hits.controls, left, y(2), by_room, &by);
+                place(buf, &mut hits.controls, links, (left, y(2)), by_room, &by);
             }
         }
         hits
@@ -975,13 +977,5 @@ mod tests {
         i.codec = "opus".into();
         i.sample_rate = 48_000;
         assert_eq!(badge(&i, Some(48_000)), "OPUS 48 kHz");
-    }
-
-    #[test]
-    fn fit_cuts_by_cells_and_marks_the_cut() {
-        assert_eq!(fit("abc", 3), "abc");
-        assert_eq!(fit("abcdef", 4), "abc\u{2026}");
-        assert!(fit("夜に駆ける夜に駆ける", 7).width() <= 7);
-        assert_eq!(fit("abc", 0), "");
     }
 }

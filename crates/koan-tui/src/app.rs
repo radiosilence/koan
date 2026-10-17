@@ -1088,6 +1088,19 @@ impl App {
                 let n = self.queue.vq_cache.entries.len();
                 Toolbar::new("queue").count(format!("{n} track{}", if n == 1 { "" } else { "s" }))
             }
+            Page::NowPlaying => {
+                use super::shell::ToolItem;
+                let key = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+                Toolbar::new("now playing")
+                    .item(ToolItem::new("cover", key('z')).priority(1))
+                    .item(ToolItem::new("visualiser", key('M')).priority(2))
+                    .item(ToolItem::new("play on", key('C')).priority(3))
+                    .item(
+                        ToolItem::new("eq", key('E'))
+                            .on(self.state.dsp().is_some())
+                            .priority(4),
+                    )
+            }
             page => Toolbar::new(page.title()),
         }
     }
@@ -2122,7 +2135,6 @@ impl App {
                 .find(|e| e.id == info.id)
                 .and_then(|e| e.db_id)
         });
-        let (album, artist) = self.art.now_playing_art.links();
         match control {
             Control::PlayPause => self.toggle_pause(),
             Control::Previous => self.skip(PlayerCommand::PrevTrack),
@@ -2142,16 +2154,6 @@ impl App {
             }
             Control::PlayOn => self.open_play_on(),
             Control::Eq => self.open_dsp_selector(),
-            Control::Artist => {
-                if let Some(id) = artist {
-                    self.go_page(Page::Artist(id));
-                }
-            }
-            Control::Album => {
-                if let Some(id) = album {
-                    self.go_page(Page::Album(id));
-                }
-            }
             Control::Cover => {
                 if self.art.now_playing_art.cached().is_some() {
                     self.mode = Mode::CoverArtZoom;

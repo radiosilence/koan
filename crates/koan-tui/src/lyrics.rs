@@ -6,8 +6,8 @@ use ratatui::widgets::{Block, Borders, Widget};
 
 use koan_core::lyrics::{LrcLine, Lyrics, current_line_index, parse_lrc};
 
+use super::shell::fit;
 use super::theme::Theme;
-use super::transport::fit;
 
 /// Lyrics display state, held by App.
 #[derive(Default)]

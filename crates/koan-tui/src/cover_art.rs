@@ -411,16 +411,7 @@ pub struct Cover {
 }
 
 type Request = (PathBuf, Option<i64>);
-type Loader = (Sender<Request>, Receiver<(PathBuf, Loaded)>);
-
-/// What the loader finds for a track: its cover, and the album and artist
-/// its row links to, for the names to open.
-#[derive(Default)]
-struct Loaded {
-    cover: Option<Cover>,
-    album: Option<i64>,
-    artist: Option<i64>,
-}
+type Loader = (Sender<Request>, Receiver<(PathBuf, Option<Cover>)>);
 
 /// The cover of one track at a time, loaded on a thread of its own. The cover
 /// shown stays until the next one arrives, so the tracks of a record follow
@@ -428,7 +419,7 @@ struct Loaded {
 #[derive(Default)]
 pub struct CoverArtCache {
     wanted: Option<PathBuf>,
-    loaded: Loaded,
+    cover: Option<Cover>,
     loader: Option<Loader>,
 }
 
@@ -451,9 +442,9 @@ impl CoverArtCache {
             return false;
         };
         let mut changed = false;
-        while let Ok((path, loaded)) = rx.try_recv() {
+        while let Ok((path, cover)) = rx.try_recv() {
             if self.wanted.as_ref() == Some(&path) {
-                self.loaded = loaded;
+                self.cover = cover;
                 changed = true;
             }
         }
@@ -461,21 +452,16 @@ impl CoverArtCache {
     }
 
     pub fn cover(&self) -> Option<&Cover> {
-        self.loaded.cover.as_ref()
+        self.cover.as_ref()
     }
 
     pub fn cached(&self) -> Option<&DynamicImage> {
         self.cover().map(|c| &c.image)
     }
 
-    /// The album and the artist the track's row links to.
-    pub fn links(&self) -> (Option<i64>, Option<i64>) {
-        (self.loaded.album, self.loaded.artist)
-    }
-
     pub fn clear(&mut self) {
         self.wanted = None;
-        self.loaded = Loaded::default();
+        self.cover = None;
     }
 
     pub fn render_to(&self, gfx: &mut Gfx, area: Rect, buf: &mut Buffer) {
@@ -513,35 +499,27 @@ fn spawn_loader() -> Loader {
     (tx, rx)
 }
 
-fn load_cover(path: &Path, track: Option<i64>) -> Loaded {
-    let row = track.and_then(|id| {
-        let db = koan_core::db::pool::shared().get().ok()?;
-        koan_core::db::queries::get_track_row(&db.conn, id).ok()?
-    });
-    let (album, artist) = row
-        .as_ref()
-        .map_or((None, None), |r| (r.album_id, r.artist_id));
-    let remote = row.and_then(|r| r.remote_id);
-    let cover = koan_core::index::folder_art::cover_art(path)
-        .or_else(|| remote.as_deref().and_then(server_cover))
-        .and_then(|bytes| {
-            let mut image = image::load_from_memory(&bytes).ok()?;
-            if image.width().max(image.height()) > COVER_SIDE {
-                image = image.resize(COVER_SIDE, COVER_SIDE, FilterType::Lanczos3);
-            }
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            bytes.hash(&mut h);
-            Some(Cover {
-                key: h.finish() & !(1 << 63),
-                accent: super::accent::from_image(&image),
-                image,
-            })
-        });
-    Loaded {
-        cover,
-        album,
-        artist,
+fn load_cover(path: &Path, track: Option<i64>) -> Option<Cover> {
+    let bytes = koan_core::index::folder_art::cover_art(path).or_else(|| {
+        let remote_id = {
+            let db = koan_core::db::pool::shared().get().ok()?;
+            koan_core::db::queries::get_track_row(&db.conn, track?)
+                .ok()??
+                .remote_id?
+        };
+        server_cover(&remote_id)
+    })?;
+    let mut image = image::load_from_memory(&bytes).ok()?;
+    if image.width().max(image.height()) > COVER_SIDE {
+        image = image.resize(COVER_SIDE, COVER_SIDE, FilterType::Lanczos3);
     }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    Some(Cover {
+        key: h.finish() & !(1 << 63),
+        accent: super::accent::from_image(&image),
+        image,
+    })
 }
 
 /// The server's cover for a track the library has from one.
