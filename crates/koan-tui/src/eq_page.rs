@@ -232,6 +232,9 @@ pub enum Outcome {
     Say(String),
 }
 
+/// A device's EQs in order, each on or off.
+type Chain = Vec<(String, bool)>;
+
 pub struct EqPage {
     worker: Worker,
     pub snap: Option<Box<Snapshot>>,
@@ -257,7 +260,7 @@ pub struct EqPage {
     local: Option<(String, Vec<DspFilter>, u64)>,
     /// The shown device's EQs as edited here, ahead of the read that will
     /// show them: the device, the chain, and the change that made it.
-    local_chain: Option<(String, Vec<(String, bool)>, u64)>,
+    local_chain: Option<(String, Chain, u64)>,
     /// For a profile with bands for each channel, the one being edited.
     channel: u16,
     /// What `B` put away, by device: the preset it is kept as.
@@ -467,7 +470,7 @@ impl EqPage {
     }
 
     /// The shown device's EQs, as edited here.
-    fn chain(&self) -> Vec<(String, bool)> {
+    fn chain(&self) -> Chain {
         let Some(s) = self.snap.as_ref() else {
             return Vec::new();
         };
