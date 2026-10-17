@@ -547,6 +547,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.render_widget(overlay, area);
     }
 
+    if app.mode == Mode::ReplaceQueue
+        && let Some(ref mut dialog) = app.replace_dialog
+    {
+        app.layout.modal_area = super::replace_dialog::ReplaceDialog::rect(area);
+        let hover = dialog.hit(app.hover.column, app.hover.row);
+        dialog.render(area, frame.buffer_mut(), &app.theme, hover);
+    }
+
     if app.mode == Mode::ActionsMenu
         && let Some(ref menu) = app.actions_menu
     {

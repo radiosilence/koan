@@ -130,6 +130,10 @@ Albums, Artists and Tracks are the apps' browsers. Albums draws each album as a 
 | `Ctrl+R` | Replace the queue and play |
 | `f` | Favourite or unfavourite what the cursor is on |
 
+Playing a list from a track takes the queue's place. When something is queued, koan asks first, as the apps do: `p` (or `play`) replaces the queue, `a` (or `add to queue`) adds the list to it, and `Esc` leaves the queue as it is. The same goes for `Enter` or a second click on a track on the shelves and the album page.
+
+The menu (`m` or `⋯ actions`) is the apps' menu for what the cursor is on, on every page: play, play next, add to queue and shuffle; add to a playlist; favouriting and downloading; track info; and going to the album or the artist.
+
 On the album page `Enter` plays the album from the track under the cursor, the tracks before it kept behind in the queue. The `play` button replaces the queue with it, `shuffle` (or `S`) plays it shuffled, and `+ add` (or `a`) and `play next` (or `N`) queue it; `P` adds it and plays it, as on the browsing pages. `A` opens the artist of the track (on a compilation, the track's own), `H` or the heart beside the title favourites the album, `f` the track, `i` shows what the library holds of the track, and `d` and `u` download the album to this device or remove the download.
 
 ### Links

@@ -58,6 +58,8 @@ pub enum Mode {
     ActionsMenu,
     /// What narrows the record pages.
     FilterPanel,
+    /// Asking before a row replaces a queue that has something in it.
+    ReplaceQueue,
     HelpModal,
     VizPicker,
 }
@@ -280,6 +282,7 @@ pub struct App {
     pub chooser: Option<Chooser>,
     pub actions_menu: Option<ActionsMenu>,
     pub filter_panel: Option<FilterPanel>,
+    pub replace_dialog: Option<super::replace_dialog::ReplaceDialog>,
     /// The filters on the album, artist and track browsers, shared by them
     /// as the apps' are.
     pub browse_filters: koan_core::browse::BrowseFilter,
@@ -462,6 +465,7 @@ impl App {
             chooser: None,
             actions_menu: None,
             filter_panel: None,
+            replace_dialog: None,
             browse_filters: Default::default(),
             settings_page: SettingsPage::new(),
             browse_drag: false,
@@ -888,6 +892,11 @@ impl App {
             Mode::PlaylistChooser => self.handle_chooser_key(key),
             Mode::ActionsMenu => self.handle_actions_menu_key(key),
             Mode::FilterPanel => self.handle_filter_panel_key(key),
+            Mode::ReplaceQueue => {
+                if let Some(choice) = self.replace_dialog.as_mut().and_then(|d| d.handle_key(key)) {
+                    self.answer_replace(choice);
+                }
+            }
             Mode::HelpModal => self.handle_help_modal_key(key),
             Mode::VizPicker => self.handle_viz_picker_key(key),
             Mode::Normal => self.handle_page_key(key),
@@ -1488,6 +1497,21 @@ impl App {
         }
     }
 
+    /// Does what the replace dialog was answered with, and closes it.
+    pub(super) fn answer_replace(&mut self, choice: super::replace_dialog::Choice) {
+        use super::replace_dialog::Choice;
+        let dialog = self.replace_dialog.take();
+        self.pop_mode();
+        let Some(d) = dialog else {
+            return;
+        };
+        match choice {
+            Choice::Play => self.enqueue(d.ids, PickerAction::ReplaceFrom(d.start)),
+            Choice::Add => self.enqueue(d.ids, PickerAction::Append),
+            Choice::Cancel => {}
+        }
+    }
+
     fn handle_filter_panel_key(&mut self, key: KeyEvent) {
         let Some(panel) = self.filter_panel.as_mut() else {
             self.pop_mode();
@@ -1775,6 +1799,17 @@ impl App {
     fn apply_browse(&mut self, action: browse::Action) {
         match action {
             browse::Action::None => {}
+            // A list played from a row takes the queue's place: asked first
+            // when there is something in it, as the apps ask.
+            browse::Action::Play(ids, PickerAction::ReplaceFrom(start))
+                if !self.visible_queue().is_empty() =>
+            {
+                let queued = self.visible_queue().len();
+                self.replace_dialog = Some(super::replace_dialog::ReplaceDialog::new(
+                    ids, start, queued,
+                ));
+                self.push_mode(Mode::ReplaceQueue);
+            }
             browse::Action::Play(ids, how) => self.enqueue(ids, how),
             browse::Action::Favourite(id) => {
                 self.toggle_favourite(id);
