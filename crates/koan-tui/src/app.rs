@@ -1207,7 +1207,7 @@ impl App {
                     None => self.handle_transport_key(key),
                 }
             }
-            Page::History => match self.history_page.handle_key(key) {
+            Page::History => match self.history_page.handle_key(key, &self.favourites) {
                 Some(action) => self.apply_browse(action),
                 None if key.code == KeyCode::Esc => self.leave_page(),
                 None => self.handle_transport_key(key),
