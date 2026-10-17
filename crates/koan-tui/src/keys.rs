@@ -146,6 +146,18 @@ pub fn hints(mode: &Mode, page: Page, filterable: bool) -> Vec<(&'static str, &'
                     ("w", "playlist"),
                     ("esc", "back"),
                 ],
+                Page::Eq => vec![
+                    ("\u{2191}\u{2193}", "move"),
+                    ("ret", "choose"),
+                    ("space", "on/off"),
+                    ("+-", "nudge"),
+                    ("a", "add band"),
+                    ("n", "new"),
+                    ("i", "import"),
+                    ("m", "manage"),
+                    ("B", "bypass"),
+                    ("esc", "back"),
+                ],
                 Page::Settings => vec![
                     ("\u{2191}\u{2193}", "move"),
                     ("\u{2190}\u{2192}", "change"),

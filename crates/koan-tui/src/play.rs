@@ -262,6 +262,10 @@ pub fn run_tui(
                         app.handle_mouse(mouse);
                     }
                 }
+                crossterm::event::Event::Paste(text) if app.page() == super::nav::Page::Eq => {
+                    // Files dropped on the EQ page are EQs to import.
+                    app.eq_page.paste(&text);
+                }
                 crossterm::event::Event::Paste(text) => {
                     let tx_drop = app.tx.clone();
                     let log_drop = app.log_buffer.clone();

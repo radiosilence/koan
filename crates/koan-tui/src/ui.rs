@@ -288,6 +288,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             } = &mut *app;
             history_page.render(stage, frame.buffer_mut(), theme, hover);
         }
+        Page::Eq => {
+            app.layout.browse_area = stage;
+            let App { eq_page, theme, .. } = &mut *app;
+            eq_page.render(stage, frame.buffer_mut(), theme);
+        }
         Page::Settings => {
             app.layout.browse_area = stage;
             let hover = match app.hover.zone {

@@ -284,8 +284,8 @@ pub struct App {
     task_tx: crossbeam_channel::Sender<super::tasks::Report>,
     task_rx: crossbeam_channel::Receiver<super::tasks::Report>,
     pub track_details: Option<Box<koan_core::db::queries::TrackRow>>,
-    /// The EQ that was on before it was bypassed, for the key that puts it back.
-    eq_last: Option<String>,
+    /// The EQ page, and what the output plays for Now Playing's curve.
+    pub eq_page: super::eq_page::EqPage,
     pub history_page: HistoryPage,
     pub search_page: SearchPage,
     pub playlists_page: PlaylistsPage,
@@ -426,6 +426,8 @@ impl App {
         let visualizer = VisualizerState::from_config(&cfg.visualizer);
         let viz_config = cfg.visualizer;
         let (routed, lane) = super::control::router(tx.clone(), task_channel.0.clone());
+        // EQ belongs to this device's player, whatever the TUI controls.
+        let eq_page = super::eq_page::EqPage::new(tx.clone());
 
         Self {
             mode: Mode::Normal,
@@ -460,7 +462,7 @@ impl App {
             task_tx: task_channel.0,
             task_rx: task_channel.1,
             track_details: None,
-            eq_last: None,
+            eq_page,
             history_page: HistoryPage::new(),
             search_page: SearchPage::new(),
             playlists_page: PlaylistsPage::new(),
@@ -773,6 +775,27 @@ impl App {
         }
         self.artist_page.poll();
         self.search_page.poll();
+        for outcome in self.eq_page.poll() {
+            // The EQ page says it on itself.
+            if let super::eq_page::Outcome::Say(said) = outcome
+                && self.page() != Page::Eq
+            {
+                self.say(said);
+            }
+        }
+        if self.page() == Page::NowPlaying {
+            let renderer = self.state.renderer().map(|r| r.udn);
+            let rate = self
+                .state
+                .output_sample_rate()
+                .or_else(|| self.state.track_info().map(|t| t.sample_rate))
+                .unwrap_or(super::eq_worker::RATE);
+            let key = (self.state.dsp().map(|d| d.profile), renderer.clone(), rate);
+            if self.eq_page.playing_key.as_ref() != Some(&key) {
+                self.eq_page.playing_key = Some(key);
+                self.eq_page.request_playing(renderer, rate);
+            }
+        }
 
         // Updated every frame: the analysis thread runs at its own rate, and
         // decay and smoothing run at the TUI frame rate.
@@ -974,6 +997,7 @@ impl App {
             Page::History => self.history_page.filter_active,
             Page::Search => self.search_page.typing,
             Page::Playlists => self.playlists_page.filter_active,
+            Page::Eq => self.eq_page.typing(),
             Page::Queue
             | Page::NowPlaying
             | Page::Album(_)
@@ -1018,6 +1042,7 @@ impl App {
             Page::Playlists => self.playlists_page.reload(),
             Page::Playlist(id) => self.playlist_page = PlaylistPage::load(id),
             Page::Settings => self.settings_page.reload(),
+            Page::Eq => self.eq_page.open(self.state.renderer().map(|r| (r.udn, r.name))),
             Page::Artists => {
                 if self.library.is_none() {
                     self.library = Some(LibraryState::load());
@@ -1134,6 +1159,13 @@ impl App {
             },
             Page::History => match self.history_page.handle_key(key) {
                 Some(action) => self.apply_browse(action),
+                None if key.code == KeyCode::Esc => self.leave_page(),
+                None => self.handle_transport_key(key),
+            },
+            Page::Eq => match self.eq_page.handle_key(key) {
+                Some(Some(super::eq_page::Outcome::Leave)) => self.leave_page(),
+                Some(Some(super::eq_page::Outcome::Say(said))) => self.say(said),
+                Some(None) => {}
                 None if key.code == KeyCode::Esc => self.leave_page(),
                 None => self.handle_transport_key(key),
             },
@@ -1609,6 +1641,10 @@ impl App {
             Page::Recent => self.recent_page.reload(),
             Page::Artist(_) => self.artist_page.reload(),
             Page::History => self.history_page.reload(),
+            // A sync brings profiles edited on the account's other devices.
+            Page::Eq => self
+                .eq_page
+                .follow(self.state.renderer().map(|r| (r.udn, r.name))),
             Page::Artists => {
                 let mut lib = LibraryState::load();
                 if let Some(old) = old {
@@ -1994,7 +2030,7 @@ impl App {
                 self.play_on = Some(super::control::PlayOnState::new(&self.view.local));
                 self.push_mode(Mode::PlayOn);
             }
-            KeyCode::Char('E') => self.open_dsp_selector(),
+            KeyCode::Char('E') => self.open_eq_page(),
             KeyCode::Char('w') => {
                 let ids = self.queue_choice();
                 self.open_chooser(ids);
@@ -2242,93 +2278,62 @@ impl App {
         }
     }
 
+    /// The EQ page, for this device's output.
+    pub fn open_eq_page(&mut self) {
+        if self.this_device_shown() {
+            self.go_page(Page::Eq);
+        }
+    }
+
+    /// The preset menu, as the apps' transport has: Flat, each preset, the
+    /// one the output in use was set from marked, and the EQ page.
     pub fn open_dsp_selector(&mut self) {
         if !self.this_device_shown() {
             return;
         }
-        self.dsp_selector = Some(super::dsp_selector::DspSelectorState::load(
-            self.eq_device(),
-        ));
-        self.push_mode(Mode::DspSelector);
+        match self.eq_page.snap.as_deref() {
+            Some(snap) => {
+                self.dsp_selector = Some(super::dsp_selector::DspSelectorState::load(snap));
+                self.push_mode(Mode::DspSelector);
+            }
+            None => self.say("the eq is still being read"),
+        }
     }
 
-    /// Plays the output through the EQ at `idx`, or untouched for the first.
     fn apply_dsp(&mut self, idx: usize) {
-        let Some(name) = self
+        use super::dsp_selector::Choose;
+        let Some(choose) = self
             .dsp_selector
             .as_ref()
             .and_then(|s| s.entries.get(idx))
-            .map(|e| e.name.clone())
+            .map(|e| e.choose.clone())
         else {
             return;
         };
-        if self.assign_eq(name.clone())
-            && let Some(sel) = self.dsp_selector.as_mut()
-        {
-            sel.active = name;
-            sel.cursor = idx;
-        }
-    }
-
-    /// The output an EQ applies to: the renderer playing, else this machine's
-    /// device.
-    fn eq_device(&self) -> Option<String> {
-        self.state
-            .renderer()
-            .map(|r| r.udn)
-            .or_else(koan_core::audio::dsp::profiles::current_device)
-    }
-
-    /// Plays the output through `name`, or untouched for `None`, and says so.
-    /// True when it took. Turning the EQ off remembers what was on, for
-    /// [`Self::toggle_eq`].
-    fn assign_eq(&mut self, name: Option<String>) -> bool {
-        use koan_core::audio::dsp::profiles;
-        let Some(device) = self.eq_device() else {
-            self.status_message = Some((
-                "no output device to set an eq on".into(),
-                std::time::Instant::now(),
-            ));
-            return false;
-        };
-        let before = profiles::overview_for(Some(device.clone())).active;
-        match profiles::assign(name.as_deref(), &device) {
-            Ok(()) => {
-                if name.is_none() && before.is_some() {
-                    self.eq_last = before;
+        match choose {
+            Choose::Edit => {
+                self.dsp_selector = None;
+                self.pop_mode();
+                self.open_eq_page();
+            }
+            Choose::Preset(name) => {
+                self.eq_page.use_preset(name);
+                if let Some(sel) = self.dsp_selector.as_mut() {
+                    sel.mark(idx);
                 }
-                self.tx.send(PlayerCommand::ReloadDsp).ok();
-                self.status_message = Some((
-                    match name {
-                        Some(n) => format!("eq: {n}"),
-                        None => "eq off".into(),
-                    },
-                    std::time::Instant::now(),
-                ));
-                true
             }
-            Err(e) => {
-                self.status_message = Some((e, std::time::Instant::now()));
-                false
-            }
+            Choose::Nothing => {}
         }
     }
 
-    /// Bypasses the EQ, or puts back what was bypassed. With nothing to put
-    /// back, the chooser opens.
+    /// Bypasses the EQ of the output in use, keeping what it played as a
+    /// preset, or puts back what was bypassed.
     fn toggle_eq(&mut self) {
         if !self.this_device_shown() {
             return;
         }
-        if koan_core::audio::dsp::profiles::overview_for(self.eq_device())
-            .active
-            .is_some()
-        {
-            self.assign_eq(None);
-        } else if let Some(last) = self.eq_last.clone() {
-            self.assign_eq(Some(last));
-        } else {
-            self.open_dsp_selector();
+        if let Some(said) = self.eq_page.bypass() {
+            self.say(said);
         }
     }
 
@@ -2337,9 +2342,14 @@ impl App {
             return;
         };
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('E') => {
+            KeyCode::Esc | KeyCode::Char('q') => {
                 self.dsp_selector = None;
                 self.pop_mode();
+            }
+            KeyCode::Char('E') | KeyCode::Char('e') => {
+                self.dsp_selector = None;
+                self.pop_mode();
+                self.open_eq_page();
             }
             KeyCode::Up | KeyCode::Char('k') => sel.move_by(-1),
             KeyCode::Down | KeyCode::Char('j') => sel.move_by(1),
@@ -3398,6 +3408,12 @@ impl App {
                         self.apply_browse(action);
                         return;
                     }
+                    if self.page() == Page::Eq {
+                        if self.eq_page.click(col, row) == Some(super::eq_page::Outcome::Leave) {
+                            self.leave_page();
+                        }
+                        return;
+                    }
                     if self.page() == Page::Settings {
                         let p = &mut self.settings_page;
                         let mut outcome = None;
@@ -3958,6 +3974,10 @@ impl App {
                         self.history_page.scroll_by(-3);
                     } else if self.page() == Page::Settings {
                         self.settings_page.scroll_by(-3);
+                    } else if self.page() == Page::Eq {
+                        if !self.eq_page.wheel_at(event.column, event.row, true) {
+                            self.eq_page.scroll_by(-1);
+                        }
                     } else if let Page::Album(_) = self.page() {
                         if let Some(p) = self.album_page.as_mut() {
                             p.scroll_by(-3);
@@ -3996,6 +4016,10 @@ impl App {
                         self.history_page.scroll_by(3);
                     } else if self.page() == Page::Settings {
                         self.settings_page.scroll_by(3);
+                    } else if self.page() == Page::Eq {
+                        if !self.eq_page.wheel_at(event.column, event.row, false) {
+                            self.eq_page.scroll_by(1);
+                        }
                     } else if let Page::Album(_) = self.page() {
                         if let Some(p) = self.album_page.as_mut() {
                             p.scroll_by(3);

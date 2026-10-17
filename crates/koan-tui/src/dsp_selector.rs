@@ -1,6 +1,7 @@
-//! Choosing the EQ the output plays through: a list of the profiles, with the
-//! one in use marked. It does what the apps' EQ page and `koan dsp assign` do,
-//! through the same calls, so the three never disagree about what is chosen.
+//! The preset menu, as the apps' transport has it: what the output in use
+//! was set from, Flat and each preset to set it from instead, and the EQ
+//! page. A preset changed since it was set is listed twice: as edited,
+//! marked, and as saved, which goes back to it.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -8,54 +9,93 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
-use koan_core::audio::dsp::profiles;
-
+use super::eq_worker::Snapshot;
 use super::theme::Theme;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Choose {
+    /// Set the output from a preset, or flat with `None`.
+    Preset(Option<String>),
+    /// What it is set to now, unsaved or edited: nothing to do.
+    Nothing,
+    Edit,
+}
+
 pub struct DspEntry {
-    /// `None` is the output untouched.
-    pub name: Option<String>,
+    pub choose: Choose,
     pub label: String,
 }
 
 pub struct DspSelectorState {
+    pub title: String,
     pub entries: Vec<DspEntry>,
     pub cursor: usize,
-    /// The profile the output plays through now.
-    pub active: Option<String>,
+    /// The entry the output is set to.
+    pub active: Option<usize>,
 }
 
 impl DspSelectorState {
-    pub fn load(device: Option<String>) -> Self {
-        let overview = profiles::overview_for(device);
+    pub fn load(snap: &Snapshot) -> Self {
         let mut entries = vec![DspEntry {
-            name: None,
-            label: "off \u{b7} the output untouched".into(),
+            choose: Choose::Preset(None),
+            label: "flat \u{b7} plays untouched".into(),
         }];
-        for p in overview.profiles.iter().filter(|p| p.problem.is_none()) {
-            let kind = if p.preset {
-                " \u{b7} preset"
-            } else if !p.members.is_empty() {
-                " \u{b7} group"
+        let mut active = None;
+        let current = snap.in_use_preset.clone();
+        if current.is_none() {
+            if snap.in_use_flat {
+                active = Some(0);
             } else {
-                ""
-            };
+                active = Some(entries.len());
+                entries.push(DspEntry {
+                    choose: Choose::Nothing,
+                    label: "unsaved".into(),
+                });
+            }
+        }
+        for p in snap.overview.profiles.iter().filter(|p| p.preset) {
+            if let Some((name, edited)) = &current
+                && *name == p.name
+            {
+                if *edited {
+                    active = Some(entries.len());
+                    entries.push(DspEntry {
+                        choose: Choose::Nothing,
+                        label: format!("{} (edited)", p.name),
+                    });
+                } else {
+                    active = Some(entries.len());
+                }
+            }
             entries.push(DspEntry {
-                name: Some(p.name.clone()),
-                label: format!("{}{kind}", p.name),
+                choose: Choose::Preset(Some(p.name.clone())),
+                label: p.name.clone(),
             });
         }
-        let active = overview.active;
-        let cursor = entries.iter().position(|e| e.name == active).unwrap_or(0);
+        entries.push(DspEntry {
+            choose: Choose::Edit,
+            label: "edit eq\u{2026}".into(),
+        });
+        let title = snap
+            .in_use
+            .as_deref()
+            .map_or_else(|| "preset".into(), |d| format!("preset \u{b7} {}", snap.label(d)));
         Self {
+            title,
+            cursor: active.unwrap_or(0),
             entries,
-            cursor,
             active,
         }
     }
 
     pub fn is_active(&self, idx: usize) -> bool {
-        self.entries.get(idx).is_some_and(|e| e.name == self.active)
+        self.active == Some(idx)
+    }
+
+    /// The entry chosen, marked ahead of the read that will say so.
+    pub fn mark(&mut self, idx: usize) {
+        self.active = Some(idx);
+        self.cursor = idx;
     }
 
     pub fn move_by(&mut self, delta: isize) {
@@ -97,7 +137,7 @@ impl Widget for DspSelectorOverlay<'_> {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(self.theme.rule)
-            .title(Span::styled(" eq ", self.theme.heading));
+            .title(Span::styled(format!(" {} ", self.state.title), self.theme.heading));
         let inner = block.inner(popup);
         block.render(popup, buf);
         let top = self.state.top(inner.height as usize);
@@ -157,14 +197,15 @@ mod tests {
 
     fn state(n: usize) -> DspSelectorState {
         DspSelectorState {
+            title: "preset".into(),
             entries: (0..n)
                 .map(|i| DspEntry {
-                    name: Some(format!("p{i}")),
-                    label: format!("profile {i}"),
+                    choose: Choose::Preset(Some(format!("p{i}"))),
+                    label: format!("preset {i}"),
                 })
                 .collect(),
             cursor: 0,
-            active: Some("p1".into()),
+            active: Some(1),
         }
     }
 
@@ -180,10 +221,12 @@ mod tests {
     }
 
     #[test]
-    fn the_active_profile_is_marked() {
-        let s = state(3);
+    fn the_preset_in_use_is_marked() {
+        let mut s = state(3);
         assert!(s.is_active(1));
-        assert!(!s.is_active(0));
+        s.mark(2);
+        assert!(s.is_active(2));
+        assert!(!s.is_active(1));
     }
 
     #[test]
