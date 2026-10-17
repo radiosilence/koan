@@ -6313,71 +6313,15 @@ impl KoanEngine {
 
     /// Whether the queue is still exactly this playlist.
     fn locked_to(&self, db: &Database, playlist_id: i64) -> bool {
-        koan_core::playlists::queue_lock(db, &self.state)
-            == Some(koan_core::playlists::QueueLock::Playlist(playlist_id))
+        koan_core::playlists::locked_to(db, &self.state, playlist_id)
     }
 
-    /// Make the queue follow a playlist that has just been edited.
-    ///
-    /// Only when the queue was still exactly that playlist beforehand —
-    /// `was_locked` is read *before* the edit lands, because afterwards the two
-    /// no longer match and every queue would look diverged.
-    ///
-    /// The edit is applied to the queue rather than the queue being rebuilt
-    /// from the playlist: entries that survived keep their queue items, and
-    /// with them their ids, what has played, what is mid-download and what the
-    /// cursor is pointing at.
+    /// Make the queue follow a playlist that has just been edited; see
+    /// `koan_core::playlists::follow_edit`.
     fn follow_playlist(&self, db: &Database, playlist_id: i64, was_locked: bool) {
-        if !was_locked {
-            return;
-        }
-        let Ok(entries) = queries::playlist_entries(&db.conn, playlist_id) else {
-            return;
-        };
-        let (items, _) = self.state.snapshot_playlist();
-
-        // Queue items whose entry has gone from the playlist.
-        let live: std::collections::HashSet<i64> = entries.iter().map(|e| e.id).collect();
-        let doomed: Vec<QueueItemId> = items
-            .iter()
-            .filter(|i| i.playlist_entry_id.is_none_or(|e| !live.contains(&e)))
-            .map(|i| i.id)
-            .collect();
-        if !doomed.is_empty() {
-            let _ = self.send_local(PlayerCommand::RemoveFromPlaylistBatch(doomed));
-        }
-
-        // Entries the queue has never seen.
-        let known: std::collections::HashMap<i64, QueueItemId> = items
-            .iter()
-            .filter_map(|i| i.playlist_entry_id.map(|e| (e, i.id)))
-            .collect();
-        let missing: Vec<&queries::PlaylistEntry> = entries
-            .iter()
-            .filter(|e| !known.contains_key(&e.id))
-            .collect();
-        let mut added = std::collections::HashMap::new();
-        if !missing.is_empty() {
-            let track_ids: Vec<i64> = missing.iter().map(|e| e.track.id).collect();
-            let mut new_items = self.build_items(db, &track_ids);
-            for (item, entry) in new_items.iter_mut().zip(&missing) {
-                item.playlist_entry_id = Some(entry.id);
-                added.insert(entry.id, item.id);
-            }
-            if !new_items.is_empty() {
-                let _ = self.send_local(PlayerCommand::AddToPlaylist(new_items));
-            }
-        }
-
-        // Then the order, which is what puts the new arrivals in their places —
-        // they were appended, because that is the only thing an add can do.
-        let order: Vec<QueueItemId> = entries
-            .iter()
-            .filter_map(|e| known.get(&e.id).or_else(|| added.get(&e.id)).copied())
-            .collect();
-        if !order.is_empty() {
-            let _ = self.send_local(PlayerCommand::ReorderPlaylist(order));
-        }
+        koan_core::playlists::follow_edit(db, &self.state, playlist_id, was_locked, &|cmd| {
+            let _ = self.send_local(cmd);
+        });
     }
 
     /// What the server asked of this app over the link. Runs on the link's

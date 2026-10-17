@@ -2,10 +2,73 @@
 //! edit is written here and pushed to the server in the background, and a
 //! playlist that the library or the server owns is not edited.
 
+use std::sync::{Arc, LazyLock, OnceLock};
+
+use crossbeam_channel::Sender;
+use koan_core::db::connection::Database;
 use koan_core::db::pool;
 use koan_core::db::queries::{self, PlaylistEntry, PlaylistRow};
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::QueueMode;
+use koan_core::player::state::{QueueMode, SharedPlayerState};
+
+/// Earlier states of each playlist edited here, for undo and redo. Lasts the
+/// session, as the apps' does.
+static HISTORY: LazyLock<koan_core::playlists::PlaylistHistory> = LazyLock::new(Default::default);
+
+/// The queue an edit is carried to while the queue is the playlist.
+static QUEUE: OnceLock<(Arc<SharedPlayerState>, Sender<PlayerCommand>)> = OnceLock::new();
+
+/// Names the player an edit to a playlist can reach. Without it an edit only
+/// reaches the database.
+pub fn attach(state: Arc<SharedPlayerState>, tx: Sender<PlayerCommand>) {
+    QUEUE.set((state, tx)).ok();
+}
+
+fn locked(db: &Database, id: i64) -> bool {
+    QUEUE
+        .get()
+        .is_some_and(|(state, _)| koan_core::playlists::locked_to(db, state, id))
+}
+
+fn follow(db: &Database, id: i64, was_locked: bool) {
+    if let Some((state, tx)) = QUEUE.get() {
+        koan_core::playlists::follow_edit(db, state, id, was_locked, &|cmd| {
+            tx.send(cmd).ok();
+        });
+    }
+}
+
+/// An edit to the contents of a playlist: refused for one that is not the
+/// user's to fill, recorded for undo, carried to the queue if it is the
+/// playlist, and pushed to the server.
+fn edit<T>(id: i64, change: impl FnOnce(&Database) -> Result<T, String>) -> Result<T, String> {
+    let db = db()?;
+    fillable(&db, id)?;
+    HISTORY.record(&db.conn, id).map_err(|e| e.to_string())?;
+    let was_locked = locked(&db, id);
+    let out = change(&db)?;
+    follow(&db, id, was_locked);
+    koan_core::playlists::push_to_remote(id);
+    Ok(out)
+}
+
+/// Undoes (or redoes) the last edit to the playlist; whether there was one.
+pub fn step(id: i64, undo: bool) -> Result<bool, String> {
+    let db = db()?;
+    fillable(&db, id)?;
+    let was_locked = locked(&db, id);
+    let moved = if undo {
+        HISTORY.undo(&db.conn, id)
+    } else {
+        HISTORY.redo(&db.conn, id)
+    }
+    .map_err(|e| e.to_string())?;
+    if moved {
+        follow(&db, id, was_locked);
+        koan_core::playlists::push_to_remote(id);
+    }
+    Ok(moved)
+}
 
 /// Every playlist, smart ones evaluated first if they are due.
 pub fn list() -> Vec<PlaylistRow> {
@@ -100,19 +163,17 @@ pub fn delete(id: i64) -> Result<(), String> {
 
 /// Appends tracks; how many landed.
 pub fn add(id: i64, track_ids: &[i64]) -> Result<usize, String> {
-    let db = db()?;
-    fillable(&db, id)?;
-    let added = queries::add_tracks(&db.conn, id, track_ids).map_err(|e| e.to_string())?;
-    koan_core::playlists::push_to_remote(id);
-    Ok(added.len())
+    edit(id, |db| {
+        queries::add_tracks(&db.conn, id, track_ids)
+            .map(|added| added.len())
+            .map_err(|e| e.to_string())
+    })
 }
 
 pub fn remove(id: i64, entry_ids: &[i64]) -> Result<usize, String> {
-    let db = db()?;
-    fillable(&db, id)?;
-    let removed = queries::remove_entries(&db.conn, id, entry_ids).map_err(|e| e.to_string())?;
-    koan_core::playlists::push_to_remote(id);
-    Ok(removed)
+    edit(id, |db| {
+        queries::remove_entries(&db.conn, id, entry_ids).map_err(|e| e.to_string())
+    })
 }
 
 /// The entry ids with the one at `from` moved to `to`.
@@ -128,11 +189,9 @@ pub fn moved(order: &[i64], from: usize, to: usize) -> Vec<i64> {
 /// Puts the entries in `order`. Ids survive, so a queue item that holds one
 /// still knows which row it means.
 pub fn reorder(id: i64, order: &[i64]) -> Result<(), String> {
-    let db = db()?;
-    fillable(&db, id)?;
-    queries::reorder_entries(&db.conn, id, order).map_err(|e| e.to_string())?;
-    koan_core::playlists::push_to_remote(id);
-    Ok(())
+    edit(id, |db| {
+        queries::reorder_entries(&db.conn, id, order).map_err(|e| e.to_string())
+    })
 }
 
 /// The queue from the playlist's entries, as the player is told to play it.

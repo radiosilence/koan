@@ -130,12 +130,13 @@ On a playlist's page:
 | `a` / `N` | Add all to the queue / put them next |
 | `K` / `J` | Move the track up / down |
 | `x`, `Delete` or `Backspace` | Take the track out |
+| `Ctrl+Z` / `Ctrl+Y` | Undo / redo the last edit to this playlist |
 | `r` | Rename |
 | `w` | Put the track in another playlist |
 | `i` | Track info |
 | `A` / `O` | Open the artist / the record |
 
-Everything on both pages is also a click: the row, `▸`, `×`, `▴`, `▾`, the artist and the record in a row, and the buttons under the playlist's name. The wheel and the scrollbar scroll.
+Everything on both pages is also a click: the row, `▸`, `×`, `▴`, `▾`, the artist and the record in a row, and the buttons under the playlist's name (play, shuffle, add to queue, undo, redo). The wheel and the scrollbar scroll.
 
 ---
 

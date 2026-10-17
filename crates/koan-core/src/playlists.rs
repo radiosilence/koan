@@ -12,7 +12,8 @@ use crate::config::Config;
 use crate::db::connection::{Database, DbError};
 use crate::db::queries;
 use crate::helpers::subsonic_client;
-use crate::player::state::SharedPlayerState;
+use crate::player::commands::PlayerCommand;
+use crate::player::state::{QueueItemId, SharedPlayerState};
 use crate::remote::client::{SubsonicClient, SubsonicError};
 
 /// Each playlist's earlier states, for undo and redo.
@@ -183,6 +184,81 @@ pub struct PlaylistSync {
     pub pulled: usize,
     /// Playlists sent to the server, new or updated.
     pub pushed: usize,
+}
+
+/// Whether the queue is still exactly this playlist.
+pub fn locked_to(db: &Database, state: &SharedPlayerState, playlist_id: i64) -> bool {
+    queue_lock(db, state) == Some(QueueLock::Playlist(playlist_id))
+}
+
+/// Make the queue follow a playlist that has just been edited.
+///
+/// Only when the queue was still exactly that playlist beforehand —
+/// `was_locked` is read *before* the edit lands, because afterwards the two
+/// no longer match and every queue would look diverged.
+///
+/// The edit is applied to the queue rather than the queue being rebuilt
+/// from the playlist: entries that survived keep their queue items, and
+/// with them their ids, what has played, what is mid-download and what the
+/// cursor is pointing at.
+pub fn follow_edit(
+    db: &Database,
+    state: &SharedPlayerState,
+    playlist_id: i64,
+    was_locked: bool,
+    send: &dyn Fn(PlayerCommand),
+) {
+    if !was_locked {
+        return;
+    }
+    let Ok(entries) = queries::playlist_entries(&db.conn, playlist_id) else {
+        return;
+    };
+    let (items, _) = state.snapshot_playlist();
+
+    // Queue items whose entry has gone from the playlist.
+    let live: std::collections::HashSet<i64> = entries.iter().map(|e| e.id).collect();
+    let doomed: Vec<QueueItemId> = items
+        .iter()
+        .filter(|i| i.playlist_entry_id.is_none_or(|e| !live.contains(&e)))
+        .map(|i| i.id)
+        .collect();
+    if !doomed.is_empty() {
+        send(PlayerCommand::RemoveFromPlaylistBatch(doomed));
+    }
+
+    // Entries the queue has never seen.
+    let known: HashMap<i64, QueueItemId> = items
+        .iter()
+        .filter_map(|i| i.playlist_entry_id.map(|e| (e, i.id)))
+        .collect();
+    let missing: Vec<&queries::PlaylistEntry> = entries
+        .iter()
+        .filter(|e| !known.contains_key(&e.id))
+        .collect();
+    let mut added = HashMap::new();
+    if !missing.is_empty() {
+        let track_ids: Vec<i64> = missing.iter().map(|e| e.track.id).collect();
+        let rows = queries::tracks_by_ids(&db.conn, &track_ids).unwrap_or_default();
+        let mut new_items = crate::helpers::playlist_items_for_tracks(db, &rows);
+        for (item, entry) in new_items.iter_mut().zip(&missing) {
+            item.playlist_entry_id = Some(entry.id);
+            added.insert(entry.id, item.id);
+        }
+        if !new_items.is_empty() {
+            send(PlayerCommand::AddToPlaylist(new_items));
+        }
+    }
+
+    // Then the order, which is what puts the new arrivals in their places —
+    // they were appended, because that is the only thing an add can do.
+    let order: Vec<QueueItemId> = entries
+        .iter()
+        .filter_map(|e| known.get(&e.id).or_else(|| added.get(&e.id)).copied())
+        .collect();
+    if !order.is_empty() {
+        send(PlayerCommand::ReorderPlaylist(order));
+    }
 }
 
 /// Reconcile playlists with the server, both directions.

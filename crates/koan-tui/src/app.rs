@@ -392,6 +392,7 @@ impl App {
         ticks_per_sec: u8,
     ) -> Self {
         let task_channel = crossbeam_channel::unbounded();
+        super::playlist_ops::attach(state.clone(), tx.clone());
         let cfg = koan_core::config::Config::load().unwrap_or_default();
         let ticker_divisor = (ticks_per_sec / TICKER_FPS).max(1);
         let visualizer = VisualizerState::from_config(&cfg.visualizer);

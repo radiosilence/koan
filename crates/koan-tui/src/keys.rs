@@ -117,6 +117,7 @@ pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
                     ("s", "shuffle"),
                     ("K/J", "move up/down"),
                     ("x", "remove"),
+                    ("C-z/y", "undo/redo"),
                     ("r", "rename"),
                     ("w", "playlist"),
                     ("esc", "back"),

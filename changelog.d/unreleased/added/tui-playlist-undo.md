@@ -1,0 +1,1 @@
+- **Playlist undo and a queue that follows.** The playlist page undoes and redoes edits (`Ctrl+Z`, `Ctrl+Y`, or the buttons under the name), and while the queue is exactly a playlist, adding, removing or moving tracks in it changes the queue too, as in the apps.

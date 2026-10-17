@@ -516,6 +516,8 @@ pub enum PlaylistHit {
     Play,
     Shuffle,
     Add,
+    Undo,
+    Redo,
 }
 
 #[derive(Default, Clone)]
@@ -628,6 +630,20 @@ impl PlaylistPage {
         PlAction::Say(said)
     }
 
+    /// Takes back (or redoes) the last edit made to this playlist.
+    fn step(&mut self, undo: bool) -> PlAction {
+        if let Some(refused) = self.refuse_if_readonly() {
+            return refused;
+        }
+        let said = match ops::step(self.list.id, undo) {
+            Ok(true) => if undo { "undone" } else { "redone" }.to_string(),
+            Ok(false) => format!("nothing to {}", if undo { "undo" } else { "redo" }),
+            Err(e) => e,
+        };
+        self.reload();
+        PlAction::Say(said)
+    }
+
     /// Moves the entry at `idx` one place, and the cursor with it.
     fn shift(&mut self, idx: usize, down: bool) -> PlAction {
         if let Some(refused) = self.refuse_if_readonly() {
@@ -693,6 +709,8 @@ impl PlaylistPage {
             KeyCode::Char('x') | KeyCode::Delete | KeyCode::Backspace => {
                 return Some(self.remove(self.cursor));
             }
+            KeyCode::Char('z') if ctrl => return Some(self.step(true)),
+            KeyCode::Char('y') if ctrl => return Some(self.step(false)),
             KeyCode::Char('K') => return Some(self.shift(self.cursor, false)),
             KeyCode::Char('J') => return Some(self.shift(self.cursor, true)),
             KeyCode::Char('i') => {
@@ -740,6 +758,8 @@ impl PlaylistPage {
             PlaylistHit::Play => self.command(None, false),
             PlaylistHit::Shuffle => self.command(None, true),
             PlaylistHit::Add => PlAction::Tracks(self.all_tracks(), PickerAction::Append),
+            PlaylistHit::Undo => self.step(true),
+            PlaylistHit::Redo => self.step(false),
             PlaylistHit::Remove(i) => self.remove(i),
             PlaylistHit::Up(i) => self.shift(i, false),
             PlaylistHit::Down(i) => self.shift(i, true),
@@ -825,11 +845,16 @@ impl PlaylistPage {
         // The buttons; play is the one prominent action.
         let by = area.y + 3;
         let mut x = area.x + 1;
-        for (label, hit, prominent) in [
+        let mut buttons = vec![
             (" play ", PlaylistHit::Play, true),
             (" shuffle ", PlaylistHit::Shuffle, false),
             (" add to queue ", PlaylistHit::Add, false),
-        ] {
+        ];
+        if !self.list.readonly {
+            buttons.push((" undo ", PlaylistHit::Undo, false));
+            buttons.push((" redo ", PlaylistHit::Redo, false));
+        }
+        for (label, hit, prominent) in buttons {
             let w = label.chars().count() as u16 + 2;
             if x + w > area.x + area.width {
                 break;
