@@ -179,9 +179,12 @@ Everything on both pages is also a click: the row, `▸`, `×`, `▴`, `▾`, th
 | `A` / `O` | Open the artist / the record |
 | `x`, `Delete` or `Backspace` | Forget the play |
 | `D` | Forget every play (press again to confirm) |
+| `Space` | Pick out the play, or put it back |
+| `Shift+↑` `Shift+↓` | Pick out a run of plays |
+| `Ctrl+A` | Pick out every play shown |
 | `/` | Filter by title, artist or record |
 
-Click a play to select it and again to play it; click the artist or the record to open it, `×` to forget the play, `forget all` to arm the second press, `/ filter` to filter. The wheel and the scrollbar scroll.
+Click a play to select it and again to play it; click the artist or the record to open it, `×` to forget the play, `clear…` to arm the second press, `/ filter` to filter. The wheel and the scrollbar scroll.
 
 ---
 
@@ -189,6 +192,17 @@ Click a play to select it and again to play it; click the artist or the record t
 
 | Key | Action |
 |-----|--------|
+| `↑` `↓` or `j` `k` | Move between sections, or between rows in the pane |
+| `Enter`, `→` or `l` | Go into the section |
+| `Esc` or `←` | Back to the sections; from the sections, leave the page |
+| `→` `←`, `+` `-` | Change the value under the cursor |
+| `Enter` or `Space` | Change a value, start typing in a field, run a button, or open a row's actions |
+| `m` | The actions of the list row under the cursor |
+| `x` or `Delete` | Remove or revoke what the list row names, after asking |
+
+While typing in a field, every key goes to the field: `Enter` keeps what is typed and runs what it is for, `Esc` leaves it as typed, `Ctrl+U` clears it. A question asked over the page takes `←` `→` or `Tab` to choose and `Enter` to answer; `Esc` cancels. Click a section, a value, a field, a button or a row's action to use it.
+
+-----|--------|
 | `↑` `↓` or `j` `k` | Move between settings |
 | `→`, `Enter` or `Space` | Next value (flips a toggle), or run the task on the row |
 | `←` | Previous value |
