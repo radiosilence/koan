@@ -1929,18 +1929,15 @@ mod tests {
 
         let db = test_db(dir.path());
 
-        // Abort partway through the second chunk, the way Ctrl-C would.
-        let seen = std::cell::Cell::new(0usize);
-        let abort = |_: ScanEvent| {
-            seen.set(seen.get() + 1);
-            assert!(seen.get() <= CHUNK_SIZE, "simulated interrupt");
-        };
+        // Abort once the first chunk is in, the way Ctrl-C would: tracks are
+        // reported only after their chunk commits.
+        let abort = |_: ScanEvent| panic!("simulated interrupt");
         let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             scan_folder(&db, &music_dir, ScanOptions::default(), Some(&abort));
         }));
         assert!(panicked.is_err());
 
-        // The first chunk is on disk; the interrupted one is not.
+        // The first chunk is on disk; the next is not.
         assert_eq!(
             queries::library_stats(&db.conn).unwrap().total_tracks,
             CHUNK_SIZE as i64
