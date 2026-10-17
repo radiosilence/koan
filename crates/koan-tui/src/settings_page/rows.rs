@@ -486,19 +486,18 @@ fn people(page: &SettingsPage, rows: &mut Rows) {
     let me = &page.cfg.remote.username;
     for user in page.remote.people.iter().flatten() {
         let name = &user.username;
-        let next = super::cycle_role(&user.role, true);
-        let mut actions = vec![
-            ("access", Op::SetRole(name.clone(), next.into())),
-            (
-                "invite",
-                Op::Invite {
-                    username: name.clone(),
-                    reset: false,
-                },
-            ),
-        ];
+        let mut actions = vec![(
+            "invite",
+            Op::Invite {
+                username: name.clone(),
+                reset: false,
+            },
+        )];
         let mut remove = None;
+        // Your own access is not yours to change here: taking away your own
+        // admin would take this section with it.
         if name != me {
+            actions.insert(0, ("access", Op::AskRole(name.clone(), user.role.clone())));
             if page.remote.offers(PASSWORDS) {
                 actions.push(("set password", Op::AskSetPassword(name.clone())));
             }

@@ -205,6 +205,8 @@ pub(crate) enum Op {
     SetPassword(String),
     AskDelete(String),
     Delete(String),
+    /// The access chooser for an account, and its current role.
+    AskRole(String, String),
     SetRole(String, String),
     Pair,
     ApprovePair(String),

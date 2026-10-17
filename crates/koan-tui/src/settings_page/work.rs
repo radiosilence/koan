@@ -541,6 +541,21 @@ impl SettingsPage {
                 });
                 None
             }
+            Op::AskRole(username, current) => {
+                let mut dialog = Dialog::new(
+                    format!("{username}'s access"),
+                    format!("They can {} now.", super::role_label(&current)),
+                );
+                for (role, label) in super::ROLES {
+                    dialog = if role == current {
+                        dialog.choice(format!("{label} \u{2713}"), Op::Cancel)
+                    } else {
+                        dialog.choice(label, Op::SetRole(username.clone(), role.into()))
+                    };
+                }
+                self.dialog = Some(dialog.choice("cancel", Op::Cancel));
+                None
+            }
             Op::SetRole(username, role) => {
                 self.ask_server("could not change their access", move || {
                     let c = helpers::subsonic_client(&Config::load().unwrap_or_default())
