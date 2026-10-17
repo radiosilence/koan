@@ -28,8 +28,11 @@ struct AlbumBrowser: View {
 
     var body: some View {
         albums
-            // Once narrowed, how many: the count a shelf's heading gave.
+            // Once narrowed, how many: the count a shelf's heading gave. The
+            // Mac's header says it already.
+            #if !os(macOS)
             .pageSubtitle(library.isNarrowed ? Format.count(Int64(library.visibleAlbums.count), "album") : "")
+            #endif
             // ⌘A picks everything the filter is showing, starting a selection
             // if there was none. Escape and leaving the page drop it.
             .onChange(of: ui.selectAllToken) { _, _ in library.selection.selectAll() }
