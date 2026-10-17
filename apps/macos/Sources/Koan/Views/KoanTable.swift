@@ -183,6 +183,10 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         private var selectAllToken: Int?
         private var rewinds: Int?
         private var restored = false
+        /// While restoring a complete listing: how far it could scroll at its
+        /// last layout, and whether the listing was complete at the last update.
+        private var lastReach: CGFloat?
+        private var complete = false
         /// Set while the rows are reloaded, whose selection changes are not
         /// the person's.
         private var reloading = false
@@ -280,7 +284,10 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             follow(parent.follow)
             // The listing can finish without a row changing, a failed last
             // page, and only a layout settles the restore.
-            if !restored, parent.complete { table.needsLayout = true }
+            if parent.complete != complete {
+                complete = parent.complete
+                if !restored { table.needsLayout = true }
+            }
             if table.rowHeight != parent.rowHeight {
                 table.rowHeight = parent.rowHeight
                 table.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<items.count))
@@ -298,9 +305,10 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         /// during SwiftUI's update, where laying the table out is an AppKit
         /// exception. Until then the offset is not noted, so a distance the
         /// first page cannot reach is not overwritten by one it can. A complete
-        /// listing that still falls short, laid out in its window, is scrolled
-        /// to its end and the wait is over; so is anything the person does in
-        /// the list meanwhile.
+        /// listing that still falls short is scrolled to its end, and the wait
+        /// is over once two layouts agree on how far that is, so a size the
+        /// window passes through on its way does not settle it. So is anything
+        /// the person does in the list meanwhile.
         func laidOut() {
             guard !restored, !ids.isEmpty, let parent, let table, let scroll else { return }
             guard let offset = parent.offset else {
@@ -309,8 +317,17 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             }
             let reach = table.frame.height - scroll.contentView.bounds.height
                 + scroll.contentInsets.top + scroll.contentInsets.bottom
-            let settled = parent.complete && table.window != nil && scroll.contentView.bounds.height > 0
-            if offset <= reach || settled { restored = true }
+            if offset <= reach {
+                restored = true
+            } else if parent.complete {
+                if reach == lastReach {
+                    restored = true
+                } else {
+                    lastReach = reach
+                    // One more pass, after this one: nothing else may ask.
+                    DispatchQueue.main.async { [weak table] in table?.needsLayout = true }
+                }
+            }
             self.scroll(to: min(offset, max(reach, 0)))
         }
 

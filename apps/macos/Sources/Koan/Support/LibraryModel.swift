@@ -66,7 +66,7 @@ final class LibraryModel {
         // another view is invisible here, and an apparently empty library is
         // the result. A section comes back with its own, as it was left, unless
         // a shelf's heading arrives with the shelf's query.
-        let filter = section.filterPlaceholder == nil ? "" : carried ?? leftFilters[section] ?? ""
+        let filter = carried ?? leftFilters[section] ?? ""
         carried = nil
         return await Listing(
             section: section,
@@ -117,7 +117,6 @@ final class LibraryModel {
     /// Each section's name filter as it was when the section was left, for
     /// the session.
     @ObservationIgnored private var leftFilters: [Section: String] = [:]
-
 
     /// Point a browser at a shelf: its filters and sort set to the shelf's, so
     /// the listing it opens on is the one the shelf's preview is the head of
