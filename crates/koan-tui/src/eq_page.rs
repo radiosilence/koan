@@ -22,7 +22,7 @@ use super::eq_graph::{self, Curve, EqGraph, Handle};
 use super::eq_worker::{
     Act, Done, Job, PendingImport, Playing, Reply, RoleAsk, Snapshot, ViewReq, Worker,
 };
-use super::text::{fit, wrap};
+use super::text::{fit, width, wrap};
 use super::theme::Theme;
 
 /// A stage of a device's chain, to choose what fills it.
@@ -255,6 +255,9 @@ pub struct EqPage {
     /// A profile's filters as edited here, ahead of the read that will
     /// show them, and the change that made them.
     local: Option<(String, Vec<DspFilter>, u64)>,
+    /// The shown device's EQs as edited here, ahead of the read that will
+    /// show them: the device, the chain, and the change that made it.
+    local_chain: Option<(String, Vec<(String, bool)>, u64)>,
     /// For a profile with bands for each channel, the one being edited.
     channel: u16,
     /// What `B` put away, by device: the preset it is kept as.
@@ -283,6 +286,7 @@ impl EqPage {
             message: None,
             seq: 0,
             local: None,
+            local_chain: None,
             channel: 0,
             bypassed: Vec::new(),
             hits: Vec::new(),
@@ -338,6 +342,13 @@ impl EqPage {
         while let Ok(done) = self.worker.rx.try_recv() {
             match done {
                 Done::Snapshot(s) => {
+                    if self
+                        .local_chain
+                        .as_ref()
+                        .is_some_and(|(_, _, seq)| s.seq >= *seq)
+                    {
+                        self.local_chain = None;
+                    }
                     if self.local.as_ref().is_some_and(|(_, _, seq)| s.seq >= *seq) {
                         self.local = None;
                     }
@@ -374,6 +385,9 @@ impl EqPage {
                     Ok(Reply::Open(name)) => self.open_profile(name),
                     Err(e) => {
                         // A refused edit: what is saved is what shows.
+                        if self.local_chain.as_ref().is_some_and(|(_, _, s)| *s <= seq) {
+                            self.local_chain = None;
+                        }
                         if self.local.as_ref().is_some_and(|(_, _, s)| *s <= seq) {
                             self.local = None;
                         }
@@ -439,19 +453,28 @@ impl EqPage {
         });
     }
 
+    /// The shown device's EQs set to `chain`: shown at once, so the next
+    /// edit starts from it, and saved behind.
     fn set_tunings(&mut self, chain: Vec<(String, bool)>) {
         let Some(device) = self.device() else { return };
+        let saved = chain.clone();
+        let on = device.clone();
         self.act(None, move || {
-            profiles::set_tunings(&device, &chain)?;
+            profiles::set_tunings(&on, &saved)?;
             Ok(Reply::Quiet)
         });
+        self.local_chain = Some((device, chain, self.seq));
     }
 
+    /// The shown device's EQs, as edited here.
     fn chain(&self) -> Vec<(String, bool)> {
-        self.snap
-            .as_ref()
-            .map(|s| s.overview.chain.clone())
-            .unwrap_or_default()
+        let Some(s) = self.snap.as_ref() else {
+            return Vec::new();
+        };
+        match &self.local_chain {
+            Some((device, chain, _)) if s.device.as_ref() == Some(device) => chain.clone(),
+            _ => s.overview.chain.clone(),
+        }
     }
 
     fn apply_preset(&mut self, device: String, name: Option<String>) {
@@ -1173,8 +1196,10 @@ impl EqPage {
                 if p.detail.devices.contains(&in_use) {
                     self.simple(move || profiles::assign(None, &in_use));
                 } else if p.detail.role == DspRole::Tuning {
-                    let chain = profiles_chain_with(&self.chain(), &name);
+                    // On the end of the output in use's own EQs, read as the
+                    // change runs, whichever device the page shows.
                     self.act(None, move || {
+                        let chain = profiles_chain_with(&profiles::tunings_for(&in_use), &name);
                         profiles::set_tunings(&in_use, &chain)?;
                         Ok(Reply::Quiet)
                     });
@@ -1519,8 +1544,9 @@ impl EqPage {
         let n = c.items.len();
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => self.choice = None,
-            KeyCode::Up | KeyCode::Char('k') => c.cursor = (c.cursor + n - 1) % n.max(1),
-            KeyCode::Down | KeyCode::Char('j') => c.cursor = (c.cursor + 1) % n.max(1),
+            _ if n == 0 => {}
+            KeyCode::Up | KeyCode::Char('k') => c.cursor = (c.cursor + n - 1) % n,
+            KeyCode::Down | KeyCode::Char('j') => c.cursor = (c.cursor + 1) % n,
             KeyCode::Home | KeyCode::Char('g') => c.cursor = 0,
             KeyCode::End | KeyCode::Char('G') => c.cursor = n.saturating_sub(1),
             KeyCode::Enter | KeyCode::Char(' ') => {
@@ -2427,9 +2453,7 @@ impl EqPage {
         if let Some(in_use) = s.in_use.as_deref() {
             let label = s.label(in_use);
             let using = d.devices.iter().any(|x| x == in_use)
-                || (d.role == DspRole::Tuning
-                    && s.device.as_deref() == Some(in_use)
-                    && s.overview.chain.iter().any(|(n, _)| *n == d.name));
+                || (d.role == DspRole::Tuning && s.in_use_chain.iter().any(|(n, _)| *n == d.name));
             out.push(Line::row(
                 Row::Use,
                 vec![
@@ -2844,11 +2868,7 @@ impl EqPage {
                     buf[(x, y)].set_style(selected_style);
                 }
             }
-            let right_w: u16 = line
-                .right
-                .iter()
-                .map(|(t, _)| t.chars().count() as u16)
-                .sum();
+            let right_w: u16 = line.right.iter().map(|(t, _)| width(t) as u16).sum();
             let thumb_w = if line.thumb.is_some() && area.width >= 50 {
                 10u16
             } else {
@@ -2871,7 +2891,7 @@ impl EqPage {
                     *style
                 };
                 buf.set_stringn(x, y, &t, w, style);
-                x += t.chars().count() as u16;
+                x += width(&t) as u16;
             }
             if let (Some((name, color)), true) = (&line.thumb, thumb_w > 0)
                 && let Some(db) = self.snap.as_ref().and_then(|s| s.curve(name))
@@ -2892,7 +2912,7 @@ impl EqPage {
                     *style
                 };
                 buf.set_string(rx, y, text, style);
-                rx += text.chars().count() as u16;
+                rx += width(text) as u16;
             }
             let row = Rect::new(area.x, y, area.width, 1);
             if let Some(Row::Band(index)) = line.row {

@@ -103,7 +103,14 @@ fn dump(page: &mut EqPage, name: &str) -> String {
         let buf = terminal.backend().buffer();
         let text: String = (0..h)
             .map(|y| {
-                let line: String = (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect();
+                // A wide character's second cell is the character's.
+                let mut line = String::new();
+                let mut x = 0;
+                while x < w {
+                    let symbol = buf[(x, y)].symbol();
+                    line.push_str(symbol);
+                    x += super::super::text::width(symbol).max(1) as u16;
+                }
                 line.trim_end().to_owned() + "\n"
             })
             .collect();
@@ -333,4 +340,74 @@ fn bypass_keeps_what_played_as_a_preset_and_puts_it_back() {
         profiles::preset_for(RENDERER),
         Some(("Test renderer".into(), false))
     );
+}
+
+#[test]
+fn an_empty_choice_takes_keys_without_moving() {
+    let (_g, _d, mut page) = page();
+    page.open_choice("nothing", None, Vec::new());
+    key(&mut page, KeyCode::Up);
+    key(&mut page, KeyCode::Down);
+    key(&mut page, KeyCode::Enter);
+    assert!(page.choice.is_none() || page.choice.as_ref().is_some_and(|c| c.cursor == 0));
+}
+
+/// Two presses before the first is read: the second acts on the first's
+/// result, not on what was last read.
+#[test]
+fn quick_chain_edits_build_on_each_other() {
+    let (_g, _d, mut page) = page();
+    profiles::create_eq("Desk", Starter::Flat).unwrap();
+    profiles::set_tunings(DEVICE, &[("Warm".into(), true), ("Desk".into(), true)]).unwrap();
+    page.request();
+    settle(&mut page, DEVICE);
+    page.toggle_eq(0);
+    page.toggle_eq(0);
+    page.cursor = row_of(&page, Row::Eq(0));
+    key(&mut page, KeyCode::Char('J'));
+    page.cursor = row_of(&page, Row::Eq(1));
+    key(&mut page, KeyCode::Char(' '));
+    settle(&mut page, DEVICE);
+    assert_eq!(
+        profiles::tunings_for(DEVICE),
+        vec![("Desk".to_owned(), true), ("Warm".to_owned(), false)]
+    );
+    assert!(page.local_chain.is_none(), "the read caught up");
+}
+
+/// Use for the output in use adds to that output's own EQs, whichever
+/// device the page shows.
+#[test]
+fn use_for_the_output_in_use_keeps_its_own_eqs() {
+    let (_g, _d, mut page) = page();
+    profiles::create_eq("Desk", Starter::Flat).unwrap();
+    profiles::set_tunings(RENDERER, &[("Desk".into(), true)]).unwrap();
+    page.open_profile("Warm".into());
+    settle(&mut page, DEVICE);
+    let text = dump(&mut page, "use-for");
+    assert!(text.contains("use for Test renderer"), "{text}");
+    page.activate(Row::Use);
+    settle(&mut page, DEVICE);
+    assert_eq!(
+        profiles::tunings_for(RENDERER),
+        vec![("Desk".to_owned(), true), ("Warm".to_owned(), true)]
+    );
+    assert_eq!(
+        profiles::tunings_for(DEVICE),
+        vec![("Warm".to_owned(), true)]
+    );
+    let text = dump(&mut page, "used-for");
+    assert!(!text.contains("use for Test renderer"), "{text}");
+}
+
+/// Wide characters take two cells, and what follows them starts after both.
+#[test]
+fn wide_names_are_measured_in_cells() {
+    let (_g, _d, mut page) = page();
+    profiles::create_eq("東京事変", Starter::Flat).unwrap();
+    profiles::set_tunings(DEVICE, &[("東京事変".into(), false)]).unwrap();
+    page.request();
+    settle(&mut page, DEVICE);
+    let text = dump(&mut page, "wide");
+    assert!(text.contains("東京事変  off"), "{text}");
 }

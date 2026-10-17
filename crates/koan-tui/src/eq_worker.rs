@@ -51,6 +51,8 @@ pub struct Snapshot {
     /// since; and whether it plays untouched.
     pub in_use_preset: Option<(String, bool)>,
     pub in_use_flat: bool,
+    /// The output in use's own EQs, in order, whichever device is shown.
+    pub in_use_chain: Vec<(String, bool)>,
     pub profile: Option<ProfileView>,
     /// The profile the page asked for, whether or not it is there.
     pub asked: Option<String>,
@@ -191,10 +193,14 @@ fn run(jobs: &Receiver<Job>, done: &Sender<Done>, player: &Sender<PlayerCommand>
         let mut changed = false;
         for i in 0..acts.len() {
             seq = seq.max(acts[i].seq);
-            let superseded = acts[i]
-                .key
-                .as_ref()
-                .is_some_and(|k| acts[i + 1..].iter().any(|b| b.key.as_ref() == Some(k)));
+            // Never across an act without a key: adding or removing a band
+            // moves the indices the keys name.
+            let superseded = acts[i].key.as_ref().is_some_and(|k| {
+                acts[i + 1..]
+                    .iter()
+                    .map_while(|b| b.key.as_ref())
+                    .any(|b| b == k)
+            });
             if superseded {
                 continue;
             }
@@ -338,6 +344,10 @@ fn load(v: &ViewReq, seq: u64) -> Snapshot {
         sentence,
         in_use_preset,
         in_use_flat,
+        in_use_chain: in_use
+            .as_deref()
+            .map(profiles::tunings_for)
+            .unwrap_or_default(),
         profile,
         asked: v.profile.clone(),
     }
@@ -445,5 +455,53 @@ mod tests {
         .filter(|c| matches!(c, PlayerCommand::ReloadDsp))
         .count();
         assert_eq!(reloads, 2, "once per batch that changed anything");
+    }
+
+    /// An edit to a band, a band removed, then the same band edited: both
+    /// edits run, since the removal moved what the index names.
+    #[test]
+    fn edits_are_never_collapsed_across_a_removal() {
+        let (player, _commands) = crossbeam_channel::unbounded();
+        let worker = Worker::spawn(player);
+        let ran = Arc::new(Mutex::new(Vec::new()));
+        let gate = Arc::new(Mutex::new(()));
+        let held = gate.lock().unwrap();
+        let g = gate.clone();
+        worker.send(Job::Act(Act {
+            seq: 1,
+            key: None,
+            run: Box::new(move || {
+                drop(g.lock().unwrap());
+                Ok(Reply::Quiet)
+            }),
+        }));
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        for (seq, key) in [
+            (2, Some(("Warm".to_owned(), 3))),
+            (3, None),
+            (4, Some(("Warm".to_owned(), 3))),
+        ] {
+            let ran = ran.clone();
+            worker.send(Job::Act(Act {
+                seq,
+                key,
+                run: Box::new(move || {
+                    ran.lock().unwrap().push(seq);
+                    Ok(Reply::Quiet)
+                }),
+            }));
+        }
+        drop(held);
+        let mut replies = 0;
+        while replies < 4 {
+            if let Done::Reply { .. } = worker
+                .rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap()
+            {
+                replies += 1;
+            }
+        }
+        assert_eq!(*ran.lock().unwrap(), vec![2, 3, 4]);
     }
 }
