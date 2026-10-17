@@ -4,8 +4,7 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
-use ratatui::text::Span;
-use ratatui::widgets::{Block, Borders, Clear, Widget};
+use ratatui::widgets::{Clear, Widget};
 
 use koan_core::db::queries::PlaylistRow;
 
@@ -35,10 +34,10 @@ impl NamePrompt {
 
     fn title(&self) -> &'static str {
         match self.purpose {
-            Purpose::New(_) => " new playlist ",
-            Purpose::Rename(_) => " rename playlist ",
-            Purpose::Export(_) => " export as m3u8 to ",
-            Purpose::Folder => " add library folder ",
+            Purpose::New(_) => "new playlist",
+            Purpose::Rename(_) => "rename playlist",
+            Purpose::Export(_) => "export as m3u8 to",
+            Purpose::Folder => "add library folder",
         }
     }
 }
@@ -77,10 +76,7 @@ impl Widget for NamePromptOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let popup = prompt_rect(area);
         Clear.render(popup, buf);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(self.theme.rule)
-            .title(Span::styled(self.prompt.title(), self.theme.heading));
+        let block = super::shell::frame(self.prompt.title(), self.theme);
         let inner = block.inner(popup);
         block.render(popup, buf);
         if inner.height < 3 || inner.width < 8 {
@@ -175,13 +171,10 @@ impl Widget for ChooserOverlay<'_> {
         Clear.render(popup, buf);
         let n = self.chooser.ids.len();
         let title = format!(
-            " add {n} track{} to a playlist ",
+            "add {n} track{} to a playlist",
             if n == 1 { "" } else { "s" }
         );
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(self.theme.rule)
-            .title(Span::styled(title, self.theme.heading));
+        let block = super::shell::frame(&title, self.theme);
         let inner = block.inner(popup);
         block.render(popup, buf);
         let top = self.chooser.top(inner.height as usize);

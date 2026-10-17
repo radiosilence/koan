@@ -1,7 +1,7 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
+use ratatui::widgets::{Clear, Paragraph, Widget};
 
 use super::app::{ContextAction, ContextMenuState};
 use super::theme::Theme;
@@ -195,10 +195,7 @@ impl Widget for ContextMenuOverlay<'_> {
         );
         Clear.render(popup, buf);
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(self.theme.hint_key)
-            .title(" Actions ");
+        let block = super::shell::frame("actions", self.theme);
         let inner = block.inner(popup);
         block.render(popup, buf);
 

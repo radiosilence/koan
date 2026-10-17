@@ -4,8 +4,7 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::text::Span;
-use ratatui::widgets::{Block, Borders, Clear, Widget};
+use ratatui::widgets::{Clear, Widget};
 
 use super::app::PickerAction;
 use super::browse::Action;
@@ -34,6 +33,8 @@ pub enum Playable {
         tracks: Vec<i64>,
         favourite: bool,
     },
+    /// Several tracks picked together.
+    Tracks(Vec<i64>),
 }
 
 /// A rule between groups of items: no label, nothing to do.
@@ -51,9 +52,24 @@ pub fn playable(thing: &Playable) -> Vec<(String, Action)> {
     use PickerAction::{Append, PlayNext, ReplaceQueue};
     let ids = match thing {
         Playable::Track { id, .. } => vec![*id],
-        Playable::Album { tracks, .. } | Playable::Artist { tracks, .. } => tracks.clone(),
+        Playable::Album { tracks, .. }
+        | Playable::Artist { tracks, .. }
+        | Playable::Tracks(tracks) => tracks.clone(),
     };
     let play = |label: &str, how| (label.to_string(), Action::Play(ids.clone(), how));
+    if let Playable::Tracks(_) = thing {
+        return vec![
+            play("Play", ReplaceQueue),
+            play("Play next", PlayNext),
+            play("Add to queue", Append),
+            rule(),
+            ("Download to cache".into(), Action::Download(ids.clone())),
+            (
+                "Remove downloaded files".into(),
+                Action::RemoveDownload(ids.clone()),
+            ),
+        ];
+    }
     let mut items = vec![
         play("Play", ReplaceQueue),
         play("Play next", PlayNext),
@@ -126,6 +142,7 @@ pub fn playable(thing: &Playable) -> Vec<(String, Action)> {
                 ("Go to artist".into(), Action::OpenArtist(artist)),
             ]);
         }
+        Playable::Tracks(_) => unreachable!("answered above"),
         Playable::Artist { id, favourite, .. } => {
             items.extend([
                 (unfavourite(favourite, "artist"), Action::ToggleArtist(id)),
@@ -220,13 +237,7 @@ impl Widget for ActionsMenuOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let popup = menu_rect(area, &self.menu.items, &self.menu.title);
         Clear.render(popup, buf);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(self.theme.rule)
-            .title(Span::styled(
-                format!(" {} ", self.menu.title),
-                self.theme.heading,
-            ));
+        let block = super::shell::frame(&self.menu.title, self.theme);
         let inner = block.inner(popup);
         block.render(popup, buf);
         let top = self.menu.top(inner.height as usize);
@@ -356,6 +367,25 @@ mod tests {
         assert!(
             !menu(false).last().is_some_and(|l| l.is_empty()),
             "no rule with nothing after it"
+        );
+    }
+
+    #[test]
+    fn several_tracks_get_the_apps_selection_menu() {
+        let labels: Vec<String> = playable(&Playable::Tracks(vec![1, 2]))
+            .into_iter()
+            .map(|(l, _)| l)
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                "Play",
+                "Play next",
+                "Add to queue",
+                "",
+                "Download to cache",
+                "Remove downloaded files"
+            ]
         );
     }
 }
