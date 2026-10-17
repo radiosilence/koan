@@ -1,0 +1,1 @@
+- **A cancelled scan is reported as cancelled.** A Cancel that landed between tag reads could end the scan as though it had finished, and then remove stale tracks and import playlists for it.
