@@ -431,7 +431,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         const DISMISS: &str = "  [esc] dismiss";
         let room = (foot.width as usize).saturating_sub(DISMISS.len());
         let line = ratatui::text::Line::from(vec![
-            ratatui::text::Span::styled(super::shell::fit(msg, room), app.theme.hint_key),
+            ratatui::text::Span::styled(super::text::fit(msg, room), app.theme.hint_key),
             ratatui::text::Span::styled(DISMISS, app.theme.hint_desc),
         ]);
         frame.render_widget(ratatui::widgets::Paragraph::new(line), foot);
@@ -905,7 +905,7 @@ fn render_sidebar(
             buf.set_stringn(
                 side.x + 1,
                 y,
-                super::shell::fit(text, label_w),
+                super::text::fit(text, label_w),
                 label_w,
                 style,
             );
@@ -943,12 +943,12 @@ fn render_sidebar(
         }
         let w = SIDEBAR_WIDTH - 2;
         let counts = job.counts.as_deref().unwrap_or("");
-        let counts_w = super::shell::width(counts) as u16;
+        let counts_w = super::text::width(counts) as u16;
         let label_room = w.saturating_sub(counts_w + 1) as usize;
         buf.set_stringn(
             side.x + 1,
             y,
-            super::shell::fit(&job.label, label_room),
+            super::text::fit(&job.label, label_room),
             label_room,
             theme.hint_desc,
         );
@@ -1749,7 +1749,7 @@ mod tests {
                     continue;
                 }
                 let sym = buf[(x, y)].symbol();
-                skip = crate::shell::width(sym).saturating_sub(1);
+                skip = crate::text::width(sym).saturating_sub(1);
                 out.push_str(sym);
             }
             out.push('\n');

@@ -159,7 +159,7 @@ pub fn max_scroll(area: Rect) -> usize {
 
 impl Widget for HelpModalOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        use crate::shell::{fit, fit_pad_right, width};
+        use crate::text::{fit, fit_pad_right, width};
         let (popup, col_height) = layout(area);
         crate::shell::clear(buf, popup);
         let block = crate::shell::frame("keys", self.theme);

@@ -29,7 +29,6 @@ pub enum AlbumHit {
     Track(usize),
     Link(Target),
     Heart,
-    Menu,
     Play,
     Shuffle,
     Add,
@@ -270,7 +269,6 @@ impl AlbumPage {
             AlbumHit::Link(Target::Artist(id)) => Action::OpenArtist(id),
             AlbumHit::Link(Target::Album(id)) => Action::OpenAlbum(id),
             AlbumHit::Heart => Action::ToggleAlbum(self.album.id),
-            AlbumHit::Menu => self.menu(self.cursor),
             AlbumHit::Play => self.play_all(PickerAction::ReplaceQueue),
             AlbumHit::Shuffle => Action::Shuffle(self.all()),
             AlbumHit::Add => self.play_all(PickerAction::Append),
@@ -306,6 +304,20 @@ impl AlbumPage {
         self.scroll = ((frac.clamp(0.0, 1.0) * max as f64).round() as usize).min(max);
     }
 
+    /// "album", how many tracks, and its actions.
+    pub fn toolbar(&self) -> crate::shell::Toolbar {
+        use crossterm::event::{KeyCode, KeyEvent};
+        let bar = crate::shell::Toolbar::new("album")
+            .count(super::text::count(self.tracks.len() as u64, "track"));
+        if self.tracks.is_empty() {
+            return bar;
+        }
+        bar.item(crate::shell::ToolItem::new(
+            "\u{22ef} actions",
+            KeyEvent::from(KeyCode::Char('m')),
+        ))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
@@ -318,27 +330,17 @@ impl AlbumPage {
         hover: Option<AlbumHit>,
     ) {
         self.geom = Geom::default();
-        let area = rows::page(area);
-        if area.width < 8 || area.height < 3 {
+        if area.width < 8 || area.height < 2 {
             return;
         }
         thumbs.begin_frame();
         let mut hits = Vec::new();
-        let count = rows::count(self.tracks.len() as u64, "track");
-        let controls: Vec<(String, AlbumHit)> = if self.tracks.is_empty() {
-            Vec::new()
-        } else {
-            vec![("\u{22ef} actions".into(), AlbumHit::Menu)]
-        };
-        let hovered = hover.filter(|h| *h == AlbumHit::Menu);
-        hits.extend(rows::toolbar(
-            buf, area, theme, "album", &count, &controls, hovered,
-        ));
+        // A row clear under the shell's toolbar.
         let body = Rect::new(
             area.x,
-            area.y + 2,
+            area.y + 1,
             area.width,
-            area.height.saturating_sub(2),
+            area.height.saturating_sub(1),
         );
 
         // The header: the cover on the left when there is room, text beside it.
@@ -646,8 +648,12 @@ mod tests {
         ] {
             assert!(labels.contains(&want), "{want}");
         }
-        let menu = hit_of(&p, AlbumHit::Menu);
-        assert_eq!(p.hit(menu.x, menu.y), Some(AlbumHit::Menu));
+        assert!(
+            p.toolbar()
+                .items
+                .iter()
+                .any(|i| i.key.code == crossterm::event::KeyCode::Char('m'))
+        );
     }
 
     #[test]

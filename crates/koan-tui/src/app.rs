@@ -1060,6 +1060,18 @@ impl App {
                 Toolbar::new("queue").count(format!("{n} track{}", if n == 1 { "" } else { "s" }))
             }
             Page::History => self.history_page.toolbar(),
+            Page::Albums | Page::Artists | Page::Tracks | Page::Artist(_) => self
+                .browse()
+                .map(Browse::toolbar)
+                .unwrap_or_else(|| Toolbar::new(self.page().title())),
+            Page::Favourites | Page::Recent | Page::Downloaded | Page::Search => self
+                .shelf()
+                .map(ShelfPage::toolbar)
+                .unwrap_or_else(|| Toolbar::new(self.page().title())),
+            Page::Album(_) => match self.album_page.as_ref() {
+                Some(p) => p.toolbar(),
+                None => Toolbar::new("album"),
+            },
             Page::Settings => self.settings_page.toolbar(),
             page => Toolbar::new(page.title()),
         }

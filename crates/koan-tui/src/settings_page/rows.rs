@@ -9,6 +9,7 @@ use koan_core::remote::profile::{
 use super::{
     Field, Load, Op, Outcome, Section, Setting, SettingsPage, Task, role_label, signed_in,
 };
+use crate::text::{bytes, count};
 
 #[derive(Debug, Clone)]
 pub(crate) struct Row {
@@ -208,31 +209,6 @@ pub(crate) fn build(page: &SettingsPage) -> Vec<Row> {
         }
     }
     rows.0
-}
-
-fn count(n: u64, one: &str) -> String {
-    let n_str = n.to_string();
-    if n == 1 {
-        format!("{n_str} {one}")
-    } else {
-        format!("{n_str} {one}s")
-    }
-}
-
-/// Bytes as a person reads them.
-fn bytes(n: u64) -> String {
-    const UNITS: [&str; 5] = ["bytes", "KB", "MB", "GB", "TB"];
-    let mut v = n as f64;
-    let mut unit = 0;
-    while v >= 1000.0 && unit + 1 < UNITS.len() {
-        v /= 1000.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{n} bytes")
-    } else {
-        format!("{v:.1} {}", UNITS[unit])
-    }
 }
 
 /// An ISO 8601 time as a date.

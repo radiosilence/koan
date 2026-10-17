@@ -65,6 +65,47 @@ pub fn wrap(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
+/// `text` fitted to exactly `width` cells, padded on the right: a column's
+/// cell.
+pub fn fit_pad(text: &str, width: usize) -> String {
+    let cut = fit(text, width);
+    let pad = width - cut.width();
+    format!("{cut}{}", " ".repeat(pad))
+}
+
+/// `text` fitted to exactly `width` cells, padded on the left: a duration, a
+/// count.
+pub fn fit_pad_right(text: &str, width: usize) -> String {
+    let cut = fit(text, width);
+    let pad = width - cut.width();
+    format!("{}{cut}", " ".repeat(pad))
+}
+
+/// "1 album", "3 albums".
+pub fn count(n: u64, noun: &str) -> String {
+    if n == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{n} {noun}s")
+    }
+}
+
+/// Bytes as a person reads them.
+pub fn bytes(n: u64) -> String {
+    const UNITS: [&str; 5] = ["bytes", "KB", "MB", "GB", "TB"];
+    let mut v = n as f64;
+    let mut unit = 0;
+    while v >= 1000.0 && unit + 1 < UNITS.len() {
+        v /= 1000.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{n} bytes")
+    } else {
+        format!("{v:.1} {}", UNITS[unit])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,6 +118,16 @@ mod tests {
         assert_eq!(fit("anything", 0), "");
         assert_eq!(tail("abcdef", 3), "def");
         assert_eq!(tail("音楽ab", 3), "ab");
+    }
+
+    #[test]
+    fn padded_cells_are_exactly_their_width() {
+        assert_eq!(width(&fit_pad("東京事変", 5)), 5);
+        assert_eq!(fit_pad_right("3:07", 6), "  3:07");
+        assert_eq!(count(1, "album"), "1 album");
+        assert_eq!(count(3, "album"), "3 albums");
+        assert_eq!(bytes(999), "999 bytes");
+        assert_eq!(bytes(1_500_000), "1.5 MB");
     }
 
     #[test]

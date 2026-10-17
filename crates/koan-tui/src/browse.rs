@@ -28,7 +28,7 @@ use super::theme::Theme;
 use super::thumb_cache;
 use super::transport::format_time;
 
-pub(super) use super::rows::fit;
+pub(super) use super::text::fit;
 
 /// The widest a tile gets, in columns. Wider screens get more tiles.
 const TILE_MAX_W: u16 = 26;
@@ -148,24 +148,12 @@ pub struct SeeAll {
     pub text: String,
 }
 
-/// A control in the page's toolbar.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Control {
-    Filter,
-    Filters,
-    Sort,
-    Reshuffle,
-    View,
-    Menu,
-}
-
 /// Where the pointer is on the page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hit {
     Item(usize),
     /// A name that leads to its page.
     Link(Target),
-    Control(Control),
     Header(HeaderHit),
 }
 
@@ -474,7 +462,6 @@ struct Geom {
     tile_w: u16,
     tile_h: u16,
     rows: usize,
-    controls: Vec<(Rect, Control)>,
     links: Vec<(Rect, Target)>,
     /// The scrollbar's column, when the page overflows.
     bar: Rect,
@@ -692,9 +679,12 @@ impl Browse {
         if let Some(header) = self.header.as_mut() {
             let holds = if self.albums.is_empty() && !self.tracks.is_empty() {
                 let on: HashSet<_> = self.tracks.iter().filter_map(|t| t.album_id).collect();
-                format!("appears on {}", rows::count(on.len() as u64, "album"))
+                format!(
+                    "appears on {}",
+                    super::text::count(on.len() as u64, "album")
+                )
             } else {
-                rows::count(self.albums.len() as u64, "album")
+                super::text::count(self.albums.len() as u64, "album")
             };
             header.set_artist(&self.title, holds);
         }
@@ -1135,9 +1125,6 @@ impl Browse {
         let inside = |r: &Rect| {
             r.width > 0 && col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
         };
-        if let Some((_, c)) = g.controls.iter().find(|(r, _)| inside(r)) {
-            return Some(Hit::Control(*c));
-        }
         if let Some(h) = self.header.as_ref().and_then(|h| h.hit(col, row)) {
             return Some(Hit::Header(h));
         }
@@ -1170,26 +1157,6 @@ impl Browse {
     /// item, opens or plays it.
     pub fn click(&mut self, hit: Hit) -> Action {
         match hit {
-            Hit::Control(c) => match c {
-                Control::Sort => {
-                    self.cycle_sort();
-                    Action::None
-                }
-                Control::Reshuffle => {
-                    self.reshuffle();
-                    Action::None
-                }
-                Control::View => {
-                    self.toggle_view();
-                    Action::None
-                }
-                Control::Filter => {
-                    self.filter_active = true;
-                    Action::None
-                }
-                Control::Filters => Action::OpenFilters,
-                Control::Menu => self.menu(self.cursor),
-            },
             Hit::Header(h) => {
                 let Source::Artist(id) = self.source else {
                     return Action::None;
@@ -1253,19 +1220,18 @@ impl Browse {
         hover: Option<Hit>,
     ) {
         self.geom = Geom::default();
-        let area = rows::page(area);
         if area.width < 4 || area.height == 0 {
             return;
         }
         self.ensure_loaded();
         thumbs.begin_frame();
         gfx.begin_frame();
-        self.render_toolbar(area, buf, theme, hover);
+        // A row clear under the shell's toolbar.
         let mut body = Rect::new(
             area.x,
-            area.y + 2,
+            area.y + 1,
             area.width,
-            area.height.saturating_sub(2),
+            area.height.saturating_sub(1),
         );
         if body.height == 0 {
             return;
@@ -1328,8 +1294,11 @@ impl Browse {
     }
 
     /// The page's title and count on the left; its filter, sort, view and
-    /// actions on the right.
-    fn render_toolbar(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme, hover: Option<Hit>) {
+    /// actions on the right, as the keys that do them.
+    pub fn toolbar(&self) -> crate::shell::Toolbar {
+        use crate::shell::{ToolItem, Toolbar};
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let key = |c| KeyEvent::from(KeyCode::Char(c));
         let title = match self.source {
             Source::Albums => "albums",
             Source::Artists => "artists",
@@ -1341,52 +1310,54 @@ impl Browse {
             Kind::Artists => "artist",
             Kind::Tracks => "track",
         };
+        let mut bar = Toolbar::new(title);
         // An artist's header says what the page holds.
-        let count = if self.loading() || matches!(self.source, Source::Artist(_)) {
-            String::new()
-        } else {
-            rows::count(self.total(), noun)
-        };
-        let mut items: Vec<(String, Control)> = Vec::new();
-        if self.filter_active || !self.filter.is_empty() {
-            let cursor = if self.filter_active { "\u{2588}" } else { "" };
-            items.push((format!("/{}{cursor}", self.filter), Control::Filter));
-        } else {
-            items.push(("/ filter".into(), Control::Filter));
+        if !self.loading() && !matches!(self.source, Source::Artist(_)) {
+            bar = bar.count(super::text::count(self.total(), noun));
         }
+        let filter = if self.filter_active || !self.filter.is_empty() {
+            let cursor = if self.filter_active { "\u{2588}" } else { "" };
+            format!("/{}{cursor}", self.filter)
+        } else {
+            "/ filter".into()
+        };
+        bar = bar.item(
+            ToolItem::new(filter, key('/'))
+                .on(!self.filter.is_empty())
+                .priority(5),
+        );
         if self.filterable() {
-            items.push((
-                match self.filters.active_count() {
-                    0 => "filters".to_string(),
-                    n => format!("filters ({n})"),
-                },
-                Control::Filters,
-            ));
+            let n = self.filters.active_count();
+            let label = match n {
+                0 => "filters".to_string(),
+                n => format!("filters ({n})"),
+            };
+            bar = bar.item(
+                ToolItem::new(
+                    label,
+                    KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+                )
+                .on(n > 0)
+                .priority(3),
+            );
         }
         if let Some(sort) = self.sort_label() {
-            items.push((format!("sort: {sort}"), Control::Sort));
+            bar = bar.item(ToolItem::new(format!("sort: {sort}"), key('o')).priority(4));
             if self.source == Source::Albums && self.album_sort == AlbumSort::Random {
-                items.push(("\u{2684} shuffle again".into(), Control::Reshuffle));
+                bar = bar.item(ToolItem::new("\u{2684} shuffle again", key('S')).priority(2));
             }
         }
         if self.kind() == Kind::Albums {
-            items.push((
-                match self.view {
-                    View::Tiles => "view: grid",
-                    View::List => "view: list",
-                }
-                .into(),
-                Control::View,
-            ));
+            let view = match self.view {
+                View::Tiles => "view: grid",
+                View::List => "view: list",
+            };
+            bar = bar.item(ToolItem::new(view, key('v')).priority(2));
         }
         if !self.is_empty() {
-            items.push(("\u{22ef} actions".into(), Control::Menu));
+            bar = bar.item(ToolItem::new("\u{22ef} actions", key('m')).priority(1));
         }
-        let hovered = match hover {
-            Some(Hit::Control(c)) => Some(c),
-            _ => None,
-        };
-        self.geom.controls = rows::toolbar(buf, area, theme, title, &count, &items, hovered);
+        bar
     }
 
     fn render_tiles(
@@ -1576,8 +1547,8 @@ impl Browse {
                     if cols.tail.w == ARTIST_TAIL {
                         let quiet = emphasis.quiet(theme);
                         let end = cols.tail.x + cols.tail.w;
-                        let albums = rows::count(a.album_count.max(0) as u64, "album");
-                        let tracks = rows::count(a.track_count.max(0) as u64, "track");
+                        let albums = super::text::count(a.album_count.max(0) as u64, "album");
+                        let tracks = super::text::count(a.track_count.max(0) as u64, "track");
                         rows::put_right(buf, end - 12, row.y, 10, &albums, quiet);
                         rows::put_right(buf, end, row.y, 11, &tracks, quiet);
                     }
@@ -1972,23 +1943,12 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn the_toolbar_controls_are_hits() {
+    fn the_toolbar_offers_each_control_as_its_key() {
         let mut b = browse(3);
         draw(&mut b, 100, 24);
-        for c in [
-            Control::Filter,
-            Control::Filters,
-            Control::Sort,
-            Control::View,
-            Control::Menu,
-        ] {
-            let (r, _) = b
-                .geom
-                .controls
-                .iter()
-                .find(|(_, k)| *k == c)
-                .unwrap_or_else(|| panic!("{c:?} is drawn"));
-            assert_eq!(b.hit(r.x, r.y), Some(Hit::Control(c)));
+        let keys: Vec<_> = b.toolbar().items.iter().map(|i| i.key.code).collect();
+        for c in ['/', 'f', 'o', 'v', 'm'] {
+            assert!(keys.contains(&KeyCode::Char(c)), "{c}");
         }
     }
 
@@ -2000,10 +1960,10 @@ pub(super) mod tests {
         }
         draw(&mut b, 120, 24);
         assert!(
-            b.geom
-                .controls
+            b.toolbar()
+                .items
                 .iter()
-                .any(|(_, c)| *c == Control::Reshuffle)
+                .any(|i| i.key.code == KeyCode::Char('S'))
         );
         let (seed, asked) = (b.seed, b.asked);
         b.handle_key(key(KeyCode::Char('S')));

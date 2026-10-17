@@ -7,16 +7,15 @@
 //! lays the row out, drops the least important controls when it is narrow,
 //! and gives the page the rect below it with the gutters taken off.
 
-use std::borrow::Cow;
 use std::cell::RefCell;
 
 use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::{Modifier, Style};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::NavTarget;
+use crate::text::{fit, width};
 use crate::theme::Theme;
 
 /// Rows between the top of the content area and the toolbar.
@@ -43,48 +42,6 @@ pub fn content(area: Rect) -> Rect {
 pub fn inset(area: Rect) -> Rect {
     let side = SIDE_GUTTER.min(area.width / 2);
     Rect::new(area.x + side, area.y, area.width - 2 * side, area.height)
-}
-
-/// How many cells `s` takes.
-pub fn width(s: &str) -> usize {
-    UnicodeWidthStr::width(s)
-}
-
-/// `s` cut to `w` cells, ending in `…` when anything was cut. Never splits a
-/// wide character: one that would straddle the edge is dropped with the rest.
-pub fn fit(s: &str, w: usize) -> Cow<'_, str> {
-    if width(s) <= w {
-        return Cow::Borrowed(s);
-    }
-    if w == 0 {
-        return Cow::Borrowed("");
-    }
-    let mut out = String::new();
-    let mut used = 0;
-    for c in s.chars() {
-        let cw = c.width().unwrap_or(0);
-        if used + cw > w - 1 {
-            break;
-        }
-        out.push(c);
-        used += cw;
-    }
-    out.push('…');
-    Cow::Owned(out)
-}
-
-/// `s` fitted to exactly `w` cells, padded on the right: a column's cell.
-pub fn fit_pad(s: &str, w: usize) -> String {
-    let cut = fit(s, w);
-    let pad = w - width(&cut);
-    format!("{cut}{}", " ".repeat(pad))
-}
-
-/// `s` fitted to exactly `w` cells, padded on the left: a duration, a count.
-pub fn fit_pad_right(s: &str, w: usize) -> String {
-    let cut = fit(s, w);
-    let pad = w - width(&cut);
-    format!("{}{cut}", " ".repeat(pad))
 }
 
 /// One of a page's controls in the toolbar.
@@ -382,18 +339,6 @@ impl Links {
 mod tests {
     use super::*;
     use crossterm::event::KeyCode;
-
-    #[test]
-    fn fitting_measures_cells_and_ends_in_an_ellipsis() {
-        assert_eq!(fit("abc", 3), "abc");
-        assert_eq!(fit("abcdef", 4), "abc…");
-        // Each of these takes two cells; none is split at the edge.
-        assert_eq!(fit("東京事変", 5), "東京…");
-        assert_eq!(width(&fit("東京事変", 4)), 3);
-        assert_eq!(fit("abc", 0), "");
-        assert_eq!(width(&fit_pad("東京事変", 5)), 5);
-        assert_eq!(fit_pad_right("3:07", 6), "  3:07");
-    }
 
     #[test]
     fn a_modal_never_leaves_half_a_wide_character_at_its_edge() {

@@ -103,8 +103,6 @@ pub enum ShelfHit {
     Link(Target),
     Input,
     Clear,
-    View,
-    Menu,
 }
 
 /// Where everything goes for one width: each item's place in the page as if
@@ -128,7 +126,6 @@ struct Geom {
     bar: Rect,
     input: Rect,
     clear: Rect,
-    controls: Vec<(Rect, ShelfHit)>,
     items: Vec<(Rect, usize)>,
     links: Vec<(Rect, Target)>,
 }
@@ -800,9 +797,6 @@ impl ShelfPage {
         if inside(&g.input, col, row) {
             return Some(ShelfHit::Input);
         }
-        if let Some((_, h)) = g.controls.iter().find(|(r, _)| inside(r, col, row)) {
-            return Some(*h);
-        }
         if let Some((_, t)) = g.links.iter().find(|(r, _)| inside(r, col, row)) {
             return Some(ShelfHit::Link(*t));
         }
@@ -823,11 +817,6 @@ impl ShelfPage {
                 self.typing = true;
                 Action::None
             }
-            ShelfHit::View => {
-                self.toggle_view();
-                Action::None
-            }
-            ShelfHit::Menu => self.menu(self.cursor),
             ShelfHit::Link(Target::Album(id)) => Action::OpenAlbum(id),
             ShelfHit::Link(Target::Artist(id)) => Action::OpenArtist(id),
             ShelfHit::Item(i) => {
@@ -864,6 +853,34 @@ impl ShelfPage {
     }
 
     /// The whole shelf's counts, not the preview's, of the kinds it has.
+    /// The shelf's title, what it holds, and its view and actions.
+    pub fn toolbar(&self) -> crate::shell::Toolbar {
+        use crate::shell::{ToolItem, Toolbar};
+        use crossterm::event::{KeyCode, KeyEvent};
+        let mut bar = Toolbar::new(self.kind.title());
+        let counts = self.counts();
+        if !counts.is_empty() {
+            bar = bar.count(counts);
+        }
+        if self
+            .summary
+            .as_ref()
+            .is_some_and(|s| !s.albums.preview.is_empty())
+        {
+            let view = match self.view {
+                View::Tiles => "view: grid",
+                View::List => "view: list",
+            };
+            bar = bar.item(ToolItem::new(view, KeyEvent::from(KeyCode::Char('v'))).priority(2));
+        }
+        if self.count() > 0 {
+            bar = bar.item(
+                ToolItem::new("\u{22ef} actions", KeyEvent::from(KeyCode::Char('m'))).priority(1),
+            );
+        }
+        bar
+    }
+
     fn counts(&self) -> String {
         let Some(s) = &self.summary else {
             return String::new();
@@ -875,7 +892,7 @@ impl ShelfPage {
         ]
         .into_iter()
         .filter(|(n, _)| *n > 0)
-        .map(|(n, noun)| rows::count(n, noun))
+        .map(|(n, noun)| super::text::count(n, noun))
         .collect::<Vec<_>>()
         .join(" \u{b7} ")
     }
@@ -892,42 +909,13 @@ impl ShelfPage {
         hover: Option<ShelfHit>,
     ) {
         self.geom = Geom::default();
-        let area = rows::page(area);
-        if area.width < 8 || area.height < 3 {
+        if area.width < 8 || area.height < 2 {
             return;
         }
         thumbs.begin_frame();
         gfx.begin_frame();
-        let mut controls = Vec::new();
-        if self
-            .summary
-            .as_ref()
-            .is_some_and(|s| !s.albums.preview.is_empty())
-        {
-            controls.push((
-                match self.view {
-                    View::Tiles => "view: grid",
-                    View::List => "view: list",
-                }
-                .to_string(),
-                ShelfHit::View,
-            ));
-        }
-        if self.count() > 0 {
-            controls.push(("\u{22ef} actions".to_string(), ShelfHit::Menu));
-        }
-        let hovered = hover.filter(|h| matches!(h, ShelfHit::View | ShelfHit::Menu));
-        let counts = self.counts();
-        self.geom.controls = rows::toolbar(
-            buf,
-            area,
-            theme,
-            self.kind.title(),
-            &counts,
-            &controls,
-            hovered,
-        );
-        let mut top = area.y + 2;
+        // A row clear under the shell's toolbar.
+        let mut top = area.y + 1;
         if self.searching() {
             self.render_box(Rect::new(area.x, top, area.width, 1), buf, theme, hover);
             top += 2;
@@ -1274,8 +1262,11 @@ mod tests {
         let at = |s: &str| text.iter().position(|l| l.contains(s)).unwrap();
         assert!(at("artists 23") < at("albums 2"));
         assert!(at("albums 2") < at("tracks 4"));
-        // The toolbar, under the page's top gutter.
-        assert!(text[1].contains("23 artists \u{b7} 2 albums \u{b7} 4 tracks"));
+        // The counts are the shell's toolbar's.
+        assert_eq!(
+            p.toolbar().count.as_deref(),
+            Some("23 artists \u{b7} 2 albums \u{b7} 4 tracks")
+        );
     }
 
     #[test]

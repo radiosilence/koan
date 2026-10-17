@@ -6,31 +6,10 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthStr;
 
+use super::text::fit;
 use super::theme::Theme;
-
-/// `text` cut to `width` cells, with an ellipsis where it was cut.
-pub fn fit(text: &str, width: usize) -> String {
-    if text.width() <= width {
-        return text.to_string();
-    }
-    if width == 0 {
-        return String::new();
-    }
-    let mut cut = String::new();
-    let mut used = 0;
-    for c in text.chars() {
-        let w = c.width().unwrap_or(0);
-        if used + w > width - 1 {
-            break;
-        }
-        cut.push(c);
-        used += w;
-    }
-    cut.push('\u{2026}');
-    cut
-}
 
 /// Draws `text` at `x`, `y` in at most `width` cells, cut with an ellipsis;
 /// returns where it landed, for a link to be hit.
@@ -315,89 +294,9 @@ pub fn heading(
     clickable
 }
 
-/// A page's content area: a row clear at the top and a column at each side.
-pub fn page(area: Rect) -> Rect {
-    Rect::new(
-        area.x + 1,
-        area.y + 1,
-        area.width.saturating_sub(2),
-        area.height.saturating_sub(1),
-    )
-}
-
-/// A page's toolbar row: its title and count on the left, its controls on
-/// the right in order. A control that does not fit whole is left off rather
-/// than cut, the last first. Returns where each control landed.
-pub fn toolbar<C: Copy + PartialEq>(
-    buf: &mut Buffer,
-    area: Rect,
-    theme: &Theme,
-    title: &str,
-    count: &str,
-    controls: &[(String, C)],
-    hovered: Option<C>,
-) -> Vec<(Rect, C)> {
-    let y = area.y;
-    let end = area.x + area.width;
-    let t = put(
-        buf,
-        area.x,
-        y,
-        area.width,
-        title,
-        theme.heading.add_modifier(Modifier::BOLD),
-    );
-    let mut x = t.x + t.width;
-    if !count.is_empty() && x + 2 < end {
-        let c = put(buf, x + 2, y, end - x - 2, count, theme.hint_desc);
-        x = c.x + c.width;
-    }
-    // Two cells between controls, and at least two after the count.
-    let widths: Vec<u16> = controls.iter().map(|(c, _)| c.width() as u16).collect();
-    let mut shown = controls.len();
-    while shown > 0 {
-        let need: u16 = widths[..shown].iter().sum::<u16>() + 2 * shown as u16;
-        if x + need <= end {
-            break;
-        }
-        shown -= 1;
-    }
-    let need: u16 = widths[..shown].iter().sum::<u16>() + 2 * shown.saturating_sub(1) as u16;
-    let mut cx = end.saturating_sub(need);
-    let mut out = Vec::with_capacity(shown);
-    for ((text, control), w) in controls.iter().zip(&widths).take(shown) {
-        let style = link(theme.hint_desc, hovered == Some(*control));
-        let at = put(buf, cx, y, *w, text, style);
-        out.push((at, *control));
-        cx += w + 2;
-    }
-    out
-}
-
-/// "1 album", "3 albums".
-pub fn count(n: u64, noun: &str) -> String {
-    if n == 1 {
-        format!("1 {noun}")
-    } else {
-        format!("{n} {noun}s")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn text_is_cut_by_cells() {
-        assert_eq!(fit("short", 10), "short");
-        assert_eq!(fit("a longer title", 8), "a longe\u{2026}");
-        assert_eq!(fit("anything", 0), "");
-        // Each of these is two cells wide: four fit in eight with no ellipsis,
-        // and in seven three do, then the ellipsis.
-        assert_eq!(fit("日本語版", 8), "日本語版");
-        assert_eq!(fit("日本語版", 7), "日本語\u{2026}");
-        assert!(fit("日本語版", 6).width() <= 6);
-    }
 
     #[test]
     fn columns_fit_inside_the_row_at_any_width() {
