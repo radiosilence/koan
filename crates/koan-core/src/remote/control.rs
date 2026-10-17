@@ -47,7 +47,7 @@ pub fn serve(
             .name("koan-link-commands".into())
             .spawn(move || {
                 for (cmd, source, pending) in inbox {
-                    let outcome = match apply(cmd, source, &tx, &state) {
+                    let outcome = match apply(cmd, source, &tx, &state, &|| {}) {
                         Ok(()) => AckOutcome::Done,
                         Err(error) => {
                             log::warn!("link: {error}");
@@ -147,11 +147,15 @@ fn parse_qids(ids: &[String]) -> Result<Vec<QueueItemId>, String> {
 }
 
 /// Act on what another device asked of this one, as player commands.
+/// `library_changed` is told when the command brought rows into the library
+/// or changed what is on disk, for a front end whose pages have to read them
+/// again.
 pub fn apply(
     cmd: LinkCommand,
     source: CommandSource,
     tx: &Sender<PlayerCommand>,
     state: &SharedPlayerState,
+    library_changed: &dyn Fn(),
 ) -> Result<(), String> {
     let send = |cmd: PlayerCommand| {
         tx.send(cmd)
@@ -165,11 +169,21 @@ pub fn apply(
             .get()
             .map_err(|e| format!("library: {e}"))
     };
+    let resolve = |db: &Database, ids: &[String]| {
+        let (found, synced) = crate::remote::link::resolve_each(db, ids, may_sync);
+        if synced {
+            library_changed();
+        }
+        found
+    };
+    let items_of = |db: &Database, ids: &[i64]| {
+        let rows = queries::tracks_by_ids(&db.conn, ids).unwrap_or_default();
+        crate::helpers::playlist_items_for_tracks(db, &rows)
+    };
     let items = |track_ids: &[String]| -> Result<Vec<PlaylistItem>, String> {
         let db = db()?;
-        let (ids, _) = crate::remote::link::resolve_tracks(&db, track_ids, may_sync);
-        let rows = queries::tracks_by_ids(&db.conn, &ids).unwrap_or_default();
-        Ok(crate::helpers::playlist_items_for_tracks(&db, &rows))
+        let ids: Vec<i64> = resolve(&db, track_ids).into_iter().flatten().collect();
+        Ok(items_of(&db, &ids))
     };
     match cmd {
         LinkCommand::Play {
@@ -183,35 +197,38 @@ pub fn apply(
             // The music is coming back here: stop controlling whatever this
             // was controlling.
             if handoff && devices::target().is_some() {
+                log::info!("link: handed the music; taking control back");
                 devices::set_target(None);
             }
-            let items = items(&track_ids)?;
+            let db = db()?;
+            let found = resolve(&db, &track_ids);
+            let (start, position_ms) = start_among(&found, start_at as usize, position_ms);
+            let ids: Vec<i64> = found.into_iter().flatten().collect();
+            let items = items_of(&db, &ids);
             if items.is_empty() {
                 return Err(format!(
                     "none of {} tracks are in the library",
                     track_ids.len()
                 ));
             }
-            let start = (start_at as usize).min(items.len() - 1);
             send(PlayerCommand::ReplacePlaylist {
+                start: start.min(items.len() - 1),
                 items,
-                start,
                 position_ms,
                 play: !paused,
                 mode,
             })
         }
-        LinkCommand::Enqueue { track_ids } => {
+        LinkCommand::Enqueue { track_ids, play } => {
             let items = items(&track_ids)?;
-            let Some(first) = items.first().map(|i| i.id) else {
+            if items.is_empty() {
                 return Ok(());
-            };
-            let was_stopped = state.is_idle();
-            send(PlayerCommand::AddToPlaylist(items))?;
-            if was_stopped {
-                send(PlayerCommand::Play(first))?;
             }
-            Ok(())
+            if play || state.is_idle() {
+                send(PlayerCommand::AddAndPlay(items))
+            } else {
+                send(PlayerCommand::AddToPlaylist(items))
+            }
         }
         LinkCommand::PlayNext { track_ids } => {
             let items = items(&track_ids)?;
@@ -233,18 +250,19 @@ pub fn apply(
         }
         LinkCommand::JumpTo { track_id } => {
             let db = db()?;
-            let (found, _) =
-                crate::remote::link::resolve_tracks(&db, std::slice::from_ref(&track_id), may_sync);
-            let Some(&local) = found.first() else {
+            let Some(local) = resolve(&db, std::slice::from_ref(&track_id))
+                .first()
+                .copied()
+                .flatten()
+            else {
                 return Err(format!("track {track_id} is not in the library"));
             };
             let (queued, cursor) = state.snapshot_playlist();
             if let Some(item) = queued.iter().find(|i| i.db_id == Some(local)) {
                 return send(PlayerCommand::Play(item.id));
             }
-            let rows = queries::tracks_by_ids(&db.conn, &[local]).unwrap_or_default();
-            let Some(item) = crate::helpers::playlist_items_for_tracks(&db, &rows).pop() else {
-                return Ok(());
+            let Some(item) = items_of(&db, &[local]).pop() else {
+                return Err(format!("track {track_id} is not in the library"));
             };
             let id = item.id;
             match cursor {
@@ -258,8 +276,7 @@ pub fn apply(
         }
         LinkCommand::Remove { track_ids } => {
             let db = db()?;
-            let (found, _) = crate::remote::link::resolve_tracks(&db, &track_ids, may_sync);
-            let found: HashSet<i64> = found.into_iter().collect();
+            let found: HashSet<i64> = resolve(&db, &track_ids).into_iter().flatten().collect();
             let (queued, _) = state.snapshot_playlist();
             let gone: Vec<QueueItemId> = queued
                 .iter()
@@ -297,12 +314,27 @@ pub fn apply(
         LinkCommand::Shuffle { on } => send(PlayerCommand::SetShuffle(on)),
         LinkCommand::Repeat { mode } => send(PlayerCommand::SetRepeat(mode)),
         LinkCommand::SleepTimer { timer } => send(PlayerCommand::SetSleepTimer(timer)),
-        LinkCommand::HandOff { to } => hand_off(&to, source, tx, state),
+        // Asked for by another device, which learns the outcome from what
+        // the destination reports. Refused there, the music plays on here.
+        LinkCommand::HandOff { to } => {
+            let was_playing = state.playback_state() != PlaybackState::Paused;
+            let player = tx.clone();
+            let then: devices::Then = Box::new(move |outcome| {
+                let refused = matches!(
+                    outcome,
+                    Some(AckOutcome::Refused { .. } | AckOutcome::Failed { .. })
+                );
+                if refused && was_playing {
+                    let _ = player.send(PlayerCommand::Resume);
+                }
+            });
+            hand_off(&to, source, tx, state, Some(then)).map(|_| ())
+        }
         // From a notification tapped or an outbox: the link's own check,
         // made again.
         LinkCommand::Shared { command } => {
             if command.allowed_playback() {
-                apply(*command, CommandSource::Shared, tx, state)?;
+                apply(*command, CommandSource::Shared, tx, state, library_changed)?;
             }
             Ok(())
         }
@@ -319,20 +351,29 @@ pub fn apply(
         }
         LinkCommand::Evict { track_ids } => {
             let db = db()?;
-            let (ids, _) = crate::remote::link::resolve_tracks(&db, &track_ids, may_sync);
+            let ids: Vec<i64> = resolve(&db, &track_ids).into_iter().flatten().collect();
             let rows = queries::tracks_by_ids(&db.conn, &ids).unwrap_or_default();
             for path in rows.iter().filter_map(|t| t.cached_path.as_deref()) {
                 let _ = std::fs::remove_file(path);
             }
             queries::clear_cached_paths_for(&db.conn, &ids).map_err(|e| e.to_string())?;
+            log::info!("link: evicted {} cached tracks", ids.len());
+            library_changed();
             Ok(())
         }
         LinkCommand::HistoryChanged => {
-            crate::remote::history::sync(&*db()?);
+            // History and Recently played follow `player::history::changed`,
+            // which the sync rings; a track it had to sync for is the
+            // library's news too.
+            if crate::remote::history::sync(&*db()?).library_synced {
+                library_changed();
+            }
             Ok(())
         }
         LinkCommand::DspProfilesChanged => {
             if crate::remote::dsp_sync::sync(&*db()?).changed() {
+                // Pages showing profiles follow the library.
+                library_changed();
                 send(PlayerCommand::ReloadDsp)?;
             }
             Ok(())
@@ -344,6 +385,7 @@ pub fn apply(
                 crate::helpers::Walk::IfChanged
             };
             crate::remote::link::sync(&*db()?, walk);
+            library_changed();
             Ok(())
         }
         // Answered by the link session itself.
@@ -357,15 +399,43 @@ pub fn apply(
     }
 }
 
+/// Where a `Play` starts once the tracks this library lacks are left out: on
+/// the track asked for, or the next one that remains, from the start when
+/// none does. The playhead holds only on the track asked for itself.
+fn start_among(found: &[Option<i64>], start_at: usize, position_ms: u64) -> (usize, u64) {
+    let start = found.iter().take(start_at).filter(|f| f.is_some()).count();
+    let kept = found.get(start_at).is_some_and(|f| f.is_some());
+    let remaining = found.iter().skip(start_at).any(|f| f.is_some());
+    match (kept, remaining) {
+        (true, _) => (start, position_ms),
+        (false, true) => (start, 0),
+        (false, false) => (0, 0),
+    }
+}
+
+/// Music sent to another device by `hand_off`.
+pub struct HandOff {
+    /// Tracks left out because the server does not have them.
+    pub left_out: u32,
+    /// The server's id for the track the destination should now be on.
+    pub track: String,
+    /// What the destination last reported before the music was sent.
+    pub before: Option<LinkState>,
+    /// This device was playing, and should play on if the music is refused.
+    pub was_playing: bool,
+}
+
 /// Send this device's queue and playhead to `to`, asked by `source`, and
-/// pause here. The tracks the server does not know are left out, since the
-/// other device could not play them.
+/// pause here; `then` is handed the destination's answer. The tracks the
+/// server does not know are left out, since the other device could not play
+/// them.
 pub fn hand_off(
     to: &str,
     source: CommandSource,
     tx: &Sender<PlayerCommand>,
     state: &SharedPlayerState,
-) -> Result<(), String> {
+    then: Option<devices::Then>,
+) -> Result<HandOff, String> {
     let (items, cursor) = state.snapshot_playlist();
     let remote = crate::db::pool::shared()
         .get()
@@ -403,6 +473,9 @@ pub fn hand_off(
     } else {
         0
     };
+    let left_out = (items.len() - kept.len()) as u32;
+    let track = kept[start_at].1.clone();
+    let before = devices::last_report(to);
     let play = LinkCommand::Play {
         track_ids: kept.into_iter().map(|(_, r)| r).collect(),
         start_at: start_at as u32,
@@ -411,13 +484,19 @@ pub fn hand_off(
         handoff: true,
         mode: QueueMode::Keep,
     };
-    if let Err(e) = devices::send_for(source, to, play) {
+    if let Err(e) = devices::send_for_then(source, to, play, then) {
         if !paused {
             let _ = tx.send(PlayerCommand::Resume);
         }
         return Err(e);
     }
-    Ok(())
+    log::info!("devices: sent the queue to {to}, {left_out} left out");
+    Ok(HandOff {
+        left_out,
+        track,
+        before,
+        was_playing: !paused,
+    })
 }
 
 /// Control the device `id`, or this one with `None`. This one pauses, and
@@ -454,7 +533,9 @@ pub fn move_music(
         return Ok(());
     }
     match (&from, &to) {
-        (None, Some(to)) => hand_off(to, CommandSource::Account, tx, state)?,
+        (None, Some(to)) => {
+            hand_off(to, CommandSource::Account, tx, state, None)?;
+        }
         (Some(from), to) => {
             let to = match to {
                 Some(to) => to.clone(),
@@ -469,33 +550,49 @@ pub fn move_music(
     Ok(())
 }
 
+/// Why a command for the device being controlled did not reach it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SendError {
+    /// It names music that device cannot play.
+    Unplayable(String),
+    /// The device could not be reached.
+    Missed(String),
+    /// This device's player has stopped.
+    Stopped,
+}
+
+impl std::fmt::Display for SendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unplayable(m) | Self::Missed(m) => f.write_str(m),
+            Self::Stopped => f.write_str("the player has stopped"),
+        }
+    }
+}
+
 /// Send `cmd` to the device being controlled, as the link carries it, or to
 /// this device's player when none is. A command for music that cannot reach
 /// that device plays here instead, and control comes back here.
-pub fn send(cmd: PlayerCommand, tx: &Sender<PlayerCommand>) -> Result<(), String> {
+pub fn send(cmd: PlayerCommand, tx: &Sender<PlayerCommand>) -> Result<(), SendError> {
+    let here_now = |cmd| tx.send(cmd).map_err(|_| SendError::Stopped);
     let Some(to) = devices::target() else {
-        return tx
-            .send(cmd)
-            .map_err(|_| "the player has stopped".to_string());
+        return here_now(cmd);
     };
     let here = cmd.instead_here();
-    let link = match to_link(cmd)? {
+    let link = match to_link(cmd).map_err(SendError::Unplayable)? {
         Routed::There(link) => link,
-        Routed::Here(local) => {
-            return tx
-                .send(local)
-                .map_err(|_| "the player has stopped".to_string());
-        }
+        Routed::Here(local) => return here_now(local),
         Routed::Dropped => return Ok(()),
     };
     match (devices::send_reaching(&to, link), here) {
         (Ok(()), _) => Ok(()),
+        // Asked for music the controlled device cannot be reached to play:
+        // this device plays it, and stops controlling that one.
         (Err(Missed::OutOfReach(_)), Some(here)) => {
             devices::fall_back(&to, here.asks_to_play());
-            tx.send(here)
-                .map_err(|_| "the player has stopped".to_string())
+            here_now(here)
         }
-        (Err(missed), _) => Err(missed.into_message()),
+        (Err(missed), _) => Err(SendError::Missed(missed.into_message())),
     }
 }
 
@@ -510,30 +607,34 @@ pub enum Routed {
     Dropped,
 }
 
+/// The server's id for each item's track, in order, `None` where the server
+/// has none. Only a device playing from the same library can resolve them,
+/// and a list the server has none of cannot be sent at all.
+fn server_ids(items: &[PlaylistItem]) -> Result<Vec<Option<String>>, String> {
+    if !devices::target_device().is_some_and(|d| d.same_library) {
+        return Err("that device plays from a different library".into());
+    }
+    let remote = crate::db::pool::shared()
+        .get()
+        .map(|db| remote_ids(&db, items))
+        .unwrap_or_default();
+    let out: Vec<Option<String>> = items
+        .iter()
+        .map(|i| i.db_id.and_then(|id| remote.get(&id).cloned()))
+        .collect();
+    if out.iter().all(Option::is_none) {
+        return Err("none of these are on the server, so the other device cannot play them".into());
+    }
+    Ok(out)
+}
+
 /// A player command as the device being controlled is sent it. Queue entries
 /// are named by the ids that device reported them under; tracks by the
-/// server's ids, which only a device playing from the same library can
-/// resolve.
+/// server's ids.
 pub fn to_link(cmd: PlayerCommand) -> Result<Routed, String> {
     let entry = |id: QueueItemId| id.0.to_string();
     let tracks = |items: &[PlaylistItem]| -> Result<Vec<String>, String> {
-        if !devices::target_device().is_some_and(|d| d.same_library) {
-            return Err("that device plays from a different library".into());
-        }
-        let remote = crate::db::pool::shared()
-            .get()
-            .map(|db| remote_ids(&db, items))
-            .unwrap_or_default();
-        let out: Vec<String> = items
-            .iter()
-            .filter_map(|i| i.db_id.and_then(|id| remote.get(&id).cloned()))
-            .collect();
-        if out.is_empty() {
-            return Err(
-                "none of these are on the server, so the other device cannot play them".into(),
-            );
-        }
-        Ok(out)
+        Ok(server_ids(items)?.into_iter().flatten().collect())
     };
     Ok(Routed::There(match cmd {
         PlayerCommand::Play(id) => LinkCommand::PlayItem { id: entry(id) },
@@ -547,6 +648,11 @@ pub fn to_link(cmd: PlayerCommand) -> Result<Routed, String> {
         PlayerCommand::SetSleepTimer(timer) => LinkCommand::SleepTimer { timer },
         PlayerCommand::AddToPlaylist(items) => LinkCommand::Enqueue {
             track_ids: tracks(&items)?,
+            play: false,
+        },
+        PlayerCommand::AddAndPlay(items) => LinkCommand::Enqueue {
+            track_ids: tracks(&items)?,
+            play: true,
         },
         PlayerCommand::InsertInPlaylist { items, after } => LinkCommand::Insert {
             track_ids: tracks(&items)?,
@@ -559,21 +665,12 @@ pub fn to_link(cmd: PlayerCommand) -> Result<Routed, String> {
             play,
             mode,
         } => {
-            // Where `start` lands once the tracks the server lacks are left
-            // out: on it, or on the next one that remains.
-            let track_ids = tracks(&items)?;
-            let remote = crate::db::pool::shared()
-                .get()
-                .map(|db| remote_ids(&db, &items))
-                .unwrap_or_default();
-            let start_at = items
-                .iter()
-                .take(start)
-                .filter(|i| i.db_id.is_some_and(|id| remote.contains_key(&id)))
-                .count();
+            let ids = server_ids(&items)?;
+            let found: Vec<Option<i64>> = ids.iter().map(|r| r.as_ref().map(|_| 0)).collect();
+            let (start_at, position_ms) = start_among(&found, start, position_ms);
             LinkCommand::Play {
-                start_at: start_at.min(track_ids.len().saturating_sub(1)) as u32,
-                track_ids,
+                track_ids: ids.into_iter().flatten().collect(),
+                start_at: start_at as u32,
                 position_ms,
                 paused: !play,
                 handoff: false,
@@ -629,4 +726,35 @@ pub fn to_link(cmd: PlayerCommand) -> Result<Routed, String> {
         | PlayerCommand::RestorePlayMode(_)
         | PlayerCommand::Renderer { .. }) => return Ok(Routed::Here(local)),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_play_starts_on_the_track_asked_for_among_those_found() {
+        let found = [Some(1), None, Some(3), Some(4)];
+        // On it, with its playhead.
+        assert_eq!(start_among(&found, 2, 500), (1, 500));
+        // Missing: the next one found, from its start.
+        assert_eq!(start_among(&found, 1, 500), (1, 0));
+        // Missing and nothing after: from the top.
+        assert_eq!(start_among(&[Some(1), None], 1, 500), (0, 0));
+        assert_eq!(start_among(&found, 0, 0), (0, 0));
+    }
+
+    #[test]
+    fn an_enqueue_that_does_not_play_reads_as_it_always_did() {
+        let plain = LinkCommand::Enqueue {
+            track_ids: vec!["t".into()],
+            play: false,
+        };
+        let json = serde_json::to_value(&plain).unwrap();
+        assert!(json.get("play").is_none(), "{json}");
+        let old: LinkCommand =
+            serde_json::from_value(serde_json::json!({"type": "enqueue", "trackIds": ["t"]}))
+                .unwrap();
+        assert_eq!(old, plain);
+    }
 }

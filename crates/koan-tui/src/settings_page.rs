@@ -81,6 +81,16 @@ pub enum SettingsHit {
     Remove(usize),
 }
 
+/// A row as the cursor remembers it across a rebuild.
+#[derive(Debug, Clone, PartialEq)]
+enum RowId {
+    Item(Setting),
+    Action(Task),
+    Folder(std::path::PathBuf),
+    Connection(Option<u64>, Option<String>, String),
+    Held(String),
+}
+
 enum Entry {
     Section(&'static str),
     Item(Setting),
@@ -395,18 +405,50 @@ impl SettingsPage {
         page
     }
 
-    /// Read the connections again when the devices have moved.
+    /// Read the connections again when the devices have moved, and lay the
+    /// page out again only when they are not what it shows.
     pub fn follow_devices(&mut self) {
-        if koan_core::remote::devices::version() != self.devices_seen {
-            self.reload();
+        let version = koan_core::remote::devices::version();
+        if version == self.devices_seen {
+            return;
+        }
+        self.devices_seen = version;
+        let connections = koan_core::remote::connections::list();
+        let held = koan_core::remote::connections::held();
+        if connections != self.connections || held != self.held {
+            let was = self.row_id(self.cursor);
+            self.connections = connections;
+            self.held = held;
+            self.rebuild(was);
         }
     }
 
     pub fn reload(&mut self) {
+        let was = self.row_id(self.cursor);
         self.cfg = Config::cached();
         self.devices_seen = koan_core::remote::devices::version();
         self.connections = koan_core::remote::connections::list();
         self.held = koan_core::remote::connections::held();
+        self.rebuild(was);
+    }
+
+    /// What the row at `idx` is, whatever place it has: the cursor stays on
+    /// it when rows above it come and go.
+    fn row_id(&self, idx: usize) -> Option<RowId> {
+        Some(match self.entries.get(idx)? {
+            Entry::Item(s) => RowId::Item(*s),
+            Entry::Action(t) => RowId::Action(*t),
+            Entry::Folder(f) => RowId::Folder(self.cfg.library.folders.get(*f)?.clone()),
+            Entry::Connection(c) => {
+                let c = self.connections.get(*c)?;
+                RowId::Connection(c.key, c.id.clone(), c.name.clone())
+            }
+            Entry::Held(h) => RowId::Held(self.held.get(*h)?.addr.clone()),
+            Entry::Section(_) | Entry::Info(..) => return None,
+        })
+    }
+
+    fn rebuild(&mut self, was: Option<RowId>) {
         let cfg = &self.cfg;
         let mut entries = vec![
             Entry::Section("playback"),
@@ -455,6 +497,12 @@ impl SettingsPage {
         }
         entries.extend((0..folders.len()).map(Entry::Folder));
         self.entries = entries;
+        if let Some(at) = was.and_then(|was| {
+            (0..self.entries.len()).find(|&i| self.row_id(i).as_ref() == Some(&was))
+        }) {
+            self.cursor = at;
+            return;
+        }
         self.cursor = self.cursor.min(self.entries.len() - 1);
         if !selectable(&self.entries[self.cursor]) {
             self.cursor = self.step_item(self.cursor, true).unwrap_or(1);

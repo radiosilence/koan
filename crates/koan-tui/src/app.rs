@@ -224,6 +224,8 @@ pub struct ArtState {
 pub struct App {
     pub mode: Mode,
     pub state: Arc<SharedPlayerState>,
+    /// `state`, for what reads it off the main thread: the media keys.
+    pub shown: Arc<parking_lot::RwLock<Arc<SharedPlayerState>>>,
     /// Where commands go: this player, or the device it controls.
     pub tx: Sender<PlayerCommand>,
     /// This player's own channel, whatever is controlled.
@@ -425,7 +427,8 @@ impl App {
         Self {
             mode: Mode::Normal,
             state: state.clone(),
-            tx: super::control::router(tx.clone()),
+            shown: Arc::new(parking_lot::RwLock::new(state.clone())),
+            tx: super::control::router(tx.clone(), task_channel.0.clone()),
             local_tx: tx,
             quit: false,
             last_skip: None,
@@ -1208,6 +1211,17 @@ impl App {
         ));
     }
 
+    /// Whether the pages show this device, rather than one it controls.
+    /// Its output and EQ are changed only then: they would not be the
+    /// controlled device's, and nothing changes it here behind the music.
+    fn this_device_shown(&mut self) -> bool {
+        if koan_core::remote::devices::target().is_none() {
+            return true;
+        }
+        self.say("output and EQ are this terminal's; choose this terminal in Play on (C) first");
+        false
+    }
+
     fn say(&mut self, text: impl Into<String>) {
         self.status_message = Some((text.into(), std::time::Instant::now()));
     }
@@ -1943,8 +1957,13 @@ impl App {
             KeyCode::Char('f') => {
                 // Toggle favourite for the track at cursor.
                 let visible = self.visible_queue();
-                if let Some(id) = visible.get(self.queue.cursor).and_then(|e| e.db_id) {
-                    self.toggle_favourite(id);
+                if let Some(e) = visible.get(self.queue.cursor) {
+                    match e.db_id {
+                        Some(id) => {
+                            self.toggle_favourite(id);
+                        }
+                        None => self.say("that track is not in this library"),
+                    }
                 }
             }
             KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1961,13 +1980,19 @@ impl App {
                 self.tx.send(PlayerCommand::Redo).ok();
             }
             KeyCode::Char('D') => {
-                self.open_device_selector();
+                if self.this_device_shown() {
+                    self.open_device_selector();
+                }
             }
             KeyCode::Char('C') => {
                 self.play_on = Some(super::control::PlayOnState::new(&self.view.local));
                 self.push_mode(Mode::PlayOn);
             }
-            KeyCode::Char('E') => self.open_dsp_selector(),
+            KeyCode::Char('E') => {
+                if self.this_device_shown() {
+                    self.open_dsp_selector();
+                }
+            }
             KeyCode::Char('w') => {
                 let ids = self.queue_choice();
                 self.open_chooser(ids);
@@ -2000,6 +2025,7 @@ impl App {
     pub fn follow_control(&mut self) {
         let shown = self.view.state().clone();
         if !Arc::ptr_eq(&shown, &self.state) {
+            *self.shown.write() = shown.clone();
             self.state = shown;
             // The two states count versions apart.
             self.queue.vq_version = u64::MAX;

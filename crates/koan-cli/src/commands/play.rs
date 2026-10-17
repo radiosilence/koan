@@ -67,15 +67,6 @@ pub fn cmd_play(
     let (state, _timeline, viz_snapshot, tx) = Player::spawn_for_listening();
     let tx_quit = tx.clone();
 
-    // Reachable as a device: by the account's other devices through the
-    // server, and by whatever is on this network, as `devices.*` says.
-    koan_core::remote::control::serve(
-        koan_core::remote::link::LinkIdentity::terminal(),
-        state.clone(),
-        viz_snapshot.clone(),
-        tx.clone(),
-    );
-
     // Spawn the API server on a background thread if requested.
     if let Some(opts) = api_opts {
         let db_path = config::db_path();
@@ -111,14 +102,18 @@ pub fn cmd_play(
 
     let mut expects_playback = track_ids.is_some() || !paths.is_empty();
 
+    // What this session starts with, being read on a thread of its own.
+    let mut startup = None;
     if let Some(ids) = track_ids {
         let tx_bg = tx.clone();
-        std::thread::Builder::new()
-            .name("koan-resolve".into())
-            .spawn(move || {
-                enqueue_playlist(ids, PickerAction::AppendAndPlay, None, tx_bg);
-            })
-            .expect("failed to spawn resolve thread");
+        startup = Some(
+            std::thread::Builder::new()
+                .name("koan-resolve".into())
+                .spawn(move || {
+                    enqueue_playlist(ids, PickerAction::AppendAndPlay, None, tx_bg);
+                })
+                .expect("failed to spawn resolve thread"),
+        );
     } else if !paths.is_empty() {
         for path in paths {
             if !path.exists() {
@@ -128,37 +123,37 @@ pub fn cmd_play(
         }
         let owned_paths: Vec<PathBuf> = paths.to_vec();
         let tx_bg = tx.clone();
-        std::thread::Builder::new()
-            .name("koan-resolve".into())
-            .spawn(move || {
-                let mut audio_paths: Vec<PathBuf> = Vec::new();
-                for path in &owned_paths {
-                    if path.is_dir() {
-                        let mut dir_files: Vec<PathBuf> = jwalk::WalkDir::new(path)
-                            .follow_links(true)
-                            .into_iter()
-                            .filter_map(|e| e.ok())
-                            .filter(|e| e.file_type().is_file())
-                            .filter(|e| koan_core::index::metadata::is_audio_file(&e.path()))
-                            .map(|e| e.path())
-                            .collect();
-                        dir_files.sort();
-                        audio_paths.extend(dir_files);
-                    } else {
-                        audio_paths.push(path.clone());
+        startup = Some(
+            std::thread::Builder::new()
+                .name("koan-resolve".into())
+                .spawn(move || {
+                    let mut audio_paths: Vec<PathBuf> = Vec::new();
+                    for path in &owned_paths {
+                        if path.is_dir() {
+                            let mut dir_files: Vec<PathBuf> = jwalk::WalkDir::new(path)
+                                .follow_links(true)
+                                .into_iter()
+                                .filter_map(|e| e.ok())
+                                .filter(|e| e.file_type().is_file())
+                                .filter(|e| koan_core::index::metadata::is_audio_file(&e.path()))
+                                .map(|e| e.path())
+                                .collect();
+                            dir_files.sort();
+                            audio_paths.extend(dir_files);
+                        } else {
+                            audio_paths.push(path.clone());
+                        }
                     }
-                }
-                if audio_paths.is_empty() {
-                    return;
-                }
-                let items = playlist_items_from_paths(&audio_paths, None);
-                if let Some(first) = items.first() {
-                    let first_id = first.id;
-                    tx_bg.send(PlayerCommand::AddToPlaylist(items)).ok();
-                    tx_bg.send(PlayerCommand::Play(first_id)).ok();
-                }
-            })
-            .expect("failed to spawn resolve thread");
+                    if audio_paths.is_empty() {
+                        return;
+                    }
+                    let items = playlist_items_from_paths(&audio_paths, None);
+                    if !items.is_empty() {
+                        tx_bg.send(PlayerCommand::AddAndPlay(items)).ok();
+                    }
+                })
+                .expect("failed to spawn resolve thread"),
+        );
     } else if !clear_queue
         && let Ok(db) = koan_core::db::pool::shared().get()
         && let Ok(Some(persisted)) = queries::load_playback_state(&db.conn)
@@ -193,6 +188,29 @@ pub fn cmd_play(
             }
             expects_playback = true;
         }
+    }
+
+    // Reachable as a device: by the account's other devices through the
+    // server, and by whatever is on this network, as `devices.*` says. Not
+    // before the session it starts with is in the player: a device that
+    // connected sooner would be told an empty queue, and could replace it
+    // before the restore landed on top.
+    {
+        let (state, viz, tx) = (state.clone(), viz_snapshot.clone(), tx.clone());
+        std::thread::Builder::new()
+            .name("koan-serve".into())
+            .spawn(move || {
+                if let Some(startup) = startup {
+                    let _ = startup.join();
+                }
+                koan_core::remote::control::serve(
+                    koan_core::remote::link::LinkIdentity::terminal(),
+                    state,
+                    viz,
+                    tx,
+                );
+            })
+            .expect("failed to spawn the serve thread");
     }
 
     let callbacks = TuiCallbacks {

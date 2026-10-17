@@ -2422,6 +2422,16 @@ impl Player {
                 self.shared_state.add_items(items);
                 self.push_undo(UndoEntry::Added { ids });
             }
+            PlayerCommand::AddAndPlay(items) => {
+                let ids: Vec<QueueItemId> = items.iter().map(|i| i.id).collect();
+                self.shared_state.add_items(items);
+                self.push_undo(UndoEntry::Added { ids: ids.clone() });
+                self.revoke_stale_lookahead();
+                if let Some(&first) = ids.first() {
+                    self.shared_state.pick(first);
+                    self.play(first);
+                }
+            }
             PlayerCommand::UpdatePaths(updates) => {
                 self.shared_state.update_paths(&updates);
                 if let Transport::Loaded(session) = &mut self.transport

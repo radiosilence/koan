@@ -17,8 +17,12 @@ use koan_core::player::state::{
 use koan_core::remote::devices::{self, Device};
 use koan_core::remote::link::{LinkQueueEntry, LinkState};
 
-/// A channel that sends each command where the terminal is pointed.
-pub fn router(local: Sender<PlayerCommand>) -> Sender<PlayerCommand> {
+/// A channel that sends each command where the terminal is pointed. What
+/// does not get there is said on the status line, through `report`.
+pub fn router(
+    local: Sender<PlayerCommand>,
+    report: Sender<crate::tasks::Report>,
+) -> Sender<PlayerCommand> {
     let (tx, rx) = crossbeam_channel::bounded::<PlayerCommand>(16);
     std::thread::Builder::new()
         .name("koan-control".into())
@@ -26,6 +30,7 @@ pub fn router(local: Sender<PlayerCommand>) -> Sender<PlayerCommand> {
             for cmd in rx {
                 if let Err(e) = koan_core::remote::control::send(cmd, &local) {
                     log::warn!("play on: {e}");
+                    report.send(crate::tasks::Report::Work(e.to_string())).ok();
                 }
             }
         })
@@ -85,11 +90,16 @@ impl View {
         };
         if report.queue != self.queue {
             self.queue = report.queue.clone();
+            let local = local_ids(device, &self.queue);
             let items: Vec<PlaylistItem> = self
                 .queue
                 .iter()
+                .zip(local)
                 .enumerate()
-                .map(|(n, e)| item(n, e))
+                .map(|(n, (e, db_id))| PlaylistItem {
+                    db_id,
+                    ..item(n, e)
+                })
                 .collect();
             let cursor = self
                 .queue
@@ -116,6 +126,31 @@ impl View {
         m.set_sleep(report.sleep);
         m.set_position_ms(device.position_ms());
     }
+}
+
+/// The tracks of a device playing from this library, as this library's own:
+/// what hearts, covers and track info name them by. Never a sync: a track
+/// this library lacks stays unnamed.
+fn local_ids(device: &Device, queue: &[LinkQueueEntry]) -> Vec<Option<i64>> {
+    let none = || vec![None; queue.len()];
+    if !device.same_library {
+        return none();
+    }
+    let Ok(db) = koan_core::db::pool::shared().get() else {
+        return none();
+    };
+    let named: Vec<(usize, String)> = queue
+        .iter()
+        .enumerate()
+        .filter_map(|(n, e)| e.track_id.clone().map(|t| (n, t)))
+        .collect();
+    let ids: Vec<String> = named.iter().map(|(_, t)| t.clone()).collect();
+    let (found, _) = koan_core::remote::link::resolve_each(&db, &ids, false);
+    let mut out = none();
+    for ((n, _), id) in named.into_iter().zip(found) {
+        out[n] = id;
+    }
+    out
 }
 
 fn state_of(report: &LinkState) -> PlaybackState {

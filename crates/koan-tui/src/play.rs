@@ -185,7 +185,11 @@ pub fn run_tui(
 
     app.load_favourites();
 
-    let mut media = crate::media_keys::MediaKeyHandler::new(app.tx.clone(), app.state.clone());
+    let mut media = crate::media_keys::MediaKeyHandler::new(
+        app.tx.clone(),
+        app.shown.clone(),
+        app.view.local.clone(),
+    );
     let mut last_track_path: Option<PathBuf> = None;
 
     let mut last_autosave = std::time::Instant::now();
@@ -479,6 +483,13 @@ pub fn run_tui(
         if app.quit {
             if app.has_played {
                 save_playback_state_from_app(&app);
+            }
+            // Behind whatever the router still holds: a barrier through it
+            // reaches this player once every command before it has gone where
+            // it was going.
+            let (reply, drained) = crossbeam_channel::bounded(1);
+            if app.tx.send(PlayerCommand::Barrier(reply)).is_ok() {
+                let _ = drained.recv_timeout(Duration::from_secs(1));
             }
             app.local_tx.send(PlayerCommand::Stop).ok();
             app.art.gfx.release_all();

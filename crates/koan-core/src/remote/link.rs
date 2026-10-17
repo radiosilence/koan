@@ -54,10 +54,13 @@ pub enum LinkCommand {
         #[serde(default, skip_serializing_if = "QueueMode::is_keep")]
         mode: QueueMode,
     },
-    /// Append these tracks to the queue.
+    /// Append these tracks to the queue, and with `play` start the first of
+    /// them. A device that does not know `play` only appends.
     #[serde(rename_all = "camelCase")]
     Enqueue {
         track_ids: Vec<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        play: bool,
     },
     /// Insert these tracks after the current one.
     #[serde(rename_all = "camelCase")]
@@ -402,7 +405,7 @@ impl LinkCommand {
     pub fn track_ids(&self) -> &[String] {
         match self {
             Self::Play { track_ids, .. }
-            | Self::Enqueue { track_ids }
+            | Self::Enqueue { track_ids, .. }
             | Self::PlayNext { track_ids }
             | Self::Remove { track_ids }
             | Self::Evict { track_ids }
@@ -492,7 +495,7 @@ impl LinkCommand {
     pub fn track_ids_mut(&mut self) -> Vec<&mut String> {
         match self {
             Self::Play { track_ids, .. }
-            | Self::Enqueue { track_ids }
+            | Self::Enqueue { track_ids, .. }
             | Self::PlayNext { track_ids }
             | Self::Remove { track_ids }
             | Self::Evict { track_ids }
@@ -1154,6 +1157,17 @@ pub fn resolve_tracks(
     remote_ids: &[String],
     may_sync: bool,
 ) -> (Vec<i64>, bool) {
+    let (found, synced) = resolve_each(db, remote_ids, may_sync);
+    (found.into_iter().flatten().collect(), synced)
+}
+
+/// `resolve_tracks`, one answer per id asked for: `None` where it is still
+/// missing.
+pub fn resolve_each(
+    db: &crate::db::connection::Database,
+    remote_ids: &[String],
+    may_sync: bool,
+) -> (Vec<Option<i64>>, bool) {
     let lookup = |db: &crate::db::connection::Database| {
         let mut stmt = db
             .conn
@@ -1178,7 +1192,7 @@ pub fn resolve_tracks(
         .map(|(id, _)| id)
         .collect();
     if missing.is_empty() || !may_sync || missing.iter().all(|id| recently_missed(id)) {
-        return (found.into_iter().flatten().collect(), false);
+        return (found, false);
     }
     sync(db, crate::helpers::Walk::IfChanged);
     let found = lookup(db);
@@ -1188,7 +1202,7 @@ pub fn resolve_tracks(
     for (id, _) in remote_ids.iter().zip(&found).filter(|(_, f)| f.is_none()) {
         missed.insert(id.clone(), now);
     }
-    (found.into_iter().flatten().collect(), true)
+    (found, true)
 }
 
 /// Ids a sync looked for and did not find, and when.
@@ -1362,6 +1376,7 @@ mod tests {
             },
             LinkCommand::Enqueue {
                 track_ids: ids.clone(),
+                play: false,
             },
             LinkCommand::HandOff { to: "x".into() },
             LinkCommand::SetRendererVolume { volume: 1 },

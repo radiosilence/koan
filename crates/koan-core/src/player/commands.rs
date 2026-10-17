@@ -35,6 +35,10 @@ pub enum PlayerCommand {
     NextTrack,
     PrevTrack,
     AddToPlaylist(Vec<PlaylistItem>),
+    /// Append these items and play the first of them, as one command: sent
+    /// on to a controlled device it stays one, where an add and a `Play`
+    /// would name an entry that device never had.
+    AddAndPlay(Vec<PlaylistItem>),
     RemoveFromPlaylist(QueueItemId),
     /// Batch remove: delete multiple items as a single undoable operation.
     RemoveFromPlaylistBatch(Vec<QueueItemId>),
@@ -230,6 +234,7 @@ impl PlayerCommand {
         matches!(
             self,
             Self::Play(_)
+                | Self::AddAndPlay(_)
                 | Self::Cue { play: true, .. }
                 | Self::Resume
                 | Self::NextTrack
@@ -249,6 +254,7 @@ impl PlayerCommand {
             Self::NextTrack => Self::NextTrack,
             Self::PrevTrack => Self::PrevTrack,
             Self::AddToPlaylist(items) => Self::AddToPlaylist(items.clone()),
+            Self::AddAndPlay(items) => Self::AddAndPlay(items.clone()),
             Self::InsertInPlaylist { items, after } => Self::InsertInPlaylist {
                 items: items.clone(),
                 after: *after,
