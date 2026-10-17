@@ -518,8 +518,12 @@ pub fn refresh() {
     }
     reconfigure();
     redial_all();
+    // A network change reaches here too, and must not end a pause that
+    // `suspend` or `devices.nearby` set.
     #[cfg(any(target_vendor = "apple", target_os = "android"))]
-    discovery::restart();
+    if crate::quiet::awake() && enabled() {
+        discovery::restart();
+    }
 }
 
 /// Whether a dialer here could reach `id`: nearby is running and the device

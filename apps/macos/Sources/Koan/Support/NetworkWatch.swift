@@ -55,12 +55,9 @@ final class NetworkWatch: @unchecked Sendable {
             guard path.status == .satisfied else { return }
             // Off the watch's queue: renewing the clients and restarting
             // nearby discovery can take a while, and updates wait behind it.
-            let tell = DispatchWorkItem { [weak self] in
-                guard let engine = self?.engine else { return }
-                DispatchQueue.global(qos: .utility).async { engine.networkChanged() }
-            }
+            let tell = DispatchWorkItem { [weak self] in self?.engine.networkChanged() }
             pending = tell
-            queue.asyncAfter(deadline: .now() + 1, execute: tell)
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1, execute: tell)
         }
         monitor.start(queue: queue)
     }
