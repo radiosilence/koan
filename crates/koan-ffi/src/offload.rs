@@ -321,7 +321,11 @@ mod tests {
                 seen.lock().push(i);
             });
         }
-        release.send(()).unwrap();
+        drop(held);
+        // Fails rather than hangs if the held save already gave up.
+        release
+            .send_timeout((), std::time::Duration::from_secs(5))
+            .unwrap();
         let read = after_saves({
             let seen = seen.clone();
             move || seen.lock().clone()

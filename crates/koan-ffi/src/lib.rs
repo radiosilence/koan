@@ -6278,11 +6278,6 @@ impl KoanEngine {
     }
 }
 
-/// Rebuild playlist items for a saved queue.
-///
-/// Anything still in the library is re-resolved so cache paths and downloads
-/// are correct; anything that has since gone keeps the copy stored in the
-/// snapshot, so a restore never silently drops tracks.
 /// Save one `[appearance]` key on the settings lane (see `offload::save`).
 fn save_appearance(key: &'static str, mutate: impl FnOnce(&mut Config) + Send + 'static) {
     offload::save(move || {
@@ -6292,6 +6287,11 @@ fn save_appearance(key: &'static str, mutate: impl FnOnce(&mut Config) + Send + 
     });
 }
 
+/// Rebuild playlist items for a saved queue.
+///
+/// Anything still in the library is re-resolved so cache paths and downloads
+/// are correct; anything that has since gone keeps the copy stored in the
+/// snapshot, so a restore never silently drops tracks.
 fn restore_items(db: &Database, saved: &[PersistedQueueItem]) -> Vec<PlaylistItem> {
     // By uid first, which no other track can have taken. Then, for a session
     // saved before uids were, by id: a saved path names the container it was

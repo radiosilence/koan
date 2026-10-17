@@ -176,7 +176,6 @@ class EngineMirror(deviceName: String) {
     private var baseIndex = emptyMap<String, Int>()
 
     init {
-        scope.launch { _appearance.value = opened.await().appearance() }
         scope.launch {
             val stream = opened.await().observe()
             while (true) {
@@ -219,13 +218,15 @@ class EngineMirror(deviceName: String) {
     }
 
     /**
-     * Appearance changes in the order they were made. The engine saves them
-     * in the order it is handed them, and a coroutine each on
-     * `Dispatchers.Default` could hand over a quick on-then-off reversed.
+     * Appearance changes, handed to the engine in the order they were made,
+     * which is the order it saves them in. The one coroutine that reads them
+     * is also the only writer of [appearance], so the first read cannot land
+     * over a change.
      */
     private val appearanceChanges = Channel<KoanEngine.() -> Unit>(Channel.UNLIMITED).also { changes ->
         scope.launch {
             val engine = opened.await()
+            _appearance.value = engine.appearance()
             for (change in changes) {
                 try {
                     engine.change()
