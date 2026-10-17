@@ -1175,7 +1175,7 @@ impl KoanEngine {
                 &db.conn,
                 &queries::AlbumQuery {
                     features_of: Some(artist_id),
-                    order: album_order(AlbumSort::Year, 0),
+                    order: queries::AlbumOrder::YearDesc,
                     filter: offline_filter(),
                     ..Default::default()
                 },
