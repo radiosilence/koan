@@ -9,7 +9,8 @@ import SwiftUI
 /// `rule`, hung from the control that opens it with no arrow. `NSPopover` is a
 /// rounded pane of glass whose chrome nothing reaches, so the theme draws its
 /// own. It opens on whichever side of the control has more of the window, so a
-/// control in the transport opens upwards and one in the toolbar downwards.
+/// control in the transport opens upwards and one in the toolbar downwards,
+/// and towards the window's middle, so one at the right edge opens leftwards.
 /// A click outside it, Escape, or the app going to the background closes it,
 /// as a transient popover does.
 struct KoanPanelAnchor<Panel: View>: NSViewRepresentable {
@@ -165,22 +166,32 @@ final class KoanPanelCoordinator: NSObject, NSWindowDelegate {
         MainActor.assumeIsolated { place() }
     }
 
-    /// Beside the anchor, on the side of it with more of the parent window,
-    /// its leading edge on the anchor's and kept on the screen.
+    /// Beside the anchor, on the side of it with more of the window, and
+    /// running from it towards the window's middle: a control at the right
+    /// edge opens leftwards, its trailing edge on the anchor's. Kept inside
+    /// the window where it fits, and on the screen.
     private func place() {
         guard let window, let anchor, let parent = anchor.window else { return }
         let top = window.parent ?? parent
         let gap: CGFloat = 4
         let button = parent.convertToScreen(anchor.convert(anchor.bounds, to: nil))
         let size = window.frame.size
+        // The window under every panel: a panel opened from another is kept
+        // in the page's window, not its parent panel.
+        var page = top
+        while page is KoanPanelWindow, let up = page.parent { page = up }
         // A toolbar in full screen is a strip of a window: the screen is the
         // room there.
-        let room = parent === top ? parent.frame : (top.screen?.visibleFrame ?? top.frame)
+        let room = parent === top ? page.frame : (top.screen?.visibleFrame ?? top.frame)
         let above = button.midY < room.midY
+        let leftwards = button.midX > room.midX
         var origin = CGPoint(
-            x: button.minX,
+            x: leftwards ? button.maxX - size.width : button.minX,
             y: above ? button.maxY + gap : button.minY - gap - size.height
         )
+        if size.width <= room.width {
+            origin.x = min(max(origin.x, room.minX), room.maxX - size.width)
+        }
         if let screen = (top.screen ?? NSScreen.main)?.visibleFrame {
             origin.x = min(max(origin.x, screen.minX), screen.maxX - size.width)
             origin.y = min(max(origin.y, screen.minY), screen.maxY - size.height)

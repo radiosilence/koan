@@ -5,7 +5,7 @@ extension KoanGlyph {
     static let all: [String: KoanGlyph] = [
         "account": KoanGlyph(name: "account", symbols: ["person.crop.circle"], strokes: "M3.5 3.5L20.5 3.5L20.5 20.5L3.5 20.5ZM8.5 10C8.5 8.067 10.067 6.5 12 6.5C13.933 6.5 15.5 8.067 15.5 10C15.5 11.933 13.933 13.5 12 13.5C10.067 13.5 8.5 11.933 8.5 10ZM6.5 20.5C6.5 17.462 8.962 15 12 15C15.038 15 17.5 17.462 17.5 20.5"),
         "add-to-queue": KoanGlyph(name: "add-to-queue", symbols: ["text.append"], strokes: "M4 6L20 6M4 11L20 11M4 16L11 16M16.5 13L16.5 21M12.5 17L20.5 17"),
-        "airplay": KoanGlyph(name: "airplay", symbols: ["airplayaudio"], strokes: "M12 15.5L17 21L7 21ZM8.54 10C9.256 8.766 10.574 8.007 12 8.007C13.426 8.007 14.744 8.766 15.46 10M5.07 8C6.499 5.523 9.141 3.997 12 3.997C14.859 3.997 17.501 5.523 18.93 8"),
+        "airplay": KoanGlyph(name: "airplay", symbols: ["airplayaudio"], strokes: "M12 15.5L17 21L7 21ZM9.79 15.33C8.319 14.355 7.661 12.531 8.17 10.842C8.679 9.152 10.235 7.996 12 7.996C13.765 7.996 15.321 9.152 15.83 10.842C16.339 12.531 15.681 14.355 14.21 15.33M7.08 18.31C4.387 16.209 3.324 12.63 4.435 9.4C5.545 6.17 8.584 4.002 12 4.002C15.416 4.002 18.455 6.17 19.565 9.4C20.676 12.63 19.613 16.209 16.92 18.31"),
         "album": KoanGlyph(name: "album", symbols: ["square.stack"], strokes: "M4 7.5L16.5 7.5L16.5 20L4 20ZM7.5 4L20 4L20 16.5"),
         "alert": KoanGlyph(name: "alert", symbols: ["exclamationmark.circle", "exclamationmark.circle.fill"], strokes: "M4 4L20 4L20 20L4 20ZM12 7.5L12 13M11.75 16L12.25 16"),
         "appearance": KoanGlyph(name: "appearance", symbols: ["paintpalette"], strokes: "M3.5 3.5L10.5 3.5L10.5 10.5L3.5 10.5ZM13.5 3.5L20.5 3.5L20.5 10.5L13.5 10.5ZM3.5 13.5L10.5 13.5L10.5 20.5L3.5 20.5ZM17 13L21 17L17 21L13 17Z"),
