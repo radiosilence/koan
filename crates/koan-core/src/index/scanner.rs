@@ -871,7 +871,7 @@ mod tests {
         let ran = index_files(
             &db,
             files,
-            &[music.clone()],
+            std::slice::from_ref(&music),
             &opts,
             None,
             &mut result,
