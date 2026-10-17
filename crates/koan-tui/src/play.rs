@@ -42,8 +42,9 @@ struct Autosave {
     tx: Option<crossbeam_channel::Sender<Save>>,
     writer: Option<JoinHandle<()>>,
     /// Nothing is saved of the position before anything has played: a queue
-    /// restored and not yet started would save over where it was left.
-    has_played: bool,
+    /// restored and not yet started would save over where it was left. The
+    /// writer reads it too, for the queue saved meanwhile.
+    has_played: Arc<std::sync::atomic::AtomicBool>,
     content: u64,
     cursor: Option<QueueItemId>,
     playback: PlaybackState,
@@ -59,6 +60,8 @@ impl Autosave {
     fn start(state: Arc<SharedPlayerState>) -> Self {
         let (tx, rx) = crossbeam_channel::unbounded::<Save>();
         let writer_state = state.clone();
+        let has_played = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let played = has_played.clone();
         let writer = std::thread::Builder::new()
             .name("koan-autosave".into())
             .spawn(move || {
@@ -66,7 +69,7 @@ impl Autosave {
                     // Whatever queued up behind it is one write: the state is
                     // read when it is written.
                     let save = rx.try_iter().fold(first, Save::max);
-                    write(&writer_state, save);
+                    write(&writer_state, save, played.load(Ordering::Relaxed));
                 }
             })
             .ok();
@@ -78,7 +81,7 @@ impl Autosave {
             state,
             tx: Some(tx),
             writer,
-            has_played: false,
+            has_played,
             last_session: now,
             last_position: now,
         }
@@ -86,7 +89,10 @@ impl Autosave {
 
     fn tick(&mut self) {
         let playback = self.state.playback_state();
-        self.has_played |= playback == PlaybackState::Playing;
+        if playback == PlaybackState::Playing {
+            self.has_played.store(true, Ordering::Relaxed);
+        }
+        let has_played = self.has_played.load(Ordering::Relaxed);
         let content = self.state.saved_version();
         let cursor = self.state.cursor();
         let save =
@@ -94,7 +100,7 @@ impl Autosave {
                 self.content = content;
                 self.last_session = Instant::now();
                 Save::Session
-            } else if self.has_played
+            } else if has_played
                 && (playback != self.playback
                     || cursor != self.cursor
                     || (playback == PlaybackState::Playing
@@ -118,7 +124,7 @@ impl Autosave {
 
     /// Saves the session a last time, and waits until it is written.
     fn finish(mut self) {
-        if self.has_played {
+        if self.has_played.load(Ordering::Relaxed) {
             self.send(Save::Session);
         }
         self.tx = None;
@@ -128,7 +134,10 @@ impl Autosave {
     }
 }
 
-fn write(state: &SharedPlayerState, save: Save) {
+/// `played`: whether anything has played this session. Until it has, a save
+/// of the queue keeps the position already saved for the track under the
+/// cursor, which the restore is still cueing.
+fn write(state: &SharedPlayerState, save: Save, played: bool) {
     let db = match koan_core::db::pool::shared().get() {
         Ok(db) => db,
         Err(e) => {
@@ -163,12 +172,21 @@ fn write(state: &SharedPlayerState, save: Save) {
                 let cursor_path = cursor
                     .and_then(|cid| items.iter().find(|i| i.id == cid))
                     .map(|i| i.path.to_string_lossy().into_owned());
+                let (position_ms, playing) = if played {
+                    (state.position_ms(), playing)
+                } else {
+                    queries::load_playback_state(&db.conn)
+                        .ok()
+                        .flatten()
+                        .filter(|saved| saved.cursor_path == cursor_path)
+                        .map_or((0, false), |saved| (saved.position_ms, saved.was_playing))
+                };
                 queries::save_playback_state(
                     &db.conn,
                     &persisted,
                     state.play_mode(),
                     cursor_path.as_deref(),
-                    state.position_ms(),
+                    position_ms,
                     playing,
                 )
             }
