@@ -499,20 +499,24 @@ fn index_files(
     let reader = std::thread::Builder::new()
         .name("koan-scan-read".into())
         .spawn(move || {
-            // Stops at the first failed send (the consumer is gone) or cancel.
-            let _ = files_to_scan.par_iter().try_for_each(|file_path| {
-                if cancel
-                    .as_ref()
-                    .is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed))
-                {
-                    return Err(());
-                }
-                send.send((
-                    file_path.clone(),
-                    isolate_read(file_path, metadata::read_metadata),
-                ))
-                .map_err(|_| ())
-            });
+            // Stops at the first failed send (the consumer is gone) or cancel,
+            // and says whether it stopped short.
+            files_to_scan
+                .par_iter()
+                .try_for_each(|file_path| {
+                    if cancel
+                        .as_ref()
+                        .is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+                    {
+                        return Err(());
+                    }
+                    send.send((
+                        file_path.clone(),
+                        isolate_read(file_path, metadata::read_metadata),
+                    ))
+                    .map_err(|_| ())
+                })
+                .is_err()
         });
     if let Err(e) = &reader {
         log::error!("failed to spawn scan reader: {}", e);
@@ -610,10 +614,22 @@ fn index_files(
     // Dropped before the join: readers parked on a full channel only wake
     // when their send fails.
     drop(recv);
-    if let Ok(handle) = reader
-        && handle.join().is_err()
-    {
-        log::error!("scan reader thread panicked");
+    if let Ok(handle) = reader {
+        match handle.join() {
+            // A cancel that lands while the channel is empty stops the
+            // readers before they send again, and the loop above ends on an
+            // empty batch as though every file had been read.
+            Ok(true)
+                if opts
+                    .cancel
+                    .as_ref()
+                    .is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) =>
+            {
+                result.cancelled = true;
+            }
+            Ok(_) => {}
+            Err(_) => log::error!("scan reader thread panicked"),
+        }
     }
     true
 }
