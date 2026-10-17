@@ -4072,6 +4072,14 @@ impl KoanEngine {
         save_appearance("text_size", move |cfg| cfg.appearance.text_size = percent);
     }
 
+    /// How far the kōan theme holds the wash to its contrast limit, in percent
+    /// (see `appearance.wash_tint`). Saved in the background; the app redraws
+    /// from its own copy.
+    pub fn set_wash_tint(&self, percent: u8) {
+        let percent = percent.min(100);
+        save_appearance("wash_tint", move |cfg| cfg.appearance.wash_tint = percent);
+    }
+
     /// Wait for every setting still being saved to land. For the app to call as
     /// it quits, since a change made just before would otherwise go with the
     /// process: the theme, which takes effect on the next launch, most of all.
@@ -4096,6 +4104,7 @@ impl KoanEngine {
             wash_window: cfg.appearance.wash_window,
             rainbow: cfg.appearance.rainbow,
             text_size: cfg.appearance.text_size,
+            wash_tint: cfg.appearance.wash_tint.min(100),
         }
     }
 

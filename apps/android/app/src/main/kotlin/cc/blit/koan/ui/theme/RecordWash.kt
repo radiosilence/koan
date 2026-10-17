@@ -144,6 +144,7 @@ fun ProvideRecordWash(
     playing: Boolean,
     recordColours: Boolean,
     graphics: Graphics = Graphics.Full,
+    tint: Int = 100,
     content: @Composable () -> Unit,
 ) {
     val wash = remember { RecordWash() }
@@ -151,11 +152,13 @@ fun ProvideRecordWash(
     val tone = if (look.dark) WashTone.Dark else WashTone.Light
     val ground = (if (look.isOn) look.colors.bg else MaterialTheme.colorScheme.background).toArgb()
     val strength = RecordWash.strength(look.isOn)
+    // The theme tint is the kōan theme's; the platform's look holds the wash fully.
+    val hold = if (look.isOn) tint.coerceIn(0, 100) / 100.0 else 1.0
     val shown = WashRules.shown(recordColours, graphics)
-    LaunchedEffect(sleeve, pending, tone, ground, shown) {
+    LaunchedEffect(sleeve, pending, tone, ground, shown, hold) {
         if (pending && shown) return@LaunchedEffect
         val baked = sleeve?.takeIf { shown }?.let {
-            withContext(Dispatchers.Default) { bake(it, tone, ground, strength) }
+            withContext(Dispatchers.Default) { bake(it, tone, ground, strength, hold) }
         }
         wash.install(baked)
     }
@@ -173,13 +176,13 @@ fun ProvideRecordWash(
     CompositionLocalProvider(LocalRecordWash provides wash, content = content)
 }
 
-private fun bake(sleeve: Bitmap, tone: WashTone, ground: Int, strength: Float): ImageBitmap {
+private fun bake(sleeve: Bitmap, tone: WashTone, ground: Int, strength: Float, hold: Double): ImageBitmap {
     val side = WashBake.SIDE
     val small = sleeve.scale(side, side)
     val pixels = IntArray(side * side)
     small.getPixels(pixels, 0, side, 0, 0, side, side)
     if (small !== sleeve) small.recycle()
-    val baked = WashBake.bake(pixels, side, tone, ground, strength)
+    val baked = WashBake.bake(pixels, side, tone, ground, strength, hold)
     return Bitmap.createBitmap(baked, side, side, Bitmap.Config.ARGB_8888).asImageBitmap()
 }
 

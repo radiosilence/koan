@@ -2020,6 +2020,8 @@ pub struct Appearance {
     pub rainbow: bool,
     /// Text size on the Mac, in percent.
     pub text_size: u16,
+    /// How far the kōan theme holds the wash to its contrast limit, in percent.
+    pub wash_tint: u8,
 }
 
 /// Everything the settings window reads and writes.

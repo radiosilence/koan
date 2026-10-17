@@ -337,21 +337,32 @@ private extension CALayer {
 /// 4.6:1 — no brighter in dark mode, no darker in light. The hue survives; the
 /// brightness that would cost contrast does not. Run once per record and
 /// appearance, on the baked texture, which is small.
-enum WashTone: Sendable, Equatable {
-    case dark, light
+///
+/// `hold` is the person's "theme tint": how far each sample moves toward the
+/// limit, from 1, all the way, to 0, the sleeve as it is.
+struct WashTone: Sendable, Equatable {
+    enum Side: Sendable, Equatable { case dark, light }
+    let side: Side
+    var hold: Double = 1
+
+    static let dark = WashTone(side: .dark)
+    static let light = WashTone(side: .light)
+
+    func holding(_ hold: Double) -> WashTone { WashTone(side: side, hold: min(max(hold, 0), 1)) }
 
     /// Dark: no brighter than `muted` (`#919191`) at 4.6:1 allows. Light: no
     /// darker than keeps the wash, drawn at `KoanTheme.wash` over white, at
     /// least as light as `surface` (Y 0.888) — so anything that reads on
     /// `surface`, the accent and `bad` included, reads over the wash.
     private var limit: Double {
-        switch self {
+        switch side {
         case .dark: (0.2831 + 0.05) / 4.6 - 0.05
         case .light: 0.86
         }
     }
 
     nonisolated func apply(to image: CGImage) -> CGImage? {
+        guard hold > 0 else { return image }
         let width = image.width, height = image.height
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(
@@ -371,16 +382,16 @@ enum WashTone: Sendable, Equatable {
             let g = c <= 0.0031308 ? 12.92 * c : 1.055 * pow(c, 1 / 2.4) - 0.055
             return UInt8((g * 255).rounded())
         }
-        let limit = limit
+        let limit = limit, hold = hold
         for i in stride(from: 0, to: width * height * 4, by: 4) {
             var r = decode[Int(pixels[i])], g = decode[Int(pixels[i + 1])], b = decode[Int(pixels[i + 2])]
             let y = 0.2126 * r + 0.7152 * g + 0.0722 * b
-            switch self {
+            switch side {
             case .dark where y > limit:
-                let k = limit / y
+                let k = 1 + (limit / y - 1) * hold
                 r *= k; g *= k; b *= k
             case .light where y < limit:
-                let t = (limit - y) / (1 - y)
+                let t = (limit - y) / (1 - y) * hold
                 r += (1 - r) * t; g += (1 - g) * t; b += (1 - b) * t
             default:
                 continue

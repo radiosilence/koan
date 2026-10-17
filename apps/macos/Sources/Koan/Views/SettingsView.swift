@@ -1655,6 +1655,49 @@ private struct TextSizeSlider: View {
 }
 #endif
 
+#if !os(tvOS)
+/// "Theme tint": how far the kōan theme holds the wash to its contrast limit.
+/// Saved when the drag ends, so a drag is one bake and one write, not one per
+/// step.
+private struct WashTintSlider: View {
+    @Environment(AppearanceModel.self) private var appearance
+    @State private var draft: Double?
+    @State private var dragging = false
+
+    var body: some View {
+        let shown = Int(draft ?? Double(appearance.washTint))
+        LabeledContent {
+            KoanSlider(
+                "Theme tint",
+                value: Binding(
+                    get: { draft ?? Double(appearance.washTint) },
+                    set: { new in
+                        draft = new
+                        if !dragging { commit() }
+                    }
+                ),
+                in: 0...100,
+                step: 5,
+                onEditingChanged: { editing in
+                    dragging = editing
+                    if !editing { commit() }
+                },
+                low: { Text("full colour").koanText(.fine, .muted) },
+                high: { Text("held").koanText(.fine, .muted) }
+            )
+        } label: {
+            Text("Theme tint \(shown)%")
+        }
+    }
+
+    private func commit() {
+        guard let draft else { return }
+        self.draft = nil
+        appearance.washTint = Int(draft.rounded())
+    }
+}
+#endif
+
 private struct AppearanceSettings: View {
     @AppStorage("graphics") private var graphics = Graphics.full
     @Environment(AppearanceModel.self) private var appearance
@@ -1686,6 +1729,11 @@ private struct AppearanceSettings: View {
             }
             Section {
                 Toggle("Colours from the record", isOn: $appearance.recordColours).koanToggle()
+                #if !os(tvOS)
+                if KoanTheme.isOn, appearance.recordColours {
+                    WashTintSlider()
+                }
+                #endif
                 #if os(macOS)
                 if KoanTheme.isOn {
                     Toggle("Wash the whole window", isOn: $appearance.washWindow).koanToggle()
@@ -1694,7 +1742,7 @@ private struct AppearanceSettings: View {
             } header: {
                 KoanSectionHeader("Colour")
             } footer: {
-                Text("The record playing colours the window behind the page, and the accent on selection and progress. Off, there is no wash and the accent is kōan's mint, in either theme. Washing the whole window draws the sidebar, toolbar, transport and lyrics clear over it; off, they keep grounds of their own. That choice is provisional, while the look is decided.")
+                Text("The record playing colours the window behind the page, and the accent on selection and progress. Off, there is no wash and the accent is kōan's mint, in either theme. Theme tint, in the kōan theme, is how far the wash is darkened in dark mode, or lightened in light, so text over it keeps its contrast: at 0 the sleeve keeps its own colours. Washing the whole window draws the sidebar, toolbar, transport and lyrics clear over it; off, they keep grounds of their own. That choice is provisional, while the look is decided.")
                     .koanText(.fine, .muted)
             }
             Section {

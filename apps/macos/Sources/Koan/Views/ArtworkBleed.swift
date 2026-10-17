@@ -97,7 +97,7 @@ struct ArtworkBleed: View {
                 image: answered ?? nil,
                 pending: answered == nil,
                 drifts: breathes,
-                tone: scheme == .dark ? .dark : .light
+                tone: (scheme == .dark ? WashTone.dark : .light).holding(Double(appearance?.washTint ?? 100) / 100)
             )
             .overlay { disco }
             .opacity(KoanTheme.wash)

@@ -38,6 +38,18 @@ class WashTest {
     }
 
     @Test
+    fun theThemeTintBlendsFromTheSleeveToTheHold() {
+        // A bright sleeve, well above the dark limit, drawn at full strength so the ground plays no part.
+        val sleeve = solid(0xFF39FF14.toInt())
+        fun centre(hold: Double) = channels(WashBake.bake(sleeve, side, WashTone.Dark, darkBg, 1f, hold)[side * side / 2]).second
+        val free = centre(0.0)
+        val half = centre(0.5)
+        val held = centre(1.0)
+        assertEquals(channels(WashBake.bake(sleeve, side, WashTone.Dark, darkBg, 1f)[side * side / 2]).second, held)
+        assertTrue("free $free > half $half > held $held", free > half && half > held)
+    }
+
+    @Test
     fun theWashKeepsTheSleevesHue() {
         val red = WashBake.bake(solid(0xFFC0302A.toInt()), side, WashTone.Dark, darkBg, 0.6f)
         val blue = WashBake.bake(solid(0xFF2A50C0.toInt()), side, WashTone.Dark, darkBg, 0.6f)
