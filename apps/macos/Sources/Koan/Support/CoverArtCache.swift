@@ -203,7 +203,13 @@ final class CoverArtCache: Observable, @unchecked Sendable {
             let decoded = await ImageWork.ifWanted(priority: { [weak self] in self?.priority(of: record) ?? .ahead(.infinity) }) {
                 Self.decode(data, to: size, in: space)
             }
-            guard let decoded, let image = decoded else { return nil }
+            // Dropped before it ran: nobody wants it any longer.
+            guard let decoded else { return nil }
+            guard let image = decoded else {
+                // Bytes that do not decode will not decode next time either.
+                self.locked { _ = self.absent.insert(record) }
+                return nil
+            }
             // Full size belongs to whichever sheet asked for it and goes when
             // that sheet does. A bitmap matched to a display the window has
             // since left is drawn this once and not kept.

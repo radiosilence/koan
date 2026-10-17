@@ -834,11 +834,11 @@ final class AlbumTile: NSCollectionViewItem {
         // its tile shows, and a spinner is an AppKit control — a SwiftUI graph
         // of its own — that would be made for every tile that scrolls in.
         ensō.isHidden = false
-        // A tile made ahead of the scroll waits its turn behind the ones on
-        // screen; the grid promotes it as it comes into view.
-        let priority: ImageWork.Priority = view.visibleRect.isEmpty ? .ahead(.infinity) : .visible
+        // As on-screen work: the tile's view is not placed yet, so whether it
+        // shows cannot be told here. The grid's next aim ranks the ones made
+        // off screen down behind it.
         load = Task { [weak self] in
-            let image = await art.image(for: .album(id), size: .tile, priority: priority, aimed: true)
+            let image = await art.image(for: .album(id), size: .tile, priority: .visible, aimed: true)
             guard !Task.isCancelled, let self, self.album?.id == id else { return }
             guard let bitmap = image?.bitmap else {
                 if !art.isAbsent(.album(id)) {
