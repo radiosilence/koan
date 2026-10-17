@@ -50,6 +50,11 @@ const FADE_CHECK: std::time::Duration = std::time::Duration::from_millis(50);
 /// How long a DSP change waits for its fade before restarting regardless: an
 /// output that has stopped calling back never reports silence.
 const QUICK_FADE_LIMIT: std::time::Duration = std::time::Duration::from_millis(100);
+/// How long a pause waits for its fade before stopping the output regardless.
+/// A fade is the render callback's to finish, and a unit the system stopped
+/// underneath it — an interruption on iOS — never calls back: left running, it
+/// holds the audio session and wakes the player every `FADE_CHECK` for good.
+const PAUSE_FADE_LIMIT: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// How long output stays stopped before the audio session is given back. Long
 /// enough that pausing to answer someone does not hand the speaker to another
@@ -184,6 +189,8 @@ pub struct Player {
     /// restarts with the new one once that reaches silence. Changes made
     /// meanwhile ride the same restart, which loads whatever is current.
     dsp_restart: Option<std::time::Instant>,
+    /// A pause fading out, since when: see `PAUSE_FADE_LIMIT`.
+    pause_fade: Option<std::time::Instant>,
     /// Open the next session's output with a quick fade in: it follows a DSP
     /// change's quick fade out.
     quick_start: bool,
@@ -393,6 +400,7 @@ impl Player {
             session_release_at: None,
             dsp: None,
             dsp_restart: None,
+            pause_fade: None,
             quick_start: false,
             session: 0,
             silence_waiters: Vec::new(),
@@ -1569,7 +1577,10 @@ impl Player {
             Transport::Loaded(session) => {
                 if let Output::Local(local) = &session.output {
                     match fade {
-                        Fade::Short => local.engine.fade_out(),
+                        Fade::Short => {
+                            local.engine.fade_out();
+                            self.pause_fade = Some(std::time::Instant::now());
+                        }
                         Fade::Cut => {
                             if let Err(e) = local.engine.stop() {
                                 log::error!("pause failed: {}", e);
@@ -1593,6 +1604,7 @@ impl Player {
     /// position it was waiting to open at.
     pub fn resume(&mut self) {
         self.answer_silence();
+        self.pause_fade = None;
         if std::mem::take(&mut self.sleep_snap_on_resume) {
             self.set_sleep_gain(1.0, true);
         }
@@ -2011,12 +2023,21 @@ impl Player {
             && session.run == Run::Paused
             && let Some(engine) = session.engine()
             && engine.is_running()
-            && engine.is_silent()
         {
-            if let Err(e) = engine.stop() {
-                log::error!("stopping after fade failed: {}", e);
+            let silent = engine.is_silent();
+            let gave_out = self
+                .pause_fade
+                .is_some_and(|since| since.elapsed() >= PAUSE_FADE_LIMIT);
+            if silent || gave_out {
+                if !silent {
+                    log::info!("pause: output stopped calling back before its fade ended");
+                }
+                if let Err(e) = engine.stop() {
+                    log::error!("stopping after fade failed: {}", e);
+                }
+                self.pause_fade = None;
+                self.answer_silence();
             }
-            self.answer_silence();
         }
 
         if let Some(since) = self.dsp_restart {
@@ -3299,6 +3320,59 @@ mod tests {
             "nothing held"
         );
         assert_eq!(player.session_release_at, None);
+    }
+
+    /// An output the system stopped underneath the player: running as far as
+    /// the player knows, and never calling back, so never silent.
+    struct StoppedUnderneath {
+        running: Arc<std::sync::atomic::AtomicBool>,
+    }
+    impl AudioEngineHandle for StoppedUnderneath {
+        fn start(&self) -> Result<(), BackendError> {
+            self.running.store(true, Ordering::Relaxed);
+            Ok(())
+        }
+        fn stop(&self) -> Result<(), BackendError> {
+            self.running.store(false, Ordering::Relaxed);
+            Ok(())
+        }
+        fn is_running(&self) -> bool {
+            self.running.load(Ordering::Relaxed)
+        }
+        fn fade_out(&self) {}
+        fn fade_in(&self) -> Result<(), BackendError> {
+            Ok(())
+        }
+        fn is_silent(&self) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn a_pause_whose_fade_never_ends_still_stops_the_output() {
+        let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let mut player = Player::new();
+        player.transport = Transport::Loaded(test_session(
+            QueueItemId::new(),
+            Box::new(StoppedUnderneath {
+                running: running.clone(),
+            }),
+        ));
+        player.pause_with(Fade::Short);
+        player.update_playback_state();
+        assert!(
+            running.load(Ordering::Relaxed),
+            "the fade is given its time"
+        );
+        assert!(player.next_event().is_some(), "and looked at again");
+
+        if let Some(since) = player.pause_fade.as_mut() {
+            *since -= PAUSE_FADE_LIMIT;
+        }
+        player.update_playback_state();
+        assert!(!running.load(Ordering::Relaxed), "stopped once it ran out");
+        assert_eq!(player.next_event(), None, "nothing left to wake for");
+        assert!(!player.wants_output(), "so the audio session can go");
     }
 
     #[test]
