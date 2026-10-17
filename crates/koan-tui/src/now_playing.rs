@@ -516,6 +516,7 @@ fn draw_words(
     let dsp = dsp.as_ref();
     let playing = app.state.playback_state() == PlaybackState::Playing;
     let output = output_name(app);
+    let controlled = app.view.controlled.as_ref().map(|(n, r)| (n.as_str(), r));
     let theme = &app.theme;
     let hits = &mut app.layout.now_playing;
     let bottom = area.y + area.height;
@@ -681,6 +682,8 @@ fn draw_words(
                 ),
                 Some(Control::Sleep),
             ),
+            (Span::raw("   "), None),
+            transport::play_on(theme, controlled),
             (Span::raw("   "), None),
             (
                 Span::styled(format!("\u{25D4} {output}"), theme.hint_desc),
