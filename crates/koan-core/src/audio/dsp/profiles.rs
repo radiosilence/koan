@@ -788,7 +788,8 @@ pub struct ImportSummary {
 /// group of them called `name`, the first playing; parts of one profile
 /// combine into one called `name`. A file refused does not stop the others;
 /// each refusal is reported, and logged. A name already taken is never
-/// written over: it is numbered.
+/// written over: it is numbered. Once anything is saved this returns `Ok`,
+/// so the caller always reloads what was saved.
 pub fn import_files(
     paths: &[PathBuf],
     name: Option<&str>,
@@ -850,12 +851,26 @@ pub fn import_files(
                         .notes
                         .push(format!("{wanted} is taken; the group is {group}"));
                 }
-                make_group(&group, &summary.imported).map_err(ImportError::Failed)?;
-                summary.group = Some(group);
+                let made = make_group(&group, &summary.imported);
+                note_group(&mut summary, group, made);
             }
         }
     }
     Ok(summary)
+}
+
+/// The group an import's presets became, or, where it could not be made,
+/// why: the presets are saved either way, and stay imported.
+fn note_group(summary: &mut ImportSummary, group: String, made: Result<(), String>) {
+    match made {
+        Ok(()) => summary.group = Some(group),
+        Err(e) => {
+            log::warn!("dsp import: group {group}: {e}");
+            summary.notes.push(format!(
+                "the presets were imported, but not grouped as {group}: {e}"
+            ));
+        }
+    }
 }
 
 fn write_impulses(name: &str, imported: &Imported) -> Result<Vec<PathBuf>, String> {
@@ -4152,6 +4167,25 @@ mod tests {
         let r = response("Both", 48000).unwrap();
         assert!(at(&r, &r.total, 30.0).abs() < 0.3, "the shelf off");
         assert!(!r.layers[0].on);
+    }
+
+    /// A group that could not be made leaves the presets imported, and says
+    /// why, so the caller still has them played.
+    #[test]
+    fn a_group_refused_keeps_the_presets_imported() {
+        let mut summary = ImportSummary {
+            imported: vec!["Lush".into(), "Bright".into()],
+            ..Default::default()
+        };
+        note_group(&mut summary, "Qudelix".into(), Err("disk full".into()));
+        assert_eq!(
+            summary.imported,
+            vec!["Lush".to_owned(), "Bright".to_owned()]
+        );
+        assert_eq!(summary.group, None);
+        assert!(summary.notes[0].contains("not grouped as Qudelix: disk full"));
+        note_group(&mut summary, "Qudelix".into(), Ok(()));
+        assert_eq!(summary.group.as_deref(), Some("Qudelix"));
     }
 
     fn fresh_config() -> (std::sync::MutexGuard<'static, ()>, tempfile::TempDir) {
