@@ -148,7 +148,10 @@ pub fn hints(mode: &Mode, page: Page, filterable: bool) -> Vec<(&'static str, &'
                 ],
                 Page::Settings => vec![
                     ("\u{2191}\u{2193}", "move"),
+                    ("ret", "open"),
                     ("\u{2190}\u{2192}", "change"),
+                    ("m", "actions"),
+                    ("x", "remove"),
                     ("E", "eq"),
                     ("0-9", "pages"),
                     ("esc", "back"),

@@ -750,6 +750,11 @@ impl App {
         {
             self.say(error);
         }
+        if self.page() == Page::Settings
+            && let Some(said) = self.settings_page.poll()
+        {
+            self.say(said);
+        }
         self.artist_page.poll();
         self.search_page.poll();
 
@@ -952,11 +957,8 @@ impl App {
             Page::History => self.history_page.filter_active,
             Page::Search => self.search_page.typing,
             Page::Playlists => self.playlists_page.filter_active,
-            Page::Queue
-            | Page::NowPlaying
-            | Page::Album(_)
-            | Page::Playlist(_)
-            | Page::Settings => false,
+            Page::Queue | Page::NowPlaying | Page::Album(_) | Page::Playlist(_) => false,
+            Page::Settings => self.settings_page.typing(),
         }
     }
 
@@ -1273,14 +1275,6 @@ impl App {
                     return;
                 }
             },
-            Purpose::Folder => match super::settings_page::add_folder(&prompt.text) {
-                Ok(path) => format!("added {path}; run scan library to index it"),
-                Err(e) => {
-                    self.name_prompt = Some(prompt);
-                    self.say(e);
-                    return;
-                }
-            },
             Purpose::Rename(id) => match super::playlist_ops::rename(*id, &prompt.text) {
                 Ok(()) => format!("renamed to '{}'", prompt.text.trim()),
                 Err(e) => {
@@ -1292,7 +1286,6 @@ impl App {
         };
         self.pop_mode();
         self.playlists_changed();
-        self.settings_page.reload();
         self.say(said);
     }
 
@@ -1518,36 +1511,53 @@ impl App {
         match outcome {
             Outcome::Changed(setting) => self.apply_setting(setting),
             Outcome::Run(task) => self.run_task(task),
-            Outcome::Failed(why) => self.say(why),
-            Outcome::RemoveFolder(path) => self.remove_folder(path),
-        }
-    }
-
-    /// Starts a scan or a sync on a thread of its own and says how it went.
-    fn run_task(&mut self, task: Task) {
-        match task {
-            Task::Scan => self.spawn_task("scanning the library...", super::tasks::scan),
-            Task::Sync => self.spawn_task("syncing with the server...", super::tasks::sync),
-            Task::AddFolder => self.open_name_prompt(Purpose::Folder, String::new()),
-        }
-    }
-
-    /// Takes a library folder out of the config, then forgets its tracks in
-    /// the background: a scan never prunes a folder it is no longer given.
-    fn remove_folder(&mut self, path: std::path::PathBuf) {
-        if self.task_running {
-            self.say("a scan or sync is already running");
-            return;
-        }
-        match super::settings_page::remove_folder(&path) {
-            Ok(()) => {
-                self.settings_page.reload();
-                self.spawn_task("removing the folder's tracks...", move || {
-                    super::tasks::forget(&path)
-                });
+            Outcome::Say(said) => self.say(said),
+            Outcome::OpenEq => self.open_dsp_selector(),
+            Outcome::OpenOutputs => self.open_device_selector(),
+            Outcome::OpenUrl(url) => self.apply_browse(browse::Action::OpenUrl(url)),
+            Outcome::Copy(text) => {
+                copy_to_clipboard(&text);
+                self.say("copied");
             }
-            Err(e) => self.say(e),
         }
+    }
+
+    /// Starts long work on the library on a thread of its own and says how
+    /// it went. Forgetting runs beside a scan: the core's lane orders them.
+    fn run_task(&mut self, task: Task) {
+        use super::tasks;
+        match task {
+            Task::Scan { force } => {
+                self.spawn_task("scanning the library...", move || tasks::scan(force))
+            }
+            Task::Sync => self.spawn_task("syncing with the server...", tasks::sync),
+            Task::RebuildIndex => {
+                self.spawn_task("clearing the library index...", tasks::rebuild_index)
+            }
+            Task::ClearCache => {
+                let state = self.state.clone();
+                self.spawn_task("clearing downloads...", move || tasks::clear_cache(&state));
+            }
+            Task::ForgetFolder(path) => self
+                .spawn_work("forgetting the folder's tracks...", move || {
+                    tasks::forget(&path)
+                }),
+            Task::ForgetRemote => {
+                self.spawn_work("forgetting the server's tracks...", tasks::forget_remote)
+            }
+        }
+    }
+
+    /// Runs `work` beside whatever task is running, and says how it went.
+    fn spawn_work(&mut self, said: &str, work: impl FnOnce() -> String + Send + 'static) {
+        self.say(said);
+        let tx = self.task_tx.clone();
+        std::thread::Builder::new()
+            .name("koan-work".into())
+            .spawn(move || {
+                tx.send(super::tasks::Report::Work(work())).ok();
+            })
+            .ok();
     }
 
     fn spawn_task(&mut self, said: &str, work: impl FnOnce() -> String + Send + 'static) {
@@ -1577,6 +1587,7 @@ impl App {
             Page::Recent => self.recent_page.reload(),
             Page::Artist(_) => self.artist_page.reload(),
             Page::History => self.history_page.reload(),
+            Page::Settings => self.settings_page.reload(),
             Page::Artists => {
                 let mut lib = LibraryState::load();
                 if let Some(old) = old {

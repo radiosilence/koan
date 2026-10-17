@@ -1,6 +1,7 @@
 //! The long jobs a page can start: reading the library's folders, forgetting
-//! one taken out of them, and pulling the server's library. Each runs to its end on the thread it is given and
-//! comes back as a line to show.
+//! one taken out of them or the server signed out of, pulling the server's
+//! library, clearing downloads and the index. Each runs to its end on the
+//! thread it is given and comes back as a line to show.
 
 use koan_core::config::Config;
 use koan_core::db::pool;
@@ -22,7 +23,8 @@ pub fn needs_fetch(t: &koan_core::db::queries::TrackRow) -> bool {
     t.remote_id.is_some() && t.path.is_none() && t.cached_path.is_none()
 }
 
-pub fn scan() -> String {
+/// Reads the library's folders; `force` re-reads every file's tags.
+pub fn scan(force: bool) -> String {
     let cfg = Config::load().unwrap_or_default();
     if cfg.library.folders.is_empty() {
         return "no library folders to scan".into();
@@ -33,7 +35,7 @@ pub fn scan() -> String {
     // `force_remove` stays off, as in the apps: a failed mount must not look
     // like a library that was deleted.
     let opts = ScanOptions {
-        force: false,
+        force,
         force_remove: false,
         cancel: None,
     };
@@ -83,6 +85,41 @@ pub fn forget(folder: &Path) -> String {
             folder.display()
         ),
     }
+}
+
+pub fn forget_remote() -> String {
+    let Ok(db) = pool::shared().get() else {
+        return "the library could not be opened".into();
+    };
+    match helpers::forget_remote(&db) {
+        Ok(n) => format!("signed out and forgot {n} tracks"),
+        Err(e) => format!("signed out, but the server's tracks could not be forgotten: {e}"),
+    }
+}
+
+pub fn rebuild_index() -> String {
+    let Ok(db) = pool::shared().get() else {
+        return "the library could not be opened".into();
+    };
+    match helpers::rebuild_index(&db) {
+        Ok(s) => format!("removed {} tracks; scan or sync to rebuild", s.tracks),
+        Err(e) => format!("the index could not be cleared: {e}"),
+    }
+}
+
+/// Deletes every downloaded track; what the queue was waiting on is fetched
+/// again.
+pub fn clear_cache(state: &koan_core::player::state::SharedPlayerState) -> String {
+    let Ok(db) = pool::shared().get() else {
+        return "the library could not be opened".into();
+    };
+    let cleared = helpers::clear_download_cache(&db, &Config::load().unwrap_or_default());
+    helpers::requeue_cleared_downloads(state);
+    format!(
+        "freed {} MB across {} files",
+        cleared.bytes / 1_000_000,
+        cleared.files
+    )
 }
 
 #[cfg(test)]
