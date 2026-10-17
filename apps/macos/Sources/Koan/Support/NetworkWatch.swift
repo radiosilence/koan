@@ -61,18 +61,17 @@ final class NetworkWatch: @unchecked Sendable {
                 burst = nil
                 return
             }
-            // Off the watch's queue: renewing the clients and restarting
-            // nearby discovery can take a while, and updates wait behind it.
             let tell = DispatchWorkItem { [weak self] in
                 guard let self else { return }
-                queue.async { self.burst = nil }
-                engine.networkChanged()
+                burst = nil
+                // Off the watch's queue: renewing the clients and restarting
+                // nearby discovery can take a while, and updates wait behind it.
+                DispatchQueue.global(qos: .utility).async { self.engine.networkChanged() }
             }
             pending = tell
             let began = burst ?? .now()
             burst = began
-            let at = min(DispatchTime.now() + Self.settle, began + Self.longest)
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: at, execute: tell)
+            queue.asyncAfter(deadline: min(.now() + Self.settle, began + Self.longest), execute: tell)
         }
         monitor.start(queue: queue)
     }
