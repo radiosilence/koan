@@ -91,6 +91,9 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
     /// to note it now. Not observed — see `LibraryModel.albumsOffset`.
     var offset: CGFloat?
     var noteOffset: (CGFloat) -> Void = { _ in }
+    /// Whether every row of the listing is here. One read a page at a time is
+    /// short at first, and an offset it cannot reach yet may be in reach later.
+    var complete = true
     /// Bumped to send the list back to its top.
     var rewinds = 0
     /// A row to select and bring into view, once — arriving from search at
@@ -180,6 +183,13 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         private var selectAllToken: Int?
         private var rewinds: Int?
         private var restored = false
+        /// While restoring a complete listing: how far it could scroll at its
+        /// last layout, and whether the listing was complete at the last update.
+        private var lastReach: CGFloat?
+        private var complete: Bool?
+        /// Set while the rows are reloaded, whose selection changes are not
+        /// the person's.
+        private var reloading = false
         private var jumpToken: Int?
         private var followed: ID?
         private var liveScroll: (any NSObjectProtocol)?
@@ -241,7 +251,9 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
                 self.items = parent.items
                 self.ids = ids
                 index = Dictionary(ids.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+                reloading = true
                 table.reloadData()
+                reloading = false
                 shownKey = parent.contextKey
             } else if parent.contextKey != shownKey || parent.changed?(self.items, parent.items) == true {
                 self.items = parent.items
@@ -256,14 +268,30 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
                 table.selectAll(nil)
             }
             selectAllToken = parent.selectAllToken
-            if let rewinds, rewinds != parent.rewinds { scroll(to: 0) }
+            if let rewinds, rewinds != parent.rewinds {
+                restored = true
+                scroll(to: 0)
+                // Noted here too: a list already at its top does not move.
+                parent.noteOffset(0)
+                // Back at the top, a pick further down is out of sight, and ⌫
+                // would act on rows nobody can see. After the update, which
+                // must not write the state it is drawing.
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated { self?.parent?.selection = [] }
+                }
+            }
             rewinds = parent.rewinds
             if let token = jumpToken, token != parent.jump.token,
                let target = parent.jump.to, let row = index[target] {
+                restored = true
                 jump(to: row, place: parent.jump.place)
             }
             jumpToken = parent.jump.token
             follow(parent.follow)
+            // The listing can finish without a row changing, a failed last
+            // page, and only a layout settles the restore.
+            if let complete, complete != parent.complete, !restored { table.needsLayout = true }
+            complete = parent.complete
             if table.rowHeight != parent.rowHeight {
                 table.rowHeight = parent.rowHeight
                 table.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<items.count))
@@ -280,8 +308,11 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         /// that far: a listing read a page at a time is short at first. Not
         /// during SwiftUI's update, where laying the table out is an AppKit
         /// exception. Until then the offset is not noted, so a distance the
-        /// first page cannot reach is not overwritten by one it can; a scroll
-        /// by the person ends the wait.
+        /// first page cannot reach is not overwritten by one it can. A complete
+        /// listing that still falls short is scrolled to its end, and the wait
+        /// is over once two layouts agree on how far that is, so a size the
+        /// window passes through on its way does not settle it. So is anything
+        /// the person does in the list meanwhile.
         func laidOut() {
             guard !restored, !ids.isEmpty, let parent, let table, let scroll else { return }
             guard let offset = parent.offset else {
@@ -290,7 +321,19 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             }
             let reach = table.frame.height - scroll.contentView.bounds.height
                 + scroll.contentInsets.top + scroll.contentInsets.bottom
-            if offset <= reach { restored = true }
+            if offset <= reach {
+                restored = true
+            } else if parent.complete {
+                if reach == lastReach {
+                    restored = true
+                    // Already at the end, the list does not move to say so.
+                    parent.noteOffset(max(reach, 0))
+                } else {
+                    lastReach = reach
+                    // One more pass, after this one: nothing else may ask.
+                    DispatchQueue.main.async { [weak table] in table?.needsLayout = true }
+                }
+            }
             self.scroll(to: min(offset, max(reach, 0)))
         }
 
@@ -412,6 +455,7 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
 
         func tableViewSelectionDidChange(_ notification: Notification) {
             guard !applying, let table, let parent else { return }
+            if !reloading { restored = true }
             let picked = Set(table.selectedRowIndexes.compactMap { $0 < ids.count ? ids[$0] : nil })
             if picked != parent.selection { parent.selection = picked }
         }

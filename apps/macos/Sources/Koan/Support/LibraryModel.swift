@@ -58,7 +58,10 @@ final class LibraryModel {
     /// to re-read it or to throw their narrowing away. A library change reloads
     /// it where it is drawn instead.
     func prepare(section: Section) async -> Listing? {
-        guard section != self.section else { return nil }
+        guard section != self.section else {
+            carried = nil
+            return nil
+        }
         // Nothing carries over from another section: a filter left behind on
         // another view is invisible here, and an apparently empty library is
         // the result. A section comes back with its own, as it was left, unless
@@ -78,7 +81,9 @@ final class LibraryModel {
     /// Adopt a listing, at the moment the navigator moves to it.
     func show(_ listing: Listing) {
         loading?.cancel()
-        leftFilters[section] = filter
+        // Only where there is a field to show it and clear it: a playlist has
+        // none, and its row id goes to the next one made once it is deleted.
+        leftFilters[section] = section.filterPlaceholder == nil ? nil : filter
         section = listing.section
         // Quietly: the rows for this section are already in hand, so emptying
         // the filter it arrives with is not a reason to ask for them again.
@@ -150,6 +155,15 @@ final class LibraryModel {
             trackSort = .artist
         }
         browseFilter = filter
+        // Already there, the navigator does not move, so nothing prepares the
+        // section: the shelf's query and filters apply to the rows in place.
+        if list.section == section {
+            adopting = true
+            self.filter = carried ?? ""
+            adopting = false
+            carried = nil
+            reload()
+        }
         return list.section
     }
 
@@ -264,6 +278,9 @@ final class LibraryModel {
     /// at a time — see `continueTracks()`.
     private(set) var visibleTracks: [Track] = []
     private(set) var trackTotal: UInt64 = 0
+    /// Whether more of the track browser's pages are on their way. A page
+    /// that fails to arrive ends the listing short of `trackTotal`.
+    private(set) var pagingTracks = false
 
     // Favourite state is read from here rather than from the copy baked into
     // each Track when it was fetched. A track appears in the album view, the
@@ -355,10 +372,14 @@ final class LibraryModel {
     /// appended as it lands. Part of the load it follows: anything that
     /// reloads cancels it, so a page of the old listing never lands on the new.
     private func continueTracks() {
+        if pagingTracks { pagingTracks = false }
         guard section == .tracks, UInt64(visibleTracks.count) < trackTotal else { return }
         let request = self.request
         let from = visibleTracks.count
+        pagingTracks = true
         loading = Task {
+            // A cancelled load is followed by the one that replaced it.
+            defer { if !Task.isCancelled { pagingTracks = false } }
             var offset = from
             while !Task.isCancelled, UInt64(offset) < trackTotal {
                 guard let page = await request.tracks(offset: UInt32(offset)), !page.tracks.isEmpty
