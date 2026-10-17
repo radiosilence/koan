@@ -250,12 +250,7 @@ impl<'a> PickerOverlay<'a> {
 
 impl Widget for PickerOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // Center overlay at ~60% width, ~70% height.
-        let popup_width = (area.width as f32 * 0.6).max(40.0).min(area.width as f32) as u16;
-        let popup_height = (area.height as f32 * 0.7).max(10.0).min(area.height as f32) as u16;
-        let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
-        let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
-        let popup_area = Rect::new(x, y, popup_width, popup_height);
+        let popup_area = picker_popup_rect(area);
 
         Clear.render(popup_area, buf);
 

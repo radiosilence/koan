@@ -36,11 +36,6 @@ impl ActionsMenu {
     pub fn top(&self, rows: usize) -> usize {
         (self.cursor + 1).saturating_sub(rows.max(1))
     }
-
-    /// The action of the item at `idx`, taken out of the menu.
-    pub fn take(&mut self, idx: usize) -> Option<Action> {
-        (idx < self.items.len()).then(|| self.items.swap_remove(idx).1)
-    }
 }
 
 pub fn menu_rect(area: Rect, items: &[(String, Action)], title: &str) -> Rect {
@@ -137,12 +132,12 @@ mod tests {
     }
 
     #[test]
-    fn the_cursor_wraps_and_an_item_is_taken_whole() {
+    fn the_cursor_wraps() {
         let mut m = menu();
         m.move_by(-1);
         assert_eq!(m.cursor, 2);
-        assert_eq!(m.take(1), Some(Action::ToggleAlbum(1)));
-        assert_eq!(m.take(9), None);
+        m.move_by(1);
+        assert_eq!(m.cursor, 0);
     }
 
     #[test]
