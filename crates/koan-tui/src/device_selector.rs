@@ -8,7 +8,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
+use ratatui::widgets::{Paragraph, Widget};
 
 use koan_core::player::state::SharedPlayerState;
 use koan_core::remote::outputs::{self, LinkOutput, LinkOutputs, OutputChoice};
@@ -257,14 +257,8 @@ impl OutputPicker {
         self.rows.clear();
         let popup = self.rect(area);
         let mut drawn = Vec::new();
-        Clear.render(popup, buf);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(theme.rule)
-            .title(ratatui::text::Span::styled(
-                " output ",
-                theme.heading.add_modifier(Modifier::BOLD),
-            ));
+        crate::shell::clear(buf, popup);
+        let block = crate::shell::frame("output", theme);
         let inner = block.inner(popup);
         block.render(popup, buf);
         if inner.height < 2 || inner.width < 8 {
@@ -365,11 +359,8 @@ pub fn play_on_rect(area: Rect, rows: usize) -> Rect {
 impl Widget for PlayOnOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let popup = play_on_rect(area, self.state.choices.len());
-        Clear.render(popup, buf);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(self.theme.hint_key)
-            .title(" Play on ");
+        crate::shell::clear(buf, popup);
+        let block = crate::shell::frame("play on", self.theme);
         let inner = block.inner(popup);
         block.render(popup, buf);
 

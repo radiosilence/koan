@@ -13,9 +13,9 @@ The TUI follows the shape of the Mac and mobile apps: pages you move between, a 
 | `3` | Albums | Every album in the library, as tiles of cover art or as rows |
 | `4` | Artists | Every artist, with how many albums and tracks each has |
 | `5` | Favourites | The artists, albums and tracks you have favourited |
-| `6` | Playlists | Your playlists, and each one's tracks |
-| `7` | Recent | The artists, albums and tracks played in the last 30 days |
-| `8` | History | Every play, newest first, under the day it was played |
+| `6` | Recent | The artists, albums and tracks played in the last 30 days |
+| `7` | History | Every play, newest first, under the day it was played |
+| `8` | Playlists | Your playlists, and each one's tracks |
 | `9` | Settings | The settings that otherwise mean editing `config.toml` |
 | `0` | Search | Artists, albums and tracks that match what you type |
 
@@ -55,7 +55,7 @@ Favourites, Recent and Downloaded are shelves, as in the apps: the first few art
 
 ## Playlists
 
-Playlists are the apps' playlists, the same rows and the same server copies: an edit is written here and pushed to the server in the background. `6` lists them; `Enter` or a second click opens one, `P` or the `▸` plays it, `a` and `N` add it to the queue or put it next, `c` or `+ new` makes one, `r` renames, `w` puts its tracks in another playlist, and `x` or the `×` deletes on a second press.
+Playlists are the apps' playlists, the same rows and the same server copies: an edit is written here and pushed to the server in the background. `8` lists them; `Enter` or a second click opens one, `P` or the `▸` plays it, `a` and `N` add it to the queue or put it next, `c` or `+ new` makes one, `r` renames, `w` puts its tracks in another playlist, and `x` or the `×` deletes on a second press.
 
 A playlist's page has its name, how many tracks and how long, and whether it is smart, read-only or synced with the server. The toolbar's controls, each a key too, play it (`P`), play it shuffled (`S`), put it next (`N`), add it to the queue (`a`), `reorder` it (`Y`, shuffling the playlist itself, for good), switch between a row per track and album runs (`t`, kept for each playlist; a playlist is a row per track until asked), `undo` and `redo` the edits made to it this session (`Ctrl+Z`, `Ctrl+Y`), `rename` it (`r`), `export` it as an M3U8 file (`e`) and `delete` it (`X`, on a second press). Its rows are the queue's rows, with each track's place in the playlist as its number, and show the track playing, downloading or failed while the queue plays the playlist. `Enter` plays from the track under the cursor, `K` and `J` move it up or down, `x` takes it out, `t` switches the view, and `m` or the row's `⋯` opens its menu: play, play next, add to queue, add to playlist, move up or down, remove from the playlist, favourite, track info, and go to the album or the artist. While the queue is exactly a playlist, an edit to the playlist is made to the queue as well, keeping what is playing.
 
@@ -99,7 +99,7 @@ Whether a device's queue is kept on the server is set in the apps: the terminal 
 
 The layout follows the width of the terminal.
 
-- **100 columns or more:** a sidebar beside the page, laid out as in the apps: the queue and Now playing; the library's pages (albums, artists, tracks, favourites, recently played, downloaded, history, downloads); your playlists, with a row for a new one; and search and settings at its foot. While a scan, a sync or downloads run, each shows above those with how far it has got; `×` stops a scan, keeping what it has read.
+- **100 columns or more:** a sidebar beside the page, laid out as in the apps: search at the top; the queue and Now playing; the library's pages (albums, artists, tracks, favourites, recently played, downloaded, history, downloads); your playlists, with a row for a new one; and settings at its foot. The page numbers run down it in order, `0` for search to `9` for settings. While a scan, a sync or downloads run, each shows above those with how far it has got; `×` stops a scan, keeping what it has read.
 - **56 to 99 columns:** a tab bar over the page, a tab for each page with a number. Page names shorten to fit.
 - **Under 56 columns:** the tab bar shows page numbers and names only the current page.
 

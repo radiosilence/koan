@@ -59,7 +59,7 @@ fn meta(artist: &str, album: &str, title: &str, n: Option<i32>) -> TrackMeta {
 
 /// The awkward library. Returns the ids of the double album and the
 /// compilation.
-fn seed() -> (i64, i64) {
+pub(crate) fn seed() -> (i64, i64) {
     let db = koan_core::db::pool::shared().get().expect("a library");
     let c = &db.conn;
     let mut ids = Vec::new();

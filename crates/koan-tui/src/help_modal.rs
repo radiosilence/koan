@@ -28,7 +28,7 @@ const SECTIONS: &[Section] = &[
         bindings: &[
             (
                 "0-9",
-                "Queue / playing / albums / artists / faves / playlists / recent / history / settings / search (0)",
+                "Pages, as the sidebar lists them: search (0), queue (1) … settings (9)",
             ),
             ("tab", "Next page (S-tab previous)"),
             ("[ ]", "Back / forward (also A-\u{2190} A-\u{2192})"),

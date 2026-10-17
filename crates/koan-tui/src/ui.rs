@@ -248,7 +248,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             }
         }
         Page::NowPlaying => {
-            heading(frame.buffer_mut(), stage, &app.theme, "now playing", "");
             super::now_playing::render(frame.buffer_mut(), app, stage);
         }
         Page::Playlists => {
@@ -291,7 +290,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 None => {
                     frame.buffer_mut().set_string(
                         stage.x,
-                        stage.y,
+                        stage.y + 1,
                         "this playlist is gone",
                         theme.hint_desc,
                     );
@@ -384,9 +383,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                     hover,
                 ),
                 None => {
-                    heading(frame.buffer_mut(), stage, theme, "album", "");
                     frame.buffer_mut().set_string(
-                        stage.x + 1,
+                        stage.x,
                         stage.y + 1,
                         "this album is not in the library",
                         theme.hint_desc,
@@ -840,9 +838,10 @@ enum SideRow<'a> {
     Target(&'a str, Option<char>, NavTarget),
 }
 
-/// The sidebar, as the apps lay it out: the queue and what is playing; the
-/// library's pages; the playlists, with a row for a new one; then search and
-/// settings at the foot. Returns what each row opens.
+/// The sidebar, as the apps lay it out: search at the top; the queue and
+/// what is playing; the library's pages; the playlists, with a row for a new
+/// one; then what is running, and settings at the foot. The digits run down
+/// it in order. Returns what each row opens.
 fn render_sidebar(
     buf: &mut ratatui::buffer::Buffer,
     app: &App,
@@ -858,6 +857,13 @@ fn render_sidebar(
     }
     let page = |p: Page| SideRow::Target(p.title(), p.key(), NavTarget::Page(p));
     let mut top = vec![
+        // The search field, as the apps head their sidebar with it.
+        SideRow::Target(
+            "/ search",
+            Page::Search.key(),
+            NavTarget::Page(Page::Search),
+        ),
+        SideRow::Gap,
         page(Page::Queue),
         page(Page::NowPlaying),
         SideRow::Gap,
@@ -878,7 +884,7 @@ fn render_sidebar(
         ),
         SideRow::Target("+ new playlist", None, NavTarget::NewPlaylist),
     ];
-    let foot = [page(Page::Search), page(Page::Settings)];
+    let foot = [page(Page::Settings)];
     let busy = busy(app);
     // Each running job takes its label and its bar, and a gap above them.
     let busy_rows = if busy.is_empty() { 0 } else { 3 * busy.len() };
@@ -1825,24 +1831,65 @@ mod tests {
         );
     }
 
-    /// Writes every page at four sizes to `target/tui-dumps`, to read.
+    /// Writes every page at four sizes to `target/tui-dumps/shell`, against
+    /// the awkward library, with the playing track's cover absent and
+    /// present. Fills this process's library: run it on its own.
     #[test]
-    #[ignore]
+    #[ignore = "fills the library; run on its own with --ignored"]
     fn dump_the_shell() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tui-dumps");
-        std::fs::create_dir_all(&dir).unwrap();
+        let root =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tui-dumps/shell");
         let mut app = app_with_queue(12);
-        app.sidebar_playlists = vec![
-            (41, "road trip".into()),
-            (42, "東京事変 best of everything".into()),
-        ];
-        for page in Page::ALL {
-            app.go_page(page);
-            for (w, h) in [(50u16, 20u16), (80, 24), (120, 40), (200, 60)] {
-                let name = format!("{}-{w}x{h}.txt", page.title().replace(' ', "-"));
-                std::fs::write(dir.join(name), dump(&mut app, w, h)).unwrap();
+        let (double, _) = crate::dumps::seed();
+        let artist = koan_core::db::pool::shared()
+            .get()
+            .ok()
+            .and_then(|db| {
+                koan_core::db::queries::get_album(&db.conn, double)
+                    .ok()
+                    .flatten()
+            })
+            .map_or(0, |a| a.artist_id);
+        app.load_favourites();
+        app.refresh_sidebar_playlists();
+        app.sidebar_playlists
+            .push((42, "東京事変 best of everything".into()));
+        // A cover beside the playing track, for the second pass.
+        let covers = tempfile::tempdir().unwrap();
+        image::RgbImage::from_pixel(64, 64, image::Rgb([200, 60, 40]))
+            .save(covers.path().join("cover.png"))
+            .unwrap();
+        let settle = |app: &mut App| {
+            for _ in 0..15 {
+                app.handle_tick();
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        };
+        let mut pages: Vec<Page> = Page::ALL.to_vec();
+        pages.extend([Page::Album(double), Page::Artist(artist)]);
+        for pass in ["nocover", "cover"] {
+            let dir = root.join(pass);
+            std::fs::create_dir_all(&dir).unwrap();
+            if pass == "cover" {
+                let path = covers.path().join("track.flac");
+                app.queue.vq_cache.entries[0].path = path.clone();
+                if let Some(mut info) = app.state.track_info() {
+                    info.path = path;
+                    app.state.set_track_info(Some(info));
+                }
+            }
+            for &page in &pages {
+                app.go_page(page);
+                draw(&mut app, 120, 40);
+                settle(&mut app);
+                for (w, h) in [(50u16, 20u16), (80, 24), (120, 40), (200, 60)] {
+                    let name = format!("{}-{w}x{h}.txt", page.title().replace(' ', "-"));
+                    std::fs::write(dir.join(name), dump(&mut app, w, h)).unwrap();
+                }
             }
         }
+        let dir = root.join("modals");
+        std::fs::create_dir_all(&dir).unwrap();
         app.go_page(Page::Queue);
         app.status_message = Some((
             "a status line long enough to be cut at the edge of a narrow terminal".into(),

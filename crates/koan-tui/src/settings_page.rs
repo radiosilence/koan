@@ -21,7 +21,7 @@ use koan_core::remote::profile::ServerProfile;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Borders, Clear, Widget};
+use ratatui::widgets::{Block, Borders, Widget};
 use unicode_width::UnicodeWidthStr;
 
 use super::text::{fit, tail, wrap};
@@ -1370,7 +1370,7 @@ impl SettingsPage {
             w,
             h,
         );
-        Clear.render(popup, buf);
+        crate::shell::clear(buf, popup);
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(theme.rule)

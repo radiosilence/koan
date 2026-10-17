@@ -8,7 +8,7 @@ use image::DynamicImage;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
-use ratatui::widgets::{Block, Borders, Clear, Widget};
+use ratatui::widgets::{Block, Borders, Widget};
 
 use koan_core::db::queries::{self, TrackMeta};
 use koan_core::player::state::{QueueEntry, QueueEntryStatus, TrackInfo};
@@ -256,7 +256,7 @@ enum Line {
 impl Widget for TrackInfoOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let popup = popup_rect(area);
-        Clear.render(popup, buf);
+        crate::shell::clear(buf, popup);
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(self.theme.rule)

@@ -2,7 +2,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
+use ratatui::widgets::{Paragraph, Widget};
 
 use super::theme::Theme;
 use super::visualizer::VisualizerMode;
@@ -74,12 +74,9 @@ impl Widget for VizPickerOverlay<'_> {
         let y = area.y + (area.height.saturating_sub(h)) / 2;
         let popup = Rect::new(x, y, w, h);
 
-        Clear.render(popup, buf);
+        crate::shell::clear(buf, popup);
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(self.theme.hint_key)
-            .title(" Visualiser ");
+        let block = crate::shell::frame("visualiser", self.theme);
         let inner = block.inner(popup);
         block.render(popup, buf);
 
