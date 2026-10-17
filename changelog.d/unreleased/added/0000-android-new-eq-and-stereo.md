@@ -1,0 +1,1 @@
+- **New EQ and Mono/Stereo on Android.** Android can make an EQ from the Flat, Bass boost, Warm or Bright starter, as the Apple apps do, and switch an EQ of bands between one list for both channels and one per channel. Going back to Mono when the two channels differ asks which to keep.

@@ -70,6 +70,9 @@ fun DspProfilePage(name: String, model: SettingsModel) {
     var renaming by remember { mutableStateOf(false) }
     var copying by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
+    var askingKeep by remember { mutableStateOf(false) }
+    // The channel whose bands the graph and table show, in stereo.
+    var channel by remember(name) { mutableStateOf(0) }
     // Read again whenever a change lands, here or synced.
     val detail by produceState<DspProfileDetail?>(null, name, state.version) { value = dsp.detail(name) }
     val response by produceState<DspResponse?>(null, name, state.version) { value = dsp.response(name) }
@@ -79,7 +82,9 @@ fun DspProfilePage(name: String, model: SettingsModel) {
     SettingsPage(name, settings) {
         val d = detail
         val r = response
-        if (r != null && d != null) item { EqEditor(dsp, name, d, r) }
+        val layout = d?.takeIf { !it.readOnly }?.channels
+        val editing = if (layout?.stereo == true) channel else null
+        if (r != null && d != null) item { EqEditor(dsp, name, d, r, editing) }
         if (d == null) return@SettingsPage
         d.problem?.let { line(it, KoanTone.Bad) }
         header("Role")
@@ -112,7 +117,32 @@ fun DspProfilePage(name: String, model: SettingsModel) {
             item { ChoiceRow("Playing", summary.playing, members.map { it to it }, { m -> m?.let { dsp.select(name, it) } }) }
         }
 
-        bandTable(dsp, name, d)
+        layout?.let { l ->
+            header("Channels")
+            item {
+                KoanSegmented(listOf("Mono" to false, "Stereo" to true), l.stereo, { stereo ->
+                    if (stereo != l.stereo) {
+                        if (!stereo && l.differ) {
+                            askingKeep = true
+                        } else {
+                            dsp.setStereo(name, stereo)
+                            channel = 0
+                        }
+                    }
+                }, inset)
+            }
+            if (l.stereo) item { KoanSegmented(listOf("Left" to 0, "Right" to 1), channel, { channel = it }, inset) }
+            footer(
+                if (l.stereo) {
+                    "Each channel has bands of its own. A mono recording plays the left channel's; an output with more than " +
+                        "two channels has them on its front left and right alone."
+                } else {
+                    "One list of bands for both channels. Stereo starts each channel with a copy of it."
+                },
+            )
+        }
+
+        bandTable(dsp, name, d, editing)
 
         if (d.impulses.isNotEmpty()) {
             header("Impulse responses")
@@ -155,6 +185,25 @@ fun DspProfilePage(name: String, model: SettingsModel) {
     }
     if (copying) {
         NameDialog("Save as new", "$name copy", "Save", { copying = false }) { new -> dsp.duplicate(name, new) }
+    }
+    if (askingKeep) {
+        AlertDialog(
+            onDismissRequest = { askingKeep = false },
+            title = { KoanText("Keep which channel?", role = KoanType.TitleSmall) },
+            text = { KoanText("The two channels have different bands. One list plays on both, and the other channel's bands are dropped.") },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(KoanSpace.s)) {
+                    listOf("Keep left" to 0, "Keep right" to 1).forEach { (label, keep) ->
+                        KoanButton(label, {
+                            askingKeep = false
+                            dsp.setStereo(name, false, keep)
+                            channel = 0
+                        })
+                    }
+                }
+            },
+            dismissButton = { KoanButton("Cancel", { askingKeep = false }) },
+        )
     }
     if (deleting) {
         AlertDialog(
@@ -200,7 +249,7 @@ fun phoneAction(name: String, role: DspRole, active: String?, inChain: Boolean) 
  * second while it goes on, and once at its end.
  */
 @Composable
-private fun EqEditor(dsp: DspModel, name: String, detail: DspProfileDetail, response: DspResponse) {
+private fun EqEditor(dsp: DspModel, name: String, detail: DspProfileDetail, response: DspResponse, channel: Int?) {
     val scope = rememberCoroutineScope()
     var live by remember(response) { mutableStateOf<DspResponse?>(null) }
     var painted by remember(response) { mutableStateOf<List<DspPoint>?>(null) }
@@ -208,14 +257,24 @@ private fun EqEditor(dsp: DspModel, name: String, detail: DspProfileDetail, resp
     val stepper = remember(name) { EditStepper<DspResponse>(scope, SystemClock::elapsedRealtime) { live = it } }
     DisposableEffect(stepper) { onDispose { stepper.flush() } }
     val editable = !detail.readOnly
-    val handles = if (editable) handles(detail.bands) else emptyList()
+    val handles = if (editable) handles(detail.bands, (channel ?: 0).toUShort()) else emptyList()
     val curve = if (editable) curveIndex(detail.bands) else null
     val shown = live ?: response
     val accent = KoanTheme.color(KoanTone.Accent)
+    val muted = KoanTheme.color(KoanTone.Muted)
     val ink = KoanTheme.color(KoanTone.Ink)
     // The scale holds still while a drag goes on: drawn from what was saved.
-    val half = halfRange(listOf(response.total))
-    val curves = remember(shown.total, accent) { listOf(Curve(shown.total, accent, 1.5f)) }
+    val half = halfRange(listOfNotNull(response.total, response.right))
+    // In stereo, the channel being edited, and the other beside it.
+    val right = shown.right.takeIf { channel != null }
+    val curves = remember(shown.total, right, channel, accent, muted) {
+        if (right == null) {
+            listOf(Curve(shown.total, accent, 1.5f))
+        } else {
+            val (edited, other) = if (channel == 1) right to shown.total else shown.total to right
+            listOf(Curve(other, muted, 1f), Curve(edited, accent, 1.5f))
+        }
+    }
 
     Column(inset.padding(vertical = KoanSpace.s), verticalArrangement = Arrangement.spacedBy(KoanSpace.s)) {
         ResponseGraph(shown.freqs, curves, graphStyle(), Modifier.fillMaxWidth().height(220.dp), fixedHalf = half) {
@@ -278,21 +337,23 @@ private fun EqEditor(dsp: DspModel, name: String, detail: DspProfileDetail, resp
  * type, frequency, gain and Q. An edit plays at once. Graphic curves are
  * painted on the graph; delays and mixes are shown as they are.
  */
-private fun LazyListScope.bandTable(dsp: DspModel, name: String, d: DspProfileDetail) {
+private fun LazyListScope.bandTable(dsp: DspModel, name: String, d: DspProfileDetail, channel: Int?) {
     if (d.bands.isEmpty() && d.readOnly) return
     header("Filters")
-    d.bands.forEachIndexed { i, band ->
+    // In stereo, the bands of the channel being edited, numbered among themselves.
+    val shown = d.bands.withIndex().filter { (_, b) -> channel == null || b.channels.isEmpty() || channel.toUShort() in b.channels }
+    shown.forEachIndexed { n, (i, band) ->
         item("band-$i-${band.kind}") {
             if (editable(band.kind) && !d.readOnly) {
-                BandRow(i + 1, band.kind, band.freq, band.gainDb, band.q, remove = { dsp.removeFilter(name, i) }) { kind, freq, gain, q ->
+                BandRow(n + 1, band.kind, band.freq, band.gainDb, band.q, remove = { dsp.removeFilter(name, i) }) { kind, freq, gain, q ->
                     dsp.setBand(name, i, kind, freq, gain, q)
                 }
             } else {
-                ValueRow("${i + 1}", describe(band.kind, band.freq, band.gainDb, band.q, band.delayMs, band.curve.size))
+                ValueRow("${n + 1}", describe(band.kind, band.freq, band.gainDb, band.q, band.delayMs, band.curve.size))
             }
         }
     }
-    if (!d.readOnly) item { ButtonRow { KoanButton("Add a band", { dsp.addBand(name) }, kind = KoanButtonKind.Bordered) } }
+    if (!d.readOnly) item { ButtonRow { KoanButton("Add a band", { dsp.addBand(name, channel) }, kind = KoanButtonKind.Bordered) } }
     footer(
         if (d.readOnly) {
             "A correction plays as made. To change the sound, add a tuning on top; to edit these, make it a tuning under Role."

@@ -14,6 +14,7 @@ import cc.blit.koan.ffi.DspProfileDetail
 import cc.blit.koan.ffi.DspProfileSummary
 import cc.blit.koan.ffi.DspResponse
 import cc.blit.koan.ffi.DspRole
+import cc.blit.koan.ffi.DspStarter
 import cc.blit.koan.ffi.DspTuningEntry
 import cc.blit.koan.ffi.KoanEngineInterface
 import cc.blit.koan.ffi.KoanException
@@ -281,8 +282,28 @@ class DspModel(private val engine: suspend () -> KoanEngineInterface) : ViewMode
     suspend fun previewCurve(name: String, index: Int, points: List<DspPoint>) =
         engine().dspPreviewCurve(name, index.toUInt(), points, 48_000u)
 
-    /** A flat band at 1 kHz, on both channels. */
-    fun addBand(name: String) = act { dspAddBand(name, null) }
+    /** A flat band at 1 kHz, on `channel`, or on both channels. */
+    fun addBand(name: String, channel: Int? = null) = act { dspAddBand(name, channel?.toUShort()) }
+
+    /** A list of bands for each channel, or one for both from channel `keep`. */
+    fun setStereo(name: String, stereo: Boolean, keep: Int = 0) = act { dspSetStereo(name, stereo, keep.toUShort()) }
+
+    /** Make the EQ `name`, eight bands from `starter`, and put it on the end of the output's tuning. Whether it took. */
+    fun createEq(name: String, starter: DspStarter, then: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            val ok = try {
+                engine().dspCreateEq(name.trim(), starter)
+                _state.update { it.copy(error = null) }
+                true
+            } catch (e: KoanException) {
+                failed(e)
+                false
+            }
+            changed()
+            if (ok) _state.value.overview?.let { setTunings(it.chain.added(name.trim())) }
+            then(ok)
+        }
+    }
 
     fun removeFilter(name: String, index: Int) = act { dspRemoveFilter(name, index.toUInt()) }
 
