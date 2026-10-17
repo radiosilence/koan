@@ -339,7 +339,7 @@ struct PlaylistView: View {
                     ShuffleHeaderButton(playable: playable)
                 }
                 Text(playlist?.name ?? "Playlist")
-                    .font(.role(.title, system: .system(size: 26, weight: .semibold)))
+                    .font(.role(.title, system: .system(size: pageTitleSize, weight: .semibold)))
                     .foregroundStyle(KoanTheme.style(.strong, system: .primary))
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)

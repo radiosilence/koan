@@ -199,7 +199,9 @@ private struct LibraryFilter: View {
     let placeholder: String
     @Environment(LibraryModel.self) private var library
     @Environment(UIState.self) private var ui
+    #if os(macOS)
     @FocusState private var focused: Bool
+    #endif
 
     var body: some View {
         @Bindable var library = library
