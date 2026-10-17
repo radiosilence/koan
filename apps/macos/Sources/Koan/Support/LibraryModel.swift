@@ -58,7 +58,10 @@ final class LibraryModel {
     /// to re-read it or to throw their narrowing away. A library change reloads
     /// it where it is drawn instead.
     func prepare(section: Section) async -> Listing? {
-        guard section != self.section else { return nil }
+        guard section != self.section else {
+            carried = nil
+            return nil
+        }
         // Nothing carries over from another section: a filter left behind on
         // another view is invisible here, and an apparently empty library is
         // the result. A section comes back with its own, as it was left, unless
@@ -112,6 +115,12 @@ final class LibraryModel {
     /// Each section's name filter as it was when the section was left, for
     /// the session.
     @ObservationIgnored private var leftFilters: [Section: String] = [:]
+
+    /// A section that no longer exists. A deleted playlist's row id is given
+    /// to the next one made, which would otherwise open with its filter.
+    func forget(_ section: Section) {
+        leftFilters[section] = nil
+    }
 
     /// Point a browser at a shelf: its filters and sort set to the shelf's, so
     /// the listing it opens on is the one the shelf's preview is the head of

@@ -120,6 +120,9 @@ struct HistoryView: View {
             )
         }
         .clearsSelection($selection)
+        // Back at the top, a pick further down is out of sight: ⌫ would act on
+        // rows nobody can see.
+        .onChange(of: nav.rewinds[.playHistory]) { selection = [] }
     }
     #endif
 

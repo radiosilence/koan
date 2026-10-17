@@ -91,6 +91,9 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
     /// to note it now. Not observed — see `LibraryModel.albumsOffset`.
     var offset: CGFloat?
     var noteOffset: (CGFloat) -> Void = { _ in }
+    /// Whether every row of the listing is here. One read a page at a time is
+    /// short at first, and an offset it cannot reach yet may be in reach later.
+    var complete = true
     /// Bumped to send the list back to its top.
     var rewinds = 0
     /// A row to select and bring into view, once — arriving from search at
@@ -256,7 +259,10 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
                 table.selectAll(nil)
             }
             selectAllToken = parent.selectAllToken
-            if let rewinds, rewinds != parent.rewinds { scroll(to: 0) }
+            if let rewinds, rewinds != parent.rewinds {
+                restored = true
+                scroll(to: 0)
+            }
             rewinds = parent.rewinds
             if let token = jumpToken, token != parent.jump.token,
                let target = parent.jump.to, let row = index[target] {
@@ -280,8 +286,9 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         /// that far: a listing read a page at a time is short at first. Not
         /// during SwiftUI's update, where laying the table out is an AppKit
         /// exception. Until then the offset is not noted, so a distance the
-        /// first page cannot reach is not overwritten by one it can; a scroll
-        /// by the person ends the wait.
+        /// first page cannot reach is not overwritten by one it can. A complete
+        /// listing that still falls short is scrolled to its end and the wait
+        /// is over; so is anything the person does in the list meanwhile.
         func laidOut() {
             guard !restored, !ids.isEmpty, let parent, let table, let scroll else { return }
             guard let offset = parent.offset else {
@@ -290,7 +297,7 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             }
             let reach = table.frame.height - scroll.contentView.bounds.height
                 + scroll.contentInsets.top + scroll.contentInsets.bottom
-            if offset <= reach { restored = true }
+            if offset <= reach || parent.complete { restored = true }
             self.scroll(to: min(offset, max(reach, 0)))
         }
 
@@ -412,6 +419,7 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
 
         func tableViewSelectionDidChange(_ notification: Notification) {
             guard !applying, let table, let parent else { return }
+            restored = true
             let picked = Set(table.selectedRowIndexes.compactMap { $0 < ids.count ? ids[$0] : nil })
             if picked != parent.selection { parent.selection = picked }
         }

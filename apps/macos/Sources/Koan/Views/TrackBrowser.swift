@@ -121,11 +121,15 @@ struct TrackBrowser: View {
                 selectAllToken: ui.selectAllToken,
                 offset: library.tracksOffset,
                 noteOffset: { library.tracksOffset = $0 },
+                complete: UInt64(tracks.count) >= library.trackTotal,
                 rewinds: nav.rewinds[.tracks] ?? 0,
                 insets: insets
             )
         }
         .clearsSelection($selection)
+        // Back at the top, a pick further down is out of sight: ⌫ would act on
+        // rows nobody can see.
+        .onChange(of: nav.rewinds[.tracks]) { selection = [] }
     }
     #endif
 
