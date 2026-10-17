@@ -511,7 +511,7 @@ fn fill_missing_songs(db: &Database) {
     for id in ids {
         let lock = push_lock(id);
         let _held = lock.lock();
-        let filled = queries::atomically(&db.conn, || {
+        let filled = queries::atomically(&db.conn, || -> Result<(), DbError> {
             let synced = queries::get_playlist(&db.conn, id)?.is_some_and(|p| !p.unsynced());
             let Some(record) = queries::playlist_server_songs(&db.conn, id)?.filter(|_| synced)
             else {
