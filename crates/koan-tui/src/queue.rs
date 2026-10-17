@@ -211,7 +211,7 @@ pub fn toolbar(entries: &[QueueEntry], layout: &Layout, facts: &Facts, selected:
         Some(name) => format!("playing {name}"),
         None => "queue".to_string(),
     };
-    let mut count = rows::count(entries.len(), "track");
+    let mut count = super::text::count(entries.len() as u64, "track");
     if layout.total_ms > 0 {
         count.push_str(&format!(" \u{b7} {}", rows::total(layout.total_ms)));
     }
@@ -1029,7 +1029,7 @@ mod tests {
                         continue;
                     }
                     let s = buf[(x, y)].symbol();
-                    skip = crate::shell::width(s).saturating_sub(1);
+                    skip = crate::text::width(s).saturating_sub(1);
                     line.push_str(s);
                 }
                 line
@@ -1088,9 +1088,9 @@ mod tests {
             let buf = render(&entries, true, w, h);
             let lines = text(&buf);
             let shown = &lines[..entries.len() + 4];
-            let end = crate::shell::width(shown[1].trim_end());
+            let end = crate::text::width(shown[1].trim_end());
             for l in shown {
-                let e = crate::shell::width(l.trim_end());
+                let e = crate::text::width(l.trim_end());
                 // A heading too narrow for its facts leaves them out.
                 let facts = l.contains('\u{b7}');
                 let track = !l.starts_with(" No More")

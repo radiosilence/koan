@@ -13,7 +13,8 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 
 use super::browse::Action;
-use super::shell::{ToolItem, Toolbar, fit};
+use super::shell::{ToolItem, Toolbar};
+use super::text::{bytes, fit};
 use super::theme::Theme;
 
 const DOUBLE_CLICK: Duration = Duration::from_millis(500);
@@ -47,21 +48,6 @@ pub struct DownloadsPage {
 
 fn inside(r: Rect, col: u16, row: u16) -> bool {
     r.width > 0 && col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
-}
-
-/// A byte count as people read one: "451 MB", "4.2 MB", "1.2 GB", "820 KB",
-/// with a decimal only while the number is small.
-pub fn bytes(n: u64) -> String {
-    let (value, unit) = match n as f64 {
-        n if n >= 1e9 => (n / 1e9, "GB"),
-        n if n >= 1e6 => (n / 1e6, "MB"),
-        n => (n / 1e3, "KB"),
-    };
-    if value < 10.0 {
-        format!("{value:.1} {unit}")
-    } else {
-        format!("{value:.0} {unit}")
-    }
 }
 
 /// The figure at the end of a transfer's first line.

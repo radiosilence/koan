@@ -14,7 +14,8 @@ use ratatui::style::{Modifier, Style};
 use super::actions_menu::Item;
 use super::app::PickerAction;
 use super::playlist_ops as ops;
-use super::shell::{Link, Links, ToolItem, Toolbar, fit};
+use super::shell::{Link, Links, ToolItem, Toolbar};
+use super::text::fit;
 use super::theme::Theme;
 use super::track_rows as rows;
 
@@ -392,7 +393,7 @@ impl PlaylistsPage {
             "/ filter".into()
         };
         Toolbar::new("playlists")
-            .count(rows::count(self.all.len(), "playlist"))
+            .count(super::text::count(self.all.len() as u64, "playlist"))
             .item(ToolItem::new("+ new", key('c')).priority(3))
             .item(
                 ToolItem::new(filter, key('/'))
@@ -738,7 +739,10 @@ impl PlaylistPage {
             PageAct::Play(start, shuffled) => self.command(start, shuffled),
             PageAct::Remove(ids) => {
                 let said = match ops::remove(self.list.id, &ids) {
-                    Ok(n) => format!("removed {} from the playlist", rows::count(n, "track")),
+                    Ok(n) => format!(
+                        "removed {} from the playlist",
+                        super::text::count(n as u64, "track")
+                    ),
                     Err(e) => e,
                 };
                 self.reload();
@@ -995,7 +999,7 @@ impl PlaylistPage {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let key = |c| KeyEvent::from(KeyCode::Char(c));
         let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
-        let mut facts = vec![rows::count(self.entries.len(), "track")];
+        let mut facts = vec![super::text::count(self.entries.len() as u64, "track")];
         let ms: u64 = self
             .entries
             .iter()

@@ -9,12 +9,13 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Widget};
+use ratatui::widgets::Widget;
 
 use nucleo::pattern::{CaseMatching, Normalization};
 use nucleo::{Config, Nucleo};
 
-use super::shell::{self, width};
+use super::shell;
+use super::text::width;
 use super::theme::Theme;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -380,7 +381,7 @@ impl<'a> PickerOverlay<'a> {
 impl Widget for PickerOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let popup = picker_popup_rect(area);
-        Clear.render(popup, buf);
+        super::shell::clear(buf, popup);
         let block = shell::frame(self.state.prompt(), self.theme);
         let inner = block.inner(popup);
         block.render(popup, buf);

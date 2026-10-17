@@ -234,7 +234,7 @@ pub fn export(id: i64, path: &str) -> Result<String, String> {
     let db = db()?;
     let done = koan_core::playlists::export_m3u8(&db, id, std::path::Path::new(&path))
         .map_err(|e| format!("couldn't write {path}: {e}"))?;
-    let tracks = super::track_rows::count(done.written, "track");
+    let tracks = super::text::count(done.written as u64, "track");
     Ok(match done.skipped {
         0 => format!("exported {tracks} to {path}"),
         n => format!(

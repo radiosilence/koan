@@ -4,7 +4,7 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::widgets::{Clear, Widget};
+use ratatui::widgets::Widget;
 
 use super::app::PickerAction;
 use super::browse::Action;
@@ -236,7 +236,7 @@ impl<'a> ActionsMenuOverlay<'a> {
 impl Widget for ActionsMenuOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let popup = menu_rect(area, &self.menu.items, &self.menu.title);
-        Clear.render(popup, buf);
+        super::shell::clear(buf, popup);
         let block = super::shell::frame(&self.menu.title, self.theme);
         let inner = block.inner(popup);
         block.render(popup, buf);

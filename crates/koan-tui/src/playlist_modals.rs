@@ -4,7 +4,7 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
-use ratatui::widgets::{Clear, Widget};
+use ratatui::widgets::Widget;
 
 use koan_core::db::queries::PlaylistRow;
 
@@ -18,8 +18,6 @@ pub enum Purpose {
     Rename(i64),
     /// Where to write the playlist with this id as an M3U8.
     Export(i64),
-    /// A folder to add to the library.
-    Folder,
 }
 
 pub struct NamePrompt {
@@ -37,7 +35,6 @@ impl NamePrompt {
             Purpose::New(_) => "new playlist",
             Purpose::Rename(_) => "rename playlist",
             Purpose::Export(_) => "export as m3u8 to",
-            Purpose::Folder => "add library folder",
         }
     }
 }
@@ -75,7 +72,7 @@ impl<'a> NamePromptOverlay<'a> {
 impl Widget for NamePromptOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let popup = prompt_rect(area);
-        Clear.render(popup, buf);
+        super::shell::clear(buf, popup);
         let block = super::shell::frame(self.prompt.title(), self.theme);
         let inner = block.inner(popup);
         block.render(popup, buf);
@@ -168,7 +165,7 @@ impl<'a> ChooserOverlay<'a> {
 impl Widget for ChooserOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let popup = chooser_rect(area, self.chooser.entries.len());
-        Clear.render(popup, buf);
+        super::shell::clear(buf, popup);
         let n = self.chooser.ids.len();
         let title = format!(
             "add {n} track{} to a playlist",

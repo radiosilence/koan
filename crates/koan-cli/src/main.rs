@@ -1,7 +1,7 @@
 use std::io;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::engine::{ArgValueCandidates, CompletionCandidate};
@@ -18,41 +18,35 @@ use koan_core::db::queries;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 // --- Logger ---
-// All log messages go to ~/.config/koan/koan.log.
-// During playback, they're also buffered for the queue display.
-// Outside playback, they also go to stderr.
+// All log messages go to ~/.config/koan/koan.log, and to stderr unless the
+// TUI owns the terminal.
 
-static LOGGER: OnceLock<BufferedLogger> = OnceLock::new();
+static LOGGER: OnceLock<Logger> = OnceLock::new();
 
-struct BufferedLogger {
-    buffer: Mutex<Option<Arc<Mutex<Vec<String>>>>>,
+struct Logger {
+    /// While the TUI is drawing, stderr would write over it.
+    quiet: AtomicBool,
     log_file: Mutex<config::LogFile>,
 }
 
-impl BufferedLogger {
+impl Logger {
     fn init() {
-        let logger = LOGGER.get_or_init(|| BufferedLogger {
-            buffer: Mutex::new(None),
+        let logger = LOGGER.get_or_init(|| Logger {
+            quiet: AtomicBool::new(false),
             log_file: Mutex::new(config::LogFile::default()),
         });
         log::set_logger(logger).expect("failed to set logger");
         log::set_max_level(log::LevelFilter::Info);
     }
 
-    fn set_buffer(buf: Arc<Mutex<Vec<String>>>) {
+    fn set_quiet(quiet: bool) {
         if let Some(logger) = LOGGER.get() {
-            *logger.buffer.lock().unwrap() = Some(buf);
-        }
-    }
-
-    fn clear_buffer() {
-        if let Some(logger) = LOGGER.get() {
-            *logger.buffer.lock().unwrap() = None;
+            logger.quiet.store(quiet, Ordering::Relaxed);
         }
     }
 }
 
-impl log::Log for BufferedLogger {
+impl log::Log for Logger {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
         metadata.level() <= log::Level::Info
     }
@@ -74,7 +68,10 @@ impl log::Log for BufferedLogger {
             .unwrap()
             .write(format_args!("[{}] {}", now, msg));
 
-        // Suppress warn-level noise from lofty/symphonia internals on stderr/buffer.
+        if self.quiet.load(Ordering::Relaxed) {
+            return;
+        }
+        // Suppress warn-level noise from lofty/symphonia internals on stderr.
         // Our own fallback warnings (from koan_core) still come through.
         let module = record.module_path().unwrap_or("");
         if record.level() == log::Level::Warn
@@ -82,12 +79,7 @@ impl log::Log for BufferedLogger {
         {
             return;
         }
-
-        if let Some(buf) = self.buffer.lock().unwrap().as_ref() {
-            buf.lock().unwrap().push(msg);
-        } else {
-            eprintln!("{}", msg);
-        }
+        eprintln!("{}", msg);
     }
 
     fn flush(&self) {
@@ -722,7 +714,7 @@ fn main() {
     // Dynamic shell completions — handles COMPLETE=zsh/bash/fish env var.
     CompleteEnv::with_factory(Cli::command).complete();
 
-    BufferedLogger::init();
+    Logger::init();
 
     let mut cli = Cli::parse();
     let command = cli.command.take();

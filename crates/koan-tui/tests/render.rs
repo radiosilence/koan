@@ -22,7 +22,6 @@ use koan_tui::app::{HoverZone, Mode};
 use koan_tui::context_menu::context_menu_rect_at;
 use koan_tui::cover_art::CoverArt;
 use koan_tui::help_modal::HelpModalOverlay;
-use koan_tui::library::{LibraryNode, LibraryState, LibraryView};
 use koan_tui::lyrics::{LyricsPanel, LyricsState};
 use koan_tui::organize::organize_popup_rect;
 use koan_tui::picker::{
@@ -354,52 +353,39 @@ fn empty_queue_panics_with_no_inner_row() {
 }
 
 // ---------------------------------------------------------------------------
-// Library
+// Library rows
 // ---------------------------------------------------------------------------
 
-fn library_state() -> LibraryState {
-    // Loading reads the library, so it has to be this process's own.
-    koan_core::config::isolate_config_for_tests();
-    let mut st = LibraryState::load();
-    for (i, name) in NASTY.iter().enumerate() {
-        st.nodes.push(LibraryNode::Artist {
-            id: i as i64,
-            name: (*name).into(),
-            expanded: true,
-        });
-        st.nodes.push(LibraryNode::Album {
-            id: i as i64,
-            title: (*name).into(),
-            year: Some("2026".into()),
-            expanded: true,
-        });
-        st.nodes.push(LibraryNode::Track {
-            id: i as i64,
-            title: (*name).into(),
-            number: Some(i as i32),
-            duration_ms: Some(215_000),
-            source: if i % 2 == 0 { "local" } else { "remote" }.into(),
-        });
-    }
-    st
-}
-
+/// Every list row stays in its row and its columns at every width, whatever
+/// the names hold.
 #[test]
-fn library_survives_every_size() {
+fn list_rows_survive_every_size() {
+    use koan_tui::rows::{Columns, Emphasis, Row, Target};
     let theme = Theme::default();
-    let mut st = library_state();
-    for &(w, h) in SIZES {
-        for focused in [true, false] {
-            for (cursor, scroll, filter, filter_active) in [
-                (0usize, 0usize, "", false),
-                (5, 2, "東京", true),
-                (st.nodes.len() + 10, st.nodes.len() + 10, "🎵", true),
-            ] {
-                st.cursor = cursor;
-                st.scroll_offset = scroll;
-                st.filter = filter.into();
-                st.filter_active = filter_active;
-                render_widget(LibraryView::new(&st, &theme, focused), w, h);
+    for &(w, _) in SIZES {
+        let area = Rect::new(0, 0, w, 1);
+        let cols = Columns::new(area, 3, 7, true, true);
+        for name in NASTY {
+            for emphasis in [Emphasis::Plain, Emphasis::Hovered, Emphasis::Selected] {
+                let mut buf = Buffer::empty(area);
+                let mut links = Vec::new();
+                Row {
+                    favourite: true,
+                    lead: "12",
+                    name,
+                    artist: Some((name, Some(1))),
+                    detail: Some((name, Some(Target::Album(1)))),
+                    tail: "1:02:03",
+                }
+                .draw(&mut buf, &cols, area, &theme, emphasis, None, &mut links);
+                // Each link ends before the next column starts.
+                for (r, target) in links {
+                    let next = match target {
+                        Target::Artist(_) => cols.detail.x,
+                        Target::Album(_) => cols.tail.x,
+                    };
+                    assert!(r.x + r.width <= next.max(r.x), "{w}: {name} at {r:?}");
+                }
             }
         }
     }
@@ -559,7 +545,9 @@ fn overlays_survive_every_size() {
     let theme = Theme::default();
     let viz = VizPickerState::new(VisualizerMode::Bars);
     for &(w, h) in SIZES {
-        render_widget(HelpModalOverlay::new(&theme), w, h);
+        for scroll in [0, usize::MAX] {
+            render_widget(HelpModalOverlay::new(&theme, scroll), w, h);
+        }
         render_widget(VizPickerOverlay::new(&viz, &theme), w, h);
     }
 }

@@ -1,187 +1,460 @@
+//! Track info: everything the library knows of a track, as each of its
+//! sources says it — the file's tags, the server's entry, the ReplayGain in
+//! the file — and its ids, as the apps' track info shows it. A queue entry
+//! adds where it stands in the queue and, while it plays, what the decoder
+//! reports.
+
 use image::DynamicImage;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Widget};
 
+use koan_core::db::queries::{self, TrackMeta};
 use koan_core::player::state::{QueueEntry, QueueEntryStatus, TrackInfo};
 
 use super::cover_art::CoverArt;
+use super::text::{fit, width, wrap};
 use super::theme::Theme;
+use super::transport::format_time;
+
+type Fields = Vec<(&'static str, String)>;
+pub type Groups = Vec<(&'static str, Fields)>;
+
+/// What is known of a track, read once when it is asked for.
+#[derive(Debug, Clone, Default)]
+pub struct Details {
+    pub title: String,
+    groups: Groups,
+    /// The first line shown, for a list longer than the popup.
+    pub scroll: usize,
+}
+
+impl Details {
+    /// Reads the track's sources, its ids and the ReplayGain in its file.
+    pub fn load(track_id: i64) -> Option<Self> {
+        let db = koan_core::db::pool::shared().get().ok()?;
+        let row = queries::get_track_row(&db.conn, track_id).ok()??;
+        let mut groups: Groups = queries::sources_of_track(&db.conn, track_id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|m| {
+                let kind = if m.source == "remote" {
+                    "server"
+                } else {
+                    "file"
+                };
+                (kind, source_fields(m))
+            })
+            .collect();
+        let gain: Fields = row
+            .path
+            .as_deref()
+            .and_then(|p| koan_core::audio::replaygain::read_tags(std::path::Path::new(p)).ok())
+            .map(|rg| {
+                [
+                    (
+                        "track gain",
+                        rg.track_gain_db.map(|g| format!("{g:+.2} dB")),
+                    ),
+                    ("track peak", rg.track_peak.map(|p| format!("{p:.6}"))),
+                    (
+                        "album gain",
+                        rg.album_gain_db.map(|g| format!("{g:+.2} dB")),
+                    ),
+                    ("album peak", rg.album_peak.map(|p| format!("{p:.6}"))),
+                ]
+                .into_iter()
+                .filter_map(|(name, value)| value.map(|v| (name, v)))
+                .collect()
+            })
+            .unwrap_or_default();
+        if !gain.is_empty() {
+            groups.push(("replaygain", gain));
+        }
+        let mut ids = vec![("track id", track_id.to_string())];
+        if let Some(uid) = queries::uids_for(&db.conn, queries::UidKind::Track, [track_id])
+            .ok()
+            .and_then(|mut u| u.remove(&track_id))
+        {
+            ids.push(("uid", uid));
+        }
+        if let Some(p) = &row.cached_path {
+            ids.push(("downloaded to", p.clone()));
+        }
+        groups.push(("library", ids));
+        Some(Self {
+            title: row.title,
+            groups,
+            scroll: 0,
+        })
+    }
+
+    pub fn groups(&self) -> Groups {
+        self.groups.clone()
+    }
+
+    /// What the popup lists for a queue entry: where it stands, then what
+    /// the library knows of it, or what the entry carries when the library
+    /// has no row for it.
+    pub fn with_entry(&self, entry: &QueueEntry, playing: Option<&TrackInfo>) -> Groups {
+        let status = match entry.status {
+            QueueEntryStatus::Queued => "queued",
+            QueueEntryStatus::Playing => "playing",
+            QueueEntryStatus::Played => "played",
+            QueueEntryStatus::Downloading => "downloading",
+            QueueEntryStatus::PriorityPending => "up next",
+            QueueEntryStatus::Failed => "failed",
+        };
+        let mut queue = vec![("status", status.to_string())];
+        if let Some(why) = &entry.error {
+            queue.push(("why", why.clone()));
+        }
+        if let Some(info) = playing {
+            queue.push(("sample rate", format!("{} Hz", info.sample_rate)));
+            if let Some(b) = info.bit_depth {
+                queue.push(("bit depth", format!("{b} bit")));
+            }
+            if let Some(kbps) = info.bitrate_kbps {
+                queue.push(("bitrate", format!("{kbps} kbps")));
+            }
+            queue.push(("channels", info.channels.to_string()));
+        }
+        let mut groups = vec![("queue", queue)];
+        if self.groups.is_empty() {
+            groups.push(("entry", entry_fields(entry)));
+        } else {
+            groups.extend(self.groups.iter().cloned());
+        }
+        groups
+    }
+}
+
+/// What a source says, by name, as the apps show it.
+fn source_fields(m: TrackMeta) -> Fields {
+    let text = |v: Option<String>| v.filter(|v| !v.is_empty());
+    let number = |v: Option<i32>| v.map(|v| v.to_string());
+    let modified = m
+        .mtime
+        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
+        .map(|t| {
+            t.with_timezone(&chrono::Local)
+                .format("%-d %b %Y %H:%M")
+                .to_string()
+        });
+    // The stream URL carries the account's credentials, so it is left out.
+    [
+        ("title", Some(m.title)),
+        ("artist", Some(m.artist)),
+        ("album artist", text(m.album_artist)),
+        ("album", Some(m.album)),
+        ("date", text(m.date)),
+        ("disc", number(m.disc)),
+        ("track", number(m.track_number)),
+        ("genre", text(m.genre)),
+        ("label", text(m.label)),
+        ("length", m.duration_ms.map(|ms| format_time(ms as u64))),
+        ("codec", text(m.codec)),
+        ("sample rate", m.sample_rate.map(|r| format!("{r} Hz"))),
+        ("bit depth", m.bit_depth.map(|b| format!("{b} bit"))),
+        ("channels", number(m.channels)),
+        ("bitrate", m.bitrate.map(|b| format!("{b} kbps"))),
+        ("size", m.size_bytes.map(|b| format!("{b} bytes"))),
+        ("modified", modified),
+        ("path", text(m.path)),
+        ("server id", text(m.remote_id)),
+        ("server album id", text(m.album_remote_id)),
+        ("server artist id", text(m.artist_remote_id)),
+        ("musicbrainz recording", text(m.mbid)),
+        ("musicbrainz release", text(m.album_mbid)),
+        ("album added", text(m.album_added_at)),
+    ]
+    .into_iter()
+    .filter_map(|(name, value)| value.map(|v| (name, v)))
+    .collect()
+}
+
+/// What a queue entry carries of its track.
+fn entry_fields(entry: &QueueEntry) -> Fields {
+    let mut out = vec![
+        ("title", entry.title.clone()),
+        ("artist", entry.artist.clone()),
+    ];
+    if !entry.album_artist.is_empty() && entry.album_artist != entry.artist {
+        out.push(("album artist", entry.album_artist.clone()));
+    }
+    out.push(("album", entry.album.clone()));
+    if let Some(year) = &entry.year {
+        out.push(("date", year.clone()));
+    }
+    if let Some(d) = entry.disc {
+        out.push(("disc", d.to_string()));
+    }
+    if let Some(n) = entry.track_number {
+        out.push(("track", n.to_string()));
+    }
+    if let Some(ms) = entry.duration_ms {
+        out.push(("length", format_time(ms)));
+    }
+    if let Some(c) = &entry.codec {
+        out.push(("codec", c.clone()));
+    }
+    out.push(("path", entry.path.display().to_string()));
+    out
+}
+
+/// Where the popup sits in `area`, for drawing and for a click outside it.
+pub fn popup_rect(area: Rect) -> Rect {
+    let w = (area.width * 7 / 10).max(40).min(area.width);
+    let h = (area.height * 7 / 10).max(14).min(area.height);
+    Rect::new(
+        area.x + area.width.saturating_sub(w) / 2,
+        area.y + area.height.saturating_sub(h) / 2,
+        w,
+        h,
+    )
+}
+
+/// The width of the labels' column.
+const LABEL_W: usize = 22;
 
 pub struct TrackInfoOverlay<'a> {
-    entry: &'a QueueEntry,
-    track_info: Option<&'a TrackInfo>,
-    cover_art: Option<&'a DynamicImage>,
+    title: &'a str,
+    groups: Groups,
+    scroll: usize,
+    /// The cover, and the squash it is drawn with.
+    cover: Option<(&'a DynamicImage, f32)>,
     theme: &'a Theme,
-    squash: f32,
 }
 
 impl<'a> TrackInfoOverlay<'a> {
     pub fn new(
-        entry: &'a QueueEntry,
-        track_info: Option<&'a TrackInfo>,
-        cover_art: Option<&'a DynamicImage>,
+        title: &'a str,
+        groups: Groups,
+        scroll: usize,
+        cover: Option<(&'a DynamicImage, f32)>,
         theme: &'a Theme,
-        squash: f32,
     ) -> Self {
         Self {
-            entry,
-            track_info,
-            cover_art,
+            title,
+            groups,
+            scroll,
+            cover,
             theme,
-            squash,
         }
     }
 }
 
-fn format_duration(ms: u64) -> String {
-    let total_secs = ms / 1000;
-    let mins = total_secs / 60;
-    let secs = total_secs % 60;
-    format!("{}:{:02}", mins, secs)
-}
-
-fn status_str(status: QueueEntryStatus) -> &'static str {
-    match status {
-        QueueEntryStatus::Queued => "Queued",
-        QueueEntryStatus::Playing => "Playing",
-        QueueEntryStatus::Played => "Played",
-        QueueEntryStatus::Downloading => "Downloading",
-        QueueEntryStatus::PriorityPending => "Up Next",
-        QueueEntryStatus::Failed => "Failed",
-    }
+/// A line of the popup: a group's heading, or a label and a line of its
+/// value.
+enum Line {
+    Blank,
+    Heading(&'static str),
+    Field(&'static str, String),
 }
 
 impl Widget for TrackInfoOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let popup_width = (area.width as f32 * 0.7).max(40.0).min(area.width as f32) as u16;
-        let popup_height = (area.height as f32 * 0.7).max(14.0).min(area.height as f32) as u16;
-        let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
-        let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
-        let popup_area = Rect::new(x, y, popup_width, popup_height);
-
-        Clear.render(popup_area, buf);
-
+        let popup = popup_rect(area);
+        Clear.render(popup, buf);
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(Line::from(vec![Span::styled(
+            .border_style(self.theme.rule)
+            .title(ratatui::text::Span::styled(
                 " track info ",
                 self.theme.album_header_artist.add_modifier(Modifier::BOLD),
-            )]));
-
-        let inner = block.inner(popup_area);
-        block.render(popup_area, buf);
-
-        if inner.height < 3 {
+            ));
+        let inner = block.inner(popup);
+        block.render(popup, buf);
+        if inner.height < 3 || inner.width < 4 {
             return;
         }
 
-        // Layout: if we have cover art, put it on the left.
-        let (text_area, art_area) = if self.cover_art.is_some() && inner.width > 30 {
-            // Art takes a square-ish area on the left. Width ≈ height works
-            // because halfblocks give 2 vertical pixels per cell, roughly
-            // matching the ~2:1 cell aspect ratio.
-            let art_size = inner.height.min(inner.width / 3);
-            let art_rect = Rect::new(inner.x + 1, inner.y, art_size, art_size);
-            let text_rect = Rect::new(
-                inner.x + art_size + 2,
+        // The cover takes a square at the top left: half blocks give two
+        // pixels a cell vertically, roughly a cell's 2:1 shape.
+        let mut text = Rect::new(inner.x + 1, inner.y, inner.width - 2, inner.height);
+        if let Some((img, squash)) = self.cover
+            && inner.width > 50
+        {
+            let side = (inner.height - 1).min(inner.width / 4);
+            CoverArt::new(img)
+                .shaped(squash)
+                .render(Rect::new(inner.x + 1, inner.y, side, side), buf);
+            text = Rect::new(
+                inner.x + side + 3,
                 inner.y,
-                inner.width.saturating_sub(art_size + 3),
+                inner.width.saturating_sub(side + 4),
                 inner.height,
             );
-            (text_rect, Some(art_rect))
-        } else {
-            (inner, None)
-        };
-
-        if let (Some(img), Some(art_rect)) = (self.cover_art, art_area) {
-            CoverArt::new(img).shaped(self.squash).render(art_rect, buf);
         }
+        let w = text.width as usize;
+        let strong = self.theme.track_normal.add_modifier(Modifier::BOLD);
+        buf.set_stringn(text.x, text.y, fit(self.title, w), w, strong);
 
-        // Render text fields.
-        let key_style = self.theme.hint_key.add_modifier(Modifier::BOLD);
-        let val_style = self.theme.track_normal;
-
-        let mut lines: Vec<Line> = Vec::new();
-
-        let mut field = |label: &str, value: &str| {
-            lines.push(Line::from(vec![
-                Span::styled(format!(" {:<14}", label), key_style),
-                Span::styled(value.to_string(), val_style),
-            ]));
-        };
-
-        field("Title", &self.entry.title);
-        field("Artist", &self.entry.artist);
-
-        if !self.entry.album_artist.is_empty() && self.entry.album_artist != self.entry.artist {
-            field("Album Artist", &self.entry.album_artist);
-        }
-
-        field("Album", &self.entry.album);
-
-        if let Some(ref year) = self.entry.year {
-            field("Year", year);
-        }
-
-        if let Some(num) = self.entry.track_number {
-            field("Track #", &num.to_string());
-        }
-
-        if let Some(disc) = self.entry.disc {
-            field("Disc", &disc.to_string());
-        }
-
-        if let Some(ms) = self.entry.duration_ms {
-            field("Duration", &format_duration(ms));
-        }
-
-        if let Some(ref codec) = self.entry.codec {
-            field("Codec", codec);
-        }
-
-        // Audio details from TrackInfo (only for currently playing track).
-        if let Some(info) = self.track_info {
-            field("Sample Rate", &format!("{} Hz", info.sample_rate));
-            if let Some(bd) = info.bit_depth {
-                field("Bit Depth", &bd.to_string());
+        // A long value wraps under itself; the labels keep their column.
+        let label_w = LABEL_W.min(w / 3);
+        let value_w = w.saturating_sub(label_w + 1).max(1);
+        let mut lines = Vec::new();
+        for (name, fields) in self.groups {
+            lines.push(Line::Blank);
+            lines.push(Line::Heading(name));
+            for (label, value) in fields {
+                for (i, part) in wrap(&value, value_w).into_iter().enumerate() {
+                    lines.push(Line::Field(if i == 0 { label } else { "" }, part));
+                }
             }
-            if let Some(kbps) = info.bitrate_kbps {
-                field("Bitrate", &format!("{} kbps", kbps));
-            }
-            field("Channels", &info.channels.to_string());
         }
-
-        field("Status", status_str(self.entry.status));
-
-        lines.push(Line::raw(""));
-        lines.push(Line::from(vec![
-            Span::styled(format!(" {:<14}", "Path"), key_style),
-            Span::styled(self.entry.path.display().to_string(), val_style),
-        ]));
-
-        // Hint bar at bottom.
-        let hint_line = Line::from(vec![
-            Span::styled(" [esc]", self.theme.hint_key.add_modifier(Modifier::BOLD)),
-            Span::styled(" close", self.theme.hint_desc),
-        ]);
-
-        // Split text area into content + hint row.
-        let content_height = text_area.height.saturating_sub(1);
-        let content_area = Rect::new(text_area.x, text_area.y, text_area.width, content_height);
-        let hint_area = Rect::new(
-            text_area.x,
-            text_area.y + content_height,
-            text_area.width,
-            1,
+        let body = Rect::new(
+            text.x,
+            text.y + 1,
+            text.width,
+            text.height.saturating_sub(2),
         );
+        let rows = body.height as usize;
+        let scroll = self.scroll.min(lines.len().saturating_sub(rows));
+        for (r, line) in lines.iter().skip(scroll).take(rows).enumerate() {
+            let y = body.y + r as u16;
+            match line {
+                Line::Blank => {}
+                Line::Heading(name) => {
+                    let style = self.theme.heading.add_modifier(Modifier::BOLD);
+                    buf.set_stringn(body.x, y, name, w, style);
+                    for cx in body.x + 1 + width(name) as u16..body.x + body.width {
+                        buf[(cx, y)].set_char('\u{2500}').set_style(self.theme.rule);
+                    }
+                }
+                Line::Field(label, value) => {
+                    let label = fit(label, label_w);
+                    buf.set_stringn(body.x, y, &label, label_w, self.theme.hint_desc);
+                    let x = body.x + label_w as u16 + 1;
+                    buf.set_stringn(x, y, value, value_w, self.theme.track_normal);
+                }
+            }
+        }
+        let hint = if lines.len() > rows {
+            " esc close \u{b7} \u{2191}\u{2193} scroll"
+        } else {
+            " esc close"
+        };
+        let foot = text.y + text.height - 1;
+        buf.set_stringn(text.x, foot, hint, w, self.theme.hint_desc);
+    }
+}
 
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .render(content_area, buf);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use koan_core::player::state::QueueItemId;
 
-        Paragraph::new(hint_line).render(hint_area, buf);
+    fn meta() -> TrackMeta {
+        TrackMeta {
+            title: "song".into(),
+            artist: "artist".into(),
+            album_artist: None,
+            album: "album".into(),
+            date: Some("2007".into()),
+            disc: Some(1),
+            track_number: Some(3),
+            genre: Some(String::new()),
+            label: None,
+            duration_ms: Some(200_000),
+            codec: Some("FLAC".into()),
+            sample_rate: Some(44_100),
+            bit_depth: Some(16),
+            channels: Some(2),
+            bitrate: None,
+            size_bytes: Some(1234),
+            mtime: None,
+            path: Some("/music/a very long path/that wraps/song.flac".into()),
+            source: "local".into(),
+            remote_id: None,
+            remote_url: Some("https://server/rest/stream?p=secret".into()),
+            album_remote_id: None,
+            artist_remote_id: None,
+            mbid: None,
+            album_mbid: None,
+            album_added_at: None,
+        }
+    }
+
+    fn details() -> Details {
+        Details {
+            title: "song".into(),
+            groups: vec![
+                ("file", source_fields(meta())),
+                ("library", vec![("track id", "7".into())]),
+            ],
+            scroll: 0,
+        }
+    }
+
+    fn entry() -> QueueEntry {
+        QueueEntry {
+            id: QueueItemId::new(),
+            db_id: Some(7),
+            playlist_entry_id: None,
+            path: "/music/song.flac".into(),
+            title: "song".into(),
+            artist: "artist".into(),
+            album_artist: String::new(),
+            album: "album".into(),
+            year: None,
+            codec: None,
+            track_number: None,
+            disc: None,
+            duration_ms: None,
+            status: QueueEntryStatus::Failed,
+            download_progress: None,
+            error: Some("the server is unreachable".into()),
+        }
+    }
+
+    #[test]
+    fn a_source_says_what_it_has_and_never_its_stream_url() {
+        let fields = source_fields(meta());
+        let names: Vec<_> = fields.iter().map(|(n, _)| *n).collect();
+        for want in [
+            "title",
+            "album",
+            "date",
+            "sample rate",
+            "bit depth",
+            "path",
+            "size",
+        ] {
+            assert!(names.contains(&want), "{want}");
+        }
+        assert!(!names.contains(&"genre"), "an empty tag is left out");
+        assert!(fields.iter().all(|(_, v)| !v.contains("secret")));
+    }
+
+    #[test]
+    fn a_queue_entry_leads_with_where_it_stands_and_why() {
+        let groups = details().with_entry(&entry(), None);
+        assert_eq!(groups[0].0, "queue");
+        assert_eq!(groups[0].1[0], ("status", "failed".into()));
+        assert_eq!(groups[0].1[1].0, "why");
+        assert_eq!(groups[1].0, "file");
+        let bare = Details::default().with_entry(&entry(), None);
+        assert_eq!(bare[1].0, "entry", "what the entry carries, with no row");
+    }
+
+    #[test]
+    fn it_draws_at_any_size() {
+        let theme = Theme::new(super::super::theme::Palette::Ansi, (125, 211, 167));
+        let cover = DynamicImage::new_rgb8(8, 8);
+        let d = details();
+        for w in 0..120 {
+            for h in 0..30 {
+                let area = Rect::new(0, 0, w, h);
+                for with_cover in [None, Some((&cover, 1.0))] {
+                    for scroll in [0, 100] {
+                        let mut buf = Buffer::empty(area);
+                        TrackInfoOverlay::new(&d.title, d.groups(), scroll, with_cover, &theme)
+                            .render(area, &mut buf);
+                    }
+                }
+            }
+        }
     }
 }

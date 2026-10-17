@@ -99,6 +99,12 @@ impl FadeControl {
         self.silent.load(Ordering::Acquire)
     }
 
+    /// A fade out asked for and no fade in since, whether or not the callback
+    /// got as far as silence.
+    pub fn is_faded_out(&self) -> bool {
+        !self.audible.load(Ordering::Acquire)
+    }
+
     /// One render callback's length, as the callback last asked for it.
     /// Zero until the first callback.
     pub fn period(&self) -> std::time::Duration {

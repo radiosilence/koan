@@ -7,7 +7,8 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 
-use super::shell::{Link, Links, fit, width};
+use super::shell::{Link, Links};
+use super::text::{fit, width};
 use super::theme::Theme;
 use super::transport::format_time;
 
@@ -374,7 +375,7 @@ pub fn facts(year: Option<&str>, tracks: usize, ms: u64, codec: Option<&str>) ->
     if let Some(year) = year.filter(|y| !y.is_empty()) {
         parts.push(year.to_string());
     }
-    parts.push(count(tracks, "track"));
+    parts.push(super::text::count(tracks as u64, "track"));
     if ms > 0 {
         parts.push(format_time(ms));
     }
@@ -382,19 +383,6 @@ pub fn facts(year: Option<&str>, tracks: usize, ms: u64, codec: Option<&str>) ->
         parts.push(codec.to_uppercase());
     }
     parts.join(" \u{b7} ")
-}
-
-/// "1 track", "1,204 tracks".
-pub fn count(n: usize, what: &str) -> String {
-    let digits = n.to_string();
-    let mut grouped = String::new();
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            grouped.push(',');
-        }
-        grouped.push(c);
-    }
-    format!("{grouped} {what}{}", if n == 1 { "" } else { "s" })
 }
 
 /// A long length as people say one: "3 days 2:10:05", "2:10:05", "59:10".
@@ -553,8 +541,6 @@ mod tests {
 
     #[test]
     fn counts_and_totals_read_as_words() {
-        assert_eq!(count(1, "track"), "1 track");
-        assert_eq!(count(1204, "track"), "1,204 tracks");
         assert_eq!(total(3_550_000), "59:10");
         assert_eq!(total(3 * 86_400_000 + 7_805_000), "3 days 2:10:05");
     }
