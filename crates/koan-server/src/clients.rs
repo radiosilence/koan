@@ -1182,7 +1182,10 @@ impl Registry {
             let cmd = if order.play_next {
                 LinkCommand::PlayNext { track_ids }
             } else {
-                LinkCommand::Enqueue { track_ids }
+                LinkCommand::Enqueue {
+                    track_ids,
+                    play: false,
+                }
             };
             match self.send(order.username.as_deref(), order.client.as_deref(), cmd) {
                 Ok(c) => {
@@ -2021,7 +2024,7 @@ mod outbox {
     pub fn describe(cmd: &LinkCommand) -> Option<String> {
         let ids: Vec<&String> = match cmd {
             LinkCommand::Play { track_ids, .. }
-            | LinkCommand::Enqueue { track_ids }
+            | LinkCommand::Enqueue { track_ids, .. }
             | LinkCommand::PlayNext { track_ids } => track_ids.iter().collect(),
             LinkCommand::JumpTo { track_id } => vec![track_id],
             _ => return None,
