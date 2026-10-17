@@ -228,6 +228,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     );
     match app.page() {
         Page::Queue => {
+            let stage = super::shell::body(stage);
             if app.lyrics_panel {
                 let panes = Layout::horizontal([
                     Constraint::Percentage(60), // queue
@@ -251,6 +252,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             super::now_playing::render(frame.buffer_mut(), app, stage);
         }
         Page::Playlists => {
+            let stage = super::shell::body(stage);
             app.layout.browse_area = stage;
             let hover = match app.hover.zone {
                 super::app::HoverZone::Playlists(h) => Some(h),
@@ -264,6 +266,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             playlists_page.render(stage, frame.buffer_mut(), theme, hover);
         }
         Page::Playlist(_) => {
+            let stage = super::shell::body(stage);
             app.layout.browse_area = stage;
             let hover = match app.hover.zone {
                 super::app::HoverZone::Playlist(h) => Some(h),
@@ -290,7 +293,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 None => {
                     frame.buffer_mut().set_string(
                         stage.x,
-                        super::shell::body(stage).y,
+                        stage.y,
                         "this playlist is gone",
                         theme.hint_desc,
                     );
@@ -427,6 +430,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             );
         }
         Page::Downloads => {
+            let stage = super::shell::body(stage);
             app.layout.browse_area = stage;
             let hover = match app.hover.zone {
                 super::app::HoverZone::Downloads(h) => Some(h),
@@ -1462,6 +1466,36 @@ mod tests {
             "the heart sits at the right, among the figures"
         );
         assert_eq!(menu_button_x(area), area.x + area.width - 3);
+    }
+
+    #[test]
+    fn the_queue_starts_one_blank_row_under_the_toolbar() {
+        let mut app = app_with_queue(3);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        let buf = terminal.backend().buffer();
+        let q = app.layout.queue_area;
+        let row =
+            |y: u16| -> String { (q.x..q.x + q.width).map(|x| buf[(x, y)].symbol()).collect() };
+        let toolbar = row(q.y - 1 - crate::shell::BODY_GAP);
+        assert!(
+            toolbar.contains("queue") && toolbar.contains("3 tracks"),
+            "{toolbar:?}"
+        );
+        assert!(
+            row(q.y - 1).trim().is_empty(),
+            "the gap: {:?}",
+            row(q.y - 1)
+        );
+        let first = row(q.y);
+        assert!(
+            first.trim_start().starts_with("album"),
+            "the album's heading: {first:?}"
+        );
+        assert!(
+            !first.contains('\u{2500}'),
+            "no rule of a heading row: {first:?}"
+        );
     }
 
     #[test]

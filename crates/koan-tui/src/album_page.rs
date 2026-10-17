@@ -335,13 +335,7 @@ impl AlbumPage {
         }
         thumbs.begin_frame();
         let mut hits = Vec::new();
-        // A row clear under the shell's toolbar.
-        let body = Rect::new(
-            area.x,
-            area.y + 1,
-            area.width,
-            area.height.saturating_sub(1),
-        );
+        let body = super::shell::body(area);
 
         // The header: the cover on the left when there is room, text beside it.
         let art_w = if body.width >= 50 {

@@ -914,8 +914,7 @@ impl ShelfPage {
         }
         thumbs.begin_frame();
         gfx.begin_frame();
-        // A row clear under the shell's toolbar.
-        let mut top = area.y + 1;
+        let mut top = super::shell::body(area).y;
         if self.searching() {
             self.render_box(Rect::new(area.x, top, area.width, 1), buf, theme, hover);
             top += 2;

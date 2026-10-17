@@ -1226,13 +1226,7 @@ impl Browse {
         self.ensure_loaded();
         thumbs.begin_frame();
         gfx.begin_frame();
-        // A row clear under the shell's toolbar.
-        let mut body = Rect::new(
-            area.x,
-            area.y + 1,
-            area.width,
-            area.height.saturating_sub(1),
-        );
+        let mut body = super::shell::body(area);
         if body.height == 0 {
             return;
         }
