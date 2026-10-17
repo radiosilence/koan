@@ -228,6 +228,8 @@ pub struct App {
     pub shown: Arc<parking_lot::RwLock<Arc<SharedPlayerState>>>,
     /// Where commands go: this player, or the device it controls.
     pub tx: Sender<PlayerCommand>,
+    /// Changes of where `tx` goes, in order with what is sent through it.
+    lane: super::control::Lane,
     /// This player's own channel, whatever is controlled.
     pub local_tx: Sender<PlayerCommand>,
     pub quit: bool,
@@ -423,12 +425,14 @@ impl App {
         let ticker_divisor = (ticks_per_sec / TICKER_FPS).max(1);
         let visualizer = VisualizerState::from_config(&cfg.visualizer);
         let viz_config = cfg.visualizer;
+        let (routed, lane) = super::control::router(tx.clone(), task_channel.0.clone());
 
         Self {
             mode: Mode::Normal,
             state: state.clone(),
             shown: Arc::new(parking_lot::RwLock::new(state.clone())),
-            tx: super::control::router(tx.clone(), task_channel.0.clone()),
+            tx: routed,
+            lane,
             local_tx: tx,
             quit: false,
             last_skip: None,
@@ -760,6 +764,8 @@ impl App {
                 super::tasks::Report::Work(line) => line,
             };
             self.status_message = Some((line, std::time::Instant::now()));
+            self.reload_library_pages();
+        } else if super::tasks::take_library_changed() {
             self.reload_library_pages();
         }
         if self.page() == Page::History && !self.history_page.filter_active {
@@ -1988,11 +1994,7 @@ impl App {
                 self.play_on = Some(super::control::PlayOnState::new(&self.view.local));
                 self.push_mode(Mode::PlayOn);
             }
-            KeyCode::Char('E') => {
-                if self.this_device_shown() {
-                    self.open_dsp_selector();
-                }
-            }
+            KeyCode::Char('E') => self.open_dsp_selector(),
             KeyCode::Char('w') => {
                 let ids = self.queue_choice();
                 self.open_chooser(ids);
@@ -2072,7 +2074,7 @@ impl App {
                 }
                 let said = format!("moved the music to {}", choice.name);
                 self.run_control(said, move |tx, state| {
-                    koan_core::remote::control::move_music(choice.id, tx, state)
+                    koan_core::remote::control::move_music(choice.id, tx, state, None).map(|_| ())
                 });
             }
             KeyCode::Char('x') => {
@@ -2091,8 +2093,9 @@ impl App {
         }
     }
 
-    /// Choosing or moving to a device: off the frame, since a hand-off waits
-    /// for this player to go quiet and a wake asks the server.
+    /// Choosing or moving to a device: on the router's lane, so a key pressed
+    /// meanwhile goes where the music went, and off the frame, since a
+    /// hand-off waits for this player to go quiet and a wake asks the server.
     fn run_control(
         &mut self,
         said: String,
@@ -2105,16 +2108,13 @@ impl App {
             self.local_tx.clone(),
             self.task_tx.clone(),
         );
-        std::thread::Builder::new()
-            .name("koan-play-on".into())
-            .spawn(move || {
-                let line = match work(&tx, &local) {
-                    Ok(()) => said,
-                    Err(e) => e,
-                };
-                report.send(super::tasks::Report::Work(line)).ok();
-            })
-            .ok();
+        self.lane.run(move || {
+            let line = match work(&tx, &local) {
+                Ok(()) => said,
+                Err(e) => e,
+            };
+            report.send(super::tasks::Report::Work(line)).ok();
+        });
     }
 
     fn open_device_selector(&mut self) {
@@ -2243,6 +2243,9 @@ impl App {
     }
 
     pub fn open_dsp_selector(&mut self) {
+        if !self.this_device_shown() {
+            return;
+        }
         self.dsp_selector = Some(super::dsp_selector::DspSelectorState::load(
             self.eq_device(),
         ));
@@ -2314,6 +2317,9 @@ impl App {
     /// Bypasses the EQ, or puts back what was bypassed. With nothing to put
     /// back, the chooser opens.
     fn toggle_eq(&mut self) {
+        if !self.this_device_shown() {
+            return;
+        }
         if koan_core::audio::dsp::profiles::overview_for(self.eq_device())
             .active
             .is_some()

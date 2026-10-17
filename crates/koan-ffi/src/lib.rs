@@ -2639,19 +2639,8 @@ impl KoanEngine {
     /// picked. Nothing moves; see `move_music`.
     pub async fn control_device(self: Arc<Self>, id: Option<String>) -> Result<(), KoanError> {
         offload::sequenced(move || {
-            if let Some(id) = &id {
-                koan_core::remote::devices::choosable(id)
-                    .map_err(|message| KoanError::Remote { message })?;
-            }
-            if id.is_some() && self.state.playback_state() == PlaybackState::Playing {
-                self.send_local(PlayerCommand::Pause)?;
-            }
-            koan_core::remote::devices::set_target(id.clone());
-            // Asleep: wake it, and let the row say how that is going.
-            if let Some(id) = id {
-                koan_core::remote::devices::wake(&id);
-            }
-            Ok(())
+            koan_core::remote::control::control(id, &self.tx, &self.state)
+                .map_err(|message| KoanError::Remote { message })
         })
         .await
     }
@@ -2662,49 +2651,45 @@ impl KoanEngine {
     /// the server does not have them, which only this device can say, and
     /// whether `to` has said it has the music.
     pub async fn move_music(self: Arc<Self>, to: Option<String>) -> Result<MoveResult, KoanError> {
-        use koan_core::remote::{devices, link::LinkCommand};
+        use koan_core::remote::control::{self, Moved};
+        use koan_core::remote::devices;
         let engine = self.clone();
         // Sent on the lane, in order with every other command; waited for off
         // it, so the transport does not stall behind a device that is slow to
         // answer.
         let sent = offload::sequenced(move || {
-            let from = devices::target();
-            if from == to {
-                return Ok(None);
-            }
-            let sent = match (&from, &to) {
-                (None, Some(to)) => Some(
-                    engine
-                        .hand_off_blocking(to, koan_core::remote::link::CommandSource::Account)?,
-                ),
-                (Some(from), to) => {
-                    let track = devices::current_track(from);
-                    let to_id = match to {
-                        Some(to) => to.clone(),
-                        None => devices::this_id().ok_or_else(|| KoanError::Remote {
-                            message: "this device is not set up to be reached".into(),
-                        })?,
-                    };
-                    let before = to.as_deref().and_then(devices::last_report);
-                    let cursor_before = engine.state.cursor();
-                    let (then, answer) = outcome_channel();
-                    devices::send_then(from, LinkCommand::HandOff { to: to_id }, Some(then))
-                        .map_err(|message| KoanError::Remote { message })?;
-                    Some(HandedOff {
-                        left_out: 0,
-                        to: to.clone(),
-                        track,
-                        before,
-                        cursor_before,
-                        answer: Some(answer),
-                        answer_is_arrival: false,
-                        was_playing: false,
-                    })
-                }
-                (None, None) => None,
-            };
-            devices::set_target(to);
-            Ok(sent)
+            // Read before the music moves: what the device it leaves is on,
+            // and what the one it goes to was doing.
+            let track = devices::target()
+                .as_deref()
+                .and_then(devices::current_track);
+            let before = to.as_deref().and_then(devices::last_report);
+            let cursor_before = engine.state.cursor();
+            let (then, answer) = outcome_channel();
+            let moved = control::move_music(to.clone(), &engine.tx, &engine.state, Some(then))
+                .map_err(|message| KoanError::Remote { message })?;
+            Ok(moved.map(|moved| match moved {
+                Moved::Sent(sent) => HandedOff {
+                    left_out: sent.left_out,
+                    to,
+                    track: Some(sent.track),
+                    before: sent.before,
+                    cursor_before: None,
+                    answer: Some(answer),
+                    answer_is_arrival: true,
+                    was_playing: sent.was_playing,
+                },
+                Moved::Asked => HandedOff {
+                    left_out: 0,
+                    to,
+                    track,
+                    before,
+                    cursor_before,
+                    answer: Some(answer),
+                    answer_is_arrival: false,
+                    was_playing: false,
+                },
+            }))
         })
         .await?;
         let Some(sent) = sent else {

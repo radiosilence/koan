@@ -17,17 +17,30 @@ use koan_core::player::state::{
 use koan_core::remote::devices::{self, Device, Reach};
 use koan_core::remote::link::{LinkQueueEntry, LinkState};
 
-/// A channel that sends each command where the terminal is pointed. What
-/// does not get there is said on the status line, through `report`.
+/// A channel that sends each command where the terminal is pointed, and the
+/// lane that changes where that is. What does not get there is said on the
+/// status line, through `report`.
+///
+/// Unbounded, since sending to a device can wait on the network and the
+/// frame must not wait behind it.
 pub fn router(
     local: Sender<PlayerCommand>,
     report: Sender<crate::tasks::Report>,
-) -> Sender<PlayerCommand> {
-    let (tx, rx) = crossbeam_channel::bounded::<PlayerCommand>(16);
+) -> (Sender<PlayerCommand>, Lane) {
+    let (tx, rx) = crossbeam_channel::unbounded::<PlayerCommand>();
+    let (work, works) = crossbeam_channel::unbounded::<(Sender<()>, Work)>();
     std::thread::Builder::new()
         .name("koan-control".into())
         .spawn(move || {
+            let mut waiting: Vec<(Sender<()>, Work)> = Vec::new();
             for cmd in rx {
+                if let PlayerCommand::Barrier(mark) = &cmd {
+                    waiting.extend(works.try_iter());
+                    if let Some(at) = waiting.iter().position(|(m, _)| m.same_channel(mark)) {
+                        (waiting.remove(at).1)();
+                        continue;
+                    }
+                }
                 if let Err(e) = koan_core::remote::control::send(cmd, &local) {
                     log::warn!("play on: {e}");
                     report.send(crate::tasks::Report::Work(e.to_string())).ok();
@@ -35,7 +48,29 @@ pub fn router(
             }
         })
         .expect("failed to spawn the control thread");
-    tx
+    (tx.clone(), Lane { tx, work })
+}
+
+type Work = Box<dyn FnOnce() + Send>;
+
+/// Work done in order with the commands around it: choosing a device, or
+/// moving the music, which change where every command after them goes.
+pub struct Lane {
+    tx: Sender<PlayerCommand>,
+    work: Sender<(Sender<()>, Work)>,
+}
+
+impl Lane {
+    /// Run `work` on the router once every command sent before it has gone,
+    /// and before any sent after it. Its place among them is held by a
+    /// barrier whose channel names it; the router runs the work there rather
+    /// than passing the barrier on.
+    pub fn run(&self, work: impl FnOnce() + Send + 'static) {
+        let (mark, _) = crossbeam_channel::bounded(0);
+        if self.work.send((mark.clone(), Box::new(work))).is_ok() {
+            self.tx.send(PlayerCommand::Barrier(mark)).ok();
+        }
+    }
 }
 
 /// The state the pages draw, kept up with the device being controlled.
@@ -100,6 +135,9 @@ impl View {
                 m.set_track_info(None);
             }
             m.set_playback_state(PlaybackState::Stopped);
+            m.set_play_mode(PlayMode::default());
+            m.set_sleep(None);
+            m.set_position_ms(0);
             return;
         };
         if report.queue != self.queue {

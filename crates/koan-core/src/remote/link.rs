@@ -777,16 +777,33 @@ impl LinkIdentity {
     }
 
     /// The terminal UI on this machine: named and kept apart from the app,
-    /// which may be running beside it on the same config directory.
-    pub fn terminal() -> Self {
+    /// which may be running beside it on the same config directory. `None`
+    /// while another terminal UI on this machine is that device: two
+    /// processes under one id would each take the other's place on the
+    /// server and the network.
+    pub fn terminal() -> Option<Self> {
         const FILES: &str = "terminal-";
+        // Held for as long as the process runs; the system lets go of it
+        // however the process ends.
+        static HELD: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
+        let dir = config::config_dir();
+        if HELD.get().is_none() {
+            let lock = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(dir.join(format!("{FILES}device.lock")))
+                .ok()?;
+            lock.try_lock().ok()?;
+            let _ = HELD.set(lock);
+        }
         let app = Self::this_device(None);
-        Self {
+        Some(Self {
             name: format!("{} (terminal)", app.name),
-            device_id: file_device_id(&config::config_dir().join(format!("{FILES}device-id"))),
+            device_id: file_device_id(&dir.join(format!("{FILES}device-id"))),
             files: FILES,
             ..app
-        }
+        })
     }
 }
 

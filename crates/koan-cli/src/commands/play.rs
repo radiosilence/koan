@@ -194,20 +194,34 @@ pub fn cmd_play(
     // server, and by whatever is on this network, as `devices.*` says. Not
     // before the session it starts with is in the player: a device that
     // connected sooner would be told an empty queue, and could replace it
-    // before the restore landed on top.
+    // before the restore landed on top. Music named on the command line
+    // plays here, whichever device the last run was controlling.
     {
         let (state, viz, tx) = (state.clone(), viz_snapshot.clone(), tx.clone());
+        let here = startup.is_some();
         std::thread::Builder::new()
             .name("koan-serve".into())
             .spawn(move || {
                 if let Some(startup) = startup {
                     let _ = startup.join();
                 }
+                let (applied, done) = crossbeam_channel::bounded(1);
+                if tx.send(PlayerCommand::Barrier(applied)).is_ok() {
+                    let _ = done.recv_timeout(Duration::from_secs(5));
+                }
+                let Some(identity) = koan_core::remote::link::LinkIdentity::terminal() else {
+                    log::info!(
+                        "another terminal on this machine is the terminal device; this one plays here only"
+                    );
+                    return;
+                };
                 koan_core::remote::control::serve(
-                    koan_core::remote::link::LinkIdentity::terminal(),
+                    identity,
                     state,
                     viz,
                     tx,
+                    koan_tui::tasks::library_changed,
+                    here,
                 );
             })
             .expect("failed to spawn the serve thread");

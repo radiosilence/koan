@@ -29,11 +29,18 @@ use crate::remote::link::{
 /// Offer this player to the server and the local network as `identity`.
 /// Commands are acted on one at a time, in the order they came, on a thread
 /// of their own: resolving a track the library lacks can mean a sync.
+///
+/// `library_changed` is told when a command changed what the library holds.
+/// With `here`, this device is the one controlled from the start, whichever
+/// the last run left controlled: music the process was started with plays
+/// here.
 pub fn serve(
     identity: LinkIdentity,
     state: Arc<SharedPlayerState>,
     viz: Arc<VizSnapshot>,
     tx: Sender<PlayerCommand>,
+    library_changed: fn(),
+    here: bool,
 ) {
     let playhead = state.clone();
     crate::remote::levels::feed().provide(viz, move || playhead.position_ms());
@@ -47,7 +54,7 @@ pub fn serve(
             .name("koan-link-commands".into())
             .spawn(move || {
                 for (cmd, source, pending) in inbox {
-                    let outcome = match apply(cmd, source, &tx, &state, &|| {}) {
+                    let outcome = match apply(cmd, source, &tx, &state, &library_changed) {
                         Ok(()) => AckOutcome::Done,
                         Err(error) => {
                             log::warn!("link: {error}");
@@ -93,6 +100,9 @@ pub fn serve(
             }
         }),
     });
+    if here {
+        devices::set_target(None);
+    }
 }
 
 /// Hang up on the server and the network: the process is ending, and the
@@ -317,7 +327,7 @@ pub fn apply(
         // Asked for by another device, which learns the outcome from what
         // the destination reports. Refused there, the music plays on here.
         LinkCommand::HandOff { to } => {
-            let was_playing = state.playback_state() != PlaybackState::Paused;
+            let was_playing = state.playback_state() == PlaybackState::Playing;
             let player = tx.clone();
             let then: devices::Then = Box::new(move |outcome| {
                 let refused = matches!(
@@ -461,7 +471,7 @@ pub fn hand_off(
     let start_at = kept.iter().position(|(n, _)| *n >= at).unwrap_or(0);
     // Silent here first, and the playhead read where it went silent: anything
     // heard while the command travels would be heard twice.
-    let paused = state.playback_state() == PlaybackState::Paused;
+    let paused = state.playback_state() != PlaybackState::Playing;
     let (reply, silent) = crossbeam_channel::bounded(1);
     tx.send(PlayerCommand::PauseAndReport(reply))
         .map_err(|_| "the player has stopped".to_string())?;
@@ -521,33 +531,49 @@ pub fn control(
     Ok(())
 }
 
+/// How `move_music` moved the music.
+pub enum Moved {
+    /// This device's own, sent by `hand_off`; `then` hears the destination.
+    Sent(HandOff),
+    /// The device being controlled was asked to send its music on; `then`
+    /// hears whether it did.
+    Asked,
+}
+
 /// Move the music of the device being controlled (this one, when none is)
-/// to `to` (this one with `None`), and control `to` from then on.
+/// to `to` (this one with `None`), and control `to` from then on. `None` when
+/// there was nothing to move: `to` is already the one controlled.
 pub fn move_music(
     to: Option<String>,
     tx: &Sender<PlayerCommand>,
     state: &SharedPlayerState,
-) -> Result<(), String> {
+    then: Option<devices::Then>,
+) -> Result<Option<Moved>, String> {
     let from = devices::target();
     if from == to {
-        return Ok(());
+        return Ok(None);
     }
-    match (&from, &to) {
-        (None, Some(to)) => {
-            hand_off(to, CommandSource::Account, tx, state, None)?;
-        }
+    let moved = match (&from, &to) {
+        (None, Some(to)) => Some(Moved::Sent(hand_off(
+            to,
+            CommandSource::Account,
+            tx,
+            state,
+            then,
+        )?)),
         (Some(from), to) => {
             let to = match to {
                 Some(to) => to.clone(),
                 None => devices::this_id()
                     .ok_or_else(|| "this device is not set up to be reached".to_string())?,
             };
-            devices::send(from, LinkCommand::HandOff { to })?;
+            devices::send_then(from, LinkCommand::HandOff { to }, then)?;
+            Some(Moved::Asked)
         }
-        (None, None) => {}
-    }
+        (None, None) => None,
+    };
     devices::set_target(to);
-    Ok(())
+    Ok(moved)
 }
 
 /// Why a command for the device being controlled did not reach it.
