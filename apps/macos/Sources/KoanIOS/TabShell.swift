@@ -619,21 +619,18 @@ private struct Transport: ViewModifier {
     #if !os(tvOS)
     private var tabs: some View {
         HStack(spacing: 0) {
-            ForEach(Array(Self.items.enumerated()), id: \.element.id) { index, item in
+            ForEach(Self.items, id: \.id) { item in
                 Button {
                     if selection == item.id { reselect(item.id) } else { selection = item.id }
                 } label: {
-                    KoanTabItem(
-                        title: item.title, selected: selection == item.id,
-                        underline: underline, position: (index, Self.items.count)
-                    )
+                    KoanTabItem(title: item.title, selected: selection == item.id, underline: underline)
                 }
                 .buttonStyle(.plain)
             }
         }
-        // A tab bar to VoiceOver, as the platform's bar is: its rotor and
-        // container navigation treat it as one. Each item still says where it
-        // sits, which SwiftUI's plain buttons do not get from the trait.
+        // A tab bar to VoiceOver, as the platform's bar is: a container that
+        // is not an element itself, whose items it reads as tabs and counts
+        // ("tab, 2 of 4").
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isTabBar)
         // The platform's bar's height, the items centred in it as its are.
