@@ -523,7 +523,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .then(|| app.state.track_info())
             .flatten();
         app.layout.track_info_area = super::track_info::popup_rect(area);
-        let cover = app.art.cover_art.cover().map(|c| (c, &mut app.art.gfx));
+        let cover = app
+            .art
+            .cover_art
+            .cover_for(&entry.path)
+            .map(|c| (c, &mut app.art.gfx));
         let fields = super::track_info::entry_fields(&entry, playing.as_ref());
         frame.render_widget(TrackInfoOverlay::new(fields, cover, &app.theme), area);
     }

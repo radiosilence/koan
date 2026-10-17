@@ -103,7 +103,7 @@ Covers are drawn as real images where the terminal supports the kitty or iTerm2 
 
 Graphics are detected once at startup by asking the terminal, which can add a moment on a terminal that does not answer. Setting `art_graphics = false` skips the question.
 
-The playing track's cover is read from the folder or the file and, for a track the library has from a server, fetched from the server when the file holds none, as a download still arriving may not; a file that gave no cover while it was arriving is read again once it has. It is loaded off the drawing thread, so a change of track never stalls a frame, and the last cover stays up until the next one arrives.
+The playing track's cover is read from the folder or the file and, for a track the library has from a server, fetched from the server when the file holds none, as a download still arriving may not; a file that gave no cover while it was arriving is read again once it has. The server is not asked while offline mode is on or while it is known to be down, and its answer never holds up a file's own cover. It is loaded off the drawing thread, so a change of track never stalls a frame, and the last cover stays up until the next one arrives.
 
 ## Colour
 

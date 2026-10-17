@@ -424,6 +424,8 @@ pub struct CoverArtCache {
     /// Whether the last answer for `wanted` was no cover.
     missed: bool,
     cover: Option<Cover>,
+    /// The file `cover` was read for.
+    cover_of: Option<PathBuf>,
     loader: Option<Loader>,
 }
 
@@ -454,6 +456,7 @@ impl CoverArtCache {
             if self.wanted.as_ref() == Some(&path) {
                 self.missed = cover.is_none();
                 self.cover = cover;
+                self.cover_of = Some(path);
                 changed = true;
             }
         }
@@ -464,6 +467,14 @@ impl CoverArtCache {
         self.cover.as_ref()
     }
 
+    /// The cover only if it was read for `path`, not one left up from the
+    /// file before.
+    pub fn cover_for(&self, path: &Path) -> Option<&Cover> {
+        self.cover
+            .as_ref()
+            .filter(|_| self.cover_of.as_deref() == Some(path))
+    }
+
     pub fn cached(&self) -> Option<&DynamicImage> {
         self.cover.as_ref().map(|c| &c.image)
     }
@@ -472,6 +483,7 @@ impl CoverArtCache {
         self.wanted = None;
         self.missed = false;
         self.cover = None;
+        self.cover_of = None;
     }
 
     pub fn render_to(&self, gfx: &mut Gfx, area: Rect, buf: &mut Buffer) {
@@ -488,10 +500,14 @@ impl CoverArtCache {
 }
 
 /// A thread that loads the latest cover asked for, passing over any asked
-/// for since that nobody wants any more. It ends with its cache.
+/// for since that nobody wants any more. A file without a cover of its own is
+/// handed to a second thread for the server's, so a slow or unreachable
+/// server never holds up the next file's. Both end with their cache.
 fn spawn_loader() -> Loader {
     let (tx, req) = crossbeam_channel::unbounded::<Request>();
     let (done, rx) = crossbeam_channel::unbounded();
+    let (fetch, fetches) = crossbeam_channel::unbounded::<(PathBuf, i64)>();
+    let fetched = done.clone();
     std::thread::Builder::new()
         .name("koan-cover".into())
         .spawn(move || {
@@ -499,8 +515,29 @@ fn spawn_loader() -> Loader {
                 while let Ok(later) = req.try_recv() {
                     next = later;
                 }
-                let cover = load_cover(&next.0, next.1);
-                if done.send((next.0, cover)).is_err() {
+                let (path, track) = next;
+                let local = koan_core::index::folder_art::cover_art(&path);
+                let sent = match (local, track) {
+                    (Some(bytes), _) => done.send((path, decode(&bytes))).is_ok(),
+                    (None, Some(track)) => fetch.send((path, track)).is_ok(),
+                    (None, None) => done.send((path, None)).is_ok(),
+                };
+                if !sent {
+                    break;
+                }
+            }
+        })
+        .ok();
+    std::thread::Builder::new()
+        .name("koan-cover-server".into())
+        .spawn(move || {
+            while let Ok(mut next) = fetches.recv() {
+                while let Ok(later) = fetches.try_recv() {
+                    next = later;
+                }
+                let (path, track) = next;
+                let cover = server_cover(track).and_then(|bytes| decode(&bytes));
+                if fetched.send((path, cover)).is_err() {
                     break;
                 }
             }
@@ -509,10 +546,8 @@ fn spawn_loader() -> Loader {
     (tx, rx)
 }
 
-fn load_cover(path: &Path, track: Option<i64>) -> Option<Cover> {
-    let bytes =
-        koan_core::index::folder_art::cover_art(path).or_else(|| track.and_then(server_cover))?;
-    let mut image = image::load_from_memory(&bytes).ok()?;
+fn decode(bytes: &[u8]) -> Option<Cover> {
+    let mut image = image::load_from_memory(bytes).ok()?;
     if image.width().max(image.height()) > COVER_SIDE {
         image = image.resize(COVER_SIDE, COVER_SIDE, FilterType::Lanczos3);
     }
@@ -534,10 +569,14 @@ fn server_cover(track: i64) -> Option<Vec<u8>> {
             .remote_id?
     };
     let cfg = koan_core::config::Config::cached();
-    if !cfg.remote.enabled {
+    if !cfg.remote.enabled || koan_core::remote::offline::active() {
         return None;
     }
     let client = koan_core::helpers::subsonic_client(&cfg)?;
+    // A server known to be down would hold this thread for the whole timeout.
+    if client.outage().is_down() {
+        return None;
+    }
     client
         .get_cover_art(&remote_id, Some(COVER_SIDE))
         .ok()
@@ -795,6 +834,7 @@ mod tests {
         cache.want(&b, false, || None);
         // The first record's cover stays up while the second's loads.
         assert_eq!(cache.cover().map(|c| c.key), Some(first));
+        assert!(cache.cover_for(&b).is_none(), "but is not the second's");
         settle(&mut cache);
         assert_eq!(cache.cover().map(|c| c.key), Some(first));
         assert_eq!(first >> 63, 0, "apart from the album tiles' keys");
