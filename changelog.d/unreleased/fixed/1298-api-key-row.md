@@ -1,1 +1,1 @@
-- **API key row: "this device" in line with the row.** In Settings → Account, the label on the key this device signs in with is now the same size and case as the row's other trailing values, on iPhone and Mac.
+- **API key row: "this device" at the size of a trailing value.** In Settings → Account in the kōan theme, the label on the key this device signs in with was in body type and sentence case; it is now in the smaller control type and lowercase, as the theme sets out for a value at the end of a row.

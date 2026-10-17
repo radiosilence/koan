@@ -119,7 +119,8 @@ struct ApiKeysSettings: View {
             if key.thisDevice {
                 // Revoking it is signing out, which Sign Out does properly.
                 Text("This device").koanCase()
-                    .koanText(.control, .muted)
+                    .font(.role(.control, system: .body))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     .help("To stop using it, sign out")
             } else {
                 Button("Revoke", role: .destructive) { revoking = key }
