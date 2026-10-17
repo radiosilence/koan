@@ -15,7 +15,7 @@ const SECTIONS: &[Section] = &[
     Section {
         title: "Playback",
         bindings: &[
-            ("space", "Play / Pause (c on the queue)"),
+            ("space", "Play / Pause, on every page"),
             ("< >", "Previous / Next track"),
             ("s", "Shuffle on / off"),
             ("R", "Repeat: off / queue / one"),
@@ -57,7 +57,7 @@ const SECTIONS: &[Section] = &[
         title: "Queue",
         bindings: &[
             ("\u{2191}\u{2193} j k", "Move the cursor"),
-            ("space", "Pick the row, or let it go"),
+            ("v", "Pick the row, or let it go"),
             ("S-\u{2191}\u{2193}", "Extend the selection (S-click too)"),
             ("C-a / esc", "Select all / clear the selection"),
             ("enter", "Play the row"),
@@ -113,7 +113,10 @@ const SECTIONS: &[Section] = &[
         bindings: &[
             ("L", "Lyrics panel"),
             ("V", "Visualiser on/off"),
-            ("v", "Visualiser picker"),
+            (
+                "v",
+                "Visualiser picker (it picks a row on the queue and History)",
+            ),
             ("M", "Visualiser mode cycle"),
             ("F", "Visualiser fullscreen"),
             ("S", "Bass shake on/off"),

@@ -1882,14 +1882,13 @@ impl App {
             KeyCode::Char('q') => {
                 self.quit = true;
             }
-            // On the queue Space picks the row under the cursor, as a list
-            // of things to act on does; `c` pauses there.
-            KeyCode::Char(' ') if self.page() == Page::Queue => {
+            KeyCode::Char(' ') => self.toggle_pause(),
+            // On the queue `v` picks the row under the cursor, as vim's
+            // visual mode starts one.
+            KeyCode::Char('v') if self.page() == Page::Queue => {
                 let cursor = self.queue.cursor;
                 self.toggle_selection(cursor);
             }
-            KeyCode::Char(' ') => self.toggle_pause(),
-            KeyCode::Char('c') if self.page() == Page::Queue && !ctrl => self.toggle_pause(),
             KeyCode::Char('>') | KeyCode::Char('n') => self.skip(PlayerCommand::NextTrack),
             KeyCode::Char('<') => self.skip(PlayerCommand::PrevTrack),
             KeyCode::Char('s') => {

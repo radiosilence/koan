@@ -471,7 +471,7 @@ impl HistoryPage {
                 self.anchor = None;
                 self.move_to(self.cursor + 1)
             }
-            KeyCode::Char(' ') => self.toggle_pick(self.cursor),
+            KeyCode::Char('v') => self.toggle_pick(self.cursor),
             KeyCode::Char('a') if ctrl => {
                 self.picked = self.entries.iter().map(|e| e.id).collect();
             }

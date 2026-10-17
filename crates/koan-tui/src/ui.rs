@@ -1540,7 +1540,7 @@ mod tests {
         use crossterm::event::KeyCode;
         let mut app = app_with_queue(5);
         draw(&mut app, 160, 40);
-        key(&mut app, KeyCode::Char(' '));
+        key(&mut app, KeyCode::Char('v'));
         assert_eq!(app.queue.selected_ids.len(), 1);
         let (rect, _) = *app
             .layout
@@ -1570,19 +1570,42 @@ mod tests {
     }
 
     #[test]
+    fn space_pauses_on_the_queue_and_on_history() {
+        use crossterm::event::KeyCode;
+        let (mut app, player) = app_and_player(3);
+        draw(&mut app, 120, 40);
+        let wait = std::time::Duration::from_millis(300);
+        for page in [Page::Queue, Page::History] {
+            app.go_page(page);
+            let picked = app.queue.selected_ids.len();
+            key(&mut app, KeyCode::Char(' '));
+            // Commands reach the player through the router's thread.
+            assert!(
+                matches!(
+                    player.recv_timeout(wait),
+                    Ok(koan_core::player::commands::PlayerCommand::Pause
+                        | koan_core::player::commands::PlayerCommand::Resume)
+                ),
+                "Space plays and pauses on {page:?}"
+            );
+            assert_eq!(app.queue.selected_ids.len(), picked, "and picks nothing");
+        }
+    }
+
+    #[test]
     fn the_queue_cursor_and_selection_are_always_live() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let mut app = app_with_queue(5);
         draw(&mut app, 120, 40);
         let ids: Vec<_> = app.queue.vq_cache.entries.iter().map(|e| e.id).collect();
-        // Moving leaves the selection alone; Space picks the row.
+        // Moving leaves the selection alone; `v` picks the row.
         key(&mut app, KeyCode::Char('j'));
         assert_eq!(app.queue.cursor, 1);
         assert!(app.queue.selected_ids.is_empty());
-        key(&mut app, KeyCode::Char(' '));
+        key(&mut app, KeyCode::Char('v'));
         key(&mut app, KeyCode::Down);
         key(&mut app, KeyCode::Down);
-        key(&mut app, KeyCode::Char(' '));
+        key(&mut app, KeyCode::Char('v'));
         assert!(
             app.queue.selected_ids.contains(&ids[1]) && app.queue.selected_ids.contains(&ids[3])
         );
