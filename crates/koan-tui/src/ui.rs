@@ -535,9 +535,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         let overlay = TrackInfoOverlay::new(
             &entry,
             ti_ref,
-            app.art.cover_art.cached(),
+            app.art.cover_art.cover(),
+            &mut app.art.gfx,
             &app.theme,
-            app.art.gfx.squash(),
         );
         frame.render_widget(overlay, area);
     }

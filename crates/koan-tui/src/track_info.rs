@@ -1,4 +1,3 @@
-use image::DynamicImage;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
@@ -7,31 +6,31 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
 use koan_core::player::state::{QueueEntry, QueueEntryStatus, TrackInfo};
 
-use super::cover_art::CoverArt;
+use super::cover_art::{Cover, Gfx};
 use super::theme::Theme;
 
 pub struct TrackInfoOverlay<'a> {
     entry: &'a QueueEntry,
     track_info: Option<&'a TrackInfo>,
-    cover_art: Option<&'a DynamicImage>,
+    cover: Option<&'a Cover>,
+    gfx: &'a mut Gfx,
     theme: &'a Theme,
-    squash: f32,
 }
 
 impl<'a> TrackInfoOverlay<'a> {
     pub fn new(
         entry: &'a QueueEntry,
         track_info: Option<&'a TrackInfo>,
-        cover_art: Option<&'a DynamicImage>,
+        cover: Option<&'a Cover>,
+        gfx: &'a mut Gfx,
         theme: &'a Theme,
-        squash: f32,
     ) -> Self {
         Self {
             entry,
             track_info,
-            cover_art,
+            cover,
+            gfx,
             theme,
-            squash,
         }
     }
 }
@@ -79,26 +78,23 @@ impl Widget for TrackInfoOverlay<'_> {
         }
 
         // Layout: if we have cover art, put it on the left.
-        let (text_area, art_area) = if self.cover_art.is_some() && inner.width > 30 {
-            // Art takes a square-ish area on the left. Width ≈ height works
-            // because halfblocks give 2 vertical pixels per cell, roughly
-            // matching the ~2:1 cell aspect ratio.
-            let art_size = inner.height.min(inner.width / 3);
-            let art_rect = Rect::new(inner.x + 1, inner.y, art_size, art_size);
-            let text_rect = Rect::new(
-                inner.x + art_size + 2,
-                inner.y,
-                inner.width.saturating_sub(art_size + 3),
-                inner.height,
-            );
-            (text_rect, Some(art_rect))
-        } else {
-            (inner, None)
+        // The cover, square in the terminal's cells, on the left.
+        let text_area = match self.cover {
+            Some(cover) if inner.width > 30 => {
+                let tallest = (f32::from(inner.height) * 2.0 / self.gfx.squash()) as u16;
+                let art_w = (inner.width / 3).min(tallest).max(1);
+                let art_h = self.gfx.rows_for(art_w).min(inner.height);
+                let art = Rect::new(inner.x + 1, inner.y, art_w, art_h);
+                self.gfx.draw(cover.key, &cover.image, art, buf, false);
+                Rect::new(
+                    inner.x + art_w + 2,
+                    inner.y,
+                    inner.width.saturating_sub(art_w + 3),
+                    inner.height,
+                )
+            }
+            _ => inner,
         };
-
-        if let (Some(img), Some(art_rect)) = (self.cover_art, art_area) {
-            CoverArt::new(img).shaped(self.squash).render(art_rect, buf);
-        }
 
         // Render text fields.
         let key_style = self.theme.hint_key.add_modifier(Modifier::BOLD);
