@@ -1332,8 +1332,7 @@ impl Browse {
             Source::Albums => "albums",
             Source::Artists => "artists",
             Source::Tracks => "tracks",
-            // The header under it names them.
-            Source::Artist(_) => "artist",
+            Source::Artist(_) => self.title.as_str(),
         };
         let noun = match self.kind() {
             Kind::Albums => "album",

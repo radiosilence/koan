@@ -1,13 +1,14 @@
 //! The top of an artist's page, as the apps lay it out: their photograph when
-//! there is one, and beside it the name and heart, how many albums, play,
-//! shuffle, add and play next, and the opening of their Wikipedia article.
+//! there is one, and beside it how many albums and the heart, play, shuffle,
+//! add and play next, and the opening of their Wikipedia article. The page's
+//! toolbar carries their name.
 
 use crossbeam_channel::{Receiver, unbounded};
 use image::DynamicImage;
 use koan_core::artist_info::{self, ArtistInfo};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use unicode_width::UnicodeWidthStr;
 
 use crate::cover_art::{Gfx, album_key};
@@ -34,10 +35,10 @@ enum Update {
 
 /// Cells between the photograph and the text beside it.
 const GAP: u16 = 3;
-/// The row the buttons sit on, under the name, the count and a gap.
-const BUTTON_ROW: u16 = 3;
+/// The row the buttons sit on, under the count and a gap.
+const BUTTON_ROW: u16 = 2;
 /// The row the bio starts on, after the buttons and a gap.
-const BIO_ROW: u16 = 5;
+const BIO_ROW: u16 = 4;
 /// Lines of bio shown before "more".
 const FOLDED: u16 = 4;
 /// The widest the bio is set, for lines that can be read.
@@ -257,28 +258,25 @@ impl ArtistHeader {
         let end = area.y + area.height;
         let mut hits = Vec::new();
 
-        // The name, and the heart after it.
-        let name = rows::put(
+        // The toolbar above names them: what the page holds, and the heart.
+        let holds = rows::put(
             buf,
             tx,
             area.y,
             tw.saturating_sub(3),
-            &self.name,
-            theme.heading.add_modifier(Modifier::BOLD),
+            &self.holds,
+            theme.hint_desc,
         );
         let (heart, heart_style) = if self.favourite {
             ("\u{2665}", theme.favourite)
         } else {
             ("\u{2661}", theme.hint_desc)
         };
-        let hx = name.x + name.width + 2;
+        let hx = holds.x + holds.width + 2;
         if hx < tx + tw {
             let style = rows::link(heart_style, hover == Some(HeaderHit::Heart));
             buf.set_string(hx, area.y, heart, style);
             hits.push((Rect::new(hx, area.y, 1, 1), HeaderHit::Heart));
-        }
-        if area.y + 1 < end {
-            rows::put(buf, tx, area.y + 1, tw, &self.holds, theme.hint_desc);
         }
 
         // The buttons. Play is the one prominent action of the page.
@@ -418,9 +416,12 @@ mod tests {
             .find(|(_, k)| *k == HeaderHit::Play)
             .unwrap()
             .0;
-        assert_eq!(
-            play.y, BUTTON_ROW,
-            "the buttons sit under the name and count"
+        assert_eq!(play.y, BUTTON_ROW, "the buttons sit under the count");
+        let text: String = (0..100).map(|x| buf[(x, 0)].symbol().to_string()).collect();
+        assert!(text.contains("3 albums"));
+        assert!(
+            !text.contains("Someone"),
+            "the name is the toolbar's, not repeated"
         );
     }
 }
