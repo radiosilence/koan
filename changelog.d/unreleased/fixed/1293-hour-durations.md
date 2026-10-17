@@ -1,3 +1,1 @@
-- **Mac: durations of an hour or more show in full** in track and queue rows in the kōan theme, rather than truncating to "1:02:…".
-- **iPhone: VoiceOver reads the kōan theme's tab bar as a tab bar**, each item as a tab with its position, as it does the platform's.
-- **Artist chips and empty sleeves are drawn in the kōan theme** rather than in the platform's grey fills: artists as the theme's outlined chips, missing artwork on the theme's `rule`.
+- **Mac: durations of an hour or more show in full** in track and queue rows, rather than truncating to "1:02:…".

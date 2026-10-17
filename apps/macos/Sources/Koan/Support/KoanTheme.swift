@@ -1280,7 +1280,8 @@ private struct KoanTextRole: ViewModifier {
         case .muted: AnyShapeStyle(.secondary)
         case .accent: accent.shade(scheme).readsAsText ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary)
         case .bad: AnyShapeStyle(.red)
-        case .rule, .hover: AnyShapeStyle(.quaternary)
+        case .rule: AnyShapeStyle(.quaternary)
+        case .hover: AnyShapeStyle(.quaternary.opacity(0.5))
         }
     }
 }

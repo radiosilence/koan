@@ -472,13 +472,12 @@ final class TrackTableRow: TableCell, TableRow {
         let width = max(right - x, 0)
         title.frame = CGRect(x: x, y: top, width: width, height: titleHeight)
         let captionY = top + titleHeight + 1
-        let measure = { (text: String) in ceil((text as NSString).size(withAttributes: [.font: Self.captionFont]).width) + 5 }
-        let artistWidth = min(measure(artist.stringValue), width)
+        let artistWidth = min(Self.measure(artist.stringValue, Self.captionFont), width)
         artist.frame = CGRect(x: x, y: captionY, width: artistWidth, height: captionHeight)
         if context.showsAlbum {
             dot.frame = CGRect(x: artist.frame.maxX, y: captionY, width: 10, height: captionHeight)
             let albumX = dot.frame.maxX + 2
-            album.frame = CGRect(x: albumX, y: captionY, width: min(measure(album.stringValue), max(x + width - albumX, 0)), height: captionHeight)
+            album.frame = CGRect(x: albumX, y: captionY, width: min(Self.measure(album.stringValue, Self.captionFont), max(x + width - albumX, 0)), height: captionHeight)
         }
     }
 

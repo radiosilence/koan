@@ -1,0 +1,1 @@
+- **iPhone: VoiceOver treats the kōan theme's tab bar as a tab bar**, as it does the platform's.

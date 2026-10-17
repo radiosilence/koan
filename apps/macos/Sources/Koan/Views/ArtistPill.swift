@@ -33,13 +33,17 @@ struct ArtistPill: View {
                 .truncationMode(.tail)
         }
         .frame(maxWidth: 260, alignment: .leading)
-        // A chip rather than glass. Glass samples what is behind it and adapts
-        // its own luminance to stay legible on it — which is right for
+        .padding(.horizontal, 11)
+        .padding(.vertical, 6)
+        .fixedSize(horizontal: true, vertical: false)
+        // A plain fill rather than glass. Glass samples what is behind it and
+        // adapts its own luminance to stay legible on it — which is right for
         // something floating over content, and wrong for a chip sitting *in*
         // it: over the wash a row of them reads as a scatter of
-        // half-transparent ones rather than a set.
-        .koanChip()
-        .fixedSize(horizontal: true, vertical: false)
+        // half-transparent ones rather than a set. Square on `rule` in the
+        // theme, as the Mac's collection draws its pills; a capsule otherwise.
+        .background(KoanTheme.style(.rule), in: Self.shape)
+        .contentShape(Self.shape)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .tapAction {
@@ -52,4 +56,7 @@ struct ArtistPill: View {
     }
 
     private var playable: Playable { .artist(id: artistId, name: name) }
+
+    /// A capsule: SwiftUI holds a corner to half the shorter side.
+    private static var shape: RoundedRectangle { RoundedRectangle(cornerRadius: KoanTheme.radius(100)) }
 }

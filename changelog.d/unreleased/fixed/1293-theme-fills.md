@@ -1,0 +1,1 @@
+- **Artist chips and empty sleeves are drawn in the kōan theme's `rule`**, and the chips square, rather than in the platform's grey.
