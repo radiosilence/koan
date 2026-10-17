@@ -1,0 +1,1 @@
+- **Terminal UI: smooth album grid scrolling with cover graphics.** While the grid moves, covers are drawn in half blocks, and they turn back into images once it stops. Kitty draws an image as a placeholder in every cell, and a screen of them moving each frame was more than terminals kept up with.
