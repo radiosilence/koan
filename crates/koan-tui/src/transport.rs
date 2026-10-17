@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -160,6 +162,8 @@ pub struct TransportBar<'a> {
     sleep: Option<Sleep>,
     sleep_fading: bool,
     levels: Option<[f32; MINI_BARS]>,
+    /// Where the EQ label was drawn, for a click on it.
+    eq_hit: Option<&'a Cell<Rect>>,
 }
 
 /// How many bars the transport's own spectrum has.
@@ -205,7 +209,14 @@ impl<'a> TransportBar<'a> {
             sleep: None,
             sleep_fading: false,
             levels: None,
+            eq_hit: None,
         }
+    }
+
+    /// Has the bar say where it drew the EQ label.
+    pub fn with_eq_hit(mut self, hit: &'a Cell<Rect>) -> Self {
+        self.eq_hit = Some(hit);
+        self
     }
 
     /// A small spectrum drawn at the end of the album line, `0.0..=1.0` a bar.
@@ -429,11 +440,29 @@ impl Widget for TransportBar<'_> {
                     album_spans.push(Span::styled(format!(" ({})", year), self.theme.hint_desc));
                 }
 
-                let format_info = format!(
-                    " \u{00B7} {}",
-                    format_quality(info, self.output_rate, self.dsp.as_ref())
-                );
+                let format_info =
+                    format!(" \u{00B7} {}", format_quality(info, self.output_rate, None));
                 album_spans.push(Span::styled(format_info, self.theme.hint_desc));
+                // The EQ's label is a link to the chooser, so it is a span of
+                // its own and its place is told to whoever asked.
+                let text_end = area.width
+                    - self
+                        .levels
+                        .filter(|_| area.width >= 48)
+                        .map_or(0, |_| MINI_BARS as u16 + 1);
+                if let Some(dsp) = self.dsp.as_ref() {
+                    let used: usize = album_spans.iter().map(|s| s.width()).sum();
+                    let label = dsp_label(dsp);
+                    album_spans.push(Span::styled(" \u{00B7} ", self.theme.hint_desc));
+                    album_spans.push(Span::styled(label, self.theme.track_playing));
+                    let x = used as u16 + 3;
+                    let w = label.len() as u16;
+                    if let Some(hit) = self.eq_hit
+                        && x + w <= text_end
+                    {
+                        hit.set(Rect::new(area.x + x, area.y + 2, w, 1));
+                    }
+                }
                 if let Some(sleep) = self.sleep {
                     album_spans.push(Span::styled(
                         format!(" \u{00B7} {}", sleep_label(sleep, self.sleep_fading)),

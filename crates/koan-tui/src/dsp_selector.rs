@@ -26,8 +26,8 @@ pub struct DspSelectorState {
 }
 
 impl DspSelectorState {
-    pub fn load() -> Self {
-        let overview = profiles::overview();
+    pub fn load(device: Option<String>) -> Self {
+        let overview = profiles::overview_for(device);
         let mut entries = vec![DspEntry {
             name: None,
             label: "off \u{b7} the output untouched".into(),
