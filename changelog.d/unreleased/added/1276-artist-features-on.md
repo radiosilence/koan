@@ -1,0 +1,1 @@
+- **Artist pages separate an artist's own records from the ones they feature on.** The records they are the album artist of come first, and Play, Shuffle and Queue on the artist act on those only; the compilations and other artists' records they are credited on follow under **Features on**, with their own play and queue, in the macOS, iOS and Android apps.
