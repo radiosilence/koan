@@ -193,6 +193,15 @@ class EqEditTest {
         advanceUntilIdle()
         assertTrue(refused.orEmpty().contains("already"))
         assertNull(model.state.value.error)
+
+        // Made, but the tuning would not take it: not a refusal of the name.
+        fake.answers.remove("dspCreateEq")
+        fake.answers["dspSetTunings"] = { throw KoanException.Database("locked") }
+        var night: String? = "not yet"
+        model.createEq("Night", DspStarter.FLAT) { night = it }
+        advanceUntilIdle()
+        assertNull(night)
+        assertTrue(model.state.value.error != null)
     }
 
     @Test fun stereoKeepsTheChannelAsked() = runTest(dispatcher) {

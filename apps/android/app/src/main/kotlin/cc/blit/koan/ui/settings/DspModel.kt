@@ -295,14 +295,22 @@ class DspModel(private val engine: suspend () -> KoanEngineInterface) : ViewMode
      */
     fun createEq(name: String, starter: DspStarter, then: (String?) -> Unit) {
         viewModelScope.launch {
+            val engine = engine()
             val refusal = try {
-                val engine = engine()
                 engine.dspCreateEq(name, starter)
-                val o = _state.value.overview
-                o?.device?.let { engine.dspSetTunings(it, o.chain.added(name)) }
                 null
             } catch (e: KoanException) {
                 e.describe()
+            }
+            if (refusal == null) {
+                // Made, whatever the tuning says next: a failure there is the page's.
+                try {
+                    val o = engine.dspOverview()
+                    o.device?.let { engine.dspSetTunings(it, o.chain.added(name)) }
+                    _state.update { it.copy(error = null) }
+                } catch (e: KoanException) {
+                    failed(e)
+                }
             }
             changed()
             then(refusal)

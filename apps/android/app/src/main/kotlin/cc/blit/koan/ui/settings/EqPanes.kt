@@ -81,7 +81,7 @@ fun EqPane(model: SettingsModel) {
     val library by app.mirror.library.collectAsStateWithLifecycle()
     var naming by remember { mutableStateOf(false) }
     var adding by remember { mutableStateOf(false) }
-    var creating by remember { mutableStateOf(false) }
+    var creating by rememberSaveable { mutableStateOf(false) }
     // Profiles sync from the account's other devices, which the engine
     // reports as the library moving.
     LaunchedEffect(library) { dsp.reload() }
@@ -199,7 +199,7 @@ private val starters = listOf(
 @Composable
 private fun NewEqDialog(dsp: DspModel, dismiss: () -> Unit, made: (String) -> Unit) {
     var name by rememberSaveable { mutableStateOf("") }
-    var starter by remember { mutableStateOf(DspStarter.FLAT) }
+    var starter by rememberSaveable { mutableStateOf(DspStarter.FLAT) }
     var refusal by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     // Held open while the EQ is made: what happens next is this dialog's.
