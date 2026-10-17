@@ -4077,7 +4077,7 @@ impl KoanEngine {
     /// Gives up after two seconds, so a disk that has gone away cannot hang the
     /// quit.
     pub fn flush_settings(&self) {
-        if !offload::flush_saves(std::time::Duration::from_secs(2)) {
+        if !APPEARANCE.settle_within(std::time::Duration::from_secs(2)) {
             log::warn!("settings: still saving as the app quit");
         }
     }
@@ -4086,7 +4086,8 @@ impl KoanEngine {
     /// being saved has landed. Read once, as the app opens: a change takes
     /// effect on the next launch.
     pub fn appearance(&self) -> Appearance {
-        let cfg = offload::after_saves(Config::cached);
+        APPEARANCE.settle();
+        let cfg = Config::cached();
         Appearance {
             koan: cfg.appearance.theme == "koan",
             icons: cfg.appearance.theme_icons,
@@ -6278,13 +6279,23 @@ impl KoanEngine {
     }
 }
 
-/// Save one `[appearance]` key on the settings lane (see `offload::save`).
-fn save_appearance(key: &'static str, mutate: impl FnOnce(&mut Config) + Send + 'static) {
-    offload::save(move || {
-        if let Err(e) = Config::persist(mutate) {
-            log::warn!("appearance: {key} not saved: {e}");
+type AppearanceChange = (&'static str, Box<dyn FnOnce(&mut Config) + Send>);
+
+/// `[appearance]` changes, saved off the caller's thread (see `offload::Batches`).
+static APPEARANCE: offload::Batches<AppearanceChange> = offload::Batches::new(|changes| {
+    let keys: Vec<_> = changes.iter().map(|(key, _)| *key).collect();
+    let saved = Config::persist(move |cfg| {
+        for (_, change) in changes {
+            change(cfg);
         }
     });
+    if let Err(e) = saved {
+        log::warn!("appearance: {} not saved: {e}", keys.join(", "));
+    }
+});
+
+fn save_appearance(key: &'static str, change: impl FnOnce(&mut Config) + Send + 'static) {
+    APPEARANCE.add((key, Box::new(change)));
 }
 
 /// Rebuild playlist items for a saved queue.

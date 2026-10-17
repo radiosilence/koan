@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 /**
  * Where the playhead was at `atMs` (`SystemClock.elapsedRealtime`), and
@@ -208,6 +209,16 @@ class EngineMirror(deviceName: String) {
                 slices.forEach(::apply)
             }
         }
+    }
+
+    /**
+     * Wait, two seconds at most, for appearance changes still being saved: for
+     * when the process may be about to go. Nothing to wait for if the engine
+     * never opened.
+     */
+    fun flushSettings() {
+        if (!opened.isCompleted) return
+        runCatching { runBlocking { opened.await() }.flushSettings() }
     }
 
     /** The engine, once it has opened the library and started the player. */

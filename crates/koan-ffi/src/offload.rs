@@ -16,7 +16,6 @@
 //! settings writes.
 
 use std::sync::LazyLock;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use crossbeam_channel::Sender;
@@ -109,80 +108,65 @@ where
 
 static REMOTE_LANE: LazyLock<Sender<Job>> = LazyLock::new(|| lane("koan-remote-commands"));
 
-/// Run `f` on the lane for settings writes, in call order, without waiting
-/// for it. Each write reads and rewrites the config files, which on a slow disk
-/// is long enough to stall the UI thread that changed the setting; the change
-/// itself is already drawn from the app's own copy. One lane, so two changes
-/// in quick succession land in the order they were made. A panic in `f` is
-/// logged and the lane goes on.
-pub fn save<F>(f: F)
-where
-    F: FnOnce() + Send + 'static,
-{
-    PENDING.fetch_add(1, Ordering::AcqRel);
-    fire(&SETTINGS_LANE, "a settings write", move || {
-        // Counted down however `f` ends, a panic included.
-        let _done = Pending;
-        f();
-    });
+/// Changes saved off the caller's thread, in batches. Each write reads and
+/// rewrites the config files, which on a slow disk is long enough to stall the
+/// UI thread that made the change; the change itself is already drawn from the
+/// app's own copy. Changes made while a write is waiting join it, so a run of
+/// them (View → Bigger held down) costs one write, applied in the order they
+/// were made.
+pub struct Batches<T> {
+    pending: parking_lot::Mutex<Vec<T>>,
+    /// Held while a batch is taken and written, so batches land in order.
+    writing: parking_lot::Mutex<()>,
+    write: fn(Vec<T>),
 }
 
-/// Run `f` on the settings lane once every [`save`] before it has finished,
-/// and wait for it: a read that must see the writes already made. With none
-/// waiting, `f` runs here.
-pub fn after_saves<T, F>(f: F) -> T
-where
-    F: FnOnce() -> T + Send + 'static,
-    T: Send + 'static,
-{
-    if PENDING.load(Ordering::Acquire) == 0 {
-        return f();
+impl<T: Send + 'static> Batches<T> {
+    pub const fn new(write: fn(Vec<T>)) -> Self {
+        Self {
+            pending: parking_lot::Mutex::new(Vec::new()),
+            writing: parking_lot::Mutex::new(()),
+            write,
+        }
     }
-    let rx = after_saves_rx(f);
-    match rx.recv() {
-        Ok(Ok(value)) => value,
-        Ok(Err(payload)) => std::panic::resume_unwind(payload),
-        Err(_) => panic!("the settings lane stopped running"),
+
+    /// Queue `change` and return at once. The first change of a batch sends
+    /// its write to the settings lane; a panic there is logged.
+    pub fn add(&'static self, change: T) {
+        let first = {
+            let mut pending = self.pending.lock();
+            pending.push(change);
+            pending.len() == 1
+        };
+        if first {
+            fire(&SETTINGS_LANE, "a settings write", || self.settle());
+        }
     }
-}
 
-/// Wait up to `within` for every [`save`] so far to finish, as the process
-/// exits; false if they had not. Returns at once when none is waiting.
-pub fn flush_saves(within: Duration) -> bool {
-    PENDING.load(Ordering::Acquire) == 0 || after_saves_rx(|| ()).recv_timeout(within).is_ok()
-}
+    /// Write whatever is queued, here, after any write in progress: for a read
+    /// that must see every change made. Nothing queued and nothing writing
+    /// costs two uncontended locks.
+    pub fn settle(&self) {
+        let _writing = self.writing.lock();
+        let batch = std::mem::take(&mut *self.pending.lock());
+        if !batch.is_empty() {
+            (self.write)(batch);
+        }
+    }
 
-type Answer<T> = crossbeam_channel::Receiver<std::thread::Result<T>>;
-
-fn after_saves_rx<T, F>(f: F) -> Answer<T>
-where
-    F: FnOnce() -> T + Send + 'static,
-    T: Send + 'static,
-{
-    // From a save it would wait on itself, and the lane would never run again.
-    assert_ne!(
-        std::thread::current().name(),
-        Some("koan-settings"),
-        "waiting for the settings lane from the settings lane"
-    );
-    let (tx, rx) = crossbeam_channel::bounded(1);
-    SETTINGS_LANE
-        .send(Box::new(move || {
-            let _ = tx.send(std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
-        }))
-        .expect("the settings lane outlives the engine");
-    rx
-}
-
-/// How many saves are on the settings lane, so a read or a flush with none
-/// waiting need not go through it.
-static PENDING: AtomicUsize = AtomicUsize::new(0);
-
-struct Pending;
-
-impl Drop for Pending {
-    fn drop(&mut self) {
-        PENDING.fetch_sub(1, Ordering::AcqRel);
+    /// Wait up to `within` for everything queued to be written, as the process
+    /// exits; false if it was not. The write runs on the lane, so a disk that
+    /// has gone away holds the lane and not the caller.
+    pub fn settle_within(&'static self, within: Duration) -> bool {
+        if self.pending.lock().is_empty() && !self.writing.is_locked() {
+            return true;
+        }
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        fire(&SETTINGS_LANE, "a settings write", move || {
+            self.settle();
+            let _ = tx.send(());
+        });
+        rx.recv_timeout(within).is_ok()
     }
 }
 
@@ -315,34 +299,30 @@ mod tests {
         assert_eq!(7, sequenced(|| 7).await, "and the next command still runs");
     }
 
-    #[test]
-    fn saves_return_at_once_and_a_read_after_them_sees_them_all() {
-        let seen = Arc::new(parking_lot::Mutex::new(Vec::new()));
-        // The first save is a slow disk, held until every save has returned:
-        // the caller must not wait for it, and later saves must not overtake it.
-        let (release, held) = crossbeam_channel::bounded::<()>(0);
-        for i in 0..8 {
-            let seen = seen.clone();
-            let held = held.clone();
-            save(move || {
-                // Times out only if `save` blocked its caller, which leaves
-                // 0 out of what is seen.
-                if i == 0 {
-                    held.recv_timeout(std::time::Duration::from_secs(5))
-                        .unwrap();
-                }
-                seen.lock().push(i);
-            });
+    type Signal = (Sender<()>, crossbeam_channel::Receiver<()>);
+    static WRITTEN: parking_lot::Mutex<Vec<Vec<u32>>> = parking_lot::Mutex::new(Vec::new());
+    static ENTERED: LazyLock<Signal> = LazyLock::new(|| crossbeam_channel::bounded(1));
+    static GATE: LazyLock<Signal> = LazyLock::new(|| crossbeam_channel::bounded(1));
+    static BATCHES: Batches<u32> = Batches::new(|batch| {
+        // The first write is a slow disk, held until the test lets it go.
+        if batch == [1] {
+            ENTERED.0.send(()).unwrap();
+            GATE.1.recv_timeout(Duration::from_secs(5)).unwrap();
         }
-        drop(held);
-        // Fails rather than hangs if the held save already gave up.
-        release
-            .send_timeout((), std::time::Duration::from_secs(5))
-            .unwrap();
-        let read = after_saves({
-            let seen = seen.clone();
-            move || seen.lock().clone()
-        });
-        assert_eq!(read, (0..8).collect::<Vec<_>>());
+        WRITTEN.lock().push(batch);
+    });
+
+    #[test]
+    fn changes_return_at_once_join_a_waiting_write_and_land_in_order() {
+        BATCHES.add(1);
+        ENTERED.1.recv_timeout(Duration::from_secs(5)).unwrap();
+        // The lane is writing [1]: these return at once and make one batch.
+        BATCHES.add(2);
+        BATCHES.add(3);
+        assert!(!BATCHES.settle_within(Duration::ZERO));
+        GATE.0.send(()).unwrap();
+        BATCHES.settle();
+        assert_eq!(*WRITTEN.lock(), vec![vec![1], vec![2, 3]]);
+        assert!(BATCHES.settle_within(Duration::from_secs(5)));
     }
 }
