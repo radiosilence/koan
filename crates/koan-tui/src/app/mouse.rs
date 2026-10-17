@@ -10,8 +10,7 @@ use ratatui::layout::{Margin, Position, Rect};
 use koan_core::player::commands::PlayerCommand;
 
 use super::{
-    App, ContextMenuState, DragState, HoverZone, Mode, NavTarget, Page, PickerAction, browse,
-    library, queue,
+    App, ContextMenuState, DragState, HoverZone, Mode, NavTarget, Page, PickerAction, browse, queue,
 };
 use crate::picker::picker_results_rect;
 use crate::playlists_page::PlAction;
@@ -24,7 +23,6 @@ pub(super) enum Click {
     QueueRow(usize),
     QueueHeading(usize),
     PickerRow(usize),
-    LibraryRow(usize),
 }
 
 /// The longest wait between the clicks of a double click.
@@ -371,11 +369,6 @@ impl App {
             return;
         }
 
-        if self.library_active() && hit(self.layout.library_area, col, row) {
-            self.library_click(col, row);
-            return;
-        }
-
         if self.art.now_playing_art.cached().is_some()
             && hit(self.layout.now_playing_art_area, col, row)
         {
@@ -444,15 +437,18 @@ impl App {
                 }
                 self.apply_playlist(action);
             }
-            Page::Search => {
+            Page::Search | Page::Favourites | Page::Recent | Page::Downloaded => {
                 let mut action = browse::Action::None;
-                let p = &mut self.search_page;
-                if p.on_scrollbar(col, row) {
-                    self.browse_drag = true;
-                    p.scroll_to_bar(row);
-                } else if let Some(hit) = p.hit(col, row) {
-                    action = p.click(hit);
+                let mut dragging = false;
+                if let Some(p) = self.shelf_mut() {
+                    if p.on_scrollbar(col, row) {
+                        dragging = true;
+                        p.scroll_to_bar(row);
+                    } else if let Some(hit) = p.hit(col, row) {
+                        action = p.click(hit);
+                    }
                 }
+                self.browse_drag |= dragging;
                 self.apply_browse(action);
             }
             Page::History => {
@@ -491,7 +487,7 @@ impl App {
                 }
                 self.apply_browse(action);
             }
-            Page::Albums | Page::Favourites | Page::Recent | Page::Artist(_) => {
+            Page::Albums | Page::Artists | Page::Tracks | Page::Artist(_) => {
                 let mut dragging = false;
                 let mut action = browse::Action::None;
                 if let Some(browse) = self.browse_mut() {
@@ -505,59 +501,7 @@ impl App {
                 self.browse_drag |= dragging;
                 self.apply_browse(action);
             }
-            Page::Queue
-            | Page::NowPlaying
-            | Page::Artists
-            | Page::Tracks
-            | Page::Downloaded
-            | Page::Downloads => {}
-        }
-    }
-
-    /// A click on the Artists tree: its filter control, its scrollbar, the
-    /// arrow that opens a node, or a row, which a second click plays.
-    fn library_click(&mut self, col: u16, row: u16) {
-        let area = self.layout.library_area;
-        if row == area.y
-            && col + (library::FILTER_CONTROL.len() as u16) >= area.x + area.width
-            && let Some(lib) = self.library.as_mut()
-            && lib.filter.is_empty()
-            && !lib.filter_active
-        {
-            lib.start_filter();
-            return;
-        }
-        if let Some((x, y, h)) = self.library_bar()
-            && col >= x
-            && row >= y
-            && row < y + h as u16
-        {
-            self.browse_drag = true;
-            self.library_scroll_to(row);
-            return;
-        }
-        let rows = self.library_content_height();
-        let top = area.y + 1;
-        if row < top || (row - top) as usize >= rows {
-            return;
-        }
-        let Some(lib) = self.library.as_mut() else {
-            return;
-        };
-        let at = lib.scroll_offset + (row - top) as usize;
-        if at >= lib.nodes.len() {
-            return;
-        }
-        lib.cursor = at;
-        // The first few cells are the arrow.
-        if col.saturating_sub(area.x) < 4 {
-            lib.toggle_expand();
-            self.last_click = None;
-        } else if self.double_click(Click::LibraryRow(at))
-            && let Some(lib) = self.library.as_mut()
-        {
-            let ids = lib.enqueue_all_under_cursor();
-            self.enqueue(ids, PickerAction::AppendAndPlay);
+            Page::Queue | Page::NowPlaying | Page::Downloads => {}
         }
     }
 
@@ -703,7 +647,11 @@ impl App {
                         p.scroll_to_bar(row);
                     }
                 }
-                Page::Search => self.search_page.scroll_to_bar(row),
+                Page::Search | Page::Favourites | Page::Recent | Page::Downloaded => {
+                    if let Some(p) = self.shelf_mut() {
+                        p.scroll_to_bar(row);
+                    }
+                }
                 Page::History => self.history_page.scroll_to_bar(row),
                 Page::Settings => self.settings_page.scroll_to_bar(row),
                 Page::Album(_) => {
@@ -711,7 +659,6 @@ impl App {
                         p.scroll_to_bar(row);
                     }
                 }
-                Page::Artists => self.library_scroll_to(row),
                 _ => {
                     if let Some(browse) = self.browse_mut() {
                         browse.scroll_to_bar(row);
@@ -873,7 +820,11 @@ impl App {
                         p.scroll_by(3 * delta);
                     }
                 }
-                Page::Search => self.search_page.scroll_by(3 * delta),
+                Page::Search | Page::Favourites | Page::Recent | Page::Downloaded => {
+                    if let Some(p) = self.shelf_mut() {
+                        p.scroll_by(3 * delta);
+                    }
+                }
                 Page::History => self.history_page.scroll_by(3 * delta),
                 Page::Settings => self.settings_page.scroll_by(3 * delta),
                 Page::Album(_) => {
@@ -883,15 +834,9 @@ impl App {
                 }
                 _ => {
                     if let Some(browse) = self.browse_mut() {
-                        browse.scroll_by(delta);
+                        browse.wheel(delta > 0);
                     }
                 }
-            }
-        } else if self.library_active() && hit(self.layout.library_area, col, row) {
-            let h = self.library_content_height();
-            if let Some(lib) = self.library.as_mut() {
-                let max = lib.nodes.len().saturating_sub(h);
-                lib.scroll_offset = lib.scroll_offset.saturating_add_signed(3 * delta).min(max);
             }
         } else if self.page() == Page::Queue {
             let total = queue::display_line_count(self.visible_queue());
@@ -941,7 +886,10 @@ impl App {
                     .as_ref()
                     .and_then(|p| p.hit(col, row))
                     .map(HoverZone::Playlist),
-                Page::Search => self.search_page.hit(col, row).map(HoverZone::Search),
+                Page::Search | Page::Favourites | Page::Recent | Page::Downloaded => self
+                    .shelf()
+                    .and_then(|p| p.hit(col, row))
+                    .map(HoverZone::Shelf),
                 Page::History => self.history_page.hit(col, row).map(HoverZone::History),
                 Page::Settings => self.settings_page.hit(col, row).map(HoverZone::Settings),
                 Page::Album(_) => self
@@ -958,40 +906,7 @@ impl App {
                 return zone;
             }
         }
-        if self.library_active() && hit(layout.library_area, col, row) {
-            let top = layout.library_area.y + 1;
-            if let Some(lib) = self.library.as_ref()
-                && row >= top
-                && ((row - top) as usize) < self.library_content_height()
-            {
-                let at = lib.scroll_offset + (row - top) as usize;
-                if at < lib.nodes.len() {
-                    return HoverZone::LibraryItem(at);
-                }
-            }
-        }
         HoverZone::None
-    }
-
-    /// The Artists tree's scrollbar, as a column and the rows it spans, when
-    /// the tree is longer than the pane.
-    fn library_bar(&self) -> Option<(u16, u16, usize)> {
-        let lib = self.library.as_ref()?;
-        let area = self.layout.library_area;
-        let h = self.library_content_height();
-        (lib.nodes.len() > h && area.width > 6 && h > 0)
-            .then(|| (area.x + area.width - 3, area.y + 1, h))
-    }
-
-    fn library_scroll_to(&mut self, row: u16) {
-        let Some((_, y, h)) = self.library_bar() else {
-            return;
-        };
-        if let Some(lib) = self.library.as_mut() {
-            let max = lib.nodes.len().saturating_sub(h);
-            let frac = row.saturating_sub(y) as f64 / h.saturating_sub(1).max(1) as f64;
-            lib.scroll_offset = ((frac.clamp(0.0, 1.0) * max as f64).round() as usize).min(max);
-        }
     }
 
     /// Scroll the queue based on a click/drag position on the scrollbar.

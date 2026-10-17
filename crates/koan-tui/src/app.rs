@@ -17,9 +17,8 @@ use super::accent::{self, Accent};
 use super::actions_menu::ActionsMenu;
 use super::album_page::{AlbumHit, AlbumPage};
 use super::browse::{self, Browse, Source};
-use super::browse_filter::{FilterPanel, Filters};
+use super::browse_filter::FilterPanel;
 use super::history_page::{HistoryHit, HistoryPage};
-use super::library::{self, LibraryState};
 use super::lyrics::LyricsState;
 use super::nav::{Navigator, Page};
 use super::picker::{
@@ -30,8 +29,8 @@ use super::picker_items::{load_picker_items, make_album_picker_items};
 use super::playlist_modals::{Chooser, NamePrompt, Purpose};
 use super::playlists_page::{ListHit, PlAction, PlaylistHit, PlaylistPage, PlaylistsPage};
 use super::queue;
-use super::search_page::{SearchHit, SearchPage};
 use super::settings_page::{Outcome, Setting, SettingsHit, SettingsPage, Task};
+use super::shelf_page::{ShelfHit, ShelfKind, ShelfPage};
 use super::theme::{Palette, Theme};
 use super::visualizer::VisualizerState;
 
@@ -118,6 +117,9 @@ pub enum PickerAction {
     PlayNext,
     /// Clear queue, add tracks, play from the top.
     ReplaceQueue,
+    /// Clear queue, add tracks, play from the one at this index: a list
+    /// played from a track in it.
+    ReplaceFrom(usize),
     /// Clear queue, add tracks, play them shuffled.
     Shuffle,
 }
@@ -141,11 +143,10 @@ pub enum HoverZone {
     #[default]
     None,
     QueueItem(usize),
-    LibraryItem(usize),
     Browse(browse::Hit),
     Album(AlbumHit),
     History(HistoryHit),
-    Search(SearchHit),
+    Shelf(ShelfHit),
     Settings(SettingsHit),
     Playlists(ListHit),
     Playlist(PlaylistHit),
@@ -194,7 +195,6 @@ pub struct LayoutRects {
     pub queue_area: ratatui::layout::Rect,
     pub picker_area: ratatui::layout::Rect,
     pub track_info_area: ratatui::layout::Rect,
-    pub library_area: ratatui::layout::Rect,
     pub now_playing_art_area: ratatui::layout::Rect,
     pub transport_text_area: ratatui::layout::Rect,
     pub seek_bar_start: u16,
@@ -269,12 +269,13 @@ pub struct App {
     // Auto-scroll: track by path so index shifts from finished_paths don't trigger.
     pub last_playing_path: Option<PathBuf>,
 
-    pub library: Option<LibraryState>,
-
     pub nav: Navigator,
     pub albums_page: Browse,
-    pub favourites_page: Browse,
-    pub recent_page: Browse,
+    pub artists_page: Browse,
+    pub tracks_page: Browse,
+    pub favourites_page: ShelfPage,
+    pub recent_page: ShelfPage,
+    pub downloaded_page: ShelfPage,
     pub artist_page: Browse,
     pub album_page: Option<AlbumPage>,
     /// The scan, sync or forgetting running, one at a time.
@@ -285,15 +286,16 @@ pub struct App {
     /// The EQ that was on before it was bypassed, for the key that puts it back.
     eq_last: Option<String>,
     pub history_page: HistoryPage,
-    pub search_page: SearchPage,
+    pub search_page: ShelfPage,
     pub playlists_page: PlaylistsPage,
     pub playlist_page: Option<PlaylistPage>,
     pub name_prompt: Option<NamePrompt>,
     pub chooser: Option<Chooser>,
     pub actions_menu: Option<ActionsMenu>,
     pub filter_panel: Option<FilterPanel>,
-    /// The filters on the record pages, shared by them as the apps' are.
-    pub browse_filters: Filters,
+    /// The filters on the album, artist and track browsers, shared by them
+    /// as the apps' are.
+    pub browse_filters: koan_core::browse::BrowseFilter,
     pub settings_page: SettingsPage,
     /// A drag that began on a page's scrollbar.
     browse_drag: bool,
@@ -448,11 +450,13 @@ impl App {
             layout: LayoutRects::default(),
             loading: Vec::new(),
             last_playing_path: None,
-            library: None,
             nav: Navigator::default(),
             albums_page: Browse::new(Source::Albums),
-            favourites_page: Browse::new(Source::Favourites),
-            recent_page: Browse::new(Source::Recent),
+            artists_page: Browse::new(Source::Artists),
+            tracks_page: Browse::new(Source::Tracks),
+            favourites_page: ShelfPage::new(ShelfKind::Favourites),
+            recent_page: ShelfPage::new(ShelfKind::Recent),
+            downloaded_page: ShelfPage::new(ShelfKind::Downloaded),
             artist_page: Browse::new(Source::Artist(0)),
             album_page: None,
             activity: None,
@@ -461,14 +465,14 @@ impl App {
             track_details: None,
             eq_last: None,
             history_page: HistoryPage::new(),
-            search_page: SearchPage::new(),
+            search_page: ShelfPage::new(ShelfKind::Search),
             playlists_page: PlaylistsPage::new(),
             playlist_page: None,
             name_prompt: None,
             chooser: None,
             actions_menu: None,
             filter_panel: None,
-            browse_filters: Filters::default(),
+            browse_filters: Default::default(),
             settings_page: SettingsPage::new(),
             browse_drag: false,
             thumbs: browse::Thumbs::new(),
@@ -594,20 +598,21 @@ impl App {
             return;
         };
         self.say(match (kind, now) {
-            (FavouriteKind::Album, true) => "record favourited",
-            (FavouriteKind::Album, false) => "record unfavourited",
+            (FavouriteKind::Album, true) => "album favourited",
+            (FavouriteKind::Album, false) => "album unfavourited",
             (_, true) => "artist favourited",
             (_, false) => "artist unfavourited",
         });
         for page in [
             &mut self.albums_page,
-            &mut self.recent_page,
+            &mut self.artists_page,
             &mut self.artist_page,
         ] {
             page.reload_favourites();
         }
-        // A shelf of favourites loses what was just let go.
-        self.favourites_page.reload();
+        // A shelf of favourites loses what was just let go; the others
+        // show the hearts.
+        self.reload_shelves();
         if let Some(p) = self.album_page.as_mut()
             && kind == FavouriteKind::Album
             && p.album.id == id
@@ -757,8 +762,22 @@ impl App {
         if self.page() == Page::History && !self.history_page.filter_active {
             self.history_page.refresh();
         }
-        self.artist_page.poll();
-        self.search_page.poll();
+        for page in [
+            &mut self.albums_page,
+            &mut self.artists_page,
+            &mut self.tracks_page,
+            &mut self.artist_page,
+        ] {
+            page.poll();
+        }
+        for page in [
+            &mut self.favourites_page,
+            &mut self.recent_page,
+            &mut self.downloaded_page,
+            &mut self.search_page,
+        ] {
+            page.poll();
+        }
 
         // Updated every frame: the analysis thread runs at its own rate, and
         // decay and smoothing run at the TUI frame rate.
@@ -886,21 +905,20 @@ impl App {
     /// Whether a page's own text field is taking the keys.
     fn typing(&self) -> bool {
         match self.page() {
-            Page::Albums => self.albums_page.filter_active,
-            Page::Favourites => self.favourites_page.filter_active,
-            Page::Recent => self.recent_page.filter_active,
-            Page::Artists => self.library.as_ref().is_some_and(|l| l.filter_active),
-            Page::Artist(_) => self.artist_page.filter_active,
+            Page::Albums | Page::Artists | Page::Tracks | Page::Artist(_) => {
+                self.browse().is_some_and(|b| b.filter_active)
+            }
             Page::History => self.history_page.filter_active,
             Page::Search => self.search_page.typing,
             Page::Playlists => self.playlists_page.filter_active,
             Page::Queue
             | Page::NowPlaying
+            | Page::Favourites
+            | Page::Recent
+            | Page::Downloaded
             | Page::Album(_)
             | Page::Playlist(_)
             | Page::Settings
-            | Page::Tracks
-            | Page::Downloaded
             | Page::Downloads => false,
         }
     }
@@ -933,8 +951,8 @@ impl App {
     pub fn browse(&self) -> Option<&Browse> {
         match self.page() {
             Page::Albums => Some(&self.albums_page),
-            Page::Favourites => Some(&self.favourites_page),
-            Page::Recent => Some(&self.recent_page),
+            Page::Artists => Some(&self.artists_page),
+            Page::Tracks => Some(&self.tracks_page),
             Page::Artist(_) => Some(&self.artist_page),
             _ => None,
         }
@@ -943,10 +961,43 @@ impl App {
     pub fn browse_mut(&mut self) -> Option<&mut Browse> {
         match self.page() {
             Page::Albums => Some(&mut self.albums_page),
-            Page::Favourites => Some(&mut self.favourites_page),
-            Page::Recent => Some(&mut self.recent_page),
+            Page::Artists => Some(&mut self.artists_page),
+            Page::Tracks => Some(&mut self.tracks_page),
             Page::Artist(_) => Some(&mut self.artist_page),
             _ => None,
+        }
+    }
+
+    /// The shelf or search on screen.
+    pub fn shelf_mut(&mut self) -> Option<&mut ShelfPage> {
+        match self.page() {
+            Page::Favourites => Some(&mut self.favourites_page),
+            Page::Recent => Some(&mut self.recent_page),
+            Page::Downloaded => Some(&mut self.downloaded_page),
+            Page::Search => Some(&mut self.search_page),
+            _ => None,
+        }
+    }
+
+    pub fn shelf(&self) -> Option<&ShelfPage> {
+        match self.page() {
+            Page::Favourites => Some(&self.favourites_page),
+            Page::Recent => Some(&self.recent_page),
+            Page::Downloaded => Some(&self.downloaded_page),
+            Page::Search => Some(&self.search_page),
+            _ => None,
+        }
+    }
+
+    /// Has the shelves read themselves again: what is on them changed.
+    fn reload_shelves(&mut self) {
+        for page in [
+            &mut self.favourites_page,
+            &mut self.recent_page,
+            &mut self.downloaded_page,
+            &mut self.search_page,
+        ] {
+            page.reload();
         }
     }
 
@@ -964,24 +1015,23 @@ impl App {
         }
         match self.page() {
             Page::Albums => self.albums_page.reload(),
-            Page::Favourites => self.favourites_page.reload(),
-            Page::Recent => self.recent_page.reload(),
+            Page::Artists => self.artists_page.reload(),
+            Page::Tracks => self.tracks_page.reload(),
+            Page::Favourites | Page::Recent | Page::Downloaded | Page::Search => {
+                if let Some(page) = self.shelf_mut() {
+                    page.open();
+                }
+            }
             Page::History => self.history_page.reload(),
-            Page::Search => self.search_page.open(),
             Page::Playlists => self.playlists_page.reload(),
             Page::Playlist(id) => self.playlist_page = PlaylistPage::load(id),
             Page::Settings => self.settings_page.reload(),
-            Page::Artists => {
-                if self.library.is_none() {
-                    self.library = Some(LibraryState::load());
-                }
-            }
             Page::Album(id) => self.album_page = AlbumPage::load(id),
             Page::Artist(id) => {
                 self.artist_page = Browse::new(Source::Artist(id));
                 self.artist_page.reload();
             }
-            Page::Queue | Page::NowPlaying | Page::Tracks | Page::Downloaded | Page::Downloads => {}
+            Page::Queue | Page::NowPlaying | Page::Downloads => {}
         }
     }
 
@@ -1107,8 +1157,7 @@ impl App {
         }
         match self.page() {
             Page::Queue => self.handle_normal_key(key),
-            Page::Artists => self.handle_library_key(key),
-            Page::Tracks | Page::Downloaded | Page::Downloads => {
+            Page::Downloads => {
                 if key.code == KeyCode::Esc {
                     self.leave_page();
                 } else {
@@ -1135,14 +1184,17 @@ impl App {
                     None => self.handle_transport_key(key),
                 }
             }
-            Page::Search => match self.search_page.handle_key(key) {
-                Some(action) => self.apply_browse(action),
-                None if key.code == KeyCode::Esc => self.leave_page(),
-                None if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) => {
-                    self.navigate_key(&key);
+            Page::Search | Page::Favourites | Page::Recent | Page::Downloaded => {
+                let action = self.shelf_mut().and_then(|p| p.handle_key(key));
+                match action {
+                    Some(action) => self.apply_browse(action),
+                    None if key.code == KeyCode::Esc => self.leave_page(),
+                    None if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) => {
+                        self.navigate_key(&key);
+                    }
+                    None => self.handle_transport_key(key),
                 }
-                None => self.handle_transport_key(key),
-            },
+            }
             Page::History => match self.history_page.handle_key(key) {
                 Some(action) => self.apply_browse(action),
                 None if key.code == KeyCode::Esc => self.leave_page(),
@@ -1165,7 +1217,7 @@ impl App {
                     None => self.handle_transport_key(key),
                 }
             }
-            Page::Albums | Page::Favourites | Page::Recent | Page::Artist(_) => {
+            Page::Albums | Page::Artists | Page::Tracks | Page::Artist(_) => {
                 let Some(browse) = self.browse_mut() else {
                     return;
                 };
@@ -1366,14 +1418,19 @@ impl App {
         let Some(panel) = self.filter_panel.as_ref() else {
             return;
         };
-        self.browse_filters = panel.filters.clone();
+        let filters = panel.filters.clone();
+        self.set_browse_filters(filters);
+    }
+
+    fn set_browse_filters(&mut self, filters: koan_core::browse::BrowseFilter) {
         for page in [
             &mut self.albums_page,
-            &mut self.favourites_page,
-            &mut self.recent_page,
+            &mut self.artists_page,
+            &mut self.tracks_page,
         ] {
-            page.set_filters(&self.browse_filters);
+            page.set_filters(&filters);
         }
+        self.browse_filters = filters;
         if let Some(browse) = self.browse_mut() {
             browse.ensure_loaded();
         }
@@ -1384,60 +1441,10 @@ impl App {
             self.pop_mode();
             return;
         };
-        let picking = panel.picking();
-        let changed = match key.code {
-            KeyCode::Esc if picking => {
-                panel.back();
-                false
-            }
-            KeyCode::Esc => {
-                self.close_filter_panel();
-                return;
-            }
-            KeyCode::Up => {
-                panel.move_by(-1);
-                false
-            }
-            KeyCode::Down => {
-                panel.move_by(1);
-                false
-            }
-            KeyCode::Enter if picking => {
-                let at = panel.pick_cursor();
-                panel.choose(at)
-            }
-            KeyCode::Backspace if picking => {
-                panel.backspace();
-                false
-            }
-            KeyCode::Char(c) if picking && !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                panel.type_char(c);
-                false
-            }
-            KeyCode::Char('q') => {
-                self.close_filter_panel();
-                return;
-            }
-            KeyCode::Char('k') => {
-                panel.move_by(-1);
-                false
-            }
-            KeyCode::Char('j') => {
-                panel.move_by(1);
-                false
-            }
-            KeyCode::Left | KeyCode::Char('h') => panel.activate(panel.cursor, false),
-            KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter | KeyCode::Char(' ') => {
-                panel.activate(panel.cursor, true)
-            }
-            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.close_filter_panel();
-                return;
-            }
-            _ => false,
-        };
-        if changed {
-            self.filters_changed();
+        match panel.handle_key(key) {
+            None => self.close_filter_panel(),
+            Some(true) => self.filters_changed(),
+            Some(false) => {}
         }
     }
 
@@ -1623,27 +1630,24 @@ impl App {
         }
     }
 
-    /// Has the page on screen, and the artist tree when it is next opened,
-    /// read the library again: after a scan or a sync, downloads removed, or
-    /// offline turned on or off. The other pages read it as they open.
+    /// Has the page on screen read the library again: after a scan or a
+    /// sync, downloads removed, or offline turned on or off. The other pages
+    /// read it as they open.
     fn reload_library_pages(&mut self) {
-        let old = self.library.take();
+        self.thumbs.retry_missing();
         match self.page() {
-            Page::Albums => self.albums_page.reload(),
-            Page::Favourites => self.favourites_page.reload(),
-            Page::Recent => self.recent_page.reload(),
-            Page::Artist(_) => self.artist_page.reload(),
             Page::History => self.history_page.reload(),
-            Page::Artists => {
-                let mut lib = LibraryState::load();
-                if let Some(old) = old {
-                    lib.filter = old.filter;
-                    lib.filter_active = old.filter_active;
-                    lib.apply_filter();
+            Page::Album(id) => self.album_page = AlbumPage::load(id),
+            Page::Favourites | Page::Recent | Page::Downloaded | Page::Search => {
+                if let Some(page) = self.shelf_mut() {
+                    page.reload();
                 }
-                self.library = Some(lib);
             }
-            _ => {}
+            _ => {
+                if let Some(page) = self.browse_mut() {
+                    page.reload();
+                }
+            }
         }
     }
 
@@ -1683,6 +1687,8 @@ impl App {
             browse::Action::Play(ids, how) => self.enqueue(ids, how),
             browse::Action::Favourite(id) => {
                 self.toggle_favourite(id);
+                // A shelf's tracks lose what was just let go.
+                self.reload_shelves();
             }
             browse::Action::OpenAlbum(id) => self.go_page(Page::Album(id)),
             browse::Action::OpenArtist(id) => self.go_page(Page::Artist(id)),
@@ -1696,8 +1702,31 @@ impl App {
             browse::Action::Info(id) => self.open_track_details(id),
             browse::Action::Choose(ids) => self.open_chooser(ids),
             browse::Action::OpenFilters => {
-                self.filter_panel = Some(FilterPanel::new(self.browse_filters.clone()));
+                let lossless = self.browse().is_none_or(Browse::offers_lossless);
+                self.filter_panel = Some(FilterPanel::new(self.browse_filters.clone(), lossless));
                 self.push_mode(Mode::FilterPanel);
+            }
+            browse::Action::SeeAll(see) => {
+                // The browse filters are shared, so the shelf's become the
+                // standing ones, as in the apps.
+                self.set_browse_filters(see.filter.clone());
+                let page = match see.source {
+                    Source::Artists => Page::Artists,
+                    Source::Tracks => Page::Tracks,
+                    _ => Page::Albums,
+                };
+                if let Some(target) = match see.source {
+                    Source::Artists => Some(&mut self.artists_page),
+                    Source::Tracks => Some(&mut self.tracks_page),
+                    Source::Albums => Some(&mut self.albums_page),
+                    Source::Artist(_) => None,
+                } {
+                    target.adopt(&see);
+                }
+                self.nav.go(page);
+                if let Some(browse) = self.browse_mut() {
+                    browse.ensure_loaded();
+                }
             }
             browse::Action::Menu(title, items) => {
                 self.actions_menu = Some(ActionsMenu::new(title, items));
@@ -3043,11 +3072,6 @@ impl App {
         }
     }
 
-    /// Whether the artists tree is the page in front.
-    pub fn library_active(&self) -> bool {
-        self.mode == Mode::Normal && self.page() == Page::Artists && self.library.is_some()
-    }
-
     // --- Selection helpers ---
 
     /// Derive selected indices from selected IDs for the current visible queue.
@@ -3310,107 +3334,6 @@ impl App {
             .ok();
     }
 
-    fn handle_library_key(&mut self, key: KeyEvent) {
-        // When filter input is focused, route keys there first.
-        if self.library.as_ref().is_some_and(|lib| lib.filter_active) {
-            self.handle_library_filter_key(key);
-            return;
-        }
-
-        if key.code == KeyCode::Esc {
-            // A filter is cleared first; otherwise the page is left.
-            if let Some(lib) = self.library.as_mut().filter(|l| !l.filter.is_empty()) {
-                lib.clear_filter();
-            } else {
-                self.leave_page();
-            }
-            return;
-        }
-        if !self.handle_library_browse_key(key) {
-            self.handle_transport_key(key);
-        }
-    }
-
-    fn handle_library_filter_key(&mut self, key: KeyEvent) {
-        let Some(ref mut lib) = self.library else {
-            return;
-        };
-        match key.code {
-            KeyCode::Esc => {
-                lib.clear_filter();
-            }
-            KeyCode::Enter => {
-                lib.stop_filter();
-            }
-            KeyCode::Backspace => {
-                if lib.filter.is_empty() {
-                    lib.stop_filter();
-                } else {
-                    lib.filter_backspace();
-                }
-            }
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                lib.filter_type_char(c);
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_library_browse_key(&mut self, key: KeyEvent) -> bool {
-        let Some(ref mut lib) = self.library else {
-            return false;
-        };
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => lib.move_up(),
-            KeyCode::Down | KeyCode::Char('j') => lib.move_down(),
-            KeyCode::PageUp => lib.page_up(10),
-            KeyCode::PageDown => lib.page_down(10),
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                lib.page_up(10);
-            }
-            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                lib.page_down(10);
-            }
-            KeyCode::Home | KeyCode::Char('g') => lib.jump_to_start(),
-            KeyCode::End | KeyCode::Char('G') => lib.jump_to_end(),
-            KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
-                if let Some(ids) = lib.expand_or_enter() {
-                    self.enqueue(ids, PickerAction::AppendAndPlay);
-                }
-            }
-            KeyCode::Left | KeyCode::Backspace | KeyCode::Char('h') => {
-                lib.collapse_or_parent();
-            }
-            KeyCode::Char('a') => {
-                let ids = lib.enqueue_all_under_cursor();
-                self.enqueue(ids, PickerAction::Append);
-            }
-            KeyCode::Char('w') => {
-                let ids = lib.enqueue_all_under_cursor();
-                self.open_chooser(ids);
-            }
-            KeyCode::Char('N') => {
-                let ids = lib.enqueue_all_under_cursor();
-                self.enqueue(ids, PickerAction::PlayNext);
-            }
-            KeyCode::Char('f') | KeyCode::Char('/') => {
-                lib.start_filter();
-            }
-            KeyCode::Char('A') => {
-                if let Some(id) = lib.artist_target() {
-                    self.go_page(Page::Artist(id));
-                }
-            }
-            KeyCode::Char('O') => {
-                if let Some(id) = lib.album_target() {
-                    self.go_page(Page::Album(id));
-                }
-            }
-            _ => return false,
-        }
-        true
-    }
-
     pub fn open_library(&mut self) {
         self.go_page(Page::Artists);
     }
@@ -3537,14 +3460,6 @@ impl App {
             self.select_single(self.queue.cursor);
         }
         self.update_scroll();
-    }
-
-    /// Rows of library content on screen. The filter input owns the bottom
-    /// row while it has focus.
-    pub(super) fn library_content_height(&self) -> usize {
-        let inner = self.layout.library_area.height.saturating_sub(1) as usize;
-        let filter_rows = self.library.as_ref().is_some_and(|lib| lib.filter_active) as usize;
-        inner.saturating_sub(filter_rows)
     }
 
     /// Rows of queue content on screen. `Borders::TOP` eats the first row.

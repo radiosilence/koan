@@ -41,10 +41,15 @@ pub fn enqueue_playlist(
 
     // One command, so the playlist is never empty in between: the download
     // queue reads an empty playlist as nothing wanted.
-    if matches!(action, PickerAction::ReplaceQueue | PickerAction::Shuffle) {
+    let start = match action {
+        PickerAction::ReplaceQueue | PickerAction::Shuffle => Some(0),
+        PickerAction::ReplaceFrom(at) => Some(at.min(items.len() - 1)),
+        _ => None,
+    };
+    if let Some(start) = start {
         tx.send(PlayerCommand::ReplacePlaylist {
             items,
-            start: 0,
+            start,
             position_ms: 0,
             play: true,
             mode: if action == PickerAction::Shuffle {

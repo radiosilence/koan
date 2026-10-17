@@ -10,16 +10,16 @@ The TUI follows the shape of the Mac and mobile apps: pages you move between, a 
 |-----|------|---------------|
 | `1` | Queue | The queue, grouped by album. Edit, reorder and select here |
 | `2` | Now playing | The cover, the signal path, levels, the spectrum, lyrics and the EQ curve |
-| `3` | Albums | Every record in the library, as tiles of cover art or as rows |
-| `4` | Artists | The library as a tree: artist, album, track |
-| `5` | Favourites | Favourited records, or the tracks themselves |
+| `3` | Albums | Every album in the library, as tiles of cover art or as rows |
+| `4` | Artists | Every artist, with how many albums and tracks each has |
+| `5` | Favourites | The artists, albums and tracks you have favourited |
 | `6` | Playlists | Your playlists, and each one's tracks |
-| `7` | Recent | What was played in the last 30 days |
+| `7` | Recent | The artists, albums and tracks played in the last 30 days |
 | `8` | History | Every play, newest first, under the day it was played |
 | `9` | Settings | The settings that otherwise mean editing `config.toml` |
-| `0` | Search | Artists, records and tracks that match what you type |
+| `0` | Search | Artists, albums and tracks that match what you type |
 
-The wheel and the scrollbars (which can be dragged) scroll every page. Opening a record or an artist (from a tile, a link, or the keys below) goes to the **album page** and the **artist page**. The album page holds the cover, who it is by, its facts and its tracks; the artist page is that artist's photograph and the opening of their Wikipedia article (with `play` and `shuffle`, and a link to the article), above their records as tiles. Both sit under Albums and Artists in the sidebar and in history.
+The **Tracks** page lists every track in the library and **Downloaded** what can play on this device; both are reached from the sidebar and from a shelf's headings. The wheel and the scrollbars (which can be dragged) scroll every page. Opening an album or an artist (from a tile, a link, or the keys below) goes to the **album page** and the **artist page**. The album page holds the cover, who it is by, its year, codec and length, and its tracks under a heading per disc; the artist page is headed with their name, and has their photograph when there is one, and beside it how many albums, the heart, `play`, `shuffle`, `+ add` and `play next`, and the opening of their Wikipedia article, above their albums as tiles. An artist with no albums of their own lists the tracks they appear on. Both sit under Albums and Artists in the sidebar and in history.
 
 ![An artist page: the photograph, the start of their Wikipedia article, play and shuffle, and their records](../../site/public/screens/tui-artist.webp)
 
@@ -27,15 +27,19 @@ The wheel and the scrollbars (which can be dragged) scroll every page. Opening a
 
 ## Favourites, play next and downloads
 
-As in the apps, a record and an artist can be favourites as well as tracks. `f` favourites the record under the cursor on the browsing pages, `H` its artist (on an artist's page, that artist; the heart beside the name does the same with a click), and a favourite record wears a `♥` under its tile. `N` puts a record, a track or whatever the cursor is on next in the queue instead of last, on the browsing pages, the album page, History and the Artists tree. `i` shows what the library knows of a track, wherever it is listed, and `d` and `u` download a record or track to this device or remove the download; the apps' menus offer the same.
+As in the apps, an album and an artist can be favourites as well as tracks. `f` favourites whatever the cursor is on, `H` its artist (on an artist's page, that artist; the heart beside the name does the same with a click), and a favourite album wears a `♥` before its title. `N` puts an album, a track or whatever the cursor is on next in the queue instead of last, on the browsing pages, the shelves, the album page and History. `i` shows what the library knows of a track, wherever it is listed, and `d` and `u` download an album or track to this device or remove the download; the apps' menus offer the same.
 
 ## The actions menu
 
-Every action with a key has a way to reach it by pointer. `m`, or `⋯ actions` in the heading of the browsing pages, an album page and History, opens a menu for what the cursor is on. What it offers depends on the page: playing, queueing and putting next everywhere, replacing the queue on the browsing pages, adding to a playlist, favouriting (the artist as well as the record on the browsing pages), going to the record or the artist, track info, downloading and removing the download. `Enter` or a click does one; `Esc` or a click outside closes it. The queue's own menu (the `⋯` at the end of a row) offers the same where it applies.
+Every action with a key has a way to reach it by pointer. `m`, or `⋯ actions` in the heading of the browsing pages, an album page and History, opens a menu for what the cursor is on. What it offers depends on the page: playing, queueing and putting next everywhere, replacing the queue on the browsing pages, adding to a playlist, favouriting (the artist as well as the album on the browsing pages), going to the album or the artist, track info, downloading and removing the download. `Enter` or a click does one; `Esc` or a click outside closes it. The queue's own menu (the `⋯` at the end of a row) offers the same where it applies.
 
 ## Search
 
-`0` opens a box that searches the library as you type and lists what matches under artists, records and tracks. `Enter` (or `↓`) moves from the box to the results, and `↑` from the first result or `/` returns to the box. On a result `Enter` opens an artist or a record and plays a track, `P`, `a` and `N` play, add and put next, `w` adds to a playlist, `f` favourites, `m` lists the rest, and the artist and record in a track's row are links. Clicking the box, a result, `clear` or `⋯ actions` does the same by pointer. While the box has focus every key is text, including the page numbers, and `Shift+Tab` (or `Tab` with nothing found) changes page; `Esc` clears it, then leaves.
+`0` opens a box that searches the library as you type. What matches is laid out as a shelf is (below), closest first, as the apps' search results are: the first few artists, albums and tracks, each heading counting everything that matches and opening the browser with the search in its filter. `Enter` (or `↓`) moves from the box to the results, and `↑` from the top or `/` returns to the box. On a result `Enter` opens an artist or an album and plays a track. Clicking the box, a result, `clear` or `⋯ actions` does the same by pointer. While the box has focus every key is text, including the page numbers, and `Shift+Tab` (or `Tab` with nothing found) changes page; `Esc` clears it, then leaves.
+
+## Shelves
+
+Favourites, Recent and Downloaded are shelves, as in the apps: the first few artists that answer the question, as pills, then albums as tiles (`v` for rows), then tracks, each under a heading with how many there are in all. A heading is a link and a stop for the cursor: `Enter` or a click opens that kind's browser set up as the shelf, with its filter on and its order, so the listing it opens on is the one the preview is the head of. The arrows move between lines and along them; `Enter` opens an artist or an album, and on a track plays the shelf's tracks from it. `P`, `a`, `N`, `f`, `H`, `w`, `d`, `u`, `i` and `m` do what they do elsewhere.
 
 ## Playlists
 
@@ -67,25 +71,28 @@ The transport bar sits at the foot. Drag the hairline above it to resize the cov
 
 Dropping files or folders on the terminal, or pasting their paths, adds the audio among them to the queue, after the row under the pointer when there is one. A folder adds every audio file under it, in path order. While a text field has the keys (a filter, the search box, a picker or a playlist's name), a paste is typed into it instead.
 
-## Browsing records
+## Browsing the library
 
-Albums, Favourites and Recent draw each record as a tile. `v` switches to rows (tracks, on Favourites and Recent). `o` cycles the order on Albums: artist, date added, title, year. `/` filters what is shown by name; the heading's `/ filter` does the same with a click. `Ctrl+F`, or `filters` in the heading, opens the apps' browse filters as a panel: lossless, downloaded, codec, genre and decade. Each row is a key (`Enter`, `←` `→`) or a click; the genre row opens a list that narrows as you type. One set of filters applies to all three pages, and the heading counts how many are on. They apply to records, so they are not offered while a page shows tracks.
+Albums, Artists and Tracks are the apps' browsers. Albums draws each album as a tile, sized as the apps' grid sizes them; `v` (or `view` in the heading) switches it to rows. `o` (or `sort` in the heading) steps through the orders the apps offer: recently added, title, artist, year and random, with last played while the recently played filter is on, most downloaded while the downloaded one is, and best match while a name filter is typed. Tracks sorts by artist, title, album or duration. Under random, `S` or `⚄ shuffle again` deals the albums again.
+
+`/` filters what is shown by name, matched by the library as the apps' filter boxes are, so a typo still finds the closest albums; the heading's `/ filter` does the same with a click. `Ctrl+F`, or `filters` in the heading, opens the apps' browse filters as a panel: favourites, recently played, downloaded, lossless (not on Tracks, where the codec says it), codec, genre, and a year range. Each row is a key (`Enter`, `←` `→`) or a click; the genre row opens a list that narrows as you type, and a year is typed as four digits or stepped a decade at a time with `←` and `→`. One set of filters applies to all three browsers, as in the apps, and the heading counts how many are on.
 
 | Key | Action |
 |-----|--------|
 | Arrows or `hjkl` | Move |
-| `Enter` or `O` | Open the record |
+| `Enter` | Open the album or artist; on a track, play the list from it |
+| `O` | Open the album |
 | `A` | Open the artist |
 | `P` | Add to the queue and play |
 | `a` | Add to the end of the queue |
 | `Ctrl+R` | Replace the queue and play |
-| `f` | Favourite or unfavourite the record, or on a list of tracks the track |
+| `f` | Favourite or unfavourite what the cursor is on |
 
-On the album page `Enter` plays from the track under the cursor to the end of the record; `P` plays all of it, `a` adds it, `Ctrl+R` replaces the queue with it, and `A` opens the artist. The buttons under the title do the same. `N` puts it next in the queue, `H` or the heart beside the title favourites the record, `i` shows what the library holds of the track, and `d` and `u` download the record to this device or remove the download.
+On the album page `Enter` plays the album from the track under the cursor, the tracks before it kept behind in the queue. The `play` button replaces the queue with it, `shuffle` (or `S`) plays it shuffled, and `+ add` (or `a`) and `play next` (or `N`) queue it; `P` adds it and plays it, as on the browsing pages. `A` opens the artist of the track (on a compilation, the track's own), `H` or the heart beside the title favourites the album, `f` the track, `i` shows what the library holds of the track, and `d` and `u` download the album to this device or remove the download.
 
 ### Links
 
-As in the apps, names that lead somewhere are links. Under a tile, the title opens the record and the artist opens the artist; on the album page the artist's name opens them; and in the queue the artist and record in each album heading do. A link is underlined while the pointer is over it. Each has a key too: `O` opens the record and `A` the artist of whatever is selected, in the queue, the Artists tree and the browsing pages.
+As in the apps, names that lead somewhere are links. Under a tile, the title opens the album and the artist opens the artist; in a row of tracks the artist and the album do; on the album page the artist's name does; and in the queue the artist and album in each album heading do. A link is underlined while the pointer is over it. Each has a key too: `O` opens the album and `A` the artist of whatever is selected, in the queue, the shelves and the browsing pages.
 
 ### Without a right button
 

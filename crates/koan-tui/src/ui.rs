@@ -8,7 +8,6 @@ use super::context_menu::{ContextMenuOverlay, context_menu_rect_at};
 use super::device_selector::DeviceSelectorOverlay;
 use super::help_modal::HelpModalOverlay;
 use super::keys::HintBar;
-use super::library::LibraryView;
 use super::lyrics::LyricsPanel;
 use super::nav::Page;
 use super::organize::{OrganizeOverlay, organize_popup_rect};
@@ -61,7 +60,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     app.layout.queue_area = Rect::default();
-    app.layout.library_area = Rect::default();
     app.layout.browse_area = Rect::default();
     app.layout.now_playing_art_area = Rect::default();
     app.layout.nav_hits.clear();
@@ -291,16 +289,39 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 }
             }
         }
-        Page::Search => {
+        Page::Search | Page::Favourites | Page::Recent | Page::Downloaded => {
             app.layout.browse_area = stage;
             let hover = match app.hover.zone {
-                super::app::HoverZone::Search(h) => Some(h),
+                super::app::HoverZone::Shelf(h) => Some(h),
                 _ => None,
             };
             let App {
-                search_page, theme, ..
+                search_page,
+                favourites_page,
+                recent_page,
+                downloaded_page,
+                thumbs,
+                art,
+                theme,
+                favourites,
+                nav,
+                ..
             } = &mut *app;
-            search_page.render(stage, frame.buffer_mut(), theme, hover);
+            let page = match nav.current() {
+                Page::Favourites => favourites_page,
+                Page::Recent => recent_page,
+                Page::Downloaded => downloaded_page,
+                _ => search_page,
+            };
+            page.render(
+                stage,
+                frame.buffer_mut(),
+                theme,
+                &mut art.gfx,
+                thumbs,
+                favourites,
+                hover,
+            );
         }
         Page::History => {
             app.layout.browse_area = stage;
@@ -357,13 +378,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                     frame.buffer_mut().set_string(
                         stage.x + 1,
                         stage.y + 1,
-                        "this record is not in the library",
+                        "this album is not in the library",
                         theme.hint_desc,
                     );
                 }
             }
         }
-        Page::Albums | Page::Favourites | Page::Recent | Page::Artist(_) => {
+        Page::Albums | Page::Artists | Page::Tracks | Page::Artist(_) => {
             app.layout.browse_area = stage;
             let hover = match app.hover.zone {
                 super::app::HoverZone::Browse(h) => Some(h),
@@ -371,8 +392,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             };
             let App {
                 albums_page,
-                favourites_page,
-                recent_page,
+                artists_page,
+                tracks_page,
                 artist_page,
                 thumbs,
                 art,
@@ -383,8 +404,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             } = &mut *app;
             let page = match nav.current() {
                 Page::Albums => albums_page,
-                Page::Favourites => favourites_page,
-                Page::Recent => recent_page,
+                Page::Artists => artists_page,
+                Page::Tracks => tracks_page,
                 _ => artist_page,
             };
             page.render(
@@ -397,21 +418,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 hover,
             );
         }
-        Page::Tracks | Page::Downloaded | Page::Downloads => {
+        Page::Downloads => {
             app.layout.browse_area = stage;
-        }
-        Page::Artists => {
-            app.layout.library_area = stage;
-            let visible_height = app.library_content_height();
-            if let Some(ref mut lib) = app.library {
-                lib.update_scroll(visible_height);
-                let hover_idx = match &app.hover.zone {
-                    super::app::HoverZone::LibraryItem(idx) => Some(*idx),
-                    _ => None,
-                };
-                let lib_view = LibraryView::new(lib, &app.theme, true).with_hover(hover_idx);
-                frame.render_widget(lib_view, stage);
-            }
         }
     }
 
