@@ -1654,6 +1654,26 @@ mod tests {
     }
 
     #[test]
+    fn moving_with_one_row_tagged_moves_that_row() {
+        use crossterm::event::KeyCode;
+        use koan_core::player::commands::PlayerCommand;
+        let (mut app, player) = app_and_player(5);
+        draw(&mut app, 120, 40);
+        app.queue.cursor = 1;
+        key(&mut app, KeyCode::Char('t'));
+        app.queue.cursor = 3;
+        let tagged = app.queue.vq_cache.entries[1].id;
+        key(&mut app, KeyCode::Char('J'));
+        let wait = std::time::Duration::from_millis(300);
+        let moved =
+            std::iter::from_fn(|| player.recv_timeout(wait).ok()).find_map(|cmd| match cmd {
+                PlayerCommand::MoveItemsInPlaylist { ids, .. } => Some(ids),
+                _ => None,
+            });
+        assert_eq!(moved, Some(vec![tagged]), "the tag, not the cursor's row");
+    }
+
+    #[test]
     fn the_queue_cursor_and_selection_are_always_live() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let mut app = app_with_queue(5);

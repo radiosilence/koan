@@ -3230,7 +3230,7 @@ impl App {
     /// up, and the cursor with it. A selection with gaps closes up around its
     /// first track.
     fn move_selected(&mut self, down: bool) {
-        if self.queue.selected_ids.len() <= 1 {
+        if self.queue.selected_ids.is_empty() {
             self.select_single(self.queue.cursor);
         }
         let entries = &self.queue.vq_cache.entries;
