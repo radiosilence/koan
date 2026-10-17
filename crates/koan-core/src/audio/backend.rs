@@ -189,6 +189,12 @@ pub trait AudioEngineHandle: Send {
         std::time::Duration::ZERO
     }
     fn is_silent(&self) -> bool;
+    /// A fade out asked for and no fade in since. Unlike `is_silent`, true
+    /// for a fade the callback never finished, as when the system stopped the
+    /// unit partway.
+    fn is_faded_out(&self) -> bool {
+        self.is_silent()
+    }
     /// Play `frames` of silence before anything from the ring, without
     /// counting them as played. A device that has just changed rate is
     /// relocking its clock, and many mute while they do: what is sent then is

@@ -1619,10 +1619,9 @@ impl Player {
             return;
         };
         let engine = &local.engine;
-        // A fade out the system cut short by stopping the unit leaves the
-        // output muted, so whenever pauses fade, resuming fades back in.
-        let faded = crate::config::Config::cached().playback.fade_on_pause;
-        let resumed = if engine.is_running() || engine.is_silent() || faded {
+        // A fade out the system cut short by stopping the unit never reached
+        // silence, and still has to be undone.
+        let resumed = if engine.is_running() || engine.is_faded_out() {
             self.lead_in_ends = None;
             engine.fade_in()
         } else {
@@ -3338,6 +3337,9 @@ mod tests {
         fn is_silent(&self) -> bool {
             false
         }
+        fn is_faded_out(&self) -> bool {
+            self.muted.load(Ordering::Relaxed)
+        }
     }
 
     #[test]
@@ -3361,15 +3363,13 @@ mod tests {
         assert!(!engine.muted.load(Ordering::Relaxed), "heard on resuming");
 
         // Paused with a fade the interruption then cuts short.
-        if crate::config::Config::cached().playback.fade_on_pause {
-            player.pause_with(Fade::Short);
-            assert!(engine.muted.load(Ordering::Relaxed), "fading");
-            engine.running.store(false, Ordering::Relaxed);
-            player.update_playback_state();
-            assert_eq!(player.next_event(), None);
-            player.resume();
-            assert!(!engine.muted.load(Ordering::Relaxed), "faded back in");
-        }
+        player.pause_with(Fade::Short);
+        assert!(engine.muted.load(Ordering::Relaxed), "fading");
+        engine.running.store(false, Ordering::Relaxed);
+        player.update_playback_state();
+        assert_eq!(player.next_event(), None);
+        player.resume();
+        assert!(!engine.muted.load(Ordering::Relaxed), "faded back in");
     }
 
     #[test]

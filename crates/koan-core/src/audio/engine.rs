@@ -146,6 +146,10 @@ impl super::backend::AudioEngineHandle for AudioEngine {
         self.fade().is_silent()
     }
 
+    fn is_faded_out(&self) -> bool {
+        self.fade().is_faded_out()
+    }
+
     fn lead_in(&self, frames: u64) {
         self.lead_in.store(frames, Ordering::Relaxed);
     }
