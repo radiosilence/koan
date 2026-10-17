@@ -14,7 +14,7 @@ use koan_core::player::state::{
     VisibleQueueSnapshot,
 };
 
-use super::accent::{self, Accent};
+use super::accent::Accent;
 use super::actions_menu::ActionsMenu;
 use super::album_page::{AlbumHit, AlbumPage};
 use super::browse::{self, Browse, Source};
@@ -303,9 +303,9 @@ pub struct App {
     /// The playing record's accent, easing as the record changes.
     pub accent: Accent,
     pub palette: Palette,
-    /// The path whose cover the accent was taken from.
-    accent_path: Option<PathBuf>,
     theme_accent: (u8, u8, u8),
+    /// The EQ curve Now playing plots.
+    pub eq_curve: super::now_playing::EqCurve,
 
     pub art: ArtState,
 
@@ -475,8 +475,8 @@ impl App {
             thumbs: browse::Thumbs::new(),
             accent: Accent::default(),
             palette: Palette::detect(&cfg.playback.tui_theme),
-            accent_path: None,
             theme_accent: super::theme::MINT,
+            eq_curve: Default::default(),
             art: ArtState::default(),
             context_menu: None,
             organize: None,
@@ -728,24 +728,31 @@ impl App {
             }
         }
 
-        // Update now-playing cover art cache when track changes.
-        // Clear when nothing is playing so the old image gets freed.
+        // The playing track's cover, and the accent it gives once it arrives.
         let now = std::time::Instant::now();
-        if let Some(ref info) = self.state.track_info() {
-            let art = self.art.now_playing_art.get(&info.path);
-            if self.accent_path.as_deref() != Some(info.path.as_path()) {
-                let rgb = art
-                    .and_then(accent::from_image)
-                    .unwrap_or(super::theme::MINT);
-                self.accent_path = Some(info.path.clone());
-                self.accent.set(rgb, now);
-            }
-        } else {
-            self.art.now_playing_art.clear();
-            if self.accent_path.take().is_some() {
+        let np = &mut self.art.now_playing_art;
+        match self.state.track_info() {
+            Some(info) => np.want(&info.path, || {
+                self.queue
+                    .vq_cache
+                    .entries
+                    .iter()
+                    .find(|e| e.id == info.id)
+                    .and_then(|e| e.db_id)
+            }),
+            None => {
+                np.clear();
                 self.accent.set(super::theme::MINT, now);
             }
         }
+        if np.poll() {
+            let colours = koan_core::config::Config::cached()
+                .appearance
+                .record_colours;
+            let rgb = np.cover().and_then(|c| c.accent).filter(|_| colours);
+            self.accent.set(rgb.unwrap_or(super::theme::MINT), now);
+        }
+        self.art.cover_art.poll();
         let rgb = self.accent.at(now);
         if rgb != self.theme_accent {
             self.theme_accent = rgb;
@@ -2952,10 +2959,9 @@ impl App {
         let Some(entry) = self.queue.vq_cache.entries.get(idx) else {
             return;
         };
-        let (id, path) = (entry.id, entry.path.clone());
+        let (id, track, path) = (entry.id, entry.db_id, entry.path.clone());
         self.mode = Mode::TrackInfo(id);
-        // Prime the cache for this track's path.
-        self.art.cover_art.get(&path);
+        self.art.cover_art.want(&path, || track);
     }
 
     pub fn handle_mouse(&mut self, event: MouseEvent) {

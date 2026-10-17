@@ -3,6 +3,9 @@
 //! terminal can afford to show in full: the source, what the device was given,
 //! and what, if anything, stood between them.
 
+use std::sync::Arc;
+
+use crossbeam_channel::Receiver;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -10,7 +13,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
 use koan_core::audio::dsp::DspStatus;
-use koan_core::config::ReplayGainMode;
+use koan_core::config::{Config, ReplayGainMode};
 use koan_core::player::state::{QueueEntry, TrackInfo};
 
 use super::app::App;
@@ -21,6 +24,50 @@ use super::visualizer::{BrailleGrid, VisualizerWidget};
 
 /// Wider than this and the cover has a column of its own.
 const COVER_MIN_WIDTH: u16 = 48;
+
+/// The rows the text beside the cover takes: three of the track, the signal
+/// path and the two meters, with a gap before each block.
+const TEXT_ROWS: u16 = 10;
+
+/// The curve the page plots, worked out on a thread of its own whenever the
+/// profile, the rate or the config changes: building a profile can read and
+/// resample impulse files, which no frame can wait for.
+#[derive(Default)]
+pub struct EqCurve {
+    made_for: Option<(String, u32, Arc<Config>)>,
+    total: Option<Vec<f64>>,
+    pending: Option<Receiver<Option<Vec<f64>>>>,
+}
+
+impl EqCurve {
+    fn get(&mut self, profile: &str, rate: u32, cfg: &Arc<Config>) -> Option<&[f64]> {
+        let current = self
+            .made_for
+            .as_ref()
+            .is_some_and(|(p, r, c)| p == profile && *r == rate && Arc::ptr_eq(c, cfg));
+        if !current {
+            self.made_for = Some((profile.to_owned(), rate, cfg.clone()));
+            self.total = None;
+            let (tx, rx) = crossbeam_channel::bounded(1);
+            let profile = profile.to_owned();
+            std::thread::Builder::new()
+                .name("koan-eq-curve".into())
+                .spawn(move || {
+                    let curve = koan_core::audio::dsp::profiles::response(&profile, rate);
+                    tx.send(curve.map(|c| c.total)).ok();
+                })
+                .ok();
+            self.pending = Some(rx);
+        }
+        if let Some(rx) = &self.pending
+            && let Ok(total) = rx.try_recv()
+        {
+            self.total = total;
+            self.pending = None;
+        }
+        self.total.as_deref()
+    }
+}
 
 /// What stands between the file and the device. `None` is bit-perfect.
 pub fn deviation(
@@ -149,6 +196,9 @@ pub fn render(buf: &mut Buffer, app: &mut App, area: Rect) {
         return;
     }
     let theme = &app.theme;
+    let cfg = Config::cached();
+    let output_rate = app.state.output_sample_rate();
+    let dsp = app.state.dsp();
 
     let info = app.state.track_info();
     let entry: Option<QueueEntry> = app
@@ -183,7 +233,7 @@ pub fn render(buf: &mut Buffer, app: &mut App, area: Rect) {
         art_w = (f32::from(max_art_h) * 2.0 / app.art.gfx.squash()) as u16;
     }
     let art_h = app.art.gfx.rows_for(art_w).min(max_art_h.max(1));
-    let top_h = art_h.max(8).min(body.height);
+    let top_h = art_h.max(TEXT_ROWS).min(body.height);
     let text_x = body.x + if art_w > 0 { art_w + 2 } else { 0 } + 1;
     let text_w = (body.x + body.width).saturating_sub(text_x);
 
@@ -231,10 +281,7 @@ pub fn render(buf: &mut Buffer, app: &mut App, area: Rect) {
         buf.set_stringn(text.x, text.y + 1, &artist, w, theme.track_playing);
         buf.set_stringn(text.x, text.y + 2, &album, w, theme.hint_desc);
 
-        let output_rate = app.state.output_sample_rate();
-        let dsp = app.state.dsp();
-        let replaygain = koan_core::config::Config::cached().playback.replaygain;
-        let off = deviation(&info, output_rate, dsp.as_ref(), replaygain);
+        let off = deviation(&info, output_rate, dsp.as_ref(), cfg.playback.replaygain);
         let value = |s: String| vec![Span::styled(s, theme.track_normal)];
         let sy = text.y + 4;
         let pad = |k: &str, y, v: Vec<Span<'_>>, buf: &mut Buffer| {
@@ -311,11 +358,11 @@ pub fn render(buf: &mut Buffer, app: &mut App, area: Rect) {
     }
     let low = Rect::new(body.x, low_y, body.width, low_h);
 
-    let curve = app.state.dsp().and_then(|d| {
-        let rate = app.state.output_sample_rate().unwrap_or(info.sample_rate);
-        koan_core::audio::dsp::profiles::response(&d.profile, rate)
+    let curve = dsp.as_ref().and_then(|d| {
+        let rate = output_rate.unwrap_or(info.sample_rate);
+        app.eq_curve.get(&d.profile, rate, &cfg)
     });
-    let (lyrics_area, plot_area) = match &curve {
+    let (lyrics_area, plot_area) = match curve {
         Some(_) if low.width >= 70 => {
             let plot_w = (low.width * 2 / 5).min(48);
             (
@@ -332,9 +379,8 @@ pub fn render(buf: &mut Buffer, app: &mut App, area: Rect) {
     };
     let pos = app.state.position_ms();
     LyricsPanel::new(&app.lyrics, pos, &app.theme, app.spinner_tick).render(lyrics_area, buf);
-    if let (Some(plot), Some(curve)) = (plot_area, &curve) {
-        let profile = app.state.dsp().map(|d| d.profile).unwrap_or_default();
-        eq_plot(plot, buf, &app.theme, &profile, &curve.total);
+    if let (Some(plot), Some(curve), Some(d)) = (plot_area, curve, &dsp) {
+        eq_plot(plot, buf, &app.theme, &d.profile, curve);
         app.layout.eq_hits.push(plot);
     }
 }

@@ -3,7 +3,6 @@
 //! track picked from any other list shows its library row, with where the
 //! file is as well.
 
-use image::DynamicImage;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
@@ -13,7 +12,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 use koan_core::db::queries::TrackRow;
 use koan_core::player::state::{QueueEntry, QueueEntryStatus, TrackInfo};
 
-use super::cover_art::CoverArt;
+use super::cover_art::{Cover, Gfx};
 use super::theme::Theme;
 use super::transport::format_time;
 
@@ -135,13 +134,13 @@ pub fn row_fields(t: &TrackRow) -> Fields {
 
 pub struct TrackInfoOverlay<'a> {
     fields: Fields,
-    /// The cover, and the squash it is drawn with.
-    cover: Option<(&'a DynamicImage, f32)>,
+    /// The cover, and what draws it.
+    cover: Option<(&'a Cover, &'a mut Gfx)>,
     theme: &'a Theme,
 }
 
 impl<'a> TrackInfoOverlay<'a> {
-    pub fn new(fields: Fields, cover: Option<(&'a DynamicImage, f32)>, theme: &'a Theme) -> Self {
+    pub fn new(fields: Fields, cover: Option<(&'a Cover, &'a mut Gfx)>, theme: &'a Theme) -> Self {
         Self {
             fields,
             cover,
@@ -167,18 +166,18 @@ impl Widget for TrackInfoOverlay<'_> {
             return;
         }
 
-        // The cover takes a square on the left: half blocks give two pixels a
-        // cell vertically, roughly a cell's 2:1 shape.
+        // The cover, square in the terminal's cells, on the left.
         let text = match self.cover {
-            Some((img, squash)) if inner.width > 30 => {
-                let side = inner.height.min(inner.width / 3);
-                CoverArt::new(img)
-                    .shaped(squash)
-                    .render(Rect::new(inner.x + 1, inner.y, side, side), buf);
+            Some((cover, gfx)) if inner.width > 30 => {
+                let tallest = (f32::from(inner.height) * 2.0 / gfx.squash()) as u16;
+                let art_w = (inner.width / 3).min(tallest).max(1);
+                let art_h = gfx.rows_for(art_w).min(inner.height);
+                let art = Rect::new(inner.x + 1, inner.y, art_w, art_h);
+                gfx.draw(cover.key, &cover.image, art, buf, false);
                 Rect::new(
-                    inner.x + side + 2,
+                    inner.x + art_w + 2,
                     inner.y,
-                    inner.width.saturating_sub(side + 3),
+                    inner.width.saturating_sub(art_w + 3),
                     inner.height,
                 )
             }
@@ -253,15 +252,20 @@ mod tests {
     #[test]
     fn it_draws_at_any_size() {
         let theme = Theme::new(super::super::theme::Palette::Ansi, (125, 211, 167));
-        let cover = DynamicImage::new_rgb8(8, 8);
+        let cover = Cover {
+            key: 1,
+            image: image::DynamicImage::new_rgb8(8, 8),
+            accent: None,
+        };
+        let mut gfx = Gfx::halfblocks();
         for w in 0..80 {
             for h in 0..24 {
                 let area = Rect::new(0, 0, w, h);
-                for with_cover in [None, Some((&cover, 1.0))] {
-                    let mut buf = Buffer::empty(area);
-                    TrackInfoOverlay::new(row_fields(&track()), with_cover, &theme)
-                        .render(area, &mut buf);
-                }
+                let mut buf = Buffer::empty(area);
+                TrackInfoOverlay::new(row_fields(&track()), None, &theme).render(area, &mut buf);
+                let mut buf = Buffer::empty(area);
+                TrackInfoOverlay::new(row_fields(&track()), Some((&cover, &mut gfx)), &theme)
+                    .render(area, &mut buf);
             }
         }
     }
