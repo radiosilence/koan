@@ -36,6 +36,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
@@ -75,7 +76,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -221,17 +221,38 @@ fun KoanButton(
 
 /**
  * A glyph that switches one thing on and off, for a toolbar short of room. The glyph never
- * changes: `ink` is on and `muted` off, so it reads one way, where a glyph that swapped would
- * have to name either the state in force or the one a tap gives.
+ * changes, so it reads one way, where a glyph that swapped would have to name either the state
+ * in force or the one a tap gives. In the theme, `ink` underlined in the accent on and `muted`
+ * off, in a 48-dp target; Material's icon toggle otherwise. A switch to TalkBack.
  */
 @Composable
 fun KoanIconToggle(icon: Int, label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    KoanButton(
-        { onCheckedChange(!checked) },
-        Modifier.semantics { stateDescription = if (checked) "On" else "Off" },
-        kind = KoanButtonKind.Icon,
+    if (!KoanTheme.isOn) {
+        IconToggleButton(checked, onCheckedChange) { KoanIcon(icon, label) }
+        return
+    }
+    val c = KoanTheme.colors
+    val accent = KoanTheme.look.accent
+    val colour by animateColorAsState(if (checked) c.ink else c.muted, KoanMotion.fast(), label = "icon-toggle")
+    Box(
+        Modifier
+            .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+            .toggleable(checked, role = Role.Switch, onValueChange = onCheckedChange),
+        contentAlignment = Alignment.Center,
     ) {
-        KoanIcon(icon, label, color = KoanTheme.color(if (checked) KoanTone.Ink else KoanTone.Muted))
+        KoanIcon(
+            icon,
+            label,
+            Modifier
+                .padding(bottom = 5.dp)
+                .drawBehind {
+                    if (checked) {
+                        val w = KoanHairline.toPx()
+                        drawRect(accent, Offset(0f, size.height - w), Size(size.width, w))
+                    }
+                },
+            color = colour,
+        )
     }
 }
 
