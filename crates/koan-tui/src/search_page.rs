@@ -6,12 +6,13 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use koan_core::db::queries::{self, AlbumRow, ArtistRow, TrackRow};
+use koan_core::shelves::{self, Shelf};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 
 use super::app::PickerAction;
-use super::browse::{Action, fit};
+use super::browse::{Action, album_tracks, fit};
 use super::theme::Theme;
 use super::transport::format_time;
 
@@ -39,8 +40,17 @@ enum Item {
 }
 
 enum Line {
-    Section(&'static str, usize),
+    /// A kind's heading: its name, how many are listed and how many match.
+    Section(&'static str, usize, u64),
     Item(usize),
+}
+
+/// What a search found: the first of each kind, closest first, and how many
+/// of each there are in all.
+#[derive(Default)]
+struct Found {
+    items: Vec<Item>,
+    totals: [u64; 3],
 }
 
 #[derive(Default, Clone)]
@@ -59,6 +69,7 @@ pub struct SearchPage {
     /// Whether the keys go to the box rather than the results.
     pub typing: bool,
     items: Vec<Item>,
+    totals: [u64; 3],
     lines: Vec<Line>,
     line_of: Vec<usize>,
     cursor: usize,
@@ -83,54 +94,53 @@ impl Default for SearchPage {
     }
 }
 
-/// What the library holds that matches `q`.
-fn find(q: &str) -> Vec<Item> {
+/// What the library holds that matches `q`: the search shelf the apps read,
+/// narrowed offline to what can play here.
+fn find(q: &str) -> Found {
     let Ok(db) = koan_core::db::pool::shared().get() else {
-        return Vec::new();
+        return Found::default();
     };
-    let artists = queries::list_artists(
-        &db.conn,
-        &queries::ArtistQuery {
-            search: Some(q),
-            limit: Some(ARTISTS),
-            without_track_counts: true,
-            ..Default::default()
-        },
-    )
-    .unwrap_or_default();
-    let albums = queries::list_albums(
-        &db.conn,
-        &queries::AlbumQuery {
-            search: Some(q),
-            order: queries::AlbumOrder::Relevance,
-            limit: Some(ALBUMS),
-            ..Default::default()
-        },
-    )
-    .unwrap_or_default();
-    let tracks = queries::filter_tracks(
-        &db.conn,
-        &queries::TrackFilter {
-            search: Some(q.to_string()),
-            ..Default::default()
-        },
-        queries::TrackOrder::ArtistAlbumDiscTrack,
-        false,
-        TRACKS,
-        0,
-    )
-    .unwrap_or_default();
-    artists
+    let (user, now) = (queries::LOCAL_USER, shelves::now());
+    let offline = koan_core::remote::offline::active();
+    let shelf = Shelf::Search(q);
+    let mut artists = shelf.artists(user, now);
+    let mut albums = shelf.albums(user, now);
+    let mut tracks = shelf.tracks(user, now);
+    artists.filter.on_device |= offline;
+    albums.filter.on_device |= offline;
+    tracks.filter.on_device |= offline;
+    let totals = [
+        queries::count_artists(&db.conn, &artists).unwrap_or_default(),
+        queries::count_albums(&db.conn, &albums).unwrap_or_default(),
+        tracks.count(&db.conn).unwrap_or_default(),
+    ];
+    artists.limit = Some(ARTISTS);
+    artists.without_track_counts = true;
+    albums.limit = Some(ALBUMS);
+    let items = queries::list_artists(&db.conn, &artists)
+        .unwrap_or_default()
         .into_iter()
         .map(Item::Artist)
-        .chain(albums.into_iter().map(Item::Album))
-        .chain(tracks.into_iter().map(Item::Track))
-        .collect()
+        .chain(
+            queries::list_albums(&db.conn, &albums)
+                .unwrap_or_default()
+                .into_iter()
+                .map(Item::Album),
+        )
+        .chain(
+            tracks
+                .page(&db.conn, TRACKS, 0)
+                .unwrap_or_default()
+                .into_iter()
+                .map(Item::Track),
+        )
+        .collect();
+    Found { items, totals }
 }
 
 /// A query and the results for it, each tagged with its generation.
 type Query = (u64, String);
-type Results = (u64, Vec<Item>);
+type Results = (u64, Found);
 
 /// Runs the searches off the TUI thread, the last query of a burst only.
 fn spawn_searcher() -> (Sender<Query>, Receiver<Results>) {
@@ -164,6 +174,7 @@ impl SearchPage {
             query: String::new(),
             typing: true,
             items: Vec::new(),
+            totals: [0; 3],
             lines: Vec::new(),
             line_of: Vec::new(),
             cursor: 0,
@@ -188,7 +199,7 @@ impl SearchPage {
         self.generation += 1;
         let q = self.query.trim();
         if q.is_empty() {
-            self.show(self.generation, Vec::new());
+            self.show(self.generation, Found::default());
         } else {
             self.tx.send((self.generation, q.to_string())).ok();
         }
@@ -197,54 +208,48 @@ impl SearchPage {
     /// Takes in what the searcher has finished. Returns whether anything came.
     pub fn poll(&mut self) -> bool {
         let mut any = false;
-        while let Ok((generation, items)) = self.rx.try_recv() {
-            any |= self.show(generation, items);
+        while let Ok((generation, found)) = self.rx.try_recv() {
+            any |= self.show(generation, found);
         }
         any
     }
 
     /// Shows the results of query `generation`, unless a newer one was asked.
-    fn show(&mut self, generation: u64, items: Vec<Item>) -> bool {
+    fn show(&mut self, generation: u64, found: Found) -> bool {
         if generation != self.generation {
             return false;
         }
         self.shown = generation;
-        self.items = items;
+        self.items = found.items;
+        self.totals = found.totals;
         self.cursor = 0;
-        self.rebuild();
-        true
-    }
-
-    fn rebuild(&mut self) {
+        self.scroll = 0;
+        self.follow = true;
+        self.last_click = None;
         self.lines.clear();
         self.line_of.clear();
+        let kind = |item: &Item| match item {
+            Item::Artist(_) => 0,
+            Item::Album(_) => 1,
+            Item::Track(_) => 2,
+        };
+        let mut listed = [0; 3];
+        for item in &self.items {
+            listed[kind(item)] += 1;
+        }
         let mut section = None;
         for (i, item) in self.items.iter().enumerate() {
-            let (name, kind) = match item {
-                Item::Artist(_) => ("artists", 0),
-                Item::Album(_) => ("records", 1),
-                Item::Track(_) => ("tracks", 2),
-            };
-            if section != Some(kind) {
-                section = Some(kind);
-                let n = self
-                    .items
-                    .iter()
-                    .filter(|it| {
-                        matches!(
-                            (it, kind),
-                            (Item::Artist(_), 0) | (Item::Album(_), 1) | (Item::Track(_), 2)
-                        )
-                    })
-                    .count();
-                self.lines.push(Line::Section(name, n));
+            let k = kind(item);
+            if section != Some(k) {
+                section = Some(k);
+                let name = ["artists", "records", "tracks"][k];
+                self.lines
+                    .push(Line::Section(name, listed[k], self.totals[k]));
             }
             self.line_of.push(self.lines.len());
             self.lines.push(Line::Item(i));
         }
-        self.cursor = self.cursor.min(self.items.len().saturating_sub(1));
-        self.scroll = 0;
-        self.follow = true;
+        true
     }
 
     fn rows(&self) -> usize {
@@ -283,28 +288,29 @@ impl SearchPage {
     /// The tracks of whatever is at `idx`: the track, the record's, the
     /// artist's.
     fn ids_at(&self, idx: usize) -> Vec<i64> {
-        let Ok(db) = koan_core::db::pool::shared().get() else {
-            return Vec::new();
-        };
         match self.items.get(idx) {
             Some(Item::Track(t)) => vec![t.id],
-            Some(Item::Album(a)) => queries::tracks_for_album(&db.conn, a.id)
-                .map(|ts| ts.into_iter().map(|t| t.id).collect())
-                .unwrap_or_default(),
-            Some(Item::Artist(a)) => queries::list_albums(
-                &db.conn,
-                &queries::AlbumQuery {
+            Some(Item::Album(a)) => album_tracks(&[a.id]),
+            Some(Item::Artist(a)) => {
+                let query = queries::AlbumQuery {
                     artist_id: Some(a.id),
                     order: queries::AlbumOrder::Date,
+                    filter: queries::AlbumFilter {
+                        on_device: koan_core::remote::offline::active(),
+                        ..Default::default()
+                    },
                     ..Default::default()
-                },
-            )
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|al| queries::tracks_for_album(&db.conn, al.id).ok())
-            .flatten()
-            .map(|t| t.id)
-            .collect(),
+                };
+                let records: Vec<i64> = koan_core::db::pool::shared()
+                    .get()
+                    .ok()
+                    .and_then(|db| queries::list_albums(&db.conn, &query).ok())
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|al| al.id)
+                    .collect();
+                album_tracks(&records)
+            }
             None => Vec::new(),
         }
     }
@@ -648,8 +654,12 @@ impl SearchPage {
             };
             let y = list.y + r as u16;
             match line {
-                Line::Section(name, n) => {
-                    let label = format!("{name} ({n})");
+                Line::Section(name, listed, total) => {
+                    let label = if *listed as u64 == *total {
+                        format!("{name} ({total})")
+                    } else {
+                        format!("{name} (first {listed} of {total})")
+                    };
                     buf.set_stringn(
                         list.x + 1,
                         y,
@@ -750,12 +760,7 @@ impl SearchPage {
                 buf.set_stringn(left, y, fit(&a.name, w), w, base);
             }
             Item::Album(a) => {
-                let year = a
-                    .date
-                    .as_deref()
-                    .and_then(|d| d.get(..4))
-                    .unwrap_or("")
-                    .to_string();
+                let year = super::library::album_year(a.date.as_deref()).unwrap_or_default();
                 let yw = year.chars().count() as u16;
                 let yx = end.saturating_sub(yw + 1);
                 buf.set_string(yx, y, &year, dim);
@@ -870,16 +875,44 @@ mod tests {
         })
     }
 
+    fn found(items: Vec<Item>) -> Found {
+        Found {
+            totals: [items.len() as u64, 0, 0],
+            items,
+        }
+    }
+
+    #[test]
+    fn a_section_says_how_many_match_beyond_those_listed() {
+        let mut p = SearchPage::new();
+        p.generation = 1;
+        p.show(
+            1,
+            Found {
+                items: (0..8).map(artist).collect(),
+                totals: [30, 0, 0],
+            },
+        );
+        let area = Rect::new(0, 0, 60, 14);
+        let mut buf = Buffer::empty(area);
+        p.render(area, &mut buf, &theme(), None);
+        let row: String = (0..60).map(|x| buf[(x, 3)].symbol().to_string()).collect();
+        assert!(row.contains("artists (first 8 of 30)"), "{row}");
+    }
+
     #[test]
     fn only_the_latest_query_is_shown_and_it_starts_at_the_top() {
         let mut p = SearchPage::new();
         p.generation = 1;
-        assert!(p.show(1, (0..40).map(artist).collect()));
+        assert!(p.show(1, found((0..40).map(artist).collect())));
         p.cursor = 30;
         p.generation = 3;
-        assert!(!p.show(2, vec![artist(99)]), "a stale result is dropped");
+        assert!(
+            !p.show(2, found(vec![artist(99)])),
+            "a stale result is dropped"
+        );
         assert_eq!(p.items.len(), 40);
-        assert!(p.show(3, (0..40).map(artist).collect()));
+        assert!(p.show(3, found((0..40).map(artist).collect())));
         assert_eq!(p.cursor, 0);
     }
 
@@ -892,7 +925,7 @@ mod tests {
             "no results to move to"
         );
         p.generation = 1;
-        p.show(1, vec![artist(1)]);
+        p.show(1, found(vec![artist(1)]));
         assert!(p.handle_key(key(KeyCode::Tab)).is_some());
         assert!(!p.typing, "Tab moves to the results");
     }
