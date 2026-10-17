@@ -36,6 +36,8 @@ pub struct Gfx {
     graphics: bool,
     drawn: HashMap<(u64, u16, u16, u8), (u64, Drawn)>,
     tick: u64,
+    /// Images first built this frame, against `FRESH_PER_FRAME`.
+    fresh: usize,
     /// Kitty image ids no longer drawn, to be deleted from the terminal.
     stale: Vec<u32>,
     next_id: u32,
@@ -79,6 +81,11 @@ fn usable(protocol: ProtocolType) -> bool {
 /// go first and the tiles in view stay put.
 const DRAWN_LIMIT: usize = 384;
 
+/// How many grid tiles a frame turns from half blocks into images. A grid
+/// that stops after a long scroll has every tile to encode and send; spread
+/// over frames, none of them stalls.
+const FRESH_PER_FRAME: usize = 12;
+
 impl Default for Gfx {
     fn default() -> Self {
         Self::halfblocks()
@@ -92,6 +99,7 @@ impl Gfx {
             graphics: false,
             drawn: HashMap::new(),
             tick: 0,
+            fresh: 0,
             stale: Vec::new(),
             next_id: seed_id(),
         }
@@ -123,6 +131,7 @@ impl Gfx {
             picker,
             drawn: HashMap::new(),
             tick: 0,
+            fresh: 0,
             stale: Vec::new(),
             next_id: seed_id(),
         }
@@ -130,7 +139,7 @@ impl Gfx {
 
     /// The half-block pixel's height over its width, against a cell twice as
     /// tall as wide, from the cell size the terminal reported.
-    fn squash(&self) -> f32 {
+    pub fn squash(&self) -> f32 {
         self.picker
             .as_ref()
             .map(|p| {
@@ -139,6 +148,26 @@ impl Gfx {
             })
             .filter(|s| s.is_finite() && *s > 0.0)
             .unwrap_or(1.0)
+    }
+
+    /// How many rows a square cover `cols` wide takes, rounded up as the
+    /// terminal's images are.
+    pub fn rows_for(&self, cols: u16) -> u16 {
+        ((f32::from(cols) * self.squash() / 2.0).ceil() as u16).max(u16::from(cols > 0))
+    }
+
+    /// Whether images are drawn as kitty placeholders, one per cell.
+    fn placeholders(&self) -> bool {
+        self.graphics
+            && self
+                .picker
+                .as_ref()
+                .is_some_and(|p| p.protocol_type() == ProtocolType::Kitty)
+    }
+
+    /// Starts a frame of the grid.
+    pub fn begin_frame(&mut self) {
+        self.fresh = 0;
     }
 
     /// Whether covers are drawn as real images.
@@ -309,7 +338,14 @@ impl Gfx {
         moving: bool,
         buf: &mut Buffer,
     ) {
-        if visible >= area.height && !(moving && self.graphics) {
+        let built = self.drawn.contains_key(&(key, area.width, area.height, 1));
+        if visible >= area.height
+            && !(moving && self.placeholders())
+            && (built || !self.graphics || self.fresh < FRESH_PER_FRAME)
+        {
+            if !built && self.graphics {
+                self.fresh += 1;
+            }
             return self.draw(key, img, area, buf, true);
         }
         if visible == 0 || area.width == 0 {
@@ -443,7 +479,8 @@ fn pre_render(
     let cols = (width as f32)
         .min(f32::from(height) * 2.0 / aspect)
         .max(1.0);
-    let rows = (aspect * cols).round().clamp(1.0, f32::from(height) * 2.0);
+    // Whole cells, rounded up as the terminal rounds its own images.
+    let rows = ((aspect * cols / 2.0).ceil() * 2.0).clamp(2.0, f32::from(height) * 2.0);
     let resized = img.resize_exact(
         cols.round() as u32,
         rows as u32,
@@ -507,6 +544,7 @@ fn pre_render(
 pub struct CoverArt<'a> {
     image: &'a DynamicImage,
     center: bool,
+    squash: f32,
 }
 
 impl<'a> CoverArt<'a> {
@@ -514,7 +552,14 @@ impl<'a> CoverArt<'a> {
         Self {
             image,
             center: false,
+            squash: 1.0,
         }
+    }
+
+    /// Shapes the half blocks to the terminal's cell; see `Gfx::squash`.
+    pub fn shaped(mut self, squash: f32) -> Self {
+        self.squash = squash;
+        self
     }
 }
 
@@ -523,7 +568,13 @@ impl Widget for CoverArt<'_> {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        let rendered = pre_render(self.image, area.width, area.height, self.center, 1.0);
+        let rendered = pre_render(
+            self.image,
+            area.width,
+            area.height,
+            self.center,
+            self.squash,
+        );
         for cell in &rendered.cells {
             if let Some(c) = buf.cell_mut(ratatui::layout::Position::new(
                 area.x + cell.rx,
@@ -547,6 +598,7 @@ impl Gfx {
             graphics: usable(protocol),
             drawn: HashMap::new(),
             tick: 0,
+            fresh: 0,
             stale: Vec::new(),
             next_id: seed_id(),
         }
@@ -658,12 +710,49 @@ mod tests {
     fn half_blocks_take_the_shape_of_the_terminal_cell() {
         let square =
             DynamicImage::ImageRgb8(image::RgbImage::from_pixel(300, 300, image::Rgb([200; 3])));
-        let rows = |squash| {
-            let drawn = pre_render(&square, 22, 11, false, squash);
+        let rows = |cols, squash| {
+            let drawn = pre_render(&square, cols, cols, false, squash);
             drawn.cells.iter().map(|c| c.ry).max().map_or(0, |r| r + 1)
         };
-        // A 13x29 px cell: 22 columns are 286 px, which is ten rows of 29.
-        assert_eq!(rows(2.0 * 13.0 / 29.0), 10);
-        assert_eq!(rows(1.0), 11);
+        // A 13x29 px cell: 22 columns are 286 px, 9.9 rows of 29, and 30 are
+        // 390 px, 13.4 rows; the terminal rounds both up.
+        let cell = 2.0 * 13.0 / 29.0;
+        assert_eq!(rows(22, cell), 10);
+        assert_eq!(rows(30, cell), 14);
+        assert_eq!(rows(22, 1.0), 11);
+    }
+
+    fn is_image(buf: &Buffer) -> bool {
+        buf.content
+            .iter()
+            .any(|c| c.symbol().contains('\u{10EEEE}'))
+    }
+
+    #[test]
+    fn a_frame_turns_only_so_many_tiles_into_images() {
+        let img = picture();
+        let area = Rect::new(0, 0, 8, 4);
+        let mut gfx = Gfx::forced(ProtocolType::Kitty);
+        let frame = |gfx: &mut Gfx| {
+            gfx.begin_frame();
+            (0..20)
+                .filter(|&key| {
+                    let mut buf = Buffer::empty(area);
+                    gfx.draw_clipped(key, &img, area, 4, false, &mut buf);
+                    is_image(&buf)
+                })
+                .count()
+        };
+        assert_eq!(frame(&mut gfx), FRESH_PER_FRAME);
+        assert_eq!(frame(&mut gfx), 20);
+    }
+
+    #[test]
+    fn only_kitty_tiles_turn_to_half_blocks_while_moving() {
+        let img = picture();
+        let area = Rect::new(0, 0, 20, 10);
+        let mut buf = Buffer::empty(area);
+        Gfx::forced(ProtocolType::Iterm2).draw_clipped(3, &img, area, 10, true, &mut buf);
+        assert!(buf.content.iter().all(|c| c.symbol() != "\u{2580}"));
     }
 }

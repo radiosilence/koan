@@ -205,7 +205,7 @@ impl ArtistHeader {
             return;
         }
         let art_w = self.art_w(area.width);
-        let art_h = (art_w / 2).min(area.height);
+        let art_h = gfx.rows_for(art_w).min(area.height);
         if art_w > 0 {
             let art = Rect::new(area.x + 1, area.y, art_w, art_h);
             match &self.photo {

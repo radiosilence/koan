@@ -315,7 +315,7 @@ impl AlbumPage {
         } else {
             0
         };
-        let art_h = (art_w / 2).max(u16::from(art_w > 0));
+        let art_h = gfx.rows_for(art_w);
         let header_h = art_h.max(6).min(body.height);
         let art = Rect::new(body.x + 1, body.y, art_w, art_h.min(body.height));
         if art_w > 0 {
