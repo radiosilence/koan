@@ -48,7 +48,7 @@ Five crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server`
 | Auth | None needed | JWT, cookies, CORS |
 | For | macOS, iOS, tvOS and Android apps | Web UI, jukebox remotes |
 
-**Nothing over the FFI blocks its caller.** koan-core is synchronous — rusqlite has no async form, and the audio path is dedicated threads on purpose — so the boundary is where the hop happens: an exported call that can block is `async` and runs on a worker thread, and the handful that stay synchronous read one atomic. Queue mutations and transport commands go down a single lane so they reach the player in the order the user gave them. See `koan-ffi/src/offload.rs`.
+**Nothing over the FFI blocks its caller.** koan-core is synchronous — rusqlite has no async form, and the audio path is dedicated threads on purpose — so the boundary is where the hop happens: an exported call that can block is `async` and runs on a worker thread, and the handful that stay synchronous read one atomic. Queue mutations and transport commands go down a single lane so they reach the player in the order the user gave them. Settings writes go down a lane of their own and the call returns at once, so changing the look never waits on the disk; `flush_settings` waits for them as the app quits. See `koan-ffi/src/offload.rs`.
 
 **A UI that can link the core should.** The macOS app sits directly on top of the audio engine, so routing its own commands through localhost HTTP would add a daemon, a port, an auth surface and a second process contending for the same SQLite file, and buy nothing. It links `koan-ffi`, and CoreAudio output never leaves Rust, so playback stays bit-perfect.
 

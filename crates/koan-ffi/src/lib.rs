@@ -4093,6 +4093,13 @@ impl KoanEngine {
         });
     }
 
+    /// Wait for every setting still being saved to land. For the app to call as
+    /// it quits, since a change made just before would otherwise go with the
+    /// process: the theme, which takes effect on the next launch, most of all.
+    pub fn flush_settings(&self) {
+        offload::after_saves(|| ());
+    }
+
     /// How the app is drawn, from `[appearance]`, once every change still
     /// being saved has landed. Read once, as the app opens: a change takes
     /// effect on the next launch.

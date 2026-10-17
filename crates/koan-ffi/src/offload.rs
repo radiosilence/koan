@@ -10,6 +10,10 @@
 //! the core count — a thread waiting on a socket costs a kernel stack and
 //! address space it never touches, not CPU, and capping blocking work at the
 //! core count queues it behind nothing.
+//!
+//! Beside the pool are three lanes, each one thread running its work in the
+//! order it was handed over: player commands, commands from other devices, and
+//! settings writes.
 
 use std::sync::LazyLock;
 
@@ -85,18 +89,7 @@ where
     }
 }
 
-static LANE: LazyLock<Sender<Job>> = LazyLock::new(|| {
-    let (tx, rx) = crossbeam_channel::unbounded::<Job>();
-    std::thread::Builder::new()
-        .name("koan-commands".into())
-        .spawn(move || {
-            for job in rx {
-                job();
-            }
-        })
-        .expect("the command lane needs one thread");
-    tx
-});
+static LANE: LazyLock<Sender<Job>> = LazyLock::new(|| lane("koan-commands"));
 
 /// Run `f` on the lane for commands from other devices, in arrival order,
 /// without waiting for it. The link's and the network's socket threads hand
@@ -118,18 +111,7 @@ where
         .expect("the remote command lane outlives the engine");
 }
 
-static REMOTE_LANE: LazyLock<Sender<Job>> = LazyLock::new(|| {
-    let (tx, rx) = crossbeam_channel::unbounded::<Job>();
-    std::thread::Builder::new()
-        .name("koan-remote-commands".into())
-        .spawn(move || {
-            for job in rx {
-                job();
-            }
-        })
-        .expect("the remote command lane needs one thread");
-    tx
-});
+static REMOTE_LANE: LazyLock<Sender<Job>> = LazyLock::new(|| lane("koan-remote-commands"));
 
 /// Run `f` on the lane for settings writes, in call order, without waiting
 /// for it. Each write reads and rewrites the config files, which on a slow disk
@@ -151,7 +133,8 @@ where
 }
 
 /// Run `f` on the settings lane once every [`save`] before it has finished,
-/// and wait for it: a read that must see the writes already made.
+/// and wait for it: a read that must see the writes already made, or a flush
+/// before the process exits. Never from a save, which would wait on itself.
 pub fn after_saves<T, F>(f: F) -> T
 where
     F: FnOnce() -> T + Send + 'static,
@@ -170,18 +153,21 @@ where
     }
 }
 
-static SETTINGS_LANE: LazyLock<Sender<Job>> = LazyLock::new(|| {
+static SETTINGS_LANE: LazyLock<Sender<Job>> = LazyLock::new(|| lane("koan-settings"));
+
+/// One thread running whatever is sent to it, in the order it was sent.
+fn lane(name: &str) -> Sender<Job> {
     let (tx, rx) = crossbeam_channel::unbounded::<Job>();
     std::thread::Builder::new()
-        .name("koan-settings".into())
+        .name(name.into())
         .spawn(move || {
             for job in rx {
                 job();
             }
         })
-        .expect("the settings lane needs one thread");
+        .unwrap_or_else(|e| panic!("{name} needs a thread: {e}"));
     tx
-});
+}
 
 #[cfg(test)]
 mod tests {
@@ -285,19 +271,20 @@ mod tests {
     #[test]
     fn saves_return_at_once_and_a_read_after_them_sees_them_all() {
         let seen = Arc::new(parking_lot::Mutex::new(Vec::new()));
-        let started = std::time::Instant::now();
+        // The first save is a slow disk, held until every save has returned:
+        // the caller must not wait for it, and later saves must not overtake it.
+        let (release, held) = crossbeam_channel::bounded::<()>(0);
         for i in 0..8 {
             let seen = seen.clone();
+            let held = held.clone();
             save(move || {
-                // A slow disk: the caller must not wait, and later writes
-                // must not overtake it.
                 if i == 0 {
-                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    let _ = held.recv();
                 }
                 seen.lock().push(i);
             });
         }
-        assert!(started.elapsed() < std::time::Duration::from_millis(100));
+        release.send(()).unwrap();
         let read = after_saves({
             let seen = seen.clone();
             move || seen.lock().clone()
