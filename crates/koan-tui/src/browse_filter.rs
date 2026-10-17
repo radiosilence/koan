@@ -83,9 +83,8 @@ const ROWS: [Row; 6] = [
     Row::Reset,
 ];
 
-/// A list of values for one row to take, narrowed by what is typed.
+/// The genres to pick from, narrowed by what is typed.
 struct Pick {
-    row: Row,
     options: Vec<String>,
     typed: String,
     cursor: usize,
@@ -176,21 +175,16 @@ impl FilterPanel {
         match ROWS[self.cursor] {
             Row::Lossless => f.lossless = !f.lossless,
             Row::Downloaded => f.downloaded = !f.downloaded,
-            Row::Codec => f.codec = step(f.codec.as_deref(), &self.codecs, forward),
+            Row::Codec => f.codec = step(f.codec.as_ref(), &self.codecs, forward),
             Row::Genre => {
                 self.pick = Some(Pick {
-                    row: Row::Genre,
                     options: self.genres.clone(),
                     typed: String::new(),
                     cursor: 0,
                 });
                 return false;
             }
-            Row::Decade => {
-                let labels: Vec<String> = DECADES.iter().map(|d| d.to_string()).collect();
-                let now = f.decade.map(|d| d.to_string());
-                f.decade = step(now.as_deref(), &labels, forward).and_then(|d| d.parse().ok());
-            }
+            Row::Decade => f.decade = step(f.decade.as_ref(), &DECADES, forward),
             Row::Reset => {
                 let changed = *f != Filters::default();
                 *f = Filters::default();
@@ -214,9 +208,7 @@ impl FilterPanel {
             self.pick = Some(pick);
             return false;
         }
-        if pick.row == Row::Genre {
-            self.filters.genre = value;
-        }
+        self.filters.genre = value;
         true
     }
 
@@ -227,7 +219,7 @@ impl FilterPanel {
 
 /// The value after (or before) `now` in `options`, with `None` at either end
 /// of the loop.
-fn step(now: Option<&str>, options: &[String], forward: bool) -> Option<String> {
+fn step<T: PartialEq + Clone>(now: Option<&T>, options: &[T], forward: bool) -> Option<T> {
     if options.is_empty() {
         return None;
     }
@@ -260,7 +252,7 @@ impl FilterPanel {
     /// How many lines the panel is tall for.
     pub fn lines(&self) -> usize {
         match &self.pick {
-            Some(pick) => (pick.shown().len() + 2).min(14),
+            Some(pick) => (pick.shown().len() + 1).min(14),
             None => ROWS.len(),
         }
     }

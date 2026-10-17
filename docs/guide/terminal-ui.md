@@ -35,7 +35,7 @@ Every action with a key has a way to reach it by pointer. `m`, or `⋯ actions` 
 
 ## Search
 
-`0` opens a box that searches the library as you type and lists what matches under artists, records and tracks. `Enter` (or `↓`) moves from the box to the results, and `↑` from the first result or `/` returns to the box. On a result `Enter` opens an artist or a record and plays a track, `P`, `a` and `N` play, add and put next, `w` adds to a playlist, `f` favourites, `m` lists the rest, and the artist and record in a track's row are links. Clicking the box, a result, `clear` or `⋯ actions` does the same by pointer. While the box has focus every key is text, including the page numbers, and `Shift+Tab` (or `Tab` with nothing found) changes page; `Esc` clears it, then leaves.
+`0` opens a box that searches the library as you type and lists what matches under artists, records and tracks, closest first, as the apps' search does. Each heading counts what matches, and says so when more match than are listed. `Enter` (or `↓`) moves from the box to the results, and `↑` from the first result or `/` returns to the box. On a result `Enter` opens an artist or a record and plays a track, `P`, `a` and `N` play, add and put next, `w` adds to a playlist, `f` favourites, `m` lists the rest, and the artist and record in a track's row are links. Clicking the box, a result, `clear` or `⋯ actions` does the same by pointer. While the box has focus every key is text, including the page numbers, and `Shift+Tab` (or `Tab` with nothing found) changes page; `Esc` clears it, then leaves.
 
 ## Playlists
 
@@ -61,7 +61,7 @@ The transport bar sits at the foot. Drag the hairline above it to resize the cov
 
 ## Browsing records
 
-Albums, Favourites and Recent draw each record as a tile. `v` switches to rows (tracks, on Favourites and Recent). `o` cycles the order on Albums: artist, date added, title, year. `/` filters what is shown by name; the heading's `/ filter` does the same with a click. `Ctrl+F`, or `filters` in the heading, opens the apps' browse filters as a panel: lossless, downloaded, codec, genre and decade. Each row is a key (`Enter`, `←` `→`) or a click; the genre row opens a list that narrows as you type. One set of filters applies to all three pages, and the heading counts how many are on. They apply to records, so they are not offered while a page shows tracks.
+Albums, Favourites and Recent draw each record as a tile. `v` switches to rows (tracks, on Favourites and Recent). `o` cycles the order on Albums: artist, date added, title, year. `/` filters what is shown by name, matched by the library as the apps' filter boxes are, so a typo still finds the closest records; the heading's `/ filter` does the same with a click. `Ctrl+F`, or `filters` in the heading, opens the apps' browse filters as a panel: lossless, downloaded, codec, genre and decade. Each row is a key (`Enter`, `←` `→`) or a click; the genre row opens a list that narrows as you type. One set of filters applies to all three pages, and the heading counts how many are on. They apply to records, so they are not offered while a page shows tracks.
 
 | Key | Action |
 |-----|--------|

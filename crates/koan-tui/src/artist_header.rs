@@ -38,7 +38,11 @@ struct Geom {
 
 pub struct ArtistHeader {
     id: i64,
+    name: String,
+    albums: usize,
     info: Option<ArtistInfo>,
+    /// The bio broken into lines, and the width it was broken for.
+    bio: Option<(usize, Vec<String>)>,
     photo: Option<DynamicImage>,
     loading: bool,
     favourite: bool,
@@ -102,7 +106,10 @@ impl ArtistHeader {
             .ok();
         Self {
             id,
+            name: String::new(),
+            albums: 0,
             info: None,
+            bio: None,
             photo: None,
             loading: true,
             favourite: false,
@@ -118,12 +125,21 @@ impl ArtistHeader {
         while let Ok(update) = self.rx.try_recv() {
             changed = true;
             match update {
-                Update::Info(info) => self.info = info.or(self.info.take()),
+                Update::Info(info) => {
+                    self.info = info.or(self.info.take());
+                    self.bio = None;
+                }
                 Update::Photo(img) => self.photo = Some(img),
                 Update::Done => self.loading = false,
             }
         }
         changed
+    }
+
+    /// Who the page is about, and how many of their records it shows.
+    pub fn set_artist(&mut self, name: &str, albums: usize) {
+        name.clone_into(&mut self.name);
+        self.albums = albums;
     }
 
     pub fn set_favourite(&mut self, on: bool) {
@@ -154,23 +170,31 @@ impl ArtistHeader {
         width.saturating_sub(tx + 1) as usize
     }
 
-    fn bio_lines(&self, width: u16) -> Vec<String> {
-        self.info
-            .as_ref()
-            .and_then(|i| i.bio.as_deref())
-            .map(|b| wrap(b, self.text_w(width).max(10)))
-            .unwrap_or_default()
+    /// The bio in lines to fit `width`, broken again only when the width or
+    /// the bio changes.
+    fn bio_lines(&mut self, width: u16) -> &[String] {
+        let w = self.text_w(width).max(10);
+        if self.bio.as_ref().is_none_or(|(at, _)| *at != w) {
+            let lines = self
+                .info
+                .as_ref()
+                .and_then(|i| i.bio.as_deref())
+                .map(|b| wrap(b, w))
+                .unwrap_or_default();
+            self.bio = Some((w, lines));
+        }
+        self.bio.as_ref().map_or(&[], |(_, lines)| lines)
     }
 
     /// Rows the header takes in a page `avail` rows tall; the records get the
     /// rest, and always at least a row of tiles.
-    pub fn height(&self, width: u16, avail: u16) -> u16 {
+    pub fn height(&mut self, width: u16, avail: u16, gfx: &Gfx) -> u16 {
         if avail < 12 {
             return 0;
         }
         let lines = self.bio_lines(width).len() as u16;
         let shown = if self.expanded { lines } else { lines.min(4) };
-        let art_h = self.art_w(width) / 2;
+        let art_h = gfx.rows_for(self.art_w(width));
         // Name, count, buttons and a gap, then the bio and its credit line.
         let text = 4 + shown + u16::from(lines > 0 || self.loading);
         (text.max(art_h) + 1).min(avail * 3 / 5)
@@ -189,15 +213,12 @@ impl ArtistHeader {
         .map(|(_, h)| h)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         area: Rect,
         buf: &mut Buffer,
         theme: &Theme,
         gfx: &mut Gfx,
-        name: &str,
-        albums: usize,
         hover: Option<HeaderHit>,
     ) {
         self.geom = Geom::default();
@@ -210,7 +231,7 @@ impl ArtistHeader {
             let art = Rect::new(area.x + 1, area.y, art_w, art_h);
             match &self.photo {
                 Some(img) => gfx.draw(album_key(-self.id - 1), img, art, buf, false),
-                None => super::browse::placeholder(art, art.height, buf, theme, name),
+                None => super::browse::placeholder(art, art.height, buf, theme, &self.name),
             }
         }
         let tx = area.x + if art_w > 0 { art_w + 3 } else { 1 };
@@ -245,11 +266,12 @@ impl ArtistHeader {
         buf.set_stringn(
             tx + 2,
             area.y,
-            name,
+            &self.name,
             tw.saturating_sub(2),
             theme.heading.add_modifier(Modifier::BOLD),
         );
         if area.y + 1 < end {
+            let albums = self.albums;
             let count = format!("{albums} {}", if albums == 1 { "album" } else { "albums" });
             buf.set_stringn(tx, area.y + 1, &count, tw, theme.hint_desc);
         }
@@ -284,7 +306,8 @@ impl ArtistHeader {
             }
         }
 
-        let lines = self.bio_lines(area.width);
+        self.bio_lines(area.width);
+        let lines: &[String] = self.bio.as_ref().map_or(&[], |(_, lines)| lines);
         let mut y = area.y + 4;
         if lines.is_empty() {
             if self.loading && y < end {
@@ -296,13 +319,13 @@ impl ArtistHeader {
         let limit = if self.expanded { room } else { room.min(4) };
         let truncated = lines.len() > limit;
         for (i, line) in lines.iter().take(limit).enumerate() {
-            let last = i + 1 == limit && truncated;
-            let text = if last {
-                format!("{line}\u{2026}")
+            let style = Style::new().patch(theme.track_normal);
+            if i + 1 == limit && truncated {
+                let cut = super::browse::fit(&format!("{line}\u{2026}"), tw);
+                buf.set_stringn(tx, y, cut, tw, style);
             } else {
-                line.clone()
-            };
-            buf.set_stringn(tx, y, &text, tw, Style::new().patch(theme.track_normal));
+                buf.set_stringn(tx, y, line, tw, style);
+            }
             y += 1;
         }
         if y < end {

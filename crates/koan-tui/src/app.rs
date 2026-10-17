@@ -748,7 +748,14 @@ impl App {
         if self.page() == Page::History && !self.history_page.filter_active {
             self.history_page.refresh();
         }
-        self.artist_page.poll();
+        for page in [
+            &mut self.albums_page,
+            &mut self.favourites_page,
+            &mut self.recent_page,
+            &mut self.artist_page,
+        ] {
+            page.poll();
+        }
         self.search_page.poll();
 
         // Updated every frame: the analysis thread runs at its own rate, and
@@ -1622,6 +1629,8 @@ impl App {
             }
             browse::Action::Favourite(id) => {
                 self.toggle_favourite(id);
+                // The shelf's tracks lose what was just let go.
+                self.favourites_page.reload();
             }
             browse::Action::OpenAlbum(id) => self.go_page(Page::Album(id)),
             browse::Action::OpenArtist(id) => self.go_page(Page::Artist(id)),
@@ -3808,7 +3817,7 @@ impl App {
                     && self.is_in_rect(event.column, event.row, self.layout.library_area)
                 {
                     if let Some(ref mut lib) = self.library {
-                        lib.scroll_offset = lib.scroll_offset.saturating_sub(3);
+                        lib.scroll_by(-3);
                     }
                 } else if self.page() != Page::Queue {
                 } else {
@@ -3845,10 +3854,8 @@ impl App {
                 } else if self.library_active()
                     && self.is_in_rect(event.column, event.row, self.layout.library_area)
                 {
-                    let h = self.library_content_height();
                     if let Some(ref mut lib) = self.library {
-                        let max = lib.nodes.len().saturating_sub(h);
-                        lib.scroll_offset = (lib.scroll_offset + 3).min(max);
+                        lib.scroll_by(3);
                     }
                 } else if self.page() != Page::Queue {
                 } else {
@@ -4347,7 +4354,7 @@ impl App {
                     lib.filter_backspace();
                 }
             }
-            KeyCode::Char(c) => {
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 lib.filter_type_char(c);
             }
             _ => {}
@@ -4361,14 +4368,10 @@ impl App {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => lib.move_up(),
             KeyCode::Down | KeyCode::Char('j') => lib.move_down(),
-            KeyCode::PageUp => lib.page_up(10),
-            KeyCode::PageDown => lib.page_down(10),
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                lib.page_up(10);
-            }
-            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                lib.page_down(10);
-            }
+            KeyCode::PageUp => lib.page_up(),
+            KeyCode::PageDown => lib.page_down(),
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => lib.page_up(),
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => lib.page_down(),
             KeyCode::Home | KeyCode::Char('g') => lib.jump_to_start(),
             KeyCode::End | KeyCode::Char('G') => lib.jump_to_end(),
             KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
@@ -4544,7 +4547,7 @@ impl App {
         if let Some(lib) = self.library.as_mut() {
             let max = lib.nodes.len().saturating_sub(h);
             let frac = row.saturating_sub(y) as f64 / h.saturating_sub(1).max(1) as f64;
-            lib.scroll_offset = ((frac.clamp(0.0, 1.0) * max as f64).round() as usize).min(max);
+            lib.scroll_to((frac.clamp(0.0, 1.0) * max as f64).round() as usize);
         }
     }
 

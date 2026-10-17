@@ -367,7 +367,10 @@ impl AlbumPage {
         let facts = [
             (!year.is_empty()).then_some(year),
             self.album.codec.clone().filter(|c| !c.is_empty()),
-            Some(format!("{} tracks", self.tracks.len())),
+            Some(match self.tracks.len() {
+                1 => "1 track".to_string(),
+                n => format!("{n} tracks"),
+            }),
             (total_ms > 0).then(|| format_time(total_ms as u64)),
         ]
         .into_iter()

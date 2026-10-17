@@ -46,6 +46,11 @@ pub struct LibraryState {
     pub filter: String,
     /// Whether the filter input box is focused (typing mode).
     pub filter_active: bool,
+    /// Rows the last frame showed, which paging moves by.
+    rows: usize,
+    /// Whether the next frame scrolls to the cursor; the wheel and the
+    /// scrollbar turn it off so they are not undone.
+    follow: bool,
     /// Cached unfiltered artist list — avoids re-querying DB on every filter keystroke.
     all_artists: Vec<LibraryNode>,
 }
@@ -66,6 +71,8 @@ impl LibraryState {
             scroll_offset: 0,
             filter: String::new(),
             filter_active: false,
+            rows: 1,
+            follow: true,
             all_artists: Vec::new(),
         };
         state.load_artists();
@@ -82,6 +89,7 @@ impl LibraryState {
             &db.conn,
             &queries::ArtistQuery {
                 filter: on_device(),
+                without_track_counts: true,
                 ..Default::default()
             },
         )
@@ -116,6 +124,7 @@ impl LibraryState {
 
         self.cursor = 0;
         self.scroll_offset = 0;
+        self.follow = true;
     }
 
     pub fn start_filter(&mut self) {
@@ -262,11 +271,11 @@ impl LibraryState {
 
     fn jump_to_parent(&mut self) {
         let depth = node_depth(&self.nodes[self.cursor]);
-        for i in (0..self.cursor).rev() {
-            if node_depth(&self.nodes[i]) < depth {
-                self.cursor = i;
-                return;
-            }
+        if let Some(i) = (0..self.cursor)
+            .rev()
+            .find(|&i| node_depth(&self.nodes[i]) < depth)
+        {
+            self.move_to(i);
         }
     }
 
@@ -292,66 +301,70 @@ impl LibraryState {
         }
     }
 
+    /// Moves the cursor to `idx`, kept in the tree, and the view with it.
+    fn move_to(&mut self, idx: usize) {
+        self.cursor = idx.min(self.nodes.len().saturating_sub(1));
+        self.follow = true;
+    }
+
+    /// Up a row, from the top to the bottom.
     pub fn move_up(&mut self) {
-        if self.nodes.is_empty() {
-            return;
+        let n = self.nodes.len();
+        if n > 0 {
+            self.move_to((self.cursor + n - 1) % n);
         }
-        if self.cursor == 0 {
-            self.cursor = self.nodes.len() - 1; // wrap to bottom
-        } else {
-            self.cursor -= 1;
-        }
-        self.ensure_visible();
     }
 
+    /// Down a row, from the bottom to the top.
     pub fn move_down(&mut self) {
-        if self.nodes.is_empty() {
-            return;
+        let n = self.nodes.len();
+        if n > 0 {
+            self.move_to((self.cursor + 1) % n);
         }
-        if self.cursor + 1 >= self.nodes.len() {
-            self.cursor = 0; // wrap to top
-        } else {
-            self.cursor += 1;
-        }
-        self.ensure_visible();
     }
 
-    pub fn page_up(&mut self, page_size: usize) {
-        self.cursor = self.cursor.saturating_sub(page_size);
-        self.ensure_visible();
+    pub fn page_up(&mut self) {
+        self.move_to(self.cursor.saturating_sub(self.rows));
     }
 
-    pub fn page_down(&mut self, page_size: usize) {
-        if !self.nodes.is_empty() {
-            self.cursor = (self.cursor + page_size).min(self.nodes.len() - 1);
-        }
-        self.ensure_visible();
+    pub fn page_down(&mut self) {
+        self.move_to(self.cursor + self.rows);
     }
 
     pub fn jump_to_start(&mut self) {
-        self.cursor = 0;
-        self.ensure_visible();
+        self.move_to(0);
     }
 
     pub fn jump_to_end(&mut self) {
-        if !self.nodes.is_empty() {
-            self.cursor = self.nodes.len() - 1;
-        }
-        self.ensure_visible();
+        self.move_to(usize::MAX);
     }
 
-    fn ensure_visible(&mut self) {
-        if self.cursor < self.scroll_offset {
-            self.scroll_offset = self.cursor;
-        }
+    /// Scrolls without moving the cursor, for the wheel.
+    pub fn scroll_by(&mut self, rows: isize) {
+        self.scroll_to(self.scroll_offset.saturating_add_signed(rows));
     }
 
+    /// Scrolls to `offset` without moving the cursor, for the scrollbar.
+    pub fn scroll_to(&mut self, offset: usize) {
+        self.follow = false;
+        self.scroll_offset = offset.min(self.nodes.len().saturating_sub(self.rows));
+    }
+
+    /// Fits the scroll to a frame `visible_height` rows tall, following the
+    /// cursor unless the view was scrolled away from it.
     pub fn update_scroll(&mut self, visible_height: usize) {
-        if self.cursor < self.scroll_offset {
-            self.scroll_offset = self.cursor;
-        } else if self.cursor >= self.scroll_offset + visible_height {
-            self.scroll_offset = self.cursor.saturating_sub(visible_height) + 1;
+        self.rows = visible_height.max(1);
+        let rows = self.rows;
+        if self.follow {
+            if self.cursor < self.scroll_offset {
+                self.scroll_offset = self.cursor;
+            } else if self.cursor >= self.scroll_offset + rows {
+                self.scroll_offset = self.cursor + 1 - rows;
+            }
         }
+        self.scroll_offset = self
+            .scroll_offset
+            .min(self.nodes.len().saturating_sub(rows));
     }
 
     /// The artist page for the row under the cursor, whatever kind of row it is.
@@ -615,6 +628,7 @@ fn render_node<'a>(node: &LibraryNode, is_cursor: bool, theme: &Theme) -> Line<'
                 let (label, color) = match source.as_str() {
                     "local" => (" \u{F0A0} ", theme.tokens.muted), // nf-fa-hdd
                     "remote" => (" \u{F0C2} ", theme.tokens.muted), // nf-fa-cloud
+                    "cached" => (" \u{F019} ", theme.tokens.muted), // nf-fa-download
                     _ => (" ? ", theme.warning),
                 };
                 Span::styled(label, ratatui::style::Style::default().fg(color))
