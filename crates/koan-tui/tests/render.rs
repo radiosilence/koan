@@ -311,7 +311,9 @@ fn queue_survives_every_size_and_title() {
             // Cursor and scroll offset past the end must not index out of bounds.
             for (cursor, scroll) in [(0, 0), (3, 1), (entries.len(), entries.len() + 5)] {
                 render_widget(
-                    QueueView::new(&entries, &mode, cursor, scroll, &theme, &selected, 3)
+                    QueueView::new(&entries, &mode, cursor, scroll, &theme)
+                        .with_selected(&selected)
+                        .with_spinner(3)
                         .with_drop_indicator(Some(2))
                         .with_hover(&HoverZone::QueueItem(1))
                         .with_favourites(&favourites),
@@ -325,9 +327,8 @@ fn queue_survives_every_size_and_title() {
 
 fn render_empty_queue(w: u16, h: u16) {
     let theme = Theme::default();
-    let selected = HashSet::new();
     let mode = Mode::Normal;
-    render_widget(QueueView::new(&[], &mode, 0, 0, &theme, &selected, 0), w, h);
+    render_widget(QueueView::new(&[], &mode, 0, 0, &theme), w, h);
 }
 
 #[test]

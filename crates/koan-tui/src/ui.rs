@@ -413,20 +413,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if app.mode == Mode::ContextMenu
         && let Some(ref menu) = app.context_menu
     {
-        let click_col = if app.hover.column > 0 {
-            Some(app.hover.column)
-        } else {
-            None
-        };
-        let click_row = if app.hover.row > 0 {
-            Some(app.hover.row)
-        } else {
-            None
-        };
+        let (click_col, click_row) = menu.at.unzip();
         app.layout.context_menu_area =
             context_menu_rect_at(area, menu.actions.len(), click_col, click_row);
         let mut overlay = ContextMenuOverlay::new(menu, &app.theme);
-        if let (Some(c), Some(r)) = (click_col, click_row) {
+        if let Some((c, r)) = menu.at {
             overlay = overlay.at_position(c, r);
         }
         frame.render_widget(overlay, area);
@@ -859,18 +850,17 @@ fn render_queue(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
         app.queue.cursor = vq_len - 1;
     }
 
-    let visible = app.visible_queue();
     let drop_indicator = app.drop_indicator_index();
     let selected_indices = app.selected_indices();
     let queue_view = QueueView::new(
-        &visible,
+        &app.queue.vq_cache.entries,
         &app.mode,
         app.queue.cursor,
         app.queue.scroll_offset,
         &app.theme,
-        &selected_indices,
-        app.spinner_tick,
     )
+    .with_selected(&selected_indices)
+    .with_spinner(app.spinner_tick)
     .with_drop_indicator(drop_indicator)
     .with_pointer(Some((app.hover.column, app.hover.row)))
     .with_hover(&app.hover.zone)
