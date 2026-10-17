@@ -57,22 +57,23 @@ impl App {
         }
         self.last_mouse_row =
             hit(self.layout.queue_area, event.column, event.row).then_some(event.row);
+        // A drag ends with the button, whatever opened over it meanwhile.
+        if event.kind == MouseEventKind::Up(MouseButton::Left) {
+            // The reorder happened live during the drag; it is one undo.
+            if self.drag_undo_active {
+                self.tx.send(PlayerCommand::EndUndoBatch).ok();
+                self.drag_undo_active = false;
+            }
+            self.queue.drag = None;
+            self.scrollbar_grab_offset = None;
+            self.browse_drag = false;
+        }
         if self.overlay_mouse(event) {
             return;
         }
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => self.left_click(event),
             MouseEventKind::Drag(MouseButton::Left) => self.left_drag(event),
-            MouseEventKind::Up(MouseButton::Left) => {
-                // The reorder happened live during the drag; it is one undo.
-                if self.drag_undo_active {
-                    self.tx.send(PlayerCommand::EndUndoBatch).ok();
-                    self.drag_undo_active = false;
-                }
-                self.queue.drag = None;
-                self.scrollbar_grab_offset = None;
-                self.browse_drag = false;
-            }
             MouseEventKind::Down(MouseButton::Right) => self.right_click(event),
             MouseEventKind::ScrollUp => self.scroll(event, -1),
             MouseEventKind::ScrollDown => self.scroll(event, 1),
@@ -901,23 +902,8 @@ impl App {
 
     fn zone_at(&self, col: u16, row: u16) -> HoverZone {
         let layout = &self.layout;
-        let text = layout.transport_text_area;
-        if row == text.y
-            && col >= layout.seek_bar_start
-            && col < layout.seek_bar_start + layout.seek_bar_width
-        {
-            return HoverZone::SeekBar;
-        }
-        if hit(layout.now_playing_art_area, col, row) {
-            return HoverZone::TransportArt;
-        }
-        if hit(text, col, row) {
-            return HoverZone::TransportText;
-        }
-        if self.on_queue_scrollbar(col, row) {
-            return HoverZone::ScrollbarQueue;
-        }
         if hit(layout.queue_area, col, row)
+            && !self.on_queue_scrollbar(col, row)
             && let Some(idx) = queue::QueueView::queue_index_at_y(
                 self.visible_queue(),
                 layout.queue_area,

@@ -620,8 +620,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         render_fps(frame, app, area);
     }
 
-    // Loading overlay with braille spinner.
-    if app.loading() {
+    // Loading overlay with braille spinner: tracks being read into the
+    // queue, or a picker's items.
+    if app.loading() || matches!(app.mode, Mode::Picker(_)) && app.picker.is_none() {
         const SPINNER: &[char] = &[
             '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}', '\u{2834}', '\u{2826}',
             '\u{2827}',
@@ -1461,6 +1462,20 @@ mod tests {
         key(&mut app, KeyCode::Up);
         draw(&mut app, 100, 20);
         assert_eq!(app.help_scroll, end - 1);
+    }
+
+    #[test]
+    fn editing_the_queue_g_moves_and_ctrl_d_pages() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let (mut app, player) = app_and_player(5);
+        draw(&mut app, 100, 30);
+        key(&mut app, KeyCode::Char('e'));
+        // As terminals send it: an uppercase letter, with Shift.
+        app.handle_key(KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT));
+        assert_eq!(app.queue.cursor, 4);
+        assert_eq!(app.queue.selected_ids.len(), 1);
+        app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+        assert!(player.try_recv().is_err(), "nothing was removed");
     }
 
     #[test]

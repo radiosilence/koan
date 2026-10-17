@@ -148,10 +148,6 @@ pub enum HoverZone {
     Playlists(ListHit),
     Playlist(PlaylistHit),
     Nav(NavTarget),
-    SeekBar,
-    ScrollbarQueue,
-    TransportArt,
-    TransportText,
 }
 
 /// What a click in the sidebar or the tab bar goes to.
@@ -2256,6 +2252,10 @@ impl App {
                 }
                 self.update_scroll();
             }
+            // Ctrl+D pages, as everywhere else; it never deletes.
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.page_down(false);
+            }
             KeyCode::Char('d') | KeyCode::Delete => {
                 self.delete_selected();
             }
@@ -2273,35 +2273,28 @@ impl App {
                     self.update_scroll();
                 }
             }
-            KeyCode::Char('K')
-                if self.queue.cursor > 0 => {
-                    self.queue.cursor -= 1;
-                    self.extend_selection_to(self.queue.cursor);
-                    self.update_scroll();
-                }
+            KeyCode::Char('K') if self.queue.cursor > 0 => {
+                self.queue.cursor -= 1;
+                self.extend_selection_to(self.queue.cursor);
+                self.update_scroll();
+            }
             KeyCode::Char('i') => {
                 self.open_track_info(self.queue.cursor);
             }
-            KeyCode::Char(' ')
-                // Open context menu if there's a selection.
-                if !self.queue.selected_ids.is_empty() => {
-                    self.open_context_menu();
-                }
-            // Vim: page up/down, home/end.
-            KeyCode::PageUp | KeyCode::Char('u')
-                if key.code == KeyCode::PageUp || key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                self.page_up(shift);
+            KeyCode::Char(' ') if !self.queue.selected_ids.is_empty() => {
+                self.open_context_menu();
             }
-            KeyCode::PageDown => {
-                self.page_down(shift);
+            // Shift with the paging keys extends the selection. `g` and `G`
+            // only move: the terminal reports Shift with `G` itself.
+            KeyCode::PageUp => self.page_up(shift),
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.page_up(false);
             }
-            KeyCode::Home | KeyCode::Char('g') if !shift => {
-                self.jump_to_start(false);
-            }
-            KeyCode::End | KeyCode::Char('G') => {
-                self.jump_to_end(shift);
-            }
+            KeyCode::PageDown => self.page_down(shift),
+            KeyCode::Home => self.jump_to_start(shift),
+            KeyCode::End => self.jump_to_end(shift),
+            KeyCode::Char('g') => self.jump_to_start(false),
+            KeyCode::Char('G') => self.jump_to_end(false),
             KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.select_all();
             }
