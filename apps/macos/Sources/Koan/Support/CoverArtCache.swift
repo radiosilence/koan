@@ -76,12 +76,15 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// One decode per record and size, shared by everyone on screen asking.
     private let decodes = Flights<PlatformImage?>()
 
-    /// How much each record still being fetched matters to what is on screen,
-    /// read by the image lane each time it picks. Raised by whoever asks, and
-    /// set outright by a grid aiming its prefetch. Kept while anyone is
-    /// waiting on the record, at any size.
-    private var wanted: [String: ImageWork.Priority] = [:]
-    private var waiting: [String: Int] = [:]
+    /// Everyone waiting on a record, at any size, and how much it matters to
+    /// each. The image lane reads the most urgent of them each time it picks.
+    private var waiters: [String: [UUID: Waiter]] = [:]
+
+    private struct Waiter {
+        var priority: ImageWork.Priority
+        /// Re-ranked by the grid as it scrolls; see `prioritise`.
+        let aimed: Bool
+    }
 
     /// Which records produced each image, by content hash.
     ///
@@ -105,9 +108,19 @@ final class CoverArtCache: Observable, @unchecked Sendable {
 
     /// The colour space of the display the artwork is drawn on, which is the
     /// one Core Animation composites in. Set by whoever knows the window.
+    ///
+    /// A new display drops the bitmaps decoded for the old one: a sleeve
+    /// matched to an sRGB display has lost the colours a P3 one would show.
+    /// They decode again from the disk cache.
     var displaySpace: CGColorSpace? {
         get { locked { space } }
-        set { locked { space = newValue } }
+        set {
+            let changed: Bool = locked {
+                defer { space = newValue }
+                return space != nil && space != newValue
+            }
+            if changed { memory.removeAllObjects() }
+        }
     }
     private var space: CGColorSpace?
 
@@ -155,17 +168,34 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// Cancelling the caller gives up its claim. When nobody is left asking,
     /// work that has not started yet is dropped, so a tile scrolled past does
     /// not hold a place in the lane ahead of the ones on screen.
+    ///
+    /// An `aimed` request is one the grid re-ranks as it scrolls; any other
+    /// keeps the priority it asked with.
     func image(
         for source: AlbumArtwork.Source,
         size: AlbumArtwork.Size,
-        priority: ImageWork.Priority = .visible
+        priority: ImageWork.Priority = .visible,
+        aimed: Bool = false
     ) async -> PlatformImage? {
         if let ready = cached(source, size: size) { return ready }
         let record = Self.key(source)
-        wait(on: record, priority)
-        defer { stopWaiting(on: record) }
+        let waiter = wait(on: record, priority, aimed: aimed)
+        defer { stopWaiting(waiter, on: record) }
         let key = Self.key(source, size)
-        return await decodes.join(key) { [weak self] in
+        return await withTaskCancellationHandler {
+            await decode(source, size: size, key: key, record: record)
+        } onCancel: {
+            self.stopWaiting(waiter, on: record)
+        }
+    }
+
+    private func decode(
+        _ source: AlbumArtwork.Source,
+        size: AlbumArtwork.Size,
+        key: String,
+        record: String
+    ) async -> PlatformImage? {
+        await decodes.join(key) { [weak self] in
             guard let self, let data = await self.bytes(for: source) else { return nil }
             let space = self.displaySpace
             let decoded = await ImageWork.ifWanted(priority: { [weak self] in self?.priority(of: record) ?? .ahead(.infinity) }) {
@@ -181,33 +211,38 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         }
     }
 
-    /// Re-rank records already asked for, as a scroll moves what is on screen
-    /// and where it is heading. Records nobody has asked for are left alone.
+    /// Re-rank the grid's requests, as a scroll moves what is on screen and
+    /// where it is heading. Other views' requests for the same records keep
+    /// their own priority.
     func prioritise(_ priorities: [(AlbumArtwork.Source, ImageWork.Priority)]) {
         locked {
             for (source, priority) in priorities {
                 let record = Self.key(source)
-                if wanted[record] != nil { wanted[record] = priority }
+                guard var waiting = waiters[record] else { continue }
+                for (id, waiter) in waiting where waiter.aimed {
+                    waiting[id]?.priority = priority
+                }
+                waiters[record] = waiting
             }
         }
     }
 
     private func priority(of record: String) -> ImageWork.Priority {
-        locked { wanted[record] ?? .ahead(.infinity) }
+        locked { waiters[record]?.values.map(\.priority).max() ?? .ahead(.infinity) }
     }
 
-    private func wait(on record: String, _ priority: ImageWork.Priority) {
-        locked {
-            waiting[record, default: 0] += 1
-            wanted[record] = max(wanted[record] ?? priority, priority)
-        }
+    private func wait(on record: String, _ priority: ImageWork.Priority, aimed: Bool = false) -> UUID {
+        let id = UUID()
+        locked { waiters[record, default: [:]][id] = Waiter(priority: priority, aimed: aimed) }
+        return id
     }
 
-    private func stopWaiting(on record: String) {
+    /// Idempotent: a cancelled caller stops waiting as it is cancelled, and
+    /// again when its await returns.
+    private func stopWaiting(_ id: UUID, on record: String) {
         locked {
-            let left = (waiting[record] ?? 1) - 1
-            waiting[record] = left > 0 ? left : nil
-            if left <= 0 { wanted[record] = nil }
+            waiters[record]?[id] = nil
+            if waiters[record]?.isEmpty == true { waiters[record] = nil }
         }
     }
 
@@ -219,8 +254,8 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     func dominantColour(for source: AlbumArtwork.Source) async -> Color? {
         let key = Self.key(source)
         if let known = locked({ colours[key] }) { return known }
-        wait(on: key, .visible)
-        defer { stopWaiting(on: key) }
+        let waiter = wait(on: key, .visible)
+        defer { stopWaiting(waiter, on: key) }
         guard let data = await bytes(for: source) else { return nil }
         let colour = await ImageWork.onCPU { Color.dominant(ofEncoded: data) }
         locked { colours[key] = colour }

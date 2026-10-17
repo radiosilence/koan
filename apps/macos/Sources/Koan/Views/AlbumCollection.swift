@@ -148,7 +148,9 @@ struct AlbumCollection: NSViewRepresentable {
             self.grid = grid
             grid.laidOut = { [weak self] in self?.restoreOnce() }
             grid.displayChanged = { [weak self, weak grid] in
-                self?.context?.art.displaySpace = grid?.window?.colorSpace?.cgColorSpace
+                // Leaving the window is not a change of display.
+                guard let space = grid?.window?.colorSpace?.cgColorSpace else { return }
+                self?.context?.art.displaySpace = space
             }
             self.scroll = scroll
             self.library = library
@@ -305,7 +307,10 @@ struct AlbumCollection: NSViewRepresentable {
             let speed = abs(velocity)
             let still = speed < 60
             let reach = still ? 3 * row : min(speed * 0.3, 3 * visible.height) + 4 * row
-            let behind = still ? 3 * row : row
+            // At least the rows of tiles made behind the visible ones, so a
+            // tile just scrolled past is re-ranked down rather than left
+            // competing with the ones on screen.
+            let behind = still ? 3 * row : 2 * row
             let path = velocity >= 0
                 ? CGRect(x: visible.minX, y: visible.minY - behind, width: visible.width, height: visible.height + behind + reach)
                 : CGRect(x: visible.minX, y: visible.minY - reach, width: visible.width, height: visible.height + behind + reach)
@@ -342,15 +347,14 @@ struct AlbumCollection: NSViewRepresentable {
                 task.cancel()
                 fetching[id] = nil
             }
+            // Once per record while it stays in range, whatever the outcome:
+            // a record with no art, or a server that cannot be reached, is not
+            // asked again on every scroll step. Its tile still asks as it is
+            // shown.
             let art = context.art
             for (id, priority) in ranked where priority.tier != .visible && fetching[id] == nil
-                && art.cached(.album(id), size: .tile) == nil {
-                fetching[id] = Task { [weak self] in
-                    _ = await art.image(for: .album(id), size: .tile, priority: priority)
-                    // Done, or failed and worth another try while it is still
-                    // in range. A cancelled one has already been replaced.
-                    if !Task.isCancelled { self?.fetching[id] = nil }
-                }
+                && art.cached(.album(id), size: .tile) == nil && !art.isAbsent(.album(id)) {
+                fetching[id] = Task { _ = await art.image(for: .album(id), size: .tile, priority: priority, aimed: true) }
             }
         }
 
@@ -807,7 +811,7 @@ final class AlbumTile: NSCollectionViewItem {
         // screen; the grid promotes it as it comes into view.
         let priority: ImageWork.Priority = view.visibleRect.isEmpty ? .ahead(.infinity) : .visible
         load = Task { [weak self] in
-            let image = await art.image(for: .album(id), size: .tile, priority: priority)
+            let image = await art.image(for: .album(id), size: .tile, priority: priority, aimed: true)
             guard !Task.isCancelled, let self, self.album?.id == id, let bitmap = image?.bitmap else { return }
             CATransaction.begin()
             CATransaction.setDisableActions(true)
