@@ -12,8 +12,9 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use unicode_width::UnicodeWidthStr;
 
+use super::actions_menu::playable;
 use super::app::PickerAction;
-use super::browse::{Action, Thumbs, album_year};
+use super::browse::{Action, Thumbs, album_year, track_playable};
 use super::cover_art::{Gfx, album_key};
 use super::rows::{self, Columns, Emphasis, Row, Target};
 use super::theme::Theme;
@@ -55,6 +56,8 @@ pub struct AlbumPage {
     lines: Vec<Line>,
     /// Whether the album is a favourite.
     pub favourite: bool,
+    /// The favourite tracks, as the page opened, for the menu.
+    fav_tracks: HashSet<i64>,
     cursor: usize,
     /// The first line shown.
     scroll: usize,
@@ -95,7 +98,10 @@ impl AlbumPage {
         let tracks = queries::tracks_for_album(&db.conn, id).unwrap_or_default();
         let favourite = queries::favourite_album_id_set(&db.conn, queries::LOCAL_USER)
             .is_ok_and(|set| set.contains(&id));
-        Some(Self::new(album, tracks, favourite))
+        let mut page = Self::new(album, tracks, favourite);
+        page.fav_tracks =
+            queries::load_favourites(&db.conn, queries::LOCAL_USER).unwrap_or_default();
+        Some(page)
     }
 
     fn new(album: AlbumRow, tracks: Vec<TrackRow>, favourite: bool) -> Self {
@@ -104,6 +110,7 @@ impl AlbumPage {
             lines: lines_of(&tracks),
             tracks,
             favourite,
+            fav_tracks: HashSet::new(),
             cursor: 0,
             scroll: 0,
             follow: true,
@@ -213,41 +220,14 @@ impl AlbumPage {
         Some(Action::None)
     }
 
-    /// What can be done with the track at `idx`, and with the album.
+    /// What can be done with the track at `idx`, as the apps' track menu
+    /// has it; the album's own actions are the buttons under its title.
     fn menu(&self, idx: usize) -> Action {
-        use PickerAction::{Append, PlayNext};
         let Some(t) = self.tracks.get(idx) else {
             return Action::None;
         };
-        let one = vec![t.id];
-        let mut items = vec![
-            ("Play from here".to_string(), self.play_from(idx)),
-            ("Add to the queue".into(), Action::Play(one.clone(), Append)),
-            ("Play next".into(), Action::Play(one.clone(), PlayNext)),
-            (
-                "Add to a playlist\u{2026}".into(),
-                Action::Choose(one.clone()),
-            ),
-            ("Favourite or unfavourite".into(), Action::Favourite(t.id)),
-            (
-                format!(
-                    "{} the album",
-                    if self.favourite {
-                        "Unfavourite"
-                    } else {
-                        "Favourite"
-                    }
-                ),
-                Action::ToggleAlbum(self.album.id),
-            ),
-        ];
-        if let Some(a) = t.artist_id {
-            items.push(("Go to the artist".into(), Action::OpenArtist(a)));
-        }
-        items.push(("Track info".into(), Action::Info(t.id)));
-        items.push(("Download".into(), Action::Download(one.clone())));
-        items.push(("Remove the download".into(), Action::RemoveDownload(one)));
-        Action::Menu(t.title.clone(), items)
+        let thing = track_playable(t, self.fav_tracks.contains(&t.id));
+        Action::Menu(t.title.clone(), playable(&thing))
     }
 
     pub fn hit(&self, col: u16, row: u16) -> Option<AlbumHit> {
@@ -632,19 +612,20 @@ mod tests {
     }
 
     #[test]
-    fn the_menu_has_the_track_and_the_album() {
+    fn the_menu_is_the_apps_track_menu() {
         let mut p = page(3);
         draw(&mut p, 100, 30);
         let Action::Menu(title, items) = p.menu(1) else {
             panic!("a menu");
         };
-        assert!(!title.is_empty());
+        assert_eq!(title, "song 1");
         let labels: Vec<&str> = items.iter().map(|(l, _)| l.as_str()).collect();
         for want in [
-            "Play from here",
+            "Play",
             "Play next",
+            "Favourite track",
             "Track info",
-            "Favourite the album",
+            "Go to artist",
         ] {
             assert!(labels.contains(&want), "{want}");
         }

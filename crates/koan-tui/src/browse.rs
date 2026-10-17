@@ -20,6 +20,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 
+use super::actions_menu::{Playable, playable};
 use super::app::PickerAction;
 use super::artist_header::{ArtistHeader, HeaderHit};
 use super::cover_art::{Gfx, album_key};
@@ -312,6 +313,17 @@ fn fetch(row: &queries::TrackRow, local: Option<&str>) -> Option<DynamicImage> {
     Some(image::load_from_memory(&bytes).ok()?.thumbnail(256, 256))
 }
 
+/// A track as the apps' menu takes it.
+pub(super) fn track_playable(t: &TrackRow, favourite: bool) -> Playable {
+    Playable::Track {
+        id: t.id,
+        favourite,
+        on_disk: t.path.is_some() || t.cached_path.is_some(),
+        album: t.album_id,
+        artist: t.artist_id,
+    }
+}
+
 /// The tracks of `albums`, album by album in the order given, in one read.
 pub(super) fn album_tracks(albums: &[i64]) -> Vec<i64> {
     let Ok(db) = koan_core::db::pool::shared().get() else {
@@ -483,9 +495,11 @@ pub struct Browse {
     /// Whether the next frame scrolls to the cursor; the wheel and the
     /// scrollbar turn it off so they are not undone.
     follow: bool,
-    /// The albums and artists that are favourites, for their hearts.
+    /// The albums and artists that are favourites, for their hearts, and
+    /// the tracks, for the menu's favourite item.
     fav_albums: HashSet<i64>,
     fav_artists: HashSet<i64>,
+    fav_tracks: HashSet<i64>,
     header: Option<ArtistHeader>,
     pub filter: String,
     pub filter_active: bool,
@@ -539,6 +553,7 @@ impl Browse {
             follow: true,
             fav_albums: HashSet::new(),
             fav_artists: HashSet::new(),
+            fav_tracks: HashSet::new(),
             header: None,
             filter: String::new(),
             filter_active: false,
@@ -646,6 +661,8 @@ impl Browse {
             queries::favourite_album_id_set(&db.conn, queries::LOCAL_USER).unwrap_or_default();
         self.fav_artists =
             queries::favourite_artist_id_set(&db.conn, queries::LOCAL_USER).unwrap_or_default();
+        self.fav_tracks =
+            queries::load_favourites(&db.conn, queries::LOCAL_USER).unwrap_or_default();
         if let (Some(header), Source::Artist(id)) = (self.header.as_mut(), self.source) {
             header.set_favourite(self.fav_artists.contains(&id));
         }
@@ -953,69 +970,37 @@ impl Browse {
 
     /// What can be done with the item at `idx`, as a menu.
     fn menu(&self, idx: usize) -> Action {
-        use PickerAction::{Append, AppendAndPlay, PlayNext, ReplaceQueue};
         let ids = self.ids_at(idx);
         if ids.is_empty() {
             return Action::None;
         }
-        let play = |label: &str, how| (label.to_string(), Action::Play(ids.clone(), how));
-        let fav = |on: bool, noun: &str| {
-            format!(
-                "{} the {noun}",
-                if on { "Unfavourite" } else { "Favourite" }
-            )
-        };
-        let mut items = vec![
-            play("Play", AppendAndPlay),
-            play("Add to the queue", Append),
-            play("Play next", PlayNext),
-            play("Replace the queue", ReplaceQueue),
-            (
-                "Add to a playlist\u{2026}".into(),
-                Action::Choose(ids.clone()),
-            ),
-        ];
-        let title = match self.kind() {
+        let (title, thing) = match self.kind() {
             Kind::Tracks => {
                 let t = &self.tracks[idx];
-                items.push(("Favourite or unfavourite".into(), Action::Favourite(t.id)));
-                if let Some(a) = t.album_id {
-                    items.push(("Go to the album".into(), Action::OpenAlbum(a)));
-                }
-                if let Some(a) = t.artist_id {
-                    items.push(("Go to the artist".into(), Action::OpenArtist(a)));
-                }
-                items.push(("Track info".into(), Action::Info(t.id)));
-                t.title.clone()
+                let favourite = self.fav_tracks.contains(&t.id);
+                (t.title.clone(), track_playable(t, favourite))
             }
             Kind::Albums => {
                 let a = &self.albums[idx];
-                items.insert(0, ("Open the album".into(), Action::OpenAlbum(a.id)));
-                items.push((
-                    fav(self.fav_albums.contains(&a.id), "album"),
-                    Action::ToggleAlbum(a.id),
-                ));
-                items.push((
-                    fav(self.fav_artists.contains(&a.artist_id), "artist"),
-                    Action::ToggleArtist(a.artist_id),
-                ));
-                items.push(("Go to the artist".into(), Action::OpenArtist(a.artist_id)));
-                a.title.clone()
+                let thing = Playable::Album {
+                    id: a.id,
+                    tracks: ids,
+                    favourite: self.fav_albums.contains(&a.id),
+                    artist: a.artist_id,
+                };
+                (a.title.clone(), thing)
             }
             Kind::Artists => {
                 let a = &self.artists[idx];
-                items.insert(0, ("Open the artist".into(), Action::OpenArtist(a.id)));
-                items.insert(1, ("Shuffle".into(), Action::Shuffle(ids.clone())));
-                items.push((
-                    fav(self.fav_artists.contains(&a.id), "artist"),
-                    Action::ToggleArtist(a.id),
-                ));
-                a.name.clone()
+                let thing = Playable::Artist {
+                    id: a.id,
+                    tracks: ids,
+                    favourite: self.fav_artists.contains(&a.id),
+                };
+                (a.name.clone(), thing)
             }
         };
-        items.push(("Download".into(), Action::Download(ids.clone())));
-        items.push(("Remove the download".into(), Action::RemoveDownload(ids)));
-        Action::Menu(title, items)
+        Action::Menu(title, playable(&thing))
     }
 
     /// `None` when the key is not the page's, so the app can try it as a
@@ -1856,6 +1841,22 @@ pub(super) mod tests {
             None,
         );
         buf
+    }
+
+    #[test]
+    fn a_tracks_menu_is_the_apps_track_menu() {
+        let listing = Listing {
+            tracks: (0..3).map(|i| track(i, 7)).collect(),
+            track_total: 3,
+            ..Default::default()
+        };
+        let mut b = page(Source::Tracks, listing);
+        b.fav_tracks.insert(1);
+        let Action::Menu(title, items) = b.menu(1) else {
+            panic!("a menu");
+        };
+        assert_eq!(title, "song 1");
+        assert_eq!(items, playable(&track_playable(&b.tracks[1], true)));
     }
 
     #[test]
