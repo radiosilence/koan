@@ -288,20 +288,24 @@ class DspModel(private val engine: suspend () -> KoanEngineInterface) : ViewMode
     /** A list of bands for each channel, or one for both from channel `keep`. */
     fun setStereo(name: String, stereo: Boolean, keep: Int = 0) = act { dspSetStereo(name, stereo, keep.toUShort()) }
 
-    /** Make the EQ `name`, eight bands from `starter`, and put it on the end of the output's tuning. Whether it took. */
-    fun createEq(name: String, starter: DspStarter, then: (Boolean) -> Unit = {}) {
+    /**
+     * Make the EQ `name`, eight bands from `starter`, and put it on the end of
+     * the output's tuning. `then` has why it was refused, or null once it is
+     * made and in place; the refusal is the dialog's to show, not the page's.
+     */
+    fun createEq(name: String, starter: DspStarter, then: (String?) -> Unit) {
         viewModelScope.launch {
-            val ok = try {
-                engine().dspCreateEq(name.trim(), starter)
-                _state.update { it.copy(error = null) }
-                true
+            val refusal = try {
+                val engine = engine()
+                engine.dspCreateEq(name, starter)
+                val o = _state.value.overview
+                o?.device?.let { engine.dspSetTunings(it, o.chain.added(name)) }
+                null
             } catch (e: KoanException) {
-                failed(e)
-                false
+                e.describe()
             }
             changed()
-            if (ok) _state.value.overview?.let { setTunings(it.chain.added(name.trim())) }
-            then(ok)
+            then(refusal)
         }
     }
 

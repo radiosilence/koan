@@ -202,14 +202,17 @@ private fun NewEqDialog(dsp: DspModel, dismiss: () -> Unit, made: (String) -> Un
     var starter by remember { mutableStateOf(DspStarter.FLAT) }
     var refusal by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
+    // Held open while the EQ is made: what happens next is this dialog's.
     AlertDialog(
-        onDismissRequest = dismiss,
+        onDismissRequest = { if (!saving) dismiss() },
         title = { KoanText("New EQ", role = KoanType.TitleSmall, appText = true) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(KoanSpace.s)) {
                 KoanField(name, {
-                    name = it
-                    refusal = null
+                    if (!saving) {
+                        name = it
+                        refusal = null
+                    }
                 }, Modifier.fillMaxWidth(), placeholder = "Name")
                 KoanFormRow("Start from") { KoanPicker(starters, starter, { starter = it }) }
                 KoanText(
@@ -224,18 +227,19 @@ private fun NewEqDialog(dsp: DspModel, dismiss: () -> Unit, made: (String) -> Un
         confirmButton = {
             KoanButton("Create", {
                 saving = true
-                dsp.createEq(name, starter) { ok ->
+                val chosen = name.trim()
+                dsp.createEq(chosen, starter) { why ->
                     saving = false
-                    if (ok) {
+                    if (why == null) {
                         dismiss()
-                        made(name.trim())
+                        made(chosen)
                     } else {
-                        refusal = dsp.state.value.error
+                        refusal = why
                     }
                 }
             }, enabled = name.isNotBlank() && !saving)
         },
-        dismissButton = { KoanButton("Cancel", dismiss) },
+        dismissButton = { KoanButton("Cancel", dismiss, enabled = !saving) },
     )
 }
 

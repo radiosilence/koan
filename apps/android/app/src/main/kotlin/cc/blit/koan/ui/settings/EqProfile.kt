@@ -22,6 +22,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,7 +73,7 @@ fun DspProfilePage(name: String, model: SettingsModel) {
     var deleting by remember { mutableStateOf(false) }
     var askingKeep by remember { mutableStateOf(false) }
     // The channel whose bands the graph and table show, in stereo.
-    var channel by remember(name) { mutableStateOf(0) }
+    var channel by rememberSaveable(name) { mutableStateOf(0) }
     // Read again whenever a change lands, here or synced.
     val detail by produceState<DspProfileDetail?>(null, name, state.version) { value = dsp.detail(name) }
     val response by produceState<DspResponse?>(null, name, state.version) { value = dsp.response(name) }
@@ -82,7 +83,8 @@ fun DspProfilePage(name: String, model: SettingsModel) {
     SettingsPage(name, settings) {
         val d = detail
         val r = response
-        val layout = d?.takeIf { !it.readOnly }?.channels
+        // Stereo needs bands to copy: an empty EQ has no channels to split.
+        val layout = d?.takeIf { !it.readOnly && it.bands.isNotEmpty() }?.channels
         val editing = if (layout?.stereo == true) channel else null
         if (r != null && d != null) item { EqEditor(dsp, name, d, r, editing) }
         if (d == null) return@SettingsPage
@@ -257,7 +259,7 @@ private fun EqEditor(dsp: DspModel, name: String, detail: DspProfileDetail, resp
     val stepper = remember(name) { EditStepper<DspResponse>(scope, SystemClock::elapsedRealtime) { live = it } }
     DisposableEffect(stepper) { onDispose { stepper.flush() } }
     val editable = !detail.readOnly
-    val handles = if (editable) handles(detail.bands, (channel ?: 0).toUShort()) else emptyList()
+    val handles = if (editable) handles(detail.bands, channel ?: 0) else emptyList()
     val curve = if (editable) curveIndex(detail.bands) else null
     val shown = live ?: response
     val accent = KoanTheme.color(KoanTone.Accent)
@@ -341,7 +343,7 @@ private fun LazyListScope.bandTable(dsp: DspModel, name: String, d: DspProfileDe
     if (d.bands.isEmpty() && d.readOnly) return
     header("Filters")
     // In stereo, the bands of the channel being edited, numbered among themselves.
-    val shown = d.bands.withIndex().filter { (_, b) -> channel == null || b.channels.isEmpty() || channel.toUShort() in b.channels }
+    val shown = d.bands.withIndex().filter { (_, b) -> channel == null || b.on(channel) }
     shown.forEachIndexed { n, (i, band) ->
         item("band-$i-${band.kind}") {
             if (editable(band.kind) && !d.readOnly) {

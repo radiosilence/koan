@@ -7,7 +7,9 @@ import cc.blit.koan.ffi.DspOverview
 import cc.blit.koan.ffi.DspPoint
 import cc.blit.koan.ffi.DspProfileSummary
 import cc.blit.koan.ffi.DspRole
+import cc.blit.koan.ffi.DspStarter
 import cc.blit.koan.ffi.DspTuningEntry
+import cc.blit.koan.ffi.KoanException
 import kotlin.math.abs
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -57,7 +59,8 @@ class EqEditTest {
     @Test fun handlesAreThePeaksAndShelvesOnTheChannelDrawn() {
         val bands = listOf(band("peaking"), band("low_pass"), band("high_shelf", channels = listOf(1u)), band("low_shelf"))
         assertEquals(listOf(0, 3), handles(bands).map { it.index })
-        assertEquals(listOf(0, 2, 3), handles(bands, channel = 1u).map { it.index })
+        assertEquals(listOf(0, 2, 3), handles(bands, channel = 1).map { it.index })
+        assertTrue(bands[2].on(1) && !bands[2].on(0) && bands[0].on(0) && bands[0].on(1))
         assertTrue(editable("notch"))
         assertTrue(!editable("graphic"))
     }
@@ -171,6 +174,36 @@ class EqEditTest {
         assertEquals(listOf(listOf<Any?>("Warm", 0, listOf(DspPoint(100.0, 1.0)))), fake.called("dspSetCurve"))
         assertEquals(listOf(listOf<Any?>("Warm", null)), fake.called("dspAddBand"))
         assertEquals(listOf(listOf<Any?>("Warm", 1)), fake.called("dspRemoveFilter"))
+    }
+
+    @Test fun aNewEqGoesOnTheEndOfTheTuningAndARefusalStaysInTheDialog() = runTest(dispatcher) {
+        val model = DspModel { fake.engine }
+        model.reload()
+        advanceUntilIdle()
+        var made: String? = "not yet"
+        model.createEq("Evening", DspStarter.BASS_BOOST) { made = it }
+        advanceUntilIdle()
+        assertNull(made)
+        assertEquals(listOf(listOf<Any?>("Evening", DspStarter.BASS_BOOST)), fake.called("dspCreateEq"))
+        assertEquals(listOf(listOf<Any?>("speaker", listOf(DspTuningEntry("Evening", true)))), fake.called("dspSetTunings"))
+
+        fake.answers["dspCreateEq"] = { throw KoanException.BadArgument("There is already an EQ called Evening") }
+        var refused: String? = null
+        model.createEq("Evening", DspStarter.FLAT) { refused = it }
+        advanceUntilIdle()
+        assertTrue(refused.orEmpty().contains("already"))
+        assertNull(model.state.value.error)
+    }
+
+    @Test fun stereoKeepsTheChannelAsked() = runTest(dispatcher) {
+        val model = DspModel { fake.engine }
+        model.setStereo("Warm", true)
+        model.setStereo("Warm", false, keep = 1)
+        model.addBand("Warm", channel = 1)
+        advanceUntilIdle()
+        // An unsigned argument reaches the engine as its bits: a plain Int.
+        assertEquals(listOf(listOf<Any?>("Warm", true, 0), listOf<Any?>("Warm", false, 1)), fake.called("dspSetStereo"))
+        assertEquals(listOf(listOf<Any?>("Warm", 1)), fake.called("dspAddBand"))
     }
 
     @Test fun theChainAndPresetsAreTheOutputsOwn() = runTest(dispatcher) {
