@@ -4036,61 +4036,39 @@ impl KoanEngine {
     /// read at start.
     pub fn set_theme(&self, koan: bool) {
         let theme = if koan { "koan" } else { "system" };
-        offload::save(move || {
-            if let Err(e) = Config::persist(|cfg| cfg.appearance.theme = theme.into()) {
-                log::warn!("appearance: theme not saved: {e}");
-            }
-        });
+        save_appearance("theme", move |cfg| cfg.appearance.theme = theme.into());
     }
 
     /// Colours from the record, or koan's own. Saved in the background; the
     /// app redraws from its own copy.
     pub fn set_record_colours(&self, on: bool) {
-        offload::save(move || {
-            if let Err(e) = Config::persist(|cfg| cfg.appearance.record_colours = on) {
-                log::warn!("appearance: record_colours not saved: {e}");
-            }
+        save_appearance("record_colours", move |cfg| {
+            cfg.appearance.record_colours = on
         });
     }
 
     /// The wash under the whole window, or panels on grounds of their own.
     /// Saved in the background; the app redraws from its own copy.
     pub fn set_wash_window(&self, on: bool) {
-        offload::save(move || {
-            if let Err(e) = Config::persist(|cfg| cfg.appearance.wash_window = on) {
-                log::warn!("appearance: wash_window not saved: {e}");
-            }
-        });
+        save_appearance("wash_window", move |cfg| cfg.appearance.wash_window = on);
     }
 
     /// The rainbow, on this device. Saved in the background; the app redraws
     /// from its own copy.
     pub fn set_rainbow(&self, on: bool) {
-        offload::save(move || {
-            if let Err(e) = Config::persist(|cfg| cfg.appearance.rainbow = on) {
-                log::warn!("appearance: rainbow not saved: {e}");
-            }
-        });
+        save_appearance("rainbow", move |cfg| cfg.appearance.rainbow = on);
     }
 
     /// Show icons beside labels in the kōan theme, or not. Saved in the
     /// background; the app redraws from its own copy.
     pub fn set_theme_icons(&self, on: bool) {
-        offload::save(move || {
-            if let Err(e) = Config::persist(|cfg| cfg.appearance.theme_icons = on) {
-                log::warn!("appearance: theme_icons not saved: {e}");
-            }
-        });
+        save_appearance("theme_icons", move |cfg| cfg.appearance.theme_icons = on);
     }
 
     /// Text size on the Mac, in percent (see `appearance.text_size`). Saved in
     /// the background; the app redraws from its own copy.
     pub fn set_text_size(&self, percent: u16) {
-        offload::save(move || {
-            if let Err(e) = Config::persist(|cfg| cfg.appearance.text_size = percent) {
-                log::warn!("appearance: text_size not saved: {e}");
-            }
-        });
+        save_appearance("text_size", move |cfg| cfg.appearance.text_size = percent);
     }
 
     /// Wait for every setting still being saved to land. For the app to call as
@@ -6305,6 +6283,15 @@ impl KoanEngine {
 /// Anything still in the library is re-resolved so cache paths and downloads
 /// are correct; anything that has since gone keeps the copy stored in the
 /// snapshot, so a restore never silently drops tracks.
+/// Save one `[appearance]` key on the settings lane (see `offload::save`).
+fn save_appearance(key: &'static str, mutate: impl FnOnce(&mut Config) + Send + 'static) {
+    offload::save(move || {
+        if let Err(e) = Config::persist(mutate) {
+            log::warn!("appearance: {key} not saved: {e}");
+        }
+    });
+}
+
 fn restore_items(db: &Database, saved: &[PersistedQueueItem]) -> Vec<PlaylistItem> {
     // By uid first, which no other track can have taken. Then, for a session
     // saved before uids were, by id: a saved path names the container it was

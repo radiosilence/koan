@@ -227,8 +227,12 @@ class EngineMirror(deviceName: String) {
         scope.launch {
             val engine = opened.await()
             for (change in changes) {
-                engine.change()
-                _appearance.value = engine.appearance()
+                try {
+                    engine.change()
+                    _appearance.value = engine.appearance()
+                } catch (e: Exception) {
+                    report(e)
+                }
             }
         }
     }

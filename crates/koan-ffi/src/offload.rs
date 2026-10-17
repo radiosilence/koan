@@ -130,6 +130,9 @@ where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
+    if !SAVED.load(Ordering::Acquire) {
+        return f();
+    }
     let rx = after_saves_rx(f);
     match rx.recv() {
         Ok(Ok(value)) => value,
