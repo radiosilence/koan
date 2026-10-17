@@ -70,8 +70,9 @@ pub struct AppearanceConfig {
     /// In the kōan theme, how far the wash is held to the theme's contrast
     /// limit, in percent: 100 keeps every sample dark enough (or, in light
     /// mode, light enough) for `muted` text over it to read; 0 leaves the
-    /// sleeve's own colours. Values between blend the two.
-    pub wash_tint: u8,
+    /// sleeve's own colours. Values between blend the two; above 100 reads
+    /// as 100.
+    pub wash_tint: u16,
 }
 
 impl Default for AppearanceConfig {

@@ -4076,7 +4076,7 @@ impl KoanEngine {
     /// (see `appearance.wash_tint`). Saved in the background; the app redraws
     /// from its own copy.
     pub fn set_wash_tint(&self, percent: u8) {
-        let percent = percent.min(100);
+        let percent = u16::from(percent.min(100));
         save_appearance("wash_tint", move |cfg| cfg.appearance.wash_tint = percent);
     }
 
@@ -4104,7 +4104,7 @@ impl KoanEngine {
             wash_window: cfg.appearance.wash_window,
             rainbow: cfg.appearance.rainbow,
             text_size: cfg.appearance.text_size,
-            wash_tint: cfg.appearance.wash_tint.min(100),
+            wash_tint: cfg.appearance.wash_tint.min(100) as u8,
         }
     }
 

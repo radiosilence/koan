@@ -250,7 +250,7 @@ final class AppearanceModel {
     /// contrast limit (`WashTone`), in percent. 100 holds it fully; 0 leaves the
     /// sleeve's own colours. Takes effect at once, from the next bake.
     var washTint: Int {
-        didSet { if washTint != oldValue { engine.setWashTint(percent: UInt8(min(max(washTint, 0), 100))) } }
+        didSet { if washTint != oldValue { engine.setWashTint(percent: UInt8(clamping: washTint)) } }
     }
 
     /// Gay mode as it was left on this device (see `Rainbow`). Saved to

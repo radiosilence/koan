@@ -348,7 +348,7 @@ struct WashTone: Sendable, Equatable {
     static let dark = WashTone(side: .dark)
     static let light = WashTone(side: .light)
 
-    func holding(_ hold: Double) -> WashTone { WashTone(side: side, hold: min(max(hold, 0), 1)) }
+    func holding(_ hold: Double) -> WashTone { WashTone(side: side, hold: hold) }
 
     /// Dark: no brighter than `muted` (`#919191`) at 4.6:1 allows. Light: no
     /// darker than keeps the wash, drawn at `KoanTheme.wash` over white, at

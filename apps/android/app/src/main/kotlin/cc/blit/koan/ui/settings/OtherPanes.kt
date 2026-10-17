@@ -265,9 +265,13 @@ fun AppearancePane(model: SettingsModel) {
         item { SwitchRow("Colours from the record", a.recordColours) { on -> mirror.setAppearance { setRecordColours(on) } } }
         if (a.koan && a.recordColours) item { WashTintRow(a.washTint.toInt()) { percent -> mirror.setAppearance { setWashTint(percent.toUByte()) } } }
         footer(
-            "The record playing colours the accent on selection and progress. Off, the accent is kōan's mint, in either theme. " +
-                "Theme tint, in the kōan theme, is how far the wash is darkened in dark mode, or lightened in light, so text over " +
-                "it keeps its contrast: at 0 the sleeve keeps its own colours.",
+            "The record playing colours the accent on selection and progress. Off, the accent is kōan's mint, in either theme." +
+                if (a.koan && a.recordColours) {
+                    " Theme tint is how far the wash is darkened in dark mode, or lightened in light, so text over it keeps " +
+                        "its contrast: at 0 the sleeve keeps its own colours."
+                } else {
+                    ""
+                },
         )
         header("Graphics")
         item {
@@ -286,10 +290,15 @@ fun AppearancePane(model: SettingsModel) {
     }
 }
 
-/** "Theme tint", saved when the drag ends: one bake and one write per drag. */
+/**
+ * "Theme tint", saved when the drag ends: one bake and one write per drag. The
+ * dragged value stands until the saved one comes back from the engine, so the
+ * thumb does not jump back to the old value in between.
+ */
 @Composable
 private fun WashTintRow(tint: Int, onChange: (Int) -> Unit) {
     var dragging by remember { mutableStateOf<Float?>(null) }
+    LaunchedEffect(tint) { dragging = null }
     val shown = (dragging ?: tint.toFloat()).roundToInt()
     Column(inset.padding(vertical = KoanSpace.s)) {
         KoanText("Theme tint $shown%", appText = true)
@@ -297,8 +306,7 @@ private fun WashTintRow(tint: Int, onChange: (Int) -> Unit) {
             value = dragging ?: tint.toFloat(),
             onValueChange = { dragging = (it / 5).roundToInt() * 5f },
             onValueChangeFinished = {
-                dragging?.let { onChange(it.roundToInt()) }
-                dragging = null
+                dragging?.let { if (it.roundToInt() == tint) dragging = null else onChange(it.roundToInt()) }
             },
             modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Theme tint" },
             range = 0f..100f,

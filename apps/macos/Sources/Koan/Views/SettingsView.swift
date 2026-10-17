@@ -1742,7 +1742,7 @@ private struct AppearanceSettings: View {
             } header: {
                 KoanSectionHeader("Colour")
             } footer: {
-                Text("The record playing colours the window behind the page, and the accent on selection and progress. Off, there is no wash and the accent is kōan's mint, in either theme. Theme tint, in the kōan theme, is how far the wash is darkened in dark mode, or lightened in light, so text over it keeps its contrast: at 0 the sleeve keeps its own colours. Washing the whole window draws the sidebar, toolbar, transport and lyrics clear over it; off, they keep grounds of their own. That choice is provisional, while the look is decided.")
+                Text("The record playing colours the window behind the page, and the accent on selection and progress. Off, there is no wash and the accent is kōan's mint, in either theme.\(KoanTheme.isOn && appearance.recordColours ? " Theme tint is how far the wash is darkened in dark mode, or lightened in light, so text over it keeps its contrast: at 0 the sleeve keeps its own colours." : "") Washing the whole window draws the sidebar, toolbar, transport and lyrics clear over it; off, they keep grounds of their own. That choice is provisional, while the look is decided.")
                     .koanText(.fine, .muted)
             }
             Section {

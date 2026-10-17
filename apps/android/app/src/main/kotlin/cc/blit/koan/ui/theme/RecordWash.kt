@@ -153,7 +153,7 @@ fun ProvideRecordWash(
     val ground = (if (look.isOn) look.colors.bg else MaterialTheme.colorScheme.background).toArgb()
     val strength = RecordWash.strength(look.isOn)
     // The theme tint is the kōan theme's; the platform's look holds the wash fully.
-    val hold = if (look.isOn) tint.coerceIn(0, 100) / 100.0 else 1.0
+    val hold = if (look.isOn) tint / 100.0 else 1.0
     val shown = WashRules.shown(recordColours, graphics)
     LaunchedEffect(sleeve, pending, tone, ground, shown, hold) {
         if (pending && shown) return@LaunchedEffect
