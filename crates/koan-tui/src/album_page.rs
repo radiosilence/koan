@@ -23,6 +23,8 @@ const DOUBLE_CLICK: Duration = Duration::from_millis(500);
 pub enum AlbumHit {
     Track(usize),
     Artist,
+    Heart,
+    Menu,
     Play,
     Add,
     Replace,
@@ -31,6 +33,8 @@ pub enum AlbumHit {
 #[derive(Default, Clone, Copy)]
 struct Geom {
     artist: Rect,
+    heart: Rect,
+    menu: Rect,
     play: Rect,
     add: Rect,
     replace: Rect,
@@ -42,6 +46,8 @@ struct Geom {
 pub struct AlbumPage {
     pub album: AlbumRow,
     tracks: Vec<TrackRow>,
+    /// Whether the record is a favourite.
+    pub favourite: bool,
     cursor: usize,
     scroll: usize,
     follow: bool,
@@ -58,9 +64,12 @@ impl AlbumPage {
         let db = koan_core::db::pool::shared().get().ok()?;
         let album = queries::get_album(&db.conn, id).ok()??;
         let tracks = queries::tracks_for_album(&db.conn, id).unwrap_or_default();
+        let favourite = queries::favourite_album_id_set(&db.conn, queries::LOCAL_USER)
+            .is_ok_and(|set| set.contains(&id));
         Some(Self {
             album,
             tracks,
+            favourite,
             cursor: 0,
             scroll: 0,
             follow: true,
@@ -133,8 +142,21 @@ impl AlbumPage {
             KeyCode::Enter => return Some(self.play_from_cursor()),
             KeyCode::Char('P') => return Some(self.play_all(PickerAction::AppendAndPlay)),
             KeyCode::Char('a') => return Some(self.play_all(PickerAction::Append)),
+            KeyCode::Char('N') => return Some(self.play_all(PickerAction::PlayNext)),
             KeyCode::Char('r') if ctrl => return Some(self.play_all(PickerAction::ReplaceQueue)),
             KeyCode::Char('A') => return Some(Action::OpenArtist(self.album.artist_id)),
+            KeyCode::Char('H') => return Some(Action::ToggleAlbum(self.album.id)),
+            KeyCode::Char('m') => return Some(self.menu(self.cursor)),
+            KeyCode::Char('w') => return Some(Action::Choose(self.all())),
+            KeyCode::Char('d') => return Some(Action::Download(self.all())),
+            KeyCode::Char('u') => return Some(Action::RemoveDownload(self.all())),
+            KeyCode::Char('i') => {
+                return Some(
+                    self.tracks
+                        .get(self.cursor)
+                        .map_or(Action::None, |t| Action::Info(t.id)),
+                );
+            }
             KeyCode::Char('f') => {
                 return Some(
                     self.tracks
@@ -147,10 +169,57 @@ impl AlbumPage {
         Some(Action::None)
     }
 
+    /// What can be done with the track at `idx`, and with the record.
+    fn menu(&self, idx: usize) -> Action {
+        use PickerAction::{Append, AppendAndPlay, PlayNext};
+        let Some(t) = self.tracks.get(idx) else {
+            return Action::None;
+        };
+        let from_here: Vec<i64> = self.tracks[idx..].iter().map(|t| t.id).collect();
+        let one = vec![t.id];
+        let mut items = vec![
+            (
+                "Play from here".to_string(),
+                Action::Play(from_here, AppendAndPlay),
+            ),
+            ("Add to the queue".into(), Action::Play(one.clone(), Append)),
+            ("Play next".into(), Action::Play(one.clone(), PlayNext)),
+            (
+                "Add to a playlist\u{2026}".into(),
+                Action::Choose(one.clone()),
+            ),
+            ("Favourite or unfavourite".into(), Action::Favourite(t.id)),
+            (
+                format!(
+                    "{} the record",
+                    if self.favourite {
+                        "Unfavourite"
+                    } else {
+                        "Favourite"
+                    }
+                ),
+                Action::ToggleAlbum(self.album.id),
+            ),
+        ];
+        if let Some(a) = t.artist_id {
+            items.push(("Go to the artist".into(), Action::OpenArtist(a)));
+        }
+        items.push(("Track info".into(), Action::Info(t.id)));
+        items.push(("Download".into(), Action::Download(one.clone())));
+        items.push(("Remove the download".into(), Action::RemoveDownload(one)));
+        Action::Menu(t.title.clone(), items)
+    }
+
     pub fn hit(&self, col: u16, row: u16) -> Option<AlbumHit> {
         let g = &self.geom;
         if inside(g.artist, col, row) {
             return Some(AlbumHit::Artist);
+        }
+        if inside(g.heart, col, row) {
+            return Some(AlbumHit::Heart);
+        }
+        if inside(g.menu, col, row) {
+            return Some(AlbumHit::Menu);
         }
         for (r, hit) in [
             (g.play, AlbumHit::Play),
@@ -171,6 +240,8 @@ impl AlbumPage {
     pub fn click(&mut self, hit: AlbumHit) -> Action {
         match hit {
             AlbumHit::Artist => Action::OpenArtist(self.album.artist_id),
+            AlbumHit::Heart => Action::ToggleAlbum(self.album.id),
+            AlbumHit::Menu => self.menu(self.cursor),
             AlbumHit::Play => self.play_all(PickerAction::AppendAndPlay),
             AlbumHit::Add => self.play_all(PickerAction::Append),
             AlbumHit::Replace => self.play_all(PickerAction::ReplaceQueue),
@@ -222,6 +293,20 @@ impl AlbumPage {
         self.geom = Geom::default();
         thumbs.begin_frame();
         super::ui::heading(buf, area, theme, "album", "");
+        if !self.tracks.is_empty() {
+            let label = " \u{22ef} actions ";
+            let w = label.chars().count() as u16;
+            if area.width > w + 12 {
+                let x = area.x + area.width - w;
+                let style = if hover == Some(AlbumHit::Menu) {
+                    theme.hint_desc.add_modifier(Modifier::UNDERLINED)
+                } else {
+                    theme.hint_desc
+                };
+                buf.set_string(x, area.y, label, style);
+                self.geom.menu = Rect::new(x, area.y, w, 1);
+            }
+        }
         let body = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
 
         // The header: cover on the left when there is room, text beside it.
@@ -247,10 +332,23 @@ impl AlbumPage {
                 buf.set_stringn(tx, y, text, tw, style);
             }
         };
-        put(
-            buf,
+        let (heart, heart_style) = if self.favourite {
+            ("\u{2665}", theme.favourite)
+        } else {
+            ("\u{2661}", theme.hint_desc)
+        };
+        let heart_style = if hover == Some(AlbumHit::Heart) {
+            heart_style.add_modifier(Modifier::UNDERLINED)
+        } else {
+            heart_style
+        };
+        buf.set_string(tx, body.y, heart, heart_style);
+        self.geom.heart = Rect::new(tx, body.y, 2, 1);
+        buf.set_stringn(
+            tx + 2,
             body.y,
             &self.album.title,
+            tw.saturating_sub(2),
             theme.heading.add_modifier(Modifier::BOLD),
         );
         let artist_style = if hover == Some(AlbumHit::Artist) {
@@ -466,6 +564,7 @@ mod tests {
                 added_at: None,
                 on_device: None,
             },
+            favourite: false,
             tracks: (0..n)
                 .map(|i| track(100 + i as i64, i as i32 + 1, &format!("song {i}")))
                 .collect(),
@@ -523,6 +622,55 @@ mod tests {
             panic!("expected a replace");
         };
         assert_eq!(ids.len(), 5);
+    }
+
+    #[test]
+    fn the_menu_has_the_track_and_the_record() {
+        let mut p = page(3);
+        draw(&mut p, 100, 30);
+        let Action::Menu(title, items) = p.menu(1) else {
+            panic!("a menu");
+        };
+        assert!(!title.is_empty());
+        let labels: Vec<&str> = items.iter().map(|(l, _)| l.as_str()).collect();
+        for want in [
+            "Play from here",
+            "Play next",
+            "Track info",
+            "Favourite the record",
+        ] {
+            assert!(labels.contains(&want), "{want}");
+        }
+        let menu = p.geom.menu;
+        assert_eq!(p.hit(menu.x, menu.y), Some(AlbumHit::Menu));
+        assert!(matches!(p.click(AlbumHit::Menu), Action::Menu(..)));
+    }
+
+    #[test]
+    fn the_heart_and_h_favourite_the_record() {
+        let mut p = page(5);
+        draw(&mut p, 100, 30);
+        let key = |c| crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char(c));
+        assert_eq!(p.handle_key(key('H')), Some(Action::ToggleAlbum(1)));
+        let heart = p.geom.heart;
+        assert_eq!(p.hit(heart.x, heart.y), Some(AlbumHit::Heart));
+        assert_eq!(p.click(AlbumHit::Heart), Action::ToggleAlbum(1));
+    }
+
+    #[test]
+    fn n_i_d_and_u_act_on_the_record_and_the_track() {
+        let mut p = page(3);
+        draw(&mut p, 100, 30);
+        let key = |c| crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char(c));
+        assert!(matches!(
+            p.handle_key(key('N')),
+            Some(Action::Play(ids, PickerAction::PlayNext)) if ids.len() == 3
+        ));
+        assert!(matches!(p.handle_key(key('i')), Some(Action::Info(_))));
+        assert!(matches!(p.handle_key(key('d')), Some(Action::Download(ids)) if ids.len() == 3));
+        assert!(
+            matches!(p.handle_key(key('u')), Some(Action::RemoveDownload(ids)) if ids.len() == 3)
+        );
     }
 
     #[test]

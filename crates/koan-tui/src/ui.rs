@@ -62,6 +62,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     app.layout.browse_area = Rect::default();
     app.layout.now_playing_art_area = Rect::default();
     app.layout.nav_hits.clear();
+    app.layout.eq_hits.clear();
 
     let has_art = app.art.now_playing_art.cached().is_some();
     // Now playing carries the cover and the spectrum itself, so the transport
@@ -155,10 +156,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     app.layout.seek_bar_width = bw;
 
     let seekable_ms = app.state.seek_ceiling_ms();
-    let levels = app
-        .viz_config
-        .enabled
+    // The little spectrum stands in for the big one: only where the transport
+    // has none above it and the page is not drawing its own.
+    let levels = (app.viz_config.enabled
+        && transport_rect.height <= TRANSPORT_HEIGHT_DEFAULT
+        && app.page() != Page::NowPlaying)
         .then(|| mini_levels(&app.visualizer.spectrum));
+    let eq_hit = std::cell::Cell::new(Rect::default());
     let transport = TransportBar::new(
         track_info.as_ref(),
         playing_entry.as_ref(),
@@ -171,8 +175,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     .with_output_rate(app.state.output_sample_rate())
     .with_dsp(app.state.dsp())
     .with_sleep(app.state.sleep(), app.state.sleep_fading())
-    .with_levels(levels);
+    .with_levels(levels)
+    .with_eq_hit(&eq_hit);
     frame.render_widget(transport, text_area);
+    if eq_hit.get().width > 0 {
+        app.layout.eq_hits.push(eq_hit.get());
+    }
 
     // Visualizer — renders in the space above the transport text.
 
@@ -217,6 +225,54 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Page::NowPlaying => {
             heading(frame.buffer_mut(), stage, &app.theme, "now playing", "");
             super::now_playing::render(frame.buffer_mut(), app, stage);
+        }
+        Page::Playlists => {
+            app.layout.browse_area = stage;
+            let hover = match app.hover.zone {
+                super::app::HoverZone::Playlists(h) => Some(h),
+                _ => None,
+            };
+            let App {
+                playlists_page,
+                theme,
+                ..
+            } = &mut *app;
+            playlists_page.render(stage, frame.buffer_mut(), theme, hover);
+        }
+        Page::Playlist(_) => {
+            app.layout.browse_area = stage;
+            let hover = match app.hover.zone {
+                super::app::HoverZone::Playlist(h) => Some(h),
+                _ => None,
+            };
+            let App {
+                playlist_page,
+                theme,
+                ..
+            } = &mut *app;
+            match playlist_page {
+                Some(p) => p.render(stage, frame.buffer_mut(), theme, hover),
+                None => {
+                    heading(frame.buffer_mut(), stage, theme, "playlist", "");
+                    frame.buffer_mut().set_string(
+                        stage.x + 1,
+                        stage.y + 1,
+                        "this playlist is gone",
+                        theme.hint_desc,
+                    );
+                }
+            }
+        }
+        Page::Search => {
+            app.layout.browse_area = stage;
+            let hover = match app.hover.zone {
+                super::app::HoverZone::Search(h) => Some(h),
+                _ => None,
+            };
+            let App {
+                search_page, theme, ..
+            } = &mut *app;
+            search_page.render(stage, frame.buffer_mut(), theme, hover);
         }
         Page::History => {
             app.layout.browse_area = stage;
@@ -338,8 +394,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         ]);
         frame.render_widget(ratatui::widgets::Paragraph::new(line), chunks[3]);
     } else {
-        app.layout.hint_hits = super::keys::hits(&app.mode, app.page(), chunks[3]);
-        let hint_bar = HintBar::new(&app.mode, app.page(), &app.theme);
+        let filterable = app.browse().is_some_and(|b| b.filterable());
+        app.layout.hint_hits = super::keys::hits(&app.mode, app.page(), filterable, chunks[3]);
+        let hint_bar = HintBar::new(&app.mode, app.page(), filterable, &app.theme);
         frame.render_widget(hint_bar, chunks[3]);
     }
 
@@ -404,6 +461,38 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.render_widget(overlay, area);
     }
 
+    // Playlist name prompt and chooser.
+    if app.mode == Mode::NamePrompt
+        && let Some(ref prompt) = app.name_prompt
+    {
+        app.layout.modal_area = super::playlist_modals::prompt_rect(area);
+        let overlay = super::playlist_modals::NamePromptOverlay::new(prompt, &app.theme);
+        frame.render_widget(overlay, area);
+    }
+    if app.mode == Mode::PlaylistChooser
+        && let Some(ref chooser) = app.chooser
+    {
+        app.layout.modal_area = super::playlist_modals::chooser_rect(area, chooser.entries.len());
+        let overlay = super::playlist_modals::ChooserOverlay::new(chooser, &app.theme);
+        frame.render_widget(overlay, area);
+    }
+
+    if app.mode == Mode::FilterPanel
+        && let Some(ref panel) = app.filter_panel
+    {
+        app.layout.modal_area = super::browse_filter::panel_rect(area, panel.lines());
+        let overlay = super::browse_filter::FilterPanelOverlay::new(panel, &app.theme);
+        frame.render_widget(overlay, area);
+    }
+
+    if app.mode == Mode::ActionsMenu
+        && let Some(ref menu) = app.actions_menu
+    {
+        app.layout.modal_area = super::actions_menu::menu_rect(area, &menu.items, &menu.title);
+        let overlay = super::actions_menu::ActionsMenuOverlay::new(menu, &app.theme);
+        frame.render_widget(overlay, area);
+    }
+
     // Help modal overlay.
     if app.mode == Mode::HelpModal {
         let overlay = HelpModalOverlay::new(&app.theme);
@@ -444,6 +533,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         app.layout.track_info_area = Rect::new(x, y, popup_width, popup_height);
 
         let overlay = TrackInfoOverlay::new(&entry, ti_ref, app.art.cover_art.cached(), &app.theme);
+        frame.render_widget(overlay, area);
+    }
+
+    // Track details overlay, for a track picked from any list.
+    if app.mode == Mode::TrackDetails
+        && let Some(track) = app.track_details.as_deref()
+    {
+        app.layout.track_info_area = super::track_details::popup_rect(area);
+        let overlay = super::track_details::TrackDetailsOverlay::new(track, &app.theme);
         frame.render_widget(overlay, area);
     }
 
@@ -1007,9 +1105,58 @@ mod tests {
         app.handle_key(KeyEvent::from(KeyCode::Char(']')));
         assert_eq!(app.page(), Page::Favourites);
         app.handle_key(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.page(), Page::Playlists);
+        app.handle_key(KeyEvent::from(KeyCode::Tab));
         assert_eq!(app.page(), Page::Recent);
         app.handle_key(KeyEvent::from(KeyCode::Char('1')));
         assert_eq!(app.page(), Page::Queue);
+    }
+
+    #[test]
+    fn the_playlist_chooser_leads_to_a_name_prompt_and_back_out() {
+        use crossterm::event::{KeyCode, KeyEvent};
+        let mut app = app_with_queue(5);
+        app.open_chooser(vec![1, 2]);
+        assert_eq!(app.mode, Mode::PlaylistChooser);
+        draw(&mut app, 100, 30);
+        // The first row is always "new playlist", whatever else is held.
+        app.handle_key(KeyEvent::from(KeyCode::Enter));
+        assert_eq!(app.mode, Mode::NamePrompt);
+        for c in "road".chars() {
+            app.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+        draw(&mut app, 100, 30);
+        assert_eq!(
+            app.name_prompt.as_ref().map(|p| p.text.as_str()),
+            Some("road")
+        );
+        app.handle_key(KeyEvent::from(KeyCode::Esc));
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.name_prompt.is_none());
+    }
+
+    #[test]
+    fn a_click_outside_a_playlist_modal_cancels_it() {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let mut app = app_with_queue(5);
+        app.open_chooser(vec![1]);
+        draw(&mut app, 100, 30);
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.chooser.is_none());
+    }
+
+    #[test]
+    fn nothing_to_add_is_said_rather_than_opening_an_empty_chooser() {
+        let mut app = app_with_queue(5);
+        app.open_chooser(Vec::new());
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.status_message.is_some());
     }
 
     #[test]

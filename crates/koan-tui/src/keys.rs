@@ -12,17 +12,24 @@ use super::theme::Theme;
 pub struct HintBar<'a> {
     mode: &'a Mode,
     page: Page,
+    filterable: bool,
     theme: &'a Theme,
 }
 
 impl<'a> HintBar<'a> {
-    pub fn new(mode: &'a Mode, page: Page, theme: &'a Theme) -> Self {
-        Self { mode, page, theme }
+    pub fn new(mode: &'a Mode, page: Page, filterable: bool, theme: &'a Theme) -> Self {
+        Self {
+            mode,
+            page,
+            filterable,
+            theme,
+        }
     }
 }
 
 /// The keys the hint bar shows for a mode and a page, with what each does.
-pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
+/// `filterable` is whether the page's filters panel opens.
+pub fn hints(mode: &Mode, page: Page, filterable: bool) -> Vec<(&'static str, &'static str)> {
     {
         match mode {
             Mode::Normal => match page {
@@ -34,7 +41,7 @@ pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
                     ("p", "track"),
                     ("a", "album"),
                     ("r", "artist"),
-                    ("1-8", "pages"),
+                    ("0-9", "pages"),
                     ("e", "edit"),
                     ("E", "eq"),
                     ("q", "quit"),
@@ -45,9 +52,10 @@ pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
                     ("<>", "skip"),
                     ("\u{2190}\u{2192}", "seek"),
                     ("E", "eq"),
+                    ("B", "bypass eq"),
                     ("M", "visualiser"),
                     ("F", "fullscreen"),
-                    ("1-8", "pages"),
+                    ("0-9", "pages"),
                     ("esc", "back"),
                     ("?", "help"),
                 ],
@@ -56,9 +64,13 @@ pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
                     ("ret", "play from here"),
                     ("P", "play all"),
                     ("a", "add"),
+                    ("N", "next"),
                     ("C-r", "replace"),
+                    ("m", "actions"),
                     ("f", "favourite"),
+                    ("i", "info"),
                     ("A", "artist"),
+                    ("E", "eq"),
                     ("esc", "back"),
                 ],
                 Page::Albums | Page::Favourites | Page::Recent | Page::Artist(_) => {
@@ -67,43 +79,91 @@ pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
                         ("ret", "open"),
                         ("P", "play"),
                         ("a", "add"),
+                        ("N", "next"),
+                        ("m", "actions"),
+                        ("w", "playlist"),
+                        ("d", "download"),
                         ("A", "artist"),
                         ("/", "filter"),
                         ("v", "view"),
                     ];
+                    if filterable {
+                        hints.push(("C-f", "filters"));
+                    }
                     if page == Page::Albums {
                         hints.push(("o", "sort"));
                     }
-                    hints.extend([("1-8", "pages"), ("esc", "back")]);
+                    hints.extend([("E", "eq"), ("0-9", "pages"), ("esc", "back")]);
                     hints
                 }
+                Page::Search => vec![
+                    ("type", "search"),
+                    ("ret", "results/open"),
+                    ("\u{2191}\u{2193}", "move"),
+                    ("P", "play"),
+                    ("a", "add"),
+                    ("m", "actions"),
+                    ("esc", "clear/back"),
+                ],
                 Page::History => vec![
                     ("\u{2191}\u{2193}", "move"),
                     ("ret", "play"),
                     ("a", "add"),
+                    ("N", "next"),
+                    ("m", "actions"),
                     ("x", "forget"),
+                    ("i", "info"),
                     ("D", "forget all"),
                     ("A", "artist"),
                     ("O", "album"),
                     ("/", "filter"),
-                    ("1-8", "pages"),
+                    ("E", "eq"),
+                    ("0-9", "pages"),
+                    ("esc", "back"),
+                ],
+                Page::Playlists => vec![
+                    ("\u{2191}\u{2193}", "move"),
+                    ("ret", "open"),
+                    ("P", "play"),
+                    ("a", "add"),
+                    ("w", "playlist"),
+                    ("c", "new"),
+                    ("r", "rename"),
+                    ("x", "delete"),
+                    ("/", "filter"),
+                    ("E", "eq"),
+                    ("0-9", "pages"),
+                    ("esc", "back"),
+                ],
+                Page::Playlist(_) => vec![
+                    ("\u{2191}\u{2193}", "move"),
+                    ("ret", "play from here"),
+                    ("P", "play all"),
+                    ("K/J", "move up/down"),
+                    ("x", "remove"),
+                    ("C-z/y", "undo/redo"),
+                    ("r", "rename"),
+                    ("w", "playlist"),
                     ("esc", "back"),
                 ],
                 Page::Settings => vec![
                     ("\u{2191}\u{2193}", "move"),
                     ("\u{2190}\u{2192}", "change"),
-                    ("1-8", "pages"),
+                    ("E", "eq"),
+                    ("0-9", "pages"),
                     ("esc", "back"),
                 ],
                 Page::Artists => vec![
                     ("\u{2191}\u{2193}", "navigate"),
                     ("\u{2192}/enter", "expand"),
                     ("\u{2190}", "collapse"),
-                    ("a", "enqueue"),
+                    ("a", "add"),
+                    ("N", "next"),
                     ("A", "artist"),
                     ("O", "album"),
                     ("/", "filter"),
-                    ("1-8", "pages"),
+                    ("E", "eq"),
+                    ("0-9", "pages"),
                     ("esc", "back"),
                 ],
             },
@@ -120,8 +180,24 @@ pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
                 ("PgUp/Dn", "page"),
                 ("esc", "done"),
             ],
-            Mode::TrackInfo(_) => vec![("esc", "close"), ("i", "close")],
+            Mode::TrackInfo(_) | Mode::TrackDetails => vec![("esc", "close"), ("i", "close")],
             Mode::CoverArtZoom => vec![("esc", "close"), ("z", "close")],
+            Mode::NamePrompt => vec![("ret", "keep"), ("esc", "cancel")],
+            Mode::FilterPanel => vec![
+                ("\u{2191}\u{2193}", "navigate"),
+                ("ret", "change"),
+                ("esc", "close"),
+            ],
+            Mode::ActionsMenu => vec![
+                ("\u{2191}\u{2193}", "navigate"),
+                ("ret", "do it"),
+                ("esc", "close"),
+            ],
+            Mode::PlaylistChooser => vec![
+                ("\u{2191}\u{2193}", "navigate"),
+                ("ret", "add here"),
+                ("esc", "cancel"),
+            ],
             Mode::ContextMenu => vec![
                 ("\u{2191}\u{2193}", "navigate"),
                 ("ret", "select"),
@@ -178,10 +254,13 @@ pub fn label_event(label: &str) -> Option<KeyEvent> {
 
 /// Each hint's cells and the key it stands for, laid out as `render` draws
 /// them, so a click on a hint is the key it names.
-pub fn hits(mode: &Mode, page: Page, area: Rect) -> Vec<(Rect, KeyEvent)> {
+pub fn hits(mode: &Mode, page: Page, filterable: bool, area: Rect) -> Vec<(Rect, KeyEvent)> {
     let mut x = area.x;
     let mut out = Vec::new();
-    for (i, (key, desc)) in fitting(mode, page, area.width).iter().enumerate() {
+    for (i, (key, desc)) in fitting(mode, page, filterable, area.width)
+        .iter()
+        .enumerate()
+    {
         if i > 0 {
             x += 2;
         }
@@ -196,10 +275,15 @@ pub fn hits(mode: &Mode, page: Page, area: Rect) -> Vec<(Rect, KeyEvent)> {
 
 /// The hints that fit `width` whole: one that would be cut is left out, so
 /// a bar never ends mid-word.
-fn fitting(mode: &Mode, page: Page, width: u16) -> Vec<(&'static str, &'static str)> {
+fn fitting(
+    mode: &Mode,
+    page: Page,
+    filterable: bool,
+    width: u16,
+) -> Vec<(&'static str, &'static str)> {
     let mut used = 0usize;
     let mut out = Vec::new();
-    for (key, desc) in hints(mode, page) {
+    for (key, desc) in hints(mode, page, filterable) {
         let w =
             key.chars().count() + 2 + 1 + desc.chars().count() + if out.is_empty() { 0 } else { 2 };
         if used + w > width as usize {
@@ -213,7 +297,7 @@ fn fitting(mode: &Mode, page: Page, width: u16) -> Vec<(&'static str, &'static s
 
 impl Widget for HintBar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let hints = fitting(self.mode, self.page, area.width);
+        let hints = fitting(self.mode, self.page, self.filterable, area.width);
         let mut spans: Vec<Span> = Vec::new();
         for (i, (key, desc)) in hints.iter().enumerate() {
             if i > 0 {

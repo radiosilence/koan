@@ -16,6 +16,7 @@ use crate::theme::Theme;
 pub enum HeaderHit {
     Play,
     Shuffle,
+    Heart,
     More,
     Wikipedia,
 }
@@ -30,6 +31,7 @@ enum Update {
 struct Geom {
     play: Rect,
     shuffle: Rect,
+    heart: Rect,
     more: Rect,
     wiki: Rect,
 }
@@ -39,6 +41,7 @@ pub struct ArtistHeader {
     info: Option<ArtistInfo>,
     photo: Option<DynamicImage>,
     loading: bool,
+    favourite: bool,
     expanded: bool,
     rx: Receiver<Update>,
     geom: Geom,
@@ -102,6 +105,7 @@ impl ArtistHeader {
             info: None,
             photo: None,
             loading: true,
+            favourite: false,
             expanded: false,
             rx,
             geom: Geom::default(),
@@ -120,6 +124,10 @@ impl ArtistHeader {
             }
         }
         changed
+    }
+
+    pub fn set_favourite(&mut self, on: bool) {
+        self.favourite = on;
     }
 
     pub fn toggle_expanded(&mut self) {
@@ -172,6 +180,7 @@ impl ArtistHeader {
         [
             (self.geom.play, HeaderHit::Play),
             (self.geom.shuffle, HeaderHit::Shuffle),
+            (self.geom.heart, HeaderHit::Heart),
             (self.geom.more, HeaderHit::More),
             (self.geom.wiki, HeaderHit::Wikipedia),
         ]
@@ -216,11 +225,28 @@ impl ArtistHeader {
             }
         };
 
-        buf.set_stringn(
+        let heart_on = hover == Some(HeaderHit::Heart);
+        let (heart, heart_style) = if self.favourite {
+            ("\u{2665}", theme.favourite)
+        } else {
+            ("\u{2661}", theme.hint_desc)
+        };
+        buf.set_string(
             tx,
             area.y,
+            heart,
+            if heart_on {
+                heart_style.add_modifier(Modifier::UNDERLINED)
+            } else {
+                heart_style
+            },
+        );
+        self.geom.heart = Rect::new(tx, area.y, 2, 1);
+        buf.set_stringn(
+            tx + 2,
+            area.y,
             name,
-            tw,
+            tw.saturating_sub(2),
             theme.heading.add_modifier(Modifier::BOLD),
         );
         if area.y + 1 < end {

@@ -29,6 +29,7 @@ pub enum HistoryHit {
     Forget(usize),
     Filter,
     ForgetAll,
+    Menu,
 }
 
 enum Line {
@@ -42,6 +43,7 @@ struct Geom {
     bar: Rect,
     filter: Rect,
     clear: Rect,
+    menu: Rect,
     links: Vec<(Rect, HistoryHit)>,
     total: usize,
 }
@@ -57,6 +59,8 @@ pub struct HistoryPage {
     pub filter: String,
     pub filter_active: bool,
     armed: Option<Instant>,
+    /// The history's version when it was read; a play moves it on.
+    seen: u64,
     geom: Geom,
     last_click: Option<(usize, Instant)>,
 }
@@ -95,18 +99,28 @@ impl HistoryPage {
             filter: String::new(),
             filter_active: false,
             armed: None,
+            seen: 0,
             geom: Geom::default(),
             last_click: None,
         }
     }
 
+    /// Reads the plays again if one was recorded or forgotten since the last
+    /// read, so the page stays current while it is open.
+    pub fn refresh(&mut self) {
+        if koan_core::player::history::version() != self.seen {
+            self.reload();
+        }
+    }
+
     /// Reads the plays again, narrowed by the filter.
     pub fn reload(&mut self) {
+        self.seen = koan_core::player::history::version();
         let Ok(db) = koan_core::db::pool::shared().get() else {
             return;
         };
         let search = (!self.filter.is_empty()).then_some(self.filter.as_str());
-        self.entries = queries::play_history_with_tracks(
+        let entries = queries::play_history_with_tracks(
             &db.conn,
             queries::LOCAL_USER,
             search,
@@ -114,7 +128,27 @@ impl HistoryPage {
             0,
         )
         .unwrap_or_default();
+        drop(db);
+        self.take(entries);
+    }
+
+    /// Shows `entries`, keeping the selected play selected and where it was
+    /// on screen when it is still among them.
+    fn take(&mut self, entries: Vec<PlayHistoryRow>) {
+        let kept = self
+            .entries
+            .get(self.cursor)
+            .map(|e| (e.id, self.line_of[self.cursor]));
+        self.entries = entries;
         self.rebuild();
+        let Some((id, was)) = kept else { return };
+        if let Some(idx) = self.entries.iter().position(|e| e.id == id) {
+            self.cursor = idx;
+            if self.scroll > 0 {
+                let now = self.line_of[idx];
+                self.scroll = (self.scroll + now).saturating_sub(was);
+            }
+        }
     }
 
     fn rebuild(&mut self) {
@@ -133,7 +167,6 @@ impl HistoryPage {
             self.lines.push(Line::Play(i));
         }
         self.cursor = self.cursor.min(self.entries.len().saturating_sub(1));
-        self.follow = true;
     }
 
     fn rows(&self) -> usize {
@@ -231,6 +264,7 @@ impl HistoryPage {
                 }
                 _ => {}
             }
+            self.follow = true;
             return Some(Action::None);
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
@@ -249,6 +283,32 @@ impl HistoryPage {
             KeyCode::End | KeyCode::Char('G') => self.move_to(usize::MAX),
             KeyCode::Enter => return Some(self.play(self.cursor, PickerAction::AppendAndPlay)),
             KeyCode::Char('a') => return Some(self.play(self.cursor, PickerAction::Append)),
+            KeyCode::Char('N') => return Some(self.play(self.cursor, PickerAction::PlayNext)),
+            KeyCode::Char('m') => return Some(self.menu(self.cursor)),
+            KeyCode::Char('w') => {
+                return Some(
+                    self.track_at(self.cursor)
+                        .map_or(Action::None, |t| Action::Choose(vec![t.id])),
+                );
+            }
+            KeyCode::Char('d') => {
+                return Some(
+                    self.track_at(self.cursor)
+                        .map_or(Action::None, |t| Action::Download(vec![t.id])),
+                );
+            }
+            KeyCode::Char('u') => {
+                return Some(
+                    self.track_at(self.cursor)
+                        .map_or(Action::None, |t| Action::RemoveDownload(vec![t.id])),
+                );
+            }
+            KeyCode::Char('i') => {
+                return Some(
+                    self.track_at(self.cursor)
+                        .map_or(Action::None, |t| Action::Info(t.id)),
+                );
+            }
             KeyCode::Char('A') => {
                 return Some(
                     self.track_at(self.cursor)
@@ -276,6 +336,35 @@ impl HistoryPage {
         Some(Action::None)
     }
 
+    /// What can be done with the play at `idx`.
+    fn menu(&self, idx: usize) -> Action {
+        use PickerAction::{Append, AppendAndPlay, PlayNext};
+        let Some(t) = self.track_at(idx) else {
+            return Action::None;
+        };
+        let one = vec![t.id];
+        let mut items = vec![
+            ("Play".to_string(), Action::Play(one.clone(), AppendAndPlay)),
+            ("Add to the queue".into(), Action::Play(one.clone(), Append)),
+            ("Play next".into(), Action::Play(one.clone(), PlayNext)),
+            (
+                "Add to a playlist\u{2026}".into(),
+                Action::Choose(one.clone()),
+            ),
+            ("Favourite or unfavourite".into(), Action::Favourite(t.id)),
+        ];
+        if let Some(a) = t.album_id {
+            items.push(("Go to the record".into(), Action::OpenAlbum(a)));
+        }
+        if let Some(a) = t.artist_id {
+            items.push(("Go to the artist".into(), Action::OpenArtist(a)));
+        }
+        items.push(("Track info".into(), Action::Info(t.id)));
+        items.push(("Download".into(), Action::Download(one.clone())));
+        items.push(("Remove the download".into(), Action::RemoveDownload(one)));
+        Action::Menu(t.title.clone(), items)
+    }
+
     pub fn hit(&self, col: u16, row: u16) -> Option<HistoryHit> {
         let g = &self.geom;
         if inside(g.filter, col, row) {
@@ -283,6 +372,9 @@ impl HistoryPage {
         }
         if inside(g.clear, col, row) {
             return Some(HistoryHit::ForgetAll);
+        }
+        if inside(g.menu, col, row) {
+            return Some(HistoryHit::Menu);
         }
         if let Some((_, hit)) = g.links.iter().find(|(r, _)| inside(*r, col, row)) {
             return Some(*hit);
@@ -306,6 +398,7 @@ impl HistoryPage {
                 self.forget_all();
                 Action::None
             }
+            HistoryHit::Menu => self.menu(self.cursor),
             HistoryHit::Forget(i) => {
                 self.forget(i);
                 Action::None
@@ -390,6 +483,12 @@ impl HistoryPage {
         };
         if !self.entries.is_empty() {
             self.geom.clear = control(buf, clear_text, clear_style);
+            let menu_style = if hover == Some(HistoryHit::Menu) {
+                theme.hint_desc.add_modifier(Modifier::UNDERLINED)
+            } else {
+                theme.hint_desc
+            };
+            self.geom.menu = control(buf, " \u{22ef} actions ".into(), menu_style);
         }
         let filter_text = if self.filter_active || !self.filter.is_empty() {
             let cursor = if self.filter_active { "\u{2588}" } else { "" };
@@ -709,6 +808,62 @@ mod tests {
         assert!(p.armed());
         p.handle_key(KeyEvent::from(KeyCode::Esc));
         assert!(!p.armed());
+    }
+
+    #[test]
+    fn n_puts_the_track_next_and_i_asks_for_its_info() {
+        let mut p = page();
+        draw(&mut p, 100, 12);
+        let key = |c| KeyEvent::from(KeyCode::Char(c));
+        assert_eq!(
+            p.handle_key(key('N')),
+            Some(Action::Play(vec![1], PickerAction::PlayNext))
+        );
+        assert_eq!(p.handle_key(key('i')), Some(Action::Info(1)));
+        assert_eq!(p.handle_key(key('d')), Some(Action::Download(vec![1])));
+        assert_eq!(
+            p.handle_key(key('u')),
+            Some(Action::RemoveDownload(vec![1]))
+        );
+    }
+
+    #[test]
+    fn the_menu_acts_on_the_play_under_the_cursor() {
+        let mut p = page();
+        draw(&mut p, 100, 12);
+        let Action::Menu(title, items) = p.menu(1) else {
+            panic!("a menu");
+        };
+        assert_eq!(title, "two");
+        assert!(
+            items
+                .iter()
+                .any(|(l, a)| l == "Track info" && *a == Action::Info(2))
+        );
+        let menu = p.geom.menu;
+        assert_eq!(p.hit(menu.x, menu.y), Some(HistoryHit::Menu));
+    }
+
+    #[test]
+    fn a_new_play_leaves_the_selection_where_it_was() {
+        let mut p = page();
+        draw(&mut p, 100, 3);
+        p.move_to(2);
+        draw(&mut p, 100, 3);
+        let (scroll, line) = (p.scroll, p.line_of[2]);
+        assert!(scroll > 0);
+        let now = Local::now().timestamp();
+        let mut entries = vec![entry(4, now + 1, "four")];
+        entries.extend(p.entries.iter().cloned());
+        p.take(entries);
+        assert_eq!(p.entries[p.cursor].id, 3, "the same play stays selected");
+        assert_eq!(p.scroll + line, scroll + p.line_of[p.cursor]);
+        draw(&mut p, 100, 3);
+        assert_eq!(
+            p.line_of[p.cursor] - p.scroll,
+            line - scroll,
+            "and stays put on screen"
+        );
     }
 
     #[test]

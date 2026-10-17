@@ -1,0 +1,1 @@
+- **Terminal UI: smaller glitches.** The transport's little spectrum no longer repeats the big one beside it, History shows plays as they are recorded, and `a` in the Artists tree appends instead of also starting playback, as its hint says.
