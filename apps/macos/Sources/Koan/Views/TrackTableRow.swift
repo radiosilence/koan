@@ -100,8 +100,11 @@ final class TrackTableRow: TableCell, TableRow {
     private static var durationWidth: CGFloat { max(48, measure("0:00:00", numberFont)) }
     private static var qualityWidth: CGFloat { max(92, measure("VORBIS 44.1 kHz", qualityFont)) }
 
-    private static func measure(_ text: String, _ font: NSFont) -> CGFloat {
-        ceil((text as NSString).size(withAttributes: [.font: font]).width) + 2
+    /// The width a label needs to show `text` whole: the string's own, the two
+    /// points a side the label's cell insets it by, and a point for rounding.
+    /// Measured on each use, since the text size can change while the app runs.
+    static func measure(_ text: String, _ font: NSFont) -> CGFloat {
+        ceil((text as NSString).size(withAttributes: [.font: font]).width) + 5
     }
 
     private enum Part { case lead, artist, album, heart, elsewhere }
@@ -268,7 +271,7 @@ final class TrackTableRow: TableCell, TableRow {
         }
         badge.isHidden = !onSleeve || !(showsMark || current)
         appearance.performAsCurrentDrawingAppearance {
-            badge.backgroundColor = (KoanTheme.isOn ? NSColor.koanBg : .windowBackgroundColor).cgColor
+            badge.backgroundColor = KoanTheme.metric(NSColor.koanBg, system: .windowBackgroundColor).cgColor
         }
         CATransaction.commit()
         // On the badge the bars are on the page's ground, not the selection.
@@ -442,11 +445,12 @@ final class TrackTableRow: TableCell, TableRow {
         // Kept when a track has no format, so the marks beside it line up.
         if context.columns.contains(.quality) {
             let qualityHeight = lineHeight(Self.qualityFont)
+            let qualityWidth = Self.qualityWidth
             quality.frame = CGRect(
-                x: right - Self.qualityWidth, y: (height - qualityHeight) / 2,
-                width: Self.qualityWidth, height: qualityHeight
+                x: right - qualityWidth, y: (height - qualityHeight) / 2,
+                width: qualityWidth, height: qualityHeight
             )
-            right -= Self.qualityWidth + Self.spacing
+            right -= qualityWidth + Self.spacing
         }
         if context.columns.contains(.heart) {
             heart.frame = Symbol.frame(of: heartImage, centredIn: CGRect(x: right - 16, y: 0, width: 16, height: height))
@@ -469,13 +473,12 @@ final class TrackTableRow: TableCell, TableRow {
         let width = max(right - x, 0)
         title.frame = CGRect(x: x, y: top, width: width, height: titleHeight)
         let captionY = top + titleHeight + 1
-        let measure = { (text: String) in ceil((text as NSString).size(withAttributes: [.font: Self.captionFont]).width) + 5 }
-        let artistWidth = min(measure(artist.stringValue), width)
+        let artistWidth = min(Self.measure(artist.stringValue, Self.captionFont), width)
         artist.frame = CGRect(x: x, y: captionY, width: artistWidth, height: captionHeight)
         if context.showsAlbum {
             dot.frame = CGRect(x: artist.frame.maxX, y: captionY, width: 10, height: captionHeight)
             let albumX = dot.frame.maxX + 2
-            album.frame = CGRect(x: albumX, y: captionY, width: min(measure(album.stringValue), max(x + width - albumX, 0)), height: captionHeight)
+            album.frame = CGRect(x: albumX, y: captionY, width: min(Self.measure(album.stringValue, Self.captionFont), max(x + width - albumX, 0)), height: captionHeight)
         }
     }
 

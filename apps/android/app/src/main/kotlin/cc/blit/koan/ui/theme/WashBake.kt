@@ -42,15 +42,19 @@ internal object WashRules {
 internal object WashBake {
     /**
      * The texture's side. Blurred to mush, so drawn small and magnified: the
-     * Apple apps blur 14 points of a 360-point texture, which is 5 pixels of
+     * Apple apps blur 28 points of a 360-point texture, which is 10 pixels of
      * this one, and bilinear magnification of something that soft adds nothing
      * the eye can find.
      */
     const val SIDE = 128
-    private const val RADIUS = 5
+    private const val RADIUS = 10
     private const val SATURATION = 1.6
 
-    fun bake(pixels: IntArray, side: Int, tone: WashTone, ground: Int, strength: Float): IntArray {
+    /**
+     * `hold` is the person's "theme tint": how far each sample moves toward the
+     * tone's limit, from 1, all the way, to 0, the sleeve's own colour.
+     */
+    fun bake(pixels: IntArray, side: Int, tone: WashTone, ground: Int, strength: Float, hold: Double = 1.0): IntArray {
         require(pixels.size == side * side)
         val n = pixels.size
         val r = DoubleArray(n)
@@ -80,13 +84,13 @@ internal object WashBake {
             val y = 0.2126 * lr + 0.7152 * lg + 0.0722 * lb
             when {
                 tone == WashTone.Dark && y > tone.limit -> {
-                    val k = tone.limit / y
+                    val k = 1 + (tone.limit / y - 1) * hold
                     lr *= k
                     lg *= k
                     lb *= k
                 }
                 tone == WashTone.Light && y < tone.limit -> {
-                    val t = (tone.limit - y) / (1 - y)
+                    val t = (tone.limit - y) / (1 - y) * hold
                     lr += (1 - lr) * t
                     lg += (1 - lg) * t
                     lb += (1 - lb) * t

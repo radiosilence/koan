@@ -474,7 +474,7 @@ struct PlayableHeaderButton: View {
                         .frame(width: 44, height: 44)
                 }
                 if loading {
-                    ProgressView().controlSize(.small).tint(KoanTheme.isOn ? nil : .white)
+                    ProgressView().controlSize(.small).tint(KoanTheme.metric(nil, system: .white))
                 } else {
                     KoanIcon(Icon.play)
                         .font(.system(size: 17))
@@ -484,7 +484,7 @@ struct PlayableHeaderButton: View {
             }
             // The whole square or disc takes the click, not just the stroke
             // and the glyph a plain button would hit-test.
-            .contentShape(KoanTheme.isOn ? AnyShape(Rectangle()) : AnyShape(Circle()))
+            .contentShape(KoanTheme.metric(AnyShape(Rectangle()), system: AnyShape(Circle())))
             #endif
         }
         #if !os(tvOS)

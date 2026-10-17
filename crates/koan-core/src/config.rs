@@ -67,6 +67,12 @@ pub struct AppearanceConfig {
     /// Text size on the Mac, in percent of the theme's own (80–130, in steps
     /// of 5). Spacing follows it at half the rate. Per device.
     pub text_size: u16,
+    /// In the kōan theme, how far the wash is held to the theme's contrast
+    /// limit, in percent: 100 keeps every sample dark enough (or, in light
+    /// mode, light enough) for `muted` text over it to read; 0 leaves the
+    /// sleeve's own colours. Values between blend the two; above 100 reads
+    /// as 100.
+    pub wash_tint: u16,
 }
 
 impl Default for AppearanceConfig {
@@ -78,6 +84,7 @@ impl Default for AppearanceConfig {
             wash_window: true,
             rainbow: false,
             text_size: 100,
+            wash_tint: 100,
         }
     }
 }

@@ -129,7 +129,7 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         table.backgroundColor = .clear
         // The separators a SwiftUI list draws between its rows; none in the
         // theme, whose rows are told apart by rhythm and alignment.
-        table.gridStyleMask = KoanTheme.isOn ? [] : .solidHorizontalGridLineMask
+        table.gridStyleMask = KoanTheme.metric([], system: .solidHorizontalGridLineMask)
         table.gridColor = .koanSeparator
         // A floating group row is drawn on AppKit's own grey band with a rule
         // under it, which no list in the theme has; its headings scroll with

@@ -74,6 +74,7 @@ fun KoanRoot(content: @Composable () -> Unit) {
             playing = nowPlaying?.state == PlayState.PLAYING,
             recordColours = recordColours,
             graphics = graphics,
+            tint = appearance?.washTint?.toInt() ?: 100,
         ) {
             CompositionLocalProvider(LocalRainbowStep provides step, content = content)
         }

@@ -123,7 +123,8 @@ enum KoanTheme {
     /// from layer code as well.
     nonisolated(unsafe) private(set) static var textScale: CGFloat = 1
     /// Spacing's scale: half of the type's change, so the theme stays as open
-    /// as it was while the type comes down to the system's.
+    /// as it was while the type comes down to the system's. Always 1 in the
+    /// platform's look, which `RowMetrics.padding` relies on.
     nonisolated(unsafe) private(set) static var spaceScale: CGFloat = 1
     /// The text size chosen, in percent, which row heights follow.
     nonisolated(unsafe) private(set) static var sizeScale: CGFloat = 1
@@ -131,9 +132,19 @@ enum KoanTheme {
     /// The text size steps Settings and the View menu move through.
     static let textSizes = stride(from: 80, through: 130, by: 5).map { $0 }
 
+    /// Whether the text size can be changed: on the Mac, in the theme. The
+    /// platform's look keeps the system's sizes.
+    nonisolated static var hasTextSize: Bool {
+        #if os(macOS)
+        isOn
+        #else
+        false
+        #endif
+    }
+
     static func setTextSize(_ percent: Int) {
         #if os(macOS)
-        guard isOn else { return }
+        guard hasTextSize else { return }
         let size = CGFloat(min(max(percent, textSizes.first!), textSizes.last!)) / 100
         sizeScale = size
         textScale = macFit * size
@@ -246,6 +257,13 @@ final class AppearanceModel {
         didSet { if washWindow != oldValue { engine.setWashWindow(on: washWindow) } }
     }
 
+    /// "Theme tint": in the kōan theme, how far the wash is held to the
+    /// contrast limit (`WashTone`), in percent. 100 holds it fully; 0 leaves the
+    /// sleeve's own colours. Takes effect at once, from the next bake.
+    var washTint: Int {
+        didSet { if washTint != oldValue { engine.setWashTint(percent: UInt8(clamping: washTint)) } }
+    }
+
     /// Gay mode as it was left on this device (see `Rainbow`). Saved to
     /// config.local.toml; never synced, never offered in Settings.
     var rainbow: Bool {
@@ -278,6 +296,7 @@ final class AppearanceModel {
         self.recordColours = appearance.recordColours
         self.washWindow = appearance.washWindow
         self.textSize = Int(appearance.textSize)
+        self.washTint = Int(appearance.washTint)
         self.rainbow = appearance.rainbow
         Rainbow.drawn = appearance.rainbow
     }
@@ -549,8 +568,10 @@ extension UIColor {
 /// the record playing, or mint — and falls back to `ink` for text where the
 /// record's colour cannot reach 4.5:1 (see `KoanAccent`).
 enum KoanTone {
-    /// `rule` is for strokes and fills — chart grids, dividers — never text.
-    case ink, strong, muted, accent, bad, rule
+    /// `rule` is for strokes and fills — chart grids, dividers, an empty
+    /// sleeve — and `hover` the fill behind a row under the pointer; neither
+    /// is for text.
+    case ink, strong, muted, accent, bad, rule, hover
 }
 
 // MARK: - Accent
@@ -835,10 +856,11 @@ extension KoanTheme {
         isOn ? style(tone) : AnyShapeStyle(system)
     }
 
-    /// A measure that differs between the looks: a thickness, a size, a
-    /// margin. The theme's in the theme, the platform's otherwise.
-    nonisolated static func metric<T>(_ theme: T, system: T) -> T {
-        isOn ? theme : system
+    /// A value that differs between the looks: a thickness, a size, a
+    /// margin, or a colour, symbol or shape where a view takes one rather
+    /// than a role. The theme's in the theme, the platform's otherwise.
+    nonisolated static func metric<T>(_ theme: @autoclosure () -> T, system: @autoclosure () -> T) -> T {
+        isOn ? theme() : system()
     }
 
     /// Whether the wash runs under the whole window, every region clear over
@@ -864,7 +886,9 @@ extension KoanTheme {
         case (true, .muted): AnyShapeStyle(Color.koanMuted)
         case (true, .bad): AnyShapeStyle(Color.koanBad)
         case (true, .rule): AnyShapeStyle(Color.koanRule)
+        case (true, .hover): AnyShapeStyle(Color.koanHover.opacity(0.3))
         case (false, .rule): AnyShapeStyle(.quaternary)
+        case (false, .hover): AnyShapeStyle(.quaternary.opacity(0.5))
         case (_, .accent): AnyShapeStyle(.tint)
         case (false, .ink), (false, .strong): AnyShapeStyle(.primary)
         case (false, .muted): AnyShapeStyle(.secondary)
@@ -903,6 +927,13 @@ extension UIFont {
         default: .body
         }
         return UIFontMetrics(forTextStyle: style).scaledFont(for: face)
+    }
+
+    /// A role as whichever look is on: Geist Mono in the theme, the given
+    /// system font otherwise.
+    @MainActor
+    static func role(_ role: KoanType, system: @autoclosure () -> UIFont) -> UIFont {
+        KoanTheme.isOn ? koan(role) : system()
     }
 }
 #endif
@@ -1033,7 +1064,7 @@ extension View {
         modifier(KoanBadgeRole(accent: accent))
     }
 
-    /// A chip that is a choice — a device, a preset, an artist: a `muted`
+    /// A chip that is a choice — a device, a preset: a `muted`
     /// outline, square, in the theme. A filled capsule in the platform's look.
     func koanChip() -> some View {
         modifier(KoanChipRole())
@@ -1265,6 +1296,7 @@ private struct KoanTextRole: ViewModifier {
         case .muted: AnyShapeStyle(Color.koanMuted)
         case .bad: AnyShapeStyle(Color.koanBad)
         case .rule: AnyShapeStyle(Color.koanRule)
+        case .hover: AnyShapeStyle(Color.koanHover.opacity(0.3))
         case .accent: accent.shade(scheme).readsAsText ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.koanInk)
         }
     }
@@ -1276,6 +1308,7 @@ private struct KoanTextRole: ViewModifier {
         case .accent: accent.shade(scheme).readsAsText ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary)
         case .bad: AnyShapeStyle(.red)
         case .rule: AnyShapeStyle(.quaternary)
+        case .hover: AnyShapeStyle(.quaternary.opacity(0.5))
         }
     }
 }
@@ -3074,7 +3107,7 @@ extension View {
             #if os(macOS)
             // Type and spacing are read as views are made, so a new text size
             // makes them again. Only where it applies: in the theme.
-            .id(KoanTheme.isOn ? appearance.textSize : 100)
+            .id(KoanTheme.hasTextSize ? appearance.textSize : 100)
             #endif
     }
 }

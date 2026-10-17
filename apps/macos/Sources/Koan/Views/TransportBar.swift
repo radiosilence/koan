@@ -113,7 +113,7 @@ struct TransportBar: View {
                         )
                 } else {
                     RoundedRectangle(cornerRadius: KoanTheme.radius(8))
-                        .fill(.quaternary)
+                        .fill(KoanTheme.style(.rule))
                         .frame(width: 44, height: 44)
                         .overlay {
                             KoanIcon(Icon.track)

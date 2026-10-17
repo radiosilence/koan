@@ -1,0 +1,1 @@
+- **Theme tint.** Settings → Appearance in the kōan theme sets how far the wash is darkened in dark mode, or lightened in light, to keep text over it readable: lower lets more of the sleeve's own colour through. On the Mac, iPhone and Android (`appearance.wash_tint`).

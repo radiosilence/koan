@@ -24,13 +24,16 @@ enum RowMetrics {
     static var sleeve: CGFloat { (32 * KoanTheme.sizeScale).rounded() }
     /// What a list puts above and below each row; in the theme it follows the
     /// spacing scale.
-    static var padding: CGFloat { KoanTheme.isOn ? 4 * KoanTheme.spaceScale : 4 }
+    static var padding: CGFloat { 4 * KoanTheme.spaceScale }
     /// What a row with a sleeve adds above and below, so the cover clears the
     /// separators.
     static let artPadding: CGFloat = 4
     /// The page's margin: where AppKit's inset table style puts its cells,
     /// and so where a header above one sits, from the side and from the top.
     static let pageEdge: CGFloat = 16
+    /// The margin of the Mac's collection views — the album grid, the shelves
+    /// — and so where a header above one sits, from the side.
+    static let collectionMargin: CGFloat = 20
     /// How far down the inset style puts its first row.
     static let tableTop: CGFloat = 10
     /// What a header above a table adds below itself, so that the gap to the

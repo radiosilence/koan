@@ -35,9 +35,14 @@ struct HistoryView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+                #if os(macOS)
+                .padding([.horizontal, .top], RowMetrics.pageEdge)
+                .padding(.bottom, RowMetrics.headerGap)
+                #else
                 .padding(.horizontal, 24)
                 .padding(.top, 18)
                 .padding(.bottom, 16)
+                #endif
 
             if entries.isEmpty {
                 EmptyState(
@@ -163,17 +168,14 @@ struct HistoryView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text("History").koanCase()
-                .font(.role(.title, system: .system(size: 26, weight: .semibold)))
-                .foregroundStyle(KoanTheme.style(.strong, system: .primary))
-            Text(entries.count == 1 ? "1 play" : "\(entries.count) plays").koanCase()
-                .font(.role(.control, system: .callout))
-                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-            Spacer(minLength: 0)
-            Button { confirmingClear = true } label: { Text("Clear…").koanCase().font(.role(.control, system: .body)) }
-                .disabled(entries.isEmpty)
-        }
+        PageHeader(
+            "History", appWords: true,
+            detail: { Text(Format.count(Int64(entries.count), "play")) },
+            trailing: {
+                Button { confirmingClear = true } label: { Text("Clear…").koanCase().font(.role(.control, system: .body)) }
+                    .disabled(entries.isEmpty)
+            }
+        )
     }
 
     /// Selection is by entry id, not track id — the same track can

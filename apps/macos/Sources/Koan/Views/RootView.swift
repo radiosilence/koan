@@ -71,7 +71,7 @@ struct RootView: View {
                 .frame(minWidth: Self.sidebarMin)
                 .navigationSplitViewColumnWidth(min: Self.sidebarMin, ideal: Self.sidebarMin + 25, max: 290)
                 // The theme draws its own, without the glass; see `PageToolbar`.
-                .toolbar(removing: KoanTheme.isOn ? .sidebarToggle : nil)
+                .toolbar(removing: KoanTheme.metric(.sidebarToggle, system: nil))
         } detail: {
             StageView()
                 .clearsTransport(transportHeight, glass: graphics.usesWindowGlass)
@@ -192,14 +192,30 @@ struct RootView: View {
 /// SwiftUI charges that read to whichever body the field sits in. Placed in
 /// `RootView` directly, that would be the root: every keystroke would re-run
 /// the window and rebuild the toolbar, field and focus with it.
+///
+/// In the theme it is the sidebar search's field, so the two read as one kind
+/// of control: no box, a muted glyph and a lowercase prompt.
 private struct LibraryFilter: View {
     let placeholder: String
     @Environment(LibraryModel.self) private var library
     @Environment(UIState.self) private var ui
+    #if os(macOS)
+    @FocusState private var focused: Bool
+    #endif
 
     var body: some View {
         @Bindable var library = library
+        #if os(macOS)
+        if KoanTheme.isOn {
+            // Escape leaves the field, as `Hotkeys` has it for every field.
+            KoanSearchField(text: $library.filter, prompt: placeholder, focus: $focused) {}
+                .onChange(of: ui.filterFocusToken) { _, _ in focused = true }
+        } else {
+            FilterField(placeholder: placeholder, text: $library.filter, focusToken: ui.filterFocusToken)
+        }
+        #else
         FilterField(placeholder: placeholder, text: $library.filter, focusToken: ui.filterFocusToken)
+        #endif
     }
 }
 
@@ -271,7 +287,7 @@ struct RecordRoom: ViewModifier {
     /// accent is the colour of every selection and indicator, and a two-second
     /// drift there reads as something wrong rather than a room changing.
     @MainActor private static var tintEase: Animation {
-        KoanTheme.isOn ? KoanTheme.Motion.settle : .easeInOut(duration: 2)
+        KoanTheme.metric(KoanTheme.Motion.settle, system: .easeInOut(duration: 2))
     }
 
     /// Read straight through the cache on every pass, the way `AlbumArtwork`

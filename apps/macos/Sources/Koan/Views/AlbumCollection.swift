@@ -485,7 +485,7 @@ final class AlbumGridView: NSCollectionView {
 private final class TileLayout: NSCollectionViewFlowLayout {
     private let minimum: CGFloat = 150
     private let maximum: CGFloat = 210
-    private let margin: CGFloat = 20
+    private let margin = RowMetrics.collectionMargin
 
     /// What floats over the grid's leading edge.
     var leading: CGFloat = 0 {
@@ -692,7 +692,7 @@ final class AlbumTile: NSCollectionViewItem {
             root.addSubview(label)
         }
         titleLabel.font = Self.titleFont
-        titleLabel.textColor = KoanTheme.isOn ? .koanStrong : .koanLabel
+        titleLabel.textColor = KoanTheme.metric(NSColor.koanStrong, system: .koanLabel)
         artistLabel.font = Self.detailFont
         artistLabel.textColor = .koanSecondaryLabel
         yearLabel.font = Self.detailFont
