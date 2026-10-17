@@ -113,6 +113,15 @@ to do with it. On iOS, finding anything on the network needs **Local Network**
 allowed for kōan (Settings → Privacy & Security); the picker says so when it
 is not.
 
+### The terminal UI
+
+`koan` in a terminal is listed as a device too, named after the machine with
+"(terminal)" after it, and its own Play on (`C`) controls the others; see
+[The terminal UI](terminal-ui.md#play-on). It follows the same settings:
+`devices.nearby`, **Visible to devices** and **Devices may** in its Settings
+page, and the account it is signed in to. It cannot be woken from elsewhere:
+it is reachable while it is running.
+
 ### Who is connected
 
 Settings → Devices → **Connected now** lists who is connected to this device

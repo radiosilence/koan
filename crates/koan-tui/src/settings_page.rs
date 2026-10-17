@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use koan_core::config::{Config, NearbyControl, ReplayGainMode};
+use koan_core::remote::connections::{Connection, Held, Via};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -88,6 +89,10 @@ enum Entry {
     Folder(usize),
     /// Shown, not edited here: what the apps set through folders and sign-in.
     Info(&'static str, String),
+    /// A connection to or from this device, by its place in `connections`.
+    Connection(usize),
+    /// A device disconnected here and held off, by its place in `held`.
+    Held(usize),
 }
 
 const REPLAYGAIN: [&str; 3] = ["off", "track", "album"];
@@ -308,7 +313,37 @@ fn palette_name(configured: &str) -> &str {
 
 /// Whether the cursor can rest on `entry`.
 fn selectable(entry: &Entry) -> bool {
-    matches!(entry, Entry::Item(_) | Entry::Action(_) | Entry::Folder(_))
+    matches!(
+        entry,
+        Entry::Item(_)
+            | Entry::Action(_)
+            | Entry::Folder(_)
+            | Entry::Connection(_)
+            | Entry::Held(_)
+    )
+}
+
+/// What a connection is, and since when.
+fn connection_detail(c: &Connection) -> String {
+    use koan_core::remote::proof::Peer;
+    let who = match &c.peer {
+        Some(Peer::Own) => "your device".to_string(),
+        Some(Peer::Shared(owner)) => format!("shared by {owner}"),
+        None => "not proved".into(),
+    };
+    let what = match (c.via, c.inbound) {
+        (Via::Server, false) => "your server".to_string(),
+        (Via::Server, true) => "your device, through the server".into(),
+        (Via::Network, true) => format!("can control this device on this network, {who}"),
+        (Via::Network, false) => format!("connected to it on this network, {who}"),
+    };
+    match c.since.and_then(|t| chrono::DateTime::from_timestamp(t, 0)) {
+        Some(at) => format!(
+            "{what} \u{b7} since {}",
+            at.with_timezone(&chrono::Local).format("%H:%M")
+        ),
+        None => what,
+    }
 }
 
 fn on_off(on: bool) -> String {
@@ -325,6 +360,10 @@ struct Geom {
 
 pub struct SettingsPage {
     cfg: Arc<Config>,
+    connections: Vec<Connection>,
+    held: Vec<Held>,
+    /// The devices' version the connections were read at.
+    devices_seen: u64,
     entries: Vec<Entry>,
     /// Index into `entries` of the row the cursor is on; always an item.
     cursor: usize,
@@ -343,6 +382,9 @@ impl SettingsPage {
     pub fn new() -> Self {
         let mut page = Self {
             cfg: Config::cached(),
+            connections: Vec::new(),
+            held: Vec::new(),
+            devices_seen: u64::MAX,
             entries: Vec::new(),
             cursor: 1,
             scroll: 0,
@@ -353,8 +395,18 @@ impl SettingsPage {
         page
     }
 
+    /// Read the connections again when the devices have moved.
+    pub fn follow_devices(&mut self) {
+        if koan_core::remote::devices::version() != self.devices_seen {
+            self.reload();
+        }
+    }
+
     pub fn reload(&mut self) {
         self.cfg = Config::cached();
+        self.devices_seen = koan_core::remote::devices::version();
+        self.connections = koan_core::remote::connections::list();
+        self.held = koan_core::remote::connections::held();
         let cfg = &self.cfg;
         let mut entries = vec![
             Entry::Section("playback"),
@@ -390,6 +442,11 @@ impl SettingsPage {
         entries.push(Entry::Section("devices"));
         entries.push(Entry::Item(Setting::Discoverable));
         entries.push(Entry::Item(Setting::NearbyControl));
+        if !self.connections.is_empty() || !self.held.is_empty() {
+            entries.push(Entry::Section("connected now"));
+            entries.extend((0..self.connections.len()).map(Entry::Connection));
+            entries.extend((0..self.held.len()).map(Entry::Held));
+        }
         entries.push(Entry::Section("library"));
         let folders = &cfg.library.folders;
         entries.push(Entry::Action(Task::AddFolder));
@@ -447,6 +504,25 @@ impl SettingsPage {
         self.scroll = self.scroll.saturating_add_signed(rows).min(max);
     }
 
+    /// Hang up the connection on row `idx`, which holds that device off
+    /// until it is let back; or let a held device back.
+    fn end(&mut self, idx: usize) {
+        match self.entries.get(idx) {
+            Some(Entry::Connection(c)) => {
+                if let Some(key) = self.connections.get(*c).and_then(|c| c.key) {
+                    koan_core::remote::nearby::end(key);
+                }
+            }
+            Some(Entry::Held(h)) => {
+                if let Some(held) = self.held.get(*h) {
+                    koan_core::remote::nearby::release_addr(&held.addr);
+                }
+            }
+            _ => return,
+        }
+        self.reload();
+    }
+
     /// Changes the setting on row `idx`, or starts the task on it.
     fn change(&mut self, idx: usize, forward: bool) -> Option<Outcome> {
         match self.entries.get(idx)? {
@@ -490,6 +566,10 @@ impl SettingsPage {
             KeyCode::Char('x') | KeyCode::Delete => {
                 return match self.entries.get(self.cursor) {
                     Some(Entry::Folder(i)) => Some(Some(Outcome::RemoveFolder(*i))),
+                    Some(Entry::Connection(_) | Entry::Held(_)) => {
+                        self.end(self.cursor);
+                        Some(None)
+                    }
                     _ => None,
                 };
             }
@@ -532,6 +612,10 @@ impl SettingsPage {
                 self.select(i);
                 match self.entries.get(i) {
                     Some(Entry::Folder(f)) => Some(Outcome::RemoveFolder(*f)),
+                    Some(Entry::Connection(_) | Entry::Held(_)) => {
+                        self.end(i);
+                        None
+                    }
                     _ => None,
                 }
             }
@@ -597,6 +681,63 @@ impl SettingsPage {
                     let from = list.x + 2 + name.chars().count() as u16;
                     for cx in from..end {
                         buf[(cx, y)].set_char('\u{2500}').set_style(theme.rule);
+                    }
+                }
+                Entry::Connection(_) | Entry::Held(_) => {
+                    let selected = idx == self.cursor;
+                    let row_hover = matches!(
+                        hover,
+                        Some(SettingsHit::Row(n) | SettingsHit::Remove(n)) if n == idx
+                    );
+                    if selected {
+                        for cx in list.x..end {
+                            buf[(cx, y)].set_style(theme.library_cursor);
+                        }
+                        buf[(list.x, y)].set_char('\u{258c}').set_style(theme.bar);
+                    } else if row_hover {
+                        for cx in list.x..end {
+                            buf[(cx, y)].set_style(theme.library_hover);
+                        }
+                    }
+                    let (base, dim) = if selected {
+                        (theme.library_cursor, theme.library_cursor)
+                    } else {
+                        (theme.track_normal, theme.hint_desc)
+                    };
+                    let (name, detail, end_label) = match entry {
+                        Entry::Connection(c) => {
+                            let c = &self.connections[*c];
+                            (
+                                c.name.clone(),
+                                connection_detail(c),
+                                c.key.map(|_| "disconnect"),
+                            )
+                        }
+                        Entry::Held(h) => {
+                            let h = &self.held[*h];
+                            (
+                                h.name.clone().unwrap_or_else(|| h.addr.clone()),
+                                "disconnected until allowed back".to_string(),
+                                Some("allow"),
+                            )
+                        }
+                        _ => unreachable!(),
+                    };
+                    buf.set_stringn(list.x + 2, y, &name, 20, base);
+                    let label_w = end_label.map_or(0, |l| l.len() as u16 + 2);
+                    let room = end.saturating_sub(value_x + label_w) as usize;
+                    buf.set_stringn(value_x, y, &detail, room, dim);
+                    if let Some(label) = end_label {
+                        let x = end.saturating_sub(label_w);
+                        let style = if hover == Some(SettingsHit::Remove(idx)) {
+                            theme.heading.add_modifier(Modifier::BOLD)
+                        } else {
+                            dim
+                        };
+                        buf.set_string(x + 1, y, label, style);
+                        self.geom
+                            .links
+                            .push((Rect::new(x, y, label_w, 1), SettingsHit::Remove(idx)));
                     }
                 }
                 Entry::Info(label, text) => {

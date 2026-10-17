@@ -61,6 +61,10 @@ fn rate_label(rate: u32) -> String {
 }
 
 fn format_source(info: &TrackInfo) -> String {
+    // Another device's track, which says only where it plays.
+    if info.sample_rate == 0 {
+        return info.codec.clone();
+    }
     let rate = info.sample_rate;
     let ch = info.channels;
     let rate_str = rate_label(rate);

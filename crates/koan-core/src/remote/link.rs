@@ -742,6 +742,10 @@ pub struct LinkIdentity {
     /// Stable across restarts, so a reconnect replaces its own entry on the
     /// server rather than listing the device twice.
     pub device_id: String,
+    /// Put before the names of the files this device keeps in the config
+    /// directory: its id and the devices it knows. Empty for the apps; the
+    /// terminal UI shares their directory and is a device of its own.
+    pub files: &'static str,
 }
 
 impl LinkIdentity {
@@ -765,6 +769,20 @@ impl LinkIdentity {
                 .unwrap_or_else(|| label.to_string()),
             platform: platform.to_string(),
             device_id: device_id(&config::config_dir()),
+            files: "",
+        }
+    }
+
+    /// The terminal UI on this machine: named and kept apart from the app,
+    /// which may be running beside it on the same config directory.
+    pub fn terminal() -> Self {
+        const FILES: &str = "terminal-";
+        let app = Self::this_device(None);
+        Self {
+            name: format!("{} (terminal)", app.name),
+            device_id: file_device_id(&config::config_dir().join(format!("{FILES}device-id"))),
+            files: FILES,
+            ..app
         }
     }
 }
@@ -1217,25 +1235,26 @@ fn device_id(dir: &Path) -> String {
         {
             return id;
         }
-        let id = file_device_id(dir);
+        let id = file_device_id(&dir.join("device-id"));
         let _ = set_generic_password(SERVICE, "device-id", id.as_bytes());
         id
     }
     #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
-    file_device_id(dir)
+    file_device_id(&dir.join("device-id"))
 }
 
-fn file_device_id(dir: &Path) -> String {
-    let path = dir.join("device-id");
-    if let Ok(id) = std::fs::read_to_string(&path) {
+fn file_device_id(path: &Path) -> String {
+    if let Ok(id) = std::fs::read_to_string(path) {
         let id = id.trim();
         if !id.is_empty() {
             return id.to_string();
         }
     }
     let id = uuid::Uuid::now_v7().to_string();
-    let _ = std::fs::create_dir_all(dir);
-    let _ = std::fs::write(&path, &id);
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, &id);
     id
 }
 
@@ -1493,6 +1512,7 @@ mod tests {
             name: "J's iPhone".into(),
             platform: "ios".into(),
             device_id: "abc".into(),
+            files: "",
         };
         let url = link_url(
             &SubsonicAuth::new("https://music.example.com", "j", "pw"),

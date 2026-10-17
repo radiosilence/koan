@@ -67,6 +67,15 @@ pub fn cmd_play(
     let (state, _timeline, viz_snapshot, tx) = Player::spawn_for_listening();
     let tx_quit = tx.clone();
 
+    // Reachable as a device: by the account's other devices through the
+    // server, and by whatever is on this network, as `devices.*` says.
+    koan_core::remote::control::serve(
+        koan_core::remote::link::LinkIdentity::terminal(),
+        state.clone(),
+        viz_snapshot.clone(),
+        tx.clone(),
+    );
+
     // Spawn the API server on a background thread if requested.
     if let Some(opts) = api_opts {
         let db_path = config::db_path();
@@ -208,6 +217,7 @@ pub fn cmd_play(
     // Saved above, playing if it was: a renderer left on our URL would play
     // out its buffer and stop, so it is stopped here and resumed next time.
     koan_core::player::commands::release_renderer(&tx_quit, Duration::from_millis(1500));
+    koan_core::remote::control::stop();
 
     BufferedLogger::clear_buffer();
     std::thread::sleep(Duration::from_millis(100));

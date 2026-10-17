@@ -5959,7 +5959,7 @@ impl KoanEngine {
                 let version = state.playlist_version();
                 let mut held = held.lock().unwrap_or_else(|e| e.into_inner());
                 if held.as_ref().is_none_or(|(v, _)| *v != version) {
-                    *held = Some((version, link_queue(&state)));
+                    *held = Some((version, koan_core::remote::control::link_queue(&state)));
                 }
                 koan_core::remote::link::LinkState {
                     playing: state.playback_state() == PlaybackState::Playing,
@@ -7067,38 +7067,6 @@ fn saved_by(changed_by: &str) -> String {
         None if changed_by == "koan" => "a kōan device".to_owned(),
         None => changed_by.to_owned(),
     }
-}
-
-/// The queue as the server is told it, with each track's id on the server. At
-/// most `LINK_QUEUE_MAX` entries, from a few before the current one.
-fn link_queue(state: &SharedPlayerState) -> Vec<koan_core::remote::link::LinkQueueEntry> {
-    const LINK_QUEUE_MAX: usize = 300;
-    let (window, cursor) = state.playlist_window(20, LINK_QUEUE_MAX);
-
-    let remote: std::collections::HashMap<i64, String> = koan_core::db::pool::shared()
-        .get()
-        .ok()
-        .and_then(|db| {
-            let ids: Vec<i64> = window.iter().filter_map(|i| i.db_id).collect();
-            queries::tracks_by_ids(&db.conn, &ids).ok()
-        })
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|t| t.remote_id.map(|r| (t.id, r)))
-        .collect();
-
-    window
-        .iter()
-        .map(|i| koan_core::remote::link::LinkQueueEntry {
-            id: Some(i.id.0.to_string()),
-            track_id: i.db_id.and_then(|id| remote.get(&id).cloned()),
-            title: i.title.clone(),
-            artist: i.artist.clone(),
-            album: i.album.clone(),
-            duration_ms: i.duration_ms.unwrap_or(0),
-            current: Some(i.id) == cursor,
-        })
-        .collect()
 }
 
 /// The account client, on a server whose invites this app can open. Checked

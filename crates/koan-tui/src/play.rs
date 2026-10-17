@@ -34,14 +34,15 @@ pub struct TuiCallbacks {
 
 /// Save the current queue and playback position to DB.
 fn save_playback_state_from_app(app: &app::App) {
-    let (items, cursor) = app.state.snapshot_playlist();
+    let state = &app.view.local;
+    let (items, cursor) = state.snapshot_playlist();
     if items.is_empty() {
         if let Ok(db) = koan_core::db::pool::shared().get() {
             let _ = koan_core::db::queries::clear_playback_state(&db.conn);
             // The mode outlives the queue, and may be what changed.
             let _ = koan_core::db::queries::save_playback_position(
                 &db.conn,
-                app.state.play_mode(),
+                state.play_mode(),
                 None,
                 0,
                 false,
@@ -57,17 +58,17 @@ fn save_playback_state_from_app(app: &app::App) {
     let cursor_path = cursor
         .and_then(|cid| items.iter().find(|i| i.id == cid))
         .map(|i| i.path.to_string_lossy().into_owned());
-    let position_ms = app.state.position_ms();
+    let position_ms = state.position_ms();
 
     match koan_core::db::pool::shared().get() {
         Ok(db) => {
             if let Err(e) = koan_core::db::queries::save_playback_state(
                 &db.conn,
                 &persisted,
-                app.state.play_mode(),
+                state.play_mode(),
                 cursor_path.as_deref(),
                 position_ms,
-                app.state.playback_state() == koan_core::player::state::PlaybackState::Playing,
+                state.playback_state() == koan_core::player::state::PlaybackState::Playing,
             ) {
                 log::warn!("failed to save playback state: {}", e);
             }
@@ -80,18 +81,18 @@ fn save_playback_state_from_app(app: &app::App) {
 
 /// Persist the cursor and position alone, leaving the saved queue as it is.
 fn save_playback_position_from_app(app: &app::App) {
-    let cursor_path = app
-        .state
+    let state = &app.view.local;
+    let cursor_path = state
         .cursor_path()
         .map(|p| p.to_string_lossy().into_owned());
     match koan_core::db::pool::shared().get() {
         Ok(db) => {
             if let Err(e) = koan_core::db::queries::save_playback_position(
                 &db.conn,
-                app.state.play_mode(),
+                state.play_mode(),
                 cursor_path.as_deref(),
-                app.state.position_ms(),
-                app.state.playback_state() == PlaybackState::Playing,
+                state.position_ms(),
+                state.playback_state() == PlaybackState::Playing,
             ) {
                 log::warn!("failed to save playback position: {}", e);
             }
@@ -165,7 +166,7 @@ pub fn run_tui(
     let frame_duration = Duration::from_micros(1_000_000 / target_fps as u64);
     let mut next_frame = std::time::Instant::now();
 
-    let mut app = app::App::new(state, viz_snapshot, tx.clone(), log_buffer, target_fps);
+    let mut app = app::App::new(state, viz_snapshot, tx, log_buffer, target_fps);
     // Before anything reads the keyboard: the terminal answers on stdin.
     app.art.gfx = crate::cover_art::Gfx::detect(
         koan_core::config::Config::load()
@@ -184,15 +185,15 @@ pub fn run_tui(
 
     app.load_favourites();
 
-    let mut media = crate::media_keys::MediaKeyHandler::new(tx.clone(), app.state.clone());
+    let mut media = crate::media_keys::MediaKeyHandler::new(app.tx.clone(), app.state.clone());
     let mut last_track_path: Option<PathBuf> = None;
 
     let mut last_autosave = std::time::Instant::now();
     const AUTOSAVE_INTERVAL: Duration = Duration::from_millis(100);
     let mut last_position_save = std::time::Instant::now();
-    let mut saved_playback_state = app.state.playback_state();
-    let mut saved_content = app.state.saved_version();
-    let mut saved_cursor = app.state.cursor();
+    let mut saved_playback_state = app.view.local.playback_state();
+    let mut saved_content = app.view.local.saved_version();
+    let mut saved_cursor = app.view.local.cursor();
     const POSITION_SAVE_INTERVAL: Duration = Duration::from_secs(1);
 
     // A picker's items, being read on another thread.
@@ -204,6 +205,7 @@ pub fn run_tui(
         }
 
         app.refresh_device_selector();
+        app.follow_control();
         terminal.draw(|f| crate::ui::render(f, &mut app))?;
 
         // Motion coalesces to the latest position; clicks and wheel ticks
@@ -238,7 +240,7 @@ pub fn run_tui(
                     }
                 }
                 crossterm::event::Event::Paste(text) => {
-                    let tx_drop = tx.clone();
+                    let tx_drop = app.tx.clone();
                     let log_drop = app.log_buffer.clone();
                     let insert_after = app.drop_target_queue_id();
                     let progress = std::sync::Arc::new((
@@ -322,7 +324,7 @@ pub fn run_tui(
         }
         crate::media_keys::pump_run_loop();
 
-        if app.state.quit_requested() {
+        if app.view.local.quit_requested() {
             app.quit = true;
         }
 
@@ -392,7 +394,7 @@ pub fn run_tui(
         }
 
         if let Some((kind, ids, action)) = app.picker_result.take() {
-            let tx_bg = tx.clone();
+            let tx_bg = app.tx.clone();
             let playing = app.state.cursor();
 
             app.loading_message = Some("loading...".into());
@@ -433,9 +435,9 @@ pub fn run_tui(
         // The whole queue is rewritten only when what is saved of it changed;
         // otherwise the position is saved about once a second, and on every
         // play/pause/stop and track change.
-        let playback_state = app.state.playback_state();
-        let content = app.state.saved_version();
-        let cursor = app.state.cursor();
+        let playback_state = app.view.local.playback_state();
+        let content = app.view.local.saved_version();
+        let cursor = app.view.local.cursor();
         if content != saved_content && last_autosave.elapsed() >= AUTOSAVE_INTERVAL {
             save_playback_state_from_app(&app);
             saved_content = content;
@@ -459,7 +461,7 @@ pub fn run_tui(
             if app.has_played {
                 save_playback_state_from_app(&app);
             }
-            app.tx.send(PlayerCommand::Stop).ok();
+            app.local_tx.send(PlayerCommand::Stop).ok();
             break;
         }
     }
