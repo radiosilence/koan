@@ -69,8 +69,8 @@ pub struct SearchPage {
     /// Counts the queries asked for; results for any but the last are dropped.
     generation: u64,
     shown: u64,
-    tx: Sender<(u64, String)>,
-    rx: Receiver<(u64, Vec<Item>)>,
+    tx: Sender<Query>,
+    rx: Receiver<Results>,
 }
 
 fn inside(r: Rect, col: u16, row: u16) -> bool {
@@ -128,8 +128,12 @@ fn find(q: &str) -> Vec<Item> {
         .collect()
 }
 
+/// A query and the results for it, each tagged with its generation.
+type Query = (u64, String);
+type Results = (u64, Vec<Item>);
+
 /// Runs the searches off the TUI thread, the last query of a burst only.
-fn spawn_searcher() -> (Sender<(u64, String)>, Receiver<(u64, Vec<Item>)>) {
+fn spawn_searcher() -> (Sender<Query>, Receiver<Results>) {
     let (tx, req) = crossbeam_channel::unbounded::<(u64, String)>();
     let (done, rx) = crossbeam_channel::unbounded();
     std::thread::Builder::new()
