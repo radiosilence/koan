@@ -28,8 +28,6 @@ use super::theme::Theme;
 use super::thumb_cache;
 use super::transport::format_time;
 
-pub(super) use super::text::fit;
-
 /// The widest a tile gets, in columns. Wider screens get more tiles.
 const TILE_MAX_W: u16 = 26;
 const TILE_MIN_W: u16 = 14;
