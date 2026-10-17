@@ -277,11 +277,28 @@ struct TrackListView: View {
             // anywhere else in either app.
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            // Top-aligned: the sleeve's top edge meets the title's first line.
-            HStack(alignment: .top, spacing: 18) {
+            PageHeader(Format.title(title)) {
                 sleeve
-                titleBlock
-                Spacer(minLength: 0)
+            } lead: {
+                #if !os(tvOS)
+                if let playable {
+                    PlayableHeaderButton(playable: playable)
+                    ShuffleHeaderButton(playable: playable)
+                }
+                #endif
+            } detail: {
+                if let artistLink {
+                    HStack(spacing: 5) {
+                        LinkText(text: subtitleArtist, target: .artist(artistLink))
+                        if !subtitleRest.isEmpty {
+                            Text(subtitleRest)
+                        }
+                    }
+                } else if !subtitle.isEmpty {
+                    Text(subtitle)
+                }
+            } actions: {
+                HeaderActions(playable: playable)
             }
         }
     }
@@ -302,44 +319,6 @@ struct TrackListView: View {
                     subtitle: subtitle.isEmpty ? nil : subtitle
                 )
         }
-    }
-
-    private var titleBlock: some View {
-        VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .headerCentre, spacing: Columns.headerGap) {
-                    #if !os(tvOS)
-                    if let playable {
-                        PlayableHeaderButton(playable: playable)
-                        ShuffleHeaderButton(playable: playable)
-                    }
-                    #endif
-                    Text(Format.title(title))
-                        .font(.role(.title, system: .system(size: Columns.title, weight: .semibold)))
-                        .headerTitleCentre(.title, systemSize: Columns.title)
-                        .foregroundStyle(KoanTheme.style(.strong, system: .primary))
-                        .lineLimit(2)
-                        // Beside the play button the row offers one line's
-                        // height; asked for two, it has to be let grow.
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                if let artistLink {
-                    HStack(spacing: 5) {
-                        LinkText(text: subtitleArtist, target: .artist(artistLink))
-                        if !subtitleRest.isEmpty {
-                            Text(subtitleRest)
-                                .font(.role(.control, system: .callout))
-                                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                        }
-                    }
-                } else if !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(.role(.control, system: .callout))
-                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                }
-
-                HeaderActions(playable: playable)
-                    .padding(.top, 4)
-            }
     }
 
     /// A phone's header: the title, the artist and the details each on a line
@@ -578,17 +557,13 @@ private enum Columns {
     static let quality = 190.0
     static let duration = 96.0
     static let compactDuration = 96.0
-    static let headerGap = 32.0
     static let sleeve = 260.0
     static let compactSleeve = 260.0
-    static let title = 48.0
     #else
     static let quality = 92.0
     static let duration = 48.0
     static let compactDuration = 36.0
-    static let headerGap = 12.0
     static let sleeve = 132.0
     static let compactSleeve = 200.0
-    static let title = 26.0
     #endif
 }

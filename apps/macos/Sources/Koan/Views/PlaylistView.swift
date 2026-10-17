@@ -285,21 +285,34 @@ struct PlaylistView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            // Top-aligned: the cover's top edge meets the title's first line.
-            HStack(alignment: .top, spacing: 18) {
+            PageHeader(playlist?.name ?? "Playlist") {
                 artwork
-
+            } lead: {
+                #if !os(tvOS)
+                if let playable {
+                    PlayableHeaderButton(playable: playable)
+                    ShuffleHeaderButton(playable: playable)
+                }
+                #endif
+            } detail: {
+                Text(summary)
+            } actions: {
                 VStack(alignment: .leading, spacing: 6) {
-                    titleBlock
+                    #if os(tvOS)
+                    if let playable {
+                        HStack {
+                            PlayableHeaderButton(playable: playable)
+                            ShuffleHeaderButton(playable: playable)
+                        }
+                        .padding(.vertical, 8)
+                    }
+                    #endif
                     HStack(spacing: 10) {
                         QueueButtons(playable: playable)
                         shuffleButton
                     }
-                    .padding(.top, 4)
                 }
-
-                Spacer(minLength: 0)
-
+            } trailing: {
                 VStack(alignment: .trailing, spacing: 10) {
                     #if !os(iOS)
                     PlaylistSelectionHeader(selection: $selection, rows: rows) { removeSelected() }
@@ -316,17 +329,17 @@ struct PlaylistView: View {
             .koanShadow(0.3, radius: 10, y: 4)
     }
 
+    /// The compact header's title, which only a phone draws: a television is
+    /// never compact.
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 12) {
-                #if !os(tvOS)
                 if let playable {
                     PlayableHeaderButton(playable: playable)
                     ShuffleHeaderButton(playable: playable)
                 }
-                #endif
                 Text(playlist?.name ?? "Playlist")
-                    .font(.role(.title, system: .system(size: 26, weight: .semibold)))
+                    .font(.role(.title, system: .system(size: pageTitleSize, weight: .semibold)))
                     .foregroundStyle(KoanTheme.style(.strong, system: .primary))
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
@@ -334,15 +347,6 @@ struct PlaylistView: View {
             Text(summary)
                 .font(.role(.control, system: .callout))
                 .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-            #if os(tvOS)
-            if let playable {
-                HStack {
-                    PlayableHeaderButton(playable: playable)
-                    ShuffleHeaderButton(playable: playable)
-                }
-                .padding(.top, 12)
-            }
-            #endif
         }
     }
 

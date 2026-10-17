@@ -425,7 +425,7 @@ private final class MixedLayout: NSCollectionViewLayout {
         didSet { invalidateLayout() }
     }
 
-    private let margin: CGFloat = 20
+    private let margin = RowMetrics.collectionMargin
     private let headerHeight: CGFloat = 34
     private var attributes: [IndexPath: NSCollectionViewLayoutAttributes] = [:]
     private var headers: [Int: NSCollectionViewLayoutAttributes] = [:]
