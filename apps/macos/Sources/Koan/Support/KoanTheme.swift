@@ -568,8 +568,10 @@ extension UIColor {
 /// the record playing, or mint — and falls back to `ink` for text where the
 /// record's colour cannot reach 4.5:1 (see `KoanAccent`).
 enum KoanTone {
-    /// `rule` is for strokes and fills — chart grids, dividers — never text.
-    case ink, strong, muted, accent, bad, rule
+    /// `rule` is for strokes and fills — chart grids, dividers, an empty
+    /// sleeve — and `hover` the fill behind a row under the pointer; neither
+    /// is for text.
+    case ink, strong, muted, accent, bad, rule, hover
 }
 
 // MARK: - Accent
@@ -884,7 +886,9 @@ extension KoanTheme {
         case (true, .muted): AnyShapeStyle(Color.koanMuted)
         case (true, .bad): AnyShapeStyle(Color.koanBad)
         case (true, .rule): AnyShapeStyle(Color.koanRule)
+        case (true, .hover): AnyShapeStyle(Color.koanHover.opacity(0.3))
         case (false, .rule): AnyShapeStyle(.quaternary)
+        case (false, .hover): AnyShapeStyle(.quaternary.opacity(0.5))
         case (_, .accent): AnyShapeStyle(.tint)
         case (false, .ink), (false, .strong): AnyShapeStyle(.primary)
         case (false, .muted): AnyShapeStyle(.secondary)
@@ -1060,7 +1064,7 @@ extension View {
         modifier(KoanBadgeRole(accent: accent))
     }
 
-    /// A chip that is a choice — a device, a preset, an artist: a `muted`
+    /// A chip that is a choice — a device, a preset: a `muted`
     /// outline, square, in the theme. A filled capsule in the platform's look.
     func koanChip() -> some View {
         modifier(KoanChipRole())
@@ -1292,6 +1296,7 @@ private struct KoanTextRole: ViewModifier {
         case .muted: AnyShapeStyle(Color.koanMuted)
         case .bad: AnyShapeStyle(Color.koanBad)
         case .rule: AnyShapeStyle(Color.koanRule)
+        case .hover: AnyShapeStyle(Color.koanHover.opacity(0.3))
         case .accent: accent.shade(scheme).readsAsText ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.koanInk)
         }
     }
@@ -1303,6 +1308,7 @@ private struct KoanTextRole: ViewModifier {
         case .accent: accent.shade(scheme).readsAsText ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary)
         case .bad: AnyShapeStyle(.red)
         case .rule: AnyShapeStyle(.quaternary)
+        case .hover: AnyShapeStyle(.quaternary.opacity(0.5))
         }
     }
 }

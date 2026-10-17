@@ -89,7 +89,7 @@ struct NowPlayingPage: View {
                 .transition(.opacity)
         } else {
             RoundedRectangle(cornerRadius: KoanTheme.radius(16))
-                .fill(.quaternary)
+                .fill(KoanTheme.style(.rule))
                 .overlay { KoanIcon(Icon.track).font(.system(size: 120)) }
         }
     }
@@ -240,7 +240,7 @@ private struct UpNext: View {
                                         if let source = Self.artwork(of: item) {
                                             AlbumArtwork(source: source, size: .thumb, cornerRadius: KoanTheme.radius(8))
                                         } else {
-                                            RoundedRectangle(cornerRadius: KoanTheme.radius(8)).fill(.quaternary)
+                                            RoundedRectangle(cornerRadius: KoanTheme.radius(8)).fill(KoanTheme.style(.rule))
                                         }
                                     }
                                     .frame(width: 96, height: 96)

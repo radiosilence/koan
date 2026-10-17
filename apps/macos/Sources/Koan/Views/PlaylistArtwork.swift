@@ -25,7 +25,7 @@ struct PlaylistArtwork: View {
     private var mosaic: some View {
         switch sources.count {
         case 0:
-            Rectangle().fill(.quaternary).overlay { EnsoPlaceholder() }
+            Rectangle().fill(KoanTheme.style(.rule)).overlay { EnsoPlaceholder() }
         case 1:
             tile(sources[0])
         case 2:
