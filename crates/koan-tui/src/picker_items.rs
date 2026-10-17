@@ -8,8 +8,9 @@ use crate::picker::{PickerItem, PickerKind, PickerPartKind};
 /// fingerprint sees rows added and removed, not rows edited in place.
 const MAX_AGE_SECS: u64 = 300;
 
-/// A kind's items, and the library they were read from.
-type Cached = (PickerKind, u64, Arc<Vec<PickerItem>>);
+/// A kind's items, the library they were read from, and whether offline
+/// narrowed them.
+type Cached = (PickerKind, (u64, bool), Arc<Vec<PickerItem>>);
 
 static CACHE: parking_lot::Mutex<Vec<Cached>> = parking_lot::Mutex::new(Vec::new());
 
@@ -37,7 +38,11 @@ pub fn load_picker_items(kind: PickerKind) -> Vec<PickerItem> {
         .unwrap_or_default()
         .as_secs()
         / MAX_AGE_SECS;
-    let version = queries::library_fingerprint(&db.conn).unwrap_or_default() ^ window;
+    let offline = koan_core::remote::offline::active();
+    let version = (
+        queries::library_fingerprint(&db.conn).unwrap_or_default() ^ window,
+        offline,
+    );
     if let Some((_, _, items)) = CACHE
         .lock()
         .iter()
@@ -45,7 +50,7 @@ pub fn load_picker_items(kind: PickerKind) -> Vec<PickerItem> {
     {
         return items.as_ref().clone();
     }
-    let items = Arc::new(read_picker_items(&db, kind));
+    let items = Arc::new(read_picker_items(&db, kind, offline));
     let mut cache = CACHE.lock();
     cache.retain(|(k, _, _)| *k != kind);
     cache.push((kind, version, Arc::clone(&items)));
@@ -55,19 +60,53 @@ pub fn load_picker_items(kind: PickerKind) -> Vec<PickerItem> {
 fn read_picker_items(
     db: &koan_core::db::connection::Database,
     kind: PickerKind,
+    offline: bool,
 ) -> Vec<PickerItem> {
     let conn = &db.conn;
+    // Offline, only what can play here.
+    let filter = queries::AlbumFilter {
+        on_device: offline,
+        ..Default::default()
+    };
     match kind {
         PickerKind::Track => {
-            let tracks = queries::all_tracks(conn).unwrap_or_default();
-            make_track_picker_items(&tracks)
+            let tracks = if offline {
+                queries::filter_tracks(
+                    conn,
+                    &queries::TrackFilter {
+                        on_device: true,
+                        ..Default::default()
+                    },
+                    queries::TrackOrder::ArtistAlbumDiscTrack,
+                    false,
+                    u32::MAX,
+                    0,
+                )
+            } else {
+                queries::all_tracks(conn)
+            };
+            make_track_picker_items(&tracks.unwrap_or_default())
         }
         PickerKind::Album => {
-            let albums = queries::all_albums(conn).unwrap_or_default();
+            let albums = queries::list_albums(
+                conn,
+                &queries::AlbumQuery {
+                    filter,
+                    ..Default::default()
+                },
+            )
+            .unwrap_or_default();
             make_album_picker_items(&albums)
         }
         PickerKind::Artist => {
-            let artists = queries::all_artists(conn).unwrap_or_default();
+            let artists = queries::list_artists(
+                conn,
+                &queries::ArtistQuery {
+                    filter,
+                    ..Default::default()
+                },
+            )
+            .unwrap_or_default();
             make_artist_picker_items(&artists)
         }
         // QueueJump items are created eagerly in app.rs, never lazy-loaded.

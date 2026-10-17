@@ -9,6 +9,19 @@ use koan_core::index::scanner::{self, ScanOptions};
 
 use crate::settings_page::Task;
 
+/// What a thread the TUI started sends back.
+pub enum Report {
+    /// A scan or a sync has ended; another may start.
+    Task(String),
+    /// Other work has ended.
+    Work(String),
+}
+
+/// Whether a track has to come from the server to play here.
+pub fn needs_fetch(t: &koan_core::db::queries::TrackRow) -> bool {
+    t.remote_id.is_some() && t.path.is_none() && t.cached_path.is_none()
+}
+
 pub fn run(task: Task) -> String {
     match task {
         Task::Scan => scan(),
@@ -63,5 +76,44 @@ fn sync() -> String {
             s.library.tracks_synced, s.library.albums_synced, s.library.artists_synced
         ),
         Err(e) => format!("sync failed: {e}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use koan_core::db::queries::TrackRow;
+
+    fn track(path: Option<&str>, remote: Option<&str>, cached: Option<&str>) -> TrackRow {
+        TrackRow {
+            id: 1,
+            album_id: None,
+            artist_id: None,
+            artist_name: String::new(),
+            album_artist_name: String::new(),
+            album_title: String::new(),
+            disc: None,
+            track_number: None,
+            title: String::new(),
+            duration_ms: None,
+            path: path.map(Into::into),
+            codec: None,
+            sample_rate: None,
+            bit_depth: None,
+            channels: None,
+            bitrate: None,
+            genre: None,
+            source: "remote".into(),
+            remote_id: remote.map(Into::into),
+            cached_path: cached.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn only_server_tracks_not_yet_here_are_fetched() {
+        assert!(needs_fetch(&track(None, Some("r"), None)));
+        assert!(!needs_fetch(&track(None, Some("r"), Some("/cache/r.flac"))));
+        assert!(!needs_fetch(&track(Some("/music/a.flac"), Some("r"), None)));
+        assert!(!needs_fetch(&track(Some("/music/a.flac"), None, None)));
     }
 }

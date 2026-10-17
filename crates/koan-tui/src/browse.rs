@@ -337,6 +337,7 @@ impl Browse {
         };
         let now = shelves::now();
         let user = queries::LOCAL_USER;
+        let offline = koan_core::remote::offline::active();
         let mut query = match (self.source.shelf(), self.source) {
             (Some(shelf), _) => shelf.albums(user, now),
             (None, Source::Artist(id)) => AlbumQuery {
@@ -352,6 +353,7 @@ impl Browse {
         if self.filterable() {
             query.filter = self.filters.album_filter();
         }
+        query.filter.on_device |= offline;
         self.albums = queries::list_albums(&db.conn, &query).unwrap_or_default();
         if let Source::Artist(id) = self.source {
             if self.header.is_none() {
@@ -364,10 +366,11 @@ impl Browse {
                 .unwrap_or_default();
         }
         self.tracks = match self.source.shelf() {
-            Some(shelf) => shelf
-                .tracks(user, now)
-                .page(&db.conn, 5000, 0)
-                .unwrap_or_default(),
+            Some(shelf) => {
+                let mut listing = shelf.tracks(user, now);
+                listing.filter.on_device |= offline;
+                listing.page(&db.conn, 5000, 0).unwrap_or_default()
+            }
             None => Vec::new(),
         };
         self.loaded = true;

@@ -120,7 +120,7 @@ impl HistoryPage {
             return;
         };
         let search = (!self.filter.is_empty()).then_some(self.filter.as_str());
-        self.entries = queries::play_history_with_tracks(
+        let entries = queries::play_history_with_tracks(
             &db.conn,
             queries::LOCAL_USER,
             search,
@@ -128,7 +128,27 @@ impl HistoryPage {
             0,
         )
         .unwrap_or_default();
+        drop(db);
+        self.take(entries);
+    }
+
+    /// Shows `entries`, keeping the selected play selected and where it was
+    /// on screen when it is still among them.
+    fn take(&mut self, entries: Vec<PlayHistoryRow>) {
+        let kept = self
+            .entries
+            .get(self.cursor)
+            .map(|e| (e.id, self.line_of[self.cursor]));
+        self.entries = entries;
         self.rebuild();
+        let Some((id, was)) = kept else { return };
+        if let Some(idx) = self.entries.iter().position(|e| e.id == id) {
+            self.cursor = idx;
+            if self.scroll > 0 {
+                let now = self.line_of[idx];
+                self.scroll = (self.scroll + now).saturating_sub(was);
+            }
+        }
     }
 
     fn rebuild(&mut self) {
@@ -147,7 +167,6 @@ impl HistoryPage {
             self.lines.push(Line::Play(i));
         }
         self.cursor = self.cursor.min(self.entries.len().saturating_sub(1));
-        self.follow = true;
     }
 
     fn rows(&self) -> usize {
@@ -245,6 +264,7 @@ impl HistoryPage {
                 }
                 _ => {}
             }
+            self.follow = true;
             return Some(Action::None);
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
@@ -822,6 +842,28 @@ mod tests {
         );
         let menu = p.geom.menu;
         assert_eq!(p.hit(menu.x, menu.y), Some(HistoryHit::Menu));
+    }
+
+    #[test]
+    fn a_new_play_leaves_the_selection_where_it_was() {
+        let mut p = page();
+        draw(&mut p, 100, 3);
+        p.move_to(2);
+        draw(&mut p, 100, 3);
+        let (scroll, line) = (p.scroll, p.line_of[2]);
+        assert!(scroll > 0);
+        let now = Local::now().timestamp();
+        let mut entries = vec![entry(4, now + 1, "four")];
+        entries.extend(p.entries.iter().cloned());
+        p.take(entries);
+        assert_eq!(p.entries[p.cursor].id, 3, "the same play stays selected");
+        assert_eq!(p.scroll + line, scroll + p.line_of[p.cursor]);
+        draw(&mut p, 100, 3);
+        assert_eq!(
+            p.line_of[p.cursor] - p.scroll,
+            line - scroll,
+            "and stays put on screen"
+        );
     }
 
     #[test]

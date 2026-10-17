@@ -44,9 +44,11 @@ fn follow(db: &Database, id: i64, was_locked: bool) {
 fn edit<T>(id: i64, change: impl FnOnce(&Database) -> Result<T, String>) -> Result<T, String> {
     let db = db()?;
     fillable(&db, id)?;
-    HISTORY.record(&db.conn, id).map_err(|e| e.to_string())?;
+    let before =
+        koan_core::playlists::PlaylistHistory::before(&db.conn, id).map_err(|e| e.to_string())?;
     let was_locked = locked(&db, id);
     let out = change(&db)?;
+    HISTORY.record(before);
     follow(&db, id, was_locked);
     koan_core::playlists::push_to_remote(id);
     Ok(out)

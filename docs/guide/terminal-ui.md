@@ -26,15 +26,15 @@ The wheel and the scrollbars (which can be dragged) scroll every page. Opening a
 
 ## Favourites, play next and downloads
 
-As in the apps, a record and an artist can be favourites as well as tracks. `f` favourites the record under the cursor on the browsing pages, `H` its artist (on an artist's page, that artist; the heart beside the name does the same with a click), and a favourite record wears a `♥` under its tile. `N` puts a record, a track or whatever the cursor is on next in the queue instead of last, on every page that has `a`. `i` shows what the library knows of a track, wherever it is listed, and `d` and `u` download a record or track to this device or remove the download; the apps' menus offer the same.
+As in the apps, a record and an artist can be favourites as well as tracks. `f` favourites the record under the cursor on the browsing pages, `H` its artist (on an artist's page, that artist; the heart beside the name does the same with a click), and a favourite record wears a `♥` under its tile. `N` puts a record, a track or whatever the cursor is on next in the queue instead of last, on the browsing pages, the album page, History and the Artists tree. `i` shows what the library knows of a track, wherever it is listed, and `d` and `u` download a record or track to this device or remove the download; the apps' menus offer the same.
 
 ## The actions menu
 
-Every action with a key has a way to reach it by pointer. `m`, or `⋯ actions` in the heading of the browsing pages, an album page and History, opens a menu for what the cursor is on: play, add to the queue, play next, replace the queue, add to a playlist, favourite the record or the artist, go to the record or the artist, track info, download, and remove the download. `Enter` or a click does one; `Esc` or a click outside closes it. The queue's own menu (the `⋯` at the end of a row) offers the same where it applies.
+Every action with a key has a way to reach it by pointer. `m`, or `⋯ actions` in the heading of the browsing pages, an album page and History, opens a menu for what the cursor is on. What it offers depends on the page: playing, queueing and putting next everywhere, replacing the queue on the browsing pages, adding to a playlist, favouriting (the artist as well as the record on the browsing pages), going to the record or the artist, track info, downloading and removing the download. `Enter` or a click does one; `Esc` or a click outside closes it. The queue's own menu (the `⋯` at the end of a row) offers the same where it applies.
 
 ## Playlists
 
-Playlists are the apps' playlists, the same rows and the same server copies: an edit is written here and pushed to the server in the background. `6` lists them; `Enter` or a second click opens one, `P` or the `▸` plays it, `s` plays it shuffled, `a` and `N` add it to the queue or put it next, `c` or `+ new` makes one, `r` renames, and `x` or the `×` deletes on a second press. On a playlist's page `Enter` plays from the track under the cursor, `K` and `J` (or the `▴` and `▾` at the end of a row) move a track up or down, and `x` or `×` takes it out; `Ctrl+Z` and `Ctrl+Y`, or `undo` and `redo` under the name, step back and forward through the edits made to that playlist this session. While the queue is exactly a playlist, an edit to the playlist is made to the queue as well, keeping what is playing. Playlists that a file in the library or a server decides, and smart playlists, are shown with `(read-only)` and refuse edits.
+Playlists are the apps' playlists, the same rows and the same server copies: an edit is written here and pushed to the server in the background. `6` lists them; `Enter` or a second click opens one, `P` or the `▸` plays it, `a` and `N` add it to the queue or put it next, `c` or `+ new` makes one, `r` renames, `w` puts its tracks in another playlist, and `x` or the `×` deletes on a second press. On a playlist's page `Enter` plays from the track under the cursor, the `shuffle` button plays it shuffled, `K` and `J` (or the `▴` and `▾` at the end of a row) move a track up or down, and `x` or `×` takes it out; `Ctrl+Z` and `Ctrl+Y`, or `undo` and `redo` under the name, step back and forward through the edits made to that playlist this session. While the queue is exactly a playlist, an edit to the playlist is made to the queue as well, keeping what is playing. Playlists that a file in the library or a server decides, and smart playlists, are shown with `(read-only)` and refuse edits.
 
 `w` puts a record, a track or whatever the cursor is on into a playlist from any page that has `a`, and from the queue and Now playing, by choosing one in a list that starts with `+ new playlist…`. `W` in the queue saves the whole queue as a new playlist.
 
@@ -42,7 +42,7 @@ Playlists are the apps' playlists, the same rows and the same server copies: an 
 
 History lists every play, grouped by day. `x` (or the `×` at the end of a row) forgets a play and `D` forgets all of them, on a second press; signed in to a koan server, a forgotten play is forgotten on the account's other devices too, as in the apps. The artist and the record in a row are links, `/` filters by title, artist or record, and `Enter` or a second click plays the track.
 
-Settings holds the playback, terminal, server and device settings that are a choice rather than a path or a password: ReplayGain and pre-amp, fading on pause, the theme, cover graphics and size, the frame counter and rate, the visualiser's colours, syncing, and what other devices on the network may do. `←` and `→` (or the arrows beside each value, or a click on the value) change one, and each is written to the file that owns it, so a setting that belongs to this machine stays out of a `config.toml` you share. Folders and the server account are shown and are set up in the apps or the config. `scan library` and `sync now` are rows too, and run in the background; offline mode narrows the library to what is on this device.
+Settings holds the playback, terminal, server and device settings that are a choice rather than a path or a password: ReplayGain and pre-amp, fading on pause, the theme, cover graphics and size, the frame counter and rate, the visualiser's colours, syncing, and what other devices on the network may do. `←` and `→` (or the arrows beside each value, or a click on the value) change one, and each is written to the file that owns it, so a setting that belongs to this machine stays out of a `config.toml` you share. Folders and the server account are shown and are set up in the apps or the config. `scan library` and `sync now` are rows too, and run in the background; offline mode narrows the browsing pages, the Artists tree and the pickers to what is on this device.
 
 ## Layout
 
@@ -66,7 +66,7 @@ Albums, Favourites and Recent draw each record as a tile. `v` switches to rows (
 | `P` | Add to the queue and play |
 | `a` | Add to the end of the queue |
 | `Ctrl+R` | Replace the queue and play |
-| `f` | On a list of tracks, favourite or unfavourite |
+| `f` | Favourite or unfavourite the record, or on a list of tracks the track |
 
 On the album page `Enter` plays from the track under the cursor to the end of the record; `P` plays all of it, `a` adds it, `Ctrl+R` replaces the queue with it, and `A` opens the artist. The buttons under the title do the same. `N` puts it next in the queue, `H` or the heart beside the title favourites the record, `i` shows what the library holds of the track, and `d` and `u` download the record to this device or remove the download.
 
@@ -82,7 +82,7 @@ With the mouse: click selects, a second click opens, the wheel scrolls, and the 
 
 ## The EQ
 
-`E` opens a list of EQ profiles with the one in use marked. Choosing one plays the output through it, and "off" plays the output untouched; it is the same choice the apps' EQ page and `koan dsp assign` make, so they agree. Editing, importing and measuring profiles still happen in the apps and the CLI. See [DSP](dsp.md).
+`E` opens a list of EQ profiles with the one in use marked. Choosing one plays the output through it, and "off" plays the output untouched; it is the same choice the apps' EQ page and `koan dsp assign` make, so they agree. `B` bypasses the EQ and, pressed again, puts back the profile that was bypassed, for comparing with and without; with nothing to put back it opens the list. The EQ is also a link wherever it is shown: the `EQ` in the transport bar, the signal path's `dsp` row and the curve on Now playing all open the list when clicked. Editing, importing and measuring profiles still happen in the apps and the CLI. See [DSP](dsp.md).
 
 ## Covers
 
