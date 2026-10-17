@@ -4032,58 +4032,62 @@ impl KoanEngine {
 
     // --- Settings ----------------------------------------------------------
 
-    /// The kōan theme, or the platform's look. Saved at once; it takes effect
-    /// on the next launch, since every view is drawn in the theme read at start.
+    /// The kōan theme, or the platform's look. Saved in the background; it
+    /// takes effect on the next launch, since every view is drawn in the theme
+    /// read at start.
     pub fn set_theme(&self, koan: bool) {
         let theme = if koan { "koan" } else { "system" };
-        if let Err(e) = Config::persist(|cfg| cfg.appearance.theme = theme.into()) {
-            log::warn!("appearance: theme not saved: {e}");
-        }
+        save_appearance("theme", move |cfg| cfg.appearance.theme = theme.into());
     }
 
-    /// Colours from the record, or koan's own. Saved at once; the app redraws
-    /// from its own copy.
+    /// Colours from the record, or koan's own. Saved in the background; the
+    /// app redraws from its own copy.
     pub fn set_record_colours(&self, on: bool) {
-        if let Err(e) = Config::persist(|cfg| cfg.appearance.record_colours = on) {
-            log::warn!("appearance: record_colours not saved: {e}");
-        }
+        save_appearance("record_colours", move |cfg| {
+            cfg.appearance.record_colours = on
+        });
     }
 
     /// The wash under the whole window, or panels on grounds of their own.
-    /// Saved at once; the app redraws from its own copy.
+    /// Saved in the background; the app redraws from its own copy.
     pub fn set_wash_window(&self, on: bool) {
-        if let Err(e) = Config::persist(|cfg| cfg.appearance.wash_window = on) {
-            log::warn!("appearance: wash_window not saved: {e}");
-        }
+        save_appearance("wash_window", move |cfg| cfg.appearance.wash_window = on);
     }
 
-    /// The rainbow, on this device. Saved at once; the app redraws from its
-    /// own copy.
+    /// The rainbow, on this device. Saved in the background; the app redraws
+    /// from its own copy.
     pub fn set_rainbow(&self, on: bool) {
-        if let Err(e) = Config::persist(|cfg| cfg.appearance.rainbow = on) {
-            log::warn!("appearance: rainbow not saved: {e}");
-        }
+        save_appearance("rainbow", move |cfg| cfg.appearance.rainbow = on);
     }
 
-    /// Show icons beside labels in the kōan theme, or not. Saved at once;
-    /// the app redraws from its own copy.
+    /// Show icons beside labels in the kōan theme, or not. Saved in the
+    /// background; the app redraws from its own copy.
     pub fn set_theme_icons(&self, on: bool) {
-        if let Err(e) = Config::persist(|cfg| cfg.appearance.theme_icons = on) {
-            log::warn!("appearance: theme_icons not saved: {e}");
-        }
+        save_appearance("theme_icons", move |cfg| cfg.appearance.theme_icons = on);
     }
 
-    /// Text size on the Mac, in percent (see `appearance.text_size`). Saved at
-    /// once; the app redraws from its own copy.
+    /// Text size on the Mac, in percent (see `appearance.text_size`). Saved in
+    /// the background; the app redraws from its own copy.
     pub fn set_text_size(&self, percent: u16) {
-        if let Err(e) = Config::persist(|cfg| cfg.appearance.text_size = percent) {
-            log::warn!("appearance: text_size not saved: {e}");
+        save_appearance("text_size", move |cfg| cfg.appearance.text_size = percent);
+    }
+
+    /// Wait for every setting still being saved to land. For the app to call as
+    /// it quits, since a change made just before would otherwise go with the
+    /// process: the theme, which takes effect on the next launch, most of all.
+    /// Gives up after two seconds, so a disk that has gone away cannot hang the
+    /// quit.
+    pub fn flush_settings(&self) {
+        if !APPEARANCE.settle_within(std::time::Duration::from_secs(2)) {
+            log::warn!("settings: still saving as the app quit");
         }
     }
 
-    /// How the app is drawn, from `[appearance]`. Read once, as the app opens:
-    /// a change takes effect on the next launch.
+    /// How the app is drawn, from `[appearance]`, once every change still
+    /// being saved has landed. Read once, as the app opens: a change takes
+    /// effect on the next launch.
     pub fn appearance(&self) -> Appearance {
+        APPEARANCE.settle();
         let cfg = Config::cached();
         Appearance {
             koan: cfg.appearance.theme == "koan",
@@ -6274,6 +6278,25 @@ impl KoanEngine {
             })
             .collect()
     }
+}
+
+type AppearanceChange = (&'static str, Box<dyn FnOnce(&mut Config) + Send>);
+
+/// `[appearance]` changes, saved off the caller's thread (see `offload::Batches`).
+static APPEARANCE: offload::Batches<AppearanceChange> = offload::Batches::new(|changes| {
+    let keys: Vec<_> = changes.iter().map(|(key, _)| *key).collect();
+    let saved = Config::persist(move |cfg| {
+        for (_, change) in changes {
+            change(cfg);
+        }
+    });
+    if let Err(e) = saved {
+        log::warn!("appearance: {} not saved: {e}", keys.join(", "));
+    }
+});
+
+fn save_appearance(key: &'static str, change: impl FnOnce(&mut Config) + Send + 'static) {
+    APPEARANCE.add((key, Box::new(change)));
 }
 
 /// Rebuild playlist items for a saved queue.

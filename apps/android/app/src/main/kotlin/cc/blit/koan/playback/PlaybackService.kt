@@ -132,6 +132,8 @@ class PlaybackService : MediaSessionService() {
 
     /** Stop with the app's task when nothing is playing, as Media3 recommends. */
     override fun onTaskRemoved(rootIntent: Intent?) {
+        // Swiped away with nothing playing, the process may go soon after.
+        engine.flushSettings()
         if (!session.player.playWhenReady) stopSelf()
     }
 
