@@ -85,7 +85,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     } else {
         0
     };
-    let transport_height = art_height.max(TRANSPORT_HEIGHT_DEFAULT);
+    // Now playing is the transport, so the foot has only the hints there.
+    let transport_height = if app.page() == Page::NowPlaying {
+        0
+    } else {
+        art_height.max(TRANSPORT_HEIGHT_DEFAULT)
+    };
 
     // Main layout: stage (flex) | hairline | transport | hints (1)
     let chunks = Layout::vertical([
@@ -127,8 +132,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .cloned()
     });
 
-    // Always reserve art space — placeholder keeps layout stable.
-    let art_width = art_cells.min(transport_rect.width.saturating_sub(2));
+    // Without a cover the words start at the gutter.
+    let art_width = if has_art {
+        art_cells.min(transport_rect.width.saturating_sub(2))
+    } else {
+        0
+    };
     let art_area = Rect::new(
         transport_rect.x,
         transport_rect.y,
@@ -227,6 +236,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             }
         }
         Page::NowPlaying => {
+            let stage = super::shell::body(stage);
             super::now_playing::render(frame.buffer_mut(), app, stage);
         }
         Page::Playlists => {

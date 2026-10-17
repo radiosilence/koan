@@ -18,31 +18,6 @@ use super::shell::{Link, Links};
 use super::text::fit;
 use super::theme::Theme;
 
-/// Format audio quality info as a human-readable string.
-///
-/// Examples: "CD quality", "FLAC 96kHz/24bit", "Opus 48kHz/128kbps", "MP3 320kbps"
-///
-/// `output_rate` is what the device settled at. Where it differs from the
-/// source, the string says so — a device that refused the rate is being fed
-/// resampled audio, and the one claim this player cannot afford to leave
-/// unqualified is the one about what reaches the DAC. DSP is named for the
-/// same reason.
-pub fn format_quality(
-    info: &TrackInfo,
-    output_rate: Option<u32>,
-    dsp: Option<&DspStatus>,
-) -> String {
-    let resampled = match output_rate {
-        Some(out) if out != info.sample_rate => format!(" → {}", rate_label(out)),
-        _ => String::new(),
-    };
-    let processed = match dsp {
-        Some(d) => format!(" · {}", dsp_label(d)),
-        None => String::new(),
-    };
-    format!("{}{}{}", format_source(info), resampled, processed)
-}
-
 pub fn dsp_label(d: &DspStatus) -> &'static str {
     match (d.eq, d.convolution_rate.is_some()) {
         (true, true) => "EQ + FIR",
@@ -79,57 +54,6 @@ pub fn khz(hz: u32) -> String {
     } else {
         format!("{:.1}", f64::from(hz) / 1000.0)
     }
-}
-
-fn rate_label(rate: u32) -> String {
-    match rate {
-        44100 => "44.1kHz".to_string(),
-        48000 => "48kHz".to_string(),
-        88200 => "88.2kHz".to_string(),
-        96000 => "96kHz".to_string(),
-        176400 => "176.4kHz".to_string(),
-        192000 => "192kHz".to_string(),
-        352800 => "352.8kHz".to_string(),
-        384000 => "384kHz".to_string(),
-        _ if rate.is_multiple_of(1000) => format!("{}kHz", rate / 1000),
-        _ => format!("{}Hz", rate),
-    }
-}
-
-fn format_source(info: &TrackInfo) -> String {
-    // Another device's track, which says only where it plays.
-    if info.sample_rate == 0 {
-        return info.codec.clone();
-    }
-    let rate = info.sample_rate;
-    let ch = info.channels;
-    let rate_str = rate_label(rate);
-
-    // Red-book audio gets its own name.
-    match (rate, info.bit_depth, ch) {
-        (44100, Some(16), 2) => return format!("{} · CD quality", info.codec),
-        (44100, Some(16), 1) => return format!("{} · CD quality (mono)", info.codec),
-        _ => {}
-    }
-
-    // Detail: bit depth for lossless, bitrate for lossy.
-    let detail = if let Some(b) = info.bit_depth {
-        format!("/{}bit", b)
-    } else if let Some(kbps) = info.bitrate_kbps {
-        format!("/{}kbps", kbps)
-    } else {
-        String::new()
-    };
-
-    let ch_str = if ch == 1 {
-        "mono"
-    } else if ch == 2 {
-        "stereo"
-    } else {
-        return format!("{} {}{}/{}ch", info.codec, rate_str, detail, ch);
-    };
-
-    format!("{} {}{} {}", info.codec, rate_str, detail, ch_str)
 }
 
 /// The playhead. A cell of its own rather than the end of the played run:

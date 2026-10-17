@@ -21,8 +21,7 @@ use super::lyrics::LyricsPanel;
 use super::shell::Link;
 use super::theme::Theme;
 use super::transport::{
-    self, Act, Control, MINI_BARS, TransportBar, badge, dsp_label, format_quality, place, press,
-    width_of,
+    self, Act, Control, MINI_BARS, TransportBar, badge, dsp_label, place, press, width_of,
 };
 use super::visualizer::{VisualizerWidget, render_spectrogram};
 
@@ -564,11 +563,14 @@ fn draw_words(
     let off = deviation(info, output_rate, dsp, cfg.playback.replaygain);
     let value = |s: String| vec![Span::styled(s, theme.track_normal)];
     if let Some(row) = next(0) {
-        let source = format!(
-            "{} \u{b7} {}",
-            badge(info, None),
-            format_quality(info, None, None)
-        );
+        // The badge, and what it leaves out: red book's name, or a lossy
+        // file's bitrate.
+        let mut source = badge(info, None);
+        match (info.sample_rate, info.bit_depth, info.bitrate_kbps) {
+            (44100, Some(16), _) => source.push_str(" \u{b7} CD quality"),
+            (_, None, Some(kbps)) => source.push_str(&format!(" \u{b7} {kbps} kbps")),
+            _ => {}
+        }
         field(buf, area.x, row, w, "source", value(source), theme);
     }
     if let Some(row) = next(0) {
@@ -599,33 +601,49 @@ fn draw_words(
     }
     if let Some(row) = next(1) {
         let set = app.state.sleep().is_some() || app.state.sleep_fading();
-        let parts = [
-            (
-                Span::styled(
-                    transport::sleep_label(app.state.sleep(), app.state.sleep_fading()),
-                    if set {
-                        Style::new().fg(theme.tokens.accent)
-                    } else {
-                        theme.hint_desc
-                    },
+        let room = w.saturating_sub(10);
+        // Each control named where there is room, its glyph alone where not.
+        let parts = |named: bool| {
+            let word = |glyph: Span<'static>, name: &str| {
+                if named && glyph.content.chars().count() == 1 {
+                    Span::styled(format!("{} {name}", glyph.content), glyph.style)
+                } else {
+                    glyph
+                }
+            };
+            let sleep = Span::styled(
+                transport::sleep_label(app.state.sleep(), app.state.sleep_fading()),
+                if set {
+                    Style::new().fg(theme.tokens.accent)
+                } else {
+                    theme.hint_desc
+                },
+            );
+            let (play_on, act) = transport::play_on(theme, controlled);
+            [
+                (word(sleep, "sleep"), press(Control::Sleep)),
+                (Span::raw("   "), None),
+                (word(play_on, "play on"), act),
+                (Span::raw("   "), None),
+                (
+                    Span::styled(format!("\u{25D4} {output}"), theme.hint_desc),
+                    press(Control::Output),
                 ),
-                press(Control::Sleep),
-            ),
-            (Span::raw("   "), None),
-            transport::play_on(theme, controlled),
-            (Span::raw("   "), None),
-            (
-                Span::styled(format!("\u{25D4} {output}"), theme.hint_desc),
-                press(Control::Output),
-            ),
-        ];
+            ]
+        };
+        let named = parts(true);
+        let parts = if width_of(&named) <= room {
+            named
+        } else {
+            parts(false)
+        };
         field(buf, area.x, row, w, "play", Vec::new(), theme);
         place(
             buf,
             &mut hits.controls,
             links,
             (area.x + 10, row),
-            w.saturating_sub(10),
+            room,
             &parts,
         );
     }
