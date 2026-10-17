@@ -15,9 +15,9 @@ import Network
 /// burst of those, as a handover makes, is told once it settles, and only once
 /// there is a network to reconnect on.
 final class NetworkWatch: @unchecked Sendable {
-    /// What of a path counts. The default interface is the first that is not a
-    /// tunnel, so a VPN renaming its own leaves this alone while a move under
-    /// it does not.
+    /// What of a path counts. The default interface is the first that is not
+    /// virtual (`.other`: tunnels, bridges), so a VPN renaming its own leaves
+    /// this alone while a move under it does not.
     private struct Route: Equatable {
         let status: NWPath.Status
         let interface: String?
@@ -52,7 +52,7 @@ final class NetworkWatch: @unchecked Sendable {
             self.current = next
             pending?.cancel()
             pending = nil
-            guard path.status == .satisfied else { return }
+            guard path.status != .unsatisfied else { return }
             // Off the watch's queue: renewing the clients and restarting
             // nearby discovery can take a while, and updates wait behind it.
             let tell = DispatchWorkItem { [weak self] in self?.engine.networkChanged() }
