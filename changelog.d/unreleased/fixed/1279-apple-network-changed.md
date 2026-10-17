@@ -1,0 +1,1 @@
+- **Apple apps: a change of network reconnects at once.** On macOS, iOS and tvOS, moving between Wi-Fi, a cable and mobile data now renews the connections to the server and retries one that was not answering, as Android already did, rather than waiting for a stalled read or a backoff to run out.
