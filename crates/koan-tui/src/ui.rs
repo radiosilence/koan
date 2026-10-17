@@ -415,20 +415,23 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         }
     }
 
-    // Key hints / status message.
+    // Key hints / status message, inside the side gutters.
     app.layout.hint_hits.clear();
+    let foot = super::shell::inset(chunks[3]);
     if let Some((ref msg, _)) = app.status_message {
-        let style = app.theme.hint_key;
+        // The message cut to leave room for how to dismiss it.
+        const DISMISS: &str = "  [esc] dismiss";
+        let room = (foot.width as usize).saturating_sub(DISMISS.len());
         let line = ratatui::text::Line::from(vec![
-            ratatui::text::Span::styled(msg.as_str(), style),
-            ratatui::text::Span::styled("  [Esc] dismiss", app.theme.hint_desc),
+            ratatui::text::Span::styled(super::shell::fit(msg, room), app.theme.hint_key),
+            ratatui::text::Span::styled(DISMISS, app.theme.hint_desc),
         ]);
-        frame.render_widget(ratatui::widgets::Paragraph::new(line), chunks[3]);
+        frame.render_widget(ratatui::widgets::Paragraph::new(line), foot);
     } else {
         let filterable = app.browse().is_some_and(|b| b.filterable());
-        app.layout.hint_hits = super::keys::hits(&app.mode, app.page(), filterable, chunks[3]);
+        app.layout.hint_hits = super::keys::hits(&app.mode, app.page(), filterable, foot);
         let hint_bar = HintBar::new(&app.mode, app.page(), filterable, &app.theme);
-        frame.render_widget(hint_bar, chunks[3]);
+        frame.render_widget(hint_bar, foot);
     }
 
     // Picker overlay (on top of everything).
@@ -1812,7 +1815,8 @@ mod tests {
             "a status line long enough to be cut at the edge of a narrow terminal".into(),
             std::time::Instant::now(),
         ));
-        let modals: [(&str, fn(&mut App)); 5] = [
+        type Open = fn(&mut App);
+        let modals: [(&str, Open); 5] = [
             ("status", |_| {}),
             ("help", |a| {
                 a.handle_key(crossterm::event::KeyEvent::from(

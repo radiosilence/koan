@@ -2,7 +2,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
+use ratatui::widgets::{Clear, Paragraph, Widget};
 
 use super::theme::Theme;
 
@@ -139,11 +139,10 @@ impl<'a> HelpModalOverlay<'a> {
 
 /// The popup in `area`, and how many rows it shows of each column.
 fn layout(area: Rect) -> (Rect, usize) {
-    let w = 72u16.min(area.width.saturating_sub(4));
+    let w = 104u16.min(area.width.saturating_sub(4));
     let h = (column_len() as u16 + 2).min(area.height.saturating_sub(2));
-    let x = area.x + (area.width.saturating_sub(w)) / 2;
-    let y = area.y + (area.height.saturating_sub(h)) / 2;
-    (Rect::new(x, y, w, h), h.saturating_sub(2) as usize)
+    let popup = crate::shell::centred(area, w, h);
+    (popup, popup.height.saturating_sub(2) as usize)
 }
 
 /// Lines in a column: the sections, a blank line between each, split in two.
@@ -160,36 +159,39 @@ pub fn max_scroll(area: Rect) -> usize {
 
 impl Widget for HelpModalOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        use crate::shell::{fit, fit_pad_right, width};
         let (popup, col_height) = layout(area);
-
         Clear.render(popup, buf);
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(self.theme.hint_key)
-            .title(" Keybindings ");
+        let block = crate::shell::frame("keys", self.theme);
         let inner = block.inner(popup);
         block.render(popup, buf);
 
+        // Each column: a cell of margin, the keys right-aligned to the
+        // widest, two cells, the description cut to what is left.
         let col_width = inner.width / 2;
+        let key_w = SECTIONS
+            .iter()
+            .flat_map(|s| s.bindings.iter())
+            .map(|(k, _)| width(k))
+            .max()
+            .unwrap_or(0);
+        let desc_w = (col_width as usize).saturating_sub(key_w + 4);
         let mut lines: Vec<Line> = Vec::new();
         for (si, section) in SECTIONS.iter().enumerate() {
             if si > 0 {
                 lines.push(Line::default());
             }
             lines.push(Line::from(Span::styled(
-                format!(" {}", section.title),
-                self.theme
-                    .hint_key
-                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                format!(" {}", section.title.to_lowercase()),
+                self.theme.heading,
             )));
             for (key, desc) in section.bindings {
                 lines.push(Line::from(vec![
                     Span::styled(
-                        format!("  {:>12}", key),
+                        format!(" {}", fit_pad_right(key, key_w)),
                         self.theme.hint_key.add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(format!("  {}", desc), self.theme.hint_desc),
+                    Span::styled(format!("  {}", fit(desc, desc_w)), self.theme.hint_desc),
                 ]));
             }
         }
