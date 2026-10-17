@@ -3,6 +3,7 @@
 //! (`koan_core::shelves`); what each holds and in what order is decided there.
 //! Records are shown as tiles of cover art, or as rows.
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -16,6 +17,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthStr;
 
 use super::app::PickerAction;
 use super::artist_header::{ArtistHeader, HeaderHit};
@@ -860,13 +862,12 @@ impl Browse {
                 let dx = (col - g.body.x - margin) % g.tile_w.max(1);
                 let art_h = g.tile_h.saturating_sub(3);
                 let label = g.tile_w.saturating_sub(2) as usize;
-                let on_text =
-                    |text: &str| dx >= 1 && (dx as usize) <= fit(text, label).chars().count();
+                let on_text = |text: &str| dx >= 1 && (dx as usize) <= fit(text, label).width();
                 if dy == art_h && on_text(&album.title) {
                     return Some(Hit::Title(idx));
                 }
                 if dy == art_h + 1 && on_text(&album.artist_name) {
-                    let end = fit(&album.artist_name, label).chars().count();
+                    let end = fit(&album.artist_name, label).width();
                     if (dx as usize) <= end {
                         return Some(Hit::Artist(idx));
                     }
@@ -1383,11 +1384,36 @@ impl Browse {
 }
 
 /// `text` cut to `width` cells, with an ellipsis where it was cut.
+/// The first of `rows` shown in a list scrolled to `scroll`, moved only as
+/// far as brings `cursor` into view, and kept for the next frame and the
+/// pointer.
+pub(super) fn scroll_to(scroll: &Cell<usize>, cursor: usize, rows: usize) -> usize {
+    let rows = rows.max(1);
+    let mut top = scroll.get();
+    if cursor < top {
+        top = cursor;
+    } else if cursor >= top + rows {
+        top = cursor + 1 - rows;
+    }
+    scroll.set(top);
+    top
+}
+
+/// `text` cut to `width` terminal cells, an ellipsis taking the last.
 pub(super) fn fit(text: &str, width: usize) -> String {
-    if text.chars().count() <= width {
+    use unicode_width::UnicodeWidthChar;
+    if text.width() <= width {
         return text.to_string();
     }
-    let mut cut: String = text.chars().take(width.saturating_sub(1)).collect();
+    let mut cut = String::new();
+    let mut used = 0;
+    for c in text.chars() {
+        used += c.width().unwrap_or(0);
+        if used >= width {
+            break;
+        }
+        cut.push(c);
+    }
     cut.push('\u{2026}');
     cut
 }
@@ -1645,6 +1671,10 @@ mod tests {
         assert_eq!(fit("short", 10), "short");
         assert_eq!(fit("a longer title", 8), "a longe\u{2026}");
         assert_eq!(fit("anything", 0), "\u{2026}");
+        // Wide characters take two cells each.
+        let cut = fit("夜に駆ける夜に駆ける", 7);
+        assert_eq!(cut, "夜に駆\u{2026}");
+        assert!(cut.width() <= 7);
     }
 
     #[test]

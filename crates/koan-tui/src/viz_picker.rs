@@ -1,9 +1,12 @@
+use std::cell::Cell;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
+use super::browse::scroll_to;
 use super::theme::Theme;
 use super::visualizer::VisualizerMode;
 
@@ -37,6 +40,8 @@ pub const ALL_MODES: &[VisualizerMode] = &[
 pub struct VizPickerState {
     pub cursor: usize,
     pub current_mode: VisualizerMode,
+    /// The first mode shown, in a terminal too short for them all.
+    scroll: Cell<usize>,
 }
 
 impl VizPickerState {
@@ -45,6 +50,7 @@ impl VizPickerState {
         Self {
             cursor,
             current_mode: current,
+            scroll: Cell::default(),
         }
     }
 
@@ -85,7 +91,7 @@ impl Widget for VizPickerOverlay<'_> {
 
         // A terminal too short for the whole list scrolls it to the cursor.
         let rows = inner.height as usize;
-        let first = (self.state.cursor + 1).saturating_sub(rows);
+        let first = scroll_to(&self.state.scroll, self.state.cursor, rows);
         for (row, (i, mode)) in ALL_MODES
             .iter()
             .enumerate()
@@ -135,5 +141,13 @@ mod tests {
         VizPickerOverlay::new(&state, &theme).render(area, &mut buf);
         let text: String = buf.content.iter().map(|c| c.symbol()).collect();
         assert!(text.contains(ALL_MODES[state.cursor].label()), "{text}");
+        let top = state.scroll.get();
+        state.cursor -= 1;
+        VizPickerOverlay::new(&state, &theme).render(area, &mut buf);
+        assert_eq!(
+            state.scroll.get(),
+            top,
+            "moving within the view leaves it still"
+        );
     }
 }

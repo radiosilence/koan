@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
 use super::app::DeviceSelectorState;
-use super::browse::fit;
+use super::browse::{fit, scroll_to};
 use super::theme::Theme;
 
 pub struct DeviceSelectorOverlay<'a> {
@@ -22,7 +22,7 @@ impl<'a> DeviceSelectorOverlay<'a> {
 impl DeviceSelectorState {
     /// The first device shown when `rows` fit: the cursor stays on screen.
     pub fn top(&self, rows: usize) -> usize {
-        (self.cursor + 1).saturating_sub(rows.max(1))
+        scroll_to(&self.scroll, self.cursor, rows)
     }
 }
 
@@ -192,6 +192,7 @@ mod tests {
             cursor,
             current_device: None,
             renderers: Vec::new(),
+            scroll: Default::default(),
         }
     }
 
@@ -216,8 +217,13 @@ mod tests {
     fn the_cursor_stays_on_screen_in_a_long_list() {
         let names: Vec<String> = (0..30).map(|i| format!("device {i}")).collect();
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
-        let s = state(&names, 25);
+        let mut s = state(&names, 25);
         assert_eq!(s.top(8), 18);
+        s.cursor = 20;
+        assert_eq!(s.top(8), 18, "moving within the view leaves it still");
+        s.cursor = 10;
+        assert_eq!(s.top(8), 10);
+        s.cursor = 25;
         let area = Rect::new(0, 0, 60, 12);
         let mut buf = Buffer::empty(area);
         DeviceSelectorOverlay::new(&s, &Theme::default()).render(area, &mut buf);

@@ -1,6 +1,8 @@
 //! The two small modals playlists need: a line to type a name into, and a
 //! list to choose the playlist something goes in.
 
+use std::cell::Cell;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
@@ -9,6 +11,7 @@ use ratatui::widgets::{Block, Borders, Clear, Widget};
 
 use koan_core::db::queries::PlaylistRow;
 
+use super::browse::scroll_to;
 use super::theme::Theme;
 
 /// What the name typed is for.
@@ -118,6 +121,8 @@ pub struct Chooser {
     /// `None` is a playlist yet to be made.
     pub entries: Vec<(Option<i64>, String)>,
     pub cursor: usize,
+    /// The first entry shown.
+    scroll: Cell<usize>,
 }
 
 impl Chooser {
@@ -138,6 +143,7 @@ impl Chooser {
             ids,
             entries,
             cursor: 0,
+            scroll: Cell::default(),
         }
     }
 
@@ -150,7 +156,7 @@ impl Chooser {
 
     /// The first entry shown when `rows` fit.
     pub fn top(&self, rows: usize) -> usize {
-        (self.cursor + 1).saturating_sub(rows.max(1))
+        scroll_to(&self.scroll, self.cursor, rows)
     }
 }
 

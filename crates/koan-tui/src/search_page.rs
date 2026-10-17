@@ -766,7 +766,7 @@ impl SearchPage {
                     let ax = left + title_w as u16 + 2;
                     let aw = avail - title_w - 2;
                     let shown = fit(&a.artist_name, aw);
-                    let width = shown.chars().count() as u16;
+                    let width = unicode_width::UnicodeWidthStr::width(shown.as_str()) as u16;
                     buf.set_string(ax, y, &shown, link(hover == Some(SearchHit::Artist(i))));
                     self.geom
                         .links
@@ -809,7 +809,7 @@ impl SearchPage {
                     ),
                 ] {
                     let shown = fit(text, w);
-                    let width = shown.chars().count() as u16;
+                    let width = unicode_width::UnicodeWidthStr::width(shown.as_str()) as u16;
                     buf.set_string(x, y, &shown, link(linked && hover == Some(hit)));
                     if linked {
                         self.geom.links.push((Rect::new(x, y, width, 1), hit));

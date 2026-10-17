@@ -991,7 +991,7 @@ impl PlaylistPage {
                 ),
             ] {
                 let shown = fit(text, w);
-                let width = shown.chars().count() as u16;
+                let width = unicode_width::UnicodeWidthStr::width(shown.as_str()) as u16;
                 buf.set_string(x, y, &shown, underline(linked && hover == Some(hit), dim));
                 if linked {
                     self.geom.links.push((Rect::new(x, y, width, 1), hit));
