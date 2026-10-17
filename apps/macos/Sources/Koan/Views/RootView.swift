@@ -205,14 +205,8 @@ private struct LibraryFilter: View {
         @Bindable var library = library
         #if os(macOS)
         if KoanTheme.isOn {
+            // Escape leaves the field, as `Hotkeys` has it for every field.
             KoanSearchField(text: $library.filter, prompt: placeholder, focus: $focused) {}
-                .onKeyPress(.escape) {
-                    // An input method's candidate window takes Escape first.
-                    let composing = (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() == true
-                    guard !library.filter.isEmpty, !composing else { return .ignored }
-                    library.filter = ""
-                    return .handled
-                }
                 .onChange(of: ui.filterFocusToken) { _, _ in focused = true }
         } else {
             FilterField(placeholder: placeholder, text: $library.filter, focusToken: ui.filterFocusToken)
