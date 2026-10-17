@@ -1837,6 +1837,24 @@ mod tests {
         assert_eq!(app.page(), Page::Albums);
     }
 
+    /// From the first frame of Now playing, and of every other page, a
+    /// page's number goes to it.
+    #[test]
+    fn a_page_number_works_from_the_first_frame_of_any_page() {
+        use crossterm::event::{KeyCode, KeyEvent};
+        let mut app = app_with_queue(3);
+        for from in ['2', '1', '4', '0', '9', '7', '8', '5', '6'] {
+            app.handle_key(KeyEvent::from(KeyCode::Char(from)));
+            if app.page() == Page::Search {
+                app.handle_key(KeyEvent::from(KeyCode::Esc));
+            }
+            draw(&mut app, 120, 40);
+            app.handle_key(KeyEvent::from(KeyCode::Char('3')));
+            assert_eq!(app.page(), Page::Albums, "3 from page key {from}");
+            draw(&mut app, 120, 40);
+        }
+    }
+
     #[test]
     fn the_help_scrolls_no_further_than_its_end() {
         use crossterm::event::KeyCode;

@@ -165,78 +165,105 @@ impl<'a> HelpModalOverlay<'a> {
     }
 }
 
-/// The popup in `area`, and how many rows it shows of each column.
-fn layout(area: Rect) -> (Rect, usize) {
-    let w = 104u16.min(area.width.saturating_sub(4));
-    let h = (column_len() as u16 + 2).min(area.height.saturating_sub(2));
-    let popup = crate::shell::centred(area, w, h);
-    (popup, popup.height.saturating_sub(2) as usize)
+/// A line of the help: a blank between sections, a section's title, or a
+/// key with a line of what it does (the key on the first line only).
+enum HelpLine {
+    Blank,
+    Title(&'static str),
+    Binding(&'static str, String),
 }
 
-/// Lines in a column: the sections, a blank line between each, split in two.
-fn column_len() -> usize {
-    let lines = SECTIONS.iter().map(|s| 1 + s.bindings.len()).sum::<usize>()
-        + SECTIONS.len().saturating_sub(1);
-    lines.div_ceil(2)
+/// The widest key, which every key is right-aligned to.
+fn key_width() -> usize {
+    use crate::text::width;
+    SECTIONS
+        .iter()
+        .flat_map(|s| s.bindings.iter())
+        .map(|(k, _)| width(k))
+        .max()
+        .unwrap_or(0)
+}
+
+/// The popup in `area`, and its two columns' lines, each description
+/// wrapped to its column. A column breaks between sections or bindings,
+/// never inside one.
+fn layout(area: Rect) -> (Rect, Vec<HelpLine>, Vec<HelpLine>) {
+    let w = 104u16.min(area.width.saturating_sub(4));
+    let col_width = w.saturating_sub(2) / 2;
+    // A cell of margin, the key, two cells, the description, a cell spare.
+    let desc_w = (col_width as usize).saturating_sub(key_width() + 4).max(8);
+    let mut blocks: Vec<Vec<HelpLine>> = Vec::new();
+    for (si, section) in SECTIONS.iter().enumerate() {
+        let mut first = Vec::new();
+        if si > 0 {
+            first.push(HelpLine::Blank);
+        }
+        first.push(HelpLine::Title(section.title));
+        blocks.push(first);
+        for (key, desc) in section.bindings {
+            let block = crate::text::wrap(desc, desc_w)
+                .into_iter()
+                .enumerate()
+                .map(|(i, part)| HelpLine::Binding(if i == 0 { key } else { "" }, part))
+                .collect();
+            blocks.push(block);
+        }
+    }
+    let total: usize = blocks.iter().map(Vec::len).sum();
+    let (mut left, mut right) = (Vec::new(), Vec::new());
+    for block in blocks {
+        // A section's title stays with its first binding.
+        let titled = matches!(left.last(), Some(HelpLine::Title(_)));
+        if right.is_empty() && (left.len() < total.div_ceil(2) || titled) {
+            left.extend(block);
+        } else {
+            right.extend(block);
+        }
+    }
+    let rows = left.len().max(right.len());
+    let h = (rows as u16 + 2).min(area.height.saturating_sub(2));
+    (crate::shell::centred(area, w, h), left, right)
 }
 
 /// How far the help scrolls in `area` before its end is on screen.
 pub fn max_scroll(area: Rect) -> usize {
-    column_len().saturating_sub(layout(area).1)
+    let (popup, left, right) = layout(area);
+    left.len()
+        .max(right.len())
+        .saturating_sub(popup.height.saturating_sub(2) as usize)
 }
 
 impl Widget for HelpModalOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        use crate::text::{fit, fit_pad_right, width};
-        let (popup, col_height) = layout(area);
+        use crate::text::fit_pad_right;
+        let (popup, left, right) = layout(area);
         crate::shell::clear(buf, popup);
         let block = crate::shell::frame("keys", self.theme);
         let inner = block.inner(popup);
         block.render(popup, buf);
-
-        // Each column: a cell of margin, the keys right-aligned to the
-        // widest, two cells, the description cut to what is left.
         let col_width = inner.width / 2;
-        let key_w = SECTIONS
-            .iter()
-            .flat_map(|s| s.bindings.iter())
-            .map(|(k, _)| width(k))
-            .max()
-            .unwrap_or(0);
-        let desc_w = (col_width as usize).saturating_sub(key_w + 4);
-        let mut lines: Vec<Line> = Vec::new();
-        for (si, section) in SECTIONS.iter().enumerate() {
-            if si > 0 {
-                lines.push(Line::default());
-            }
-            lines.push(Line::from(Span::styled(
-                format!(" {}", section.title.to_lowercase()),
+        let key_w = key_width();
+        let line = |l: &HelpLine| match l {
+            HelpLine::Blank => Line::default(),
+            HelpLine::Title(t) => Line::from(Span::styled(
+                format!(" {}", t.to_lowercase()),
                 self.theme.heading,
-            )));
-            for (key, desc) in section.bindings {
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!(" {}", fit_pad_right(key, key_w)),
-                        self.theme.hint_key.add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(format!("  {}", fit(desc, desc_w)), self.theme.hint_desc),
-                ]));
+            )),
+            HelpLine::Binding(key, desc) => Line::from(vec![
+                Span::styled(
+                    format!(" {}", fit_pad_right(key, key_w)),
+                    self.theme.hint_key.add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!("  {desc}"), self.theme.hint_desc),
+            ]),
+        };
+        // The two columns, scrolled together.
+        let rows = inner.height as usize;
+        for (x, column) in [(inner.x, &left), (inner.x + col_width, &right)] {
+            for (row, l) in column.iter().skip(self.scroll).take(rows).enumerate() {
+                let r = Rect::new(x, inner.y + row as u16, col_width, 1);
+                Paragraph::new(line(l)).render(r, buf);
             }
-        }
-
-        // Two columns, scrolled together.
-        let mid = column_len();
-        for (i, line) in lines.into_iter().enumerate() {
-            let (col_x, row) = if i < mid {
-                (inner.x, i)
-            } else {
-                (inner.x + col_width, i - mid)
-            };
-            let Some(row) = row.checked_sub(self.scroll).filter(|r| *r < col_height) else {
-                continue;
-            };
-            let row_area = Rect::new(col_x, inner.y + row as u16, col_width, 1);
-            Paragraph::new(line).render(row_area, buf);
         }
     }
 }
@@ -248,10 +275,43 @@ mod tests {
     #[test]
     fn the_whole_help_can_be_scrolled_into_view() {
         let short = Rect::new(0, 0, 100, 20);
-        let (_, shown) = layout(short);
-        assert!(shown < column_len());
-        assert_eq!(max_scroll(short) + shown, column_len());
+        let (popup, left, right) = layout(short);
+        let shown = popup.height as usize - 2;
+        let lines = left.len().max(right.len());
+        assert!(shown < lines);
+        assert_eq!(max_scroll(short) + shown, lines);
         // Tall enough, nothing scrolls.
         assert_eq!(max_scroll(Rect::new(0, 0, 100, 200)), 0);
+    }
+
+    #[test]
+    fn descriptions_wrap_rather_than_cut_and_the_frame_stays_square() {
+        let theme = Theme::default();
+        for (w, h) in [(120u16, 40u16), (80, 24), (50, 20), (200, 60)] {
+            let area = Rect::new(0, 0, w, h);
+            let max = max_scroll(area);
+            let mut seen = String::new();
+            for scroll in 0..=max {
+                let mut buf = Buffer::empty(area);
+                HelpModalOverlay::new(&theme, scroll).render(area, &mut buf);
+                let (popup, _, _) = layout(area);
+                let right = popup.x + popup.width - 1;
+                for y in popup.y + 1..popup.y + popup.height - 1 {
+                    assert_eq!(buf[(right, y)].symbol(), "\u{2502}", "{w}x{h} row {y}");
+                    let row: String = (popup.x..right).map(|x| buf[(x, y)].symbol()).collect();
+                    seen.push_str(&row);
+                    seen.push(' ');
+                }
+            }
+            if w < 80 {
+                continue;
+            }
+            // Every word of every description is there whole.
+            for (_, desc) in SECTIONS.iter().flat_map(|s| s.bindings.iter()) {
+                for word in desc.split_whitespace() {
+                    assert!(seen.contains(word), "{w}x{h}: {word:?} of {desc:?} missing");
+                }
+            }
+        }
     }
 }
