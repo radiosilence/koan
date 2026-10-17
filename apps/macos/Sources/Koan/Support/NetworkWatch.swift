@@ -61,7 +61,11 @@ final class NetworkWatch: @unchecked Sendable {
             self.current = next
             pending?.cancel()
             pending = nil
-            guard path.status != .unsatisfied else { return }
+            // A network gone ends the burst: what comes back settles afresh.
+            guard path.status != .unsatisfied else {
+                burst = nil
+                return
+            }
             let tell = DispatchWorkItem { [weak self] in
                 guard let self else { return }
                 burst = nil
