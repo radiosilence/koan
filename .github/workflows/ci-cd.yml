@@ -843,14 +843,17 @@ jobs:
           name: koan-macos-app
           path: apps/macos/.build/pkg/Koan.dmg
 
-  # Nothing waits on this. App Store Connect's processing of an upload takes
-  # anywhere from minutes to an hour and says nothing about the release, so the
-  # GitHub release, the crates, the image tags and the package go out without
-  # it. A failed upload is retried alone, from ios.yml's manual dispatch.
+  # Every push to main that passes uploads a build, a release or not: the
+  # workspace version stays and the build number (the time) rises, so
+  # testers always have main. Nothing waits on this. App Store Connect's
+  # processing of an upload takes anywhere from minutes to an hour and says
+  # nothing about the release, so the GitHub release, the crates, the image
+  # tags and the package go out without it. A failed upload is retried alone,
+  # from ios.yml's manual dispatch.
   testflight:
-    name: Release (TestFlight)
+    name: TestFlight
     needs: [fmt, clippy, test, audit, check-version]
-    if: ${{ !cancelled() && !failure() && needs.check-version.outputs.should_release == 'true' }}
+    if: ${{ !cancelled() && !failure() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
     uses: ./.github/workflows/ios.yml
     secrets: inherit
 

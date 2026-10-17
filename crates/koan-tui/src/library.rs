@@ -50,6 +50,14 @@ pub struct LibraryState {
     all_artists: Vec<LibraryNode>,
 }
 
+/// Nothing narrowed but, offline, to what can play here.
+fn on_device() -> queries::AlbumFilter<'static> {
+    queries::AlbumFilter {
+        on_device: koan_core::remote::offline::active(),
+        ..Default::default()
+    }
+}
+
 impl LibraryState {
     pub fn load() -> Self {
         let mut state = Self {
@@ -70,7 +78,14 @@ impl LibraryState {
 
     fn load_artists(&mut self) {
         let Some(db) = self.open_db() else { return };
-        let artists = queries::all_artists(&db.conn).unwrap_or_default();
+        let artists = queries::list_artists(
+            &db.conn,
+            &queries::ArtistQuery {
+                filter: on_device(),
+                ..Default::default()
+            },
+        )
+        .unwrap_or_default();
         self.all_artists = artists
             .into_iter()
             .map(|a| LibraryNode::Artist {
@@ -174,7 +189,16 @@ impl LibraryState {
         let artist_id = *id;
 
         let Some(db) = self.open_db() else { return };
-        let albums = queries::albums_for_artist(&db.conn, artist_id).unwrap_or_default();
+        let albums = queries::list_albums(
+            &db.conn,
+            &queries::AlbumQuery {
+                artist_id: Some(artist_id),
+                order: queries::AlbumOrder::Date,
+                filter: on_device(),
+                ..Default::default()
+            },
+        )
+        .unwrap_or_default();
 
         if let LibraryNode::Artist { expanded, .. } = &mut self.nodes[self.cursor] {
             *expanded = true;

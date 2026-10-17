@@ -2098,11 +2098,11 @@ impl KoanEngine {
         offload::offload(move || {
             let db = self.db()?;
             fillable(&db, playlist_id)?;
-            self.playlist_history
-                .record(&db.conn, playlist_id)
+            let before = koan_core::playlists::PlaylistHistory::before(&db.conn, playlist_id)
                 .map_err(db_err)?;
             let locked = self.locked_to(&db, playlist_id);
             let added = queries::add_tracks(&db.conn, playlist_id, &track_ids).map_err(db_err)?;
+            self.playlist_history.record(before);
             self.follow_playlist(&db, playlist_id, locked);
             self.bump_library();
             koan_core::playlists::push_to_remote(playlist_id);
@@ -2127,8 +2127,7 @@ impl KoanEngine {
         offload::offload(move || {
             let db = self.db()?;
             fillable(&db, playlist_id)?;
-            self.playlist_history
-                .record(&db.conn, playlist_id)
+            let before = koan_core::playlists::PlaylistHistory::before(&db.conn, playlist_id)
                 .map_err(db_err)?;
             let locked = self.locked_to(&db, playlist_id);
             let added = queries::add_tracks(&db.conn, playlist_id, &track_ids).map_err(db_err)?;
@@ -2143,6 +2142,7 @@ impl KoanEngine {
                 order.splice(at..at, added.iter().copied());
                 queries::reorder_entries(&db.conn, playlist_id, &order).map_err(db_err)?;
             }
+            self.playlist_history.record(before);
             self.follow_playlist(&db, playlist_id, locked);
             self.bump_library();
             koan_core::playlists::push_to_remote(playlist_id);
@@ -2161,11 +2161,11 @@ impl KoanEngine {
         offload::offload(move || {
             let db = self.db()?;
             fillable(&db, playlist_id)?;
-            self.playlist_history
-                .record(&db.conn, playlist_id)
+            let before = koan_core::playlists::PlaylistHistory::before(&db.conn, playlist_id)
                 .map_err(db_err)?;
             let locked = self.locked_to(&db, playlist_id);
             queries::reorder_entries(&db.conn, playlist_id, &entry_ids).map_err(db_err)?;
+            self.playlist_history.record(before);
             self.follow_playlist(&db, playlist_id, locked);
             self.bump_library();
             koan_core::playlists::push_to_remote(playlist_id);
@@ -2183,12 +2183,12 @@ impl KoanEngine {
         offload::offload(move || {
             let db = self.db()?;
             fillable(&db, playlist_id)?;
-            self.playlist_history
-                .record(&db.conn, playlist_id)
+            let before = koan_core::playlists::PlaylistHistory::before(&db.conn, playlist_id)
                 .map_err(db_err)?;
             let locked = self.locked_to(&db, playlist_id);
             let removed =
                 queries::remove_entries(&db.conn, playlist_id, &entry_ids).map_err(db_err)?;
+            self.playlist_history.record(before);
             self.follow_playlist(&db, playlist_id, locked);
             self.bump_library();
             koan_core::playlists::push_to_remote(playlist_id);
@@ -2203,14 +2203,14 @@ impl KoanEngine {
         offload::offload(move || {
             let db = self.db()?;
             fillable(&db, playlist_id)?;
-            self.playlist_history
-                .record(&db.conn, playlist_id)
+            let before = koan_core::playlists::PlaylistHistory::before(&db.conn, playlist_id)
                 .map_err(db_err)?;
             let mut entries = queries::playlist_entries(&db.conn, playlist_id).map_err(db_err)?;
             koan_core::helpers::shuffle(&mut entries);
             let order: Vec<i64> = entries.iter().map(|e| e.id).collect();
             let locked = self.locked_to(&db, playlist_id);
             queries::reorder_entries(&db.conn, playlist_id, &order).map_err(db_err)?;
+            self.playlist_history.record(before);
             self.follow_playlist(&db, playlist_id, locked);
             self.bump_library();
             koan_core::playlists::push_to_remote(playlist_id);
