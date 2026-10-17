@@ -37,6 +37,7 @@ pub mod search_page;
 pub mod settings_page;
 pub mod tasks;
 pub mod theme;
+pub mod thumb_cache;
 pub mod track_details;
 pub mod track_info;
 pub mod transport;

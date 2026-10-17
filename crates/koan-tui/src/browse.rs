@@ -22,6 +22,7 @@ use super::artist_header::{ArtistHeader, HeaderHit};
 use super::browse_filter::Filters;
 use super::cover_art::{Gfx, album_key};
 use super::theme::Theme;
+use super::thumb_cache;
 use super::transport::format_time;
 
 /// The widest a tile gets, in columns. Wider screens get more tiles.
@@ -29,7 +30,10 @@ const TILE_MAX_W: u16 = 26;
 const TILE_MIN_W: u16 = 14;
 
 /// Decoded covers kept for tiles before the lot is dropped.
-const THUMB_LIMIT: usize = 240;
+const THUMB_LIMIT: usize = 800;
+
+/// How long the grid must be still before its covers are drawn as images.
+const SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// How many rows beyond the page are loaded ahead of scrolling.
 const PREFETCH_ROWS: usize = 3;
@@ -227,25 +231,46 @@ impl Thumbs {
     }
 }
 
-/// A record's cover as a thumbnail: from a file beside or inside one of its
-/// tracks, else from the server, as the apps do. A library synced from a
-/// server has no files to read.
+/// A record's cover as a thumbnail, from the disk cache when it has one, else
+/// from a file beside or inside one of its tracks or from the server, as the
+/// apps do. A library synced from a server has no files to read.
 fn load(album: i64) -> Option<DynamicImage> {
-    let db = koan_core::db::pool::shared().get().ok()?;
-    let row = queries::cover_track_for_album(&db.conn, album).ok()??;
+    let (row, uid) = {
+        let db = koan_core::db::pool::shared().get().ok()?;
+        let row = queries::cover_track_for_album(&db.conn, album).ok()??;
+        let uid = queries::uids::uids_for(&db.conn, queries::uids::UidKind::Album, [album])
+            .ok()
+            .and_then(|mut uids| uids.remove(&album));
+        (row, uid)
+    };
     let local = row.path.as_deref().or(row.cached_path.as_deref());
+    let stamp = thumb_cache::stamp(local.map(Path::new));
+    if let Some(uid) = &uid
+        && let Some(img) = thumb_cache::read(uid, stamp)
+    {
+        return Some(img);
+    }
+    // A JPEG keeps no transparency, so the first load looks as every later one.
+    let img = DynamicImage::ImageRgb8(fetch(&row, local)?.to_rgb8());
+    if let Some(uid) = &uid {
+        thumb_cache::write(uid, stamp, &img);
+    }
+    Some(img)
+}
+
+fn fetch(row: &queries::TrackRow, local: Option<&str>) -> Option<DynamicImage> {
     if let Some(bytes) = local.and_then(|p| koan_core::index::folder_art::cover_art(Path::new(p)))
         && let Ok(img) = image::load_from_memory(&bytes)
     {
         return Some(img.thumbnail(256, 256));
     }
-    let remote_id = row.remote_id?;
+    let remote_id = row.remote_id.as_deref()?;
     let cfg = koan_core::config::Config::cached();
     if !cfg.remote.enabled {
         return None;
     }
     let client = koan_core::helpers::subsonic_client(&cfg)?;
-    let bytes = client.get_cover_art(&remote_id, Some(320)).ok()?;
+    let bytes = client.get_cover_art(remote_id, Some(320)).ok()?;
     Some(image::load_from_memory(&bytes).ok()?.thumbnail(256, 256))
 }
 
@@ -296,6 +321,10 @@ pub struct Browse {
     loaded: bool,
     geom: Geom,
     last_click: Option<(usize, Instant)>,
+    /// The scroll the last frame drew, and when it last changed: covers are
+    /// drawn as images only once the grid has stopped.
+    drawn_scroll: usize,
+    moved: Option<Instant>,
 }
 
 impl Browse {
@@ -320,6 +349,8 @@ impl Browse {
             loaded: false,
             geom: Geom::default(),
             last_click: None,
+            drawn_scroll: 0,
+            moved: None,
         }
     }
 
@@ -936,6 +967,7 @@ impl Browse {
         }
         self.ensure_loaded();
         thumbs.begin_frame();
+        gfx.begin_frame();
         self.geom = Geom::default();
         self.render_header(area, buf, theme);
         let body = Rect::new(
@@ -1085,10 +1117,10 @@ impl Browse {
     ) {
         let cols = ((body.width / TILE_MIN_W) as usize).max(1);
         let tile_w = (body.width / cols as u16).min(TILE_MAX_W);
-        // A cell is about twice as tall as wide, so art of `w` columns is
-        // square at `w / 2` rows. Two lines of label under it, and a gap.
+        // Square art, as tall as the terminal's cell makes it. Two lines of
+        // label under it, and a gap.
         let art_w = tile_w.saturating_sub(2).max(1);
-        let art_h = (art_w / 2).max(1);
+        let art_h = gfx.rows_for(art_w);
         let tile_h = art_h + 3;
         // Rows that fit whole, which paging and the cursor keep to; the one
         // after is drawn as far as it reaches.
@@ -1105,6 +1137,11 @@ impl Browse {
         let total_rows = self.shown.len().div_ceil(cols);
         self.scroll = self.scroll.min(total_rows.saturating_sub(rows));
         let bottom = body.y + body.height;
+        if self.scroll != self.drawn_scroll {
+            self.drawn_scroll = self.scroll;
+            self.moved = Some(Instant::now());
+        }
+        let moving = self.moved.is_some_and(|at| at.elapsed() < SETTLE);
 
         for r in 0..=rows {
             for c in 0..cols {
@@ -1120,7 +1157,7 @@ impl Browse {
                 let art = Rect::new(x + 1, y, art_w, art_h);
                 let art_visible = (bottom - y).min(art_h);
                 if let Some(img) = thumbs.get(album.id) {
-                    gfx.draw_clipped(album_key(album.id), img, art, art_visible, buf);
+                    gfx.draw_clipped(album_key(album.id), img, art, art_visible, moving, buf);
                 } else {
                     placeholder(art, art_visible, buf, theme, &album.title);
                 }

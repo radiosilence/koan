@@ -15,6 +15,7 @@ pub struct TrackInfoOverlay<'a> {
     track_info: Option<&'a TrackInfo>,
     cover_art: Option<&'a DynamicImage>,
     theme: &'a Theme,
+    squash: f32,
 }
 
 impl<'a> TrackInfoOverlay<'a> {
@@ -23,12 +24,14 @@ impl<'a> TrackInfoOverlay<'a> {
         track_info: Option<&'a TrackInfo>,
         cover_art: Option<&'a DynamicImage>,
         theme: &'a Theme,
+        squash: f32,
     ) -> Self {
         Self {
             entry,
             track_info,
             cover_art,
             theme,
+            squash,
         }
     }
 }
@@ -94,7 +97,7 @@ impl Widget for TrackInfoOverlay<'_> {
         };
 
         if let (Some(img), Some(art_rect)) = (self.cover_art, art_area) {
-            CoverArt::new(img).render(art_rect, buf);
+            CoverArt::new(img).shaped(self.squash).render(art_rect, buf);
         }
 
         // Render text fields.

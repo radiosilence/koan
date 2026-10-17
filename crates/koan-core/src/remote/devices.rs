@@ -86,7 +86,9 @@ impl Device {
     /// Whether a command sent now can reach it.
     pub fn reach(&self) -> Reach {
         if let Some(problem) = &self.problem {
-            return Reach::OutOfReach(Some(problem.clone()));
+            // The controlled device missing from every list has only the
+            // state itself to say, which is no reason.
+            return Reach::OutOfReach((problem != OUT_OF_REACH).then(|| problem.clone()));
         }
         if self.awake {
             return Reach::Connected;
@@ -95,14 +97,13 @@ impl Device {
             Some(Waking::Failed(_)) | None => {}
             Some(_) => return Reach::Waking,
         }
-        // Not heard from, and nothing to wake it: a command finds no way
-        // there, however recently it was last heard.
+        // Heard from within a heartbeat: a dropped connection is most likely
+        // being made again, and saying so is better than a flash of red.
+        if !self.asleep {
+            return Reach::Reconnecting;
+        }
         if self.wakeable {
-            return if self.asleep {
-                Reach::Asleep
-            } else {
-                Reach::Reconnecting
-            };
+            return Reach::Asleep;
         }
         Reach::OutOfReach(match &self.waking {
             Some(Waking::Failed(why)) => Some(why.clone()),
@@ -111,6 +112,9 @@ impl Device {
     }
 }
 
+/// The problem of the controlled device when no list carries it.
+const OUT_OF_REACH: &str = "Out of reach";
+
 /// How a device can be reached, as every front end shows it. Derived from
 /// the device's connections, not from a command failing, so a front end can
 /// say a device is out of reach before anything is sent to it.
@@ -118,8 +122,8 @@ impl Device {
 pub enum Reach {
     /// Over the local network or the server's link, now.
     Connected,
-    /// Not heard from for less than a heartbeat, and wakeable: a dropped
-    /// connection being made again, as far as anyone can tell.
+    /// Not heard from for less than a heartbeat: a dropped connection being
+    /// made again, as far as anyone can tell.
     Reconnecting,
     /// Being woken, by the network, a push or a notification to tap.
     Waking,
@@ -1011,7 +1015,7 @@ fn list_at(now: i64) -> Vec<Device> {
                 same_library: true,
                 state: None,
                 heard: Instant::now(),
-                problem: Some("Out of reach".into()),
+                problem: Some(OUT_OF_REACH.into()),
             });
         }
         for d in &mut out {
@@ -1456,13 +1460,6 @@ pub fn target_device() -> Option<Device> {
     list().into_iter().find(|d| d.id == id)
 }
 
-/// How the device being controlled can be reached; `None` while this device
-/// is in view. A target no longer listed is out of reach.
-pub fn target_reach() -> Option<Reach> {
-    let id = target()?;
-    Some(reach_of(&list(), &id))
-}
-
 /// How the device `id` in `list` can be reached.
 pub fn reach_of(list: &[Device], id: &str) -> Reach {
     list.iter()
@@ -1848,9 +1845,9 @@ pub fn this_id() -> Option<String> {
 pub(crate) mod tests {
     use super::*;
 
-    /// Reach follows the device's connections: one not heard from is out of
-    /// reach unless something can wake it, and then reconnecting until a
-    /// heartbeat has passed and asleep after.
+    /// Reach follows the device's connections: one not heard from is
+    /// reconnecting until a heartbeat has passed, then asleep if something can
+    /// wake it and out of reach if nothing can.
     #[test]
     fn reach_is_read_from_the_connections() {
         let device = |awake, asleep, wakeable| Device {
@@ -1872,7 +1869,7 @@ pub(crate) mod tests {
         };
         assert_eq!(device(true, false, false).reach(), Reach::Connected);
         assert_eq!(device(false, false, true).reach(), Reach::Reconnecting);
-        assert_eq!(device(false, false, false).reach(), Reach::OutOfReach(None));
+        assert_eq!(device(false, false, false).reach(), Reach::Reconnecting);
         assert_eq!(device(false, true, true).reach(), Reach::Asleep);
         assert_eq!(device(false, true, false).reach(), Reach::OutOfReach(None));
         let waking = Device {
@@ -1886,12 +1883,21 @@ pub(crate) mod tests {
         };
         assert_eq!(failed.reach(), Reach::OutOfReach(Some("no answer".into())));
         let problem = Device {
-            problem: Some("Out of reach".into()),
+            problem: Some("Not on this network".into()),
             ..device(true, false, false)
         };
         assert_eq!(
             problem.reach(),
-            Reach::OutOfReach(Some("Out of reach".into()))
+            Reach::OutOfReach(Some("Not on this network".into()))
+        );
+        let unlisted = Device {
+            problem: Some(OUT_OF_REACH.into()),
+            ..device(false, true, false)
+        };
+        assert_eq!(
+            unlisted.reach(),
+            Reach::OutOfReach(None),
+            "no reason beyond the state"
         );
         assert_eq!(reach_of(&[], "tv"), Reach::OutOfReach(None));
     }

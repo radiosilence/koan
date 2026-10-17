@@ -123,6 +123,7 @@ What it creates:
 | `.gitignore` | Ignores `*.log`, `*.db`, `config.local.toml`, `cache/` |
 | `koan.db` | SQLite database (created if missing) |
 | `cache/` | Download cache directory |
+| `thumbs/` | The TUI's album thumbnails, kept to 256 MB with the least recently used dropped first; safe to delete |
 
 Running `koan config init` on an existing setup is safe -- it merges new defaults without touching values you've changed, and skips `config.local.toml` if it exists.
 
@@ -184,7 +185,7 @@ When a track needs the output device at a different sample rate, the device relo
 
 ### Cover graphics
 
-With `art_graphics` on, the TUI asks the terminal at startup whether it draws images (the kitty or iTerm2 protocol; sixel is not used) and uses them for covers and album tiles. Terminals that do not answer get half blocks, which is also what `art_graphics = false` gives, and skips the question. `I` in the TUI switches for the session and saves the choice. It lives in `config.local.toml`: whether images work is a property of the terminal at hand.
+With `art_graphics` on, the TUI asks the terminal at startup whether it draws images (the kitty or iTerm2 protocol; sixel is not used) and uses them for covers and album tiles. While the album grid scrolls its tiles are half blocks, turning back into images when it stops: terminals draw a kitty image as a placeholder in every cell, and a screen of those moving every frame is slow. iTerm2-protocol terminals keep their images. Covers are shaped by the cell size the terminal reports. Terminals that do not answer get half blocks, which is also what `art_graphics = false` gives, and skips the question. `I` in the TUI switches for the session and saves the choice. It lives in `config.local.toml`: whether images work is a property of the terminal at hand.
 
 ### TUI palette
 
