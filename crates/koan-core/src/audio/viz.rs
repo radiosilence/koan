@@ -46,6 +46,30 @@ pub struct VizFrame {
     /// Interleaved stereo (L, R, L, R...) — `WAVEFORM_SAMPLES` frames = `WAVEFORM_SAMPLES * 2` values.
     /// Empty when no audio is playing.
     pub waveform: Vec<f32>,
+    /// What was heard, as EBU R128 measures it.
+    pub loudness: Loudness,
+}
+
+/// Loudness as EBU R128 (BS.1770) measures it, of the audio as it was heard.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Loudness {
+    /// K-weighted loudness over the last 400 ms, in LUFS. `-inf` in silence.
+    pub momentary: f64,
+    /// The same over the last 3 s.
+    pub short_term: f64,
+    /// The highest true peak heard since the previous frame, across the
+    /// channels, as linear amplitude: 1.0 is 0 dBTP.
+    pub true_peak: f64,
+}
+
+impl Default for Loudness {
+    fn default() -> Self {
+        Self {
+            momentary: f64::NEG_INFINITY,
+            short_term: f64::NEG_INFINITY,
+            true_peak: 0.0,
+        }
+    }
 }
 
 impl Default for VizFrame {
@@ -57,6 +81,7 @@ impl Default for VizFrame {
             beat_energy: 0.0,
             timestamp: std::time::Instant::now(),
             waveform: Vec::new(),
+            loudness: Loudness::default(),
         }
     }
 }
@@ -571,6 +596,7 @@ mod tests {
             beat_energy: 0.0,
             timestamp: std::time::Instant::now(),
             waveform: Vec::new(),
+            loudness: Loudness::default(),
         });
 
         let frame2 = snap.read();

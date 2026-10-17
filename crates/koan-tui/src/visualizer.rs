@@ -785,6 +785,11 @@ pub struct VisualizerState {
     pub radial_angle: f32,
     /// Spectrum history for spectrogram and flame modes.
     pub spectrum_history: SpectrumHistory,
+    /// The analyser's loudness reading of what was heard last.
+    pub loudness: koan_core::audio::viz::Loudness,
+    /// The highest true peak heard since `true_peak_hold` was last reset, as
+    /// linear amplitude.
+    pub true_peak_hold: f64,
     /// VU needle angle (smoothed), [left, right] in radians.
     pub vu_needle_angle: [f32; 2],
     /// Starfield: persistent star positions [(x, y, z)].
@@ -872,6 +877,8 @@ impl VisualizerState {
             lissajous_trail: LissajousTrail::new(),
             radial_angle: 0.0,
             spectrum_history: SpectrumHistory::new(),
+            loudness: Default::default(),
+            true_peak_hold: 0.0,
             vu_needle_angle: [0.0; 2],
             stars: (0..1500)
                 .map(|i| {
@@ -939,6 +946,8 @@ impl VisualizerState {
         self.spectrum = frame.spectrum;
         self.peaks = frame.peaks;
         self.vu_levels = frame.vu_levels;
+        self.loudness = frame.loudness;
+        self.true_peak_hold = self.true_peak_hold.max(frame.loudness.true_peak);
 
         // Beat energy: rise instantly from analyzer, decay locally for smooth falloff.
         // Local decay gives the hue-shift a longer tail than the analyzer's own decay.
@@ -1408,7 +1417,7 @@ fn render_lissajous(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
 
 // ── Spectrogram Renderer ──────────────────────────────────────────────────
 
-fn render_spectrogram(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+pub fn render_spectrogram(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     let w = area.width as usize;
     let h = area.height as usize;
     if w == 0 || h == 0 {
@@ -3045,6 +3054,7 @@ mod tests {
             beat_energy: 0.3,
             timestamp: Instant::now(),
             waveform: Vec::new(),
+            loudness: Default::default(),
         });
 
         state.update_from_snapshot(&snapshot);
@@ -3077,6 +3087,7 @@ mod tests {
             beat_energy: 0.8,
             timestamp: Instant::now(),
             waveform: Vec::new(),
+            loudness: Default::default(),
         });
         state.update_from_snapshot(&snapshot);
 
@@ -3128,6 +3139,7 @@ mod tests {
             beat_energy: 0.0,
             timestamp: Instant::now(),
             waveform: Vec::new(),
+            loudness: Default::default(),
         });
         state.update_from_snapshot(&snapshot);
         assert!(state.peaks[5] > 0.5, "peak should match analyzer value");
@@ -3142,6 +3154,7 @@ mod tests {
             beat_energy: 0.0,
             timestamp: Instant::now(),
             waveform: Vec::new(),
+            loudness: Default::default(),
         });
         state.update_from_snapshot(&snapshot);
         assert!(

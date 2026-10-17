@@ -2946,6 +2946,7 @@ dependencies = [
  "cpal",
  "crossbeam-channel",
  "dirs",
+ "ebur128",
  "env_logger",
  "fft-convolver",
  "figment",
