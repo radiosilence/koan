@@ -125,6 +125,31 @@ impl ToolItem {
     }
 }
 
+/// The frame every modal draws: a plain line in the rule colour, its title
+/// lowercase in the heading style at the top left.
+pub fn frame(title: &str, theme: &Theme) -> ratatui::widgets::Block<'static> {
+    use ratatui::widgets::{Block, Borders};
+    Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme.rule)
+        .title(ratatui::text::Span::styled(
+            format!(" {title} "),
+            theme.heading,
+        ))
+}
+
+/// A modal `w` by `h` cells, centred in `area` and kept inside it.
+pub fn centred(area: Rect, w: u16, h: u16) -> Rect {
+    let w = w.min(area.width);
+    let h = h.min(area.height);
+    Rect::new(
+        area.x + (area.width - w) / 2,
+        area.y + (area.height - h) / 2,
+        w,
+        h,
+    )
+}
+
 /// What a page shows in the toolbar row: its title and count on the left,
 /// its controls on the right.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -350,6 +375,13 @@ mod tests {
         assert_eq!(fit("abc", 0), "");
         assert_eq!(width(&fit_pad("東京事変", 5)), 5);
         assert_eq!(fit_pad_right("3:07", 6), "  3:07");
+    }
+
+    #[test]
+    fn a_modal_stays_inside_its_area() {
+        let area = Rect::new(10, 5, 40, 12);
+        assert_eq!(centred(area, 20, 6), Rect::new(20, 8, 20, 6));
+        assert_eq!(centred(area, 90, 60), area);
     }
 
     #[test]
