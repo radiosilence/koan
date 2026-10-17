@@ -286,6 +286,9 @@ pub enum Link {
     ArtistOfTrack(i64),
     /// The album of the library track with this id.
     AlbumOfTrack(i64),
+    /// The artist of the album the library track with this id is on: an
+    /// album heading's, which a compilation's first track does not share.
+    AlbumArtistOfTrack(i64),
 }
 
 /// The links drawn this frame and where, so a click on one opens it wherever

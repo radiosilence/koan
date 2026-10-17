@@ -1469,7 +1469,7 @@ mod tests {
         );
         assert_eq!(
             app.links.at(area.x + 1 + "album  ".len() as u16, area.y),
-            Some(Link::ArtistOfTrack(1))
+            Some(Link::AlbumArtistOfTrack(1))
         );
         assert_eq!(app.links.at(area.x + 40, area.y), None);
         // A track's heart is its own hit.

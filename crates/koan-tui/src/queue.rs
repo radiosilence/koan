@@ -498,7 +498,7 @@ fn draw_heading(
         theme,
         &rows::Heading {
             album: (&e.album, e.db_id.map(Link::AlbumOfTrack)),
-            artist: (artist, e.db_id.map(Link::ArtistOfTrack)),
+            artist: (artist, e.db_id.map(Link::AlbumArtistOfTrack)),
             facts: &facts,
             selected,
         },

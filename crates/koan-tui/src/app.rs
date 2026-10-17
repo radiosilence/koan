@@ -1207,6 +1207,9 @@ impl App {
                 Some(Link::Album(id)) => self.go_page(Page::Album(id)),
                 Some(Link::ArtistOfTrack(id)) => self.open_entry_link(Some(id), false),
                 Some(Link::AlbumOfTrack(id)) => self.open_entry_link(Some(id), true),
+                Some(Link::AlbumArtistOfTrack(id)) => {
+                    self.open_track_page(Some(id), |_, album| Page::Artist(album.artist_id))
+                }
                 None => return false,
             },
         }
@@ -3089,6 +3092,21 @@ impl App {
 
     /// Opens the album, or the artist, of the library track `db_id`.
     pub fn open_entry_link(&mut self, db_id: Option<i64>, album_page: bool) {
+        self.open_track_page(db_id, |track, album| {
+            if album_page {
+                Page::Album(album.id)
+            } else {
+                Page::Artist(track.artist_id.unwrap_or(album.artist_id))
+            }
+        });
+    }
+
+    /// Opens the page `to` picks from a library track and its album.
+    fn open_track_page(
+        &mut self,
+        db_id: Option<i64>,
+        to: impl FnOnce(&koan_core::db::queries::TrackRow, &koan_core::db::queries::AlbumRow) -> Page,
+    ) {
         let found = db_id.and_then(|id| {
             let db = koan_core::db::pool::shared().get().ok()?;
             let track = koan_core::db::queries::get_track_row(&db.conn, id)
@@ -3097,11 +3115,7 @@ impl App {
             let album = koan_core::db::queries::get_album(&db.conn, track.album_id?)
                 .ok()
                 .flatten()?;
-            Some(if album_page {
-                Page::Album(album.id)
-            } else {
-                Page::Artist(track.artist_id.unwrap_or(album.artist_id))
-            })
+            Some(to(&track, &album))
         });
         match found {
             Some(page) => self.go_page(page),

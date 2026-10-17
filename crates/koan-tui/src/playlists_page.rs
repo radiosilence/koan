@@ -1127,7 +1127,7 @@ impl PlaylistPage {
                         theme,
                         &rows::Heading {
                             album: (&t.album_title, t.album_id.map(Link::Album)),
-                            artist: (artist, Some(Link::ArtistOfTrack(t.id))),
+                            artist: (artist, Some(Link::AlbumArtistOfTrack(t.id))),
                             facts: "",
                             selected: false,
                         },
