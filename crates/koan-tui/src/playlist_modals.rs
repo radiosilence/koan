@@ -17,6 +17,8 @@ pub enum Purpose {
     /// A new playlist holding these tracks.
     New(Vec<i64>),
     Rename(i64),
+    /// Where to write the playlist with this id as an M3U8.
+    Export(i64),
     /// A folder to add to the library.
     Folder,
 }
@@ -35,6 +37,7 @@ impl NamePrompt {
         match self.purpose {
             Purpose::New(_) => " new playlist ",
             Purpose::Rename(_) => " rename playlist ",
+            Purpose::Export(_) => " export as m3u8 to ",
             Purpose::Folder => " add library folder ",
         }
     }

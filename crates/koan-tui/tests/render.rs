@@ -29,7 +29,7 @@ use koan_tui::picker::{
     PickerItem, PickerKind, PickerOverlay, PickerPartKind, PickerState, picker_popup_rect,
     picker_results_rect,
 };
-use koan_tui::queue::QueueView;
+use koan_tui::queue::{self, QueueView};
 use koan_tui::theme::Theme;
 use koan_tui::transport::TransportBar;
 use koan_tui::visualizer::VisualizerMode;
@@ -306,12 +306,13 @@ fn queue_survives_every_size_and_title() {
     let selected: HashSet<usize> = [0usize, 2].into_iter().collect();
     let favourites: HashSet<i64> = [1].into_iter().collect();
 
+    let layout = queue::Layout::build(&entries, true);
     for &(w, h) in SIZES {
         for mode in [Mode::Normal, Mode::QueueEdit] {
             // Cursor and scroll offset past the end must not index out of bounds.
             for (cursor, scroll) in [(0, 0), (3, 1), (entries.len(), entries.len() + 5)] {
                 render_widget(
-                    QueueView::new(&entries, &mode, cursor, scroll, &theme)
+                    QueueView::new(&entries, &layout, &mode, cursor, scroll, &theme)
                         .with_selected(&selected)
                         .with_spinner(3)
                         .with_drop_indicator(Some(2))
@@ -328,7 +329,8 @@ fn queue_survives_every_size_and_title() {
 fn render_empty_queue(w: u16, h: u16) {
     let theme = Theme::default();
     let mode = Mode::Normal;
-    render_widget(QueueView::new(&[], &mode, 0, 0, &theme), w, h);
+    let layout = queue::Layout::default();
+    render_widget(QueueView::new(&[], &layout, &mode, 0, 0, &theme), w, h);
 }
 
 #[test]

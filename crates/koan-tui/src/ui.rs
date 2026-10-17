@@ -249,10 +249,19 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             let App {
                 playlist_page,
                 theme,
+                queue,
+                favourites,
+                spinner_tick,
                 ..
             } = &mut *app;
+            let live = super::playlists_page::Live {
+                queue: &queue.vq_cache.entries,
+                favourites: Some(favourites),
+                offline: koan_core::remote::offline::active(),
+                spinner: *spinner_tick,
+            };
             match playlist_page {
-                Some(p) => p.render(stage, frame.buffer_mut(), theme, hover),
+                Some(p) => p.render(stage, frame.buffer_mut(), theme, hover, &live),
                 None => {
                     heading(frame.buffer_mut(), stage, theme, "playlist", "");
                     frame.buffer_mut().set_string(
@@ -865,11 +874,13 @@ fn render_queue(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
     let selected_indices = app.selected_indices();
     let queue_view = QueueView::new(
         &app.queue.vq_cache.entries,
+        &app.queue.layout,
         &app.mode,
         app.queue.cursor,
         app.queue.scroll_offset,
         &app.theme,
     )
+    .with_facts(&app.queue.facts, koan_core::remote::offline::active())
     .with_selected(&selected_indices)
     .with_spinner(app.spinner_tick)
     .with_drop_indicator(drop_indicator)
@@ -947,6 +958,7 @@ mod tests {
         );
         app.queue.vq_cache.entries = entries;
         app.queue.vq_version = app.state.playlist_version();
+        app.relayout_queue();
         // Pinned so the sweep does not inherit the developer's own config.
         app.art_size = 24;
         app.show_fps = false;
@@ -1234,23 +1246,22 @@ mod tests {
 
     #[test]
     fn the_queue_headings_name_links_and_a_row_has_a_menu_button() {
-        use crate::queue::{HeaderLink, QueueView, menu_button_x};
+        use crate::queue::{QueueView, menu_button_x};
+        use crate::rows::Link;
         let app = app_with_queue(3);
         let entries = &app.queue.vq_cache.entries;
+        let layout = &app.queue.layout;
         let area = Rect::new(0, 0, 80, 20);
-        // Row 1 is the heading: " artist \u{2014} (2024) album [FLAC]".
+        // Row 1 is the heading: " album  artist ... 2024 · 3 tracks · 10:00 · FLAC".
+        let at = |col, row| QueueView::header_link_at(entries, layout, area, 0, col, row);
+        assert_eq!(at(1, 1), Some((0, Link::Album)));
         assert_eq!(
-            QueueView::header_link_at(entries, area, 0, 2, 1),
-            Some((0, HeaderLink::Artist))
+            at(1 + "album  ".len() as u16, 1),
+            Some((0, Link::AlbumArtist))
         );
-        let album_col = 1 + "artist".len() as u16 + 3 + "(2024) ".len() as u16;
-        assert_eq!(
-            QueueView::header_link_at(entries, area, 0, album_col + 1, 1),
-            Some((0, HeaderLink::Album))
-        );
-        // Off the text, and on a track row, there is no link.
-        assert_eq!(QueueView::header_link_at(entries, area, 0, 70, 1), None);
-        assert_eq!(QueueView::header_link_at(entries, area, 0, 2, 2), None);
+        // Off the text, and on a track's title, there is no link.
+        assert_eq!(at(40, 1), None);
+        assert_eq!(at(10, 2), None);
         assert_eq!(menu_button_x(area), 77);
     }
 

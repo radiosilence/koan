@@ -92,6 +92,8 @@ pub enum ContextAction {
     AddToPlaylist,
     Download,
     RemoveDownload,
+    /// A rule between groups of items.
+    Separator,
 }
 
 /// A status bar message with the instant it was created (for auto-clear timeout).
@@ -178,6 +180,12 @@ pub struct QueueState {
     /// Cached visible queue snapshot — refreshed once per frame.
     pub(super) vq_cache: VisibleQueueSnapshot,
     pub(super) vq_version: u64,
+    /// The queue's lines, built when it changes or is regrouped.
+    pub(super) layout: queue::Layout,
+    /// What the library says of the queue's tracks, read when it changes.
+    pub(super) facts: queue::Facts,
+    /// A row per track rather than album runs.
+    pub flat: bool,
 }
 
 /// Cached layout rects from last render, used for mouse hit-testing.
@@ -437,7 +445,10 @@ impl App {
             local_tx: tx,
             quit: false,
             last_skip: None,
-            queue: QueueState::default(),
+            queue: QueueState {
+                flat: !koan_core::config::Config::cached().playback.queue_grouped,
+                ..Default::default()
+            },
             picker: None,
             spinner_tick: 0,
             last_click_time: None,
@@ -923,7 +934,7 @@ impl App {
                 {
                     let visible_height = self.queue_visible_height();
                     self.queue.scroll_offset = queue::scroll_for_cursor(
-                        self.visible_queue(),
+                        &self.queue.layout,
                         idx,
                         self.queue.scroll_offset,
                         visible_height,
@@ -1252,6 +1263,28 @@ impl App {
             PlAction::Rename(id, name) => self.open_name_prompt(Purpose::Rename(id), name),
             PlAction::Choose(ids) => self.open_chooser(ids),
             PlAction::Say(text) => self.say(text),
+            PlAction::Favourite(id) => {
+                self.toggle_favourite(id);
+            }
+            PlAction::Menu(title, items) => {
+                self.actions_menu = Some(ActionsMenu::new(title, items));
+                self.push_mode(Mode::ActionsMenu);
+            }
+            PlAction::Export(id, name) => {
+                let file = name.replace('/', "-");
+                self.open_name_prompt(Purpose::Export(id), format!("~/{file}.m3u8"));
+            }
+            PlAction::Deleted(name) => {
+                self.say(format!("deleted '{name}'"));
+                self.go_page(Page::Playlists);
+            }
+            PlAction::Page(act) => {
+                let next = self
+                    .playlist_page
+                    .as_mut()
+                    .map_or(PlAction::None, |p| p.apply(act));
+                self.apply_playlist(next);
+            }
         }
     }
 
@@ -1309,6 +1342,14 @@ impl App {
             },
             Purpose::Folder => match super::settings_page::add_folder(&prompt.text) {
                 Ok(path) => format!("added {path}; run scan library to index it"),
+                Err(e) => {
+                    self.name_prompt = Some(prompt);
+                    self.say(e);
+                    return;
+                }
+            },
+            Purpose::Export(id) => match super::playlist_ops::export(*id, &prompt.text) {
+                Ok(said) => said,
                 Err(e) => {
                     self.name_prompt = Some(prompt);
                     self.say(e);
@@ -1439,14 +1480,24 @@ impl App {
 
     /// Runs the menu's item at `idx` as its key would, and closes the menu.
     fn run_menu_item(&mut self, idx: usize) {
+        if self
+            .actions_menu
+            .as_ref()
+            .and_then(|m| m.items.get(idx))
+            .is_some_and(|(label, _)| label.is_empty())
+        {
+            return;
+        }
         let action = self
             .actions_menu
             .take()
             .and_then(|m| m.items.into_iter().nth(idx))
-            .map(|(_, action)| action);
+            .map(|(_, item)| item);
         self.pop_mode();
-        if let Some(action) = action {
-            self.apply_browse(action);
+        match action {
+            Some(super::actions_menu::Item::Browse(action)) => self.apply_browse(action),
+            Some(super::actions_menu::Item::Playlist(action)) => self.apply_playlist(action),
+            None => {}
         }
     }
 
@@ -1682,6 +1733,10 @@ impl App {
                 self.push_mode(Mode::FilterPanel);
             }
             browse::Action::Menu(title, items) => {
+                let items = items
+                    .into_iter()
+                    .map(|(label, action)| (label, super::actions_menu::Item::Browse(action)))
+                    .collect();
                 self.actions_menu = Some(ActionsMenu::new(title, items));
                 self.push_mode(Mode::ActionsMenu);
             }
@@ -1835,9 +1890,9 @@ impl App {
             }
             KeyCode::Char('A') | KeyCode::Char('O') => {
                 let link = if key.code == KeyCode::Char('A') {
-                    queue::HeaderLink::Artist
+                    crate::rows::Link::Artist
                 } else {
-                    queue::HeaderLink::Album
+                    crate::rows::Link::Album
                 };
                 let db_id = self
                     .visible_queue()
@@ -2001,17 +2056,9 @@ impl App {
                 let ids = self.queue_choice();
                 self.open_chooser(ids);
             }
-            KeyCode::Char('W') => {
-                let ids: Vec<i64> = self
-                    .visible_queue()
-                    .iter()
-                    .filter_map(|e| e.db_id)
-                    .collect();
-                if ids.is_empty() {
-                    self.say("the queue is empty");
-                } else {
-                    self.open_name_prompt(Purpose::New(ids), "queue".into());
-                }
+            KeyCode::Char('W') => self.queue_control(queue::Control::Save),
+            KeyCode::Char('t') if self.page() == Page::Queue => {
+                self.queue_control(queue::Control::Grouped(self.queue.flat));
             }
             KeyCode::Char('B') => self.toggle_eq(),
             KeyCode::Char('/') => {
@@ -2497,7 +2544,7 @@ impl App {
             KeyCode::Char(' ')
                 // Open context menu if there's a selection.
                 if !self.queue.selected_ids.is_empty() => {
-                    self.open_context_menu(None);
+                    self.open_context_menu(None, false);
                 }
             // Vim: page up/down, home/end.
             KeyCode::PageUp | KeyCode::Char('u')
@@ -2540,16 +2587,14 @@ impl App {
                 self.context_menu = None;
                 self.pop_mode();
             }
-            KeyCode::Up | KeyCode::Char('k') => {
-                if let Some(ref mut menu) = self.context_menu {
-                    menu.cursor = menu.cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(ref mut menu) = self.context_menu
-                    && menu.cursor + 1 < menu.actions.len()
-                {
-                    menu.cursor += 1;
+            KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+                let delta = if matches!(key.code, KeyCode::Up | KeyCode::Char('k')) {
+                    -1
+                } else {
+                    1
+                };
+                if let Some(menu) = self.context_menu.as_mut() {
+                    menu.cursor = super::context_menu::step(&menu.actions, menu.cursor, delta);
                 }
             }
             KeyCode::Enter => {
@@ -2567,7 +2612,11 @@ impl App {
                     self.pop_mode();
                 } else if let Some(menu) = self.context_menu.take() {
                     // Match hotkey char against menu actions.
-                    if let Some((action, _, _)) = menu.actions.iter().find(|(_, _, h)| *h == c) {
+                    if let Some((action, _, _)) = menu
+                        .actions
+                        .iter()
+                        .find(|(a, _, h)| *h == c && *a != ContextAction::Separator)
+                    {
                         self.execute_context_action(*action);
                     } else {
                         // No match — restore menu.
@@ -2630,45 +2679,31 @@ impl App {
         }
     }
 
-    /// Build common context menu actions, conditionally including share if remote is configured.
-    fn build_context_actions(
-        &self,
-        fav_label: &'static str,
-    ) -> Vec<(ContextAction, &'static str, char)> {
-        let mut actions = vec![
-            (ContextAction::Play, "Play", 'p'),
-            (ContextAction::ToggleFavourite, fav_label, 'f'),
-            (ContextAction::TrackInfo, "Track info", 'i'),
-            (
-                ContextAction::AddToPlaylist,
-                "Add to a playlist\u{2026}",
-                'w',
-            ),
-            (ContextAction::GoToAlbum, "Go to the record", 'a'),
-            (ContextAction::GoToArtist, "Go to the artist", 'r'),
-            (ContextAction::Download, "Download", 'l'),
-            (ContextAction::RemoveDownload, "Remove the download", 'u'),
-            (ContextAction::Remove, "Remove", 'd'),
-            (ContextAction::Organize, "Organize files", 'o'),
-        ];
-        let cfg = koan_core::config::Config::cached();
-        if cfg.remote.enabled && koan_core::helpers::remote_credential(&cfg).is_some() {
-            actions.push((ContextAction::CopyShareLink, "Share link", 's'));
-        }
-        actions
-    }
-
-    /// The queue's menu for the selection, or the track under the cursor.
-    fn open_context_menu(&mut self, at: Option<(u16, u16)>) {
+    /// The queue's menu for the selection, or the track under the cursor;
+    /// `heading` when it was opened on an album's heading.
+    fn open_context_menu(&mut self, at: Option<(u16, u16)>, heading: bool) {
+        use super::context_menu::MenuFor;
         let ids = self.queue_choice();
-        let fav_label = if !ids.is_empty() && ids.iter().all(|id| self.favourites.contains(id)) {
-            "Unfavourite"
+        let favourite = !ids.is_empty() && ids.iter().all(|id| self.favourites.contains(id));
+        let of = if heading {
+            MenuFor::Album
+        } else if self.queue.selected_ids.len() > 1 {
+            MenuFor::Tracks { favourite }
         } else {
-            "Favourite"
+            let on_disk = ids
+                .first()
+                .and_then(|id| self.queue.facts.sources.get(id))
+                .is_some_and(|&(_, on_disk)| on_disk);
+            MenuFor::Track {
+                in_library: !ids.is_empty(),
+                favourite,
+                on_disk,
+            }
         };
-        let actions = self.build_context_actions(fav_label);
+        let cfg = koan_core::config::Config::cached();
+        let share = cfg.remote.enabled && koan_core::helpers::remote_credential(&cfg).is_some();
         self.context_menu = Some(ContextMenuState {
-            actions,
+            actions: super::context_menu::queue_items(of, share),
             cursor: 0,
             at,
         });
@@ -2678,6 +2713,7 @@ impl App {
     fn execute_context_action(&mut self, action: ContextAction) {
         self.pop_mode();
         match action {
+            ContextAction::Separator => {}
             ContextAction::Play => {
                 self.play_at_cursor();
             }
@@ -2709,9 +2745,9 @@ impl App {
             }
             ContextAction::GoToAlbum | ContextAction::GoToArtist => {
                 let link = if action == ContextAction::GoToAlbum {
-                    queue::HeaderLink::Album
+                    crate::rows::Link::Album
                 } else {
-                    queue::HeaderLink::Artist
+                    crate::rows::Link::Artist
                 };
                 let db_id = self
                     .visible_queue()
@@ -2891,8 +2927,11 @@ impl App {
                             self.queue.cursor = idx;
                             // Scroll so the jumped-to track is near the top.
                             let visible_height = self.queue_visible_height();
-                            self.queue.scroll_offset =
-                                queue::scroll_cursor_to_top(visible, idx, visible_height);
+                            self.queue.scroll_offset = queue::scroll_cursor_to_top(
+                                &self.queue.layout,
+                                idx,
+                                visible_height,
+                            );
                         }
                     }
                 }
@@ -3167,6 +3206,7 @@ impl App {
                     if let Some(row) = row
                         && let Some(ref mut menu) = self.context_menu
                         && row < menu.actions.len()
+                        && menu.actions[row].0 != ContextAction::Separator
                     {
                         menu.cursor = row;
                         let action = menu.actions[row].0;
@@ -3566,8 +3606,7 @@ impl App {
                 if event.column == scrollbar_x && event.row > q.y && event.row < q.y + q.height {
                     let inner_y = q.y + 1;
                     let visible_height = self.queue_visible_height();
-                    let visible = self.visible_queue();
-                    let total_lines = super::queue::display_line_count(visible);
+                    let total_lines = super::queue::display_line_count(&self.queue.layout);
 
                     if total_lines > visible_height && visible_height > 0 {
                         let vis8 = visible_height * 8;
@@ -3601,20 +3640,39 @@ impl App {
                 }
 
                 let visible = &self.queue.vq_cache.entries;
-                if let Some((first, link)) = queue::QueueView::header_link_at(
+                let area = self.layout.queue_area;
+                if let Some(control) = queue::QueueView::control_at(
+                    area,
+                    self.queue.selected_ids.len(),
+                    !self.queue.flat,
+                    event.column,
+                    event.row,
+                ) {
+                    self.queue_control(control);
+                    return;
+                }
+                if let Some((idx, link)) = queue::QueueView::header_link_at(
                     visible,
-                    self.layout.queue_area,
+                    &self.queue.layout,
+                    area,
                     self.queue.scroll_offset,
                     event.column,
                     event.row,
                 ) {
-                    let db_id = visible.get(first).and_then(|e| e.db_id);
-                    self.open_entry_link(db_id, link);
+                    let db_id = visible.get(idx).and_then(|e| e.db_id);
+                    match link {
+                        crate::rows::Link::Heart => {
+                            if let Some(id) = db_id {
+                                self.toggle_favourite(id);
+                            }
+                        }
+                        link => self.open_entry_link(db_id, link),
+                    }
                     return;
                 }
                 if event.column == queue::menu_button_x(self.layout.queue_area)
                     && let Some(idx) = queue::QueueView::queue_index_at_y(
-                        visible,
+                        &self.queue.layout,
                         self.layout.queue_area,
                         self.queue.scroll_offset,
                         event.row,
@@ -3624,14 +3682,14 @@ impl App {
                     return;
                 }
                 let Some(idx) = queue::QueueView::queue_index_at_y(
-                    visible,
+                        &self.queue.layout,
                     self.layout.queue_area,
                     self.queue.scroll_offset,
                     event.row,
                 ) else {
                     // Check if the click landed on an album header.
                     if let Some((first, last)) = queue::QueueView::album_group_at_y(
-                        visible,
+                        &self.queue.layout,
                         self.layout.queue_area,
                         self.queue.scroll_offset,
                         event.row,
@@ -3764,7 +3822,7 @@ impl App {
                     return;
                 }
                 let Some(idx) = queue::QueueView::queue_index_at_y(
-                    &self.queue.vq_cache.entries,
+                        &self.queue.layout,
                     self.layout.queue_area,
                     self.queue.scroll_offset,
                     event.row,
@@ -3823,17 +3881,19 @@ impl App {
                     let entries = &self.queue.vq_cache.entries;
                     let (area, scroll) = (self.layout.queue_area, self.queue.scroll_offset);
                     if let Some(idx) =
-                        queue::QueueView::queue_index_at_y(entries, area, scroll, event.row)
+                        queue::QueueView::queue_index_at_y(
+                        &self.queue.layout, area, scroll, event.row)
                     {
                         self.open_queue_menu(idx, event.column, event.row);
                     } else if let Some((first, last)) =
-                        queue::QueueView::album_group_at_y(entries, area, scroll, event.row)
+                        queue::QueueView::album_group_at_y(
+                        &self.queue.layout, area, scroll, event.row)
                     {
                         // On an album heading: the menu is for the whole record.
                         self.queue.selected_ids = entries[first..=last].iter().map(|e| e.id).collect();
                         self.queue.anchor_id = Some(entries[first].id);
                         self.queue.cursor = first;
-                        self.open_context_menu(Some((event.column, event.row)));
+                        self.open_context_menu(Some((event.column, event.row)), true);
                     }
                 }
             MouseEventKind::ScrollUp => {
@@ -3911,8 +3971,7 @@ impl App {
                     }
                 } else if self.page() != Page::Queue {
                 } else {
-                    let visible = self.visible_queue();
-                    let total_display = super::queue::display_line_count(visible);
+                    let total_display = super::queue::display_line_count(&self.queue.layout);
                     let visible_height = self.queue_visible_height();
                     let max_scroll = total_display.saturating_sub(visible_height);
                     self.queue.scroll_offset = (self.queue.scroll_offset + 1).min(max_scroll);
@@ -3935,11 +3994,11 @@ impl App {
             self.select_single(idx);
         }
         self.queue.cursor = idx;
-        self.open_context_menu(Some((col, row)));
+        self.open_context_menu(Some((col, row)), false);
     }
 
     /// Opens the record or the artist of the library track `db_id`.
-    pub fn open_entry_link(&mut self, db_id: Option<i64>, link: queue::HeaderLink) {
+    pub fn open_entry_link(&mut self, db_id: Option<i64>, link: crate::rows::Link) {
         let found = db_id.and_then(|id| {
             let db = koan_core::db::pool::shared().get().ok()?;
             let track = koan_core::db::queries::get_track_row(&db.conn, id)
@@ -3948,10 +4007,12 @@ impl App {
             let album = koan_core::db::queries::get_album(&db.conn, track.album_id?)
                 .ok()
                 .flatten()?;
-            Some(match link {
-                queue::HeaderLink::Album => Page::Album(album.id),
-                queue::HeaderLink::Artist => Page::Artist(album.artist_id),
-            })
+            match link {
+                crate::rows::Link::Album => Some(Page::Album(album.id)),
+                crate::rows::Link::AlbumArtist => Some(Page::Artist(album.artist_id)),
+                crate::rows::Link::Artist => track.artist_id.map(Page::Artist),
+                crate::rows::Link::Heart => None,
+            }
         });
         match found {
             Some(page) => self.go_page(page),
@@ -4013,17 +4074,16 @@ impl App {
         }
 
         // Queue item.
-        if self.is_in_rect(col, row, self.layout.queue_area) {
-            let visible = self.visible_queue();
-            if let Some(idx) = queue::QueueView::queue_index_at_y(
-                visible,
+        if self.is_in_rect(col, row, self.layout.queue_area)
+            && let Some(idx) = queue::QueueView::queue_index_at_y(
+                &self.queue.layout,
                 self.layout.queue_area,
                 self.queue.scroll_offset,
                 row,
-            ) {
-                self.hover.zone = HoverZone::QueueItem(idx);
-                return;
-            }
+            )
+        {
+            self.hover.zone = HoverZone::QueueItem(idx);
+            return;
         }
 
         if let Some(target) = self.nav_target_at(col, row) {
@@ -4523,10 +4583,9 @@ impl App {
     }
 
     fn update_scroll(&mut self) {
-        let visible = self.visible_queue();
         let visible_height = self.queue_visible_height();
         self.queue.scroll_offset = queue::scroll_for_cursor(
-            visible,
+            &self.queue.layout,
             self.queue.cursor,
             self.queue.scroll_offset,
             visible_height,
@@ -4543,8 +4602,7 @@ impl App {
             return;
         }
 
-        let visible = self.visible_queue();
-        let total_lines = super::queue::display_line_count(visible);
+        let total_lines = super::queue::display_line_count(&self.queue.layout);
         if total_lines <= visible_height {
             return;
         }
@@ -4577,7 +4635,7 @@ impl App {
         }
         let row = self.last_mouse_row?;
         queue::QueueView::queue_index_at_y(
-            &self.queue.vq_cache.entries,
+            &self.queue.layout,
             self.layout.queue_area,
             self.queue.scroll_offset,
             row,
@@ -4622,6 +4680,8 @@ impl App {
         self.queue.vq_cache = self.state.derive_visible_queue();
         if mutated {
             self.queue.vq_version = v;
+            self.queue.facts = queue::Facts::read(&self.queue.vq_cache.entries, &self.state);
+            self.relayout_queue();
 
             self.clamp_queue_cursor();
             self.close_stale_track_info();
@@ -4693,6 +4753,72 @@ impl App {
             self.mode = Mode::Normal;
             self.art.cover_art.clear();
         }
+    }
+
+    /// Does what a control in the queue's heading is for.
+    fn queue_control(&mut self, control: queue::Control) {
+        match control {
+            queue::Control::Playing => {
+                if let Some(idx) = self
+                    .queue
+                    .vq_cache
+                    .entries
+                    .iter()
+                    .position(|e| e.status == QueueEntryStatus::Playing)
+                {
+                    let height = self.queue_visible_height();
+                    self.queue.scroll_offset =
+                        queue::scroll_cursor_to_top(&self.queue.layout, idx, height);
+                }
+            }
+            queue::Control::Grouped(grouped) => {
+                self.queue.flat = !grouped;
+                self.relayout_queue();
+                self.update_scroll();
+                std::thread::Builder::new()
+                    .name("koan-config".into())
+                    .spawn(move || {
+                        koan_core::config::Config::persist(|cfg| {
+                            cfg.playback.queue_grouped = grouped;
+                        })
+                        .ok();
+                    })
+                    .ok();
+            }
+            queue::Control::Undo => {
+                self.tx.send(PlayerCommand::Undo).ok();
+            }
+            queue::Control::Redo => {
+                self.tx.send(PlayerCommand::Redo).ok();
+            }
+            queue::Control::Save => {
+                let ids: Vec<i64> = self
+                    .visible_queue()
+                    .iter()
+                    .filter_map(|e| e.db_id)
+                    .collect();
+                if ids.is_empty() {
+                    self.say("nothing in the queue is in the library");
+                } else {
+                    self.open_name_prompt(Purpose::New(ids), "queue".into());
+                }
+            }
+            queue::Control::ClearQueue => {
+                self.tx.send(PlayerCommand::ClearPlaylist).ok();
+                self.queue.selected_ids.clear();
+                self.say("cleared the queue: ctrl+z puts it back");
+            }
+            queue::Control::Deselect => {
+                self.queue.selected_ids.clear();
+                self.queue.anchor_id = None;
+            }
+            queue::Control::RemoveSelected => self.delete_selected(),
+        }
+    }
+
+    /// Lays the queue's lines out again, grouped or a row per track.
+    pub(super) fn relayout_queue(&mut self) {
+        self.queue.layout = queue::Layout::build(&self.queue.vq_cache.entries, !self.queue.flat);
     }
 
     pub fn visible_queue(&self) -> &[QueueEntry] {
