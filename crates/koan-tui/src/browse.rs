@@ -1383,7 +1383,6 @@ impl Browse {
     }
 }
 
-/// `text` cut to `width` cells, with an ellipsis where it was cut.
 /// The first of `rows` shown in a list scrolled to `scroll`, moved only as
 /// far as brings `cursor` into view, and kept for the next frame and the
 /// pointer.
