@@ -332,6 +332,10 @@ fn load(v: &ViewReq, seq: u64) -> Snapshot {
             detail,
         })
     });
+    let in_use_chain = in_use
+        .as_deref()
+        .map(profiles::tunings_for)
+        .unwrap_or_default();
     Snapshot {
         seq,
         in_use,
@@ -344,10 +348,7 @@ fn load(v: &ViewReq, seq: u64) -> Snapshot {
         sentence,
         in_use_preset,
         in_use_flat,
-        in_use_chain: in_use
-            .as_deref()
-            .map(profiles::tunings_for)
-            .unwrap_or_default(),
+        in_use_chain,
         profile,
         asked: v.profile.clone(),
     }
