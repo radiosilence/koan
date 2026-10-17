@@ -705,7 +705,8 @@ impl KoanEngine {
         koan_core::remote::devices::resume();
     }
 
-    /// The device's network changed: Android's default network came or went.
+    /// The device's network changed: Android's default network, or the
+    /// Apple apps' path, came or went.
     /// Connections to the server start afresh and an unanswered server is
     /// tried now. See `koan_core::helpers::network_changed`.
     pub fn network_changed(&self) {
