@@ -808,7 +808,7 @@ final class AlbumTile: NSCollectionViewItem {
         }
         let key = Playable.album(album).key
         if context.selecting, context.picked.contains(key) {
-            return (context.selection?.picked ?? []).map(PlayableTransfer.init)
+            return PlayableTransfer.dragging(context.selection?.picked ?? [])
         }
         return [PlayableTransfer(.album(album))]
     }

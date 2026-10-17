@@ -132,6 +132,10 @@ Albums, Artists and Tracks are the apps' browsers. Albums draws each album as a 
 | `Ctrl+R` | Replace the queue and play |
 | `f` | Favourite or unfavourite what the cursor is on |
 
+Playing a list from a track takes the queue's place. When something is queued, koan asks first, as the apps do: `p` (or `play`) replaces the queue, `a` (or `add to queue`) adds the list to it, and `Esc` leaves the queue as it is. The same goes for `Enter` or a second click on a track on the shelves and the album page.
+
+The menu (`m` or `⋯ actions`) is the apps' menu for what the cursor is on, on every page: play, play next, add to queue and shuffle; add to a playlist; favouriting and downloading; track info; and going to the album or the artist.
+
 On the album page `Enter` plays the album from the track under the cursor, the tracks before it kept behind in the queue. The `play` button replaces the queue with it, `shuffle` (or `S`) plays it shuffled, and `+ add` (or `a`) and `play next` (or `N`) queue it; `P` adds it and plays it, as on the browsing pages. `A` opens the artist of the track (on a compilation, the track's own), `H` or the heart beside the title favourites the album, `f` the track, `i` shows what the library holds of the track, and `d` and `u` download the album to this device or remove the download.
 
 ### Links
@@ -154,9 +158,11 @@ Covers are drawn as real images where the terminal supports the kitty or iTerm2 
 
 Graphics are detected once at startup by asking the terminal, which can add a moment on a terminal that does not answer. Setting `art_graphics = false` skips the question.
 
+The playing track's cover is read from the folder or the file and, for a track the library has from a server, fetched from the server when the file holds none, as a download still arriving may not; a file that gave no cover while it was arriving is read again once it has. The server is not asked while offline mode is on or while it is known to be down, and its answer never holds up a file's own cover. It is loaded off the drawing thread, so a change of track never stalls a frame, and the last cover stays up until the next one arrives.
+
 ## Colour
 
-The palette is the [kōan theme](https://github.com/radiosilence/koan/blob/main/docs/design/koan-theme.md). While a record plays, the accent takes its colour from the cover; a sleeve with no colour in it leaves the accent mint. The visualizers follow it too: the default `theme` palette runs from a dark shade of the accent through the accent to a light tint, in every mode, and the heat maps and matrix rain draw in it as well. `visualizer.palette = "rainbow"` is the old frequency rainbow, and `mono`, `fire` and `neon` are as they were. Where the terminal reports 24-bit colour the theme is drawn exactly, and in the nearest of the 256 colours otherwise. `playback.tui_theme = "ansi"` returns to the terminal's own sixteen colours. The theme never paints a background, so the terminal's own shows through.
+The palette is the [kōan theme](https://github.com/radiosilence/koan/blob/main/docs/design/koan-theme.md). While a record plays, the accent takes its colour from the cover, worked out as the apps do: the sleeve's hue, at a lightness that reads as text on a dark ground. Where no such lightness exists for the hue, the accent colours the progress bar, the spectrum and other marks, and text that would have been in it is drawn in the body colour. A sleeve with no colour in it, or with colour on only a sliver of it, leaves the accent mint, as does turning off `appearance.record_colours`, which takes effect at once. The visualizers follow it too: the default `theme` palette runs from a dark shade of the accent through the accent to a light tint, in every mode, and the heat maps and matrix rain draw in it as well. `visualizer.palette = "rainbow"` is the old frequency rainbow, and `mono`, `fire` and `neon` are as they were. Where the terminal reports 24-bit colour the theme is drawn exactly, and in the nearest of the 256 colours otherwise. `playback.tui_theme = "ansi"` returns to the terminal's own sixteen colours. The theme never paints a background, so the terminal's own shows through.
 
 ## Now playing
 

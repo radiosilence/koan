@@ -184,6 +184,16 @@ impl App {
                     }
                 }
             }
+            Mode::ReplaceQueue => {
+                let area = self.layout.modal_area;
+                if down && !hit(area, col, row) {
+                    self.answer_replace(crate::replace_dialog::Choice::Cancel);
+                } else if down
+                    && let Some(choice) = self.replace_dialog.as_ref().and_then(|d| d.hit(col, row))
+                {
+                    self.answer_replace(choice);
+                }
+            }
             Mode::NamePrompt => {
                 let area = self.layout.modal_area;
                 if down && !hit(area, col, row) {

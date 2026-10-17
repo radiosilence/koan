@@ -189,6 +189,7 @@ pub fn hints(mode: &Mode, page: Page, filterable: bool) -> Vec<(&'static str, &'
                 ("ret", "do it"),
                 ("esc", "close"),
             ],
+            Mode::ReplaceQueue => vec![("p", "play"), ("a", "add to queue"), ("esc", "cancel")],
             Mode::PlaylistChooser => vec![
                 ("\u{2191}\u{2193}", "navigate"),
                 ("ret", "add here"),

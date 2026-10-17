@@ -1,0 +1,1 @@
+- **A scan that loses a batch removes nothing.** When a batch of a scan failed to commit, the scan went on to remove tracks whose files it had not found, so a file moved into the lost batch, even from another library folder, lost its track along with its favourites and play history. Progress now reports a track only once its batch is committed.

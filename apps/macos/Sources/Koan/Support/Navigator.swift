@@ -123,9 +123,10 @@ final class Navigator {
     }
 
     /// How many times each section has been sent back to its top. The stage
-    /// keys most pages on it, so a bump rebuilds the page at its top; the album
-    /// and artist browsers, which put themselves back where they were when
-    /// rebuilt, watch it and scroll to the top instead. See `StageView`.
+    /// keys most pages on it, so a bump rebuilds the page at its top; the
+    /// album, artist and track browsers and play history, which put themselves
+    /// back where they were when rebuilt, watch it and scroll to the top
+    /// instead. See `RootView.pageOnStage`.
     private(set) var rewinds: [Section: Int] = [:]
 
     /// A click on the sidebar row for the page already showing: back to the

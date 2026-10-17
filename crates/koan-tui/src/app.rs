@@ -13,7 +13,7 @@ use koan_core::player::state::{
     VisibleQueueSnapshot,
 };
 
-use super::accent::{self, Accent};
+use super::accent::Accent;
 use super::actions_menu::ActionsMenu;
 use super::album_page::{AlbumHit, AlbumPage};
 use super::browse::{self, Browse, Source};
@@ -57,8 +57,20 @@ pub enum Mode {
     ActionsMenu,
     /// What narrows the record pages.
     FilterPanel,
+    /// Asking before a row replaces a queue that has something in it.
+    ReplaceQueue,
     HelpModal,
     VizPicker,
+}
+
+/// Whether a queue entry's file is still on its way, so a cover read from it
+/// now may be missing.
+fn arriving(entry: &QueueEntry) -> bool {
+    entry.download_progress.is_some()
+        || matches!(
+            entry.status,
+            QueueEntryStatus::Downloading | QueueEntryStatus::PriorityPending
+        )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -279,6 +291,7 @@ pub struct App {
     pub chooser: Option<Chooser>,
     pub actions_menu: Option<ActionsMenu>,
     pub filter_panel: Option<FilterPanel>,
+    pub replace_dialog: Option<super::replace_dialog::ReplaceDialog>,
     /// The filters on the album, artist and track browsers, shared by them
     /// as the apps' are.
     pub browse_filters: koan_core::browse::BrowseFilter,
@@ -289,9 +302,18 @@ pub struct App {
     /// The playing record's accent, easing as the record changes.
     pub accent: Accent,
     pub palette: Palette,
-    /// The path whose cover the accent was taken from.
-    accent_path: Option<PathBuf>,
     theme_accent: (u8, u8, u8),
+    /// The EQ curve Now playing plots.
+    pub eq_curve: super::now_playing::EqCurve,
+    /// The config as of this tick, read once for the tick and its frame.
+    pub cfg: Arc<koan_core::config::Config>,
+    /// The playing track's queue entry, as the cover needs it: its id, the
+    /// queue version it was found at, whether its file is still arriving,
+    /// and its row. Looked up again only when one of those can have moved.
+    playing_entry: Option<(QueueItemId, u64, bool, Option<i64>)>,
+    /// Whether the file of the track info popup's entry is still arriving,
+    /// so its cover is asked for again until it has.
+    info_arriving: bool,
 
     pub art: ArtState,
 
@@ -461,14 +483,18 @@ impl App {
             chooser: None,
             actions_menu: None,
             filter_panel: None,
+            replace_dialog: None,
             browse_filters: Default::default(),
             settings_page: SettingsPage::new(),
             browse_drag: false,
             thumbs: browse::Thumbs::new(),
             accent: Accent::default(),
             palette: Palette::detect(&cfg.playback.tui_theme),
-            accent_path: None,
             theme_accent: super::theme::MINT,
+            eq_curve: Default::default(),
+            cfg: koan_core::config::Config::cached(),
+            playing_entry: None,
+            info_arriving: false,
             art: ArtState::default(),
             context_menu: None,
             organize: None,
@@ -602,6 +628,7 @@ impl App {
     }
 
     pub fn handle_tick(&mut self) {
+        self.cfg = koan_core::config::Config::cached();
         // Refresh visible queue cache so all tick logic sees current state.
         self.refresh_visible_queue();
         // Against the layout just drawn: what is under the pointer moves with
@@ -689,28 +716,54 @@ impl App {
             }
         }
 
-        // Update now-playing cover art cache when track changes.
-        // Clear when nothing is playing so the old image gets freed.
+        // The playing track's cover, and the accent it gives once it arrives.
         let now = std::time::Instant::now();
-        if let Some(ref info) = self.state.track_info() {
-            let art = self.art.now_playing_art.get(&info.path);
-            if self.accent_path.as_deref() != Some(info.path.as_path()) {
-                let rgb = art
-                    .and_then(accent::from_image)
-                    .unwrap_or(super::theme::MINT);
-                self.accent_path = Some(info.path.clone());
-                self.accent.set(rgb, now);
+        match self.state.track_info() {
+            Some(info) => {
+                let version = self.queue.vq_version;
+                // A file still arriving moves without the version moving.
+                let stale = self.playing_entry.is_none_or(|(id, seen, arriving, _)| {
+                    id != info.id || seen != version || arriving
+                });
+                if stale {
+                    let entry = self.queue.vq_cache.entries.iter().find(|e| e.id == info.id);
+                    self.playing_entry = Some((
+                        info.id,
+                        version,
+                        entry.is_some_and(arriving),
+                        entry.and_then(|e| e.db_id),
+                    ));
+                }
+                if let Some((_, _, arriving, track)) = self.playing_entry {
+                    self.art
+                        .now_playing_art
+                        .want(&info.path, arriving, || track);
+                }
             }
-        } else {
-            self.art.now_playing_art.clear();
-            if self.accent_path.take().is_some() {
-                self.accent.set(super::theme::MINT, now);
+            None => {
+                self.playing_entry = None;
+                self.art.now_playing_art.clear();
             }
         }
         // A zoomed cover that has gone would leave a modal showing nothing.
         if self.mode == Mode::CoverArtZoom && self.art.now_playing_art.cached().is_none() {
             self.pop_mode();
         }
+        let np = &mut self.art.now_playing_art;
+        np.poll();
+        // Taken every tick, so turning record colours on or off lands at once.
+        let colours = self.cfg.appearance.record_colours;
+        let rgb = np.cover().and_then(|c| c.accent).filter(|_| colours);
+        self.accent.set(rgb.unwrap_or(super::theme::MINT), now);
+        if let Mode::TrackInfo(id) = self.mode
+            && self.info_arriving
+            && let Some(entry) = self.queue.vq_cache.entries.iter().find(|e| e.id == id)
+        {
+            self.info_arriving = arriving(entry);
+            let (path, track) = (entry.path.clone(), entry.db_id);
+            self.art.cover_art.want(&path, self.info_arriving, || track);
+        }
+        self.art.cover_art.poll();
         let rgb = self.accent.at(now);
         if rgb != self.theme_accent {
             self.theme_accent = rgb;
@@ -877,6 +930,11 @@ impl App {
             Mode::PlaylistChooser => self.handle_chooser_key(key),
             Mode::ActionsMenu => self.handle_actions_menu_key(key),
             Mode::FilterPanel => self.handle_filter_panel_key(key),
+            Mode::ReplaceQueue => {
+                if let Some(choice) = self.replace_dialog.as_mut().and_then(|d| d.handle_key(key)) {
+                    self.answer_replace(choice);
+                }
+            }
             Mode::HelpModal => self.handle_help_modal_key(key),
             Mode::VizPicker => self.handle_viz_picker_key(key),
             Mode::Normal => self.handle_page_key(key),
@@ -1472,6 +1530,21 @@ impl App {
         }
     }
 
+    /// Does what the replace dialog was answered with, and closes it.
+    pub(super) fn answer_replace(&mut self, choice: super::replace_dialog::Choice) {
+        use super::replace_dialog::Choice;
+        let dialog = self.replace_dialog.take();
+        self.pop_mode();
+        let Some(d) = dialog else {
+            return;
+        };
+        match choice {
+            Choice::Play => self.enqueue(d.ids, PickerAction::ReplaceFrom(d.start)),
+            Choice::Add => self.enqueue(d.ids, PickerAction::Append),
+            Choice::Cancel => {}
+        }
+    }
+
     fn handle_filter_panel_key(&mut self, key: KeyEvent) {
         let Some(panel) = self.filter_panel.as_mut() else {
             self.pop_mode();
@@ -1755,9 +1828,20 @@ impl App {
         }
     }
 
-    fn apply_browse(&mut self, action: browse::Action) {
+    pub(crate) fn apply_browse(&mut self, action: browse::Action) {
         match action {
             browse::Action::None => {}
+            // A list played from a row takes the queue's place: asked first
+            // when there is something in it, as the apps ask.
+            browse::Action::Play(ids, PickerAction::ReplaceFrom(start))
+                if !self.visible_queue().is_empty() =>
+            {
+                let queued = self.visible_queue().len();
+                self.replace_dialog = Some(super::replace_dialog::ReplaceDialog::new(
+                    ids, start, queued,
+                ));
+                self.push_mode(Mode::ReplaceQueue);
+            }
             browse::Action::Play(ids, how) => self.enqueue(ids, how),
             browse::Action::Favourite(id) => {
                 self.toggle_favourite(id);
@@ -2919,15 +3003,14 @@ impl App {
         let Some(entry) = self.queue.vq_cache.entries.get(idx) else {
             return;
         };
-        let (id, path) = (entry.id, entry.path.clone());
-        let details = entry
-            .db_id
+        let (id, track, path) = (entry.id, entry.db_id, entry.path.clone());
+        self.info_arriving = arriving(entry);
+        let details = track
             .and_then(super::track_info::Details::load)
             .unwrap_or_default();
         self.track_details = Some(Box::new(details));
         self.push_mode(Mode::TrackInfo(id));
-        // Prime the cache for this track's path.
-        self.art.cover_art.get(&path);
+        self.art.cover_art.want(&path, self.info_arriving, || track);
     }
 
     /// Opens the album, or the artist, of the library track `db_id`.
