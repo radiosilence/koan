@@ -25,11 +25,14 @@ final class NowPlayingCentre {
     /// What was last published, so a position tick doesn't republish unchanged
     /// metadata to the system.
     ///
-    /// Keyed by queue entry rather than library track: a controlled device's
-    /// queue can hold tracks this library does not have, which carry no
-    /// track id, and each of them is still a new item to the system.
-    private var publishedItem: String?
+    /// The queue entry and what it names, rather than the library track: a
+    /// controlled device's queue can hold tracks this library does not have,
+    /// which carry no track id, and an entry it reported without an id is
+    /// named by its place, which a new queue reuses for another track.
+    private var publishedItem: [String]?
     private var publishedState: PlayState?
+    /// The rate the system was told to extrapolate at.
+    private var publishedRate = 0.0
     private var publishedPosition: UInt64 = 0
     /// When the position was published, so a later reading can be compared
     /// with where the system has extrapolated it to rather than with where it
@@ -155,12 +158,16 @@ final class NowPlayingCentre {
         // finally arriving.
         let source = player.currentArtwork
         let artwork = source.flatMap { art.cached($0, size: .tile) }
-        let extrapolated = publishedState == .playing
-            ? Int64(publishedPosition) + Int64((ContinuousClock.now - publishedAt) / .milliseconds(1))
-            : Int64(publishedPosition)
+        let item = [entry.queueItemId, entry.title, entry.artist, entry.album]
+        // A transport that plays but a playhead that holds still — waiting for
+        // a download, or run dry at a track's end — is rate 0 to the system.
+        let rate = now.state == .playing && mirror.playhead.playing && !now.waiting ? 1.0 : 0.0
+        var extrapolated = Int64(publishedPosition)
+            + Int64(publishedRate * ((ContinuousClock.now - publishedAt) / .milliseconds(1)))
+        if now.durationMs > 0 { extrapolated = min(extrapolated, Int64(now.durationMs)) }
         let drifted = abs(Int64(positionMs) - extrapolated) > 2000
         let artworkArrived = artwork != nil && publishedArtwork != source
-        guard entry.queueItemId != publishedItem || now.state != publishedState || drifted
+        guard item != publishedItem || now.state != publishedState || rate != publishedRate || drifted
             || artworkArrived
         else {
             return
@@ -171,7 +178,7 @@ final class NowPlayingCentre {
             MPMediaItemPropertyArtist: entry.artist,
             MPMediaItemPropertyAlbumTitle: entry.album,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: Double(positionMs) / 1000,
-            MPNowPlayingInfoPropertyPlaybackRate: now.state == .playing ? 1.0 : 0.0,
+            MPNowPlayingInfoPropertyPlaybackRate: rate,
         ]
         if now.durationMs > 0 {
             info[MPMediaItemPropertyPlaybackDuration] = Double(now.durationMs) / 1000
@@ -187,8 +194,9 @@ final class NowPlayingCentre {
         case .stopped: .stopped
         }
 
-        publishedItem = entry.queueItemId
+        publishedItem = item
         publishedState = now.state
+        publishedRate = rate
         publishedPosition = positionMs
         publishedAt = .now
         publishedArtwork = artwork == nil ? nil : source

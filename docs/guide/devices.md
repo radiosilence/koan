@@ -280,7 +280,7 @@ Centre and the media keys on a Mac, the media notification on Android) shows
 that device's track and acts on it too. A command that cannot reach the
 controlled device fails and says why; this device does not start playing in
 its place. While nothing can reach the controlled device, the Control button
-shows a warning in red, before anything is pressed. Pick this device under
+shows a warning sign in the warning colour, before anything is pressed. Pick this device under
 **Control** to play here again. Library pages are still this
 device's library; what you add goes to the other device's queue by the
 server's id for each track.

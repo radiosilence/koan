@@ -58,6 +58,8 @@ class PlaybackService : MediaSessionService() {
 
     private val noisy = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            // `focusCommand` drops it while another device is controlled: the
+            // phone's headphones say nothing about that device.
             if (intent.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) focusCommand { pause() }
         }
     }
@@ -109,6 +111,14 @@ class PlaybackService : MediaSessionService() {
             }
                 .distinctUntilChanged()
                 .collect { playing -> if (playing) holdFocus() else if (!resumeOnGain) releaseFocus() }
+        }
+        // A resume owed to a transient loss here is not owed to the device
+        // control moves to: let the focus go with it.
+        scope.launch {
+            engine.devices
+                .map { it.target != null }
+                .distinctUntilChanged()
+                .collect { controlling -> if (controlling) releaseFocus() }
         }
         scope.launch {
             engine.nowPlaying
