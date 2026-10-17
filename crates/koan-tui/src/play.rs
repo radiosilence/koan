@@ -211,9 +211,15 @@ pub fn run_tui(
             built = frame_start.elapsed();
         })?;
         let total = frame_start.elapsed();
+        if let Some(deletes) = app.art.gfx.take_deletes() {
+            use std::io::Write;
+            let mut out = io::stdout();
+            let _ = out.write_all(deletes.as_bytes());
+            let _ = out.flush();
+        }
         if total > Duration::from_millis(30) {
             log::debug!(
-                "slow frame: {total:?} (build {built:?}, flush {:?}), covers {}",
+                "slow frame: {total:?} (build {built:?}, diff and write {:?}), covers {}",
                 total - built,
                 app.art.gfx.protocol_name()
             );
@@ -473,6 +479,13 @@ pub fn run_tui(
                 save_playback_state_from_app(&app);
             }
             app.tx.send(PlayerCommand::Stop).ok();
+            app.art.gfx.release_all();
+            if let Some(deletes) = app.art.gfx.take_deletes() {
+                use std::io::Write;
+                let mut out = io::stdout();
+                let _ = out.write_all(deletes.as_bytes());
+                let _ = out.flush();
+            }
             break;
         }
     }
