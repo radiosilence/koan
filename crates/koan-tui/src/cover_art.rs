@@ -419,6 +419,10 @@ type Loader = (Sender<Request>, Receiver<(PathBuf, Option<Cover>)>);
 #[derive(Default)]
 pub struct CoverArtCache {
     wanted: Option<PathBuf>,
+    /// Whether the file was still arriving when it was last asked for.
+    asked_arriving: bool,
+    /// Whether the last answer for `wanted` was no cover.
+    missed: bool,
     cover: Option<Cover>,
     loader: Option<Loader>,
 }
@@ -426,12 +430,16 @@ pub struct CoverArtCache {
 impl CoverArtCache {
     /// Asks for the cover of the file at `path`. `track` is its row, for the
     /// server's art when the file has none, as a download still arriving may
-    /// not; it is only asked for when the path is new.
-    pub fn want(&mut self, path: &Path, track: impl FnOnce() -> Option<i64>) {
-        if self.wanted.as_deref() == Some(path) {
+    /// not; it is only asked for when the path is new, or when a file that
+    /// gave no cover while `arriving` has since arrived.
+    pub fn want(&mut self, path: &Path, arriving: bool, track: impl FnOnce() -> Option<i64>) {
+        let again = self.missed && self.asked_arriving && !arriving;
+        if self.wanted.as_deref() == Some(path) && !again {
             return;
         }
         self.wanted = Some(path.to_path_buf());
+        self.asked_arriving = arriving;
+        self.missed = false;
         let (tx, _) = self.loader.get_or_insert_with(spawn_loader);
         tx.send((path.to_path_buf(), track())).ok();
     }
@@ -444,6 +452,7 @@ impl CoverArtCache {
         let mut changed = false;
         while let Ok((path, cover)) = rx.try_recv() {
             if self.wanted.as_ref() == Some(&path) {
+                self.missed = cover.is_none();
                 self.cover = cover;
                 changed = true;
             }
@@ -461,6 +470,7 @@ impl CoverArtCache {
 
     pub fn clear(&mut self) {
         self.wanted = None;
+        self.missed = false;
         self.cover = None;
     }
 
@@ -779,15 +789,30 @@ mod tests {
         std::fs::write(&a, b"x").unwrap();
         std::fs::write(&b, b"x").unwrap();
         let mut cache = CoverArtCache::default();
-        cache.want(&a, || None);
+        cache.want(&a, false, || None);
         settle(&mut cache);
         let first = cache.cover().expect("the folder's cover").key;
-        cache.want(&b, || None);
+        cache.want(&b, false, || None);
         // The first record's cover stays up while the second's loads.
         assert_eq!(cache.cover().map(|c| c.key), Some(first));
         settle(&mut cache);
         assert_eq!(cache.cover().map(|c| c.key), Some(first));
         assert_eq!(first >> 63, 0, "apart from the album tiles' keys");
+    }
+
+    #[test]
+    fn a_file_with_no_cover_while_arriving_is_asked_again_once_it_has() {
+        let dir = tempfile::tempdir().unwrap();
+        let track = dir.path().join("01.flac");
+        std::fs::write(&track, b"x").unwrap();
+        let mut cache = CoverArtCache::default();
+        cache.want(&track, true, || None);
+        settle(&mut cache);
+        assert!(cache.cover().is_none());
+        picture().save(dir.path().join("cover.png")).unwrap();
+        cache.want(&track, false, || None);
+        settle(&mut cache);
+        assert!(cache.cover().is_some(), "asked again once it arrived");
     }
 
     #[test]
@@ -797,7 +822,7 @@ mod tests {
         let track = dir.path().join("01.flac");
         std::fs::write(&track, b"x").unwrap();
         let mut cache = CoverArtCache::default();
-        cache.want(&track, || None);
+        cache.want(&track, false, || None);
         cache.clear();
         std::thread::sleep(std::time::Duration::from_millis(200));
         assert!(!cache.poll());

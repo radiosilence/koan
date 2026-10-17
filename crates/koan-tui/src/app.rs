@@ -72,6 +72,18 @@ pub struct DeviceSelectorState {
     /// The UPnP renderers listed after the local devices, by UDN, in the
     /// order their labels end `devices`.
     pub renderers: Vec<String>,
+    /// The first device shown.
+    pub scroll: std::cell::Cell<usize>,
+}
+
+/// Whether a queue entry's file is still on its way, so a cover read from it
+/// now may be missing.
+fn arriving(entry: &QueueEntry) -> bool {
+    entry.download_progress.is_some()
+        || matches!(
+            entry.status,
+            QueueEntryStatus::Downloading | QueueEntryStatus::PriorityPending
+        )
 }
 
 /// How a UPnP renderer is labelled among the output devices.
@@ -732,26 +744,21 @@ impl App {
         let now = std::time::Instant::now();
         let np = &mut self.art.now_playing_art;
         match self.state.track_info() {
-            Some(info) => np.want(&info.path, || {
-                self.queue
-                    .vq_cache
-                    .entries
-                    .iter()
-                    .find(|e| e.id == info.id)
-                    .and_then(|e| e.db_id)
-            }),
-            None => {
-                np.clear();
-                self.accent.set(super::theme::MINT, now);
+            Some(info) => {
+                let entry = self.queue.vq_cache.entries.iter().find(|e| e.id == info.id);
+                np.want(&info.path, entry.is_some_and(arriving), || {
+                    entry.and_then(|e| e.db_id)
+                });
             }
+            None => np.clear(),
         }
-        if np.poll() {
-            let colours = koan_core::config::Config::cached()
-                .appearance
-                .record_colours;
-            let rgb = np.cover().and_then(|c| c.accent).filter(|_| colours);
-            self.accent.set(rgb.unwrap_or(super::theme::MINT), now);
-        }
+        np.poll();
+        // Read every tick, so turning record colours on or off lands at once.
+        let colours = koan_core::config::Config::cached()
+            .appearance
+            .record_colours;
+        let rgb = np.cover().and_then(|c| c.accent).filter(|_| colours);
+        self.accent.set(rgb.unwrap_or(super::theme::MINT), now);
         self.art.cover_art.poll();
         let rgb = self.accent.at(now);
         if rgb != self.theme_accent {
@@ -2160,6 +2167,7 @@ impl App {
                     cursor,
                     current_device: current,
                     renderers: renderers.into_iter().map(|r| r.udn).collect(),
+                    scroll: Default::default(),
                 });
                 self.push_mode(Mode::DeviceSelector);
             }
@@ -2960,8 +2968,9 @@ impl App {
             return;
         };
         let (id, track, path) = (entry.id, entry.db_id, entry.path.clone());
+        let arriving = arriving(entry);
         self.mode = Mode::TrackInfo(id);
-        self.art.cover_art.want(&path, || track);
+        self.art.cover_art.want(&path, arriving, || track);
     }
 
     pub fn handle_mouse(&mut self, event: MouseEvent) {
