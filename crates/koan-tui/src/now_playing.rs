@@ -271,6 +271,11 @@ pub fn render(buf: &mut Buffer, app: &mut App, area: Rect) {
             None => "none".into(),
         };
         pad("dsp", sy + 2, value(dsp_text), buf);
+        if sy + 2 < text.y + text.height {
+            app.layout
+                .eq_hits
+                .push(Rect::new(text.x, sy + 2, text.width, 1));
+        }
 
         let [l, r] = app.visualizer.vu_levels;
         let bar_w = (text.width as usize).saturating_sub(18).clamp(4, 30);
@@ -330,6 +335,7 @@ pub fn render(buf: &mut Buffer, app: &mut App, area: Rect) {
     if let (Some(plot), Some(curve)) = (plot_area, &curve) {
         let profile = app.state.dsp().map(|d| d.profile).unwrap_or_default();
         eq_plot(plot, buf, &app.theme, &profile, &curve.total);
+        app.layout.eq_hits.push(plot);
     }
 }
 

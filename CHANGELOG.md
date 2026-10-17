@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Switch the terminal UI's EQ without leaving the page.** `B` bypasses the EQ and puts it back, so a change can be heard with and without it, and the `EQ` label in the transport bar, the signal path's `dsp` row and the curve on Now playing open the EQ list when clicked.
 - **More of the apps' actions in the terminal UI.** `N` puts a record, track or tree node next in the queue; `f` and `H` favourite a record and its artist (queued for the server as in the apps), with a heart on the tile and in the album and artist headers; `i` shows what the library holds of any listed track; `d` and `u` download a record or track to this device or remove the download; and Settings gains offline mode, `scan library` and `sync now`.
 
 ### Fixed

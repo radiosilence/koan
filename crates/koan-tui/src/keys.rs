@@ -45,6 +45,7 @@ pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
                     ("<>", "skip"),
                     ("\u{2190}\u{2192}", "seek"),
                     ("E", "eq"),
+                    ("B", "bypass eq"),
                     ("M", "visualiser"),
                     ("F", "fullscreen"),
                     ("1-8", "pages"),
@@ -61,6 +62,7 @@ pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
                     ("f", "favourite"),
                     ("i", "info"),
                     ("A", "artist"),
+                    ("E", "eq"),
                     ("esc", "back"),
                 ],
                 Page::Albums | Page::Favourites | Page::Recent | Page::Artist(_) => {
@@ -78,7 +80,7 @@ pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
                     if page == Page::Albums {
                         hints.push(("o", "sort"));
                     }
-                    hints.extend([("1-8", "pages"), ("esc", "back")]);
+                    hints.extend([("E", "eq"), ("1-8", "pages"), ("esc", "back")]);
                     hints
                 }
                 Page::History => vec![
@@ -92,12 +94,14 @@ pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
                     ("A", "artist"),
                     ("O", "album"),
                     ("/", "filter"),
+                    ("E", "eq"),
                     ("1-8", "pages"),
                     ("esc", "back"),
                 ],
                 Page::Settings => vec![
                     ("\u{2191}\u{2193}", "move"),
                     ("\u{2190}\u{2192}", "change"),
+                    ("E", "eq"),
                     ("1-8", "pages"),
                     ("esc", "back"),
                 ],
@@ -110,6 +114,7 @@ pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
                     ("A", "artist"),
                     ("O", "album"),
                     ("/", "filter"),
+                    ("E", "eq"),
                     ("1-8", "pages"),
                     ("esc", "back"),
                 ],

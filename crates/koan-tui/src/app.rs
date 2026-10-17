@@ -159,6 +159,8 @@ pub struct QueueState {
 /// Cached layout rects from last render, used for mouse hit-testing.
 #[derive(Default)]
 pub struct LayoutRects {
+    /// Where the EQ is shown, each a click that opens the chooser.
+    pub eq_hits: Vec<ratatui::layout::Rect>,
     pub transport_area: ratatui::layout::Rect,
     pub queue_area: ratatui::layout::Rect,
     pub picker_area: ratatui::layout::Rect,
@@ -250,6 +252,8 @@ pub struct App {
     task_tx: crossbeam_channel::Sender<super::tasks::Report>,
     task_rx: crossbeam_channel::Receiver<super::tasks::Report>,
     pub track_details: Option<Box<koan_core::db::queries::TrackRow>>,
+    /// The EQ that was on before it was bypassed, for the key that puts it back.
+    eq_last: Option<String>,
     pub history_page: HistoryPage,
     pub settings_page: SettingsPage,
     /// A drag that began on a page's scrollbar.
@@ -404,6 +408,7 @@ impl App {
             task_tx: task_channel.0,
             task_rx: task_channel.1,
             track_details: None,
+            eq_last: None,
             history_page: HistoryPage::new(),
             settings_page: SettingsPage::new(),
             browse_drag: false,
@@ -1070,7 +1075,7 @@ impl App {
         let shared = match key.code {
             KeyCode::Char(
                 ' ' | '>' | '<' | 'n' | 's' | 'T' | 'R' | '.' | ',' | 'L' | 'V' | 'F' | 'M' | 'X'
-                | 'S' | 'v' | 'D' | 'E' | 'p' | 'q' | '?' | 'z',
+                | 'S' | 'v' | 'D' | 'E' | 'B' | 'p' | 'q' | '?' | 'z',
             ) => !ctrl,
             KeyCode::Left | KeyCode::Right => true,
             _ => false,
@@ -1511,6 +1516,7 @@ impl App {
                 self.open_device_selector();
             }
             KeyCode::Char('E') => self.open_dsp_selector(),
+            KeyCode::Char('B') => self.toggle_eq(),
             KeyCode::Char('/') => {
                 self.open_queue_jump();
             }
@@ -1647,36 +1653,58 @@ impl App {
     }
 
     pub fn open_dsp_selector(&mut self) {
-        self.dsp_selector = Some(super::dsp_selector::DspSelectorState::load());
+        self.dsp_selector = Some(super::dsp_selector::DspSelectorState::load(
+            self.eq_device(),
+        ));
         self.push_mode(Mode::DspSelector);
     }
 
     /// Plays the output through the EQ at `idx`, or untouched for the first.
     fn apply_dsp(&mut self, idx: usize) {
-        let Some(sel) = self.dsp_selector.as_mut() else {
+        let Some(name) = self
+            .dsp_selector
+            .as_ref()
+            .and_then(|s| s.entries.get(idx))
+            .map(|e| e.name.clone())
+        else {
             return;
         };
-        let Some(entry) = sel.entries.get(idx) else {
-            return;
-        };
-        let name = entry.name.clone();
-        let device = self
-            .state
+        if self.assign_eq(name.clone())
+            && let Some(sel) = self.dsp_selector.as_mut()
+        {
+            sel.active = name;
+            sel.cursor = idx;
+        }
+    }
+
+    /// The output an EQ applies to: the renderer playing, else this machine's
+    /// device.
+    fn eq_device(&self) -> Option<String> {
+        self.state
             .renderer()
             .map(|r| r.udn)
-            .or_else(koan_core::audio::dsp::profiles::current_device);
-        let Some(device) = device else {
+            .or_else(koan_core::audio::dsp::profiles::current_device)
+    }
+
+    /// Plays the output through `name`, or untouched for `None`, and says so.
+    /// True when it took. Turning the EQ off remembers what was on, for
+    /// [`Self::toggle_eq`].
+    fn assign_eq(&mut self, name: Option<String>) -> bool {
+        use koan_core::audio::dsp::profiles;
+        let Some(device) = self.eq_device() else {
             self.status_message = Some((
                 "no output device to set an eq on".into(),
                 std::time::Instant::now(),
             ));
-            return;
+            return false;
         };
-        match koan_core::audio::dsp::profiles::assign(name.as_deref(), &device) {
+        let before = profiles::overview_for(Some(device.clone())).active;
+        match profiles::assign(name.as_deref(), &device) {
             Ok(()) => {
+                if name.is_none() && before.is_some() {
+                    self.eq_last = before;
+                }
                 self.tx.send(PlayerCommand::ReloadDsp).ok();
-                sel.active = name.clone();
-                sel.cursor = idx;
                 self.status_message = Some((
                     match name {
                         Some(n) => format!("eq: {n}"),
@@ -1684,8 +1712,27 @@ impl App {
                     },
                     std::time::Instant::now(),
                 ));
+                true
             }
-            Err(e) => self.status_message = Some((e, std::time::Instant::now())),
+            Err(e) => {
+                self.status_message = Some((e, std::time::Instant::now()));
+                false
+            }
+        }
+    }
+
+    /// Bypasses the EQ, or puts back what was bypassed. With nothing to put
+    /// back, the chooser opens.
+    fn toggle_eq(&mut self) {
+        if koan_core::audio::dsp::profiles::overview_for(self.eq_device())
+            .active
+            .is_some()
+        {
+            self.assign_eq(None);
+        } else if let Some(last) = self.eq_last.clone() {
+            self.assign_eq(Some(last));
+        } else {
+            self.open_dsp_selector();
         }
     }
 
@@ -2519,6 +2566,17 @@ impl App {
                     .map(|(_, k)| *k)
                 {
                     self.handle_key(key);
+                    return;
+                }
+
+                // Wherever the EQ is shown, a click opens the chooser.
+                if self.layout.eq_hits.iter().any(|r| {
+                    event.column >= r.x
+                        && event.column < r.x + r.width
+                        && event.row >= r.y
+                        && event.row < r.y + r.height
+                }) {
+                    self.open_dsp_selector();
                     return;
                 }
 
