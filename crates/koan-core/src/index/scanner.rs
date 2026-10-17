@@ -35,8 +35,7 @@ pub struct ScanResult {
     /// Stopped early because someone asked. What it had done is still done.
     pub cancelled: bool,
     /// Files were found that the scan could not write: the reader could not
-    /// start, a transaction failed to begin or commit, or a row would not
-    /// store. Nothing is removed against such a scan, in any of its folders,
+    /// start, or a transaction failed to begin or commit. Nothing is removed against such a scan, in any of its folders,
     /// since a file it lost may be one moved from another.
     pub incomplete: bool,
     /// Tracks this scan made, which a file gone from elsewhere may turn out to
@@ -168,12 +167,16 @@ fn scan_folders_in_lane(
     let incomplete = indexed.iter().any(|(.., result)| result.incomplete);
     let mut total = ScanResult::default();
     for (path, playlists, settled, prune, seen, mut result) in indexed {
-        if prune && !cancelled {
+        // Stale removal decides what is missing by what the scan did *not*
+        // see. After a cancellation that is most of the library, so it would
+        // delete a library rather than tidy one. Moves are adopted all the
+        // same: see `remove_stale`.
+        if prune {
             remove_stale(
                 db,
                 &path,
                 opts.force_remove,
-                !incomplete,
+                !cancelled && !incomplete,
                 &arrived,
                 &seen,
                 &mut result,
@@ -207,13 +210,6 @@ fn index_folder(
 
     let scope = [path.to_path_buf()];
     index_files(db, audio_files, &scope, opts, on_track, result, path);
-
-    if result.cancelled {
-        // Stale removal decides what is missing by what the scan did *not* see.
-        // After a cancellation that is most of the folder, so it would delete a
-        // library rather than tidy one.
-        return false;
-    }
 
     // Remove tracks for files that no longer exist. A folder that yielded nothing
     // is far more likely to be an unmounted volume than a library someone emptied,
@@ -312,17 +308,20 @@ pub fn scan_dirs(
         &mut result,
         Path::new(""),
     );
-    if result.cancelled {
-        return result;
-    }
     let arrived = std::mem::take(&mut result.arrived);
-    let remove = !result.incomplete;
+    let remove = !result.incomplete && !result.cancelled;
     for dir in &settled {
         remove_stale(db, dir, true, remove, &arrived, &seen, &mut result);
+        if result.cancelled {
+            continue;
+        }
         // A cover image changing is a reason to be here that no row records.
         if let Err(e) = queries::evict_art_under(&db.conn, dir) {
             log::warn!("cover art under {} not refreshed: {e}", dir.display());
         }
+    }
+    if result.cancelled {
+        return result;
     }
     result.playlists += super::playlist_files::import(db, &playlists, &settled);
     result.added = result.added.saturating_sub(result.moved);
@@ -598,11 +597,12 @@ fn index_files(
                             // Not fatal, but every future scan re-reads this file's tags.
                             log::warn!("failed to cache {}: {}", file_path.display(), e);
                         }
-                        stored.push((file_path, meta, is_new));
+                        if on_track.is_some() {
+                            stored.push((file_path, meta, is_new));
+                        }
                     }
                     Err(e) => {
                         result.errors.push((file_path, format!("db error: {}", e)));
-                        result.incomplete = true;
                     }
                 },
                 Err(e) => {
@@ -660,9 +660,10 @@ fn index_files(
 
 /// Remove the rows under `path` whose files are gone, in one transaction,
 /// after giving those that moved (to one of `arrived`) their tracks back.
-/// Without `remove`, only the moves: a scan that lost writes cannot say what
-/// is gone, but a track it made for a moved file must find the old row now,
-/// since the next scan finds that file cached and does not count it arrived.
+/// Without `remove`, only the moves: a scan that was cancelled or lost writes
+/// cannot say what is gone, but a track it made for a moved file must find
+/// the old row now, since the next scan finds that file cached and does not
+/// count it arrived.
 /// `walked` is every audio file the walk under `path` found, as stored: those
 /// are present without asking the filesystem again.
 fn remove_stale(
@@ -710,6 +711,7 @@ fn remove_stale(
                 result
                     .errors
                     .push((path.to_path_buf(), format!("db error: {}", e)));
+                result.moved -= moved;
                 return;
             }
             result.removed += removed.len();
