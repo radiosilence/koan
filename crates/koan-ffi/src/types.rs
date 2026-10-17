@@ -190,43 +190,6 @@ pub struct InfoField {
 
 impl From<queries::TrackMeta> for TrackSource {
     fn from(m: queries::TrackMeta) -> Self {
-        let text = |v: Option<String>| v.filter(|v| !v.is_empty());
-        let number = |v: Option<i32>| v.map(|v| v.to_string());
-        let length = m.duration_ms.map(|ms| {
-            let s = ms / 1000;
-            format!("{}:{:02}", s / 60, s % 60)
-        });
-        let modified = m
-            .mtime
-            .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
-            .map(|t| t.to_rfc3339());
-        // The stream URL carries the account's credentials, so it is left out.
-        let fields = [
-            ("Title", Some(m.title)),
-            ("Artist", Some(m.artist)),
-            ("Album artist", text(m.album_artist)),
-            ("Album", Some(m.album)),
-            ("Date", text(m.date)),
-            ("Disc", number(m.disc)),
-            ("Track", number(m.track_number)),
-            ("Genre", text(m.genre)),
-            ("Label", text(m.label)),
-            ("Length", length),
-            ("Codec", text(m.codec)),
-            ("Sample rate", m.sample_rate.map(|r| format!("{r} Hz"))),
-            ("Bit depth", m.bit_depth.map(|b| format!("{b} bit"))),
-            ("Channels", number(m.channels)),
-            ("Bitrate", m.bitrate.map(|b| format!("{b} kbps"))),
-            ("Size", m.size_bytes.map(|b| format!("{b} bytes"))),
-            ("Modified", modified),
-            ("Path", text(m.path)),
-            ("Server id", text(m.remote_id)),
-            ("Server album id", text(m.album_remote_id)),
-            ("Server artist id", text(m.artist_remote_id)),
-            ("MusicBrainz recording", text(m.mbid)),
-            ("MusicBrainz release", text(m.album_mbid)),
-            ("Album added", text(m.album_added_at)),
-        ];
         TrackSource {
             kind: if m.source == "remote" {
                 "server"
@@ -234,13 +197,12 @@ impl From<queries::TrackMeta> for TrackSource {
                 "file"
             }
             .into(),
-            fields: fields
+            fields: m
+                .info_fields()
                 .into_iter()
-                .filter_map(|(name, value)| {
-                    value.map(|value| InfoField {
-                        name: name.into(),
-                        value,
-                    })
+                .map(|(name, value)| InfoField {
+                    name: name.into(),
+                    value,
                 })
                 .collect(),
         }

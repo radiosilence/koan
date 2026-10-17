@@ -20,6 +20,7 @@ mod history;
 mod oauth;
 mod pages;
 mod pair;
+mod properties;
 mod scrobbling;
 mod session;
 mod setup;
@@ -134,6 +135,7 @@ pub fn router(
         .route("/artists", get(pages::artists))
         .route("/artist/{id}", get(pages::artist))
         .route("/tracks", get(pages::tracks))
+        .route("/track/{id}/properties", get(properties::page))
         .route("/playlists", get(pages::playlists))
         .route("/playlist/{id}", get(pages::playlist))
         .route("/search", get(pages::search))

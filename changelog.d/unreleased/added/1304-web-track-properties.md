@@ -1,0 +1,1 @@
+- **Track properties in the web UI.** A track row's menu opens its properties: each source's tags and format, its uids and MusicBrainz ids, and for admins the file's path on the server, for working out why a record appears twice or the wrong file plays.

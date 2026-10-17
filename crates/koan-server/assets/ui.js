@@ -72,6 +72,8 @@
     const { queue, cur } = player.state();
     try { localStorage.setItem(STORE, JSON.stringify({ queue, cur, pos: from ?? player.position() })); } catch {}
   };
+  // The queue's tracks as last drawn; see renderQueue.
+  let queueKey = "";
   const player = window.KoanPlayer({ onChange: render, renew });
 
   function trackOf(li) {
@@ -80,7 +82,7 @@
     return {
       id: Number(d.id), src: `/ui/stream/${d.id}`, dur: Number(d.dur) || 0,
       title: d.title, artist: d.artist, album: d.album, albumId,
-      cover: d.cover || null,
+      artistId: Number(d.artistId) || 0, cover: d.cover || null,
     };
   }
 
@@ -109,6 +111,12 @@
   function renderQueue(queue, cur) {
     const list = document.getElementById("queue-list");
     if (!list) return;
+    // A menu open on a queue row would act on the place it had, once the
+    // queue itself changes.
+    const key = queue.map((t) => t.id).join();
+    const open = document.getElementById("track-menu");
+    if (key !== queueKey && open && open.hasAttribute("data-queued") && open.matches(":popover-open")) open.hidePopover();
+    queueKey = key;
     list.replaceChildren();
     if (!queue.length) {
       const p = document.createElement("li");
@@ -121,6 +129,10 @@
       const li = document.createElement("li");
       li.tabIndex = 0;
       li.dataset.q = i;
+      Object.assign(li.dataset, {
+        id: t.id, dur: t.dur, title: t.title, artist: t.artist ?? "", album: t.album ?? "",
+        albumId: t.albumId || 0, artistId: t.artistId || 0, cover: t.cover ?? "",
+      });
       li.classList.toggle("playing", i === cur);
       const n = document.createElement("span");
       n.className = "n";
@@ -140,7 +152,14 @@
       rm.setAttribute("aria-label", "Remove from queue");
       rm.title = "Remove from queue";
       rm.textContent = "×";
-      li.append(n, title, d, rm);
+      const more = document.createElement("button");
+      more.className = "quiet wide:hidden";
+      more.dataset.act = "menu";
+      more.setAttribute("aria-haspopup", "menu");
+      more.setAttribute("aria-label", "More");
+      more.title = "More";
+      more.textContent = "⋯";
+      li.append(n, title, d, rm, more);
       list.append(li);
     });
   }
@@ -246,9 +265,13 @@
           document.querySelector("[data-act-forget]")?.click();
         })]
       : [];
+    const queued = li.dataset.q !== undefined
+      ? [item("Remove from Queue", () => player.remove(Number(li.dataset.q)))]
+      : [];
     const go = [];
     if (Number(d.albumId)) go.push(item("Go to Album", () => navigate(`/album/${d.albumId}`, true)));
     if (Number(d.artistId)) go.push(item("Go to Artist", () => navigate(`/artist/${d.artistId}`, true)));
+    const about = [item("Properties…", () => showProperties(d.id))];
     const head = document.createElement("p");
     head.textContent = [t.title, t.artist].filter(Boolean).join(" · ");
     menu.replaceChildren(
@@ -259,7 +282,11 @@
       ...group(mine),
       ...group(go),
       ...group(forget),
+      ...group(queued),
+      ...group(about),
     );
+    // A queue row's place moves when the queue does; see renderQueue.
+    menu.toggleAttribute("data-queued", li.dataset.q !== undefined);
     if (!menu.matches(":popover-open")) menu.showPopover();
     if (wide.matches) {
       const r = menu.getBoundingClientRect();
@@ -270,6 +297,51 @@
     }
     menu.querySelector("button").focus();
   }
+  // Opened at once, filled when the server answers; only the latest request
+  // may fill it.
+  const properties = document.getElementById("track-properties");
+  const propertiesBody = document.getElementById("track-properties-body");
+  let asked = 0;
+  async function showProperties(id) {
+    if (!properties) return;
+    const mine = ++asked;
+    const say = (text) => {
+      const p = document.createElement("p");
+      p.className = "text-muted";
+      p.textContent = text;
+      propertiesBody.replaceChildren(p);
+    };
+    say("Loading…");
+    if (!properties.open) properties.showModal();
+    try {
+      const r = await fetch(`/track/${id}/properties`, { headers: { "x-koan-partial": "1" } });
+      const html = r.ok ? await r.text() : null;
+      if (mine !== asked) return;
+      if (html === null) say(r.status === 404 ? "This track is no longer in the library." : "The server could not say.");
+      else {
+        // The page's content, without the section the UI's navigation swaps in.
+        const t = document.createElement("template");
+        t.innerHTML = html;
+        propertiesBody.replaceChildren(...(t.content.querySelector("section.page") ?? t.content).childNodes);
+      }
+    } catch {
+      if (mine === asked) say("The server could not be reached.");
+    }
+  }
+  // A click on the backdrop lands on the dialog itself, as does one in its
+  // padding or a selection dragged out of it, so only a press and release
+  // both outside its box close it.
+  const outside = (e) => {
+    const r = properties.getBoundingClientRect();
+    return e.target === properties &&
+      (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom);
+  };
+  let pressedOutside = false;
+  properties?.addEventListener("pointerdown", (e) => { pressedOutside = outside(e); });
+  properties?.addEventListener("click", (e) => {
+    if (pressedOutside && outside(e)) properties.close();
+    pressedOutside = false;
+  });
   // A manual popover: the press that opens it ends on the row (a touch stays
   // captured by what it went down on), which a light-dismissing popover would
   // take for a click outside. It closes on the next press outside it, Escape,
@@ -412,6 +484,7 @@
     const html = await r.text();
     if (n !== navigating) return;
     closeMenu();
+    if (properties?.open) properties.close();
     main.innerHTML = html;
     if (push) history.pushState(null, "", url);
     settle();

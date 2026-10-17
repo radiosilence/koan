@@ -227,8 +227,14 @@
   .m-0 {
     margin: 0px;
   }
+  .m-auto {
+    margin: auto;
+  }
   .mx-auto {
     margin-inline: auto;
+  }
+  .my-1 {
+    margin-block: var(--spacing);
   }
   .my-2 {
     margin-block: calc(var(--spacing) * 2);
@@ -364,6 +370,9 @@
   .h-auto {
     height: auto;
   }
+  .max-h-\[85dvh\] {
+    max-height: 85dvh;
+  }
   .w-\(--side-w\) {
     width: var(--side-w);
   }
@@ -375,6 +384,9 @@
   }
   .w-\[17em\] {
     width: 17em;
+  }
+  .w-\[calc\(100\%-24px\)\] {
+    width: calc(100% - 24px);
   }
   .w-auto {
     width: auto;
@@ -433,6 +445,9 @@
   .grid-cols-\[max-content_1fr\] {
     grid-template-columns: max-content 1fr;
   }
+  .grid-cols-\[max-content_minmax\(0\,1fr\)\] {
+    grid-template-columns: max-content minmax(0,1fr);
+  }
   .grid-cols-\[minmax\(0\,1fr\)_minmax\(0\,2fr\)_minmax\(0\,1fr\)\] {
     grid-template-columns: minmax(0,1fr) minmax(0,2fr) minmax(0,1fr);
   }
@@ -459,6 +474,9 @@
   }
   .justify-center {
     justify-content: center;
+  }
+  .justify-end {
+    justify-content: flex-end;
   }
   .gap-0\.5 {
     gap: calc(var(--spacing) * 0.5);
@@ -521,6 +539,9 @@
   }
   .overflow-hidden {
     overflow: hidden;
+  }
+  .overflow-y-auto {
+    overflow-y: auto;
   }
   .border {
     border-style: var(--tw-border-style);
@@ -606,6 +627,9 @@
   .px-4 {
     padding-inline: calc(var(--spacing) * 4);
   }
+  .px-5 {
+    padding-inline: calc(var(--spacing) * 5);
+  }
   .px-7 {
     padding-inline: calc(var(--spacing) * 7);
   }
@@ -645,6 +669,9 @@
   .pt-1 {
     padding-top: var(--spacing);
   }
+  .pt-4 {
+    padding-top: calc(var(--spacing) * 4);
+  }
   .pt-\[max\(16px\,env\(safe-area-inset-top\)\)\] {
     padding-top: max(16px, env(safe-area-inset-top));
   }
@@ -659,6 +686,9 @@
   }
   .pb-4 {
     padding-bottom: calc(var(--spacing) * 4);
+  }
+  .pb-5 {
+    padding-bottom: calc(var(--spacing) * 5);
   }
   .pb-10 {
     padding-bottom: calc(var(--spacing) * 10);
@@ -755,6 +785,12 @@
   @media (hover: hover) {
     .group-hover\:text-strong:is(:where(.group):hover *) {
       color: var(--strong);
+    }
+  }
+  .backdrop\:bg-bg\/70::backdrop {
+    background-color: var(--bg);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--bg) 70%, transparent);
     }
   }
   .open\:flex:is([open], :popover-open, :open) {
@@ -1007,12 +1043,19 @@
       overflow-y: auto;
     }
   }
+  .\[\&_dd\]\:m-0 dd {
+    margin: 0px;
+  }
   .\[\&_dd\]\:wrap-anywhere dd {
     overflow-wrap: anywhere;
   }
   .\[\&_dd\]\:select-all dd {
     -webkit-user-select: all;
     user-select: all;
+  }
+  .\[\&_dd\]\:select-text dd {
+    -webkit-user-select: text;
+    user-select: text;
   }
   .\[\&_dt\]\:text-muted dt {
     color: var(--muted);
