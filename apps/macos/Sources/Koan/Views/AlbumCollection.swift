@@ -321,9 +321,13 @@ struct AlbumCollection: NSViewRepresentable {
             let path = velocity >= 0
                 ? CGRect(x: visible.minX, y: visible.minY - behind, width: visible.width, height: visible.height + behind + reach)
                 : CGRect(x: visible.minX, y: visible.minY - reach, width: visible.width, height: visible.height + behind + reach)
-            let landing = heading.decay.map { decay in
-                visible.offsetBy(dx: 0, dy: velocity / decay).insetBy(dx: 0, dy: -row)
+            // The screenful where the flick will stop, kept inside the grid.
+            let rest = heading.decay.map { decay in
+                let end = max(0, grid.bounds.height - visible.height)
+                let y = min(max(visible.minY + velocity / decay, 0), end)
+                return CGRect(x: visible.minX, y: y, width: visible.width, height: visible.height)
             }
+            let landing = rest.map { $0.insetBy(dx: 0, dy: -row) }
 
             let near = visible.insetBy(dx: 0, dy: -2 * row)
             grid.overdraw = near
@@ -347,8 +351,8 @@ struct AlbumCollection: NSViewRepresentable {
             }
             var ranked: [Int64: ImageWork.Priority] = [:]
             for (id, distance) in records(in: path, from: visible) { ranked[id] = .ahead(distance) }
-            if let landing {
-                for (id, distance) in records(in: landing, from: landing) { ranked[id] = .landing(distance) }
+            if let landing, let rest {
+                for (id, distance) in records(in: landing, from: rest) { ranked[id] = .landing(distance) }
             }
             for id in records(in: visible, from: visible).keys { ranked[id] = .visible }
             context.art.prioritise(ranked.map { (.album($0.key), $0.value) })

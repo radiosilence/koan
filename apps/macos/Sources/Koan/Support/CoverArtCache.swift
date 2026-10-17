@@ -198,7 +198,9 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         record: String
     ) async -> PlatformImage? {
         await decodes.join(key) { [weak self] in
-            guard let self, let data = await self.bytes(for: source) else { return nil }
+            guard let self else { return nil }
+            let epoch = self.locked { self.epoch }
+            guard let data = await self.bytes(for: source) else { return nil }
             let space = self.displaySpace
             let decoded = await ImageWork.ifWanted(priority: { [weak self] in self?.priority(of: record) ?? .ahead(.infinity) }) {
                 Self.decode(data, to: size, in: space)
@@ -206,13 +208,12 @@ final class CoverArtCache: Observable, @unchecked Sendable {
             // Dropped before it ran: nobody wants it any longer.
             guard let decoded else { return nil }
             guard let image = decoded else {
-                // Bytes that do not decode will not decode next time either.
-                // The cached copy goes too, so a later launch asks the server
-                // again rather than reading the same bytes back.
-                self.locked { _ = self.absent.insert(record) }
-                if let file = self.directory?.appendingPathComponent(Self.filename(for: record)) {
-                    self.writes.async { _ = try? FileManager.default.removeItem(at: file) }
-                }
+                // Bytes that will not make a thumbnail will not make one next
+                // time either, so the record is taken to have no art, and the
+                // cached copy goes so a later launch asks the server again.
+                // Not for full size, which can fail on an image that
+                // thumbnails fine, nor for bytes an eviction has replaced.
+                if size != .full { self.discard(record, from: epoch) }
                 return nil
             }
             // Full size belongs to whichever sheet asked for it and goes when
@@ -551,6 +552,19 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// Bumped by every eviction. A download that began before one may hold
     /// the artwork being replaced, and is not written.
     private var epoch = 0
+
+    private func discard(_ record: String, from epoch: Int) {
+        let marked: Bool = locked {
+            guard self.epoch == epoch else { return false }
+            absent.insert(record)
+            return true
+        }
+        guard marked, let file = directory?.appendingPathComponent(Self.filename(for: record)) else { return }
+        writes.async { [weak self] in
+            guard let self, self.locked({ self.epoch }) == epoch else { return }
+            _ = try? FileManager.default.removeItem(at: file)
+        }
+    }
 
     private func keeper(_ file: URL?, from epoch: Int) -> (@Sendable (Data) -> Void)? {
         guard let file else { return nil }
