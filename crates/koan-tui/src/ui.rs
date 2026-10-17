@@ -1465,6 +1465,31 @@ mod tests {
     }
 
     #[test]
+    fn the_queue_draws_no_heading_of_its_own_under_the_toolbar() {
+        let mut app = app_with_queue(3);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        let buf = terminal.backend().buffer();
+        let q = app.layout.queue_area;
+        let row =
+            |y: u16| -> String { (q.x..q.x + q.width).map(|x| buf[(x, y)].symbol()).collect() };
+        let toolbar = row(q.y - 1);
+        assert!(
+            toolbar.contains("queue") && toolbar.contains("3 tracks"),
+            "{toolbar:?}"
+        );
+        let first = row(q.y);
+        assert!(
+            first.trim_start().starts_with("album"),
+            "the album's heading: {first:?}"
+        );
+        assert!(
+            !first.contains('\u{2500}'),
+            "no rule of a heading row: {first:?}"
+        );
+    }
+
+    #[test]
     fn the_eq_chooser_opens_and_closes_by_key_and_by_click() {
         use crossterm::event::{
             KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
