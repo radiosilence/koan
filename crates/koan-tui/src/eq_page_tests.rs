@@ -156,6 +156,8 @@ fn a_band_is_nudged_and_typed_from_the_keyboard() {
     settle(&mut page, DEVICE);
     assert_eq!(*page.view(), View::Profile("Warm".into()));
     page.cursor = row_of(&page, Row::Band(1));
+    // On a band, digits, tab and the brackets are the band's, not the pages'.
+    assert!(page.takes_keys());
     assert_eq!(page.field, Field::Gain);
     for _ in 0..3 {
         key(&mut page, KeyCode::Char('+'));

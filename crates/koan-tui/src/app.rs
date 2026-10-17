@@ -1009,7 +1009,7 @@ impl App {
             Page::History => self.history_page.filter_active,
             Page::Search => self.search_page.typing,
             Page::Playlists => self.playlists_page.filter_active,
-            Page::Eq => self.eq_page.typing(),
+            Page::Eq => self.eq_page.takes_keys(),
             Page::Queue
             | Page::NowPlaying
             | Page::Album(_)
@@ -1107,6 +1107,7 @@ impl App {
                 let n = self.queue.vq_cache.entries.len();
                 Toolbar::new("queue").count(format!("{n} track{}", if n == 1 { "" } else { "s" }))
             }
+            Page::Eq => self.eq_page.toolbar(),
             page => Toolbar::new(page.title()),
         }
     }

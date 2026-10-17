@@ -218,7 +218,6 @@ enum Hit {
     Line(usize),
     Field(usize, usize, Field),
     Item(usize),
-    Back,
     /// Over a choice, off its items.
     Inside,
     Outside,
@@ -1875,13 +1874,6 @@ impl EqPage {
                 self.choice = None;
                 self.prompt = None;
             }
-            Some(Hit::Back) => {
-                if self.views.len() > 1 {
-                    self.back();
-                } else {
-                    return Some(Outcome::Leave);
-                }
-            }
             Some(Hit::Line(line)) => {
                 if self.typing.is_some() {
                     self.commit_typing(0);
@@ -2513,46 +2505,70 @@ impl EqPage {
 
     // --- Drawing ----------------------------------------------------------
 
+    /// The page's toolbar: where it is, and what can be done there.
+    pub fn toolbar(&self) -> super::shell::Toolbar {
+        use super::shell::{ToolItem, Toolbar};
+        let key = |c: char| KeyEvent::from(KeyCode::Char(c));
+        let back = ToolItem::new("back", KeyEvent::from(KeyCode::Esc)).priority(9);
+        match (self.view(), self.profile()) {
+            (View::Profile(name), p) => {
+                let mut count =
+                    p.map_or_else(String::new, |p| role_label(p.detail.role).to_owned());
+                if p.is_some_and(|p| p.detail.edited) {
+                    count.push_str(" \u{b7} edited");
+                }
+                let mut bar = Toolbar::new(format!("eq \u{b7} {name}")).count(count);
+                if self.editable() {
+                    bar = bar.item(ToolItem::new("add band", key('a')).priority(5));
+                }
+                bar.item(ToolItem::new("rename", key('r')).priority(3))
+                    .item(ToolItem::new("delete", key('D')).priority(2))
+                    .item(back)
+            }
+            (View::Manage, _) => Toolbar::new("eq \u{b7} manage")
+                .count(self.snap.as_ref().map_or_else(String::new, |s| {
+                    let n = s.overview.profiles.len();
+                    format!("{n} profile{}", if n == 1 { "" } else { "s" })
+                }))
+                .item(ToolItem::new("new", key('n')).priority(5))
+                .item(ToolItem::new("import", key('i')).priority(4))
+                .item(back),
+            (View::Chain, _) => {
+                let flat = self
+                    .snap
+                    .as_ref()
+                    .is_none_or(|s| s.overview.active.is_none() && s.overview.chain.is_empty());
+                Toolbar::new("eq")
+                    .count(self.summary().unwrap_or_default())
+                    .item(ToolItem::new("preset", key('p')).priority(6))
+                    .item(ToolItem::new("new", key('n')).priority(3))
+                    .item(ToolItem::new("import", key('i')).priority(4))
+                    .item(ToolItem::new("manage", key('m')).priority(5))
+                    .item(
+                        ToolItem::new("bypass", key('B'))
+                            .on(flat && !self.bypassed.is_empty())
+                            .priority(7),
+                    )
+            }
+        }
+    }
+
+    /// Whether the page takes keys the app would otherwise move pages
+    /// with: a field or choice open, or a band's figures under the cursor,
+    /// where digits type and `[` `]` and tab are the band's.
+    pub fn takes_keys(&self) -> bool {
+        self.typing()
+            || (self.editable()
+                && matches!(self.row_list().get(self.cursor), Some(Row::Band(i)) if self.band_editable(*i)))
+    }
+
     pub fn render(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme) {
         self.hits.clear();
         self.rows.clear();
         if area.width < 4 || area.height < 2 {
             return;
         }
-        let title = match self.view() {
-            View::Chain => "eq".to_owned(),
-            View::Manage => "eq \u{b7} manage".to_owned(),
-            View::Profile(name) => format!("eq \u{b7} {name}"),
-        };
-        let note = match (self.view(), self.profile()) {
-            (View::Profile(_), Some(p)) => {
-                let mut n = format!("  {}", role_label(p.detail.role));
-                if p.detail.edited {
-                    n.push_str(" \u{b7} edited");
-                }
-                n
-            }
-            (View::Chain, _) => self
-                .snap
-                .as_ref()
-                .filter(|s| !s.overview.enabled)
-                .map(|_| "  processing is off".into())
-                .unwrap_or_default(),
-            _ => String::new(),
-        };
-        super::ui::heading(buf, area, theme, &title, &note);
-        if self.views.len() > 1 {
-            self.hits.push((
-                Rect::new(area.x, area.y, title.chars().count() as u16, 1),
-                Hit::Back,
-            ));
-        }
-        let body = Rect::new(
-            area.x + 1,
-            area.y + 2,
-            area.width.saturating_sub(2),
-            area.height.saturating_sub(2),
-        );
+        let body = area;
         if body.height == 0 || body.width == 0 {
             return;
         }
@@ -2940,9 +2956,8 @@ impl EqPage {
         if w < 12 || h < 3 {
             return;
         }
-        let x = area.x + (area.width - w) / 2;
-        let y = area.y + (area.height - h) / 2;
-        let popup = Rect::new(x, y, w, h);
+        let popup = super::shell::centred(area, w, h);
+        let (x, y) = (popup.x, popup.y);
         self.hits.push((area, Hit::Outside));
         self.hits.push((popup, Hit::Inside));
         let mut items = Vec::new();
@@ -3018,9 +3033,8 @@ impl EqPage {
         if w < 12 || h < 3 {
             return;
         }
-        let x = area.x + (area.width - w) / 2;
-        let y = area.y + (area.height - h) / 2;
-        let popup = Rect::new(x, y, w, h);
+        let popup = super::shell::centred(area, w, h);
+        let (x, y) = (popup.x, popup.y);
         box_frame(popup, buf, theme, &p.title);
         let inner_w = w.saturating_sub(4) as usize;
         let mut cy = y + 1;
@@ -3052,16 +3066,9 @@ impl EqPage {
 
 /// A frame with a title, cleared inside.
 fn box_frame(area: Rect, buf: &mut Buffer, theme: &Theme, title: &str) {
-    use ratatui::widgets::{Block, Borders, Clear, Widget};
+    use ratatui::widgets::{Clear, Widget};
     Clear.render(area, buf);
-    Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme.rule)
-        .title(ratatui::text::Span::styled(
-            format!(" {title} "),
-            theme.heading,
-        ))
-        .render(area, buf);
+    super::shell::frame(title, theme).render(area, buf);
 }
 
 /// The chain with `name` on the end, switched on, where it is not in it.
@@ -3468,7 +3475,7 @@ fn expand(path: &str) -> String {
 
 /// `text` cut to `width` cells, with an ellipsis where it was cut.
 fn fit(text: &str, width: usize) -> String {
-    super::browse::fit(text, width)
+    super::shell::fit(text, width).into_owned()
 }
 
 /// `text` in lines of at most `width`, broken at spaces.
