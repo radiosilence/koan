@@ -114,7 +114,7 @@ final class AppState {
         #if os(macOS)
         self.hotkeys = Hotkeys.standard(player: player, library: library, nav: nav, ui: ui)
         hotkeys.onKonami = { [appearance = self.appearance] in appearance.toggleRainbow() }
-        if KoanTheme.isOn {
+        if KoanTheme.hasTextSize {
             hotkeys.onBigger = { [appearance = self.appearance] in appearance.stepTextSize(1) }
         }
         FullScreenBackstop.install()

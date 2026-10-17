@@ -1,0 +1,1 @@
+- **kōan theme.** Most of the views that checked the theme themselves now take its value roles (`KoanTheme.metric`, `style`, `ground`, `UIFont.role`, `hasTextSize`), so a look's values are set where the role is. Nothing on screen changes.

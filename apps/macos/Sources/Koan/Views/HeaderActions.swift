@@ -81,7 +81,7 @@ private struct HeaderTitleCentre: ViewModifier {
         #if os(macOS)
         NSFont.role(role, system: NSFont.systemFont(ofSize: systemSize, weight: .semibold)).capHeight
         #else
-        (KoanTheme.isOn ? UIFont.koan(role) : UIFont.systemFont(ofSize: systemSize, weight: .semibold)).capHeight
+        UIFont.role(role, system: UIFont.systemFont(ofSize: systemSize, weight: .semibold)).capHeight
         #endif
     }
 }

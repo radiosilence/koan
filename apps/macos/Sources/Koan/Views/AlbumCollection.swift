@@ -692,7 +692,7 @@ final class AlbumTile: NSCollectionViewItem {
             root.addSubview(label)
         }
         titleLabel.font = Self.titleFont
-        titleLabel.textColor = KoanTheme.isOn ? .koanStrong : .koanLabel
+        titleLabel.textColor = KoanTheme.metric(NSColor.koanStrong, system: .koanLabel)
         artistLabel.font = Self.detailFont
         artistLabel.textColor = .koanSecondaryLabel
         yearLabel.font = Self.detailFont

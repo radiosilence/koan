@@ -268,7 +268,7 @@ final class TrackTableRow: TableCell, TableRow {
         }
         badge.isHidden = !onSleeve || !(showsMark || current)
         appearance.performAsCurrentDrawingAppearance {
-            badge.backgroundColor = (KoanTheme.isOn ? NSColor.koanBg : .windowBackgroundColor).cgColor
+            badge.backgroundColor = KoanTheme.metric(NSColor.koanBg, system: .windowBackgroundColor).cgColor
         }
         CATransaction.commit()
         // On the badge the bars are on the page's ground, not the selection.

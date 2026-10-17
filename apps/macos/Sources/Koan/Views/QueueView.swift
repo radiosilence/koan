@@ -13,9 +13,10 @@ struct QueueView: View {
     #else
     /// Names the pages as their tabs and rows show them.
     private static var emptyDetail: String {
-        KoanTheme.isOn
-            ? "Find something to play from albums or artists."
-            : "Find something to play from Albums or Artists."
+        KoanTheme.metric(
+            "Find something to play from albums or artists.",
+            system: "Find something to play from Albums or Artists."
+        )
     }
     #endif
 
@@ -388,7 +389,7 @@ struct QueueView: View {
                 #if os(tvOS)
                 KoanIcon(Icon.more)
                 #else
-                KoanIcon(KoanTheme.isOn ? Icon.more : Icon.moreCircled)
+                KoanIcon(KoanTheme.metric(Icon.more, system: Icon.moreCircled))
                 #endif
             }
             #if os(tvOS)

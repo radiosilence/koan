@@ -1717,7 +1717,7 @@ private struct AppearanceSettings: View {
                     Toggle("Show icons", isOn: $appearance.showIcons).koanToggle()
                 }
                 #if os(macOS)
-                if KoanTheme.isOn {
+                if KoanTheme.hasTextSize {
                     TextSizeSlider()
                 }
                 #endif

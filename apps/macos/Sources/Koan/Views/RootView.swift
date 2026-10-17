@@ -71,7 +71,7 @@ struct RootView: View {
                 .frame(minWidth: Self.sidebarMin)
                 .navigationSplitViewColumnWidth(min: Self.sidebarMin, ideal: Self.sidebarMin + 25, max: 290)
                 // The theme draws its own, without the glass; see `PageToolbar`.
-                .toolbar(removing: KoanTheme.isOn ? .sidebarToggle : nil)
+                .toolbar(removing: KoanTheme.metric(.sidebarToggle, system: nil))
         } detail: {
             StageView()
                 .clearsTransport(transportHeight, glass: graphics.usesWindowGlass)
@@ -287,7 +287,7 @@ struct RecordRoom: ViewModifier {
     /// accent is the colour of every selection and indicator, and a two-second
     /// drift there reads as something wrong rather than a room changing.
     @MainActor private static var tintEase: Animation {
-        KoanTheme.isOn ? KoanTheme.Motion.settle : .easeInOut(duration: 2)
+        KoanTheme.metric(KoanTheme.Motion.settle, system: .easeInOut(duration: 2))
     }
 
     /// Read straight through the cache on every pass, the way `AlbumArtwork`

@@ -36,7 +36,7 @@ struct SeekProgress: PlatformViewRepresentable {
     }
 
     func updateView(_ view: ProgressView, context: Context) {
-        view.tint = KoanTheme.isOn ? PlatformColor(tint) : nil
+        view.tint = KoanTheme.metric(PlatformColor(tint), system: nil)
         view.rainbow = rainbow
         view.apply(fraction: fraction, remaining: remaining)
     }
