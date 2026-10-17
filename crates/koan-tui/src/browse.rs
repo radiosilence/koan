@@ -30,7 +30,7 @@ const TILE_MAX_W: u16 = 26;
 const TILE_MIN_W: u16 = 14;
 
 /// Decoded covers kept for tiles before the lot is dropped.
-const THUMB_LIMIT: usize = 240;
+const THUMB_LIMIT: usize = 800;
 
 /// How many rows beyond the page are loaded ahead of scrolling.
 const PREFETCH_ROWS: usize = 3;
@@ -232,20 +232,25 @@ impl Thumbs {
 /// from a file beside or inside one of its tracks or from the server, as the
 /// apps do. A library synced from a server has no files to read.
 fn load(album: i64) -> Option<DynamicImage> {
-    let db = koan_core::db::pool::shared().get().ok()?;
-    let row = queries::cover_track_for_album(&db.conn, album).ok()??;
+    let (row, uid) = {
+        let db = koan_core::db::pool::shared().get().ok()?;
+        let row = queries::cover_track_for_album(&db.conn, album).ok()??;
+        let uid = queries::uids::uids_for(&db.conn, queries::uids::UidKind::Album, [album])
+            .ok()
+            .and_then(|mut uids| uids.remove(&album));
+        (row, uid)
+    };
     let local = row.path.as_deref().or(row.cached_path.as_deref());
-    let uid = queries::uids::uids_for(&db.conn, queries::uids::UidKind::Album, [album])
-        .ok()
-        .and_then(|mut uids| uids.remove(&album));
+    let stamp = thumb_cache::stamp(local.map(Path::new));
     if let Some(uid) = &uid
-        && let Some(img) = thumb_cache::read(uid, local.map(Path::new))
+        && let Some(img) = thumb_cache::read(uid, stamp)
     {
         return Some(img);
     }
-    let img = fetch(&row, local)?;
+    // A JPEG keeps no transparency, so the first load looks as every later one.
+    let img = DynamicImage::ImageRgb8(fetch(&row, local)?.to_rgb8());
     if let Some(uid) = &uid {
-        thumb_cache::write(uid, &img);
+        thumb_cache::write(uid, stamp, &img);
     }
     Some(img)
 }
