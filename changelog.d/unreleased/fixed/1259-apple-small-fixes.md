@@ -1,0 +1,1 @@
+- **Mac and iPhone details.** The AirPlay icon's arcs run down to the triangle, so it reads as AirPlay. Popovers and menus at the right of the Mac window open leftwards and stay inside it. The full-size cover on iPhone and iPad fits the screen instead of being cropped.

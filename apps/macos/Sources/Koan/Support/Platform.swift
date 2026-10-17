@@ -249,7 +249,13 @@ extension View {
 private struct TelevisionMenuRow<Menu: View>: ViewModifier {
     let action: () -> Void
     @ViewBuilder let menu: () -> Menu
+    @Environment(PlayerModel.self) private var player: PlayerModel?
     @State private var open = false
+    /// An item was chosen, and focus has not yet come back from the menu.
+    @State private var chose = false
+    /// A share code this row's menu asked for is up: the shell shows it, and
+    /// tvOS gives focus back to the page's first control when it closes.
+    @State private var sharing = false
     @FocusState private var focused: Bool
 
     func body(content: Content) -> some View {
@@ -267,7 +273,23 @@ private struct TelevisionMenuRow<Menu: View>: ViewModifier {
             .accessibilityAddTraits(.isButton)
             .accessibilityAction(named: "Menu") { open = true }
             .televisionPanel(isPresented: $open) {
-                menu().buttonStyle(MenuItem(close: { open = false }))
+                menu().buttonStyle(MenuItem(close: {
+                    chose = true
+                    open = false
+                }))
+            }
+            // Focus back on the row, or gone elsewhere: either way the menu's
+            // choice no longer stands for it.
+            .onChange(of: focused) { if !open { chose = false } }
+            .onDisappear { chose = false }
+            .onChange(of: player?.sharedLink != nil) { _, shown in
+                if shown {
+                    sharing = focused || chose
+                    chose = false
+                } else if sharing {
+                    sharing = false
+                    focused = true
+                }
             }
     }
 
@@ -953,13 +975,16 @@ private struct TelevisionPanel<Panel: View>: View {
     let title: String?
     @ViewBuilder let content: () -> Panel
     /// The content's own height: the panel stands as tall as it, to a limit.
-    @State private var height: CGFloat = 0
+    /// At the limit until measured: a panel drawn shorter than its content
+    /// has nothing focusable in it, and focus stays on the page behind.
+    @State private var height: CGFloat = 880
 
     var body: some View {
         ScrollView {
             stack.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
         }
         .scrollBounceBehavior(.basedOnSize)
+        .focusSection()
         .frame(width: 960, height: min(max(height, 1), 880))
         .background(Color.koanBg)
         .overlay { Rectangle().strokeBorder(Color.koanRule, lineWidth: KoanTheme.hairline) }

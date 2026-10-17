@@ -48,6 +48,8 @@ pub enum Mode {
     ContextMenu,
     Organize,
     DeviceSelector,
+    /// Choosing which kōan the terminal shows and commands.
+    PlayOn,
     DspSelector,
     /// Typing the name of a playlist.
     NamePrompt,
@@ -206,7 +208,14 @@ pub struct ArtState {
 pub struct App {
     pub mode: Mode,
     pub state: Arc<SharedPlayerState>,
+    /// `state`, for what reads it off the main thread: the media keys.
+    pub shown: Arc<parking_lot::RwLock<Arc<SharedPlayerState>>>,
+    /// Where commands go: this player, or the device it controls.
     pub tx: Sender<PlayerCommand>,
+    /// Changes of where `tx` goes, in order with what is sent through it.
+    lane: super::control::Lane,
+    /// This player's own channel, whatever is controlled.
+    pub local_tx: Sender<PlayerCommand>,
     pub quit: bool,
     /// When a skip key last acted, to swallow the terminal's key repeat.
     last_skip: Option<std::time::Instant>,
@@ -292,6 +301,12 @@ pub struct App {
 
     /// Device selector modal state (when in DeviceSelector mode).
     pub device_selector: Option<super::device_selector::OutputPicker>,
+
+    /// The Play on chooser (when in PlayOn mode).
+    pub play_on: Option<super::control::PlayOnState>,
+
+    /// What `state` is drawn from: this player, or the device it controls.
+    pub view: super::control::View,
 
     /// EQ chooser state (when in DspSelector mode).
     pub dsp_selector: Option<super::dsp_selector::DspSelectorState>,
@@ -394,11 +409,15 @@ impl App {
         let ticker_divisor = (ticks_per_sec / TICKER_FPS).max(1);
         let visualizer = VisualizerState::from_config(&cfg.visualizer);
         let viz_config = cfg.visualizer;
+        let (routed, lane) = super::control::router(tx.clone(), task_channel.0.clone());
 
         Self {
             mode: Mode::Normal,
-            state,
-            tx,
+            state: state.clone(),
+            shown: Arc::new(parking_lot::RwLock::new(state.clone())),
+            tx: routed,
+            lane,
+            local_tx: tx,
             quit: false,
             last_skip: None,
             queue: QueueState::default(),
@@ -446,6 +465,8 @@ impl App {
             context_menu: None,
             organize: None,
             device_selector: None,
+            play_on: None,
+            view: super::control::View::new(state.clone()),
             dsp_selector: None,
             viz_picker: None,
             mode_stack: Vec::new(),
@@ -728,6 +749,8 @@ impl App {
             };
             self.status_message = Some((line, std::time::Instant::now()));
             self.reload_library_pages();
+        } else if super::tasks::take_library_changed() {
+            self.reload_library_pages();
         }
         if self.page() == Page::History
             && let Some(error) = self.history_page.poll()
@@ -915,6 +938,7 @@ impl App {
             Mode::ContextMenu => self.handle_context_menu_key(key),
             Mode::Organize => self.handle_organize_key(key),
             Mode::DeviceSelector => self.handle_device_selector_key(key),
+            Mode::PlayOn => self.handle_play_on_key(key),
             Mode::DspSelector => self.handle_dsp_selector_key(key),
             Mode::NamePrompt => self.handle_name_prompt_key(key),
             Mode::PlaylistChooser => self.handle_chooser_key(key),
@@ -1149,7 +1173,7 @@ impl App {
         let shared = match key.code {
             KeyCode::Char(
                 ' ' | '>' | '<' | 'n' | 's' | 'T' | 'R' | '.' | ',' | 'L' | 'V' | 'F' | 'M' | 'X'
-                | 'S' | 'v' | 'D' | 'E' | 'B' | 'w' | 'W' | 'p' | 'q' | '?' | 'z',
+                | 'S' | 'v' | 'D' | 'C' | 'E' | 'B' | 'w' | 'W' | 'p' | 'q' | '?' | 'z',
             ) => !ctrl,
             KeyCode::Left | KeyCode::Right => true,
             _ => false,
@@ -1179,6 +1203,17 @@ impl App {
             },
             std::time::Instant::now(),
         ));
+    }
+
+    /// Whether the pages show this device, rather than one it controls.
+    /// Its output and EQ are changed only then: they would not be the
+    /// controlled device's, and nothing changes it here behind the music.
+    fn this_device_shown(&mut self) -> bool {
+        if koan_core::remote::devices::target().is_none() {
+            return true;
+        }
+        self.say("output and EQ are this terminal's; choose this terminal in Play on (C) first");
+        false
     }
 
     fn say(&mut self, text: impl Into<String>) {
@@ -1496,8 +1531,16 @@ impl App {
             Outcome::Changed(setting) => self.apply_setting(setting),
             Outcome::Run(task) => self.run_task(task),
             Outcome::Say(said) => self.say(said),
-            Outcome::OpenEq => self.open_dsp_selector(),
-            Outcome::OpenOutputs => self.open_device_selector(),
+            Outcome::OpenEq => {
+                if self.this_device_shown() {
+                    self.open_dsp_selector();
+                }
+            }
+            Outcome::OpenOutputs => {
+                if self.this_device_shown() {
+                    self.open_device_selector();
+                }
+            }
             Outcome::OpenUrl(url) => self.apply_browse(browse::Action::OpenUrl(url)),
             Outcome::Copy(text) => {
                 copy_to_clipboard(&text);
@@ -1519,7 +1562,7 @@ impl App {
                 self.spawn_task("clearing the library index...", tasks::rebuild_index)
             }
             Task::ClearCache => {
-                let state = self.state.clone();
+                let state = self.view.local.clone();
                 self.spawn_task("clearing downloads...", move || tasks::clear_cache(&state));
             }
             Task::ForgetFolder(path) => self
@@ -1924,8 +1967,13 @@ impl App {
             KeyCode::Char('f') => {
                 // Toggle favourite for the track at cursor.
                 let visible = self.visible_queue();
-                if let Some(id) = visible.get(self.queue.cursor).and_then(|e| e.db_id) {
-                    self.toggle_favourite(id);
+                if let Some(e) = visible.get(self.queue.cursor) {
+                    match e.db_id {
+                        Some(id) => {
+                            self.toggle_favourite(id);
+                        }
+                        None => self.say("that track is not in this library"),
+                    }
                 }
             }
             KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1942,7 +1990,13 @@ impl App {
                 self.tx.send(PlayerCommand::Redo).ok();
             }
             KeyCode::Char('D') => {
-                self.open_device_selector();
+                if self.this_device_shown() {
+                    self.open_device_selector();
+                }
+            }
+            KeyCode::Char('C') => {
+                self.play_on = Some(super::control::PlayOnState::new(&self.view.local));
+                self.push_mode(Mode::PlayOn);
             }
             KeyCode::Char('E') => self.open_dsp_selector(),
             KeyCode::Char('w') => {
@@ -1970,6 +2024,98 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// Draw the device being controlled, or this one, and keep the Play on
+    /// chooser up with the devices.
+    pub fn follow_control(&mut self) {
+        let shown = self.view.state().clone();
+        if !Arc::ptr_eq(&shown, &self.state) {
+            *self.shown.write() = shown.clone();
+            self.state = shown;
+            // The two states count versions apart.
+            self.queue.vq_version = u64::MAX;
+        }
+        if let Some(p) = self.play_on.as_mut() {
+            p.refresh(&self.view.local);
+        }
+    }
+
+    fn handle_play_on_key(&mut self, key: KeyEvent) {
+        let Some(play_on) = self.play_on.as_mut() else {
+            self.pop_mode();
+            return;
+        };
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('C') => {
+                self.play_on = None;
+                self.pop_mode();
+            }
+            KeyCode::Up | KeyCode::Char('k') => play_on.move_by(-1),
+            KeyCode::Down | KeyCode::Char('j') => play_on.move_by(1),
+            KeyCode::Enter => {
+                let Some(choice) = play_on.current().cloned() else {
+                    return;
+                };
+                if choice.controlled {
+                    return;
+                }
+                let said = format!("controlling {}", choice.name);
+                self.run_control(said, move |tx, state| {
+                    koan_core::remote::control::control(choice.id, tx, state)
+                });
+            }
+            KeyCode::Char('m') => {
+                let Some(choice) = play_on.current().cloned() else {
+                    return;
+                };
+                if !choice.can_move {
+                    self.say(format!("nothing to move to {}", choice.name));
+                    return;
+                }
+                let said = format!("moved the music to {}", choice.name);
+                self.run_control(said, move |tx, state| {
+                    koan_core::remote::control::move_music(choice.id, tx, state, None).map(|_| ())
+                });
+            }
+            KeyCode::Char('x') => {
+                let Some(choice) = play_on.current().cloned() else {
+                    return;
+                };
+                let Some(id) = choice.id.filter(|_| choice.away) else {
+                    return;
+                };
+                match koan_core::remote::devices::forget(&id) {
+                    Ok(()) => self.say(format!("forgot {}", choice.name)),
+                    Err(e) => self.say(e),
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Choosing or moving to a device: on the router's lane, so a key pressed
+    /// meanwhile goes where the music went, and off the frame, since a
+    /// hand-off waits for this player to go quiet and a wake asks the server.
+    fn run_control(
+        &mut self,
+        said: String,
+        work: impl FnOnce(&Sender<PlayerCommand>, &SharedPlayerState) -> Result<(), String>
+        + Send
+        + 'static,
+    ) {
+        let (local, tx, report) = (
+            self.view.local.clone(),
+            self.local_tx.clone(),
+            self.task_tx.clone(),
+        );
+        self.lane.run(move || {
+            let line = match work(&tx, &local) {
+                Ok(()) => said,
+                Err(e) => e,
+            };
+            report.send(super::tasks::Report::Work(line)).ok();
+        });
     }
 
     fn open_device_selector(&mut self) {
@@ -2030,6 +2176,9 @@ impl App {
     }
 
     pub fn open_dsp_selector(&mut self) {
+        if !self.this_device_shown() {
+            return;
+        }
         self.dsp_selector = Some(super::dsp_selector::DspSelectorState::load(
             self.eq_device(),
         ));
@@ -2101,6 +2250,9 @@ impl App {
     /// Bypasses the EQ, or puts back what was bypassed. With nothing to put
     /// back, the chooser opens.
     fn toggle_eq(&mut self) {
+        if !self.this_device_shown() {
+            return;
+        }
         if koan_core::audio::dsp::profiles::overview_for(self.eq_device())
             .active
             .is_some()
@@ -2974,7 +3126,10 @@ impl App {
 
         // The output and EQ choosers: click a row to choose it, click outside
         // to close, wheel to move.
-        if matches!(self.mode, Mode::DeviceSelector | Mode::DspSelector) {
+        if matches!(
+            self.mode,
+            Mode::DeviceSelector | Mode::DspSelector | Mode::PlayOn
+        ) {
             let area = self.layout.selector_area;
             let inner = ratatui::layout::Rect::new(
                 area.x + 1,
@@ -2987,6 +3142,7 @@ impl App {
                     if !self.is_in_rect(event.column, event.row, area) {
                         self.dsp_selector = None;
                         self.device_selector = None;
+                        self.play_on = None;
                         self.pop_mode();
                     } else if self.is_in_rect(event.column, event.row, inner) {
                         let row = (event.row - inner.y) as usize;
@@ -2996,6 +3152,11 @@ impl App {
                                 .as_ref()
                                 .map_or(0, |s| s.top(inner.height as usize));
                             self.apply_dsp(top + row);
+                        } else if let Some(p) = self.play_on.as_mut() {
+                            if row < p.choices.len() {
+                                p.cursor = row;
+                                self.handle_play_on_key(KeyEvent::from(KeyCode::Enter));
+                            }
                         } else if let Some(picker) = self.device_selector.as_mut()
                             && let Some(idx) = picker.row_at(event.column, event.row)
                         {
@@ -3012,6 +3173,8 @@ impl App {
                     };
                     if let Some(sel) = self.dsp_selector.as_mut() {
                         sel.move_by(delta);
+                    } else if let Some(p) = self.play_on.as_mut() {
+                        p.move_by(delta);
                     } else if let Some(picker) = self.device_selector.as_mut() {
                         picker.scroll(delta);
                     }

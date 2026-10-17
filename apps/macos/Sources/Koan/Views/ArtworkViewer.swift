@@ -12,12 +12,15 @@ struct ArtworkViewer: View {
     let subtitle: String?
 
     @Environment(\.dismiss) private var dismiss
+    #if os(macOS)
     @Environment(UIState.self) private var ui
+    #endif
 
     /// Room for the caption below the cover, and the margin around the lot.
     private static let caption: CGFloat = 76
     private static let margin: CGFloat = 48
 
+    #if os(macOS)
     /// Covers are square, so the sheet is too — sized off the window it hangs
     /// from rather than its own proposal, which SwiftUI answers with a tall
     /// narrow box that leaves the cover no wider than a thumbnail.
@@ -28,11 +31,18 @@ struct ArtworkViewer: View {
         let height = host.height - Self.margin * 2 - Self.caption
         return max(320, min(width, height))
     }
+    #endif
 
     var body: some View {
         VStack(spacing: 16) {
             AlbumArtwork(source: source, size: .full, cornerRadius: KoanTheme.radius(10))
+                #if os(macOS)
                 .frame(width: side, height: side)
+                #else
+                // A sheet on a phone is the size of the screen: the largest
+                // square that fits in it, the whole cover in view.
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                #endif
                 .koanShadow(0.45, radius: 32, y: 14)
 
             VStack(spacing: 3) {
@@ -45,7 +55,11 @@ struct ArtworkViewer: View {
                         .multilineTextAlignment(.center)
                 }
             }
+            #if os(macOS)
             .frame(width: side)
+            #else
+            .frame(maxWidth: .infinity)
+            #endif
             .frame(height: Self.caption - 16)
         }
         .padding(Self.margin / 2)
