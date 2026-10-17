@@ -37,17 +37,47 @@ struct TrackListView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     #endif
 
-    /// A record whose tracks span discs, by the discs the tracks carry: the
-    /// album's own disc total is often missing (#1300). Each disc gets a
-    /// heading and each row its own number rather than its place in the list.
-    private var spansDiscs: Bool {
-        !mixedAlbums && Set(tracks.map { $0.disc ?? 1 }).count > 1
+    /// A record's tracks as the discs they carry, or `nil` when they carry
+    /// fewer than two: the album's own disc total is often missing (#1300).
+    /// Each run is a disc in the order the tracks come, `disc` nil for tracks
+    /// that name none; `id` is the run's own, for its heading. On a run of
+    /// several discs each row shows its own number rather than its place.
+    private var discRuns: [DiscRun]? {
+        guard !mixedAlbums, Set(tracks.compactMap(\.disc).filter { $0 > 0 }).count > 1 else { return nil }
+        var runs: [DiscRun] = []
+        for (index, track) in tracks.enumerated() {
+            let disc = track.disc.flatMap { $0 > 0 ? $0 : nil }
+            if runs.last?.disc != disc || runs.isEmpty {
+                runs.append(DiscRun(id: -Int64(runs.count) - 1, disc: disc, tracks: []))
+            }
+            runs[runs.count - 1].tracks.append((index, track))
+        }
+        return runs
     }
 
-    /// What a row's number column says: the track's own number on a record,
-    /// its place in the list anywhere else.
-    private func number(_ track: Track, at index: Int) -> Int {
-        guard !mixedAlbums, let number = track.trackNumber, number > 0 else { return index + 1 }
+    private func trackRow(_ track: Track, at index: Int, number: Int?, allTrackIds: [Int64]) -> some View {
+        TrackRow(
+            track: track,
+            position: index + 1,
+            number: number,
+            showsAlbum: mixedAlbums,
+            allTrackIds: allTrackIds
+        )
+        .rowBehaviour(playable: .track(track))
+        .primaryTap { play([track.id]) } menu: { menu(for: [track.id]) }
+    }
+
+    struct DiscRun: Identifiable {
+        let id: Int64
+        let disc: Int32?
+        var tracks: [(index: Int, track: Track)]
+        var title: String { disc.map { "Disc \($0)" } ?? "Other tracks" }
+    }
+
+    /// A row's number on a record that spans discs: its own, or its place in
+    /// its disc's run where the file has none.
+    private static func number(_ track: Track, inRun place: Int) -> Int {
+        guard let number = track.trackNumber, number > 0 else { return place + 1 }
         return Int(number)
     }
 
@@ -91,15 +121,15 @@ struct TrackListView: View {
     #if os(macOS)
     /// A `KoanTable` — see there for why the Mac's lists are AppKit.
     private var table: some View {
-        var numbered: [TrackLine] = []
-        var disc: Int32?
-        for (index, track) in tracks.enumerated() {
-            if spansDiscs, track.disc ?? 1 != disc {
-                disc = track.disc ?? 1
-                numbered.append(TrackLine(id: -Int64(disc ?? 1), kind: .heading("Disc \(disc ?? 1)")))
+        let runs = discRuns
+        let numbered: [TrackLine] = runs.map { runs in
+            runs.flatMap { run in
+                [TrackLine(id: run.id, kind: .heading(run.title))] + run.tracks.enumerated().map { place, entry in
+                    TrackLine(id: entry.track.id, kind: .track(entry.track), lead: "\(Self.number(entry.track, inRun: place))", position: entry.index)
+                }
             }
-            numbered.append(TrackLine(id: track.id, kind: .track(track), lead: "\(number(track, at: index))", position: index))
-        }
+        } ?? tracks.enumerated().map { TrackLine(id: $1.id, kind: .track($1), lead: "\($0 + 1)", position: $0) }
+        let widest = runs == nil ? tracks.count : numbered.compactMap { Int($0.lead) }.max() ?? tracks.count
         let queued = mirror.queuedByTrack
         let current = player.currentTrackId
         let playing = player.isPlaying
@@ -117,7 +147,7 @@ struct TrackListView: View {
                 id: \.id,
                 context: TrackTableRow.Context(
                     showsAlbum: mixedAlbums,
-                    leadWidth: TrackTableRow.leadWidth(for: tracks.count),
+                    leadWidth: TrackTableRow.leadWidth(for: widest),
                     currentTrackId: current,
                     isPlaying: playing,
                     barsLive: live,
@@ -179,22 +209,20 @@ struct TrackListView: View {
                                 .onAppear { headerShown = true }
                                 .onDisappear { headerShown = false }
                         }
-                        ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
-                            if spansDiscs, index == 0 || tracks[index - 1].disc ?? 1 != track.disc ?? 1 {
-                                KoanSectionHeader("Disc \(track.disc ?? 1)")
-                                    .rowSeparator(.hidden)
-                                    .selectionDisabled()
-                                    .washedRow()
+                        if let runs = discRuns {
+                            ForEach(runs) { run in
+                                Section {
+                                    ForEach(Array(run.tracks.enumerated()), id: \.element.track.id) { place, entry in
+                                        trackRow(entry.track, at: entry.index, number: Self.number(entry.track, inRun: place), allTrackIds: allTrackIds)
+                                    }
+                                } header: {
+                                    KoanSectionHeader(run.title)
+                                }
                             }
-                            TrackRow(
-                                track: track,
-                                position: index + 1,
-                                number: number(track, at: index),
-                                showsAlbum: mixedAlbums,
-                                allTrackIds: allTrackIds
-                            )
-                            .rowBehaviour(playable: .track(track))
-                            .primaryTap { play([track.id]) } menu: { menu(for: [track.id]) }
+                        } else {
+                            ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+                                trackRow(track, at: index, number: nil, allTrackIds: allTrackIds)
+                            }
                         }
                     }
                     .insetList()

@@ -88,7 +88,9 @@ struct QueueView: View {
     }
 
     /// The records whose tracks in the queue run past disc 1: their rows
-    /// number by disc and track. Read from the tracks, since an album's disc
+    /// number by disc and track in the grouped queue, where a heading names
+    /// the record. Per album rather than per group, so a record queued twice
+    /// numbers both copies alike. Read from the tracks, since an album's disc
     /// total is often missing.
     static func multiDisc(_ items: [QueueItem]) -> Set<Int64> {
         Set(items.compactMap { ($0.disc ?? 1) > 1 ? $0.albumId : nil })
@@ -145,7 +147,7 @@ struct QueueView: View {
     #if os(macOS)
     /// A `KoanTable` — see there for why the Mac's lists are AppKit.
     private func table(_ rows: [Row]) -> some View {
-        let discs = Self.multiDisc(listed)
+        let discs = grouped ? Self.multiDisc(listed) : []
         let lines = rows.map { line($0, discs: discs) }
         let live = onStage && !reduceMotion
         let offline = mirror.connection?.offline == true
@@ -228,7 +230,7 @@ struct QueueView: View {
     #endif
 
     private func list(_ rows: [Row]) -> some View {
-                let discs = Self.multiDisc(listed)
+                let discs = grouped ? Self.multiDisc(listed) : []
                 return ScrollViewReader { scroll in
                     List(selection: $selection) {
                         ForEach(rows) { row in
