@@ -7,6 +7,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Rect, Size};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::Widget;
+use ratatui_image::picker::cap_parser::QueryStdioOptions;
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::protocol::Protocol;
 use ratatui_image::{Image, Resize};
@@ -32,7 +33,8 @@ struct RenderedArt {
 pub struct Gfx {
     picker: Option<Picker>,
     graphics: bool,
-    drawn: HashMap<(u64, u16, u16, u8), Drawn>,
+    drawn: HashMap<(u64, u16, u16, u8), (u64, Drawn)>,
+    tick: u64,
 }
 
 enum Drawn {
@@ -48,8 +50,9 @@ fn usable(protocol: ProtocolType) -> bool {
     matches!(protocol, ProtocolType::Kitty | ProtocolType::Iterm2)
 }
 
-/// How many drawings are kept before the lot is dropped. A screenful of
-/// tiles is well under this; scrolling a long library through it is not.
+/// How many drawings are kept. A screenful of tiles is well under this;
+/// scrolling a long library through it is not, so the least recently drawn
+/// go first and the tiles in view stay put.
 const DRAWN_LIMIT: usize = 192;
 
 impl Default for Gfx {
@@ -64,6 +67,7 @@ impl Gfx {
             picker: None,
             graphics: false,
             drawn: HashMap::new(),
+            tick: 0,
         }
     }
 
@@ -73,7 +77,10 @@ impl Gfx {
         if !graphics {
             return Self::halfblocks();
         }
-        let picker = Picker::from_query_stdio();
+        let picker = Picker::from_query_stdio_with_options(QueryStdioOptions {
+            kitty_compression: true,
+            ..QueryStdioOptions::default()
+        });
         match &picker {
             Ok(p) => log::info!(
                 "cover graphics: {:?}, cells {:?}px",
@@ -87,6 +94,7 @@ impl Gfx {
             graphics: picker.as_ref().is_some_and(|p| usable(p.protocol_type())),
             picker,
             drawn: HashMap::new(),
+            tick: 0,
         }
     }
 
@@ -135,10 +143,11 @@ impl Gfx {
             return;
         }
         let slot = (key, area.width, area.height, center as u8);
-        if !self.drawn.contains_key(&slot) {
-            if self.drawn.len() >= DRAWN_LIMIT {
-                self.drawn.clear();
-            }
+        self.tick += 1;
+        if let Some((used, _)) = self.drawn.get_mut(&slot) {
+            *used = self.tick;
+        } else {
+            self.make_room();
             let made = match self.picker.as_ref().filter(|_| self.graphics) {
                 Some(picker) => picker
                     .new_protocol(
@@ -149,9 +158,9 @@ impl Gfx {
                     .map_or(Drawn::Unsupported, Drawn::Protocol),
                 None => Drawn::Cells(pre_render(img, area.width, area.height, center)),
             };
-            self.drawn.insert(slot, made);
+            self.drawn.insert(slot, (self.tick, made));
         }
-        match self.drawn.get(&slot) {
+        match self.drawn.get(&slot).map(|(_, d)| d) {
             Some(Drawn::Protocol(proto)) => {
                 let size = proto.size();
                 let (w, h) = (size.width.min(area.width), size.height.min(area.height));
@@ -166,6 +175,16 @@ impl Gfx {
             Some(Drawn::Cells(rendered)) => blit(rendered, area, area.height, buf),
             _ => {}
         }
+    }
+
+    /// Drops the least recently drawn quarter once the limit is reached.
+    fn make_room(&mut self) {
+        if self.drawn.len() < DRAWN_LIMIT {
+            return;
+        }
+        let mut ticks: Vec<u64> = self.drawn.values().map(|(used, _)| *used).collect();
+        let cut = *ticks.select_nth_unstable(DRAWN_LIMIT / 4).1;
+        self.drawn.retain(|_, (used, _)| *used > cut);
     }
 
     /// Draws the top `visible` rows of the image that would fill `area`, for a
@@ -186,16 +205,20 @@ impl Gfx {
             return;
         }
         let slot = (key, area.width, area.height, 3u8);
-        if !self.drawn.contains_key(&slot) {
-            if self.drawn.len() >= DRAWN_LIMIT {
-                self.drawn.clear();
-            }
+        self.tick += 1;
+        if let Some((used, _)) = self.drawn.get_mut(&slot) {
+            *used = self.tick;
+        } else {
+            self.make_room();
             self.drawn.insert(
                 slot,
-                Drawn::Cells(pre_render(img, area.width, area.height, true)),
+                (
+                    self.tick,
+                    Drawn::Cells(pre_render(img, area.width, area.height, true)),
+                ),
             );
         }
-        if let Some(Drawn::Cells(rendered)) = self.drawn.get(&slot) {
+        if let Some((_, Drawn::Cells(rendered))) = self.drawn.get(&slot) {
             blit(rendered, area, visible, buf);
         }
     }
@@ -391,6 +414,7 @@ impl Gfx {
             picker: Some(picker),
             graphics: usable(protocol),
             drawn: HashMap::new(),
+            tick: 0,
         }
     }
 }

@@ -1,1 +1,1 @@
-- **Terminal UI: cover art under tmux.** Kitty images now draw inside tmux, from ratatui-image 11. The minimum supported Rust version is 1.90.
+- **Terminal UI: scrolling the album grid with cover graphics.** Covers out of view are now dropped least recently drawn first, instead of the whole set at once, so scrolling a long library no longer redraws and resends every visible cover. Covers are also sent compressed where the terminal supports it, and kitty images now draw inside tmux. The minimum supported Rust version is 1.90.

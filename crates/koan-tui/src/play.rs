@@ -204,7 +204,20 @@ pub fn run_tui(
         }
 
         app.refresh_device_selector();
-        terminal.draw(|f| crate::ui::render(f, &mut app))?;
+        let frame_start = std::time::Instant::now();
+        let mut built = Duration::ZERO;
+        terminal.draw(|f| {
+            crate::ui::render(f, &mut app);
+            built = frame_start.elapsed();
+        })?;
+        let total = frame_start.elapsed();
+        if total > Duration::from_millis(30) {
+            log::debug!(
+                "slow frame: {total:?} (build {built:?}, flush {:?}), covers {}",
+                total - built,
+                app.art.gfx.protocol_name()
+            );
+        }
 
         // Motion coalesces to the latest position; clicks and wheel ticks
         // each carry meaning and are dispatched in order.
