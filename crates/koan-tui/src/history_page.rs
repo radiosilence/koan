@@ -1014,6 +1014,17 @@ mod tests {
     }
 
     #[test]
+    fn forgetting_the_last_play_selects_the_one_above() {
+        let mut p = page();
+        draw(&mut p, 100, 12);
+        p.move_to(2);
+        p.handle_key(KeyEvent::from(KeyCode::Char('x')));
+        assert_eq!(p.entries[p.cursor].id, 2);
+        p.handle_key(KeyEvent::from(KeyCode::Char('x')));
+        assert_eq!(p.entries[p.cursor].id, 1);
+    }
+
+    #[test]
     fn a_failed_read_still_follows_new_plays() {
         let mut p = page();
         let (done, rx) = crossbeam_channel::unbounded();
