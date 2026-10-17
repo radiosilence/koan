@@ -362,6 +362,10 @@ impl App {
             return;
         }
 
+        if self.shell_click(col, row) {
+            return;
+        }
+
         if self.page() != Page::Queue && hit(self.layout.browse_area, col, row) {
             self.page_click(col, row);
             return;
@@ -501,7 +505,12 @@ impl App {
                 self.browse_drag |= dragging;
                 self.apply_browse(action);
             }
-            Page::Queue | Page::NowPlaying | Page::Artists => {}
+            Page::Queue
+            | Page::NowPlaying
+            | Page::Artists
+            | Page::Tracks
+            | Page::Downloaded
+            | Page::Downloads => {}
         }
     }
 
