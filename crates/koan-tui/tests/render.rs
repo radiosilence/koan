@@ -465,7 +465,7 @@ fn popup_rects_stay_inside_the_terminal() {
             assert!(popup.bottom() <= area.bottom(), "{popup:?} in {area:?}");
         }
 
-        let results = picker_results_rect(picker_popup_rect(area));
+        let results = picker_results_rect(picker_popup_rect(area), true);
         assert!(results.right() <= area.right(), "{results:?} in {area:?}");
         assert!(results.bottom() <= area.bottom(), "{results:?} in {area:?}");
     }

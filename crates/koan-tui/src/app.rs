@@ -278,7 +278,8 @@ pub struct App {
     // and the right enqueue behaviour is applied.
     pub picker_result: Option<(PickerKind, Vec<i64>, PickerAction)>,
 
-    pub artist_drill_down: Option<i64>,
+    /// What the picker committed, to be expanded into tracks and queued.
+    pub picker_picks: Option<(Vec<(PickerKind, i64)>, PickerAction)>,
 
     // Loading overlay message (e.g. "loading album...").
     pub loading_message: Option<String>,
@@ -471,7 +472,7 @@ impl App {
             layout: LayoutRects::default(),
             loading_message: None,
             picker_result: None,
-            artist_drill_down: None,
+            picker_picks: None,
             last_playing_path: None,
             library: None,
             nav: Navigator::default(),
@@ -2994,6 +2995,34 @@ impl App {
         self.push_mode(Mode::Organize);
     }
 
+    /// Closes the picker and does `action` with what it holds: a track to
+    /// jump to in the queue, or the picks for the queue.
+    fn commit_picker(&mut self, action: PickerAction) {
+        let Some(picker) = self.picker.take() else {
+            return;
+        };
+        self.mode = Mode::Normal;
+        let picks = picker.confirm();
+        if picker.kind() != PickerKind::QueueJump {
+            if !picks.is_empty() {
+                self.picker_picks = Some((picks, action));
+            }
+            return;
+        }
+        let Some(&(_, idx)) = picks.first() else {
+            return;
+        };
+        let idx = idx as usize;
+        if let Some(entry) = self.queue.vq_cache.entries.get(idx) {
+            self.tx.send(PlayerCommand::Play(entry.id)).ok();
+            self.queue.cursor = idx;
+            // Scroll so the jumped-to track is near the top.
+            let visible_height = self.queue_visible_height();
+            self.queue.scroll_offset =
+                queue::scroll_cursor_to_top(&self.queue.layout, idx, visible_height);
+        }
+    }
+
     fn handle_picker_key(&mut self, key: KeyEvent) {
         let Some(ref mut picker) = self.picker else {
             return;
@@ -3012,36 +3041,7 @@ impl App {
         };
 
         if let Some(action) = action {
-            let ids = picker.confirm();
-            let kind = picker.kind;
-            self.picker = None;
-            self.mode = Mode::Normal;
-
-            if !ids.is_empty() {
-                match kind {
-                    PickerKind::Track | PickerKind::Album => {
-                        self.picker_result = Some((kind, ids, action));
-                    }
-                    PickerKind::Artist => {
-                        self.artist_drill_down = Some(ids[0]);
-                    }
-                    PickerKind::QueueJump => {
-                        let idx = ids[0] as usize;
-                        let visible = &self.queue.vq_cache.entries;
-                        if let Some(entry) = visible.get(idx) {
-                            self.tx.send(PlayerCommand::Play(entry.id)).ok();
-                            self.queue.cursor = idx;
-                            // Scroll so the jumped-to track is near the top.
-                            let visible_height = self.queue_visible_height();
-                            self.queue.scroll_offset = queue::scroll_cursor_to_top(
-                                &self.queue.layout,
-                                idx,
-                                visible_height,
-                            );
-                        }
-                    }
-                }
-            }
+            self.commit_picker(action);
             return;
         }
 
@@ -3057,6 +3057,8 @@ impl App {
             KeyCode::Home => picker.jump_to_start(),
             KeyCode::End => picker.jump_to_end(),
             KeyCode::Tab => picker.toggle_select(),
+            KeyCode::Left => picker.move_tab(-1),
+            KeyCode::Right => picker.move_tab(1),
             KeyCode::Backspace => picker.backspace(),
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 picker.page_up(10);
@@ -3394,61 +3396,47 @@ impl App {
         // Picker intercepts all mouse events when active.
         if let Mode::Picker(_) = &self.mode {
             let picker_area = self.layout.picker_area;
-            let results = picker_results_rect(picker_area);
+            let tabs = self
+                .picker
+                .as_ref()
+                .is_some_and(|p| !p.tab_labels().is_empty());
+            let results = picker_results_rect(picker_area, tabs);
             let in_results = self.is_in_rect(event.column, event.row, results);
             let in_popup = self.is_in_rect(event.column, event.row, picker_area);
 
             if let MouseEventKind::Down(MouseButton::Left) = event.kind {
-                if in_results {
-                    if let Some(ref mut picker) = self.picker {
-                        let visible_height = results.height as usize;
-                        let start = if picker.cursor >= visible_height {
-                            picker.cursor - visible_height + 1
+                let tab = self.picker.as_ref().and_then(|p| {
+                    super::picker::picker_tab_rects(picker_area, &p.tab_labels())
+                        .iter()
+                        .position(|r| self.is_in_rect(event.column, event.row, *r))
+                });
+                if let Some(tab) = tab {
+                    if let Some(p) = self.picker.as_mut() {
+                        p.set_tab(tab);
+                    }
+                } else if in_results {
+                    let Some(picker) = self.picker.as_mut() else {
+                        return;
+                    };
+                    let rows = results.height as usize;
+                    let start = (picker.cursor + 1).saturating_sub(rows);
+                    let n = start + (event.row - results.y) as usize;
+                    if n < picker.matched_count() {
+                        let now = std::time::Instant::now();
+                        let double = self.last_click_idx == Some(n)
+                            && self
+                                .last_click_time
+                                .is_some_and(|t| now.duration_since(t).as_millis() < 400);
+                        if double {
+                            // Only this, and play it now.
+                            self.last_click_idx = None;
+                            self.last_click_time = None;
+                            picker.pick_only(n);
+                            self.commit_picker(PickerAction::AppendAndPlay);
                         } else {
-                            0
-                        };
-                        let row_in_results = (event.row - results.y) as usize;
-                        let item_idx = start + row_in_results;
-                        if item_idx < picker.matched_count() {
-                            let now = std::time::Instant::now();
-                            let is_double = self.last_click_idx == Some(item_idx)
-                                && self
-                                    .last_click_time
-                                    .is_some_and(|t| now.duration_since(t).as_millis() < 400);
-
-                            if is_double {
-                                self.last_click_idx = None;
-                                self.last_click_time = None;
-                                picker.cursor = item_idx;
-                                let ids = picker.confirm();
-                                let kind = picker.kind;
-                                self.picker = None;
-                                self.mode = Mode::Normal;
-                                if !ids.is_empty() {
-                                    match kind {
-                                        PickerKind::Track | PickerKind::Album => {
-                                            self.picker_result =
-                                                Some((kind, ids, PickerAction::AppendAndPlay));
-                                        }
-                                        PickerKind::Artist => {
-                                            self.artist_drill_down = Some(ids[0]);
-                                        }
-                                        PickerKind::QueueJump => {
-                                            let idx = ids[0] as usize;
-                                            let visible = self.visible_queue();
-                                            if let Some(entry) = visible.get(idx) {
-                                                self.tx.send(PlayerCommand::Play(entry.id)).ok();
-                                                self.queue.cursor = idx;
-                                                self.update_scroll();
-                                            }
-                                        }
-                                    }
-                                }
-                            } else {
-                                self.last_click_idx = Some(item_idx);
-                                self.last_click_time = Some(now);
-                                picker.cursor = item_idx;
-                            }
+                            self.last_click_idx = Some(n);
+                            self.last_click_time = Some(now);
+                            picker.toggle_at(n);
                         }
                     }
                 } else if !in_popup {
@@ -4561,6 +4549,7 @@ impl App {
     }
 
     fn open_picker(&mut self, kind: PickerKind) {
+        self.picker = Some(PickerState::library(kind));
         self.mode = Mode::Picker(kind);
     }
 

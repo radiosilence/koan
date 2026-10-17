@@ -41,6 +41,10 @@ Each row has the same columns, so lengths and formats line up down the page: wha
 
 The row's menu (right click, the `⋯` at its end, or `space` with a selection) offers what the apps' queue menu does: on a track, play, remove, add to playlist, organize files, favourite, go to the album or the artist, download it or remove the download, copy a share link and track info; on an album heading, the same for the whole run; on several tracks, what applies to all of them. A track the library no longer has can only be played or removed.
 
+## The picker
+
+`p`, `a` and `r` on the queue open the picker, the apps' picker sheet, on its tracks, albums or artists tab. Typing narrows the tab shown, `←` and `→` (or a click on a tab) change tab, and `Tab` (or a click) picks the row under the cursor or lets it go. Picks are kept across the tabs, in the order they were made. `Enter` adds them to the queue, `Ctrl+Enter` adds them and plays the first, and `Ctrl+R` replaces the queue with them; with nothing picked, each acts on the row under the cursor. An album or an artist stands for all of its tracks. A double click plays the row clicked on its own.
+
 ## Search
 
 `0` opens a box that searches the library as you type and lists what matches under artists, records and tracks. `Enter` (or `↓`) moves from the box to the results, and `↑` from the first result or `/` returns to the box. On a result `Enter` opens an artist or a record and plays a track, `P`, `a` and `N` play, add and put next, `w` adds to a playlist, `f` favourites, `m` lists the rest, and the artist and record in a track's row are links. Clicking the box, a result, `clear` or `⋯ actions` does the same by pointer. While the box has focus every key is text, including the page numbers, and `Shift+Tab` (or `Tab` with nothing found) changes page; `Esc` clears it, then leaves.

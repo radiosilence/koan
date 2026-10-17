@@ -8,13 +8,9 @@ use koan_core::db::queries;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::PlaybackState;
 
-use crate::app::{self, PickerAction};
+use crate::app;
 use crate::enqueue::enqueue_playlist;
-use crate::picker::{
-    PickerItem, PickerKind, PickerPartKind, PickerState, all_tracks_sentinel,
-    artist_id_from_sentinel, is_all_tracks_sentinel,
-};
-use crate::picker_items::{load_picker_items, make_album_picker_items};
+use crate::picker::PickerKind;
 
 /// Callbacks for CLI integration. The TUI library crate doesn't own
 /// the logger or signal handler — koan-cli provides those.
@@ -201,9 +197,6 @@ pub fn run_tui(
     let mut saved_cursor = app.view.local.cursor();
     const POSITION_SAVE_INTERVAL: Duration = Duration::from_secs(1);
 
-    // A picker's items, being read on another thread.
-    let mut picker_load: Option<(PickerKind, crossbeam_channel::Receiver<Vec<PickerItem>>)> = None;
-
     loop {
         if (callbacks.sigint_received)() {
             app.quit = true;
@@ -362,62 +355,12 @@ pub fn run_tui(
             next_frame = now;
         }
 
-        if let app::Mode::Picker(kind) = app.mode
-            && app.picker.is_none()
-        {
-            match picker_load.as_ref().filter(|(k, _)| *k == kind) {
-                Some((_, rx)) => match rx.try_recv() {
-                    Ok(items) => {
-                        let multi = matches!(kind, PickerKind::Track);
-                        app.picker = Some(PickerState::new(kind, items, multi));
-                        picker_load = None;
-                    }
-                    Err(crossbeam_channel::TryRecvError::Empty) => {}
-                    Err(crossbeam_channel::TryRecvError::Disconnected) => picker_load = None,
-                },
-                None => {
-                    let (tx, rx) = crossbeam_channel::bounded(1);
-                    let spawned = std::thread::Builder::new()
-                        .name("koan-picker".into())
-                        .spawn(move || {
-                            let _ = tx.send(load_picker_items(kind));
-                        });
-                    if spawned.is_ok() {
-                        picker_load = Some((kind, rx));
-                    }
-                }
-            }
-        }
-
-        if let Some(artist_id) = app.artist_drill_down.take()
-            && let Ok(db) = koan_core::db::pool::shared().get()
-        {
-            let albums = queries::albums_for_artist(&db.conn, artist_id).unwrap_or_default();
-            if albums.is_empty() {
-                let track_ids: Vec<i64> = queries::tracks_for_artist(&db.conn, artist_id)
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|t| t.id)
-                    .collect();
-                if !track_ids.is_empty() {
-                    app.picker_result =
-                        Some((PickerKind::Track, track_ids, PickerAction::AppendAndPlay));
-                }
-            } else {
-                let mut items = vec![PickerItem {
-                    id: all_tracks_sentinel(artist_id),
-                    display: "all tracks".to_string(),
-                    match_text: "all tracks".into(),
-                    parts: vec![("all tracks".into(), PickerPartKind::Plain)],
-                }];
-                items.extend(make_album_picker_items(&albums));
-                app.mode = app::Mode::Picker(PickerKind::Album);
-                let picker = PickerState::new(PickerKind::Album, items, false);
-                app.picker = Some(picker);
-            }
-        }
-
-        if let Some((kind, ids, action)) = app.picker_result.take() {
+        let picks = app
+            .picker_result
+            .take()
+            .map(|(kind, ids, action)| (ids.into_iter().map(|id| (kind, id)).collect(), action))
+            .or_else(|| app.picker_picks.take());
+        if let Some((picks, action)) = picks {
             let tx_bg = app.tx.clone();
             let playing = app.state.cursor();
 
@@ -426,29 +369,24 @@ pub fn run_tui(
             std::thread::Builder::new()
                 .name("koan-enqueue".into())
                 .spawn(move || {
-                    let track_ids = match kind {
-                        PickerKind::Album => {
-                            let Ok(db) = koan_core::db::pool::shared().get() else {
-                                return;
-                            };
-                            let mut expanded = Vec::new();
-                            for album_id in &ids {
-                                if is_all_tracks_sentinel(*album_id) {
-                                    let aid = artist_id_from_sentinel(*album_id);
-                                    let tracks = queries::tracks_for_artist(&db.conn, aid)
-                                        .unwrap_or_default();
-                                    expanded.extend(tracks.iter().map(|t| t.id));
-                                    continue;
-                                }
-                                let tracks = queries::tracks_for_album(&db.conn, *album_id)
-                                    .unwrap_or_default();
-                                expanded.extend(tracks.iter().map(|t| t.id));
-                            }
-                            expanded
-                        }
-                        _ => ids,
+                    let Ok(db) = koan_core::db::pool::shared().get() else {
+                        return;
                     };
-
+                    // Albums and artists stand for their tracks, in the
+                    // order they were picked.
+                    let mut track_ids: Vec<i64> = Vec::new();
+                    for (kind, id) in picks {
+                        let tracks = match kind {
+                            PickerKind::Album => queries::tracks_for_album(&db.conn, id),
+                            PickerKind::Artist => queries::tracks_for_artist(&db.conn, id),
+                            PickerKind::Track | PickerKind::QueueJump => {
+                                track_ids.push(id);
+                                continue;
+                            }
+                        };
+                        track_ids.extend(tracks.unwrap_or_default().iter().map(|t| t.id));
+                    }
+                    drop(db);
                     if !track_ids.is_empty() {
                         enqueue_playlist(track_ids, action, playing, tx_bg);
                     }

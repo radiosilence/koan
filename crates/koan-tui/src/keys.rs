@@ -239,11 +239,12 @@ pub fn hints(mode: &Mode, page: Page, filterable: bool) -> Vec<(&'static str, &'
                 ("esc", "close"),
             ],
             Mode::Picker(_) => vec![
-                ("\u{2191}\u{2193}", "navigate"),
-                ("ret", "append"),
-                ("C-ret", "play"),
+                ("\u{2191}\u{2193}", "move"),
+                ("\u{2190}\u{2192}", "kind"),
+                ("tab", "pick"),
+                ("ret", "add"),
+                ("C-ret", "add & play"),
                 ("C-r", "replace"),
-                ("tab", "multi"),
                 ("esc", "cancel"),
             ],
         }
