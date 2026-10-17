@@ -1,5 +1,6 @@
-//! The top of an artist's page: photograph, name, play and shuffle, and the
-//! opening of their Wikipedia article, as the apps lay it out.
+//! The top of an artist's page, as the apps lay it out: their photograph when
+//! there is one, and beside it the name and heart, how many albums, play,
+//! shuffle, add and play next, and the opening of their Wikipedia article.
 
 use crossbeam_channel::{Receiver, unbounded};
 use image::DynamicImage;
@@ -7,8 +8,10 @@ use koan_core::artist_info::{self, ArtistInfo};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
+use unicode_width::UnicodeWidthStr;
 
 use crate::cover_art::{Gfx, album_key};
+use crate::rows;
 use crate::theme::Theme;
 
 /// What the pointer can be over in the header.
@@ -16,6 +19,8 @@ use crate::theme::Theme;
 pub enum HeaderHit {
     Play,
     Shuffle,
+    Add,
+    Next,
     Heart,
     More,
     Wikipedia,
@@ -27,19 +32,21 @@ enum Update {
     Done,
 }
 
-#[derive(Default, Clone, Copy)]
-struct Geom {
-    play: Rect,
-    shuffle: Rect,
-    heart: Rect,
-    more: Rect,
-    wiki: Rect,
-}
+/// Cells between the photograph and the text beside it.
+const GAP: u16 = 3;
+/// The row the buttons sit on, under the name, the count and a gap.
+const BUTTON_ROW: u16 = 3;
+/// The row the bio starts on, after the buttons and a gap.
+const BIO_ROW: u16 = 5;
+/// Lines of bio shown before "more".
+const FOLDED: u16 = 4;
+/// The widest the bio is set, for lines that can be read.
+const BIO_MAX: usize = 96;
 
 pub struct ArtistHeader {
     id: i64,
     name: String,
-    albums: usize,
+    holds: String,
     info: Option<ArtistInfo>,
     /// The bio broken into lines, and the width it was broken for.
     bio: Option<(usize, Vec<String>)>,
@@ -48,7 +55,7 @@ pub struct ArtistHeader {
     favourite: bool,
     expanded: bool,
     rx: Receiver<Update>,
-    geom: Geom,
+    hits: Vec<(Rect, HeaderHit)>,
 }
 
 fn inside(r: Rect, col: u16, row: u16) -> bool {
@@ -60,7 +67,7 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut line = String::new();
     for word in text.split_whitespace() {
-        let need = line.chars().count() + usize::from(!line.is_empty()) + word.chars().count();
+        let need = line.width() + usize::from(!line.is_empty()) + word.width();
         if need > width && !line.is_empty() {
             lines.push(std::mem::take(&mut line));
         }
@@ -107,7 +114,7 @@ impl ArtistHeader {
         Self {
             id,
             name: String::new(),
-            albums: 0,
+            holds: String::new(),
             info: None,
             bio: None,
             photo: None,
@@ -115,7 +122,7 @@ impl ArtistHeader {
             favourite: false,
             expanded: false,
             rx,
-            geom: Geom::default(),
+            hits: Vec::new(),
         }
     }
 
@@ -136,10 +143,11 @@ impl ArtistHeader {
         changed
     }
 
-    /// Who the page is about, and how many of their records it shows.
-    pub fn set_artist(&mut self, name: &str, albums: usize) {
+    /// Who the page is about, and what it shows of them: "12 albums", or
+    /// "appears on 3 albums".
+    pub fn set_artist(&mut self, name: &str, holds: String) {
         name.clone_into(&mut self.name);
-        self.albums = albums;
+        self.holds = holds;
     }
 
     pub fn set_favourite(&mut self, on: bool) {
@@ -154,26 +162,33 @@ impl ArtistHeader {
         self.info.as_ref().and_then(|i| i.bio_url.clone())
     }
 
+    /// The photograph's width: only when there is one, as the apps show it.
     fn art_w(&self, width: u16) -> u16 {
-        let wants_photo = self.photo.is_some()
-            || (self.loading || self.info.as_ref().is_some_and(|i| i.image_url.is_some()));
-        if width >= 50 && wants_photo {
-            (width / 4).clamp(12, 22)
+        let has_photo =
+            self.photo.is_some() || self.info.as_ref().is_some_and(|i| i.image_url.is_some());
+        if width >= 50 && has_photo {
+            (width / 5).clamp(12, 20)
         } else {
             0
         }
     }
 
-    fn text_w(&self, width: u16) -> usize {
-        let art_w = self.art_w(width);
-        let tx = if art_w > 0 { art_w + 3 } else { 1 };
-        width.saturating_sub(tx + 1) as usize
+    /// Where the text column starts, from the left of the header.
+    fn text_x(&self, width: u16) -> u16 {
+        match self.art_w(width) {
+            0 => 0,
+            w => w + GAP,
+        }
+    }
+
+    fn text_w(&self, width: u16) -> u16 {
+        width.saturating_sub(self.text_x(width))
     }
 
     /// The bio in lines to fit `width`, broken again only when the width or
     /// the bio changes.
     fn bio_lines(&mut self, width: u16) -> &[String] {
-        let w = self.text_w(width).max(10);
+        let w = (self.text_w(width) as usize).clamp(10, BIO_MAX);
         if self.bio.as_ref().is_none_or(|(at, _)| *at != w) {
             let lines = self
                 .info
@@ -186,31 +201,34 @@ impl ArtistHeader {
         self.bio.as_ref().map_or(&[], |(_, lines)| lines)
     }
 
-    /// Rows the header takes in a page `avail` rows tall; the records get the
+    /// Rows the header takes in a page `avail` rows tall; the albums get the
     /// rest, and always at least a row of tiles.
     pub fn height(&mut self, width: u16, avail: u16, gfx: &Gfx) -> u16 {
         if avail < 12 {
             return 0;
         }
         let lines = self.bio_lines(width).len() as u16;
-        let shown = if self.expanded { lines } else { lines.min(4) };
+        let shown = if self.expanded {
+            lines
+        } else {
+            lines.min(FOLDED)
+        };
         let art_h = gfx.rows_for(self.art_w(width));
-        // Name, count, buttons and a gap, then the bio and its credit line.
-        let text = 4 + shown + u16::from(lines > 0 || self.loading);
-        (text.max(art_h) + 1).min(avail * 3 / 5)
+        // Then the bio and its credits, or the line saying it is being
+        // looked up.
+        let bio = if lines > 0 {
+            shown + 1
+        } else {
+            u16::from(self.loading)
+        };
+        ((BIO_ROW + bio).max(art_h) + 1).min(avail * 3 / 5)
     }
 
     pub fn hit(&self, col: u16, row: u16) -> Option<HeaderHit> {
-        [
-            (self.geom.play, HeaderHit::Play),
-            (self.geom.shuffle, HeaderHit::Shuffle),
-            (self.geom.heart, HeaderHit::Heart),
-            (self.geom.more, HeaderHit::More),
-            (self.geom.wiki, HeaderHit::Wikipedia),
-        ]
-        .into_iter()
-        .find(|(r, _)| inside(*r, col, row))
-        .map(|(_, h)| h)
+        self.hits
+            .iter()
+            .find(|(r, _)| inside(*r, col, row))
+            .map(|(_, h)| *h)
     }
 
     pub fn render(
@@ -221,69 +239,63 @@ impl ArtistHeader {
         gfx: &mut Gfx,
         hover: Option<HeaderHit>,
     ) {
-        self.geom = Geom::default();
+        self.hits.clear();
         if area.height == 0 || area.width < 8 {
             return;
         }
         let art_w = self.art_w(area.width);
-        let art_h = gfx.rows_for(art_w).min(area.height);
         if art_w > 0 {
-            let art = Rect::new(area.x + 1, area.y, art_w, art_h);
+            let art_h = gfx.rows_for(art_w).min(area.height);
+            let art = Rect::new(area.x, area.y, art_w, art_h);
             match &self.photo {
                 Some(img) => gfx.draw(album_key(-self.id - 1), img, art, buf, false),
                 None => super::browse::placeholder(art, art.height, buf, theme, &self.name),
             }
         }
-        let tx = area.x + if art_w > 0 { art_w + 3 } else { 1 };
+        let tx = area.x + self.text_x(area.width);
         let tw = self.text_w(area.width);
         let end = area.y + area.height;
-        let link = |on: bool| {
-            let base = theme.track_playing;
-            if on {
-                base.add_modifier(Modifier::UNDERLINED)
-            } else {
-                base
-            }
-        };
+        let mut hits = Vec::new();
 
-        let heart_on = hover == Some(HeaderHit::Heart);
+        // The name, and the heart after it.
+        let name = rows::put(
+            buf,
+            tx,
+            area.y,
+            tw.saturating_sub(3),
+            &self.name,
+            theme.heading.add_modifier(Modifier::BOLD),
+        );
         let (heart, heart_style) = if self.favourite {
             ("\u{2665}", theme.favourite)
         } else {
             ("\u{2661}", theme.hint_desc)
         };
-        buf.set_string(
-            tx,
-            area.y,
-            heart,
-            if heart_on {
-                heart_style.add_modifier(Modifier::UNDERLINED)
-            } else {
-                heart_style
-            },
-        );
-        self.geom.heart = Rect::new(tx, area.y, 2, 1);
-        buf.set_stringn(
-            tx + 2,
-            area.y,
-            &self.name,
-            tw.saturating_sub(2),
-            theme.heading.add_modifier(Modifier::BOLD),
-        );
-        if area.y + 1 < end {
-            let albums = self.albums;
-            let count = format!("{albums} {}", if albums == 1 { "album" } else { "albums" });
-            buf.set_stringn(tx, area.y + 1, &count, tw, theme.hint_desc);
+        let hx = name.x + name.width + 2;
+        if hx < tx + tw {
+            let style = rows::link(heart_style, hover == Some(HeaderHit::Heart));
+            buf.set_string(hx, area.y, heart, style);
+            hits.push((Rect::new(hx, area.y, 1, 1), HeaderHit::Heart));
         }
-        if area.y + 2 < end {
-            let y = area.y + 2;
-            let mut x = tx;
+        if area.y + 1 < end {
+            rows::put(buf, tx, area.y + 1, tw, &self.holds, theme.hint_desc);
+        }
+
+        // The buttons. Play is the one prominent action of the page.
+        let by = area.y + BUTTON_ROW;
+        if by < end {
+            // A button's padding sits outside the text column, so its label
+            // lines up with the name.
+            let mut x = tx.saturating_sub(1);
             for (label, hit, prominent) in [
-                (" play ", HeaderHit::Play, true),
-                (" shuffle ", HeaderHit::Shuffle, false),
+                ("\u{25b6} play", HeaderHit::Play, true),
+                ("shuffle", HeaderHit::Shuffle, false),
+                ("+ add", HeaderHit::Add, false),
+                ("play next", HeaderHit::Next, false),
             ] {
-                let w = label.chars().count() as u16 + 2;
-                if x + w > area.x + area.width {
+                let text = format!(" {label} ");
+                let w = text.width() as u16;
+                if x + w > tx + tw {
                     break;
                 }
                 let base = if prominent {
@@ -291,71 +303,78 @@ impl ArtistHeader {
                 } else {
                     theme.track_normal
                 };
-                let style = if hover == Some(hit) {
-                    base.add_modifier(Modifier::UNDERLINED)
-                } else {
-                    base
-                };
-                buf.set_string(x, y, format!("[{label}]"), style);
-                let rect = Rect::new(x, y, w, 1);
-                match hit {
-                    HeaderHit::Play => self.geom.play = rect,
-                    _ => self.geom.shuffle = rect,
-                }
-                x += w + 2;
+                let at = rows::put(buf, x, by, w, &text, rows::link(base, hover == Some(hit)));
+                hits.push((at, hit));
+                x += w + 1;
             }
         }
 
         self.bio_lines(area.width);
         let lines: &[String] = self.bio.as_ref().map_or(&[], |(_, lines)| lines);
-        let mut y = area.y + 4;
+        let mut y = area.y + BIO_ROW;
+        let bw = tw.min(BIO_MAX as u16);
         if lines.is_empty() {
             if self.loading && y < end {
-                buf.set_stringn(tx, y, "looking up biography\u{2026}", tw, theme.hint_desc);
+                rows::put(
+                    buf,
+                    tx,
+                    y,
+                    bw,
+                    "looking up biography\u{2026}",
+                    theme.hint_desc,
+                );
             }
+            self.hits = hits;
             return;
         }
-        let room = end.saturating_sub(y + 2) as usize;
-        let limit = if self.expanded { room } else { room.min(4) };
+        // The credits line is kept below the bio.
+        let room = end.saturating_sub(y + 1) as usize;
+        let limit = if self.expanded {
+            room
+        } else {
+            room.min(FOLDED as usize)
+        };
         let truncated = lines.len() > limit;
         for (i, line) in lines.iter().take(limit).enumerate() {
-            let style = Style::new().patch(theme.track_normal);
             if i + 1 == limit && truncated {
-                let cut = super::browse::fit(&format!("{line}\u{2026}"), tw);
-                buf.set_stringn(tx, y, cut, tw, style);
+                rows::put(buf, tx, y, bw, &format!("{line}\u{2026}"), theme.hint_desc);
             } else {
-                buf.set_stringn(tx, y, line, tw, style);
+                rows::put(buf, tx, y, bw, line, theme.hint_desc);
             }
             y += 1;
         }
         if y < end {
+            let link = |on: bool| rows::link(theme.track_playing, on);
             let mut x = tx;
-            let mut put = |buf: &mut Buffer, text: &str, style: Style, whole: bool| -> Rect {
-                let w = (text.chars().count() as u16).min((area.x + area.width).saturating_sub(x));
-                if whole && (w as usize) < text.chars().count() {
-                    return Rect::default();
+            let mut credit = |buf: &mut Buffer, text: &str, style: Style| {
+                let w = text.width() as u16;
+                if x + w > tx + tw {
+                    return None;
                 }
-                buf.set_stringn(x, y, text, w as usize, style);
-                let at = Rect::new(x, y, w, 1);
-                x += w + 2;
-                at
+                let at = rows::put(buf, x, y, w, text, style);
+                x += w + 3;
+                Some(at)
             };
             if truncated || self.expanded {
                 let label = if self.expanded { "less" } else { "more" };
-                self.geom.more = put(buf, label, link(hover == Some(HeaderHit::More)), false);
+                if let Some(at) = credit(buf, label, link(hover == Some(HeaderHit::More))) {
+                    hits.push((at, HeaderHit::More));
+                }
             }
-            if self.info.as_ref().is_some_and(|i| i.bio_url.is_some()) {
-                self.geom.wiki = put(
+            if self.info.as_ref().is_some_and(|i| i.bio_url.is_some())
+                && let Some(at) = credit(
                     buf,
                     "from wikipedia",
                     link(hover == Some(HeaderHit::Wikipedia)),
-                    false,
-                );
+                )
+            {
+                hits.push((at, HeaderHit::Wikipedia));
             }
-            if let Some(credit) = self.info.as_ref().and_then(|i| i.image_credit.as_deref()) {
-                put(buf, &format!("photo: {credit}"), theme.hint_desc, true);
+            if let Some(by) = self.info.as_ref().and_then(|i| i.image_credit.as_deref()) {
+                credit(buf, &format!("photo: {by}"), theme.hint_desc);
             }
         }
+        self.hits = hits;
     }
 }
 
@@ -367,5 +386,41 @@ mod tests {
     fn text_wraps_at_spaces() {
         assert_eq!(wrap("one two three", 7), vec!["one two", "three"]);
         assert_eq!(wrap("", 7), Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_buttons_and_heart_are_hits_beside_the_name() {
+        koan_core::config::isolate_config_for_tests();
+        let mut h = ArtistHeader::new(-1);
+        h.set_artist("Someone", "3 albums".into());
+        let area = Rect::new(0, 0, 100, 14);
+        let mut buf = Buffer::empty(area);
+        h.render(
+            area,
+            &mut buf,
+            &Theme::default(),
+            &mut Gfx::halfblocks(),
+            None,
+        );
+        for hit in [
+            HeaderHit::Play,
+            HeaderHit::Shuffle,
+            HeaderHit::Add,
+            HeaderHit::Next,
+            HeaderHit::Heart,
+        ] {
+            let (r, _) = h.hits.iter().find(|(_, k)| *k == hit).expect("drawn");
+            assert_eq!(h.hit(r.x, r.y), Some(hit));
+        }
+        let play = h
+            .hits
+            .iter()
+            .find(|(_, k)| *k == HeaderHit::Play)
+            .unwrap()
+            .0;
+        assert_eq!(
+            play.y, BUTTON_ROW,
+            "the buttons sit under the name and count"
+        );
     }
 }

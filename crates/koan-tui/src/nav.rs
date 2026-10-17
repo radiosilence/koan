@@ -14,6 +14,10 @@ pub enum Page {
     History,
     Settings,
     Search,
+    /// The library's tracks.
+    Tracks,
+    /// What can play on this device.
+    Downloaded,
     /// One playlist, by its id.
     Playlist(i64),
     /// One record, by its id: reached from a tile, a link, or the queue.
@@ -48,6 +52,8 @@ impl Page {
             Page::History => "history",
             Page::Settings => "settings",
             Page::Search => "search",
+            Page::Tracks => "tracks",
+            Page::Downloaded => "downloaded",
             Page::Playlist(_) => "playlist",
             Page::Album(_) => "album",
             Page::Artist(_) => "artist",
@@ -77,6 +83,8 @@ impl Page {
             Page::History => "history",
             Page::Settings => "settings",
             Page::Search => "search",
+            Page::Tracks => "tracks",
+            Page::Downloaded => "offline",
             Page::Playlist(_) => "playlist",
             Page::Album(_) => "album",
             Page::Artist(_) => "artist",
@@ -96,7 +104,11 @@ impl Page {
             Page::History => '8',
             Page::Settings => '9',
             Page::Search => '0',
-            Page::Album(_) | Page::Artist(_) | Page::Playlist(_) => ' ',
+            Page::Tracks
+            | Page::Downloaded
+            | Page::Album(_)
+            | Page::Artist(_)
+            | Page::Playlist(_) => ' ',
         }
     }
 

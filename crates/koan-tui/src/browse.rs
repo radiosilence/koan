@@ -1,7 +1,8 @@
-//! The browsing pages: Albums, Favourites and Recent. One page type with a
-//! source, because they are the library's own listings with a filter on
-//! (`koan_core::shelves`); what each holds and in what order is decided there.
-//! Records are shown as tiles of cover art, or as rows.
+//! The library's browsers: Albums, Artists and Tracks, and an artist's page,
+//! which is their albums under a header. One page type with a source, because
+//! they are the library's own listings, narrowed by the browse filters and the
+//! name filter and ordered by the sort, as the apps' browsers are
+//! (`koan_core::browse`). Albums are shown as tiles of cover art, or as rows.
 //!
 //! Listings are read off the UI thread, narrowed and ordered in SQL, and
 //! arrive whole; a read asked for after another always wins over it.
@@ -13,20 +14,21 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender};
 use image::DynamicImage;
-use koan_core::db::queries::{self, AlbumOrder, AlbumQuery, AlbumRow, TrackRow};
-use koan_core::shelves::{self, Shelf};
+use koan_core::browse::{self as core_browse, AlbumSort, BrowseFilter, TrackSort};
+use koan_core::db::queries::{self, AlbumOrder, AlbumQuery, AlbumRow, ArtistRow, TrackRow};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
 
 use super::app::PickerAction;
 use super::artist_header::{ArtistHeader, HeaderHit};
-use super::browse_filter::Filters;
 use super::cover_art::{Gfx, album_key};
+use super::rows::{self, Columns, Emphasis, Row, Target};
 use super::theme::Theme;
 use super::thumb_cache;
 use super::transport::format_time;
+
+pub(super) use super::rows::fit;
 
 /// The widest a tile gets, in columns. Wider screens get more tiles.
 const TILE_MAX_W: u16 = 26;
@@ -36,7 +38,7 @@ const TILE_MIN_W: u16 = 14;
 const THUMB_LIMIT: usize = 800;
 
 /// How long the grid must be still before its covers are drawn as images.
-const SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
+const SETTLE: Duration = Duration::from_millis(150);
 
 /// How many rows beyond the page are loaded ahead of scrolling.
 const PREFETCH_ROWS: usize = 3;
@@ -48,32 +50,17 @@ const DOUBLE_CLICK: Duration = Duration::from_millis(500);
 /// drawn and one of gap.
 const BAR_W: u16 = 3;
 
+/// Tracks are read this many at a time, more as the cursor nears the end of
+/// what is here: a library has tens of thousands.
+const TRACK_PAGE: u32 = 2000;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
     Albums,
-    Favourites,
-    Recent,
-    /// One artist's records.
+    Artists,
+    Tracks,
+    /// One artist's albums, or the tracks they appear on when they have none.
     Artist(i64),
-}
-
-impl Source {
-    fn shelf(self) -> Option<Shelf<'static>> {
-        match self {
-            Source::Albums | Source::Artist(_) => None,
-            Source::Favourites => Some(Shelf::Favourites),
-            Source::Recent => Some(Shelf::Recent),
-        }
-    }
-
-    fn empty(self) -> &'static str {
-        match self {
-            Source::Albums => "no albums in the library",
-            Source::Favourites => "nothing favourited yet",
-            Source::Recent => "nothing played in the last 30 days",
-            Source::Artist(_) => "no records by this artist",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,12 +69,43 @@ pub enum View {
     List,
 }
 
-const ORDERS: [(AlbumOrder, &str); 4] = [
-    (AlbumOrder::ArtistThenDate, "artist"),
-    (AlbumOrder::RecentlyAdded, "added"),
-    (AlbumOrder::Title, "title"),
-    (AlbumOrder::YearDesc, "year"),
-];
+/// What the page lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Albums,
+    Artists,
+    Tracks,
+}
+
+fn album_sort_label(sort: AlbumSort) -> &'static str {
+    match sort {
+        AlbumSort::RecentlyAdded => "recently added",
+        AlbumSort::Title => "title",
+        AlbumSort::Artist => "artist",
+        AlbumSort::Year => "year",
+        AlbumSort::Random => "random",
+        AlbumSort::LastPlayed => "last played",
+        AlbumSort::Downloaded => "most downloaded",
+        AlbumSort::BestMatch => "best match",
+    }
+}
+
+fn track_sort_label(sort: TrackSort) -> &'static str {
+    match sort {
+        TrackSort::Artist => "artist",
+        TrackSort::Title => "title",
+        TrackSort::Album => "album",
+        TrackSort::Duration => "duration",
+        TrackSort::LastPlayed => "last played",
+        TrackSort::BestMatch => "best match",
+    }
+}
+
+/// The sort after `now` in `offered`, round to the first.
+fn next_sort<T: PartialEq + Copy>(now: T, offered: &[T]) -> T {
+    let at = offered.iter().position(|s| *s == now);
+    offered[at.map_or(0, |i| (i + 1) % offered.len())]
+}
 
 /// What a click or key asks the app to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,26 +127,43 @@ pub enum Action {
     Choose(Vec<i64>),
     /// A menu of actions for what the cursor is on, with its heading.
     Menu(String, Vec<(String, Action)>),
-    /// Open the panel of filters.
+    /// Open the panel of filters, for the browser on screen.
     OpenFilters,
     /// Fetch these tracks to this device, or let the copies go.
     Download(Vec<i64>),
     RemoveDownload(Vec<i64>),
+    /// Open a browser set up as a shelf is: its "See all".
+    SeeAll(SeeAll),
+}
+
+/// A browser to open, and what to open it with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SeeAll {
+    pub source: Source,
+    pub filter: BrowseFilter,
+    pub album_sort: AlbumSort,
+    pub track_sort: TrackSort,
+    pub text: String,
+}
+
+/// A control in the page's toolbar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Control {
+    Filter,
+    Filters,
+    Sort,
+    Reshuffle,
+    View,
+    Menu,
 }
 
 /// Where the pointer is on the page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hit {
     Item(usize),
-    /// A record's title under its tile: a link to the record.
-    Title(usize),
-    /// A record's artist under its tile: a link to the artist.
-    Artist(usize),
-    Sort,
-    View,
-    Filter,
-    Filters,
-    Menu,
+    /// A name that leads to its page.
+    Link(Target),
+    Control(Control),
     Header(HeaderHit),
 }
 
@@ -238,7 +273,7 @@ impl Thumbs {
     }
 }
 
-/// A record's cover as a thumbnail, from the disk cache when it has one, else
+/// An album's cover as a thumbnail, from the disk cache when it has one, else
 /// from a file beside or inside one of its tracks or from the server, as the
 /// apps do. A library synced from a server has no files to read.
 fn load(album: i64) -> Option<DynamicImage> {
@@ -281,7 +316,7 @@ fn fetch(row: &queries::TrackRow, local: Option<&str>) -> Option<DynamicImage> {
     Some(image::load_from_memory(&bytes).ok()?.thumbnail(256, 256))
 }
 
-/// The tracks of `albums`, record by record in the order given, in one read.
+/// The tracks of `albums`, album by album in the order given, in one read.
 pub(super) fn album_tracks(albums: &[i64]) -> Vec<i64> {
     let Ok(db) = koan_core::db::pool::shared().get() else {
         return Vec::new();
@@ -295,23 +330,64 @@ pub(super) fn album_tracks(albums: &[i64]) -> Vec<i64> {
         .collect()
 }
 
+/// An artist's albums as their page lists them, narrowed offline to what can
+/// play here.
+fn artist_album_query(id: i64) -> AlbumQuery<'static> {
+    AlbumQuery {
+        artist_id: Some(id),
+        order: AlbumOrder::Date,
+        filter: queries::AlbumFilter {
+            on_device: koan_core::remote::offline::active(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+/// Every track of an artist's albums, as play and shuffle on their page and in
+/// search take them; what they appear on when they have no albums of their own.
+pub(super) fn artist_tracks(id: i64) -> Vec<i64> {
+    let Ok(db) = koan_core::db::pool::shared().get() else {
+        return Vec::new();
+    };
+    let albums: Vec<i64> = queries::list_albums(&db.conn, &artist_album_query(id))
+        .unwrap_or_default()
+        .iter()
+        .map(|a| a.id)
+        .collect();
+    if albums.is_empty() {
+        return queries::tracks_for_artist(&db.conn, id)
+            .unwrap_or_default()
+            .iter()
+            .map(|t| t.id)
+            .collect();
+    }
+    drop(db);
+    album_tracks(&albums)
+}
+
 /// Everything a listing is read by.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Ask {
     source: Source,
-    order: AlbumOrder,
-    /// The panel's filters, on the pages they narrow.
-    filters: Option<Filters>,
+    filter: BrowseFilter,
+    album_sort: AlbumSort,
+    track_sort: TrackSort,
+    seed: i64,
     /// The name filter, matched by the database as the apps' boxes are.
     text: String,
+    /// How many tracks to read.
+    limit: u32,
 }
 
 /// A listing as the database answered it.
 #[derive(Default)]
 struct Listing {
     albums: Vec<AlbumRow>,
-    /// A shelf's tracks, for its list view.
+    artists: Vec<ArtistRow>,
     tracks: Vec<TrackRow>,
+    /// How many tracks pass, of which `tracks` are the first.
+    track_total: u64,
     /// The artist's name, on an artist's page.
     artist: Option<String>,
 }
@@ -320,45 +396,39 @@ fn read(ask: &Ask) -> Listing {
     let Ok(db) = koan_core::db::pool::shared().get() else {
         return Listing::default();
     };
-    let now = shelves::now();
-    let user = queries::LOCAL_USER;
-    let offline = koan_core::remote::offline::active();
-    let text = Some(ask.text.trim()).filter(|t| !t.is_empty());
-    let mut query = match (ask.source.shelf(), ask.source) {
-        (Some(shelf), _) => shelf.albums(user, now),
-        (None, Source::Artist(id)) => AlbumQuery {
-            artist_id: Some(id),
-            order: AlbumOrder::Date,
-            ..Default::default()
-        },
-        (None, _) => AlbumQuery {
-            order: ask.order,
-            ..Default::default()
-        },
-    };
-    if let Some(filters) = &ask.filters {
-        query.filter = filters.album_filter();
+    let text = Some(ask.text.as_str());
+    let mut listing = Listing::default();
+    match ask.source {
+        Source::Albums => {
+            let query = core_browse::albums(&ask.filter, text, ask.album_sort, ask.seed);
+            listing.albums = queries::list_albums(&db.conn, &query).unwrap_or_default();
+        }
+        Source::Artists => {
+            let query = core_browse::artists(&ask.filter, text);
+            listing.artists = queries::list_artists(&db.conn, &query).unwrap_or_default();
+        }
+        Source::Tracks => {
+            let tracks = core_browse::tracks(&ask.filter, text, ask.track_sort);
+            listing.track_total = tracks.count(&db.conn).unwrap_or_default();
+            listing.tracks = tracks.page(&db.conn, ask.limit, 0).unwrap_or_default();
+        }
+        Source::Artist(id) => {
+            let query = AlbumQuery {
+                search: core_browse::trimmed(text),
+                ..artist_album_query(id)
+            };
+            listing.albums = queries::list_albums(&db.conn, &query).unwrap_or_default();
+            if listing.albums.is_empty() && ask.text.trim().is_empty() {
+                listing.tracks = queries::tracks_for_artist(&db.conn, id).unwrap_or_default();
+                listing.track_total = listing.tracks.len() as u64;
+            }
+            listing.artist = queries::get_artist(&db.conn, id)
+                .ok()
+                .flatten()
+                .map(|a| a.name);
+        }
     }
-    query.filter.on_device |= offline;
-    query.search = text;
-    let tracks = ask.source.shelf().map(|shelf| {
-        let mut listing = shelf.tracks(user, now);
-        listing.filter.on_device |= offline;
-        listing.filter.search = text.map(str::to_owned);
-        listing.page(&db.conn, u32::MAX, 0).unwrap_or_default()
-    });
-    let artist = match ask.source {
-        Source::Artist(id) => queries::get_artist(&db.conn, id)
-            .ok()
-            .flatten()
-            .map(|a| a.name),
-        _ => None,
-    };
-    Listing {
-        albums: queries::list_albums(&db.conn, &query).unwrap_or_default(),
-        tracks: tracks.unwrap_or_default(),
-        artist,
-    }
+    listing
 }
 
 /// Asks for listings and the answers, each tagged with its generation.
@@ -387,23 +457,20 @@ fn spawn_reader() -> Reader {
 }
 
 /// What the last render laid out, for the keys and the mouse to agree with it.
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 struct Geom {
-    /// Below the heading and an artist's header: the records themselves,
-    /// left of the scrollbar.
+    /// Below the toolbar and an artist's header: the items themselves, left
+    /// of the scrollbar.
     body: Rect,
     cols: usize,
     tile_w: u16,
     tile_h: u16,
     rows: usize,
-    sort: Rect,
-    view: Rect,
-    filter: Rect,
-    filters: Rect,
-    menu: Rect,
+    controls: Vec<(Rect, Control)>,
+    links: Vec<(Rect, Target)>,
     /// The scrollbar's column, when the page overflows.
     bar: Rect,
-    /// Rows in all, and the fully visible ones; the scroll runs between.
+    /// Rows in all; the scroll runs between it and the page.
     total_rows: usize,
 }
 
@@ -413,21 +480,29 @@ pub struct Browse {
     /// The heading, for a page about one artist.
     title: String,
     albums: Vec<AlbumRow>,
+    artists: Vec<ArtistRow>,
     tracks: Vec<TrackRow>,
+    track_total: u64,
     cursor: usize,
     scroll: usize,
     /// Whether the next frame scrolls to the cursor; the wheel and the
     /// scrollbar turn it off so they are not undone.
     follow: bool,
-    /// The records and artists that are favourites, for the heart on a tile.
+    /// The albums and artists that are favourites, for their hearts.
     fav_albums: HashSet<i64>,
     fav_artists: HashSet<i64>,
     header: Option<ArtistHeader>,
-    order: usize,
     pub filter: String,
     pub filter_active: bool,
-    /// What the filters panel has narrowed the records by.
-    filters: Filters,
+    /// What the filters panel has narrowed the listing by.
+    filters: BrowseFilter,
+    album_sort: AlbumSort,
+    track_sort: TrackSort,
+    /// Which shuffle Random means: held, so narrowing a shuffle does not deal
+    /// it again.
+    seed: i64,
+    /// How many tracks are asked for.
+    limit: u32,
     /// The last read asked for and the last one shown; they differ while a
     /// read is under way, and a listing from any but the last is dropped.
     asked: u64,
@@ -447,6 +522,12 @@ pub struct Browse {
     moved: Option<Instant>,
 }
 
+fn new_seed() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as i64)
+}
+
 impl Browse {
     pub fn new(source: Source) -> Self {
         let (tx, rx) = spawn_reader();
@@ -455,17 +536,22 @@ impl Browse {
             view: View::Tiles,
             title: String::new(),
             albums: Vec::new(),
+            artists: Vec::new(),
             tracks: Vec::new(),
+            track_total: 0,
             cursor: 0,
             scroll: 0,
             follow: true,
             fav_albums: HashSet::new(),
             fav_artists: HashSet::new(),
             header: None,
-            order: 0,
             filter: String::new(),
             filter_active: false,
-            filters: Filters::default(),
+            filters: BrowseFilter::default(),
+            album_sort: AlbumSort::default(),
+            track_sort: TrackSort::default(),
+            seed: new_seed(),
+            limit: TRACK_PAGE,
             asked: 0,
             shown: 0,
             stale: true,
@@ -479,22 +565,52 @@ impl Browse {
         }
     }
 
-    /// Whether the list view holds tracks (a shelf's) rather than records.
-    fn tracks_in_list(&self) -> bool {
-        self.view == View::List && self.source.shelf().is_some()
+    fn kind(&self) -> Kind {
+        match self.source {
+            Source::Albums => Kind::Albums,
+            Source::Artists => Kind::Artists,
+            Source::Tracks => Kind::Tracks,
+            Source::Artist(_) if self.albums.is_empty() && !self.tracks.is_empty() => Kind::Tracks,
+            Source::Artist(_) => Kind::Albums,
+        }
     }
 
-    /// Whether the filters panel narrows this page: the records of the
-    /// library, not one artist's and not a shelf's tracks.
+    /// Whether albums are drawn as tiles.
+    fn tiles(&self) -> bool {
+        self.view == View::Tiles && self.kind() == Kind::Albums
+    }
+
+    /// Whether the filters panel narrows this page: the browsers, not an
+    /// artist's page.
     pub fn filterable(&self) -> bool {
-        !matches!(self.source, Source::Artist(_)) && !self.tracks_in_list()
+        !matches!(self.source, Source::Artist(_))
     }
 
-    pub fn set_filters(&mut self, filters: &Filters) {
-        if self.filters != *filters {
+    /// Whether the panel offers the lossless filter: a track's codec says it
+    /// already, and the track browser narrows by codec instead.
+    pub fn offers_lossless(&self) -> bool {
+        self.source != Source::Tracks
+    }
+
+    pub fn set_filters(&mut self, filters: &BrowseFilter) {
+        if self.filterable() && self.filters != *filters {
             self.filters = filters.clone();
+            self.limit = TRACK_PAGE;
             self.stale = true;
         }
+    }
+
+    /// Sets the page up as a shelf's "See all" asks: its filters, sorts and
+    /// name filter, read afresh from the top.
+    pub fn adopt(&mut self, see: &SeeAll) {
+        self.filters = see.filter.clone();
+        self.album_sort = see.album_sort;
+        self.track_sort = see.track_sort;
+        self.filter = see.text.clone();
+        self.filter_active = false;
+        self.limit = TRACK_PAGE;
+        self.to_top = true;
+        self.stale = true;
     }
 
     /// Asks for the listing again, keeping the cursor on what it is on.
@@ -509,9 +625,12 @@ impl Browse {
         self.asked += 1;
         let ask = Ask {
             source: self.source,
-            order: ORDERS[self.order].0,
-            filters: (!matches!(self.source, Source::Artist(_))).then(|| self.filters.clone()),
+            filter: self.filters.clone(),
+            album_sort: self.album_sort,
+            track_sort: self.track_sort,
+            seed: self.seed,
             text: self.filter.clone(),
+            limit: self.limit,
         };
         self.tx.send((self.asked, ask)).ok();
         self.reload_favourites();
@@ -523,7 +642,7 @@ impl Browse {
         }
     }
 
-    /// Reads which records and artists are favourites.
+    /// Reads which albums and artists are favourites.
     pub fn reload_favourites(&mut self) {
         let Ok(db) = koan_core::db::pool::shared().get() else {
             return;
@@ -553,17 +672,28 @@ impl Browse {
             return false;
         }
         let on = self.cursor_id();
+        let kind = self.kind();
         self.shown = generation;
         self.albums = listing.albums;
+        self.artists = listing.artists;
         self.tracks = listing.tracks;
+        self.track_total = listing.track_total;
         if let Some(name) = listing.artist {
             self.title = name;
         }
         if let Some(header) = self.header.as_mut() {
-            header.set_artist(&self.title, self.albums.len());
+            let holds = if self.albums.is_empty() && !self.tracks.is_empty() {
+                let on: HashSet<_> = self.tracks.iter().filter_map(|t| t.album_id).collect();
+                format!("appears on {}", rows::count(on.len() as u64, "album"))
+            } else {
+                rows::count(self.albums.len() as u64, "album")
+            };
+            header.set_artist(&self.title, holds);
         }
         self.last_click = None;
-        let found = on.and_then(|id| self.position(id));
+        let found = on
+            .filter(|_| kind == self.kind())
+            .and_then(|id| self.position(id));
         if std::mem::take(&mut self.to_top) {
             self.cursor = 0;
             self.scroll = 0;
@@ -577,26 +707,26 @@ impl Browse {
         true
     }
 
-    /// The id of the record or track under the cursor.
+    /// The id of the album, artist or track under the cursor.
     fn cursor_id(&self) -> Option<i64> {
-        if self.tracks_in_list() {
-            self.tracks.get(self.cursor).map(|t| t.id)
-        } else {
-            self.albums.get(self.cursor).map(|a| a.id)
+        match self.kind() {
+            Kind::Albums => self.albums.get(self.cursor).map(|a| a.id),
+            Kind::Artists => self.artists.get(self.cursor).map(|a| a.id),
+            Kind::Tracks => self.tracks.get(self.cursor).map(|t| t.id),
         }
     }
 
     fn position(&self, id: i64) -> Option<usize> {
-        if self.tracks_in_list() {
-            self.tracks.iter().position(|t| t.id == id)
-        } else {
-            self.albums.iter().position(|a| a.id == id)
+        match self.kind() {
+            Kind::Albums => self.albums.iter().position(|a| a.id == id),
+            Kind::Artists => self.artists.iter().position(|a| a.id == id),
+            Kind::Tracks => self.tracks.iter().position(|t| t.id == id),
         }
     }
 
-    /// Whether a read is under way and nothing has been shown yet.
+    /// Whether nothing has been shown yet: the first read is under way.
     fn loading(&self) -> bool {
-        self.shown == 0 && (self.asked > 0 || self.stale)
+        self.shown == 0
     }
 
     /// Changes the name filter, and reads the listing it narrows to.
@@ -604,15 +734,16 @@ impl Browse {
         if text != self.filter {
             self.filter = text;
             self.to_top = true;
+            self.limit = TRACK_PAGE;
             self.reload();
         }
     }
 
     pub fn len(&self) -> usize {
-        if self.tracks_in_list() {
-            self.tracks.len()
-        } else {
-            self.albums.len()
+        match self.kind() {
+            Kind::Albums => self.albums.len(),
+            Kind::Artists => self.artists.len(),
+            Kind::Tracks => self.tracks.len(),
         }
     }
 
@@ -620,32 +751,68 @@ impl Browse {
         self.len() == 0
     }
 
-    /// Switches between tiles and rows. The cursor stays on its record, or
-    /// on a shelf, where rows are tracks, goes to the first track of it.
+    /// How many the listing holds in all: tracks arrive a page at a time.
+    fn total(&self) -> u64 {
+        match self.kind() {
+            Kind::Tracks => self.track_total.max(self.tracks.len() as u64),
+            _ => self.len() as u64,
+        }
+    }
+
+    /// Switches albums between tiles and rows, the cursor on its album.
     pub fn toggle_view(&mut self) {
-        let album = self.album_at(self.cursor);
+        if self.kind() != Kind::Albums {
+            return;
+        }
         self.view = match self.view {
             View::Tiles => View::List,
             View::List => View::Tiles,
         };
-        let at = if self.tracks_in_list() {
-            self.tracks.iter().position(|t| t.album_id == album)
-        } else {
-            album.and_then(|id| self.albums.iter().position(|a| a.id == id))
-        };
         self.scroll = 0;
-        self.move_to(at.unwrap_or(0));
+        self.move_to(self.cursor);
     }
 
-    pub fn cycle_order(&mut self) {
-        if self.source == Source::Albums {
-            self.order = (self.order + 1) % ORDERS.len();
+    /// The next sort the page offers.
+    pub fn cycle_sort(&mut self) {
+        let searching = !self.filter.trim().is_empty();
+        match self.source {
+            Source::Albums => {
+                self.album_sort = next_sort(
+                    self.album_sort,
+                    &AlbumSort::offered(&self.filters, searching),
+                );
+            }
+            Source::Tracks => {
+                self.track_sort = next_sort(
+                    self.track_sort,
+                    &TrackSort::offered(&self.filters, searching),
+                );
+                self.limit = TRACK_PAGE;
+            }
+            _ => return,
+        }
+        self.reload();
+    }
+
+    /// Deals the random order again.
+    pub fn reshuffle(&mut self) {
+        if self.source == Source::Albums && self.album_sort == AlbumSort::Random {
+            self.seed = new_seed();
+            self.to_top = true;
             self.reload();
         }
     }
 
+    fn sort_label(&self) -> Option<&'static str> {
+        match self.source {
+            Source::Albums => Some(album_sort_label(self.album_sort)),
+            Source::Tracks => Some(track_sort_label(self.track_sort)),
+            _ => None,
+        }
+    }
+
     fn cols(&self) -> usize {
-        if self.view == View::Tiles {
+        if self.tiles() {
             self.geom.cols.max(1)
         } else {
             1
@@ -670,6 +837,27 @@ impl Browse {
         self.cursor = idx.min(self.len().saturating_sub(1));
         self.follow = true;
         self.keep_cursor_visible();
+        self.read_ahead();
+    }
+
+    /// Asks for more tracks when the view nears the end of what is here.
+    fn read_ahead(&mut self) {
+        let n = self.tracks.len();
+        let near = self.cursor.max(self.scroll + self.page_rows()) + self.page_rows() * 2;
+        if self.source == Source::Tracks
+            && (n as u64) < self.track_total
+            && near >= n
+            && self.limit as usize <= n
+        {
+            self.limit = self.limit.saturating_add(TRACK_PAGE);
+            self.reload();
+        }
+    }
+
+    /// A notch of the wheel: a row of tiles, or three of a list.
+    pub fn wheel(&mut self, down: bool) {
+        let rows = if self.tiles() { 1 } else { 3 };
+        self.scroll_by(if down { rows } else { -rows });
     }
 
     pub fn scroll_by(&mut self, rows: isize) {
@@ -677,17 +865,38 @@ impl Browse {
         let total_rows = self.len().div_ceil(self.cols());
         let max = total_rows.saturating_sub(self.page_rows());
         self.scroll = self.scroll.saturating_add_signed(rows).min(max);
+        self.read_ahead();
     }
 
     /// The ids a play of the item at `idx` would queue.
     fn ids_at(&self, idx: usize) -> Vec<i64> {
-        if self.tracks_in_list() {
-            return self.tracks.get(idx).map(|t| vec![t.id]).unwrap_or_default();
+        match self.kind() {
+            Kind::Albums => self
+                .albums
+                .get(idx)
+                .map(|a| album_tracks(&[a.id]))
+                .unwrap_or_default(),
+            Kind::Artists => self
+                .artists
+                .get(idx)
+                .map(|a| artist_tracks(a.id))
+                .unwrap_or_default(),
+            Kind::Tracks => self.tracks.get(idx).map(|t| vec![t.id]).unwrap_or_default(),
         }
-        self.albums
-            .get(idx)
-            .map(|a| album_tracks(&[a.id]))
-            .unwrap_or_default()
+    }
+
+    /// What Enter and a second click do: a track plays the list from there,
+    /// as the apps' track lists do; anything else opens.
+    fn primary(&self, idx: usize) -> Action {
+        match self.kind() {
+            Kind::Tracks if idx < self.tracks.len() => Action::Play(
+                self.tracks.iter().map(|t| t.id).collect(),
+                PickerAction::ReplaceFrom(idx),
+            ),
+            Kind::Albums => self.album_at(idx).map_or(Action::None, Action::OpenAlbum),
+            Kind::Artists => self.artist_at(idx).map_or(Action::None, Action::OpenArtist),
+            Kind::Tracks => Action::None,
+        }
     }
 
     pub fn append_at(&mut self, idx: usize) -> Action {
@@ -704,33 +913,47 @@ impl Browse {
         }
     }
 
-    /// The record the item at `idx` is, or is on.
+    /// The album the item at `idx` is, or is on.
     fn album_at(&self, idx: usize) -> Option<i64> {
-        if self.tracks_in_list() {
-            self.tracks.get(idx)?.album_id
-        } else {
-            Some(self.albums.get(idx)?.id)
+        match self.kind() {
+            Kind::Albums => Some(self.albums.get(idx)?.id),
+            Kind::Tracks => self.tracks.get(idx)?.album_id,
+            Kind::Artists => None,
         }
     }
 
-    /// The artist the item at `idx` is by.
+    /// The artist the item at `idx` is, or is by.
     fn artist_at(&self, idx: usize) -> Option<i64> {
-        if self.tracks_in_list() {
-            self.tracks.get(idx)?.artist_id
-        } else {
-            Some(self.albums.get(idx)?.artist_id)
+        match self.kind() {
+            Kind::Albums => Some(self.albums.get(idx)?.artist_id),
+            Kind::Artists => Some(self.artists.get(idx)?.id),
+            Kind::Tracks => self.tracks.get(idx)?.artist_id,
         }
     }
 
     /// The track under the cursor when the page lists tracks, for hearting.
     pub fn track_at_cursor(&self) -> Option<i64> {
-        if !self.tracks_in_list() {
+        if self.kind() != Kind::Tracks {
             return None;
         }
         self.tracks.get(self.cursor).map(|t| t.id)
     }
 
-    /// What can be done with the record or track at `idx`, as a menu.
+    /// What `f` favourites: the item under the cursor.
+    fn favourite_at(&self, idx: usize) -> Action {
+        match self.kind() {
+            Kind::Albums => self.album_at(idx).map_or(Action::None, Action::ToggleAlbum),
+            Kind::Artists => self
+                .artist_at(idx)
+                .map_or(Action::None, Action::ToggleArtist),
+            Kind::Tracks => self
+                .tracks
+                .get(idx)
+                .map_or(Action::None, |t| Action::Favourite(t.id)),
+        }
+    }
+
+    /// What can be done with the item at `idx`, as a menu.
     fn menu(&self, idx: usize) -> Action {
         use PickerAction::{Append, AppendAndPlay, PlayNext, ReplaceQueue};
         let ids = self.ids_at(idx);
@@ -738,43 +961,13 @@ impl Browse {
             return Action::None;
         }
         let play = |label: &str, how| (label.to_string(), Action::Play(ids.clone(), how));
-        let mut items = Vec::new();
-        if self.tracks_in_list() {
-            let t = &self.tracks[idx];
-            items.extend([
-                play("Play", AppendAndPlay),
-                play("Add to the queue", Append),
-                play("Play next", PlayNext),
-                play("Replace the queue", ReplaceQueue),
-                (
-                    "Add to a playlist\u{2026}".into(),
-                    Action::Choose(ids.clone()),
-                ),
-                ("Favourite or unfavourite".into(), Action::Favourite(t.id)),
-            ]);
-            if let Some(a) = t.album_id {
-                items.push(("Go to the record".into(), Action::OpenAlbum(a)));
-            }
-            if let Some(a) = t.artist_id {
-                items.push(("Go to the artist".into(), Action::OpenArtist(a)));
-            }
-            items.push(("Track info".into(), Action::Info(t.id)));
-            items.push(("Download".into(), Action::Download(ids.clone())));
-            items.push((
-                "Remove the download".into(),
-                Action::RemoveDownload(ids.clone()),
-            ));
-            return Action::Menu(t.title.clone(), items);
-        }
-        let a = &self.albums[idx];
         let fav = |on: bool, noun: &str| {
             format!(
                 "{} the {noun}",
                 if on { "Unfavourite" } else { "Favourite" }
             )
         };
-        items.extend([
-            ("Open the record".into(), Action::OpenAlbum(a.id)),
+        let mut items = vec![
             play("Play", AppendAndPlay),
             play("Add to the queue", Append),
             play("Play next", PlayNext),
@@ -783,22 +976,48 @@ impl Browse {
                 "Add to a playlist\u{2026}".into(),
                 Action::Choose(ids.clone()),
             ),
-            (
-                fav(self.fav_albums.contains(&a.id), "record"),
-                Action::ToggleAlbum(a.id),
-            ),
-            (
-                fav(self.fav_artists.contains(&a.artist_id), "artist"),
-                Action::ToggleArtist(a.artist_id),
-            ),
-            ("Go to the artist".into(), Action::OpenArtist(a.artist_id)),
-            ("Download".into(), Action::Download(ids.clone())),
-            (
-                "Remove the download".into(),
-                Action::RemoveDownload(ids.clone()),
-            ),
-        ]);
-        Action::Menu(a.title.clone(), items)
+        ];
+        let title = match self.kind() {
+            Kind::Tracks => {
+                let t = &self.tracks[idx];
+                items.push(("Favourite or unfavourite".into(), Action::Favourite(t.id)));
+                if let Some(a) = t.album_id {
+                    items.push(("Go to the album".into(), Action::OpenAlbum(a)));
+                }
+                if let Some(a) = t.artist_id {
+                    items.push(("Go to the artist".into(), Action::OpenArtist(a)));
+                }
+                items.push(("Track info".into(), Action::Info(t.id)));
+                t.title.clone()
+            }
+            Kind::Albums => {
+                let a = &self.albums[idx];
+                items.insert(0, ("Open the album".into(), Action::OpenAlbum(a.id)));
+                items.push((
+                    fav(self.fav_albums.contains(&a.id), "album"),
+                    Action::ToggleAlbum(a.id),
+                ));
+                items.push((
+                    fav(self.fav_artists.contains(&a.artist_id), "artist"),
+                    Action::ToggleArtist(a.artist_id),
+                ));
+                items.push(("Go to the artist".into(), Action::OpenArtist(a.artist_id)));
+                a.title.clone()
+            }
+            Kind::Artists => {
+                let a = &self.artists[idx];
+                items.insert(0, ("Open the artist".into(), Action::OpenArtist(a.id)));
+                items.insert(1, ("Shuffle".into(), Action::Shuffle(ids.clone())));
+                items.push((
+                    fav(self.fav_artists.contains(&a.id), "artist"),
+                    Action::ToggleArtist(a.id),
+                ));
+                a.name.clone()
+            }
+        };
+        items.push(("Download".into(), Action::Download(ids.clone())));
+        items.push(("Remove the download".into(), Action::RemoveDownload(ids)));
+        Action::Menu(title, items)
     }
 
     /// `None` when the key is not the page's, so the app can try it as a
@@ -816,6 +1035,7 @@ impl Browse {
                     text.pop();
                     self.set_text(text);
                 }
+                KeyCode::Char('u') if ctrl => self.set_text(String::new()),
                 KeyCode::Char(c) if !ctrl => self.set_text(format!("{}{c}", self.filter)),
                 _ => {}
             }
@@ -823,7 +1043,7 @@ impl Browse {
         }
         let cols = self.cols();
         let page = self.page_rows() * cols;
-        let tiles = self.view == View::Tiles;
+        let tiles = self.tiles();
         let ids = |b: &Self, make: fn(Vec<i64>) -> Action| {
             let ids = b.ids_at(b.cursor);
             if ids.is_empty() {
@@ -845,10 +1065,8 @@ impl Browse {
             KeyCode::Char('d') if ctrl => self.move_to(self.cursor + page),
             KeyCode::Home | KeyCode::Char('g') => self.move_to(0),
             KeyCode::End | KeyCode::Char('G') => self.move_to(usize::MAX),
-            KeyCode::Enter if self.tracks_in_list() => {
-                return Some(self.play(self.cursor, PickerAction::AppendAndPlay));
-            }
-            KeyCode::Enter | KeyCode::Char('O') => {
+            KeyCode::Enter => return Some(self.primary(self.cursor)),
+            KeyCode::Char('O') => {
                 return Some(
                     self.album_at(self.cursor)
                         .map_or(Action::None, Action::OpenAlbum),
@@ -873,23 +1091,12 @@ impl Browse {
                     Action::None
                 });
             }
-            KeyCode::Char('f') if self.tracks_in_list() => {
-                return Some(
-                    self.track_at_cursor()
-                        .map_or(Action::None, Action::Favourite),
-                );
-            }
-            KeyCode::Char('f') => {
-                return Some(
-                    self.album_at(self.cursor)
-                        .map_or(Action::None, Action::ToggleAlbum),
-                );
-            }
+            KeyCode::Char('f') => return Some(self.favourite_at(self.cursor)),
             KeyCode::Char('m') => return Some(self.menu(self.cursor)),
             KeyCode::Char('w') => return Some(ids(self, Action::Choose)),
             KeyCode::Char('d') => return Some(ids(self, Action::Download)),
             KeyCode::Char('u') => return Some(ids(self, Action::RemoveDownload)),
-            KeyCode::Char('i') if self.tracks_in_list() => {
+            KeyCode::Char('i') if self.kind() == Kind::Tracks => {
                 return Some(self.track_at_cursor().map_or(Action::None, Action::Info));
             }
             KeyCode::Char('H') => {
@@ -901,7 +1108,8 @@ impl Browse {
             }
             KeyCode::Char('/') => self.filter_active = true,
             KeyCode::Char('v') => self.toggle_view(),
-            KeyCode::Char('o') => self.cycle_order(),
+            KeyCode::Char('o') => self.cycle_sort(),
+            KeyCode::Char('S') if self.album_sort == AlbumSort::Random => self.reshuffle(),
             KeyCode::Esc if !self.filter.is_empty() => self.clear_filter(),
             _ => return None,
         }
@@ -913,139 +1121,102 @@ impl Browse {
         self.set_text(String::new());
     }
 
-    /// Where a tile's title starts, after the heart a favourite wears, and
-    /// how many cells it may take.
-    fn title_span(&self, album: &AlbumRow, label: usize) -> (usize, usize) {
-        if self.fav_albums.contains(&album.id) && label > 3 {
-            (3, label - 2)
-        } else {
-            (1, label)
-        }
-    }
-
     /// What the pointer is over.
     pub fn hit(&self, col: u16, row: u16) -> Option<Hit> {
         let g = &self.geom;
-        let inside = |r: Rect| col >= r.x && col < r.x + r.width && row == r.y;
-        if inside(g.sort) {
-            return Some(Hit::Sort);
-        }
-        if inside(g.view) {
-            return Some(Hit::View);
-        }
-        if inside(g.filter) {
-            return Some(Hit::Filter);
-        }
-        if inside(g.filters) {
-            return Some(Hit::Filters);
-        }
-        if inside(g.menu) {
-            return Some(Hit::Menu);
+        let inside = |r: &Rect| {
+            r.width > 0 && col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
+        };
+        if let Some((_, c)) = g.controls.iter().find(|(r, _)| inside(r)) {
+            return Some(Hit::Control(*c));
         }
         if let Some(h) = self.header.as_ref().and_then(|h| h.hit(col, row)) {
             return Some(Hit::Header(h));
         }
+        if let Some((_, t)) = g.links.iter().find(|(r, _)| inside(r)) {
+            return Some(Hit::Link(*t));
+        }
         let body = g.body;
-        if body.height == 0
-            || col < body.x
-            || col >= body.x + body.width
-            || row < body.y
-            || row >= body.y + body.height
-        {
+        if !inside(&body) {
             return None;
         }
-        match self.view {
-            View::Tiles => {
-                let tile_w = g.tile_w.max(1);
-                let tile_h = g.tile_h.max(1);
-                let margin = (body.width.saturating_sub(g.tile_w * g.cols as u16)) / 2;
-                if col < body.x + margin {
-                    return None;
-                }
-                let tile_col = (col - body.x - margin) / tile_w;
-                if tile_col as usize >= g.cols {
-                    return None;
-                }
-                let idx =
-                    (self.scroll + ((row - body.y) / tile_h) as usize) * g.cols + tile_col as usize;
-                let album = self.albums.get(idx)?;
-                // The label lines under the art are links, as far as their text
-                // goes; the rest of the tile selects.
-                let dy = (row - body.y) % tile_h;
-                let dx = ((col - body.x - margin) % tile_w) as usize;
-                let art_h = g.tile_h.saturating_sub(3);
-                let label = g.tile_w.saturating_sub(2) as usize;
-                let on = |from: usize, text: &str, width: usize| {
-                    dx >= from && dx < from + fit(text, width).chars().count()
-                };
-                let (from, width) = self.title_span(album, label);
-                if dy == art_h && on(from, &album.title, width) {
-                    return Some(Hit::Title(idx));
-                }
-                if dy == art_h + 1 && on(1, &album.artist_name, label) {
-                    return Some(Hit::Artist(idx));
-                }
-                Some(Hit::Item(idx))
-            }
-            View::List => {
-                let idx = self.scroll + (row - body.y) as usize;
-                (idx < self.len()).then_some(Hit::Item(idx))
-            }
+        if !self.tiles() {
+            let idx = self.scroll + (row - body.y) as usize;
+            return (idx < self.len()).then_some(Hit::Item(idx));
         }
+        let tile_w = g.tile_w.max(1);
+        let tile_h = g.tile_h.max(1);
+        let margin = (body.width.saturating_sub(g.tile_w * g.cols as u16)) / 2;
+        if col < body.x + margin {
+            return None;
+        }
+        let tile_col = (col - body.x - margin) / tile_w;
+        if tile_col as usize >= g.cols {
+            return None;
+        }
+        let idx = (self.scroll + ((row - body.y) / tile_h) as usize) * g.cols + tile_col as usize;
+        (idx < self.albums.len()).then_some(Hit::Item(idx))
     }
 
     /// A left click. The first selects; the second, soon after on the same
-    /// item, plays it.
+    /// item, opens or plays it.
     pub fn click(&mut self, hit: Hit) -> Action {
         match hit {
-            Hit::Sort => {
-                self.cycle_order();
-                Action::None
-            }
-            Hit::View => {
-                self.toggle_view();
-                Action::None
-            }
-            Hit::Filter => {
-                self.filter_active = true;
-                Action::None
-            }
-            Hit::Filters => Action::OpenFilters,
-            Hit::Menu => self.menu(self.cursor),
-            Hit::Header(h) => match h {
-                HeaderHit::Play | HeaderHit::Shuffle => {
-                    let records: Vec<i64> = self.albums.iter().map(|a| a.id).collect();
-                    let ids = album_tracks(&records);
-                    match (h, ids.is_empty()) {
-                        (_, true) => Action::None,
-                        (HeaderHit::Play, _) => Action::Play(ids, PickerAction::ReplaceQueue),
-                        _ => Action::Shuffle(ids),
-                    }
-                }
-                HeaderHit::Heart => match self.source {
-                    Source::Artist(id) => Action::ToggleArtist(id),
-                    _ => Action::None,
-                },
-                HeaderHit::More => {
-                    if let Some(header) = self.header.as_mut() {
-                        header.toggle_expanded();
-                    }
+            Hit::Control(c) => match c {
+                Control::Sort => {
+                    self.cycle_sort();
                     Action::None
                 }
-                HeaderHit::Wikipedia => self
-                    .header
-                    .as_ref()
-                    .and_then(ArtistHeader::url)
-                    .map_or(Action::None, Action::OpenUrl),
+                Control::Reshuffle => {
+                    self.reshuffle();
+                    Action::None
+                }
+                Control::View => {
+                    self.toggle_view();
+                    Action::None
+                }
+                Control::Filter => {
+                    self.filter_active = true;
+                    Action::None
+                }
+                Control::Filters => Action::OpenFilters,
+                Control::Menu => self.menu(self.cursor),
             },
-            Hit::Title(idx) => {
-                self.move_to(idx);
-                self.album_at(idx).map_or(Action::None, Action::OpenAlbum)
+            Hit::Header(h) => {
+                let Source::Artist(id) = self.source else {
+                    return Action::None;
+                };
+                let tracks = || {
+                    let ids = artist_tracks(id);
+                    (!ids.is_empty()).then_some(ids)
+                };
+                match h {
+                    HeaderHit::Play => tracks().map_or(Action::None, |ids| {
+                        Action::Play(ids, PickerAction::ReplaceQueue)
+                    }),
+                    HeaderHit::Shuffle => tracks().map_or(Action::None, Action::Shuffle),
+                    HeaderHit::Add => {
+                        tracks().map_or(Action::None, |ids| Action::Play(ids, PickerAction::Append))
+                    }
+                    HeaderHit::Next => tracks().map_or(Action::None, |ids| {
+                        Action::Play(ids, PickerAction::PlayNext)
+                    }),
+                    HeaderHit::Heart => Action::ToggleArtist(id),
+                    HeaderHit::More => {
+                        if let Some(header) = self.header.as_mut() {
+                            header.toggle_expanded();
+                        }
+                        Action::None
+                    }
+                    HeaderHit::Wikipedia => self
+                        .header
+                        .as_ref()
+                        .and_then(ArtistHeader::url)
+                        .map_or(Action::None, Action::OpenUrl),
+                }
             }
-            Hit::Artist(idx) => {
-                self.move_to(idx);
-                self.artist_at(idx).map_or(Action::None, Action::OpenArtist)
-            }
+            Hit::Link(Target::Album(id)) => Action::OpenAlbum(id),
+            Hit::Link(Target::Artist(id)) => Action::OpenArtist(id),
             Hit::Item(idx) => {
                 let double = self
                     .last_click
@@ -1053,11 +1224,7 @@ impl Browse {
                 self.move_to(idx);
                 if double {
                     self.last_click = None;
-                    if self.tracks_in_list() {
-                        self.play(idx, PickerAction::AppendAndPlay)
-                    } else {
-                        self.album_at(idx).map_or(Action::None, Action::OpenAlbum)
-                    }
+                    self.primary(idx)
                 } else {
                     self.last_click = Some((idx, Instant::now()));
                     Action::None
@@ -1077,21 +1244,22 @@ impl Browse {
         favourites: &HashSet<i64>,
         hover: Option<Hit>,
     ) {
-        if area.width == 0 || area.height == 0 {
+        self.geom = Geom::default();
+        let area = rows::page(area);
+        if area.width < 4 || area.height == 0 {
             return;
         }
         self.ensure_loaded();
         thumbs.begin_frame();
         gfx.begin_frame();
-        self.geom = Geom::default();
-        self.render_header(area, buf, theme);
+        self.render_toolbar(area, buf, theme, hover);
         let mut body = Rect::new(
             area.x,
-            area.y + 1,
+            area.y + 2,
             area.width,
-            area.height.saturating_sub(1),
+            area.height.saturating_sub(2),
         );
-        if body.height == 0 || body.width < 4 {
+        if body.height == 0 {
             return;
         }
         if let Some(header) = self.header.as_mut() {
@@ -1113,96 +1281,105 @@ impl Browse {
         }
         self.geom.body = body;
         if self.is_empty() {
-            if !self.loading() {
-                let text = if self.filter.is_empty() {
-                    self.source.empty()
-                } else {
-                    "no match"
-                };
-                buf.set_line(
+            if !self.loading() && body.height > 0 {
+                rows::put(
+                    buf,
                     body.x + 1,
                     body.y,
-                    &Line::from(Span::styled(text, theme.hint_desc)),
-                    body.width.saturating_sub(1),
+                    body.width.saturating_sub(2),
+                    self.empty_text(),
+                    theme.hint_desc,
                 );
             }
             return;
         }
-        match self.view {
-            View::Tiles => self.render_tiles(body, buf, theme, gfx, thumbs, hover),
-            View::List => self.render_list(body, buf, theme, favourites, hover),
+        let hover_link = match hover {
+            Some(Hit::Link(t)) => Some(t),
+            _ => None,
+        };
+        let hover_item = match hover {
+            Some(Hit::Item(i)) => Some(i),
+            _ => None,
+        };
+        if self.tiles() {
+            self.render_tiles(body, buf, theme, gfx, thumbs, hover_link);
+        } else {
+            self.render_list(body, buf, theme, favourites, hover_item, hover_link);
         }
     }
 
-    fn render_header(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme) {
-        let count = format!(" {} ", self.len());
-        let mut x = area.x;
-        let end = area.x + area.width;
-        let put = |buf: &mut Buffer, x: &mut u16, text: &str, style: Style| -> Rect {
-            let w = (text.chars().count() as u16).min(end.saturating_sub(*x));
-            let at = Rect::new(*x, area.y, w, 1);
-            buf.set_stringn(*x, area.y, text, w as usize, style);
-            *x += w;
-            at
-        };
+    fn empty_text(&self) -> &'static str {
+        let narrowed = !self.filter.trim().is_empty() || self.filters.active_count() > 0;
+        match self.source {
+            _ if narrowed => "nothing matches",
+            Source::Albums => "no albums yet: add a folder in Settings, or sign in to a server",
+            Source::Artists => "no artists yet",
+            Source::Tracks => "no tracks yet",
+            Source::Artist(_) => "no albums by this artist",
+        }
+    }
+
+    /// The page's title and count on the left; its filter, sort, view and
+    /// actions on the right.
+    fn render_toolbar(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme, hover: Option<Hit>) {
         let title = match self.source {
             Source::Albums => "albums",
-            Source::Favourites => "favourites",
-            Source::Recent => "recent",
-            Source::Artist(_) => self.title.as_str(),
+            Source::Artists => "artists",
+            Source::Tracks => "tracks",
+            // The header under it names them.
+            Source::Artist(_) => "artist",
         };
-        put(buf, &mut x, title, theme.heading);
-        put(buf, &mut x, &count, theme.hint_desc);
+        let noun = match self.kind() {
+            Kind::Albums => "album",
+            Kind::Artists => "artist",
+            Kind::Tracks => "track",
+        };
+        // An artist's header says what the page holds.
+        let count = if self.loading() || matches!(self.source, Source::Artist(_)) {
+            String::new()
+        } else {
+            rows::count(self.total(), noun)
+        };
+        let mut items: Vec<(String, Control)> = Vec::new();
         if self.filter_active || !self.filter.is_empty() {
             let cursor = if self.filter_active { "\u{2588}" } else { "" };
-            let text = format!(" /{}{} ", self.filter, cursor);
-            self.geom.filter = put(buf, &mut x, &text, theme.hint_key);
-        }
-        // The rule fills the rest, with the page's own controls on its right.
-        let mut controls = Vec::new();
-        if !self.filter_active && self.filter.is_empty() {
-            controls.push((" / filter ".to_string(), Hit::Filter));
+            items.push((format!("/{}{cursor}", self.filter), Control::Filter));
+        } else {
+            items.push(("/ filter".into(), Control::Filter));
         }
         if self.filterable() {
-            controls.push((
-                match self.filters.count() {
-                    0 => " filters ".to_string(),
-                    n => format!(" filters ({n}) "),
+            items.push((
+                match self.filters.active_count() {
+                    0 => "filters".to_string(),
+                    n => format!("filters ({n})"),
                 },
-                Hit::Filters,
+                Control::Filters,
+            ));
+        }
+        if let Some(sort) = self.sort_label() {
+            items.push((format!("sort: {sort}"), Control::Sort));
+            if self.source == Source::Albums && self.album_sort == AlbumSort::Random {
+                items.push(("\u{2684} shuffle again".into(), Control::Reshuffle));
+            }
+        }
+        if self.kind() == Kind::Albums {
+            items.push((
+                match self.view {
+                    View::Tiles => "view: grid",
+                    View::List => "view: list",
+                }
+                .into(),
+                Control::View,
             ));
         }
         if !self.is_empty() {
-            controls.push((" \u{22ef} actions ".to_string(), Hit::Menu));
+            items.push(("\u{22ef} actions".into(), Control::Menu));
         }
-        if self.source == Source::Albums {
-            controls.push((format!(" sort: {} ", ORDERS[self.order].1), Hit::Sort));
-        }
-        controls.push((
-            match (self.view, self.tracks_in_list()) {
-                (View::Tiles, _) => " view: tiles ",
-                (View::List, false) => " view: rows ",
-                (View::List, true) => " view: tracks ",
-            }
-            .to_string(),
-            Hit::View,
-        ));
-        let total: u16 = controls.iter().map(|(c, _)| c.chars().count() as u16).sum();
-        let rule_end = end.saturating_sub(total).max(x);
-        for cx in x..rule_end {
-            buf[(cx, area.y)].set_char('\u{2500}').set_style(theme.rule);
-        }
-        x = rule_end;
-        for (text, kind) in controls {
-            let at = put(buf, &mut x, &text, theme.hint_desc);
-            match kind {
-                Hit::Sort => self.geom.sort = at,
-                Hit::Filter => self.geom.filter = at,
-                Hit::Filters => self.geom.filters = at,
-                Hit::Menu => self.geom.menu = at,
-                _ => self.geom.view = at,
-            }
-        }
+        let hovered = match hover {
+            Some(Hit::Control(c)) => Some(c),
+            _ => None,
+        };
+        self.geom.controls = rows::toolbar(buf, area, theme, title, &count, &items, hovered);
     }
 
     fn render_tiles(
@@ -1212,21 +1389,15 @@ impl Browse {
         theme: &Theme,
         gfx: &mut Gfx,
         thumbs: &mut Thumbs,
-        hover: Option<Hit>,
+        hover: Option<Target>,
     ) {
         // Square art, as tall as the terminal's cell makes it. Two lines of
         // label under it, and a gap. Rows that fit whole are what paging and
         // the cursor keep to; the one after is drawn as far as it reaches.
-        let grid = |width: u16| {
-            let cols = ((width / TILE_MIN_W) as usize).max(1);
-            let tile_w = (width / cols as u16).min(TILE_MAX_W);
-            let tile_h = gfx.rows_for(tile_w.saturating_sub(2).max(1)) + 3;
-            let rows = ((body.height / tile_h) as usize).max(1);
-            (cols, tile_w, tile_h, rows)
-        };
+        let grid = |width: u16| tile_grid(width, body.height, gfx);
         let mut layout = grid(body.width);
-        let overflows =
-            |(cols, _, _, rows): (usize, u16, u16, usize)| self.albums.len().div_ceil(cols) > rows;
+        let n = self.albums.len();
+        let overflows = |(cols, _, _, rows): (usize, u16, u16, usize)| n.div_ceil(cols) > rows;
         let bar = overflows(layout) && body.width >= TILE_MIN_W + BAR_W;
         let grid_area = if bar {
             layout = grid(body.width - BAR_W);
@@ -1238,7 +1409,6 @@ impl Browse {
             body
         };
         let (cols, tile_w, tile_h, rows) = layout;
-        let art_w = tile_w.saturating_sub(2).max(1);
         let art_h = tile_h - 3;
         self.geom.body = grid_area;
         self.geom.cols = cols;
@@ -1250,7 +1420,7 @@ impl Browse {
         if self.follow {
             self.keep_cursor_visible();
         }
-        let total_rows = self.albums.len().div_ceil(cols);
+        let total_rows = n.div_ceil(cols);
         self.scroll = self.scroll.min(total_rows.saturating_sub(rows));
         let bottom = body.y + body.height;
         if self.scroll != self.drawn_scroll {
@@ -1258,7 +1428,9 @@ impl Browse {
             self.moved = Some(Instant::now());
         }
         let moving = self.moved.is_some_and(|at| at.elapsed() < SETTLE);
-        let label = tile_w.saturating_sub(2) as usize;
+        // An artist's own page does not name them under every tile.
+        let name_artist = !matches!(self.source, Source::Artist(_));
+        let mut links = Vec::new();
 
         for r in 0..=rows {
             for c in 0..cols {
@@ -1271,71 +1443,26 @@ impl Browse {
                 if y >= bottom {
                     continue;
                 }
-                let selected = idx == self.cursor;
-                let art = Rect::new(x + 1, y, art_w, art_h);
-                let art_visible = (bottom - y).min(art_h);
-                if let Some(img) = thumbs.get(album.id) {
-                    gfx.draw_clipped(album_key(album.id), img, art, art_visible, moving, buf);
-                } else {
-                    placeholder(art, art_visible, buf, theme, &album.title);
+                Tile {
+                    album,
+                    favourite: self.fav_albums.contains(&album.id),
+                    selected: idx == self.cursor,
+                    name_artist,
                 }
-                if selected {
-                    for dy in 0..art_visible {
-                        buf[(x, y + dy)].set_char('\u{258c}').set_style(theme.bar);
-                    }
-                }
-                let title_y = y + art_h;
-                if title_y < bottom {
-                    let style = if selected {
-                        theme.track_cursor
-                    } else {
-                        theme.track_normal
-                    };
-                    let style = if hover == Some(Hit::Title(idx)) {
-                        style.add_modifier(Modifier::UNDERLINED)
-                    } else {
-                        style
-                    };
-                    let (from, width) = self.title_span(album, label);
-                    if from > 1 {
-                        buf.set_string(x + 1, title_y, "\u{2665}", theme.favourite);
-                    }
-                    buf.set_stringn(
-                        x + from as u16,
-                        title_y,
-                        fit(&album.title, width),
-                        width,
-                        style,
-                    );
-                }
-                if title_y + 1 < bottom {
-                    // The artist is a link; the year after it is not.
-                    let artist = fit(&album.artist_name, label);
-                    let used = artist.chars().count();
-                    let style = if selected {
-                        theme.track_playing
-                    } else {
-                        theme.hint_desc
-                    };
-                    let style = if hover == Some(Hit::Artist(idx)) {
-                        style.add_modifier(Modifier::UNDERLINED)
-                    } else {
-                        style
-                    };
-                    buf.set_stringn(x + 1, title_y + 1, &artist, label, style);
-                    let year = year(album);
-                    if !year.is_empty() && used + 3 + year.chars().count() <= label {
-                        buf.set_stringn(
-                            x + 1 + used as u16,
-                            title_y + 1,
-                            format!(" \u{b7} {year}"),
-                            label - used,
-                            theme.hint_desc,
-                        );
-                    }
-                }
+                .draw(
+                    buf,
+                    theme,
+                    gfx,
+                    thumbs,
+                    Rect::new(x, y, tile_w, art_h + 3),
+                    bottom,
+                    moving,
+                    hover,
+                    &mut links,
+                );
             }
         }
+        self.geom.links = links;
         // Covers a few rows either side load before they scroll into view.
         let ahead =
             (self.scroll + rows + 1) * cols..(self.scroll + rows + 1 + PREFETCH_ROWS) * cols;
@@ -1356,105 +1483,103 @@ impl Browse {
         buf: &mut Buffer,
         theme: &Theme,
         favourites: &HashSet<i64>,
-        hover: Option<Hit>,
+        hover_item: Option<usize>,
+        hover: Option<Target>,
     ) {
-        let rows = body.height as usize;
-        let total = self.len();
-        let bar = total > rows && body.width >= 6 + BAR_W;
+        let rows_on = body.height as usize;
+        let n = self.len();
+        let bar = n > rows_on && body.width >= 6 + BAR_W;
         let text = Rect {
             width: body.width - if bar { BAR_W } else { 0 },
             ..body
         };
         self.geom.body = text;
         self.geom.cols = 1;
-        self.geom.tile_w = text.width;
-        self.geom.tile_h = 1;
-        self.geom.rows = rows;
+        self.geom.rows = rows_on;
         if self.follow {
             self.keep_cursor_visible();
         }
-        self.scroll = self.scroll.min(total.saturating_sub(rows));
-        let tracks = self.tracks_in_list();
-        let w = text.width as usize;
-        for r in 0..rows {
+        self.scroll = self.scroll.min(n.saturating_sub(rows_on));
+        let kind = self.kind();
+        let cols = match kind {
+            Kind::Tracks => {
+                let lead = (self.total().max(1).ilog10() + 1) as u16;
+                Columns::new(text, lead, 7, true, true)
+            }
+            Kind::Albums => Columns::new(text, 0, ALBUM_TAIL, true, false),
+            Kind::Artists => Columns::new(text, 0, ARTIST_TAIL, false, false),
+        };
+        let mut links = Vec::new();
+        for r in 0..rows_on {
             let idx = self.scroll + r;
-            if idx >= total {
+            if idx >= n {
                 break;
             }
-            let y = body.y + r as u16;
-            let selected = idx == self.cursor;
-            let hovered = hover == Some(Hit::Item(idx));
-            let (name, detail, tail, fav) = if tracks {
-                let t = &self.tracks[idx];
-                (
-                    t.title.as_str(),
-                    format!("{} \u{b7} {}", t.artist_name, t.album_title),
-                    t.duration_ms
+            let row = Rect::new(text.x, body.y + r as u16, text.width, 1);
+            let emphasis = Emphasis::of(idx == self.cursor, hover_item == Some(idx));
+            match kind {
+                Kind::Tracks => {
+                    let t = &self.tracks[idx];
+                    let lead = (idx + 1).to_string();
+                    let time = t
+                        .duration_ms
                         .map(|d| format_time(d as u64))
-                        .unwrap_or_default(),
-                    favourites.contains(&t.id),
-                )
-            } else {
-                let a = &self.albums[idx];
-                let tail = [year(a), a.codec.clone().unwrap_or_default()]
-                    .into_iter()
-                    .filter(|s| !s.is_empty())
-                    .collect::<Vec<_>>()
-                    .join("  ");
-                (
-                    a.title.as_str(),
-                    a.artist_name.clone(),
-                    tail,
-                    self.fav_albums.contains(&a.id),
-                )
-            };
-            let (name_style, rest_style) = if selected {
-                (theme.library_cursor, theme.library_cursor)
-            } else if hovered {
-                (theme.library_hover, theme.hint_desc)
-            } else {
-                (theme.track_normal, theme.hint_desc)
-            };
-            if selected {
-                for cx in body.x..body.x + body.width {
-                    buf[(cx, y)].set_style(theme.library_cursor);
+                        .unwrap_or_default();
+                    Row {
+                        favourite: favourites.contains(&t.id),
+                        lead: &lead,
+                        name: &t.title,
+                        artist: Some((&t.artist_name, t.artist_id)),
+                        detail: Some((&t.album_title, t.album_id.map(Target::Album))),
+                        tail: &time,
+                    }
+                    .draw(buf, &cols, row, theme, emphasis, hover, &mut links);
                 }
-                buf[(body.x, y)].set_char('\u{258c}').set_style(theme.bar);
-            }
-            let tail_w = tail.chars().count();
-            if fav && w > 2 {
-                buf.set_string(
-                    body.x + 1,
-                    y,
-                    "\u{2665}",
-                    if selected {
-                        theme.library_cursor
-                    } else {
-                        theme.favourite
-                    },
-                );
-            }
-            let name_w = (w.saturating_sub(tail_w + 4) * 3 / 5)
-                .max(8)
-                .min(w.saturating_sub(4));
-            buf.set_stringn(body.x + 3, y, name, name_w, name_style);
-            let detail_x = body.x + 3 + name_w as u16 + 2;
-            let room = (text.x + text.width).saturating_sub(detail_x + tail_w as u16 + 2) as usize;
-            if room > 0 {
-                buf.set_stringn(detail_x, y, &detail, room, rest_style);
-            }
-            if tail_w > 0 && tail_w + 1 < w {
-                buf.set_stringn(
-                    text.x + text.width - tail_w as u16 - 1,
-                    y,
-                    &tail,
-                    tail_w,
-                    rest_style,
-                );
+                Kind::Albums => {
+                    let a = &self.albums[idx];
+                    Row {
+                        favourite: self.fav_albums.contains(&a.id),
+                        lead: "",
+                        name: &a.title,
+                        artist: Some((&a.artist_name, Some(a.artist_id))),
+                        detail: None,
+                        tail: "",
+                    }
+                    .draw(buf, &cols, row, theme, emphasis, hover, &mut links);
+                    // The year, then the codec at the end.
+                    if cols.tail.w == ALBUM_TAIL {
+                        let quiet = emphasis.quiet(theme);
+                        let end = cols.tail.x + cols.tail.w;
+                        rows::put(buf, cols.tail.x, row.y, 4, &year(a), quiet);
+                        let codec = a.codec.as_deref().unwrap_or_default();
+                        rows::put_right(buf, end, row.y, 5, codec, quiet);
+                    }
+                }
+                Kind::Artists => {
+                    let a = &self.artists[idx];
+                    Row {
+                        favourite: self.fav_artists.contains(&a.id),
+                        lead: "",
+                        name: &a.name,
+                        artist: None,
+                        detail: None,
+                        tail: "",
+                    }
+                    .draw(buf, &cols, row, theme, emphasis, hover, &mut links);
+                    if cols.tail.w == ARTIST_TAIL {
+                        let quiet = emphasis.quiet(theme);
+                        let end = cols.tail.x + cols.tail.w;
+                        let albums = rows::count(a.album_count.max(0) as u64, "album");
+                        let tracks = rows::count(a.track_count.max(0) as u64, "track");
+                        rows::put_right(buf, end - 12, row.y, 10, &albums, quiet);
+                        rows::put_right(buf, end, row.y, 11, &tracks, quiet);
+                    }
+                }
             }
         }
+        self.geom.links = links;
         if bar {
-            self.scrollbar(body, buf, theme, total, rows);
+            self.scrollbar(body, buf, theme, n, rows_on);
         }
     }
 
@@ -1506,24 +1631,142 @@ impl Browse {
         let max = self.geom.total_rows.saturating_sub(self.page_rows());
         let frac = row.saturating_sub(b.y) as f64 / (b.height.saturating_sub(1)).max(1) as f64;
         self.scroll = ((frac.clamp(0.0, 1.0) * max as f64).round() as usize).min(max);
+        self.read_ahead();
     }
 }
 
-/// `text` cut to `width` cells, with an ellipsis where it was cut.
-pub(super) fn fit(text: &str, width: usize) -> String {
-    if text.chars().count() <= width {
-        return text.to_string();
-    }
-    let mut cut: String = text.chars().take(width.saturating_sub(1)).collect();
-    cut.push('\u{2026}');
-    cut
+/// The tiles' sizes across `width` cells and down `height`: how many go
+/// across, how wide and tall each is, and how many rows fit whole. As the
+/// apps' grids: the fewest across that keep each within the largest tile, as
+/// long as each stays at least the smallest.
+pub(super) fn tile_grid(width: u16, height: u16, gfx: &Gfx) -> (usize, u16, u16, usize) {
+    let cols = width.div_ceil(TILE_MAX_W).min(width / TILE_MIN_W).max(1) as usize;
+    let tile_w = (width / cols as u16).min(TILE_MAX_W);
+    let tile_h = gfx.rows_for(tile_w.saturating_sub(2).max(1)) + 3;
+    let rows = ((height / tile_h) as usize).max(1);
+    (cols, tile_w, tile_h, rows)
 }
+
+/// One album as a tile: its cover, and under it its title and, when
+/// `name_artist`, its artist (else its year). Both names are links.
+pub(super) struct Tile<'a> {
+    pub album: &'a AlbumRow,
+    pub favourite: bool,
+    pub selected: bool,
+    pub name_artist: bool,
+}
+
+impl Tile<'_> {
+    /// Draws the tile at `at`, cut at `bottom`; covers are drawn as images
+    /// only while not `moving`.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn draw(
+        &self,
+        buf: &mut Buffer,
+        theme: &Theme,
+        gfx: &mut Gfx,
+        thumbs: &mut Thumbs,
+        at: Rect,
+        bottom: u16,
+        moving: bool,
+        hover: Option<Target>,
+        links: &mut Vec<(Rect, Target)>,
+    ) {
+        let (x, y) = (at.x, at.y);
+        let album = self.album;
+        let art_w = at.width.saturating_sub(2).max(1);
+        let art_h = at.height.saturating_sub(3);
+        let art = Rect::new(x + 1, y, art_w, art_h);
+        let art_visible = bottom.saturating_sub(y).min(art_h);
+        if let Some(img) = thumbs.get(album.id) {
+            gfx.draw_clipped(album_key(album.id), img, art, art_visible, moving, buf);
+        } else {
+            placeholder(art, art_visible, buf, theme, &album.title);
+        }
+        if self.selected {
+            for dy in 0..art_visible {
+                buf[(x, y + dy)].set_char('\u{258c}').set_style(theme.bar);
+            }
+        }
+        let label = at.width.saturating_sub(2);
+        let title_y = y + art_h;
+        if title_y < bottom {
+            let style = if self.selected {
+                theme.track_cursor
+            } else {
+                theme.track_normal
+            };
+            let target = Target::Album(album.id);
+            // A favourite wears a heart before its title.
+            let (from, width) = if self.favourite && label > 3 {
+                buf.set_string(x + 1, title_y, "\u{2665}", theme.favourite);
+                (3, label - 2)
+            } else {
+                (1, label)
+            };
+            let drawn = rows::put(
+                buf,
+                x + from,
+                title_y,
+                width,
+                &album.title,
+                rows::link(style, hover == Some(target)),
+            );
+            links.push((drawn, target));
+        }
+        if title_y + 1 < bottom {
+            let quiet = if self.selected {
+                theme.track_playing
+            } else {
+                theme.hint_desc
+            };
+            let year = year(album);
+            if self.name_artist {
+                // The artist is a link; the year after it is not.
+                let target = Target::Artist(album.artist_id);
+                let drawn = rows::put(
+                    buf,
+                    x + 1,
+                    title_y + 1,
+                    label,
+                    &album.artist_name,
+                    rows::link(quiet, hover == Some(target)),
+                );
+                links.push((drawn, target));
+                let after = drawn.x + drawn.width;
+                if !year.is_empty() && after + 7 <= x + 1 + label {
+                    buf.set_string(
+                        after,
+                        title_y + 1,
+                        format!(" \u{b7} {year}"),
+                        theme.hint_desc,
+                    );
+                }
+            } else {
+                rows::put(buf, x + 1, title_y + 1, label, &year, theme.hint_desc);
+            }
+        }
+    }
+}
+
+/// An album row's tail: the year, a gap, the codec.
+const ALBUM_TAIL: u16 = 11;
+
+/// An artist row's tail: "12 albums", a gap, "340 tracks".
+const ARTIST_TAIL: u16 = 23;
 
 fn year(album: &AlbumRow) -> String {
-    super::library::album_year(album.date.as_deref()).unwrap_or_default()
+    album_year(album.date.as_deref()).unwrap_or_default()
 }
 
-/// A tile with no cover (yet): the record's first letter on the raised
+/// Leading year of a free-form album date tag. Tags are arbitrary text: this
+/// counts characters, not bytes, and yields nothing when there aren't four.
+pub fn album_year(date: Option<&str>) -> Option<String> {
+    let year: String = date?.chars().take(4).collect();
+    (year.chars().count() == 4).then_some(year)
+}
+
+/// A tile with no cover (yet): the album's first letter on the raised
 /// ground, so the grid keeps its shape while covers arrive.
 pub(super) fn placeholder(area: Rect, visible: u16, buf: &mut Buffer, theme: &Theme, title: &str) {
     let ground = Style::new().bg(theme.tokens.surface);
@@ -1548,11 +1791,11 @@ pub(super) fn placeholder(area: Rect, visible: u16, buf: &mut Buffer, theme: &Th
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    fn album(id: i64, title: &str, artist: &str) -> AlbumRow {
+    pub fn album(id: i64, title: &str, artist: &str) -> AlbumRow {
         AlbumRow {
             id,
             title: title.into(),
@@ -1569,14 +1812,14 @@ mod tests {
         }
     }
 
-    fn track(id: i64, album: i64) -> TrackRow {
+    pub fn track(id: i64, album: i64) -> TrackRow {
         TrackRow {
             id,
             album_id: Some(album),
             artist_id: Some(album),
             artist_name: "artist".into(),
             album_artist_name: "artist".into(),
-            album_title: format!("record {album}"),
+            album_title: format!("album {album}"),
             disc: None,
             track_number: Some(1),
             title: format!("song {id}"),
@@ -1598,20 +1841,24 @@ mod tests {
         Listing {
             albums: ids
                 .into_iter()
-                .map(|i| album(i, &format!("record {i}"), "artist"))
+                .map(|i| album(i, &format!("album {i}"), "artist"))
                 .collect(),
             ..Default::default()
         }
     }
 
-    /// A page as if the reader had answered with `n` records.
-    fn browse(n: usize) -> Browse {
+    /// A page of `source` as if the reader had answered with `listing`.
+    fn page(source: Source, listing: Listing) -> Browse {
         koan_core::config::isolate_config_for_tests();
-        let mut b = Browse::new(Source::Albums);
+        let mut b = Browse::new(source);
         b.stale = false;
         b.asked = 1;
-        b.show(1, albums(0..n as i64));
+        b.show(1, listing);
         b
+    }
+
+    fn browse(n: usize) -> Browse {
+        page(Source::Albums, albums(0..n as i64))
     }
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -1663,7 +1910,7 @@ mod tests {
     }
 
     #[test]
-    fn a_click_selects_and_the_second_opens_the_record() {
+    fn a_click_selects_and_the_second_opens_the_album() {
         let mut b = browse(10);
         draw(&mut b, 80, 30);
         let (x, y) = first_tile(&b, 2, 1);
@@ -1680,11 +1927,10 @@ mod tests {
         draw(&mut b, 80, 30);
         let art_h = b.geom.tile_h - 3;
         let (x, y) = first_tile(&b, 2, art_h);
-        assert_eq!(b.hit(x, y), Some(Hit::Title(0)));
-        assert_eq!(b.click(Hit::Title(0)), Action::OpenAlbum(0));
+        assert_eq!(b.hit(x, y), Some(Hit::Link(Target::Album(0))));
+        assert_eq!(b.click(Hit::Link(Target::Album(0))), Action::OpenAlbum(0));
         let (x, y) = first_tile(&b, 2, art_h + 1);
-        assert_eq!(b.hit(x, y), Some(Hit::Artist(0)));
-        assert_eq!(b.click(Hit::Artist(0)), Action::OpenArtist(0));
+        assert_eq!(b.hit(x, y), Some(Hit::Link(Target::Artist(0))));
         // Past the end of the text it is the tile again.
         let (x, y) = first_tile(&b, b.geom.tile_w - 1, art_h);
         assert_eq!(b.hit(x, y), Some(Hit::Item(0)));
@@ -1699,39 +1945,63 @@ mod tests {
         let (x, y) = first_tile(&b, 1, art_h);
         assert_eq!(b.hit(x, y), Some(Hit::Item(0)), "the heart is not the link");
         let (x, y) = first_tile(&b, 3, art_h);
-        assert_eq!(b.hit(x, y), Some(Hit::Title(0)));
-        // "record 0" is 8 cells from column 3: the last is 10, 11 is past it.
-        let (x, y) = first_tile(&b, 11, art_h);
+        assert_eq!(b.hit(x, y), Some(Hit::Link(Target::Album(0))));
+        // "album 0" is 7 cells from column 3: the last is 9, 10 is past it.
+        let (x, y) = first_tile(&b, 10, art_h);
         assert_eq!(b.hit(x, y), Some(Hit::Item(0)));
     }
 
     #[test]
-    fn the_menu_lists_what_can_be_done_with_a_record() {
+    fn the_toolbar_controls_are_hits() {
         let mut b = browse(3);
-        draw(&mut b, 80, 24);
-        // Without a library to read the tracks of, the menu has nothing to
-        // play, and says nothing rather than offering what would do nothing.
-        assert_eq!(b.menu(0), Action::None);
-        let Some(Hit::Menu) = b.hit(b.geom.menu.x, b.geom.menu.y) else {
-            panic!("the actions control is a hit");
-        };
+        draw(&mut b, 100, 24);
+        for c in [
+            Control::Filter,
+            Control::Filters,
+            Control::Sort,
+            Control::View,
+            Control::Menu,
+        ] {
+            let (r, _) = b
+                .geom
+                .controls
+                .iter()
+                .find(|(_, k)| *k == c)
+                .unwrap_or_else(|| panic!("{c:?} is drawn"));
+            assert_eq!(b.hit(r.x, r.y), Some(Hit::Control(c)));
+        }
     }
 
     #[test]
-    fn ctrl_f_opens_the_filters_only_where_they_apply() {
+    fn random_offers_a_reshuffle_and_s_deals_again() {
+        let mut b = browse(3);
+        while b.album_sort != AlbumSort::Random {
+            b.cycle_sort();
+        }
+        draw(&mut b, 120, 24);
+        assert!(
+            b.geom
+                .controls
+                .iter()
+                .any(|(_, c)| *c == Control::Reshuffle)
+        );
+        let (seed, asked) = (b.seed, b.asked);
+        b.handle_key(key(KeyCode::Char('S')));
+        assert_ne!(b.seed, seed);
+        assert_eq!(b.asked, asked + 1);
+    }
+
+    #[test]
+    fn ctrl_f_opens_the_filters_on_the_browsers_only() {
         let ctrl_f = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL);
         let mut b = browse(3);
         assert_eq!(b.handle_key(ctrl_f), Some(Action::OpenFilters));
-        b.source = Source::Favourites;
-        b.view = View::List;
-        assert_eq!(b.handle_key(ctrl_f), Some(Action::None));
-        b.source = Source::Artist(1);
-        b.view = View::Tiles;
+        let mut b = page(Source::Artist(1), albums(0..3));
         assert_eq!(b.handle_key(ctrl_f), Some(Action::None));
     }
 
     #[test]
-    fn f_favourites_the_record_and_h_its_artist() {
+    fn f_favourites_the_item_and_h_its_artist() {
         let mut b = browse(3);
         draw(&mut b, 80, 24);
         b.move_to(1);
@@ -1746,7 +2016,7 @@ mod tests {
     }
 
     #[test]
-    fn a_favourite_record_wears_a_heart() {
+    fn a_favourite_album_wears_a_heart() {
         let mut b = browse(3);
         b.fav_albums.insert(0);
         let buf = draw(&mut b, 80, 24);
@@ -1795,31 +2065,24 @@ mod tests {
     #[test]
     fn a_row_that_does_not_fit_is_drawn_as_far_as_it_reaches() {
         let mut b = browse(40);
-        // Tall enough for a whole row and a bit more.
-        let buf = draw(&mut b, 80, 17);
+        draw(&mut b, 80, 60);
+        // Tall enough for a whole row and three lines of the next.
+        let h = b.geom.body.y + b.geom.tile_h + 3;
+        let buf = draw(&mut b, 80, h);
         let theme = Theme::default();
-        // The second row starts below the first and is cut by the bottom edge:
-        // its placeholder is drawn on the rows that exist.
-        let second_row_y = 1 + b.geom.tile_h;
-        assert!(second_row_y + 1 < 17, "a second row begins on screen");
+        let second_row_y = b.geom.body.y + b.geom.tile_h;
+        assert_eq!(b.geom.rows, 1);
         let drawn =
-            (second_row_y..17).any(|y| (0..80).any(|x| buf[(x, y)].bg == theme.tokens.surface));
+            (second_row_y..h).any(|y| (0..80).any(|x| buf[(x, y)].bg == theme.tokens.surface));
         assert!(drawn);
     }
 
     #[test]
-    fn long_titles_end_in_an_ellipsis() {
-        assert_eq!(fit("short", 10), "short");
-        assert_eq!(fit("a longer title", 8), "a longe\u{2026}");
-        assert_eq!(fit("anything", 0), "\u{2026}");
-    }
-
-    #[test]
-    fn a_listing_keeps_the_cursor_on_its_record() {
+    fn a_listing_keeps_the_cursor_on_its_album() {
         let mut b = browse(10);
         b.move_to(4);
         b.asked = 2;
-        // Two records ahead of it are gone, and one is new at the end.
+        // Two albums ahead of it are gone, and one is new at the end.
         b.show(2, albums([0, 1, 4, 5, 6, 7, 8, 9, 10]));
         assert_eq!(b.cursor, 2);
         assert_eq!(b.albums[b.cursor].id, 4);
@@ -1865,42 +2128,118 @@ mod tests {
     }
 
     #[test]
-    fn an_artists_rows_are_records() {
-        koan_core::config::isolate_config_for_tests();
-        let mut b = Browse::new(Source::Artist(7));
-        b.stale = false;
-        b.asked = 1;
-        b.show(1, albums(0..3));
-        b.handle_key(key(KeyCode::Char('v')));
-        assert_eq!(b.view, View::List);
+    fn an_artist_with_no_albums_lists_what_they_appear_on() {
+        let listing = Listing {
+            tracks: (0..3).map(|i| track(i, 9)).collect(),
+            track_total: 3,
+            ..Default::default()
+        };
+        let mut b = page(Source::Artist(7), listing);
+        assert_eq!(b.kind(), Kind::Tracks);
         assert_eq!(b.len(), 3);
-        assert!(!b.tracks_in_list());
+        b.move_to(1);
+        assert_eq!(
+            b.handle_key(key(KeyCode::Enter)),
+            Some(Action::Play(vec![0, 1, 2], PickerAction::ReplaceFrom(1)))
+        );
     }
 
     #[test]
-    fn switching_view_keeps_the_record() {
-        let mut b = browse(10);
-        b.source = Source::Favourites;
-        b.tracks = (0..10)
-            .flat_map(|a| [track(a * 2, a), track(a * 2 + 1, a)])
-            .collect();
-        draw(&mut b, 80, 24);
+    fn enter_on_a_track_plays_the_list_from_it() {
+        let listing = Listing {
+            tracks: (0..5).map(|i| track(i, i)).collect(),
+            track_total: 5,
+            ..Default::default()
+        };
+        let mut b = page(Source::Tracks, listing);
+        draw(&mut b, 100, 20);
         b.move_to(3);
-        b.toggle_view();
-        assert_eq!(b.tracks[b.cursor].album_id, Some(3));
-        b.move_to(b.cursor + 1);
-        b.toggle_view();
-        assert_eq!(b.cursor, 3);
+        assert_eq!(
+            b.handle_key(key(KeyCode::Enter)),
+            Some(Action::Play(
+                vec![0, 1, 2, 3, 4],
+                PickerAction::ReplaceFrom(3)
+            ))
+        );
+        // Each row's artist and album are links.
+        assert!(b.geom.links.iter().any(|(_, t)| *t == Target::Artist(0)));
+        assert!(b.geom.links.iter().any(|(_, t)| *t == Target::Album(0)));
+    }
+
+    #[test]
+    fn tracks_are_read_a_page_at_a_time() {
+        let listing = Listing {
+            tracks: (0..TRACK_PAGE as i64).map(|i| track(i, 1)).collect(),
+            track_total: 5000,
+            ..Default::default()
+        };
+        let mut b = page(Source::Tracks, listing);
+        draw(&mut b, 100, 20);
+        let asked = b.asked;
+        b.move_to(100);
+        assert_eq!(b.asked, asked, "far from the end, nothing more is asked");
+        b.move_to(TRACK_PAGE as usize - 5);
+        assert_eq!(b.asked, asked + 1);
+        assert_eq!(b.limit, TRACK_PAGE * 2);
+    }
+
+    #[test]
+    fn the_columns_of_a_track_list_line_up() {
+        let listing = Listing {
+            tracks: vec![
+                TrackRow {
+                    title: "日本語のタイトルがとても長い曲".into(),
+                    artist_name: "アーティスト".into(),
+                    ..track(1, 1)
+                },
+                TrackRow {
+                    title: "short".into(),
+                    artist_name: "Someone With A Very Long Name Indeed".into(),
+                    ..track(2, 2)
+                },
+            ],
+            track_total: 2,
+            ..Default::default()
+        };
+        let mut b = page(Source::Tracks, listing);
+        draw(&mut b, 120, 20);
+        let artists: Vec<u16> = b
+            .geom
+            .links
+            .iter()
+            .filter(|(_, t)| matches!(t, Target::Artist(_)))
+            .map(|(r, _)| r.x)
+            .collect();
+        assert_eq!(artists.len(), 2);
+        assert_eq!(artists[0], artists[1], "artists start in one column");
     }
 
     #[test]
     fn it_draws_at_any_size() {
-        let mut b = browse(30);
-        for view in [View::Tiles, View::List] {
-            b.view = view;
-            for w in [1u16, 2, 5, 13, 14, 16, 17, 20, 60, 200] {
-                for h in [1u16, 2, 3, 5, 12, 40] {
-                    draw(&mut b, w, h);
+        for source in [Source::Albums, Source::Tracks, Source::Artists] {
+            let listing = Listing {
+                albums: albums(0..30).albums,
+                tracks: (0..30).map(|i| track(i, i)).collect(),
+                artists: (0..30)
+                    .map(|i| ArtistRow {
+                        id: i,
+                        name: format!("artist {i}"),
+                        sort_name: None,
+                        remote_id: None,
+                        album_count: 2,
+                        track_count: 20,
+                    })
+                    .collect(),
+                track_total: 30,
+                ..Default::default()
+            };
+            let mut b = page(source, listing);
+            for view in [View::Tiles, View::List] {
+                b.view = view;
+                for w in [1u16, 2, 5, 13, 14, 16, 17, 20, 60, 200] {
+                    for h in [1u16, 2, 3, 5, 12, 40] {
+                        draw(&mut b, w, h);
+                    }
                 }
             }
         }
