@@ -5,7 +5,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::text::Span;
-use ratatui::widgets::{Block, Borders, Clear, Widget};
+use ratatui::widgets::{Block, Borders, Widget};
 
 use koan_core::db::queries::PlaylistRow;
 
@@ -70,7 +70,7 @@ impl<'a> NamePromptOverlay<'a> {
 impl Widget for NamePromptOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let popup = prompt_rect(area);
-        Clear.render(popup, buf);
+        crate::shell::clear(buf, popup);
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(self.theme.rule)
@@ -176,7 +176,7 @@ impl<'a> ChooserOverlay<'a> {
 impl Widget for ChooserOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let popup = chooser_rect(area, self.chooser.entries.len());
-        Clear.render(popup, buf);
+        crate::shell::clear(buf, popup);
         let n = self.chooser.ids.len();
         let title = format!(
             " add {n} track{} to a playlist ",

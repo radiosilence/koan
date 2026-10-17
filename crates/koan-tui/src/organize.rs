@@ -5,7 +5,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
+use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
 use koan_core::organize::{OrganizeResult, PlanEntry, PlanOutcome};
 use koan_core::player::state::QueueItemId;
@@ -343,12 +343,9 @@ pub fn organize_popup_rect(area: Rect) -> Rect {
 impl Widget for OrganizeOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let popup = organize_popup_rect(area);
-        Clear.render(popup, buf);
+        crate::shell::clear(buf, popup);
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(self.theme.hint_key)
-            .title(" Organize \u{2014} Move/Rename ");
+        let block = crate::shell::frame("organize: move and rename", self.theme);
         let inner = block.inner(popup);
         block.render(popup, buf);
 

@@ -6,7 +6,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
+use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
 use koan_core::audio::dsp::profiles;
 
@@ -94,7 +94,7 @@ impl<'a> DspSelectorOverlay<'a> {
 impl Widget for DspSelectorOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let popup = dsp_selector_rect(area, self.state.entries.len());
-        Clear.render(popup, buf);
+        crate::shell::clear(buf, popup);
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(self.theme.rule)

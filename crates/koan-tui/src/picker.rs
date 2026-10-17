@@ -2,7 +2,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
+use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
 use nucleo::pattern::{CaseMatching, Normalization};
 use nucleo::{Config, Nucleo};
@@ -257,7 +257,7 @@ impl Widget for PickerOverlay<'_> {
         let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
         let popup_area = Rect::new(x, y, popup_width, popup_height);
 
-        Clear.render(popup_area, buf);
+        crate::shell::clear(buf, popup_area);
 
         let prompt = self.state.prompt();
         let matched = self.state.matched_count();

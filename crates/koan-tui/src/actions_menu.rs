@@ -5,7 +5,7 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::Span;
-use ratatui::widgets::{Block, Borders, Clear, Widget};
+use ratatui::widgets::{Block, Borders, Widget};
 
 use super::browse::Action;
 use super::theme::Theme;
@@ -78,7 +78,7 @@ impl<'a> ActionsMenuOverlay<'a> {
 impl Widget for ActionsMenuOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let popup = menu_rect(area, &self.menu.items, &self.menu.title);
-        Clear.render(popup, buf);
+        crate::shell::clear(buf, popup);
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(self.theme.rule)

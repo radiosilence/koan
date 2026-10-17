@@ -9,7 +9,7 @@ use koan_core::db::queries;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::Span;
-use ratatui::widgets::{Block, Borders, Clear, Widget};
+use ratatui::widgets::{Block, Borders, Widget};
 
 use super::theme::Theme;
 
@@ -343,7 +343,7 @@ impl Widget for FilterPanelOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let panel = self.panel;
         let popup = panel_rect(area, panel.lines());
-        Clear.render(popup, buf);
+        crate::shell::clear(buf, popup);
         let title = match &panel.pick {
             Some(pick) => format!(" genre /{} ", pick.typed),
             None => match panel.filters.active_count() {
