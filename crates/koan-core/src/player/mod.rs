@@ -50,11 +50,6 @@ const FADE_CHECK: std::time::Duration = std::time::Duration::from_millis(50);
 /// How long a DSP change waits for its fade before restarting regardless: an
 /// output that has stopped calling back never reports silence.
 const QUICK_FADE_LIMIT: std::time::Duration = std::time::Duration::from_millis(100);
-/// How long a pause waits for its fade before stopping the output regardless.
-/// A fade is the render callback's to finish, and a unit the system stopped
-/// underneath it — an interruption on iOS — never calls back: left running, it
-/// holds the audio session and wakes the player every `FADE_CHECK` for good.
-const PAUSE_FADE_LIMIT: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// How long output stays stopped before the audio session is given back. Long
 /// enough that pausing to answer someone does not hand the speaker to another
@@ -189,8 +184,6 @@ pub struct Player {
     /// restarts with the new one once that reaches silence. Changes made
     /// meanwhile ride the same restart, which loads whatever is current.
     dsp_restart: Option<std::time::Instant>,
-    /// A pause fading out, since when: see `PAUSE_FADE_LIMIT`.
-    pause_fade: Option<std::time::Instant>,
     /// Open the next session's output with a quick fade in: it follows a DSP
     /// change's quick fade out.
     quick_start: bool,
@@ -400,7 +393,6 @@ impl Player {
             session_release_at: None,
             dsp: None,
             dsp_restart: None,
-            pause_fade: None,
             quick_start: false,
             session: 0,
             silence_waiters: Vec::new(),
@@ -1577,11 +1569,12 @@ impl Player {
             Transport::Loaded(session) => {
                 if let Output::Local(local) = &session.output {
                     match fade {
-                        Fade::Short => {
-                            local.engine.fade_out();
-                            self.pause_fade = Some(std::time::Instant::now());
-                        }
-                        Fade::Cut => {
+                        // A fade is the render callback's to finish, and a unit
+                        // the system has stopped (an interruption on iOS) never
+                        // calls back: there is nothing to fade, and a fade begun
+                        // would leave the output muted for the resume.
+                        Fade::Short if local.engine.is_running() => local.engine.fade_out(),
+                        _ => {
                             if let Err(e) = local.engine.stop() {
                                 log::error!("pause failed: {}", e);
                                 return;
@@ -1604,7 +1597,6 @@ impl Player {
     /// position it was waiting to open at.
     pub fn resume(&mut self) {
         self.answer_silence();
-        self.pause_fade = None;
         if std::mem::take(&mut self.sleep_snap_on_resume) {
             self.set_sleep_gain(1.0, true);
         }
@@ -1627,7 +1619,10 @@ impl Player {
             return;
         };
         let engine = &local.engine;
-        let resumed = if engine.is_running() || engine.is_silent() {
+        // A fade out the system cut short by stopping the unit leaves the
+        // output muted, so whenever pauses fade, resuming fades back in.
+        let faded = crate::config::Config::cached().playback.fade_on_pause;
+        let resumed = if engine.is_running() || engine.is_silent() || faded {
             self.lead_in_ends = None;
             engine.fade_in()
         } else {
@@ -2023,21 +2018,12 @@ impl Player {
             && session.run == Run::Paused
             && let Some(engine) = session.engine()
             && engine.is_running()
+            && engine.is_silent()
         {
-            let silent = engine.is_silent();
-            let gave_out = self
-                .pause_fade
-                .is_some_and(|since| since.elapsed() >= PAUSE_FADE_LIMIT);
-            if silent || gave_out {
-                if !silent {
-                    log::info!("pause: output stopped calling back before its fade ended");
-                }
-                if let Err(e) = engine.stop() {
-                    log::error!("stopping after fade failed: {}", e);
-                }
-                self.pause_fade = None;
-                self.answer_silence();
+            if let Err(e) = engine.stop() {
+                log::error!("stopping after fade failed: {}", e);
             }
+            self.answer_silence();
         }
 
         if let Some(since) = self.dsp_restart {
@@ -3322,12 +3308,15 @@ mod tests {
         assert_eq!(player.session_release_at, None);
     }
 
-    /// An output the system stopped underneath the player: running as far as
-    /// the player knows, and never calling back, so never silent.
-    struct StoppedUnderneath {
+    /// An output the system can stop underneath the player, as iOS does when
+    /// an interruption begins. Muted from a fade out until a fade in, as the
+    /// real fade is.
+    #[derive(Clone, Default)]
+    struct Interruptible {
         running: Arc<std::sync::atomic::AtomicBool>,
+        muted: Arc<std::sync::atomic::AtomicBool>,
     }
-    impl AudioEngineHandle for StoppedUnderneath {
+    impl AudioEngineHandle for Interruptible {
         fn start(&self) -> Result<(), BackendError> {
             self.running.store(true, Ordering::Relaxed);
             Ok(())
@@ -3339,9 +3328,12 @@ mod tests {
         fn is_running(&self) -> bool {
             self.running.load(Ordering::Relaxed)
         }
-        fn fade_out(&self) {}
+        fn fade_out(&self) {
+            self.muted.store(true, Ordering::Relaxed);
+        }
         fn fade_in(&self) -> Result<(), BackendError> {
-            Ok(())
+            self.muted.store(false, Ordering::Relaxed);
+            self.start()
         }
         fn is_silent(&self) -> bool {
             false
@@ -3349,30 +3341,35 @@ mod tests {
     }
 
     #[test]
-    fn a_pause_whose_fade_never_ends_still_stops_the_output() {
-        let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    fn pausing_output_the_system_stopped_leaves_nothing_waiting_and_resumes_audibly() {
+        let engine = Interruptible::default();
+        engine.running.store(true, Ordering::Relaxed);
         let mut player = Player::new();
-        player.transport = Transport::Loaded(test_session(
-            QueueItemId::new(),
-            Box::new(StoppedUnderneath {
-                running: running.clone(),
-            }),
-        ));
+        player.transport =
+            Transport::Loaded(test_session(QueueItemId::new(), Box::new(engine.clone())));
+
+        // The interruption stops the unit, then the app pauses.
+        engine.running.store(false, Ordering::Relaxed);
         player.pause_with(Fade::Short);
         player.update_playback_state();
-        assert!(
-            running.load(Ordering::Relaxed),
-            "the fade is given its time"
-        );
-        assert!(player.next_event().is_some(), "and looked at again");
-
-        if let Some(since) = player.pause_fade.as_mut() {
-            *since -= PAUSE_FADE_LIMIT;
-        }
-        player.update_playback_state();
-        assert!(!running.load(Ordering::Relaxed), "stopped once it ran out");
-        assert_eq!(player.next_event(), None, "nothing left to wake for");
+        assert!(!engine.muted.load(Ordering::Relaxed), "no fade begun");
+        assert_eq!(player.next_event(), None, "nothing to wake for");
         assert!(!player.wants_output(), "so the audio session can go");
+
+        player.resume();
+        assert!(engine.running.load(Ordering::Relaxed));
+        assert!(!engine.muted.load(Ordering::Relaxed), "heard on resuming");
+
+        // Paused with a fade the interruption then cuts short.
+        if crate::config::Config::cached().playback.fade_on_pause {
+            player.pause_with(Fade::Short);
+            assert!(engine.muted.load(Ordering::Relaxed), "fading");
+            engine.running.store(false, Ordering::Relaxed);
+            player.update_playback_state();
+            assert_eq!(player.next_event(), None);
+            player.resume();
+            assert!(!engine.muted.load(Ordering::Relaxed), "faded back in");
+        }
     }
 
     #[test]

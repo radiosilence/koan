@@ -300,8 +300,33 @@ impl AudioEngine {
         unsafe { AudioOutputUnitStop(self.audio_unit) }
     }
 
+    /// Started and not since stopped, by koan or by the system: iOS stops
+    /// RemoteIO when an interruption begins, and only the unit knows.
     pub fn is_running(&self) -> bool {
-        self.running.load(Ordering::Acquire)
+        self.running.load(Ordering::Acquire) && self.unit_running()
+    }
+
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+    fn unit_running(&self) -> bool {
+        let mut running: UInt32 = 0;
+        let mut size = mem::size_of::<UInt32>() as u32;
+        // SAFETY: querying a bool property on a unit we own.
+        let status = unsafe {
+            AudioUnitGetProperty(
+                self.audio_unit,
+                kAudioOutputUnitProperty_IsRunning,
+                kAudioUnitScope_Global,
+                0,
+                &mut running as *mut _ as *mut c_void,
+                &mut size,
+            )
+        };
+        status != 0 || running != 0
+    }
+
+    #[cfg(target_os = "macos")]
+    fn unit_running(&self) -> bool {
+        true
     }
 
     pub fn fade(&self) -> &FadeControl {
