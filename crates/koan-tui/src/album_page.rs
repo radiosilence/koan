@@ -113,13 +113,6 @@ impl AlbumPage {
         }
     }
 
-    /// Puts the cursor on `track`, as a link to it from elsewhere asks.
-    pub fn highlight(&mut self, track: i64) {
-        if let Some(i) = self.tracks.iter().position(|t| t.id == track) {
-            self.move_to(i);
-        }
-    }
-
     fn rows(&self) -> usize {
         (self.geom.list.height as usize).max(1)
     }
