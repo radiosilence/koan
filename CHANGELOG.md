@@ -4,6 +4,12 @@
 
 ### Added
 
+- **Switch the terminal UI's EQ without leaving the page.** `B` bypasses the EQ and puts it back, so a change can be heard with and without it, and the `EQ` label in the transport bar, the signal path's `dsp` row and the curve on Now playing open the EQ list when clicked.
+
+## 0.63.0
+
+### Added
+
 - **Album and artist pages in the terminal UI, and links to them.** Artist and album names under a tile, in the queue's album headings and on the album page open the page, and `A` and `O` do the same from the keyboard. The key hints along the foot can be clicked, queue rows have a `⋯` menu button, and the browsing pages' scrollbars can be dragged, so nothing depends on a right click.
 - **Artist pages in the terminal UI show the artist.** A photograph and the opening of their Wikipedia article sit above the records, with play and shuffle buttons and a link to the article. The wheel and a draggable scrollbar now work on the album and artist pages and on the Artists tree.
 - **Covers in the terminal UI are drawn as images** where the terminal supports the kitty or iTerm2 protocol, and in half blocks elsewhere. `playback.art_graphics = false`, or `I` in the TUI, keeps half blocks.
@@ -11,7 +17,6 @@
 - **A Now playing page in the terminal UI.** The cover, the signal path (source, output, DSP, and whether the stream is bit-perfect), level meters, the spectrum, lyrics, and the active DSP profile's frequency response. The transport bar carries a small spectrum.
 - **The terminal UI has pages.** Queue, Now playing, Albums, Artists, Favourites and Recent, reached by number keys, `Tab`, a sidebar or a tab bar, with back and forward like a browser. Albums, Favourites and Recent show records as tiles of cover art or as rows; the layout follows the terminal's width. Everything works with the keyboard and with the mouse.
 - **History and Settings pages in the terminal UI.** History lists every play under the day it was played, with the artist and record as links, a filter, and forgetting one play or all of them (on the account's other devices too, signed in to a koan server). Settings changes playback, terminal, visualiser, server and device settings without editing `config.toml`. Albums, Favourites, Recent and Artists now show a clickable `/ filter` in their heading.
-- **Switch the terminal UI's EQ without leaving the page.** `B` bypasses the EQ and puts it back, so a change can be heard with and without it, and the `EQ` label in the transport bar, the signal path's `dsp` row and the curve on Now playing open the EQ list when clicked.
 
 ### Changed
 
