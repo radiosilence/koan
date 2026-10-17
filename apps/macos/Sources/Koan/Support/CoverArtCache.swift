@@ -110,14 +110,16 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// one Core Animation composites in. Set by whoever knows the window.
     ///
     /// A new display drops the bitmaps decoded for the old one: a sleeve
-    /// matched to an sRGB display has lost the colours a P3 one would show.
-    /// They decode again from the disk cache.
+    /// matched to an sRGB display has lost the colours a P3 one would show,
+    /// and one decoded before any display was known would be converted on the
+    /// main thread every time it is drawn. They decode again from the disk
+    /// cache.
     var displaySpace: CGColorSpace? {
         get { locked { space } }
         set {
             let changed: Bool = locked {
                 defer { space = newValue }
-                return space != nil && space != newValue
+                return space != newValue
             }
             if changed { memory.removeAllObjects() }
         }

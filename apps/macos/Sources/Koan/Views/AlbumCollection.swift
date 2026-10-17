@@ -807,11 +807,18 @@ final class AlbumTile: NSCollectionViewItem {
     }
 
     /// Fetch the sleeve again if the tile shows a record with neither a
-    /// sleeve nor a load for one.
+    /// sleeve nor a load for one. A load that came back empty for a record
+    /// not known to lack art (the server could not be reached) is tried again,
+    /// though not more often than every couple of seconds.
     func resumeSleeve() {
-        guard load == nil, shown == nil, let album, let context else { return }
+        guard load == nil, shown == nil, let album, let context,
+              CACurrentMediaTime() - failedAt > 2
+        else { return }
         showSleeve(album.id, art: context.art)
     }
+
+    /// When the last load came back empty.
+    private var failedAt: CFTimeInterval = 0
 
     private func showSleeve(_ id: Int64, art: CoverArtCache) {
         load?.cancel()
@@ -832,7 +839,14 @@ final class AlbumTile: NSCollectionViewItem {
         let priority: ImageWork.Priority = view.visibleRect.isEmpty ? .ahead(.infinity) : .visible
         load = Task { [weak self] in
             let image = await art.image(for: .album(id), size: .tile, priority: priority, aimed: true)
-            guard !Task.isCancelled, let self, self.album?.id == id, let bitmap = image?.bitmap else { return }
+            guard !Task.isCancelled, let self, self.album?.id == id else { return }
+            guard let bitmap = image?.bitmap else {
+                if !art.isAbsent(.album(id)) {
+                    self.failedAt = CACurrentMediaTime()
+                    self.load = nil
+                }
+                return
+            }
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             self.ensō.isHidden = true
