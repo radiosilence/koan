@@ -4,12 +4,12 @@
 
 ### Added
 
+- **Search in the terminal UI.** A Search page on `0` searches the library as you type and lists artists, records and tracks, with open, play, queue, favourite and playlist actions by key or click, as the apps' search results do.
 - **More of the apps' actions in the terminal UI.** `N` puts a record, track or tree node next in the queue; `f` and `H` favourite a record and its artist (queued for the server as in the apps), with a heart on the tile and in the album and artist headers; `i` shows what the library holds of any listed track; `d` and `u` download a record or track to this device or remove the download; and Settings gains offline mode, `scan library` and `sync now`.
 - **An actions menu in the terminal UI.** `m`, or `⋯ actions` in the heading, opens a menu of what can be done with the record or track under the cursor on the browsing pages, album pages and History, so that play next, favourites, playlists, downloads and info can be reached with the pointer alone; the queue's menu gains go to the record and artist, add to a playlist and downloads.
 - **Browse filters in the terminal UI.** `Ctrl+F`, or `filters` in the heading of Albums, Favourites and Recent, opens a panel for lossless, downloaded, codec, genre and decade, the same narrowing the apps' browser offers.
 - **Playlist undo and a queue that follows.** The playlist page undoes and redoes edits (`Ctrl+Z`, `Ctrl+Y`, or the buttons under the name), and while the queue is exactly a playlist, adding, removing or moving tracks in it changes the queue too, as in the apps.
 - **Playlists in the terminal UI.** A Playlists page and a page for each playlist, with play, shuffle, create, rename, delete, and moving or removing tracks; `w` puts a record, track or queue selection into a playlist from any page, and `W` saves the queue as one. They are the apps' playlists, pushed to the server as the apps push them. Pages are now numbered `1` to `9`, with Playlists at `6`, so Recent, History and Settings are `7`, `8` and `9`.
-- **Search in the terminal UI.** A Search page on `0` searches the library as you type and lists artists, records and tracks, with open, play, queue, favourite and playlist actions by key or click, as the apps' search results do.
 
 ### Fixed
 

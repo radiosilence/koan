@@ -739,6 +739,7 @@ impl App {
             self.history_page.refresh();
         }
         self.artist_page.poll();
+        self.search_page.poll();
 
         // Updated every frame: the analysis thread runs at its own rate, and
         // decay and smoothing run at the TUI frame rate.
@@ -1082,6 +1083,9 @@ impl App {
             Page::Search => match self.search_page.handle_key(key) {
                 Some(action) => self.apply_browse(action),
                 None if key.code == KeyCode::Esc => self.leave_page(),
+                None if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) => {
+                    self.navigate_key(&key);
+                }
                 None => self.handle_transport_key(key),
             },
             Page::History => match self.history_page.handle_key(key) {

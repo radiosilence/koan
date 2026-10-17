@@ -145,7 +145,7 @@ Everything on both pages is also a click: the row, `▸`, `×`, `▴`, `▾`, th
 | Key | Action |
 |-----|--------|
 | Typing | Search the library; every key is text while the box has focus |
-| `Enter` or `↓` | Move to the results |
+| `Enter`, `↓` or `Tab` | Move to the results; `Tab` with none, and `Shift+Tab`, change page |
 | `Esc` | Clear the box, then leave the page |
 | `↑` on the first result, or `/` | Back to the box |
 | `Enter` | Open an artist or a record; play a track |

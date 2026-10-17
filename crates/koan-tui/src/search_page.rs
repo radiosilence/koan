@@ -4,6 +4,7 @@
 
 use std::time::{Duration, Instant};
 
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use koan_core::db::queries::{self, AlbumRow, ArtistRow, TrackRow};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -18,6 +19,8 @@ const ARTISTS: u32 = 8;
 const ALBUMS: u32 = 12;
 const TRACKS: u32 = 40;
 const DOUBLE_CLICK: Duration = Duration::from_millis(500);
+/// How long the box must rest before a search runs.
+const DEBOUNCE: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchHit {
@@ -63,6 +66,11 @@ pub struct SearchPage {
     follow: bool,
     geom: Geom,
     last_click: Option<(usize, Instant)>,
+    /// Counts the queries asked for; results for any but the last are dropped.
+    generation: u64,
+    shown: u64,
+    tx: Sender<(u64, String)>,
+    rx: Receiver<(u64, Vec<Item>)>,
 }
 
 fn inside(r: Rect, col: u16, row: u16) -> bool {
@@ -75,8 +83,79 @@ impl Default for SearchPage {
     }
 }
 
+/// What the library holds that matches `q`.
+fn find(q: &str) -> Vec<Item> {
+    let Ok(db) = koan_core::db::pool::shared().get() else {
+        return Vec::new();
+    };
+    let artists = queries::list_artists(
+        &db.conn,
+        &queries::ArtistQuery {
+            search: Some(q),
+            limit: Some(ARTISTS),
+            without_track_counts: true,
+            ..Default::default()
+        },
+    )
+    .unwrap_or_default();
+    let albums = queries::list_albums(
+        &db.conn,
+        &queries::AlbumQuery {
+            search: Some(q),
+            order: queries::AlbumOrder::Relevance,
+            limit: Some(ALBUMS),
+            ..Default::default()
+        },
+    )
+    .unwrap_or_default();
+    let tracks = queries::filter_tracks(
+        &db.conn,
+        &queries::TrackFilter {
+            search: Some(q.to_string()),
+            ..Default::default()
+        },
+        queries::TrackOrder::ArtistAlbumDiscTrack,
+        false,
+        TRACKS,
+        0,
+    )
+    .unwrap_or_default();
+    artists
+        .into_iter()
+        .map(Item::Artist)
+        .chain(albums.into_iter().map(Item::Album))
+        .chain(tracks.into_iter().map(Item::Track))
+        .collect()
+}
+
+/// Runs the searches off the TUI thread, the last query of a burst only.
+fn spawn_searcher() -> (Sender<(u64, String)>, Receiver<(u64, Vec<Item>)>) {
+    let (tx, req) = crossbeam_channel::unbounded::<(u64, String)>();
+    let (done, rx) = crossbeam_channel::unbounded();
+    std::thread::Builder::new()
+        .name("koan-search".into())
+        .spawn(move || {
+            while let Ok(mut next) = req.recv() {
+                loop {
+                    match req.recv_timeout(DEBOUNCE) {
+                        Ok(newer) => next = newer,
+                        Err(RecvTimeoutError::Timeout) => break,
+                        Err(RecvTimeoutError::Disconnected) => return,
+                    }
+                }
+                let (generation, query) = next;
+                if done.send((generation, find(&query))).is_err() {
+                    return;
+                }
+            }
+        })
+        .ok();
+    (tx, rx)
+}
+
 impl SearchPage {
     pub fn new() -> Self {
+        let (tx, rx) = spawn_searcher();
         Self {
             query: String::new(),
             typing: true,
@@ -88,6 +167,10 @@ impl SearchPage {
             follow: true,
             geom: Geom::default(),
             last_click: None,
+            generation: 0,
+            shown: 0,
+            tx,
+            rx,
         }
     }
 
@@ -96,50 +179,36 @@ impl SearchPage {
         self.typing = true;
     }
 
-    /// Runs the search over the library.
+    /// Asks for the search over the library; an empty box clears at once.
     pub fn search(&mut self) {
-        self.items.clear();
+        self.generation += 1;
         let q = self.query.trim();
-        if !q.is_empty()
-            && let Ok(db) = koan_core::db::pool::shared().get()
-        {
-            let artists = queries::list_artists(
-                &db.conn,
-                &queries::ArtistQuery {
-                    search: Some(q),
-                    limit: Some(ARTISTS),
-                    without_track_counts: true,
-                    ..Default::default()
-                },
-            )
-            .unwrap_or_default();
-            let albums = queries::list_albums(
-                &db.conn,
-                &queries::AlbumQuery {
-                    search: Some(q),
-                    order: queries::AlbumOrder::Relevance,
-                    limit: Some(ALBUMS),
-                    ..Default::default()
-                },
-            )
-            .unwrap_or_default();
-            let tracks = queries::filter_tracks(
-                &db.conn,
-                &queries::TrackFilter {
-                    search: Some(q.to_string()),
-                    ..Default::default()
-                },
-                queries::TrackOrder::ArtistAlbumDiscTrack,
-                false,
-                TRACKS,
-                0,
-            )
-            .unwrap_or_default();
-            self.items.extend(artists.into_iter().map(Item::Artist));
-            self.items.extend(albums.into_iter().map(Item::Album));
-            self.items.extend(tracks.into_iter().map(Item::Track));
+        if q.is_empty() {
+            self.show(self.generation, Vec::new());
+        } else {
+            self.tx.send((self.generation, q.to_string())).ok();
         }
+    }
+
+    /// Takes in what the searcher has finished. Returns whether anything came.
+    pub fn poll(&mut self) -> bool {
+        let mut any = false;
+        while let Ok((generation, items)) = self.rx.try_recv() {
+            any |= self.show(generation, items);
+        }
+        any
+    }
+
+    /// Shows the results of query `generation`, unless a newer one was asked.
+    fn show(&mut self, generation: u64, items: Vec<Item>) -> bool {
+        if generation != self.generation {
+            return false;
+        }
+        self.shown = generation;
+        self.items = items;
+        self.cursor = 0;
         self.rebuild();
+        true
     }
 
     fn rebuild(&mut self) {
@@ -305,11 +374,12 @@ impl SearchPage {
                     self.query.clear();
                     self.search();
                 }
-                KeyCode::Esc => return None,
+                KeyCode::Esc | KeyCode::BackTab => return None,
                 KeyCode::Enter | KeyCode::Down | KeyCode::Tab if !self.items.is_empty() => {
                     self.typing = false;
                 }
-                KeyCode::Enter | KeyCode::Down | KeyCode::Tab => {}
+                KeyCode::Tab => return None,
+                KeyCode::Enter | KeyCode::Down => {}
                 KeyCode::Backspace => {
                     self.query.pop();
                     self.search();
@@ -546,6 +616,8 @@ impl SearchPage {
         if self.items.is_empty() {
             let msg = if self.query.trim().is_empty() {
                 "artists, records and tracks that match appear here"
+            } else if self.shown != self.generation {
+                "searching\u{2026}"
             } else {
                 "nothing matches"
             };
@@ -781,6 +853,44 @@ mod tests {
             assert!(p.handle_key(key(KeyCode::Char(c))).is_some());
         }
         assert_eq!(p.query, "1a/");
+    }
+
+    fn artist(id: i64) -> Item {
+        Item::Artist(ArtistRow {
+            id,
+            name: format!("artist {id}"),
+            sort_name: None,
+            remote_id: None,
+            album_count: 0,
+            track_count: 0,
+        })
+    }
+
+    #[test]
+    fn only_the_latest_query_is_shown_and_it_starts_at_the_top() {
+        let mut p = SearchPage::new();
+        p.generation = 1;
+        assert!(p.show(1, (0..40).map(artist).collect()));
+        p.cursor = 30;
+        p.generation = 3;
+        assert!(!p.show(2, vec![artist(99)]), "a stale result is dropped");
+        assert_eq!(p.items.len(), 40);
+        assert!(p.show(3, (0..40).map(artist).collect()));
+        assert_eq!(p.cursor, 0);
+    }
+
+    #[test]
+    fn page_keys_pass_through_the_box() {
+        let mut p = SearchPage::new();
+        assert!(p.handle_key(key(KeyCode::BackTab)).is_none());
+        assert!(
+            p.handle_key(key(KeyCode::Tab)).is_none(),
+            "no results to move to"
+        );
+        p.generation = 1;
+        p.show(1, vec![artist(1)]);
+        assert!(p.handle_key(key(KeyCode::Tab)).is_some());
+        assert!(!p.typing, "Tab moves to the results");
     }
 
     #[test]
