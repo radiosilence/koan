@@ -1,6 +1,6 @@
 //! The long jobs a page can start: reading the library's folders, forgetting
-//! one taken out of them, and pulling the server's library. Each runs to its end on the thread it is given and
-//! comes back as a line to show.
+//! one taken out of them, and pulling the server's library. Each runs to its
+//! end on the thread it is given and comes back as a line to show.
 
 use koan_core::config::Config;
 use koan_core::db::pool;
@@ -13,8 +13,10 @@ use std::path::Path;
 pub enum Report {
     /// A scan, a sync or a folder being forgotten has ended; another may start.
     Task(String),
-    /// Other work has ended.
+    /// Other work that changed the library has ended.
     Work(String),
+    /// A line to show, the library untouched.
+    Say(String),
 }
 
 /// Whether a track has to come from the server to play here.
@@ -23,7 +25,7 @@ pub fn needs_fetch(t: &koan_core::db::queries::TrackRow) -> bool {
 }
 
 pub fn scan() -> String {
-    let cfg = Config::load().unwrap_or_default();
+    let cfg = Config::cached();
     if cfg.library.folders.is_empty() {
         return "no library folders to scan".into();
     }
@@ -49,7 +51,7 @@ pub fn scan() -> String {
 }
 
 pub fn sync() -> String {
-    let cfg = Config::load().unwrap_or_default();
+    let cfg = Config::cached();
     let Some(client) = helpers::subsonic_client(&cfg) else {
         return "no server to sync with".into();
     };

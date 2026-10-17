@@ -21,7 +21,6 @@ const SECTIONS: &[Section] = &[
             ("R", "Repeat: off / queue / one"),
             ("T", "Sleep: 15 / 30 / 45 / 60 min / track / record / off"),
             (", .", "Seek backward / forward"),
-            ("+ -", "Volume up / down"),
         ],
     },
     Section {
@@ -86,8 +85,11 @@ const SECTIONS: &[Section] = &[
                 "\u{2191}\u{2193}\u{2190}\u{2192}",
                 "Move (tree: expand / collapse)",
             ),
-            ("enter", "Append & play"),
+            ("enter", "Open (tree: expand, or play a track)"),
+            ("P", "Play"),
             ("a", "Append (C-r replaces the queue)"),
+            ("N", "Play next"),
+            ("m", "Actions"),
             ("/", "Filter"),
             ("v / o", "Tiles or rows / sort order"),
         ],
@@ -116,7 +118,7 @@ const SECTIONS: &[Section] = &[
     Section {
         title: "General",
         bindings: &[
-            ("?", "This help"),
+            ("?", "This help (\u{2191}\u{2193} scroll)"),
             ("q", "Quit"),
             ("esc", "Close modal / cancel"),
         ],
@@ -125,23 +127,39 @@ const SECTIONS: &[Section] = &[
 
 pub struct HelpModalOverlay<'a> {
     theme: &'a Theme,
+    scroll: usize,
 }
 
 impl<'a> HelpModalOverlay<'a> {
-    pub fn new(theme: &'a Theme) -> Self {
-        Self { theme }
+    pub fn new(theme: &'a Theme, scroll: usize) -> Self {
+        Self { theme, scroll }
     }
+}
+
+/// The popup in `area`, and how many rows it shows of each column.
+fn layout(area: Rect) -> (Rect, usize) {
+    let w = 72u16.min(area.width.saturating_sub(4));
+    let h = (column_len() as u16 + 2).min(area.height.saturating_sub(2));
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    (Rect::new(x, y, w, h), h.saturating_sub(2) as usize)
+}
+
+/// Lines in a column: the sections, a blank line between each, split in two.
+fn column_len() -> usize {
+    let lines = SECTIONS.iter().map(|s| 1 + s.bindings.len()).sum::<usize>()
+        + SECTIONS.len().saturating_sub(1);
+    lines.div_ceil(2)
+}
+
+/// How far the help scrolls in `area` before its end is on screen.
+pub fn max_scroll(area: Rect) -> usize {
+    column_len().saturating_sub(layout(area).1)
 }
 
 impl Widget for HelpModalOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let w = 72u16.min(area.width.saturating_sub(4));
-        let content_lines = SECTIONS.iter().map(|s| 1 + s.bindings.len()).sum::<usize>()
-            + SECTIONS.len().saturating_sub(1); // blank lines between sections
-        let h = (content_lines as u16 + 2).min(area.height.saturating_sub(2)); // +2 for border
-        let x = area.x + (area.width.saturating_sub(w)) / 2;
-        let y = area.y + (area.height.saturating_sub(h)) / 2;
-        let popup = Rect::new(x, y, w, h);
+        let (popup, col_height) = layout(area);
 
         Clear.render(popup, buf);
 
@@ -152,11 +170,7 @@ impl Widget for HelpModalOverlay<'_> {
         let inner = block.inner(popup);
         block.render(popup, buf);
 
-        // Render in two columns.
         let col_width = inner.width / 2;
-        let col_height = inner.height as usize;
-
-        // Build all lines first.
         let mut lines: Vec<Line> = Vec::new();
         for (si, section) in SECTIONS.iter().enumerate() {
             if si > 0 {
@@ -179,19 +193,34 @@ impl Widget for HelpModalOverlay<'_> {
             }
         }
 
-        // Split into two columns.
-        let mid = lines.len().div_ceil(2);
-        for (i, line) in lines.iter().enumerate() {
+        // Two columns, scrolled together.
+        let mid = column_len();
+        for (i, line) in lines.into_iter().enumerate() {
             let (col_x, row) = if i < mid {
                 (inner.x, i)
             } else {
                 (inner.x + col_width, i - mid)
             };
-            if row >= col_height {
+            let Some(row) = row.checked_sub(self.scroll).filter(|r| *r < col_height) else {
                 continue;
-            }
+            };
             let row_area = Rect::new(col_x, inner.y + row as u16, col_width, 1);
-            Paragraph::new(line.clone()).render(row_area, buf);
+            Paragraph::new(line).render(row_area, buf);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_whole_help_can_be_scrolled_into_view() {
+        let short = Rect::new(0, 0, 100, 20);
+        let (_, shown) = layout(short);
+        assert!(shown < column_len());
+        assert_eq!(max_scroll(short) + shown, column_len());
+        // Tall enough, nothing scrolls.
+        assert_eq!(max_scroll(Rect::new(0, 0, 100, 200)), 0);
     }
 }

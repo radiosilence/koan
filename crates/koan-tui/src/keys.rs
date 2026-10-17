@@ -209,7 +209,11 @@ pub fn hints(mode: &Mode, page: Page, filterable: bool) -> Vec<(&'static str, &'
                 ("ret", "run"),
                 ("esc", "cancel"),
             ],
-            Mode::HelpModal => vec![("esc", "close"), ("?", "close")],
+            Mode::HelpModal => vec![
+                ("\u{2191}\u{2193}", "scroll"),
+                ("esc", "close"),
+                ("?", "close"),
+            ],
             Mode::VizPicker => vec![
                 ("\u{2191}\u{2193}", "preview"),
                 ("ret", "select"),

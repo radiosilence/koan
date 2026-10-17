@@ -38,6 +38,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Fullscreen visualizer — take the entire frame, skip everything else.
     if app.viz_fullscreen && app.viz_config.enabled {
+        // Nothing else is on screen to be clicked.
+        app.layout = Default::default();
         let viz = VisualizerWidget::new(&mut app.visualizer, &app.theme);
         viz.render(area, frame.buffer_mut());
 
@@ -495,7 +497,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Help modal overlay.
     if app.mode == Mode::HelpModal {
-        let overlay = HelpModalOverlay::new(&app.theme);
+        // Keys and the wheel scroll it without knowing how far it goes.
+        app.help_scroll = app.help_scroll.min(super::help_modal::max_scroll(area));
+        let overlay = HelpModalOverlay::new(&app.theme, app.help_scroll);
         frame.render_widget(overlay, area);
     }
 
@@ -617,13 +621,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // Loading overlay with braille spinner.
-    if let Some(ref msg) = app.loading_message {
+    if app.loading() {
         const SPINNER: &[char] = &[
             '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}', '\u{2834}', '\u{2826}',
             '\u{2827}',
         ];
         let frame_char = SPINNER[app.spinner_tick % SPINNER.len()];
-        let display = format!("{} {}", frame_char, msg);
+        let display = format!("{} loading...", frame_char);
         let text_len = display.len() as u16 + 4;
         let w = text_len.max(20).min(area.width);
         let x = area.x + (area.width.saturating_sub(w)) / 2;
@@ -852,18 +856,10 @@ fn render_fps(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(fps_line), fps_area);
 }
 
-fn render_queue(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
-    // Clamp cursor before borrowing visible queue.
-    let vq_len = app.queue.vq_cache.entries.len();
-    if vq_len > 0 && app.queue.cursor >= vq_len {
-        app.queue.cursor = vq_len - 1;
-    }
-
-    let visible = app.visible_queue();
-    let drop_indicator = app.drop_indicator_index();
+fn render_queue(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let selected_indices = app.selected_indices();
     let queue_view = QueueView::new(
-        &visible,
+        app.visible_queue(),
         &app.mode,
         app.queue.cursor,
         app.queue.scroll_offset,
@@ -871,7 +867,7 @@ fn render_queue(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
         &selected_indices,
         app.spinner_tick,
     )
-    .with_drop_indicator(drop_indicator)
+    .with_drop_indicator(app.drop_indicator_index())
     .with_pointer(Some((app.hover.column, app.hover.row)))
     .with_hover(&app.hover.zone)
     .with_favourites(&app.favourites);
@@ -911,14 +907,23 @@ mod tests {
 
     /// An `App` with a queue and a track playing, detached from any real player.
     fn app_with_queue(len: usize) -> App {
+        app_and_player(len).0
+    }
+
+    /// The same, and what it sends the player.
+    fn app_and_player(
+        len: usize,
+    ) -> (
+        App,
+        crossbeam_channel::Receiver<koan_core::player::commands::PlayerCommand>,
+    ) {
         // First, before anything reads configuration: spawning the download
         // queue resolves the remote server, and a render test has no business
         // reaching for anyone's credentials.
         koan_core::config::isolate_config_for_tests();
 
         let state = SharedPlayerState::new();
-        let (tx, _rx) = crossbeam_channel::unbounded();
-        let log_buffer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (tx, rx) = crossbeam_channel::unbounded();
 
         let mut entries: Vec<QueueEntry> = (0..len).map(entry).collect();
         if let Some(first) = entries.first_mut() {
@@ -937,13 +942,7 @@ mod tests {
             }));
         }
 
-        let mut app = App::new(
-            state,
-            koan_core::audio::viz::VizSnapshot::new(),
-            tx,
-            log_buffer,
-            60,
-        );
+        let mut app = App::new(state, koan_core::audio::viz::VizSnapshot::new(), tx, 60);
         app.queue.vq_cache.entries = entries;
         app.queue.vq_version = app.state.playlist_version();
         // Pinned so the sweep does not inherit the developer's own config.
@@ -951,7 +950,7 @@ mod tests {
         app.show_fps = false;
         app.viz_fullscreen = false;
         app.viz_config.enabled = true;
-        app
+        (app, rx)
     }
 
     fn draw(app: &mut App, w: u16, h: u16) {
@@ -1275,6 +1274,193 @@ mod tests {
             modifiers: KeyModifiers::NONE,
         });
         assert_eq!(app.mode, Mode::Normal);
+    }
+
+    fn click(app: &mut App, column: u16, row: u16) {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        });
+    }
+
+    fn key(app: &mut App, code: crossterm::event::KeyCode) {
+        app.handle_key(crossterm::event::KeyEvent::from(code));
+    }
+
+    #[test]
+    fn leaving_the_queue_leaves_editing_it() {
+        use crossterm::event::KeyCode;
+        let mut app = app_with_queue(5);
+        draw(&mut app, 160, 40);
+        key(&mut app, KeyCode::Char('e'));
+        assert_eq!(app.mode, Mode::QueueEdit);
+        let (rect, _) = *app
+            .layout
+            .nav_hits
+            .iter()
+            .find(|(_, t)| *t == NavTarget::Page(Page::Albums))
+            .expect("an albums tab");
+        click(&mut app, rect.x, rect.y);
+        assert_eq!(app.page(), Page::Albums);
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.mode_stack.is_empty());
+        // Keys are the page's again, not the queue editor's.
+        key(&mut app, KeyCode::Char('/'));
+        key(&mut app, KeyCode::Char('x'));
+        assert_eq!(app.albums_page.filter, "x");
+    }
+
+    #[test]
+    fn closing_track_info_returns_to_editing() {
+        use crossterm::event::KeyCode;
+        let mut app = app_with_queue(5);
+        key(&mut app, KeyCode::Char('e'));
+        key(&mut app, KeyCode::Char('i'));
+        assert!(matches!(app.mode, Mode::TrackInfo(_)));
+        key(&mut app, KeyCode::Esc);
+        assert_eq!(app.mode, Mode::QueueEdit);
+        key(&mut app, KeyCode::Esc);
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.mode_stack.is_empty());
+    }
+
+    #[test]
+    fn the_fullscreen_visualiser_hides_what_was_clickable() {
+        use crossterm::event::KeyCode;
+        let mut app = app_with_queue(5);
+        draw(&mut app, 160, 40);
+        let (rect, _) = *app
+            .layout
+            .nav_hits
+            .iter()
+            .find(|(_, t)| *t == NavTarget::Page(Page::Albums))
+            .expect("an albums tab");
+        key(&mut app, KeyCode::Char('F'));
+        draw(&mut app, 160, 40);
+        click(&mut app, rect.x, rect.y);
+        assert_eq!(app.page(), Page::Queue);
+    }
+
+    #[test]
+    fn a_click_off_the_queue_with_no_queue_on_screen_is_harmless() {
+        let mut app = app_with_queue(5);
+        app.go_page(Page::NowPlaying);
+        for (w, h) in [(160u16, 40u16), (60, 20)] {
+            draw(&mut app, w, h);
+            for row in 0..h {
+                for column in [0, w / 2, w - 1] {
+                    click(&mut app, column, row);
+                    if app.mode != Mode::Normal {
+                        app.mode_stack.clear();
+                        app.mode = Mode::Normal;
+                    }
+                    app.go_page(Page::NowPlaying);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_context_menu_border_is_not_its_first_row() {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let mut app = app_with_queue(5);
+        draw(&mut app, 100, 30);
+        let q = app.layout.queue_area;
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column: q.x + 10,
+            row: q.y + 2,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.mode, Mode::ContextMenu);
+        draw(&mut app, 100, 30);
+        let area = app.layout.context_menu_area;
+        click(&mut app, area.x + 2, area.y);
+        assert_eq!(app.mode, Mode::ContextMenu);
+    }
+
+    #[test]
+    fn a_click_closes_the_help_rather_than_reaching_under_it() {
+        use crossterm::event::KeyCode;
+        let mut app = app_with_queue(5);
+        draw(&mut app, 160, 40);
+        let (rect, _) = *app
+            .layout
+            .nav_hits
+            .iter()
+            .find(|(_, t)| *t == NavTarget::Page(Page::Albums))
+            .expect("an albums tab");
+        key(&mut app, KeyCode::Char('?'));
+        draw(&mut app, 160, 40);
+        click(&mut app, rect.x, rect.y);
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.page(), Page::Queue);
+    }
+
+    #[test]
+    fn a_heading_then_its_first_row_is_not_a_double_click() {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let (mut app, player) = app_and_player(3);
+        app.queue.vq_cache.entries[0].status = QueueEntryStatus::Queued;
+        draw(&mut app, 100, 30);
+        // Row 1 of the queue is the record's heading, row 2 its first track.
+        let q = app.layout.queue_area;
+        click(&mut app, q.x + 40, q.y + 1);
+        assert_eq!(app.queue.selected_ids.len(), 3);
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: q.x + 40,
+            row: q.y + 1,
+            modifiers: KeyModifiers::NONE,
+        });
+        click(&mut app, q.x + 40, q.y + 2);
+        assert!(player.try_recv().is_err(), "nothing was played");
+        // The same row twice is.
+        click(&mut app, q.x + 40, q.y + 2);
+        assert!(matches!(
+            player.try_recv(),
+            Ok(koan_core::player::commands::PlayerCommand::Play(_))
+        ));
+    }
+
+    #[test]
+    fn the_picker_closes_before_its_items_arrive() {
+        use crossterm::event::KeyCode;
+        let mut app = app_with_queue(3);
+        key(&mut app, KeyCode::Char('p'));
+        assert!(matches!(app.mode, Mode::Picker(_)));
+        key(&mut app, KeyCode::Esc);
+        assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn a_paste_goes_into_the_field_that_has_the_keys() {
+        use crossterm::event::KeyCode;
+        let mut app = app_with_queue(3);
+        assert!(!app.takes_text());
+        key(&mut app, KeyCode::Char('3'));
+        key(&mut app, KeyCode::Char('/'));
+        assert!(app.takes_text());
+        app.type_text("boards of\ncanada");
+        assert_eq!(app.albums_page.filter, "boards of canada");
+        assert_eq!(app.page(), Page::Albums);
+    }
+
+    #[test]
+    fn the_help_scrolls_no_further_than_its_end() {
+        use crossterm::event::KeyCode;
+        let mut app = app_with_queue(3);
+        key(&mut app, KeyCode::Char('?'));
+        key(&mut app, KeyCode::End);
+        draw(&mut app, 100, 20);
+        let end = app.help_scroll;
+        assert!(end > 0);
+        key(&mut app, KeyCode::Up);
+        draw(&mut app, 100, 20);
+        assert_eq!(app.help_scroll, end - 1);
     }
 
     #[test]

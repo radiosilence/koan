@@ -556,7 +556,9 @@ fn overlays_survive_every_size() {
     let theme = Theme::default();
     let viz = VizPickerState::new(VisualizerMode::Bars);
     for &(w, h) in SIZES {
-        render_widget(HelpModalOverlay::new(&theme), w, h);
+        for scroll in [0, usize::MAX] {
+            render_widget(HelpModalOverlay::new(&theme, scroll), w, h);
+        }
         render_widget(VizPickerOverlay::new(&viz, &theme), w, h);
     }
 }
