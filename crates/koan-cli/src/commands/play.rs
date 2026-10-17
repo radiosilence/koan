@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use koan_core::config;
@@ -14,7 +13,7 @@ use koan_tui::enqueue::enqueue_playlist;
 use koan_tui::play::TuiCallbacks;
 
 use super::{install_terminal_panic_hook, open_db, parse_dropped_paths, playlist_items_from_paths};
-use crate::BufferedLogger;
+use crate::Logger;
 
 /// Options for running the GraphQL/Subsonic API server alongside the TUI.
 pub struct ApiOptions {
@@ -61,8 +60,7 @@ pub fn cmd_play(
         None
     };
 
-    let log_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    BufferedLogger::set_buffer(log_buffer.clone());
+    Logger::set_quiet(true);
 
     let (state, _timeline, viz_snapshot, tx) = Player::spawn_for_listening();
     let tx_quit = tx.clone();
@@ -100,16 +98,19 @@ pub fn cmd_play(
         }
     }
 
-    let mut expects_playback = track_ids.is_some() || !paths.is_empty();
-
-    // What this session starts with, being read on a thread of its own.
+    // What this session starts with, being read on a thread of its own. The
+    // TUI shows "loading" until the thread drops `reading`.
     let mut startup = None;
+    let mut loading = None;
     if let Some(ids) = track_ids {
         let tx_bg = tx.clone();
+        let (reading, done) = crossbeam_channel::bounded::<()>(0);
+        loading = Some(done);
         startup = Some(
             std::thread::Builder::new()
                 .name("koan-resolve".into())
                 .spawn(move || {
+                    let _reading = reading;
                     enqueue_playlist(ids, PickerAction::AppendAndPlay, None, tx_bg);
                 })
                 .expect("failed to spawn resolve thread"),
@@ -123,10 +124,13 @@ pub fn cmd_play(
         }
         let owned_paths: Vec<PathBuf> = paths.to_vec();
         let tx_bg = tx.clone();
+        let (reading, done) = crossbeam_channel::bounded::<()>(0);
+        loading = Some(done);
         startup = Some(
             std::thread::Builder::new()
                 .name("koan-resolve".into())
                 .spawn(move || {
+                    let _reading = reading;
                     let mut audio_paths: Vec<PathBuf> = Vec::new();
                     for path in &owned_paths {
                         if path.is_dir() {
@@ -186,7 +190,6 @@ pub fn cmd_play(
                     state.set_cursor(Some(cid));
                 }
             }
-            expects_playback = true;
         }
     }
 
@@ -238,9 +241,8 @@ pub fn cmd_play(
         state,
         viz_snapshot,
         tx,
-        log_buffer,
         start_in_library,
-        expects_playback,
+        loading,
         callbacks,
     ) {
         eprintln!("{} {}", "tui error:".red().bold(), e);
@@ -251,7 +253,7 @@ pub fn cmd_play(
     koan_core::player::commands::release_renderer(&tx_quit, Duration::from_millis(1500));
     koan_core::remote::control::stop();
 
-    BufferedLogger::clear_buffer();
+    Logger::set_quiet(false);
     std::thread::sleep(Duration::from_millis(100));
 }
 
@@ -303,8 +305,7 @@ pub fn cmd_play_remote(server_url: &str) {
     let (state, _timeline, viz_snapshot, cmd_tx) =
         koan_tui::remote_bridge::spawn_remote_bridge(client);
 
-    let log_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    BufferedLogger::set_buffer(log_buffer.clone());
+    Logger::set_quiet(true);
 
     std::thread::sleep(Duration::from_millis(300));
 
@@ -315,17 +316,9 @@ pub fn cmd_play_remote(server_url: &str) {
         playlist_items_from_paths,
     };
 
-    if let Err(e) = koan_tui::play::run_tui(
-        state,
-        viz_snapshot,
-        cmd_tx,
-        log_buffer,
-        true,
-        false,
-        callbacks,
-    ) {
+    if let Err(e) = koan_tui::play::run_tui(state, viz_snapshot, cmd_tx, true, None, callbacks) {
         eprintln!("{} {}", "tui error:".red().bold(), e);
     }
 
-    BufferedLogger::clear_buffer();
+    Logger::set_quiet(false);
 }

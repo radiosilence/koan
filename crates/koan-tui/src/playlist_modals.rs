@@ -17,8 +17,6 @@ pub enum Purpose {
     /// A new playlist holding these tracks.
     New(Vec<i64>),
     Rename(i64),
-    /// A folder to add to the library.
-    Folder,
 }
 
 pub struct NamePrompt {
@@ -35,7 +33,6 @@ impl NamePrompt {
         match self.purpose {
             Purpose::New(_) => " new playlist ",
             Purpose::Rename(_) => " rename playlist ",
-            Purpose::Folder => " add library folder ",
         }
     }
 }

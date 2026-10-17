@@ -487,7 +487,7 @@ pub fn render_zoom(buf: &mut Buffer, app: &mut App, area: Rect) {
         ),
         (cover.y + rows + 2, subtitle.as_str(), theme.hint_desc),
     ] {
-        let text = super::shell::fit(text, area.width.saturating_sub(4) as usize);
+        let text = super::text::fit(text, area.width.saturating_sub(4) as usize);
         let w = unicode_width::UnicodeWidthStr::width(text.as_ref()) as u16;
         if y < area.y + area.height {
             buf.set_string(area.x + (area.width - w) / 2, y, &text, style);

@@ -150,7 +150,7 @@ pub fn make_album_picker_items(albums: &[queries::AlbumRow]) -> Vec<PickerItem> 
     albums
         .iter()
         .map(|a| {
-            let year = crate::library::album_year(a.date.as_deref());
+            let year = crate::browse::album_year(a.date.as_deref());
             let codec = a.codec.as_deref();
             let mut parts = vec![
                 (a.artist_name.clone(), PickerPartKind::Artist),

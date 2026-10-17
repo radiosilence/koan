@@ -14,7 +14,8 @@ use koan_core::audio::dsp::DspStatus;
 use koan_core::player::state::{PlaybackState, QueueEntry, Repeat, Sleep, TrackInfo};
 use koan_core::remote::devices::Reach;
 
-use super::shell::{Link, Links, fit};
+use super::shell::{Link, Links};
+use super::text::fit;
 use super::theme::Theme;
 
 /// Format audio quality info as a human-readable string.

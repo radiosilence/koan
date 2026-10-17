@@ -1569,8 +1569,12 @@ impl Player {
             Transport::Loaded(session) => {
                 if let Output::Local(local) = &session.output {
                     match fade {
-                        Fade::Short => local.engine.fade_out(),
-                        Fade::Cut => {
+                        // A fade is the render callback's to finish, and a unit
+                        // the system has stopped (an interruption on iOS) never
+                        // calls back: there is nothing to fade, and a fade begun
+                        // would leave the output muted for the resume.
+                        Fade::Short if local.engine.is_running() => local.engine.fade_out(),
+                        _ => {
                             if let Err(e) = local.engine.stop() {
                                 log::error!("pause failed: {}", e);
                                 return;
@@ -1615,7 +1619,9 @@ impl Player {
             return;
         };
         let engine = &local.engine;
-        let resumed = if engine.is_running() || engine.is_silent() {
+        // A fade out the system cut short by stopping the unit never reached
+        // silence, and still has to be undone.
+        let resumed = if engine.is_running() || engine.is_faded_out() {
             self.lead_in_ends = None;
             engine.fade_in()
         } else {
@@ -3299,6 +3305,71 @@ mod tests {
             "nothing held"
         );
         assert_eq!(player.session_release_at, None);
+    }
+
+    /// An output the system can stop underneath the player, as iOS does when
+    /// an interruption begins. Muted from a fade out until a fade in, as the
+    /// real fade is.
+    #[derive(Clone, Default)]
+    struct Interruptible {
+        running: Arc<std::sync::atomic::AtomicBool>,
+        muted: Arc<std::sync::atomic::AtomicBool>,
+    }
+    impl AudioEngineHandle for Interruptible {
+        fn start(&self) -> Result<(), BackendError> {
+            self.running.store(true, Ordering::Relaxed);
+            Ok(())
+        }
+        fn stop(&self) -> Result<(), BackendError> {
+            self.running.store(false, Ordering::Relaxed);
+            Ok(())
+        }
+        fn is_running(&self) -> bool {
+            self.running.load(Ordering::Relaxed)
+        }
+        fn fade_out(&self) {
+            self.muted.store(true, Ordering::Relaxed);
+        }
+        fn fade_in(&self) -> Result<(), BackendError> {
+            self.muted.store(false, Ordering::Relaxed);
+            self.start()
+        }
+        fn is_silent(&self) -> bool {
+            false
+        }
+        fn is_faded_out(&self) -> bool {
+            self.muted.load(Ordering::Relaxed)
+        }
+    }
+
+    #[test]
+    fn pausing_output_the_system_stopped_leaves_nothing_waiting_and_resumes_audibly() {
+        let engine = Interruptible::default();
+        engine.running.store(true, Ordering::Relaxed);
+        let mut player = Player::new();
+        player.transport =
+            Transport::Loaded(test_session(QueueItemId::new(), Box::new(engine.clone())));
+
+        // The interruption stops the unit, then the app pauses.
+        engine.running.store(false, Ordering::Relaxed);
+        player.pause_with(Fade::Short);
+        player.update_playback_state();
+        assert!(!engine.muted.load(Ordering::Relaxed), "no fade begun");
+        assert_eq!(player.next_event(), None, "nothing to wake for");
+        assert!(!player.wants_output(), "so the audio session can go");
+
+        player.resume();
+        assert!(engine.running.load(Ordering::Relaxed));
+        assert!(!engine.muted.load(Ordering::Relaxed), "heard on resuming");
+
+        // Paused with a fade the interruption then cuts short.
+        player.pause_with(Fade::Short);
+        assert!(engine.muted.load(Ordering::Relaxed), "fading");
+        engine.running.store(false, Ordering::Relaxed);
+        player.update_playback_state();
+        assert_eq!(player.next_event(), None);
+        player.resume();
+        assert!(!engine.muted.load(Ordering::Relaxed), "faded back in");
     }
 
     #[test]
