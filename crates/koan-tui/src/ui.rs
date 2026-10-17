@@ -272,10 +272,21 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             let App {
                 playlist_page,
                 theme,
+                queue,
+                favourites,
+                spinner_tick,
+                links,
                 ..
             } = &mut *app;
+            let live = super::playlists_page::Live {
+                queue: &queue.vq_cache.entries,
+                links: Some(links),
+                favourites: Some(favourites),
+                offline: koan_core::remote::offline::active(),
+                spinner: *spinner_tick,
+            };
             match playlist_page {
-                Some(p) => p.render(stage, frame.buffer_mut(), theme, hover),
+                Some(p) => p.render(stage, frame.buffer_mut(), theme, hover, &live),
                 None => {
                     frame.buffer_mut().set_string(
                         stage.x,
@@ -417,6 +428,18 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         }
         Page::Downloads => {
             app.layout.browse_area = stage;
+            let hover = match app.hover.zone {
+                super::app::HoverZone::Downloads(h) => Some(h),
+                _ => None,
+            };
+            let App {
+                downloads_page,
+                state,
+                theme,
+                ..
+            } = &mut *app;
+            downloads_page.refresh(state);
+            downloads_page.render(stage, frame.buffer_mut(), theme, hover);
         }
     }
 
@@ -452,20 +475,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if app.mode == Mode::ContextMenu
         && let Some(ref menu) = app.context_menu
     {
-        let click_col = if app.hover.column > 0 {
-            Some(app.hover.column)
-        } else {
-            None
-        };
-        let click_row = if app.hover.row > 0 {
-            Some(app.hover.row)
-        } else {
-            None
-        };
+        let (click_col, click_row) = menu.at.unzip();
         app.layout.context_menu_area =
             context_menu_rect_at(area, menu.actions.len(), click_col, click_row);
         let mut overlay = ContextMenuOverlay::new(menu, &app.theme);
-        if let (Some(c), Some(r)) = (click_col, click_row) {
+        if let Some((c, r)) = menu.at {
             overlay = overlay.at_position(c, r);
         }
         frame.render_widget(overlay, area);
@@ -1042,15 +1056,17 @@ fn render_queue(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let selected_indices = app.selected_indices();
     let queue_view = QueueView::new(
         app.visible_queue(),
+        &app.queue.layout,
         &app.mode,
         app.queue.cursor,
         app.queue.scroll_offset,
         &app.theme,
-        &selected_indices,
-        app.spinner_tick,
     )
+    .with_facts(&app.queue.facts, koan_core::remote::offline::active())
+    .with_selected(&selected_indices)
+    .with_spinner(app.spinner_tick)
     .with_drop_indicator(app.drop_indicator_index())
-    .with_pointer(Some((app.hover.column, app.hover.row)))
+    .with_links(&app.links)
     .with_hover(&app.hover.zone)
     .with_favourites(&app.favourites);
     frame.render_widget(queue_view, area);
@@ -1127,6 +1143,7 @@ mod tests {
         let mut app = App::new(state, koan_core::audio::viz::VizSnapshot::new(), tx, 60);
         app.queue.vq_cache.entries = entries;
         app.queue.vq_version = app.state.playlist_version();
+        app.relayout_queue();
         // Pinned so the sweep does not inherit the developer's own config.
         app.art_size = 24;
         app.show_fps = false;
@@ -1414,24 +1431,37 @@ mod tests {
 
     #[test]
     fn the_queue_headings_name_links_and_a_row_has_a_menu_button() {
-        use crate::queue::{HeaderLink, QueueView, menu_button_x};
-        let app = app_with_queue(3);
+        use crate::queue::{QueueView, menu_button_x};
+        use crate::shell::Link;
+        let mut app = app_with_queue(3);
+        for (i, e) in app.queue.vq_cache.entries.iter_mut().enumerate() {
+            e.db_id = Some(i as i64 + 1);
+        }
+        app.relayout_queue();
+        draw(&mut app, 120, 30);
+        let area = app.layout.queue_area;
+        // The first line is the heading: " album  artist ... 2024 · 3 tracks".
+        assert_eq!(
+            app.links.at(area.x + 1, area.y),
+            Some(Link::AlbumOfTrack(1))
+        );
+        assert_eq!(
+            app.links.at(area.x + 1 + "album  ".len() as u16, area.y),
+            Some(Link::ArtistOfTrack(1))
+        );
+        assert_eq!(app.links.at(area.x + 40, area.y), None);
+        // A track's heart is its own hit.
         let entries = &app.queue.vq_cache.entries;
-        let area = Rect::new(0, 0, 80, 20);
-        // Row 1 is the heading: " artist \u{2014} (2024) album [FLAC]".
-        assert_eq!(
-            QueueView::header_link_at(entries, area, 0, 2, 1),
-            Some((0, HeaderLink::Artist))
+        let heart = (area.x..area.x + area.width)
+            .find(|&x| {
+                QueueView::heart_at(entries, &app.queue.layout, area, 0, x, area.y + 1).is_some()
+            })
+            .expect("a heart column");
+        assert!(
+            heart > area.x + 40,
+            "the heart sits at the right, among the figures"
         );
-        let album_col = 1 + "artist".len() as u16 + 3 + "(2024) ".len() as u16;
-        assert_eq!(
-            QueueView::header_link_at(entries, area, 0, album_col + 1, 1),
-            Some((0, HeaderLink::Album))
-        );
-        // Off the text, and on a track row, there is no link.
-        assert_eq!(QueueView::header_link_at(entries, area, 0, 70, 1), None);
-        assert_eq!(QueueView::header_link_at(entries, area, 0, 2, 2), None);
-        assert_eq!(menu_button_x(area), 77);
+        assert_eq!(menu_button_x(area), area.x + area.width - 3);
     }
 
     #[test]
@@ -1588,22 +1618,22 @@ mod tests {
         let (mut app, player) = app_and_player(3);
         app.queue.vq_cache.entries[0].status = QueueEntryStatus::Queued;
         draw(&mut app, 100, 30);
-        // Row 1 of the queue is the record's heading, row 2 its first track.
+        // The queue's first row is the album's heading, the next its first track.
         let q = app.layout.queue_area;
-        click(&mut app, q.x + 40, q.y + 1);
+        click(&mut app, q.x + 40, q.y);
         assert_eq!(app.queue.selected_ids.len(), 3);
         app.handle_mouse(MouseEvent {
             kind: MouseEventKind::Up(MouseButton::Left),
             column: q.x + 40,
-            row: q.y + 1,
+            row: q.y,
             modifiers: KeyModifiers::NONE,
         });
-        click(&mut app, q.x + 40, q.y + 2);
+        click(&mut app, q.x + 40, q.y + 1);
         // Commands reach the player through the router's thread.
         let wait = std::time::Duration::from_millis(150);
         assert!(player.recv_timeout(wait).is_err(), "nothing was played");
         // The same row twice is.
-        click(&mut app, q.x + 40, q.y + 2);
+        click(&mut app, q.x + 40, q.y + 1);
         assert!(matches!(
             player.recv_timeout(wait * 3),
             Ok(koan_core::player::commands::PlayerCommand::Play(_))

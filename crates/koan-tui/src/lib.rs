@@ -14,6 +14,7 @@ pub mod context_menu;
 pub mod control;
 pub mod cover_art;
 pub mod device_selector;
+pub mod downloads_page;
 pub mod dsp_selector;
 #[cfg(test)]
 mod dumps;
@@ -43,6 +44,7 @@ pub mod text;
 pub mod theme;
 pub mod thumb_cache;
 pub mod track_info;
+pub mod track_rows;
 pub mod transport;
 pub mod ui;
 pub mod visualizer;

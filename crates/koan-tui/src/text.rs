@@ -83,11 +83,15 @@ pub fn fit_pad_right(text: &str, width: usize) -> String {
 
 /// "1 album", "3 albums".
 pub fn count(n: u64, noun: &str) -> String {
-    if n == 1 {
-        format!("1 {noun}")
-    } else {
-        format!("{n} {noun}s")
+    let digits = n.to_string();
+    let mut grouped = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(c);
     }
+    format!("{grouped} {noun}{}", if n == 1 { "" } else { "s" })
 }
 
 /// Bytes as a person reads them.
@@ -99,10 +103,11 @@ pub fn bytes(n: u64) -> String {
         v /= 1000.0;
         unit += 1;
     }
-    if unit == 0 {
-        format!("{n} bytes")
-    } else {
-        format!("{v:.1} {}", UNITS[unit])
+    // A decimal only while the number is small: "4.2 MB", "451 MB".
+    match unit {
+        0 => format!("{n} bytes"),
+        _ if v < 10.0 => format!("{v:.1} {}", UNITS[unit]),
+        _ => format!("{v:.0} {}", UNITS[unit]),
     }
 }
 
@@ -128,6 +133,8 @@ mod tests {
         assert_eq!(count(3, "album"), "3 albums");
         assert_eq!(bytes(999), "999 bytes");
         assert_eq!(bytes(1_500_000), "1.5 MB");
+        assert_eq!(bytes(451_000_000), "451 MB");
+        assert_eq!(count(1204, "track"), "1,204 tracks");
     }
 
     #[test]

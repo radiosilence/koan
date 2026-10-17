@@ -9,9 +9,7 @@ use ratatui::layout::{Margin, Position, Rect};
 
 use koan_core::player::commands::PlayerCommand;
 
-use super::{
-    App, ContextMenuState, DragState, HoverZone, Mode, NavTarget, Page, PickerAction, browse, queue,
-};
+use super::{App, DragState, HoverZone, Mode, NavTarget, Page, PickerAction, browse, queue};
 use crate::picker::picker_results_rect;
 use crate::playlists_page::PlAction;
 use crate::transport::TransportBar;
@@ -231,6 +229,7 @@ impl App {
                         .as_ref()
                         .and_then(|m| m.actions.get(at))
                         .map(|a| a.0)
+                        .filter(|a| *a != crate::app::ContextAction::Separator)
                     {
                         self.context_menu = None;
                         self.execute_context_action(action);
@@ -282,8 +281,9 @@ impl App {
         true
     }
 
-    /// A click on a result picks it and a second plays it; a click outside
-    /// closes the picker; the wheel moves through the results.
+    /// A click on a tab shows it, a click on a result picks it and a second
+    /// plays it; a click outside closes the picker; the wheel moves through
+    /// the results.
     fn picker_mouse(&mut self, event: MouseEvent) {
         let (col, row) = (event.column, event.row);
         match event.kind {
@@ -298,17 +298,26 @@ impl App {
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => {
-                let results = picker_results_rect(self.layout.picker_area);
-                if !hit(self.layout.picker_area, col, row) {
+                let area = self.layout.picker_area;
+                if !hit(area, col, row) {
                     self.close_picker();
                     return;
                 }
+                let Some(picker) = self.picker.as_mut() else {
+                    return;
+                };
+                let labels = picker.tab_labels();
+                if let Some(tab) = crate::picker::picker_tab_rects(area, &labels)
+                    .iter()
+                    .position(|r| hit(*r, col, row))
+                {
+                    picker.set_tab(tab);
+                    return;
+                }
+                let results = picker_results_rect(area, !labels.is_empty());
                 if !hit(results, col, row) {
                     return;
                 }
-                let Some(picker) = self.picker.as_ref() else {
-                    return;
-                };
                 // The results scroll as the overlay draws them: the cursor
                 // on the last row once it is past the first screen.
                 let shown = results.height as usize;
@@ -317,13 +326,14 @@ impl App {
                 if at >= picker.matched_count() {
                     return;
                 }
+                // A click picks or lets go; a second plays that row alone.
                 if self.double_click(Click::PickerRow(at)) {
                     if let Some(picker) = self.picker.as_mut() {
-                        picker.cursor = at;
+                        picker.pick_only(at);
                     }
                     self.confirm_picker(PickerAction::AppendAndPlay);
                 } else if let Some(picker) = self.picker.as_mut() {
-                    picker.cursor = at;
+                    picker.toggle_at(at);
                 }
             }
             _ => {}
@@ -497,15 +507,20 @@ impl App {
                 self.browse_drag |= dragging;
                 self.apply_browse(action);
             }
-            Page::Queue | Page::NowPlaying | Page::Downloads => {}
+            Page::Downloads => {
+                if let Some(hit) = self.downloads_page.hit(col, row) {
+                    let action = self.downloads_page.click(hit);
+                    self.apply_browse(action);
+                }
+            }
+            Page::Queue | Page::NowPlaying => {}
         }
     }
 
-    /// The queue's scrollbar: the last column of the queue, below its
-    /// heading.
+    /// The queue's scrollbar: the last column of the queue.
     fn on_queue_scrollbar(&self, col: u16, row: u16) -> bool {
         let q = self.layout.queue_area;
-        q.width > 0 && col == q.x + q.width - 1 && row > q.y && row < q.y + q.height
+        q.width > 0 && col == q.x + q.width - 1 && row >= q.y && row < q.y + q.height
     }
 
     /// A click on the queue's scrollbar: on the thumb it takes hold of it
@@ -513,7 +528,7 @@ impl App {
     /// middle. In eighths of a cell, as the bar is drawn.
     fn grab_queue_scrollbar(&mut self, row: u16) {
         let visible_height = self.queue_visible_height();
-        let total_lines = queue::display_line_count(self.visible_queue());
+        let total_lines = queue::display_line_count(&self.queue.layout);
         if total_lines <= visible_height || visible_height == 0 {
             return;
         }
@@ -526,7 +541,7 @@ impl App {
         } else {
             0
         };
-        let click_8 = (row - (self.layout.queue_area.y + 1)) as usize * 8 + 4;
+        let click_8 = (row - self.layout.queue_area.y) as usize * 8 + 4;
         if click_8 >= thumb_top_8 && click_8 < thumb_top_8 + thumb_8 {
             self.scrollbar_grab_offset = Some((click_8 - thumb_top_8) as u16);
         } else {
@@ -535,21 +550,22 @@ impl App {
         }
     }
 
-    /// A click in the queue: a heading's links and its group, a row's menu
-    /// button, or a row. A second click plays; a press starts a drag.
+    /// A click in the queue: a row's heart or menu button, a heading's
+    /// group, or a row. A second click plays; a press starts a drag. The
+    /// names are the shell's links.
     fn queue_click(&mut self, event: MouseEvent) {
         let (col, row) = (event.column, event.row);
         let area = self.layout.queue_area;
         let scroll = self.queue.scroll_offset;
-        let visible = self.visible_queue();
-        if let Some((first, link)) =
-            queue::QueueView::header_link_at(visible, area, scroll, col, row)
+        let layout = &self.queue.layout;
+        let visible = &self.queue.vq_cache.entries;
+        if let Some(id) = queue::QueueView::heart_at(visible, layout, area, scroll, col, row)
+            .and_then(|i| visible[i].db_id)
         {
-            let db_id = visible.get(first).and_then(|e| e.db_id);
-            self.open_entry_link(db_id, link);
+            self.toggle_favourite(id);
             return;
         }
-        let at = queue::QueueView::queue_index_at_y(visible, area, scroll, row);
+        let at = queue::QueueView::queue_index_at_y(layout, area, scroll, row);
         if let Some(idx) = at
             && col == queue::menu_button_x(area)
         {
@@ -557,24 +573,20 @@ impl App {
             return;
         }
         let Some(idx) = at else {
-            let Some((first, last)) =
-                queue::QueueView::album_group_at_y(visible, area, scroll, row)
+            let Some((first, last)) = queue::QueueView::album_group_at_y(layout, area, scroll, row)
             else {
                 return;
             };
             if self.double_click(Click::QueueHeading(first)) {
-                // A second click on a heading plays the record from its top.
+                // A second click on a heading plays the album from its top.
                 self.queue.cursor = first;
                 self.play_at_cursor();
             } else {
                 self.select_group(first, last);
-                // A drag from here moves the record.
+                // A drag from here moves the album.
                 self.queue.drag = Some(DragState {
-                    from_index: first,
-                    current_y: row,
-                    multi: true,
                     anchor_offset: 0,
-                    last_group_start: Some(first),
+                    group_start: first,
                 });
             }
             return;
@@ -601,15 +613,20 @@ impl App {
         }
         self.queue.cursor = idx;
 
-        let first = self.selected_indices().into_iter().min().unwrap_or(idx);
-        let multi = self.queue.selected_ids.len() > 1;
-        self.queue.drag = Some(DragState {
-            from_index: idx,
-            current_y: row,
-            multi,
-            anchor_offset: if multi { idx.saturating_sub(first) } else { 0 },
-            last_group_start: Some(if multi { first } else { idx }),
-        });
+        // A drag moves the selection, with the track grabbed in it.
+        let entries = &self.queue.vq_cache.entries;
+        let selected = &self.queue.selected_ids;
+        self.queue.drag = entries
+            .get(idx)
+            .filter(|e| selected.contains(&e.id))
+            .and_then(|_| entries.iter().position(|e| selected.contains(&e.id)))
+            .map(|first| DragState {
+                anchor_offset: entries[first..idx]
+                    .iter()
+                    .filter(|e| selected.contains(&e.id))
+                    .count(),
+                group_start: first,
+            });
     }
 
     fn is_selected(&self, idx: usize) -> bool {
@@ -667,70 +684,38 @@ impl App {
             self.scroll_to_scrollbar_y(row);
             return;
         }
-        let Some((from_index, anchor_offset)) = self.queue.drag.as_mut().map(|d| {
-            d.current_y = row;
-            (d.from_index, d.anchor_offset)
-        }) else {
-            return;
-        };
-        if !hit(self.layout.queue_area, event.column, row) {
+        if self.queue.drag.is_none() || !hit(self.layout.queue_area, event.column, row) {
             return;
         }
-        let Some(to_idx) = queue::QueueView::queue_index_at_y(
-            self.visible_queue(),
+        let Some(idx) = queue::QueueView::queue_index_at_y(
+            &self.queue.layout,
             self.layout.queue_area,
             self.queue.scroll_offset,
             row,
         ) else {
             return;
         };
-
         if self.mode == Mode::QueueEdit {
             // Editing, a drag extends the selection, for terminals that
             // report no Shift with a click.
-            self.extend_selection_to(to_idx);
-            self.queue.cursor = to_idx;
+            self.extend_selection_to(idx);
+            self.queue.cursor = idx;
             return;
         }
-
-        // Otherwise it reorders live, the rows moving as the pointer crosses
-        // them.
-        if self.queue.selected_ids.len() > 1 {
-            // The group's start that keeps the row grabbed under the pointer.
-            let desired_start = to_idx.saturating_sub(anchor_offset);
-            if self.queue.drag.as_ref().and_then(|d| d.last_group_start) == Some(desired_start) {
-                return;
-            }
-            self.begin_drag_undo();
-            let indices = self.selected_indices();
-            let count = indices.len();
-            let first = indices.into_iter().min().unwrap_or(0);
-            let target = if desired_start > first {
-                // Moving down: after the row the group's end lands on.
-                (desired_start + count - 1).min(self.visible_queue().len().saturating_sub(1))
-            } else {
-                desired_start
-            };
-            self.send_move_selected(target);
-            if let Some(drag) = self.queue.drag.as_mut() {
-                drag.last_group_start = Some(desired_start);
-            }
-        } else if to_idx != from_index {
-            self.begin_drag_undo();
-            // The dragged track's id before the move: the snapshot is not
-            // re-derived until the next frame, and the row at `to_idx` is
-            // still the one it displaces.
-            let dragged = self.queue.vq_cache.entries.get(from_index).map(|e| e.id);
-            self.send_move(from_index, to_idx);
-            self.queue.cursor = to_idx;
-            self.queue.selected_ids.clear();
-            if let Some(id) = dragged {
-                self.queue.selected_ids.insert(id);
-                self.queue.anchor_id = Some(id);
-            }
-            if let Some(drag) = self.queue.drag.as_mut() {
-                drag.from_index = to_idx;
-            }
+        // Otherwise it reorders live: the selection follows the pointer, the
+        // grabbed track under it.
+        let Some(drag) = self.queue.drag.as_mut() else {
+            return;
+        };
+        let start = idx.saturating_sub(drag.anchor_offset);
+        if start == drag.group_start {
+            return;
+        }
+        drag.group_start = start;
+        let grabbed = drag.anchor_offset;
+        self.begin_drag_undo();
+        if let Some(start) = self.place_selected(start) {
+            self.queue.cursor = start + grabbed;
         }
     }
 
@@ -760,21 +745,15 @@ impl App {
         }
         let area = self.layout.queue_area;
         let scroll = self.queue.scroll_offset;
-        let visible = self.visible_queue();
-        if let Some(idx) = queue::QueueView::queue_index_at_y(visible, area, scroll, row) {
+        let layout = &self.queue.layout;
+        if let Some(idx) = queue::QueueView::queue_index_at_y(layout, area, scroll, row) {
             self.open_queue_menu(idx, col, row);
         } else if let Some((first, last)) =
-            queue::QueueView::album_group_at_y(visible, area, scroll, row)
+            queue::QueueView::album_group_at_y(layout, area, scroll, row)
         {
-            // On a heading: the record's menu, favourited only if all of it is.
+            // On a heading: the menu is for the whole album.
             self.select_group(first, last);
-            let all_fav = self
-                .visible_queue()
-                .get(first..=last)
-                .unwrap_or_default()
-                .iter()
-                .all(|e| e.db_id.is_some_and(|id| self.favourites.contains(&id)));
-            self.open_context_menu_at(all_fav, col, row);
+            self.open_context_menu(Some((col, row)), true);
         }
     }
 
@@ -785,25 +764,7 @@ impl App {
             self.select_single(idx);
         }
         self.queue.cursor = idx;
-        let fav = self
-            .visible_queue()
-            .get(idx)
-            .and_then(|e| e.db_id)
-            .is_some_and(|id| self.favourites.contains(&id));
-        self.open_context_menu_at(fav, col, row);
-    }
-
-    fn open_context_menu_at(&mut self, favourite: bool, col: u16, row: u16) {
-        let actions = self.build_context_actions(if favourite {
-            "Unfavourite"
-        } else {
-            "Favourite"
-        });
-        self.context_menu = Some(ContextMenuState { actions, cursor: 0 });
-        self.push_mode(Mode::ContextMenu);
-        // Where it opens.
-        self.hover.column = col;
-        self.hover.row = row;
+        self.open_context_menu(Some((col, row)), false);
     }
 
     fn scroll(&mut self, event: MouseEvent, delta: isize) {
@@ -811,6 +772,7 @@ impl App {
         if self.page() != Page::Queue && hit(self.layout.browse_area, col, row) {
             match self.page() {
                 Page::Playlists => self.playlists_page.scroll_by(3 * delta),
+                Page::Downloads => self.downloads_page.scroll_by(delta),
                 Page::Playlist(_) => {
                     if let Some(p) = self.playlist_page.as_mut() {
                         p.scroll_by(3 * delta);
@@ -835,7 +797,7 @@ impl App {
                 }
             }
         } else if self.page() == Page::Queue {
-            let total = queue::display_line_count(self.visible_queue());
+            let total = queue::display_line_count(&self.queue.layout);
             let max = total.saturating_sub(self.queue_visible_height());
             self.queue.scroll_offset = self
                 .queue
@@ -863,7 +825,7 @@ impl App {
         if hit(layout.queue_area, col, row)
             && !self.on_queue_scrollbar(col, row)
             && let Some(idx) = queue::QueueView::queue_index_at_y(
-                self.visible_queue(),
+                &self.queue.layout,
                 layout.queue_area,
                 self.queue.scroll_offset,
                 row,
@@ -887,6 +849,7 @@ impl App {
                     .and_then(|p| p.hit(col, row))
                     .map(HoverZone::Shelf),
                 Page::History => self.history_page.hit(col, row).map(HoverZone::History),
+                Page::Downloads => self.downloads_page.hit(col, row).map(HoverZone::Downloads),
                 Page::Settings => self.settings_page.hit(col, row).map(HoverZone::Settings),
                 Page::Album(_) => self
                     .album_page
@@ -908,12 +871,12 @@ impl App {
     /// Scroll the queue based on a click/drag position on the scrollbar.
     /// Uses the same sub-pixel (1/8th-cell) thumb math as queue.rs rendering.
     fn scroll_to_scrollbar_y(&mut self, y: u16) {
-        let inner_y = self.layout.queue_area.y + 1;
+        let inner_y = self.layout.queue_area.y;
         let visible_height = self.queue_visible_height();
         if visible_height == 0 {
             return;
         }
-        let total_lines = queue::display_line_count(self.visible_queue());
+        let total_lines = queue::display_line_count(&self.queue.layout);
         if total_lines <= visible_height {
             return;
         }
@@ -941,7 +904,7 @@ impl App {
             return None; // internal drag takes precedence
         }
         queue::QueueView::queue_index_at_y(
-            self.visible_queue(),
+            &self.queue.layout,
             self.layout.queue_area,
             self.queue.scroll_offset,
             self.last_mouse_row?,
