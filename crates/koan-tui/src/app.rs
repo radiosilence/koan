@@ -112,6 +112,8 @@ pub enum PickerAction {
     PlayNext,
     /// Clear queue, add tracks, play from the top.
     ReplaceQueue,
+    /// Replace the queue and play it shuffled.
+    Shuffle,
 }
 
 pub struct DragState {
@@ -1628,8 +1630,7 @@ impl App {
             browse::Action::OpenAlbum(id) => self.go_page(Page::Album(id)),
             browse::Action::OpenArtist(id) => self.go_page(Page::Artist(id)),
             browse::Action::Shuffle(ids) => {
-                self.tx.send(PlayerCommand::SetShuffle(true)).ok();
-                self.picker_result = Some((PickerKind::Track, ids, PickerAction::ReplaceQueue));
+                self.picker_result = Some((PickerKind::Track, ids, PickerAction::Shuffle));
             }
             browse::Action::ToggleAlbum(id) => {
                 self.toggle_collection_favourite(koan_core::helpers::FavouriteKind::Album, id)
