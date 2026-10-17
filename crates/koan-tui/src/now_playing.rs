@@ -29,6 +29,9 @@ const COVER_MIN_WIDTH: u16 = 48;
 /// path and the two meters, with a gap before each block.
 const TEXT_ROWS: u16 = 10;
 
+/// A response curve and the profile it is the curve of.
+type Curve = (String, Vec<f64>);
+
 /// The curve the page plots, worked out on a thread of its own whenever the
 /// profile, the rate or the profiles it is built from change: building a
 /// profile can read and resample impulse files, which no frame can wait for.
@@ -37,8 +40,8 @@ const TEXT_ROWS: u16 = 10;
 pub struct EqCurve {
     made_for: Option<(String, u32, Arc<Config>)>,
     /// The curve shown, with the profile it is the curve of.
-    total: Option<(String, Vec<f64>)>,
-    pending: Option<Receiver<Option<(String, Vec<f64>)>>>,
+    total: Option<Curve>,
+    pending: Option<Receiver<Option<Curve>>>,
 }
 
 impl EqCurve {
