@@ -56,7 +56,7 @@ The transport bar sits at the foot. Drag the hairline above it to resize the cov
 
 ## Browsing records
 
-Albums, Favourites and Recent draw each record as a tile. `v` switches to rows (tracks, on Favourites and Recent). `o` cycles the order on Albums: artist, date added, title, year. `/` filters what is shown; the heading's `/ filter` does the same with a click.
+Albums, Favourites and Recent draw each record as a tile. `v` switches to rows (tracks, on Favourites and Recent). `o` cycles the order on Albums: artist, date added, title, year. `/` filters what is shown by name; the heading's `/ filter` does the same with a click. `Ctrl+F`, or `filters` in the heading, opens the apps' browse filters as a panel: lossless, downloaded, codec, genre and decade. Each row is a key (`Enter`, `←` `→`) or a click; the genre row opens a list that narrows as you type. One set of filters applies to all three pages, and the heading counts how many are on. They apply to records, so they are not offered while a page shows tracks.
 
 | Key | Action |
 |-----|--------|

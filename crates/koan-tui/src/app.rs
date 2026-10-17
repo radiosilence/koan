@@ -18,6 +18,7 @@ use super::accent::{self, Accent};
 use super::actions_menu::ActionsMenu;
 use super::album_page::{AlbumHit, AlbumPage};
 use super::browse::{self, Browse, Source};
+use super::browse_filter::{FilterPanel, Filters};
 use super::history_page::{HistoryHit, HistoryPage};
 use super::library::{self, LibraryState};
 use super::lyrics::LyricsState;
@@ -53,6 +54,8 @@ pub enum Mode {
     PlaylistChooser,
     /// The things that can be done with what the cursor is on.
     ActionsMenu,
+    /// What narrows the record pages.
+    FilterPanel,
     HelpModal,
     VizPicker,
 }
@@ -274,6 +277,9 @@ pub struct App {
     pub name_prompt: Option<NamePrompt>,
     pub chooser: Option<Chooser>,
     pub actions_menu: Option<ActionsMenu>,
+    pub filter_panel: Option<FilterPanel>,
+    /// The filters on the record pages, shared by them as the apps' are.
+    pub browse_filters: Filters,
     pub settings_page: SettingsPage,
     /// A drag that began on a page's scrollbar.
     browse_drag: bool,
@@ -434,6 +440,8 @@ impl App {
             name_prompt: None,
             chooser: None,
             actions_menu: None,
+            filter_panel: None,
+            browse_filters: Filters::default(),
             settings_page: SettingsPage::new(),
             browse_drag: false,
             thumbs: browse::Thumbs::new(),
@@ -905,6 +913,7 @@ impl App {
             Mode::NamePrompt => self.handle_name_prompt_key(key),
             Mode::PlaylistChooser => self.handle_chooser_key(key),
             Mode::ActionsMenu => self.handle_actions_menu_key(key),
+            Mode::FilterPanel => self.handle_filter_panel_key(key),
             Mode::HelpModal => self.handle_help_modal_key(key),
             Mode::VizPicker => self.handle_viz_picker_key(key),
             Mode::Normal => self.handle_page_key(key),
@@ -1259,6 +1268,91 @@ impl App {
         self.push_mode(Mode::PlaylistChooser);
     }
 
+    fn close_filter_panel(&mut self) {
+        self.filter_panel = None;
+        self.pop_mode();
+    }
+
+    /// Carries the panel's filters to the record pages.
+    fn filters_changed(&mut self) {
+        let Some(panel) = self.filter_panel.as_ref() else {
+            return;
+        };
+        self.browse_filters = panel.filters.clone();
+        for page in [
+            &mut self.albums_page,
+            &mut self.favourites_page,
+            &mut self.recent_page,
+        ] {
+            page.set_filters(&self.browse_filters);
+        }
+        if let Some(browse) = self.browse_mut() {
+            browse.ensure_loaded();
+        }
+    }
+
+    fn handle_filter_panel_key(&mut self, key: KeyEvent) {
+        let Some(panel) = self.filter_panel.as_mut() else {
+            self.pop_mode();
+            return;
+        };
+        let picking = panel.picking();
+        let changed = match key.code {
+            KeyCode::Esc if picking => {
+                panel.back();
+                false
+            }
+            KeyCode::Esc => {
+                self.close_filter_panel();
+                return;
+            }
+            KeyCode::Up => {
+                panel.move_by(-1);
+                false
+            }
+            KeyCode::Down => {
+                panel.move_by(1);
+                false
+            }
+            KeyCode::Enter if picking => {
+                let at = panel.pick_cursor();
+                panel.choose(at)
+            }
+            KeyCode::Backspace if picking => {
+                panel.backspace();
+                false
+            }
+            KeyCode::Char(c) if picking && !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                panel.type_char(c);
+                false
+            }
+            KeyCode::Char('q') => {
+                self.close_filter_panel();
+                return;
+            }
+            KeyCode::Char('k') => {
+                panel.move_by(-1);
+                false
+            }
+            KeyCode::Char('j') => {
+                panel.move_by(1);
+                false
+            }
+            KeyCode::Left | KeyCode::Char('h') => panel.activate(panel.cursor, false),
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter | KeyCode::Char(' ') => {
+                panel.activate(panel.cursor, true)
+            }
+            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.close_filter_panel();
+                return;
+            }
+            _ => false,
+        };
+        if changed {
+            self.filters_changed();
+        }
+    }
+
     fn close_actions_menu(&mut self) {
         self.actions_menu = None;
         self.pop_mode();
@@ -1457,6 +1551,10 @@ impl App {
             }
             browse::Action::Info(id) => self.open_track_details(id),
             browse::Action::Choose(ids) => self.open_chooser(ids),
+            browse::Action::OpenFilters => {
+                self.filter_panel = Some(FilterPanel::new(self.browse_filters.clone()));
+                self.push_mode(Mode::FilterPanel);
+            }
             browse::Action::Menu(title, items) => {
                 self.actions_menu = Some(ActionsMenu::new(title, items));
                 self.push_mode(Mode::ActionsMenu);
@@ -2642,6 +2740,37 @@ impl App {
                     }
                 }
                 _ => {}
+            }
+            return;
+        }
+
+        if self.mode == Mode::FilterPanel {
+            let area = self.layout.modal_area;
+            let inner = ratatui::layout::Rect::new(
+                area.x + 1,
+                area.y + 1,
+                area.width.saturating_sub(2),
+                area.height.saturating_sub(2),
+            );
+            if let MouseEventKind::Down(MouseButton::Left) = event.kind {
+                if !self.is_in_rect(event.column, event.row, area) {
+                    if !self.filter_panel.as_mut().is_some_and(|p| p.back()) {
+                        self.close_filter_panel();
+                    }
+                } else if self.is_in_rect(event.column, event.row, inner) {
+                    let row = (event.row - inner.y) as usize;
+                    let changed = self.filter_panel.as_mut().is_some_and(|panel| {
+                        if panel.picking() {
+                            let at = panel.pick_top(inner.height as usize) + row;
+                            panel.choose(at)
+                        } else {
+                            panel.activate(row, true)
+                        }
+                    });
+                    if changed {
+                        self.filters_changed();
+                    }
+                }
             }
             return;
         }

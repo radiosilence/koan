@@ -77,6 +77,9 @@ pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
                         ("/", "filter"),
                         ("v", "view"),
                     ];
+                    if !matches!(page, Page::Artist(_)) {
+                        hints.push(("C-f", "filters"));
+                    }
                     if page == Page::Albums {
                         hints.push(("o", "sort"));
                     }
@@ -157,6 +160,11 @@ pub fn hints(mode: &Mode, page: Page) -> Vec<(&'static str, &'static str)> {
             Mode::TrackInfo(_) | Mode::TrackDetails => vec![("esc", "close"), ("i", "close")],
             Mode::CoverArtZoom => vec![("esc", "close"), ("z", "close")],
             Mode::NamePrompt => vec![("ret", "keep"), ("esc", "cancel")],
+            Mode::FilterPanel => vec![
+                ("\u{2191}\u{2193}", "navigate"),
+                ("ret", "change"),
+                ("esc", "close"),
+            ],
             Mode::ActionsMenu => vec![
                 ("\u{2191}\u{2193}", "navigate"),
                 ("ret", "do it"),

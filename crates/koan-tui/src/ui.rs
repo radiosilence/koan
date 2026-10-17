@@ -459,6 +459,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.render_widget(overlay, area);
     }
 
+    if app.mode == Mode::FilterPanel
+        && let Some(ref panel) = app.filter_panel
+    {
+        app.layout.modal_area = super::browse_filter::panel_rect(area, panel.lines());
+        let overlay = super::browse_filter::FilterPanelOverlay::new(panel, &app.theme);
+        frame.render_widget(overlay, area);
+    }
+
     if app.mode == Mode::ActionsMenu
         && let Some(ref menu) = app.actions_menu
     {
