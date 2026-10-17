@@ -2317,10 +2317,18 @@ impl App {
             }
             ContextAction::Download => {
                 let ids = self.queue_choice();
+                if ids.is_empty() {
+                    self.say("that track is not in the library");
+                    return;
+                }
                 self.apply_browse(browse::Action::Download(ids));
             }
             ContextAction::RemoveDownload => {
                 let ids = self.queue_choice();
+                if ids.is_empty() {
+                    self.say("that track is not in the library");
+                    return;
+                }
                 self.apply_browse(browse::Action::RemoveDownload(ids));
             }
         }

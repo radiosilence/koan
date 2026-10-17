@@ -210,6 +210,7 @@ Click the arrows beside a value, or the value, to change it, or `run` to start a
 | Right-click | Append to the queue (also `a`, and the hint bar) |
 | Wheel | Scroll |
 | Click `sort:` or `view:` in the heading | Cycle the order, switch tiles and rows |
+| Click `⋯ actions` in the heading | Open the menu for what the cursor is on (also `m`) |
 | Click the sidebar or tab bar | Open that page, or go back or forward |
 | Click a key hint along the foot | The same as pressing that key |
 | Drag the scrollbar | Scroll |

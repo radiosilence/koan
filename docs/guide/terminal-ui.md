@@ -30,7 +30,7 @@ As in the apps, a record and an artist can be favourites as well as tracks. `f` 
 
 ## The actions menu
 
-Every action with a key has a way to reach it by pointer. `m`, or `⋯ actions` in the heading of the browsing pages, an album page and History, opens a menu for what the cursor is on: play, add to the queue, play next, replace the queue, add to a playlist, favourite the record or the artist, go to the record or the artist, track info, download, and remove the download. `Enter` or a click does one; `Esc` or a click outside closes it. The queue's own menu (the `⋯` at the end of a row) offers the same where it applies.
+Every action with a key has a way to reach it by pointer. `m`, or `⋯ actions` in the heading of the browsing pages, an album page and History, opens a menu for what the cursor is on. What it offers depends on the page: playing, queueing and putting next everywhere, replacing the queue on the browsing pages, adding to a playlist, favouriting (the artist as well as the record on the browsing pages), going to the record or the artist, track info, downloading and removing the download. `Enter` or a click does one; `Esc` or a click outside closes it. The queue's own menu (the `⋯` at the end of a row) offers the same where it applies.
 
 ## Playlists
 
