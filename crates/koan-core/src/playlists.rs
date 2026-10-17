@@ -315,7 +315,8 @@ pub fn follow_edit(
 /// sync has not reached, or ones the server lists in no album. The local copy
 /// holds the rest; a push puts those songs back where they were (see
 /// [`keep_unknown`]), so koan never deletes on the server an entry it could
-/// not show.
+/// not show, and the songs fill in here once the library has them (see
+/// [`fill_missing_songs`]).
 pub fn reconcile_playlists(
     db: &Database,
     client: &SubsonicClient,
@@ -405,6 +406,15 @@ pub fn reconcile_playlists(
                 track_ids.len()
             );
         }
+        let record = queries::ServerSongs {
+            missing: remote_song_ids
+                .iter()
+                .zip(&track_ids)
+                .filter(|(_, t)| t.is_none())
+                .map(|(s, _)| s.clone())
+                .collect(),
+            songs: remote_song_ids,
+        };
         let track_ids: Vec<i64> = track_ids.into_iter().flatten().collect();
 
         // All of it or none: a copy renamed but not refilled, or refilled but
@@ -430,6 +440,7 @@ pub fn reconcile_playlists(
                 &account,
             )?;
             queries::merge_server_tracks(&db.conn, id, &track_ids)?;
+            queries::set_playlist_server_songs(&db.conn, id, &record)?;
             // The rename stamped the local copy as changed; this is the
             // server's copy, so what is here now is what the server has.
             queries::mark_playlist_synced(&db.conn, id, summary.changed.as_deref(), None)
@@ -481,7 +492,54 @@ pub fn reconcile_playlists(
         }
     }
 
+    fill_missing_songs(db);
     out
+}
+
+/// Put the songs a server copy named that the library lacked into their
+/// places once the library has them.
+///
+/// The record (see [`queries::ServerSongs`]) is the server's copy as of the
+/// last pull or push; a playlist whose copy has moved on either side since is
+/// pulled or pushed afresh, which records again. So this needs no request:
+/// what the server holds is already known, only the library has changed.
+fn fill_missing_songs(db: &Database) {
+    let awaiting = match queries::playlists_awaiting_songs(&db.conn) {
+        Ok(awaiting) => awaiting,
+        Err(e) => {
+            log::warn!("could not read the playlists missing songs: {e}");
+            return;
+        }
+    };
+    for (id, record) in awaiting {
+        let filled = queries::atomically(&db.conn, || {
+            let arrived = queries::track_ids_for_remote_ids(&db.conn, &record.missing)?;
+            if arrived.iter().all(Option::is_none) {
+                return Ok(());
+            }
+            let missing = record
+                .missing
+                .iter()
+                .zip(&arrived)
+                .filter(|(_, t)| t.is_none())
+                .map(|(s, _)| s.clone())
+                .collect();
+            let track_ids = queries::track_ids_for_remote_ids(&db.conn, &record.songs)?;
+            let track_ids: Vec<i64> = track_ids.into_iter().flatten().collect();
+            queries::merge_server_tracks(&db.conn, id, &track_ids)?;
+            queries::set_playlist_server_songs(
+                &db.conn,
+                id,
+                &queries::ServerSongs {
+                    songs: record.songs,
+                    missing,
+                },
+            )
+        });
+        if let Err(e) = filled {
+            log::warn!("could not fill in playlist {id}: {e}");
+        }
+    }
 }
 
 /// What a playlist's `remote_id` is relative to: one account on one server.
@@ -550,9 +608,18 @@ fn push(db: &Database, client: &SubsonicClient, account: &str, id: i64) -> Resul
         return Err(());
     }
 
-    // The push replaces the server's copy wholesale, so a song there that the
-    // library does not know would be deleted by it without anyone having
-    // chosen to: this copy never held it. Those go back in where they were.
+    // The push replaces the server's copy wholesale, so a song there that
+    // this copy never held would be deleted by it without anyone having
+    // chosen to. That is one the library does not know, or one it learnt of
+    // after this copy was pulled without it. Those go back in where they were.
+    let missing = match queries::playlist_server_songs(&db.conn, id) {
+        Ok(record) => record.unwrap_or_default().missing,
+        Err(e) => {
+            log::warn!("could not read playlist '{}' to push it: {e}", local.name);
+            return Err(());
+        }
+    };
+    let held = song_ids.clone();
     let song_ids = match remote_id {
         None => song_ids,
         Some(remote_id) => {
@@ -567,7 +634,11 @@ fn push(db: &Database, client: &SubsonicClient, account: &str, id: i64) -> Resul
                 });
             match server {
                 Ok((ids, known)) => {
-                    let known: Vec<bool> = known.iter().map(Option::is_some).collect();
+                    let known: Vec<bool> = ids
+                        .iter()
+                        .zip(&known)
+                        .map(|(id, track)| track.is_some() && !missing.contains(id))
+                        .collect();
                     keep_unknown(&ids, &known, song_ids)
                 }
                 Err(e) => {
@@ -617,6 +688,18 @@ fn push(db: &Database, client: &SubsonicClient, account: &str, id: i64) -> Resul
                         owner.as_deref(),
                         local.public,
                         account,
+                    )?;
+                    queries::set_playlist_server_songs(
+                        &db.conn,
+                        id,
+                        &queries::ServerSongs {
+                            missing: song_ids
+                                .iter()
+                                .filter(|s| !held.contains(s))
+                                .cloned()
+                                .collect(),
+                            songs: song_ids.clone(),
+                        },
                     )?;
                     queries::mark_playlist_synced(
                         &db.conn,
@@ -1379,6 +1462,151 @@ mod tests {
             entries(&db, id).iter().map(|e| e.1).collect::<Vec<_>>(),
             [r1, r9, r2]
         );
+    }
+
+    fn missing(db: &Database, id: i64) -> Option<Vec<String>> {
+        queries::playlist_server_songs(&db.conn, id)
+            .unwrap()
+            .map(|r| r.missing)
+    }
+
+    /// Songs a pulled playlist named before the library had them fill in, in
+    /// the server's order, on the sync after the library gains them, without
+    /// the server being asked for the playlist again.
+    #[test]
+    fn songs_the_library_lacked_fill_in_when_they_arrive() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let r1 = upsert_track(&db.conn, &remote_meta("One", "s1")).unwrap();
+        let r2 = upsert_track(&db.conn, &remote_meta("Two", "s2")).unwrap();
+
+        let server = std::sync::Arc::new(parking_lot::Mutex::new(Server {
+            lists: vec![(
+                "p1".into(),
+                vec!["s1".into(), "s9".into(), "s2".into(), "s8".into()],
+                1,
+            )],
+            ..Default::default()
+        }));
+        let url = serve(server.clone());
+        let client = SubsonicClient::new(&url, "u", "pw");
+        assert_eq!(reconcile_playlists(&db, &client, &url, "u").pulled, 1);
+        let id = queries::playlist_by_remote_id(&db.conn, "p1")
+            .unwrap()
+            .unwrap()
+            .id;
+        let before = entries(&db, id);
+        assert_eq!(before.iter().map(|e| e.1).collect::<Vec<_>>(), [r1, r2]);
+        assert_eq!(missing(&db, id).unwrap(), ["s9", "s8"]);
+
+        // One of the two arrives: it goes in its place, the entries already
+        // there keep theirs, and the other is still missing.
+        let r9 = upsert_track(&db.conn, &remote_meta("Nine", "s9")).unwrap();
+        let fetches = server.lock().fetches;
+        let sync = reconcile_playlists(&db, &client, &url, "u");
+        assert_eq!((sync.pulled, sync.pushed), (0, 0));
+        let now = entries(&db, id);
+        assert_eq!(now.iter().map(|e| e.1).collect::<Vec<_>>(), [r1, r9, r2]);
+        assert_eq!((now[0], now[2]), (before[0], before[1]));
+        assert_eq!(missing(&db, id).unwrap(), ["s8"]);
+
+        let r8 = upsert_track(&db.conn, &remote_meta("Eight", "s8")).unwrap();
+        reconcile_playlists(&db, &client, &url, "u");
+        assert_eq!(
+            entries(&db, id).iter().map(|e| e.1).collect::<Vec<_>>(),
+            [r1, r9, r2, r8]
+        );
+        assert_eq!(missing(&db, id), None);
+        assert_eq!(server.lock().fetches, fetches, "the server was not asked");
+
+        // Filling in took the server's copy, which is no edit to push.
+        let sync = reconcile_playlists(&db, &client, &url, "u");
+        assert_eq!((sync.pulled, sync.pushed), (0, 0));
+        assert!(
+            !queries::get_playlist(&db.conn, id)
+                .unwrap()
+                .unwrap()
+                .unsynced()
+        );
+    }
+
+    /// An edit on the server replaces what is missing with what its new copy
+    /// lacks.
+    #[test]
+    fn a_server_edit_replaces_the_missing_songs() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let r1 = upsert_track(&db.conn, &remote_meta("One", "s1")).unwrap();
+
+        let server = std::sync::Arc::new(parking_lot::Mutex::new(Server {
+            lists: vec![("p1".into(), vec!["s1".into(), "s9".into()], 1)],
+            ..Default::default()
+        }));
+        let url = serve(server.clone());
+        let client = SubsonicClient::new(&url, "u", "pw");
+        reconcile_playlists(&db, &client, &url, "u");
+        let id = queries::playlist_by_remote_id(&db.conn, "p1")
+            .unwrap()
+            .unwrap()
+            .id;
+        assert_eq!(missing(&db, id).unwrap(), ["s9"]);
+
+        {
+            let mut server = server.lock();
+            server.lists[0].1 = vec!["s8".into(), "s1".into()];
+            server.lists[0].2 += 1;
+        }
+        assert_eq!(reconcile_playlists(&db, &client, &url, "u").pulled, 1);
+        assert_eq!(missing(&db, id).unwrap(), ["s8"]);
+
+        // The song only the old copy named is not wanted any more.
+        upsert_track(&db.conn, &remote_meta("Nine", "s9")).unwrap();
+        reconcile_playlists(&db, &client, &url, "u");
+        assert_eq!(
+            entries(&db, id).iter().map(|e| e.1).collect::<Vec<_>>(),
+            [r1]
+        );
+
+        {
+            let mut server = server.lock();
+            server.lists[0].1 = vec!["s1".into()];
+            server.lists[0].2 += 1;
+        }
+        reconcile_playlists(&db, &client, &url, "u");
+        assert_eq!(missing(&db, id), None);
+    }
+
+    /// A playlist edited here before its missing songs arrive keeps the edit,
+    /// and the push neither drops those songs from the server nor stops them
+    /// filling in here.
+    #[test]
+    fn a_local_edit_keeps_the_missing_songs() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let r1 = upsert_track(&db.conn, &remote_meta("One", "s1")).unwrap();
+        let r2 = upsert_track(&db.conn, &remote_meta("Two", "s2")).unwrap();
+
+        let server = std::sync::Arc::new(parking_lot::Mutex::new(Server {
+            lists: vec![("p1".into(), vec!["s1".into(), "s9".into()], 1)],
+            ..Default::default()
+        }));
+        let url = serve(server.clone());
+        let client = SubsonicClient::new(&url, "u", "pw");
+        reconcile_playlists(&db, &client, &url, "u");
+        let id = queries::playlist_by_remote_id(&db.conn, "p1")
+            .unwrap()
+            .unwrap()
+            .id;
+        queries::add_tracks(&db.conn, id, &[r2]).unwrap();
+
+        let r9 = upsert_track(&db.conn, &remote_meta("Nine", "s9")).unwrap();
+        assert_eq!(reconcile_playlists(&db, &client, &url, "u").pushed, 1);
+        assert_eq!(server.lock().lists[0].1, ["s1", "s9", "s2"]);
+        assert_eq!(
+            entries(&db, id).iter().map(|e| e.1).collect::<Vec<_>>(),
+            [r1, r9, r2]
+        );
+        assert_eq!(missing(&db, id), None);
     }
 
     #[test]
