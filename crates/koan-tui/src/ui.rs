@@ -5,10 +5,8 @@ use ratatui::widgets::{Clear, Paragraph, Widget};
 
 use super::app::{App, Mode, NavTarget};
 use super::context_menu::{ContextMenuOverlay, context_menu_rect_at};
-use super::device_selector::DeviceSelectorOverlay;
 use super::help_modal::HelpModalOverlay;
 use super::keys::HintBar;
-use super::library::LibraryView;
 use super::lyrics::LyricsPanel;
 use super::nav::Page;
 use super::organize::{OrganizeOverlay, organize_popup_rect};
@@ -39,6 +37,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Fullscreen visualizer — take the entire frame, skip everything else.
     if app.viz_fullscreen && app.viz_config.enabled {
+        // Nothing else is on screen to be clicked.
+        app.layout = Default::default();
         let viz = VisualizerWidget::new(&mut app.visualizer, &app.theme);
         viz.render(area, frame.buffer_mut());
 
@@ -59,7 +59,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     app.layout.queue_area = Rect::default();
-    app.layout.library_area = Rect::default();
     app.layout.browse_area = Rect::default();
     app.layout.now_playing_art_area = Rect::default();
     app.layout.nav_hits.clear();
@@ -249,7 +248,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             }
         }
         Page::NowPlaying => {
-            heading(frame.buffer_mut(), stage, &app.theme, "now playing", "");
             super::now_playing::render(frame.buffer_mut(), app, stage);
         }
         Page::Playlists => {
@@ -274,31 +272,64 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             let App {
                 playlist_page,
                 theme,
+                queue,
+                favourites,
+                spinner_tick,
+                links,
                 ..
             } = &mut *app;
+            let live = super::playlists_page::Live {
+                queue: &queue.vq_cache.entries,
+                links: Some(links),
+                favourites: Some(favourites),
+                offline: koan_core::remote::offline::active(),
+                spinner: *spinner_tick,
+            };
             match playlist_page {
-                Some(p) => p.render(stage, frame.buffer_mut(), theme, hover),
+                Some(p) => p.render(stage, frame.buffer_mut(), theme, hover, &live),
                 None => {
-                    heading(frame.buffer_mut(), stage, theme, "playlist", "");
                     frame.buffer_mut().set_string(
-                        stage.x + 1,
-                        stage.y + 1,
+                        stage.x,
+                        super::shell::body(stage).y,
                         "this playlist is gone",
                         theme.hint_desc,
                     );
                 }
             }
         }
-        Page::Search => {
+        Page::Search | Page::Favourites | Page::Recent | Page::Downloaded => {
             app.layout.browse_area = stage;
             let hover = match app.hover.zone {
-                super::app::HoverZone::Search(h) => Some(h),
+                super::app::HoverZone::Shelf(h) => Some(h),
                 _ => None,
             };
             let App {
-                search_page, theme, ..
+                search_page,
+                favourites_page,
+                recent_page,
+                downloaded_page,
+                thumbs,
+                art,
+                theme,
+                favourites,
+                nav,
+                ..
             } = &mut *app;
-            search_page.render(stage, frame.buffer_mut(), theme, hover);
+            let page = match nav.current() {
+                Page::Favourites => favourites_page,
+                Page::Recent => recent_page,
+                Page::Downloaded => downloaded_page,
+                _ => search_page,
+            };
+            page.render(
+                stage,
+                frame.buffer_mut(),
+                theme,
+                &mut art.gfx,
+                thumbs,
+                favourites,
+                hover,
+            );
         }
         Page::History => {
             app.layout.browse_area = stage;
@@ -309,9 +340,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             let App {
                 history_page,
                 theme,
+                links,
                 ..
             } = &mut *app;
-            history_page.render(stage, frame.buffer_mut(), theme, hover);
+            history_page.render(stage, frame.buffer_mut(), theme, hover, links);
         }
         Page::Eq => {
             app.layout.browse_area = stage;
@@ -356,17 +388,16 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                     hover,
                 ),
                 None => {
-                    heading(frame.buffer_mut(), stage, theme, "album", "");
                     frame.buffer_mut().set_string(
-                        stage.x + 1,
-                        stage.y + 1,
-                        "this record is not in the library",
+                        stage.x,
+                        super::shell::body(stage).y,
+                        "this album is not in the library",
                         theme.hint_desc,
                     );
                 }
             }
         }
-        Page::Albums | Page::Favourites | Page::Recent | Page::Artist(_) => {
+        Page::Albums | Page::Artists | Page::Tracks | Page::Artist(_) => {
             app.layout.browse_area = stage;
             let hover = match app.hover.zone {
                 super::app::HoverZone::Browse(h) => Some(h),
@@ -374,8 +405,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             };
             let App {
                 albums_page,
-                favourites_page,
-                recent_page,
+                artists_page,
+                tracks_page,
                 artist_page,
                 thumbs,
                 art,
@@ -386,8 +417,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             } = &mut *app;
             let page = match nav.current() {
                 Page::Albums => albums_page,
-                Page::Favourites => favourites_page,
-                Page::Recent => recent_page,
+                Page::Artists => artists_page,
+                Page::Tracks => tracks_page,
                 _ => artist_page,
             };
             page.render(
@@ -400,38 +431,40 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 hover,
             );
         }
-        Page::Tracks | Page::Downloaded | Page::Downloads => {
+        Page::Downloads => {
             app.layout.browse_area = stage;
-        }
-        Page::Artists => {
-            app.layout.library_area = stage;
-            let visible_height = app.library_content_height();
-            if let Some(ref mut lib) = app.library {
-                lib.update_scroll(visible_height);
-                let hover_idx = match &app.hover.zone {
-                    super::app::HoverZone::LibraryItem(idx) => Some(*idx),
-                    _ => None,
-                };
-                let lib_view = LibraryView::new(lib, &app.theme, true).with_hover(hover_idx);
-                frame.render_widget(lib_view, stage);
-            }
+            let hover = match app.hover.zone {
+                super::app::HoverZone::Downloads(h) => Some(h),
+                _ => None,
+            };
+            let App {
+                downloads_page,
+                state,
+                theme,
+                ..
+            } = &mut *app;
+            downloads_page.refresh(state);
+            downloads_page.render(stage, frame.buffer_mut(), theme, hover);
         }
     }
 
-    // Key hints / status message.
+    // Key hints / status message, inside the side gutters.
     app.layout.hint_hits.clear();
+    let foot = super::shell::inset(chunks[3]);
     if let Some((ref msg, _)) = app.status_message {
-        let style = app.theme.hint_key;
+        // The message cut to leave room for how to dismiss it.
+        const DISMISS: &str = "  [esc] dismiss";
+        let room = (foot.width as usize).saturating_sub(DISMISS.len());
         let line = ratatui::text::Line::from(vec![
-            ratatui::text::Span::styled(msg.as_str(), style),
-            ratatui::text::Span::styled("  [Esc] dismiss", app.theme.hint_desc),
+            ratatui::text::Span::styled(super::text::fit(msg, room), app.theme.hint_key),
+            ratatui::text::Span::styled(DISMISS, app.theme.hint_desc),
         ]);
-        frame.render_widget(ratatui::widgets::Paragraph::new(line), chunks[3]);
+        frame.render_widget(ratatui::widgets::Paragraph::new(line), foot);
     } else {
         let filterable = app.browse().is_some_and(|b| b.filterable());
-        app.layout.hint_hits = super::keys::hits(&app.mode, app.page(), filterable, chunks[3]);
+        app.layout.hint_hits = super::keys::hits(&app.mode, app.page(), filterable, foot);
         let hint_bar = HintBar::new(&app.mode, app.page(), filterable, &app.theme);
-        frame.render_widget(hint_bar, chunks[3]);
+        frame.render_widget(hint_bar, foot);
     }
 
     // Picker overlay (on top of everything).
@@ -447,20 +480,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if app.mode == Mode::ContextMenu
         && let Some(ref menu) = app.context_menu
     {
-        let click_col = if app.hover.column > 0 {
-            Some(app.hover.column)
-        } else {
-            None
-        };
-        let click_row = if app.hover.row > 0 {
-            Some(app.hover.row)
-        } else {
-            None
-        };
+        let (click_col, click_row) = menu.at.unzip();
         app.layout.context_menu_area =
             context_menu_rect_at(area, menu.actions.len(), click_col, click_row);
         let mut overlay = ContextMenuOverlay::new(menu, &app.theme);
-        if let (Some(c), Some(r)) = (click_col, click_row) {
+        if let Some((c, r)) = menu.at {
             overlay = overlay.at_position(c, r);
         }
         frame.render_widget(overlay, area);
@@ -477,12 +501,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Device selector overlay.
     if app.mode == Mode::DeviceSelector
-        && let Some(ref selector) = app.device_selector
+        && let Some(picker) = app.device_selector.as_mut()
     {
-        app.layout.selector_area =
-            super::device_selector::device_selector_rect(area, selector.devices.len());
-        let overlay = DeviceSelectorOverlay::new(selector, &app.theme);
-        frame.render_widget(overlay, area);
+        app.layout.selector_area = picker.rect(area);
+        let problem = app.state.renderer().and_then(|r| r.problem);
+        picker.render(area, frame.buffer_mut(), &app.theme, problem.as_deref());
     }
 
     // Play on overlay.
@@ -539,7 +562,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Help modal overlay.
     if app.mode == Mode::HelpModal {
-        let overlay = HelpModalOverlay::new(&app.theme);
+        // Keys and the wheel scroll it without knowing how far it goes.
+        app.help_scroll = app.help_scroll.min(super::help_modal::max_scroll(area));
+        let overlay = HelpModalOverlay::new(&app.theme, app.help_scroll);
         frame.render_widget(overlay, area);
     }
 
@@ -561,37 +586,34 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .find(|e| e.id == id)
             .cloned()
     {
-        let current_track_info = app.state.track_info();
-        let is_playing = entry.status == koan_core::player::state::QueueEntryStatus::Playing;
-        let ti_ref = if is_playing {
-            current_track_info.as_ref()
-        } else {
-            None
-        };
-
-        // Calculate popup rect for mouse hit-testing.
-        let popup_width = (area.width as f32 * 0.7).max(40.0).min(area.width as f32) as u16;
-        let popup_height = (area.height as f32 * 0.7).max(14.0).min(area.height as f32) as u16;
-        let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
-        let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
-        app.layout.track_info_area = Rect::new(x, y, popup_width, popup_height);
-
-        let overlay = TrackInfoOverlay::new(
-            &entry,
-            ti_ref,
-            app.art.cover_art.cached(),
-            &app.theme,
-            app.art.gfx.squash(),
-        );
+        let playing = (entry.status == koan_core::player::state::QueueEntryStatus::Playing)
+            .then(|| app.state.track_info())
+            .flatten();
+        app.layout.track_info_area = super::track_info::popup_rect(area);
+        let cover = app
+            .art
+            .cover_art
+            .cached()
+            .map(|img| (img, app.art.gfx.squash()));
+        let details = app.track_details.as_deref().cloned().unwrap_or_default();
+        let groups = details.with_entry(&entry, playing.as_ref());
+        let overlay =
+            TrackInfoOverlay::new(&entry.title, groups, details.scroll, cover, &app.theme);
         frame.render_widget(overlay, area);
     }
 
-    // Track details overlay, for a track picked from any list.
+    // Track info for a track picked from any list.
     if app.mode == Mode::TrackDetails
-        && let Some(track) = app.track_details.as_deref()
+        && let Some(details) = app.track_details.as_deref()
     {
-        app.layout.track_info_area = super::track_details::popup_rect(area);
-        let overlay = super::track_details::TrackDetailsOverlay::new(track, &app.theme);
+        app.layout.track_info_area = super::track_info::popup_rect(area);
+        let overlay = TrackInfoOverlay::new(
+            &details.title,
+            details.groups(),
+            details.scroll,
+            None,
+            &app.theme,
+        );
         frame.render_widget(overlay, area);
     }
 
@@ -632,7 +654,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             let x = area.x + (area.width.saturating_sub(w)) / 2;
             let y = area.y + area.height / 2;
             let popup = Rect::new(x, y, w, 1);
-            Clear.render(popup, frame.buffer_mut());
+            super::shell::clear(frame.buffer_mut(), popup);
 
             // Progress bar: filled portion. `total > 0` is guaranteed by the
             // checked_div above, so this division cannot trap.
@@ -649,26 +671,27 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
             // Label below.
             let label_area = Rect::new(x, y.saturating_sub(1), w, 1);
-            Clear.render(label_area, frame.buffer_mut());
+            super::shell::clear(frame.buffer_mut(), label_area);
             let label_line = Line::from(Span::styled(label, app.theme.spinner));
             frame.render_widget(Paragraph::new(label_line), label_area);
         }
     }
 
-    // Loading overlay with braille spinner.
-    if let Some(ref msg) = app.loading_message {
+    // Loading overlay with braille spinner: tracks being read into the
+    // queue, or a picker's items.
+    if app.loading() || matches!(app.mode, Mode::Picker(_)) && app.picker.is_none() {
         const SPINNER: &[char] = &[
             '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}', '\u{2834}', '\u{2826}',
             '\u{2827}',
         ];
         let frame_char = SPINNER[app.spinner_tick % SPINNER.len()];
-        let display = format!("{} {}", frame_char, msg);
+        let display = format!("{} loading...", frame_char);
         let text_len = display.len() as u16 + 4;
         let w = text_len.max(20).min(area.width);
         let x = area.x + (area.width.saturating_sub(w)) / 2;
         let y = area.y + area.height / 2;
         let popup = Rect::new(x, y, w, 1);
-        Clear.render(popup, frame.buffer_mut());
+        super::shell::clear(frame.buffer_mut(), popup);
         let line = Line::from(vec![
             Span::styled("  ", app.theme.hint_desc),
             Span::styled(display, app.theme.spinner),
@@ -820,9 +843,10 @@ enum SideRow<'a> {
     Target(&'a str, Option<char>, NavTarget),
 }
 
-/// The sidebar, as the apps lay it out: the queue and what is playing; the
-/// library's pages; the playlists, with a row for a new one; then search and
-/// settings at the foot. Returns what each row opens.
+/// The sidebar, as the apps lay it out: search at the top; the queue and
+/// what is playing; the library's pages; the playlists, with a row for a new
+/// one; then what is running, and settings at the foot. The digits run down
+/// it in order. Returns what each row opens.
 fn render_sidebar(
     buf: &mut ratatui::buffer::Buffer,
     app: &App,
@@ -838,6 +862,13 @@ fn render_sidebar(
     }
     let page = |p: Page| SideRow::Target(p.title(), p.key(), NavTarget::Page(p));
     let mut top = vec![
+        // The search field, as the apps head their sidebar with it.
+        SideRow::Target(
+            "/ search",
+            Page::Search.key(),
+            NavTarget::Page(Page::Search),
+        ),
+        SideRow::Gap,
         page(Page::Queue),
         page(Page::NowPlaying),
         SideRow::Gap,
@@ -858,9 +889,12 @@ fn render_sidebar(
         ),
         SideRow::Target("+ new playlist", None, NavTarget::NewPlaylist),
     ];
-    let foot = [page(Page::Search), page(Page::Settings)];
+    let foot = [page(Page::Settings)];
+    let busy = busy(app);
+    // Each running job takes its label and its bar, and a gap above them.
+    let busy_rows = if busy.is_empty() { 0 } else { 3 * busy.len() };
     // The playlists fill what is left between the two, as many as fit.
-    let room = (side.height as usize).saturating_sub(top.len() + 1 + foot.len());
+    let room = (side.height as usize).saturating_sub(top.len() + 1 + foot.len() + busy_rows);
     top.extend(app.sidebar_playlists.iter().take(room).map(|(id, name)| {
         SideRow::Target(name.as_str(), None, NavTarget::Page(Page::Playlist(*id)))
     }));
@@ -895,7 +929,7 @@ fn render_sidebar(
             buf.set_stringn(
                 side.x + 1,
                 y,
-                super::shell::fit(text, label_w),
+                super::text::fit(text, label_w),
                 label_w,
                 style,
             );
@@ -911,9 +945,10 @@ fn render_sidebar(
         }
     };
     let bottom = side.y + side.height;
+    let below = (foot.len() + busy_rows) as u16;
     for (i, row) in top.iter().enumerate() {
         let y = side.y + super::shell::TOP_GUTTER + i as u16;
-        if y + foot.len() as u16 >= bottom {
+        if y + below >= bottom {
             break;
         }
         draw(row, y, &mut hits);
@@ -924,7 +959,88 @@ fn render_sidebar(
             draw(row, y, &mut hits);
         }
     }
+    let mut y = bottom.saturating_sub(below);
+    for job in &busy {
+        y += 1;
+        if y <= side.y || y + 1 >= bottom {
+            break;
+        }
+        let w = SIDEBAR_WIDTH - 2;
+        let counts = job.counts.as_deref().unwrap_or("");
+        let counts_w = super::text::width(counts) as u16;
+        let label_room = w.saturating_sub(counts_w + 1) as usize;
+        buf.set_stringn(
+            side.x + 1,
+            y,
+            super::text::fit(&job.label, label_room),
+            label_room,
+            theme.hint_desc,
+        );
+        buf.set_stringn(
+            side.x + 1 + w - counts_w.min(w),
+            y,
+            counts,
+            w as usize,
+            theme.rule,
+        );
+        hits.push((Rect::new(side.x, y, SIDEBAR_WIDTH - 1, 1), job.open));
+        // The bar: as far as it has got, or dashed while there is no total.
+        let bar_w = if job.cancellable { w - 2 } else { w };
+        let filled = job.fraction.map(|f| (f * bar_w as f64).round() as u16);
+        for i in 0..bar_w {
+            let (c, style) = match filled {
+                Some(n) if i < n => ('\u{2501}', theme.bar),
+                Some(_) => ('\u{2500}', theme.rule),
+                None => ('\u{254c}', theme.rule),
+            };
+            buf[(side.x + 1 + i, y + 1)].set_char(c).set_style(style);
+        }
+        if job.cancellable {
+            let x = side.x + 1 + w - 1;
+            buf.set_string(x, y + 1, "\u{d7}", theme.hint_desc);
+            hits.push((Rect::new(x, y + 1, 1, 1), NavTarget::CancelTask));
+        }
+        y += 2;
+    }
     hits
+}
+
+/// A job the sidebar shows running.
+struct Busy {
+    label: String,
+    counts: Option<String>,
+    fraction: Option<f64>,
+    cancellable: bool,
+    /// Where a click on it goes.
+    open: NavTarget,
+}
+
+/// What this device is busy with: the scan or sync the TUI started, and the
+/// downloads in flight. Nothing when idle.
+fn busy(app: &App) -> Vec<Busy> {
+    let mut out = Vec::new();
+    if let Some(a) = app.activity.as_ref() {
+        out.push(Busy {
+            label: a.label(),
+            counts: a.counts(),
+            fraction: a.fraction(),
+            cancellable: a.cancel.is_some(),
+            open: NavTarget::Page(Page::Settings),
+        });
+    }
+    let readings = app.view.local.downloads().readings();
+    if !readings.is_empty() {
+        let written: u64 = readings.iter().map(|r| r.written).sum();
+        let total: u64 = readings.iter().map(|r| r.total).sum();
+        out.push(Busy {
+            label: format!("downloading {}", readings.len()),
+            counts: (total > 0).then(|| format!("{} / {} MB", written >> 20, total >> 20)),
+            fraction: (total > 0).then(|| (written as f64 / total as f64).min(1.0)),
+            cancellable: false,
+            open: NavTarget::Page(Page::Downloads),
+        });
+    }
+    out
 }
 
 /// FPS + beat-energy counter, right-aligned on the top row of `area`.
@@ -941,27 +1057,21 @@ fn render_fps(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(fps_line), fps_area);
 }
 
-fn render_queue(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
-    // Clamp cursor before borrowing visible queue.
-    let vq_len = app.queue.vq_cache.entries.len();
-    if vq_len > 0 && app.queue.cursor >= vq_len {
-        app.queue.cursor = vq_len - 1;
-    }
-
-    let visible = app.visible_queue();
-    let drop_indicator = app.drop_indicator_index();
+fn render_queue(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let selected_indices = app.selected_indices();
     let queue_view = QueueView::new(
-        &visible,
+        app.visible_queue(),
+        &app.queue.layout,
         &app.mode,
         app.queue.cursor,
         app.queue.scroll_offset,
         &app.theme,
-        &selected_indices,
-        app.spinner_tick,
     )
-    .with_drop_indicator(drop_indicator)
-    .with_pointer(Some((app.hover.column, app.hover.row)))
+    .with_facts(&app.queue.facts, koan_core::remote::offline::active())
+    .with_selected(&selected_indices)
+    .with_spinner(app.spinner_tick)
+    .with_drop_indicator(app.drop_indicator_index())
+    .with_links(&app.links)
     .with_hover(&app.hover.zone)
     .with_favourites(&app.favourites);
     frame.render_widget(queue_view, area);
@@ -1000,14 +1110,23 @@ mod tests {
 
     /// An `App` with a queue and a track playing, detached from any real player.
     fn app_with_queue(len: usize) -> App {
+        app_and_player(len).0
+    }
+
+    /// The same, and what it sends the player.
+    fn app_and_player(
+        len: usize,
+    ) -> (
+        App,
+        crossbeam_channel::Receiver<koan_core::player::commands::PlayerCommand>,
+    ) {
         // First, before anything reads configuration: spawning the download
         // queue resolves the remote server, and a render test has no business
         // reaching for anyone's credentials.
         koan_core::config::isolate_config_for_tests();
 
         let state = SharedPlayerState::new();
-        let (tx, _rx) = crossbeam_channel::unbounded();
-        let log_buffer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (tx, rx) = crossbeam_channel::unbounded();
 
         let mut entries: Vec<QueueEntry> = (0..len).map(entry).collect();
         if let Some(first) = entries.first_mut() {
@@ -1026,21 +1145,16 @@ mod tests {
             }));
         }
 
-        let mut app = App::new(
-            state,
-            koan_core::audio::viz::VizSnapshot::new(),
-            tx,
-            log_buffer,
-            60,
-        );
+        let mut app = App::new(state, koan_core::audio::viz::VizSnapshot::new(), tx, 60);
         app.queue.vq_cache.entries = entries;
         app.queue.vq_version = app.state.playlist_version();
+        app.relayout_queue();
         // Pinned so the sweep does not inherit the developer's own config.
         app.art_size = 24;
         app.show_fps = false;
         app.viz_fullscreen = false;
         app.viz_config.enabled = true;
-        app
+        (app, rx)
     }
 
     fn draw(app: &mut App, w: u16, h: u16) {
@@ -1322,24 +1436,62 @@ mod tests {
 
     #[test]
     fn the_queue_headings_name_links_and_a_row_has_a_menu_button() {
-        use crate::queue::{HeaderLink, QueueView, menu_button_x};
-        let app = app_with_queue(3);
+        use crate::queue::{QueueView, menu_button_x};
+        use crate::shell::Link;
+        let mut app = app_with_queue(3);
+        for (i, e) in app.queue.vq_cache.entries.iter_mut().enumerate() {
+            e.db_id = Some(i as i64 + 1);
+        }
+        app.relayout_queue();
+        draw(&mut app, 120, 30);
+        let area = app.layout.queue_area;
+        // The first line is the heading: " album  artist ... 2024 · 3 tracks".
+        assert_eq!(
+            app.links.at(area.x + 1, area.y),
+            Some(Link::AlbumOfTrack(1))
+        );
+        assert_eq!(
+            app.links.at(area.x + 1 + "album  ".len() as u16, area.y),
+            Some(Link::ArtistOfTrack(1))
+        );
+        assert_eq!(app.links.at(area.x + 40, area.y), None);
+        // A track's heart is its own hit.
         let entries = &app.queue.vq_cache.entries;
-        let area = Rect::new(0, 0, 80, 20);
-        // Row 1 is the heading: " artist \u{2014} (2024) album [FLAC]".
-        assert_eq!(
-            QueueView::header_link_at(entries, area, 0, 2, 1),
-            Some((0, HeaderLink::Artist))
+        let heart = (area.x..area.x + area.width)
+            .find(|&x| {
+                QueueView::heart_at(entries, &app.queue.layout, area, 0, x, area.y + 1).is_some()
+            })
+            .expect("a heart column");
+        assert!(
+            heart > area.x + 40,
+            "the heart sits at the right, among the figures"
         );
-        let album_col = 1 + "artist".len() as u16 + 3 + "(2024) ".len() as u16;
-        assert_eq!(
-            QueueView::header_link_at(entries, area, 0, album_col + 1, 1),
-            Some((0, HeaderLink::Album))
+        assert_eq!(menu_button_x(area), area.x + area.width - 3);
+    }
+
+    #[test]
+    fn the_queue_draws_no_heading_of_its_own_under_the_toolbar() {
+        let mut app = app_with_queue(3);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        let buf = terminal.backend().buffer();
+        let q = app.layout.queue_area;
+        let row =
+            |y: u16| -> String { (q.x..q.x + q.width).map(|x| buf[(x, y)].symbol()).collect() };
+        let toolbar = row(q.y - 1);
+        assert!(
+            toolbar.contains("queue") && toolbar.contains("3 tracks"),
+            "{toolbar:?}"
         );
-        // Off the text, and on a track row, there is no link.
-        assert_eq!(QueueView::header_link_at(entries, area, 0, 70, 1), None);
-        assert_eq!(QueueView::header_link_at(entries, area, 0, 2, 2), None);
-        assert_eq!(menu_button_x(area), 77);
+        let first = row(q.y);
+        assert!(
+            first.trim_start().starts_with("album"),
+            "the album's heading: {first:?}"
+        );
+        assert!(
+            !first.contains('\u{2500}'),
+            "no rule of a heading row: {first:?}"
+        );
     }
 
     #[test]
@@ -1494,6 +1646,448 @@ mod tests {
                 let name = format!("{}-{w}x{h}.txt", page.title().replace(' ', "-"));
                 std::fs::write(dir.join(name), dump(&mut app, w, h)).unwrap();
             }
+        }
+    }
+
+    fn click(app: &mut App, column: u16, row: u16) {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        });
+    }
+
+    fn key(app: &mut App, code: crossterm::event::KeyCode) {
+        app.handle_key(crossterm::event::KeyEvent::from(code));
+    }
+
+    #[test]
+    fn leaving_the_queue_leaves_editing_it() {
+        use crossterm::event::KeyCode;
+        let mut app = app_with_queue(5);
+        draw(&mut app, 160, 40);
+        key(&mut app, KeyCode::Char('e'));
+        assert_eq!(app.mode, Mode::QueueEdit);
+        let (rect, _) = *app
+            .layout
+            .nav_hits
+            .iter()
+            .find(|(_, t)| *t == NavTarget::Page(Page::Albums))
+            .expect("an albums tab");
+        click(&mut app, rect.x, rect.y);
+        assert_eq!(app.page(), Page::Albums);
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.mode_stack.is_empty());
+        // Keys are the page's again, not the queue editor's.
+        key(&mut app, KeyCode::Char('/'));
+        key(&mut app, KeyCode::Char('x'));
+        assert_eq!(app.albums_page.filter, "x");
+    }
+
+    #[test]
+    fn closing_track_info_returns_to_editing() {
+        use crossterm::event::KeyCode;
+        let mut app = app_with_queue(5);
+        key(&mut app, KeyCode::Char('e'));
+        key(&mut app, KeyCode::Char('i'));
+        assert!(matches!(app.mode, Mode::TrackInfo(_)));
+        key(&mut app, KeyCode::Esc);
+        assert_eq!(app.mode, Mode::QueueEdit);
+        key(&mut app, KeyCode::Esc);
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.mode_stack.is_empty());
+    }
+
+    #[test]
+    fn the_fullscreen_visualiser_hides_what_was_clickable() {
+        use crossterm::event::KeyCode;
+        let mut app = app_with_queue(5);
+        draw(&mut app, 160, 40);
+        let (rect, _) = *app
+            .layout
+            .nav_hits
+            .iter()
+            .find(|(_, t)| *t == NavTarget::Page(Page::Albums))
+            .expect("an albums tab");
+        key(&mut app, KeyCode::Char('F'));
+        draw(&mut app, 160, 40);
+        click(&mut app, rect.x, rect.y);
+        assert_eq!(app.page(), Page::Queue);
+    }
+
+    #[test]
+    fn a_click_off_the_queue_with_no_queue_on_screen_is_harmless() {
+        let mut app = app_with_queue(5);
+        app.go_page(Page::NowPlaying);
+        for (w, h) in [(160u16, 40u16), (60, 20)] {
+            draw(&mut app, w, h);
+            for row in 0..h {
+                for column in [0, w / 2, w - 1] {
+                    click(&mut app, column, row);
+                    if app.mode != Mode::Normal {
+                        app.mode_stack.clear();
+                        app.mode = Mode::Normal;
+                    }
+                    app.go_page(Page::NowPlaying);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_context_menu_border_is_not_its_first_row() {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let mut app = app_with_queue(5);
+        draw(&mut app, 100, 30);
+        let q = app.layout.queue_area;
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column: q.x + 10,
+            row: q.y + 2,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.mode, Mode::ContextMenu);
+        draw(&mut app, 100, 30);
+        let area = app.layout.context_menu_area;
+        click(&mut app, area.x + 2, area.y);
+        assert_eq!(app.mode, Mode::ContextMenu);
+    }
+
+    #[test]
+    fn a_click_closes_the_help_rather_than_reaching_under_it() {
+        use crossterm::event::KeyCode;
+        let mut app = app_with_queue(5);
+        draw(&mut app, 160, 40);
+        let (rect, _) = *app
+            .layout
+            .nav_hits
+            .iter()
+            .find(|(_, t)| *t == NavTarget::Page(Page::Albums))
+            .expect("an albums tab");
+        key(&mut app, KeyCode::Char('?'));
+        draw(&mut app, 160, 40);
+        click(&mut app, rect.x, rect.y);
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.page(), Page::Queue);
+    }
+
+    #[test]
+    fn a_heading_then_its_first_row_is_not_a_double_click() {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let (mut app, player) = app_and_player(3);
+        app.queue.vq_cache.entries[0].status = QueueEntryStatus::Queued;
+        draw(&mut app, 100, 30);
+        // The queue's first row is the album's heading, the next its first track.
+        let q = app.layout.queue_area;
+        click(&mut app, q.x + 40, q.y);
+        assert_eq!(app.queue.selected_ids.len(), 3);
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: q.x + 40,
+            row: q.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        click(&mut app, q.x + 40, q.y + 1);
+        // Commands reach the player through the router's thread.
+        let wait = std::time::Duration::from_millis(150);
+        assert!(player.recv_timeout(wait).is_err(), "nothing was played");
+        // The same row twice is.
+        click(&mut app, q.x + 40, q.y + 1);
+        assert!(matches!(
+            player.recv_timeout(wait * 3),
+            Ok(koan_core::player::commands::PlayerCommand::Play(_))
+        ));
+    }
+
+    #[test]
+    fn the_picker_closes_before_its_items_arrive() {
+        use crossterm::event::KeyCode;
+        let mut app = app_with_queue(3);
+        key(&mut app, KeyCode::Char('p'));
+        assert!(matches!(app.mode, Mode::Picker(_)));
+        key(&mut app, KeyCode::Esc);
+        assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn a_paste_goes_into_the_field_that_has_the_keys() {
+        use crossterm::event::KeyCode;
+        let mut app = app_with_queue(3);
+        assert!(!app.takes_text());
+        key(&mut app, KeyCode::Char('3'));
+        key(&mut app, KeyCode::Char('/'));
+        assert!(app.takes_text());
+        app.type_text("boards of\ncanada");
+        assert_eq!(app.albums_page.filter, "boards of canada");
+        assert_eq!(app.page(), Page::Albums);
+    }
+
+    #[test]
+    fn the_help_scrolls_no_further_than_its_end() {
+        use crossterm::event::KeyCode;
+        let mut app = app_with_queue(3);
+        key(&mut app, KeyCode::Char('?'));
+        key(&mut app, KeyCode::End);
+        draw(&mut app, 100, 20);
+        let end = app.help_scroll;
+        assert!(end > 0);
+        key(&mut app, KeyCode::Up);
+        draw(&mut app, 100, 20);
+        assert_eq!(app.help_scroll, end - 1);
+    }
+
+    #[test]
+    fn editing_the_queue_g_moves_and_ctrl_d_pages() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let (mut app, player) = app_and_player(5);
+        draw(&mut app, 100, 30);
+        key(&mut app, KeyCode::Char('e'));
+        // As terminals send it: an uppercase letter, with Shift.
+        app.handle_key(KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT));
+        assert_eq!(app.queue.cursor, 4);
+        assert_eq!(app.queue.selected_ids.len(), 1);
+        app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+        // Commands reach the player through the router's thread.
+        assert!(
+            player
+                .recv_timeout(std::time::Duration::from_millis(300))
+                .is_err(),
+            "nothing was removed"
+        );
+    }
+
+    #[test]
+    fn the_toolbar_sits_below_the_top_gutter_and_goes_back() {
+        use crate::shell::{TOP_GUTTER, ToolHit};
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let mut app = app_with_queue(3);
+        app.go_page(Page::Albums);
+        for (w, top) in [(160u16, TOP_GUTTER), (80, 1 + TOP_GUTTER)] {
+            draw(&mut app, w, 40);
+            assert!(!app.layout.toolbar_hits.is_empty(), "width {w}");
+            for (r, _) in &app.layout.toolbar_hits {
+                assert_eq!(r.y, top, "width {w}");
+                assert!(r.x + r.width <= w, "width {w}");
+            }
+        }
+        let back = app
+            .layout
+            .toolbar_hits
+            .iter()
+            .find(|(_, h)| *h == ToolHit::Nav(NavTarget::Back))
+            .expect("a back button")
+            .0;
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: back.x,
+            row: back.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.page(), Page::Queue);
+    }
+
+    #[test]
+    fn a_link_drawn_anywhere_opens_its_page() {
+        use crate::shell::Link;
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let mut app = app_with_queue(3);
+        draw(&mut app, 120, 40);
+        let mut buf = ratatui::buffer::Buffer::empty(Rect::new(0, 0, 120, 40));
+        app.links.draw(
+            &mut buf,
+            60,
+            20,
+            "Selected Ambient Works",
+            30,
+            ratatui::style::Style::default(),
+            Link::Album(999),
+        );
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 62,
+            row: 20,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.page(), Page::Album(999));
+    }
+
+    #[test]
+    fn the_sidebar_lists_every_page_and_the_playlists() {
+        let mut app = app_with_queue(3);
+        app.sidebar_playlists = vec![(41, "road trip".into()), (42, "東京事変 best".into())];
+        draw(&mut app, 160, 40);
+        let targets: Vec<_> = app.layout.nav_hits.iter().map(|(_, t)| *t).collect();
+        for page in Page::ALL {
+            assert!(targets.contains(&NavTarget::Page(page)), "{page:?}");
+        }
+        assert!(targets.contains(&NavTarget::NewPlaylist));
+        assert!(targets.contains(&NavTarget::Page(Page::Playlist(42))));
+        // Short: the playlists give way, the pages do not.
+        draw(&mut app, 160, 26);
+        let targets: Vec<_> = app.layout.nav_hits.iter().map(|(_, t)| *t).collect();
+        assert!(targets.contains(&NavTarget::Page(Page::Settings)));
+    }
+
+    /// The buffer as text, a line a row, the second cell of a wide
+    /// character left out.
+    fn dump(app: &mut App, w: u16, h: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+        terminal.draw(|f| render(f, app)).unwrap();
+        let buf = terminal.backend().buffer();
+        let mut out = String::new();
+        for y in 0..h {
+            let mut skip = 0;
+            for x in 0..w {
+                if skip > 0 {
+                    skip -= 1;
+                    continue;
+                }
+                let sym = buf[(x, y)].symbol();
+                skip = crate::text::width(sym).saturating_sub(1);
+                out.push_str(sym);
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn a_running_scan_has_a_row_and_a_stop_button_in_the_sidebar() {
+        let mut app = app_with_queue(3);
+        let activity = crate::tasks::Activity::new("scanning the library", true);
+        activity
+            .total
+            .store(4000, std::sync::atomic::Ordering::Relaxed);
+        activity
+            .done
+            .store(1204, std::sync::atomic::Ordering::Relaxed);
+        app.activity = Some(activity.clone());
+        let text = dump(&mut app, 160, 40);
+        assert!(text.contains("1,204 / 4,000"), "{text}");
+        let stop = app
+            .layout
+            .nav_hits
+            .iter()
+            .find(|(_, t)| *t == NavTarget::CancelTask)
+            .expect("a stop button")
+            .0;
+        click(&mut app, stop.x, stop.y);
+        assert!(
+            activity
+                .cancel
+                .as_ref()
+                .unwrap()
+                .load(std::sync::atomic::Ordering::Relaxed)
+        );
+        // Idle, nothing shows.
+        app.activity = None;
+        draw(&mut app, 160, 40);
+        assert!(
+            !app.layout
+                .nav_hits
+                .iter()
+                .any(|(_, t)| *t == NavTarget::CancelTask)
+        );
+    }
+
+    /// Writes every page at four sizes to `target/tui-dumps/shell`, against
+    /// the awkward library, with the playing track's cover absent and
+    /// present. Fills this process's library: run it on its own.
+    #[test]
+    #[ignore = "fills the library; run on its own with --ignored"]
+    fn dump_the_shell() {
+        let root =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tui-dumps/shell");
+        let mut app = app_with_queue(12);
+        let (double, _) = crate::dumps::seed();
+        let artist = koan_core::db::pool::shared()
+            .get()
+            .ok()
+            .and_then(|db| {
+                koan_core::db::queries::get_album(&db.conn, double)
+                    .ok()
+                    .flatten()
+            })
+            .map_or(0, |a| a.artist_id);
+        app.load_favourites();
+        app.refresh_sidebar_playlists();
+        app.sidebar_playlists
+            .push((42, "東京事変 best of everything".into()));
+        // A cover beside the playing track, for the second pass.
+        let covers = tempfile::tempdir().unwrap();
+        image::RgbImage::from_pixel(64, 64, image::Rgb([200, 60, 40]))
+            .save(covers.path().join("cover.png"))
+            .unwrap();
+        let settle = |app: &mut App| {
+            for _ in 0..15 {
+                app.handle_tick();
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        };
+        let mut pages: Vec<Page> = Page::ALL.to_vec();
+        pages.extend([Page::Album(double), Page::Artist(artist)]);
+        for pass in ["nocover", "cover"] {
+            let dir = root.join(pass);
+            std::fs::create_dir_all(&dir).unwrap();
+            if pass == "cover" {
+                let path = covers.path().join("track.flac");
+                app.queue.vq_cache.entries[0].path = path.clone();
+                if let Some(mut info) = app.state.track_info() {
+                    info.path = path;
+                    app.state.set_track_info(Some(info));
+                }
+            }
+            for &page in &pages {
+                app.go_page(page);
+                draw(&mut app, 120, 40);
+                settle(&mut app);
+                for (w, h) in [(50u16, 20u16), (80, 24), (120, 40), (200, 60)] {
+                    let name = format!("{}-{w}x{h}.txt", page.title().replace(' ', "-"));
+                    std::fs::write(dir.join(name), dump(&mut app, w, h)).unwrap();
+                }
+            }
+        }
+        let dir = root.join("modals");
+        std::fs::create_dir_all(&dir).unwrap();
+        app.go_page(Page::Queue);
+        app.status_message = Some((
+            "a status line long enough to be cut at the edge of a narrow terminal".into(),
+            std::time::Instant::now(),
+        ));
+        type Open = fn(&mut App);
+        let modals: [(&str, Open); 5] = [
+            ("status", |_| {}),
+            ("help", |a| {
+                a.handle_key(crossterm::event::KeyEvent::from(
+                    crossterm::event::KeyCode::Char('?'),
+                ))
+            }),
+            ("chooser", |a| a.open_chooser(vec![1, 2])),
+            ("prompt", |a| {
+                a.open_chooser(vec![1]);
+                a.handle_key(crossterm::event::KeyEvent::from(
+                    crossterm::event::KeyCode::Enter,
+                ));
+            }),
+            ("eq", |a| {
+                a.handle_key(crossterm::event::KeyEvent::from(
+                    crossterm::event::KeyCode::Char('E'),
+                ))
+            }),
+        ];
+        for (name, open) in modals {
+            open(&mut app);
+            for (w, h) in [(50u16, 20u16), (120, 40)] {
+                std::fs::write(
+                    dir.join(format!("modal-{name}-{w}x{h}.txt")),
+                    dump(&mut app, w, h),
+                )
+                .unwrap();
+            }
+            app.mode_stack.clear();
+            app.mode = Mode::Normal;
         }
     }
 

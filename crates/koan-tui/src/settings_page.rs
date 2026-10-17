@@ -1,17 +1,63 @@
-//! The Settings page: the settings that otherwise mean editing
-//! `config.toml`. Each change is written through `Config::persist`, which
-//! puts it in the file that owns it, as the apps' Settings does.
+//! The Settings page: the apps' Settings, as a list of sections beside the
+//! pane of the one chosen. Each change is written through `Config::persist`,
+//! which puts it in the file that owns it, and each action goes through the
+//! koan-core call the apps' Settings makes. Anything that waits on the disk
+//! or the server runs on a thread of its own and lands on a later frame.
 
+mod rows;
+mod work;
+
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use crossbeam_channel::{Receiver, Sender};
 use koan_core::config::{Config, NearbyControl, ReplayGainMode};
-use koan_core::remote::connections::{Connection, Held, Via};
+use koan_core::remote::client::{
+    KoanApiKey, KoanAppPassword, KoanMcp, KoanScrobbleService, KoanUser,
+};
+use koan_core::remote::connections::{Connection, Held};
+use koan_core::remote::profile::ServerProfile;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
+use ratatui::widgets::{Block, Borders, Widget};
+use unicode_width::UnicodeWidthStr;
 
+use super::text::{fit, tail, wrap};
 use super::theme::Theme;
+use rows::{Kind, Row, Step};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    Library,
+    Server,
+    Account,
+    People,
+    Playback,
+    Eq,
+    Devices,
+    Integrations,
+    Terminal,
+}
+
+impl Section {
+    fn label(self) -> &'static str {
+        match self {
+            Section::Library => "library",
+            Section::Server => "server",
+            Section::Account => "account",
+            Section::People => "people",
+            Section::Playback => "playback",
+            Section::Eq => "eq",
+            Section::Devices => "devices",
+            Section::Integrations => "integrations",
+            Section::Terminal => "terminal",
+        }
+    }
+}
+
+/// A value the page steps through with `←` and `→`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Setting {
     ReplayGain,
@@ -24,99 +70,784 @@ pub enum Setting {
     FrameRate,
     Palette,
     AutoSync,
+    SyncInterval,
+    DownloadWorkers,
+    Offline,
     Discoverable,
     NearbyControl,
-    Offline,
-    SyncInterval,
-    PlayQueue,
-    DownloadWorkers,
-    CacheLimit,
 }
 
-/// Work a row starts rather than a value it sets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Long work on the library, which the app runs one at a time and reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Task {
-    Scan,
+    Scan {
+        force: bool,
+    },
     Sync,
-    AddFolder,
-}
-
-impl Task {
-    fn label(self) -> &'static str {
-        match self {
-            Task::Scan => "scan library",
-            Task::Sync => "sync now",
-            Task::AddFolder => "add folder",
-        }
-    }
-
-    fn note(self) -> &'static str {
-        match self {
-            Task::Scan => "read the library folders for new, changed and removed files",
-            Task::Sync => "pull the server's library, favourites and playlists",
-            Task::AddFolder => "type the path of a folder of music",
-        }
-    }
+    /// Forget the tracks of a folder taken out of the library.
+    ForgetFolder(PathBuf),
+    /// Forget the tracks only the server had, after signing out.
+    ForgetRemote,
+    ClearCache,
+    RebuildIndex,
 }
 
 /// What a change on the page asks of the app.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
+    /// A setting the running TUI applies itself.
     Changed(Setting),
+    /// A line for the status bar: what happened, or why it did not.
+    Say(String),
     Run(Task),
-    /// Take the library folder at this place in the config out, and forget
-    /// its tracks.
-    RemoveFolder(usize),
+    OpenEq,
+    OpenOutputs,
+    OpenUrl(String),
+    Copy(String),
 }
+
+/// A text the page asks for, kept as typed until it is used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Field {
+    Url,
+    Username,
+    Secret,
+    Folder,
+    CacheLimit,
+    CurrentPassword,
+    NewPassword,
+    KeyName,
+    AppPasswordName,
+    PersonName,
+    PairCode,
+    ScrobbleToken,
+    Address,
+    Grantee,
+}
+
+impl Field {
+    fn secret(self) -> bool {
+        matches!(
+            self,
+            Field::Secret | Field::CurrentPassword | Field::NewPassword | Field::ScrobbleToken
+        )
+    }
+
+    fn placeholder(self) -> &'static str {
+        match self {
+            Field::Url => "https://music.example.com, or an invite link",
+            Field::Username | Field::PersonName => "username",
+            Field::Secret => "the account's password or API key",
+            Field::Folder => "the path of a folder of music",
+            Field::CacheLimit => "e.g. 50GB, blank for no limit",
+            Field::CurrentPassword => "current password",
+            Field::NewPassword => "new password",
+            Field::KeyName | Field::AppPasswordName => "the app it is for",
+            Field::PairCode => "XXXX-XXXX",
+            Field::ScrobbleToken => "ListenBrainz user token",
+            Field::Address => "host or host:port",
+            Field::Grantee => "their username on this server",
+        }
+    }
+}
+
+/// An account's access on a koan server, as the server names it.
+pub(crate) const ROLES: [(&str, &str); 3] = [
+    ("readonly", "listen only"),
+    ("user", "listen and edit"),
+    ("admin", "admin"),
+];
+
+pub(crate) fn role_label(role: &str) -> &'static str {
+    ROLES
+        .iter()
+        .find(|(r, _)| *r == role)
+        .map_or("listen only", |(_, l)| l)
+}
+
+fn cycle_role(role: &str, forward: bool) -> &'static str {
+    let names: Vec<&'static str> = ROLES.iter().map(|(r, _)| *r).collect();
+    cycle(&names, role, forward)
+}
+
+/// What a row, a menu choice or a dialog's button does.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Op {
+    Outcome(Outcome),
+    SignIn,
+    AskSignOut,
+    SignOut {
+        forget: bool,
+    },
+    AddFolder,
+    AskRemoveFolder(PathBuf),
+    RemoveFolder {
+        path: PathBuf,
+        forget: bool,
+    },
+    AskRebuild,
+    CommitCacheLimit,
+    ChangePassword,
+    NewApiKey,
+    AskRevokeKey(i64, String),
+    RevokeKey(i64),
+    NewAppPassword,
+    AskRevokeAppPassword(i64, String),
+    RevokeAppPassword(i64),
+    AddPerson,
+    Invite {
+        username: String,
+        reset: bool,
+    },
+    AskReset(String),
+    AskSetPassword(String),
+    /// The password is the dialog's input.
+    SetPassword(String),
+    AskDelete(String),
+    Delete(String),
+    SetRole(String, String),
+    Pair,
+    ApprovePair(String),
+    DeclinePair(String),
+    ConnectScrobbling,
+    DisconnectScrobbling,
+    EndConnection {
+        key: u64,
+        refuse: Option<String>,
+    },
+    AllowHeld(String),
+    AllowRefused(String),
+    AddAddress,
+    RemoveAddress(String),
+    Share,
+    StopSharing(String),
+    Cancel,
+    /// A menu of a row's actions.
+    Menu(String, Vec<(&'static str, Op)>),
+}
+
+/// A question over the page: its choices, and a password to type when it
+/// asks for one. `Esc` cancels.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Dialog {
+    title: String,
+    message: String,
+    choices: Vec<(String, Op)>,
+    cursor: usize,
+    input: Option<String>,
+}
+
+impl Dialog {
+    fn new(title: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            message: message.into(),
+            choices: Vec::new(),
+            cursor: 0,
+            input: None,
+        }
+    }
+
+    fn choice(mut self, label: impl Into<String>, op: Op) -> Self {
+        self.choices.push((label.into(), op));
+        self
+    }
+}
+
+/// Something read off the server: waiting for it, what came, or why not.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) enum Load<T> {
+    #[default]
+    Waiting,
+    Ready(T),
+    Failed(String),
+}
+
+/// What the page shows of this machine, read off the UI thread.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Local {
+    /// How many tracks each library folder holds.
+    folder_tracks: HashMap<PathBuf, u64>,
+    server_tracks: u64,
+    cache_bytes: u64,
+}
+
+/// What the page shows of the signed-in server, read off the UI thread.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Remote {
+    /// The server these were read from: a sign-in elsewhere drops them.
+    url: String,
+    profile: Option<ServerProfile>,
+    refused: bool,
+    api_keys: Load<Vec<KoanApiKey>>,
+    app_passwords: Load<Vec<KoanAppPassword>>,
+    /// `None` until the list loads, which the server allows an admin alone.
+    people: Option<Vec<KoanUser>>,
+    scrobbling: Load<Vec<KoanScrobbleService>>,
+    assistants: Load<KoanMcp>,
+}
+
+impl Remote {
+    fn offers(&self, extension: &str) -> bool {
+        self.profile.as_ref().is_some_and(|p| p.offers(extension))
+    }
+}
+
+/// Work finished off the UI thread, applied to the page on the next frame,
+/// with a line to say.
+type Done = Box<dyn FnOnce(&mut SettingsPage) -> Option<String> + Send>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsHit {
+    Section(usize),
     /// The row, anywhere off its controls.
     Row(usize),
     Dec(usize),
     Inc(usize),
-    /// The value itself: a toggle flips, a choice moves on.
+    /// The value itself: a choice moves on, a field starts typing, a button
+    /// runs.
     Value(usize),
-    /// The `×` on a library folder.
-    Remove(usize),
+    /// One of a list row's actions, by its place.
+    Action(usize, usize),
+    DialogChoice(usize),
 }
 
-/// A row as the cursor remembers it across a rebuild.
-#[derive(Debug, Clone, PartialEq)]
-enum RowId {
-    Item(Setting),
-    Action(Task),
-    Folder(std::path::PathBuf),
-    Connection(Option<u64>, Option<String>, String),
-    Held(String),
+#[derive(Default, Clone)]
+struct Geom {
+    sections: Rect,
+    pane: Rect,
+    bar: Rect,
+    /// The pane's lines, and the first line of each row.
+    total: usize,
+    line_of: Vec<usize>,
+    links: Vec<(Rect, SettingsHit)>,
 }
 
-enum Entry {
-    Section(&'static str),
-    Item(Setting),
-    Action(Task),
-    /// A library folder, by its place in the config.
-    Folder(usize),
-    /// Shown, not edited here: what the apps set through folders and sign-in.
-    Info(&'static str, String),
-    /// A connection to or from this device, by its place in `connections`.
-    Connection(usize),
-    /// A device disconnected here and held off, by its place in `held`.
-    Held(usize),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Focus {
+    Sections,
+    Pane,
+}
+
+pub struct SettingsPage {
+    cfg: Arc<Config>,
+    local: Local,
+    remote: Remote,
+    connections: Vec<Connection>,
+    held: Vec<Held>,
+    /// The devices' version the connections were read at.
+    devices_seen: u64,
+    eq_summary: Option<String>,
+    section: Section,
+    focus: Focus,
+    /// The row the cursor is on, by its key, so it stays on that row as
+    /// rows above it come and go.
+    cursor: String,
+    scroll: usize,
+    follow: bool,
+    fields: HashMap<Field, String>,
+    /// The field being typed into.
+    editing: Option<Field>,
+    sign_in_with_key: bool,
+    new_role: &'static str,
+    dialog: Option<Dialog>,
+    /// Jobs started and not yet landed.
+    busy: usize,
+    done_tx: Sender<Done>,
+    done_rx: Receiver<Done>,
+    geom: Geom,
+}
+
+impl Default for SettingsPage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn inside(r: Rect, col: u16, row: u16) -> bool {
+    r.width > 0 && col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
+}
+
+fn signed_in(cfg: &Config) -> bool {
+    koan_core::helpers::subsonic_auth(cfg).is_some()
+}
+
+impl SettingsPage {
+    pub fn new() -> Self {
+        let (done_tx, done_rx) = crossbeam_channel::unbounded();
+        Self {
+            cfg: Config::cached(),
+            local: Local::default(),
+            remote: Remote::default(),
+            connections: Vec::new(),
+            held: Vec::new(),
+            devices_seen: u64::MAX,
+            eq_summary: None,
+            section: Section::Library,
+            focus: Focus::Sections,
+            cursor: String::new(),
+            scroll: 0,
+            follow: true,
+            fields: HashMap::new(),
+            editing: None,
+            sign_in_with_key: false,
+            new_role: ROLES[0].0,
+            dialog: None,
+            busy: 0,
+            done_tx,
+            done_rx,
+            geom: Geom::default(),
+        }
+    }
+
+    /// Reads the config again, and what the page shows of the disk and the
+    /// server, on threads of their own.
+    pub fn reload(&mut self) {
+        self.cfg = Config::cached();
+        self.follow_devices(true);
+        self.load_local();
+        self.load_remote();
+    }
+
+    /// The page's toolbar: the section in view, and whether work is out.
+    pub fn toolbar(&self) -> super::shell::Toolbar {
+        let count = match self.busy {
+            0 => self.section.label().to_string(),
+            _ => format!("{} \u{b7} working\u{2026}", self.section.label()),
+        };
+        super::shell::Toolbar::new("settings").count(count)
+    }
+
+    /// What the EQ section says of the EQ in use.
+    pub fn set_eq_summary(&mut self, summary: Option<String>) {
+        self.eq_summary = summary;
+    }
+
+    /// Whether the page takes every key: a field or a dialog is open.
+    pub fn typing(&self) -> bool {
+        self.editing.is_some() || self.dialog.is_some()
+    }
+
+    /// Takes in finished work, and the connections when the devices moved.
+    /// Returns what to say.
+    pub fn poll(&mut self) -> Option<String> {
+        let mut said = None;
+        while let Ok(done) = self.done_rx.try_recv() {
+            self.busy = self.busy.saturating_sub(1);
+            said = done(self).or(said);
+        }
+        self.follow_devices(false);
+        said
+    }
+
+    fn follow_devices(&mut self, force: bool) {
+        let version = koan_core::remote::devices::version();
+        if !force && version == self.devices_seen {
+            return;
+        }
+        self.devices_seen = version;
+        self.connections = koan_core::remote::connections::list();
+        self.held = koan_core::remote::connections::held();
+    }
+
+    /// Runs `work` on a thread of its own; what it returns is applied on a
+    /// later frame.
+    fn spawn(&mut self, work: impl FnOnce() -> Done + Send + 'static) {
+        let tx = self.done_tx.clone();
+        let started = std::thread::Builder::new()
+            .name("koan-settings".into())
+            .spawn(move || {
+                tx.send(work()).ok();
+            });
+        if started.is_ok() {
+            self.busy += 1;
+        }
+    }
+
+    /// The sections there is something in, in order.
+    fn sections(&self) -> Vec<Section> {
+        use koan_core::remote::profile::{API_KEYS, MCP, PASSWORDS, SCROBBLING};
+        let signed_in = signed_in(&self.cfg);
+        let r = &self.remote;
+        let mut out = vec![Section::Library, Section::Server];
+        if signed_in && (r.offers(PASSWORDS) || r.offers(API_KEYS)) {
+            out.push(Section::Account);
+        }
+        if signed_in && r.people.is_some() {
+            out.push(Section::People);
+        }
+        out.extend([Section::Playback, Section::Eq, Section::Devices]);
+        if signed_in && (r.offers(SCROBBLING) || r.offers(MCP)) {
+            out.push(Section::Integrations);
+        }
+        out.push(Section::Terminal);
+        out
+    }
+
+    fn rows(&self) -> Vec<Row> {
+        rows::build(self)
+    }
+
+    fn field(&self, field: Field) -> &str {
+        self.fields.get(&field).map_or("", String::as_str)
+    }
+
+    fn take_field(&mut self, field: Field) -> String {
+        self.fields
+            .remove(&field)
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    }
+
+    /// The row the cursor is on, or the first that can hold it.
+    fn cursor_at(&self, rows: &[Row]) -> Option<usize> {
+        rows.iter()
+            .position(|r| r.key == self.cursor && r.kind.selectable())
+            .or_else(|| rows.iter().position(|r| r.kind.selectable()))
+    }
+
+    fn select_section(&mut self, section: Section) {
+        if self.section != section {
+            self.section = section;
+            self.cursor.clear();
+            self.scroll = 0;
+            self.follow = true;
+        }
+    }
+
+    fn step_section(&mut self, delta: isize) {
+        let sections = self.sections();
+        let at = sections
+            .iter()
+            .position(|s| *s == self.section)
+            .unwrap_or(0);
+        let next = (at as isize + delta).clamp(0, sections.len() as isize - 1) as usize;
+        self.select_section(sections[next]);
+    }
+
+    fn move_cursor(&mut self, delta: isize) {
+        let rows = self.rows();
+        let selectable: Vec<usize> = (0..rows.len())
+            .filter(|&i| rows[i].kind.selectable())
+            .collect();
+        if selectable.is_empty() {
+            return;
+        }
+        let at = self
+            .cursor_at(&rows)
+            .and_then(|c| selectable.iter().position(|&i| i == c))
+            .unwrap_or(0);
+        let next = (at as isize + delta).clamp(0, selectable.len() as isize - 1) as usize;
+        self.cursor = rows[selectable[next]].key.clone();
+        self.follow = true;
+    }
+
+    pub fn scroll_by(&mut self, rows: isize) {
+        self.follow = false;
+        let max = self
+            .geom
+            .total
+            .saturating_sub(self.geom.pane.height as usize);
+        self.scroll = self.scroll.saturating_add_signed(rows).min(max);
+    }
+
+    pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> Option<Option<Outcome>> {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        if self.dialog.is_some() {
+            return Some(self.dialog_key(key));
+        }
+        if let Some(field) = self.editing {
+            let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+            let text = self.fields.entry(field).or_default();
+            match key.code {
+                KeyCode::Esc => self.editing = None,
+                KeyCode::Enter => {
+                    self.editing = None;
+                    let submit = self.rows().into_iter().find_map(|r| match r.kind {
+                        Kind::Field {
+                            field: f, submit, ..
+                        } if f == field => submit,
+                        _ => None,
+                    });
+                    return Some(submit.and_then(|op| self.run(op)));
+                }
+                KeyCode::Backspace => {
+                    text.pop();
+                }
+                KeyCode::Char('u') if ctrl => text.clear(),
+                KeyCode::Char(c) if !ctrl => text.push(c),
+                _ => {}
+            }
+            return Some(None);
+        }
+        if self.focus == Focus::Sections {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => self.step_section(-1),
+                KeyCode::Down | KeyCode::Char('j') => self.step_section(1),
+                KeyCode::Home | KeyCode::Char('g') => self.step_section(-100),
+                KeyCode::End | KeyCode::Char('G') => self.step_section(100),
+                KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter | KeyCode::Char(' ') => {
+                    self.focus = Focus::Pane;
+                    self.follow = true;
+                }
+                _ => return None,
+            }
+            return Some(None);
+        }
+        let rows = self.rows();
+        let at = self.cursor_at(&rows);
+        let kind = at.map(|i| rows[i].kind.clone());
+        let page = (self.geom.pane.height as isize).max(1);
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => self.move_cursor(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.move_cursor(1),
+            KeyCode::PageUp => self.move_cursor(-page),
+            KeyCode::PageDown => self.move_cursor(page),
+            KeyCode::Home | KeyCode::Char('g') => self.move_cursor(-10_000),
+            KeyCode::End | KeyCode::Char('G') => self.move_cursor(10_000),
+            KeyCode::Esc => self.focus = Focus::Sections,
+            KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('-') => match kind {
+                Some(Kind::Choice { step, .. }) => return Some(self.step(step, false)),
+                _ if key.code != KeyCode::Char('-') => self.focus = Focus::Sections,
+                _ => {}
+            },
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('+') | KeyCode::Char('=') => {
+                if let Some(Kind::Choice { step, .. }) = kind {
+                    return Some(self.step(step, true));
+                }
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                return Some(kind.and_then(|k| self.activate(k)));
+            }
+            KeyCode::Char('m') => {
+                if let Some(Kind::Item { title, actions, .. }) = kind
+                    && !actions.is_empty()
+                {
+                    return Some(self.run(Op::Menu(title, actions)));
+                }
+            }
+            KeyCode::Char('x') | KeyCode::Delete => {
+                return match kind {
+                    Some(Kind::Item {
+                        remove: Some(op), ..
+                    }) => Some(self.run(op)),
+                    _ => None,
+                };
+            }
+            _ => return None,
+        }
+        Some(None)
+    }
+
+    fn dialog_key(&mut self, key: crossterm::event::KeyEvent) -> Option<Outcome> {
+        use crossterm::event::KeyCode;
+        let dialog = self.dialog.as_mut()?;
+        let n = dialog.choices.len().max(1);
+        let typing = dialog.input.is_some();
+        match key.code {
+            KeyCode::Esc => self.dialog = None,
+            KeyCode::Left | KeyCode::Up | KeyCode::BackTab => {
+                dialog.cursor = (dialog.cursor + n - 1) % n
+            }
+            KeyCode::Right | KeyCode::Down | KeyCode::Tab => {
+                dialog.cursor = (dialog.cursor + 1) % n
+            }
+            KeyCode::Char('h' | 'k') if !typing => dialog.cursor = (dialog.cursor + n - 1) % n,
+            KeyCode::Char('l' | 'j') if !typing => dialog.cursor = (dialog.cursor + 1) % n,
+            KeyCode::Enter => return self.choose(None),
+            KeyCode::Backspace => {
+                if let Some(input) = dialog.input.as_mut() {
+                    input.pop();
+                }
+            }
+            KeyCode::Char(c) => {
+                if let Some(input) = dialog.input.as_mut() {
+                    input.push(c);
+                }
+            }
+            _ => {}
+        }
+        None
+    }
+
+    /// Runs the dialog's choice at `idx`, or the one under its cursor.
+    fn choose(&mut self, idx: Option<usize>) -> Option<Outcome> {
+        let dialog = self.dialog.take()?;
+        let (_, op) = dialog.choices.get(idx.unwrap_or(dialog.cursor))?.clone();
+        match op {
+            Op::SetPassword(username) => {
+                let password = dialog.input.unwrap_or_default();
+                self.set_password(username, password)
+            }
+            op => self.run(op),
+        }
+    }
+
+    /// What `Enter`, or a click on its value, does to a row.
+    fn activate(&mut self, kind: Kind) -> Option<Outcome> {
+        match kind {
+            Kind::Choice { step, .. } => self.step(step, true),
+            Kind::Field { field, .. } => {
+                self.editing = Some(field);
+                None
+            }
+            Kind::Button { op, .. } | Kind::Info { op: Some(op), .. } => self.run(op),
+            Kind::Item { actions, title, .. } => match actions.as_slice() {
+                [] => None,
+                [(_, op)] => self.run(op.clone()),
+                _ => self.run(Op::Menu(title, actions)),
+            },
+            _ => None,
+        }
+    }
+
+    pub fn hit(&self, col: u16, row: u16) -> Option<SettingsHit> {
+        let g = &self.geom;
+        if let Some((_, hit)) = g.links.iter().rev().find(|(r, _)| inside(*r, col, row)) {
+            return Some(*hit);
+        }
+        if self.dialog.is_some() {
+            return None;
+        }
+        if inside(g.sections, col, row) {
+            return Some(SettingsHit::Section((row - g.sections.y) as usize));
+        }
+        if inside(g.pane, col, row) {
+            let line = self.scroll + (row - g.pane.y) as usize;
+            let idx = g.line_of.iter().position(|&l| l == line)?;
+            if self.rows().get(idx).is_some_and(|r| r.kind.selectable()) {
+                return Some(SettingsHit::Row(idx));
+            }
+        }
+        None
+    }
+
+    pub fn click(&mut self, hit: SettingsHit) -> Option<Outcome> {
+        if self.dialog.is_some() {
+            return match hit {
+                SettingsHit::DialogChoice(i) => self.choose(Some(i)),
+                _ => None,
+            };
+        }
+        self.editing = None;
+        let idx = match hit {
+            SettingsHit::Section(i) => {
+                if let Some(s) = self.sections().get(i) {
+                    self.select_section(*s);
+                }
+                self.focus = Focus::Sections;
+                return None;
+            }
+            SettingsHit::DialogChoice(_) => return None,
+            SettingsHit::Row(i)
+            | SettingsHit::Dec(i)
+            | SettingsHit::Inc(i)
+            | SettingsHit::Value(i)
+            | SettingsHit::Action(i, _) => i,
+        };
+        let row = self.rows().into_iter().nth(idx)?;
+        self.cursor = row.key.clone();
+        self.focus = Focus::Pane;
+        self.follow = true;
+        match (hit, row.kind) {
+            (SettingsHit::Dec(_), Kind::Choice { step, .. }) => self.step(step, false),
+            (SettingsHit::Inc(_), Kind::Choice { step, .. }) => self.step(step, true),
+            (SettingsHit::Value(_), kind) => self.activate(kind),
+            (SettingsHit::Action(_, a), Kind::Item { actions, .. }) => {
+                let op = actions.into_iter().nth(a)?.1;
+                self.run(op)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn on_scrollbar(&self, col: u16, row: u16) -> bool {
+        inside(self.geom.bar, col, row)
+    }
+
+    pub fn scroll_to_bar(&mut self, row: u16) {
+        self.follow = false;
+        let b = self.geom.bar;
+        if b.height == 0 {
+            return;
+        }
+        let max = self
+            .geom
+            .total
+            .saturating_sub(self.geom.pane.height as usize);
+        let frac = row.saturating_sub(b.y) as f64 / b.height.saturating_sub(1).max(1) as f64;
+        self.scroll = ((frac.clamp(0.0, 1.0) * max as f64).round() as usize).min(max);
+    }
+
+    /// Writes a change to the config and reads it back. The device settings
+    /// reach the network at once.
+    fn persist(&mut self, change: impl FnOnce(&mut Config)) -> Result<(), String> {
+        let wrote = Config::persist(change).map_err(|e| format!("could not save: {e}"));
+        self.cfg = Config::cached();
+        koan_core::remote::nearby::reconfigure();
+        wrote
+    }
+
+    /// Moves a choice one step, `forward` or back.
+    fn step(&mut self, step: Step, forward: bool) -> Option<Outcome> {
+        match step {
+            Step::Setting(Setting::Offline) => {
+                koan_core::remote::offline::set_manual(!koan_core::remote::offline::manual());
+                Some(Outcome::Changed(Setting::Offline))
+            }
+            Step::Setting(setting) => Some(match self.persist(|c| setting.step(c, forward)) {
+                Ok(()) => Outcome::Changed(setting),
+                Err(e) => Outcome::Say(e),
+            }),
+            Step::SignInWith => {
+                self.sign_in_with_key = !self.sign_in_with_key;
+                None
+            }
+            Step::NewRole => {
+                self.new_role = cycle_role(self.new_role, forward);
+                None
+            }
+        }
+    }
 }
 
 const REPLAYGAIN: [&str; 3] = ["off", "track", "album"];
 const THEMES: [&str; 2] = ["koan", "ansi"];
 const PALETTES: [&str; 5] = ["theme", "rainbow", "mono", "fire", "neon"];
 const FRAME_RATES: [u8; 3] = [30, 60, 120];
-const NEARBY: [&str; 2] = ["full", "playback"];
-const SYNC_MINUTES: [u64; 6] = [0, 5, 15, 30, 60, 120];
-const CACHE_LIMITS: [&str; 6] = ["unlimited", "5GB", "20GB", "50GB", "100GB", "250GB"];
+const SYNC_MINUTES: [u64; 5] = [0, 15, 60, 360, 1440];
 
-/// The cache limit as the page names it: a size, or `unlimited`.
-fn cache_limit(set: Option<&str>) -> &str {
-    set.filter(|l| !l.trim().is_empty())
-        .unwrap_or(CACHE_LIMITS[0])
+/// The palette's name as the page lists it: `spectrum` and `record` are older
+/// names for the themed palette.
+fn palette_name(configured: &str) -> &str {
+    match configured {
+        "spectrum" | "record" | "" => "theme",
+        other => other,
+    }
+}
+
+fn on_off(on: bool) -> String {
+    if on { "on" } else { "off" }.into()
+}
+
+/// The name after (or before) `now` in `names`, round the end.
+fn cycle<'a>(names: &[&'a str], now: &str, forward: bool) -> &'a str {
+    let at = names.iter().position(|n| *n == now).unwrap_or(0);
+    let n = names.len();
+    names[if forward {
+        (at + 1) % n
+    } else {
+        (at + n - 1) % n
+    }]
+}
+
+fn replaygain_name(mode: ReplayGainMode) -> &'static str {
+    match mode {
+        ReplayGainMode::Off => "off",
+        ReplayGainMode::Track => "track",
+        ReplayGainMode::Album => "album",
+    }
 }
 
 impl Setting {
@@ -131,37 +862,33 @@ impl Setting {
             Setting::ShowFps => "frame counter",
             Setting::FrameRate => "frame rate",
             Setting::Palette => "visualiser colours",
-            Setting::AutoSync => "sync the server",
-            Setting::Discoverable => "visible to devices",
-            Setting::NearbyControl => "devices may",
+            Setting::AutoSync => "keep in sync",
+            Setting::SyncInterval => "every",
+            Setting::DownloadWorkers => "parallel downloads",
             Setting::Offline => "offline mode",
-            Setting::SyncInterval => "sync every",
-            Setting::PlayQueue => "queue on server",
-            Setting::DownloadWorkers => "downloads at once",
-            Setting::CacheLimit => "download cache",
+            Setting::Discoverable => "discoverable",
+            Setting::NearbyControl => "devices on network",
         }
     }
 
-    /// A line on why, for the right of the row.
+    /// A few words on what it does, for the right of the row.
     fn note(self) -> &'static str {
         match self {
-            Setting::ReplayGain => "level tracks or albums alike",
-            Setting::PreAmp => "dB on top of the gain",
-            Setting::FadeOnPause => "instead of cutting",
-            Setting::Theme => "koan's colours or the terminal's own",
+            Setting::ReplayGain => "the gain written into the file's tags",
+            Setting::PreAmp => "on top of the gain",
+            Setting::FadeOnPause => "ramp the volume instead of cutting",
+            Setting::Theme => "kōan's colours or the terminal's own",
             Setting::CoverGraphics => "images where the terminal draws them",
             Setting::ArtSize => "columns, in the transport bar",
             Setting::ShowFps => "top right",
-            Setting::FrameRate => "applies at the next start",
+            Setting::FrameRate => "from the next start",
             Setting::Palette => "theme follows the cover",
-            Setting::AutoSync => "at start and on a timer",
-            Setting::Discoverable => "announce this device on the network",
-            Setting::NearbyControl => "full, or the queue and playback only",
-            Setting::Offline => "play only what is on this device",
-            Setting::SyncInterval => "between automatic syncs",
-            Setting::PlayQueue => "pick this queue up on another device",
-            Setting::DownloadWorkers => "applies at the next start",
-            Setting::CacheLimit => "oldest records go first when full",
+            Setting::AutoSync => "in the apps",
+            Setting::SyncInterval => "",
+            Setting::DownloadWorkers => "from the next start",
+            Setting::Offline => "only what is on this device",
+            Setting::Discoverable => "other kōan apps on this network see it",
+            Setting::NearbyControl => "what they may do here",
         }
     }
 
@@ -169,8 +896,8 @@ impl Setting {
         match self {
             Setting::ReplayGain => match cfg.playback.replaygain {
                 ReplayGainMode::Off => "off",
-                ReplayGainMode::Track => "track",
-                ReplayGainMode::Album => "album",
+                ReplayGainMode::Track => "per track",
+                ReplayGainMode::Album => "per album",
             }
             .into(),
             Setting::PreAmp => format!("{:+.1} dB", cfg.playback.pre_amp_db),
@@ -182,52 +909,43 @@ impl Setting {
             Setting::FrameRate => format!("{} fps", cfg.playback.target_fps),
             Setting::Palette => palette_name(&cfg.visualizer.palette).into(),
             Setting::AutoSync => on_off(cfg.remote.auto_sync),
+            Setting::SyncInterval => match cfg.remote.auto_sync_interval_mins {
+                0 => "startup only".into(),
+                60 => "hour".into(),
+                1440 => "day".into(),
+                n if n % 60 == 0 => format!("{} hours", n / 60),
+                n => format!("{n} minutes"),
+            },
+            Setting::DownloadWorkers => cfg.remote.download_workers.to_string(),
+            Setting::Offline => on_off(koan_core::remote::offline::manual()),
             Setting::Discoverable => on_off(cfg.devices.discoverable),
             Setting::NearbyControl => match cfg.devices.nearby_control {
-                NearbyControl::Full => "full",
-                NearbyControl::Playback => "playback",
+                NearbyControl::Full => "full control",
+                NearbyControl::Playback => "playback only",
             }
             .into(),
-            Setting::Offline => on_off(koan_core::remote::offline::manual()),
-            Setting::SyncInterval => match cfg.remote.auto_sync_interval_mins {
-                0 => "start only".into(),
-                n => format!("{n} min"),
-            },
-            Setting::PlayQueue => on_off(cfg.remote.play_queue),
-            Setting::DownloadWorkers => cfg.remote.download_workers.to_string(),
-            Setting::CacheLimit => cache_limit(cfg.remote.cache_limit.as_deref()).to_string(),
         }
     }
 
-    /// Moves the setting one step, `forward` or back, and writes it.
-    fn step(self, forward: bool) -> bool {
-        if self == Setting::Offline {
-            koan_core::remote::offline::set_manual(!koan_core::remote::offline::manual());
-            return true;
-        }
+    /// Moves the setting one step in `c`, `forward` or back.
+    fn step(self, c: &mut Config, forward: bool) {
         let d: isize = if forward { 1 } else { -1 };
-        let cycle = |names: &[&str], now: &str| -> String {
-            let at = names.iter().position(|n| *n == now).unwrap_or(0) as isize;
-            names[(at + d).rem_euclid(names.len() as isize) as usize].to_string()
-        };
-        Config::persist(|c| match self {
+        match self {
             Setting::ReplayGain => {
-                let now = match c.playback.replaygain {
-                    ReplayGainMode::Off => "off",
-                    ReplayGainMode::Track => "track",
-                    ReplayGainMode::Album => "album",
-                };
-                c.playback.replaygain = match cycle(&REPLAYGAIN, now).as_str() {
+                let now = replaygain_name(c.playback.replaygain);
+                c.playback.replaygain = match cycle(&REPLAYGAIN, now, forward) {
                     "track" => ReplayGainMode::Track,
                     "album" => ReplayGainMode::Album,
                     _ => ReplayGainMode::Off,
                 };
             }
             Setting::PreAmp => {
-                c.playback.pre_amp_db = (c.playback.pre_amp_db + 0.5 * d as f64).clamp(-12.0, 12.0);
+                c.playback.pre_amp_db = (c.playback.pre_amp_db + 0.5 * d as f64).clamp(-15.0, 15.0);
             }
             Setting::FadeOnPause => c.playback.fade_on_pause = !c.playback.fade_on_pause,
-            Setting::Theme => c.playback.tui_theme = cycle(&THEMES, &c.playback.tui_theme),
+            Setting::Theme => {
+                c.playback.tui_theme = cycle(&THEMES, &c.playback.tui_theme, forward).into();
+            }
             Setting::CoverGraphics => c.playback.art_graphics = !c.playback.art_graphics,
             Setting::ArtSize => {
                 c.playback.art_size = (c.playback.art_size as isize + 2 * d).clamp(4, 80) as u16;
@@ -242,453 +960,40 @@ impl Setting {
                     FRAME_RATES[(at + d).rem_euclid(FRAME_RATES.len() as isize) as usize];
             }
             Setting::Palette => {
-                c.visualizer.palette = cycle(&PALETTES, palette_name(&c.visualizer.palette));
+                let now = palette_name(&c.visualizer.palette).to_string();
+                c.visualizer.palette = cycle(&PALETTES, &now, forward).into();
             }
             Setting::AutoSync => c.remote.auto_sync = !c.remote.auto_sync,
-            Setting::Discoverable => c.devices.discoverable = !c.devices.discoverable,
-            Setting::Offline => {}
             Setting::SyncInterval => {
                 let at = SYNC_MINUTES
                     .iter()
-                    .position(|m| *m == c.remote.auto_sync_interval_mins)
-                    .unwrap_or(2) as isize;
+                    .position(|m| *m >= c.remote.auto_sync_interval_mins)
+                    .unwrap_or(0) as isize;
                 c.remote.auto_sync_interval_mins =
                     SYNC_MINUTES[(at + d).rem_euclid(SYNC_MINUTES.len() as isize) as usize];
             }
-            Setting::PlayQueue => c.remote.play_queue = !c.remote.play_queue,
             Setting::DownloadWorkers => {
                 c.remote.download_workers =
                     (c.remote.download_workers as isize + d).clamp(1, 16) as usize;
             }
-            Setting::CacheLimit => {
-                let now = cache_limit(c.remote.cache_limit.as_deref()).to_string();
-                let next = cycle(&CACHE_LIMITS, &now);
-                c.remote.cache_limit = (next != CACHE_LIMITS[0]).then_some(next);
-            }
+            Setting::Offline => {}
+            Setting::Discoverable => c.devices.discoverable = !c.devices.discoverable,
             Setting::NearbyControl => {
-                let now = match c.devices.nearby_control {
-                    NearbyControl::Full => "full",
-                    NearbyControl::Playback => "playback",
-                };
-                c.devices.nearby_control = match cycle(&NEARBY, now).as_str() {
-                    "playback" => NearbyControl::Playback,
-                    _ => NearbyControl::Full,
+                c.devices.nearby_control = match c.devices.nearby_control {
+                    NearbyControl::Full => NearbyControl::Playback,
+                    NearbyControl::Playback => NearbyControl::Full,
                 };
             }
-        })
-        .is_ok()
+        }
     }
 }
 
-/// Adds the folder typed to the library's folders; its path as written.
-pub fn add_folder(typed: &str) -> Result<String, String> {
-    let typed = typed.trim();
-    if typed.is_empty() {
-        return Err("type the path of a folder".into());
-    }
-    let path = match (typed.strip_prefix("~/"), std::env::var_os("HOME")) {
-        (Some(rest), Some(home)) => std::path::Path::new(&home).join(rest),
-        _ => std::path::PathBuf::from(typed),
-    };
-    if !path.is_dir() {
-        return Err(format!("{} is not a folder", path.display()));
-    }
-    if Config::cached().library.folders.contains(&path) {
-        return Err("that folder is already in the library".into());
-    }
-    let shown = path.display().to_string();
-    Config::persist(|c| c.library.folders.push(path))
-        .map(|_| shown)
-        .map_err(|e| e.to_string())
-}
-
-/// Takes the folder at place `i` out of the library's folders; the folder.
-pub fn remove_folder(i: usize) -> Result<std::path::PathBuf, String> {
-    let Some(path) = Config::cached().library.folders.get(i).cloned() else {
-        return Err("that folder is no longer in the library".into());
-    };
-    Config::persist(|c| c.library.folders.retain(|f| *f != path))
-        .map(|_| path)
-        .map_err(|e| e.to_string())
-}
-
-/// The palette's name as the page lists it: `spectrum` and `record` are older
-/// names for the themed palette.
-fn palette_name(configured: &str) -> &str {
-    match configured {
-        "spectrum" | "record" | "" => "theme",
-        other => other,
-    }
-}
-
-/// Whether the cursor can rest on `entry`.
-fn selectable(entry: &Entry) -> bool {
-    matches!(
-        entry,
-        Entry::Item(_)
-            | Entry::Action(_)
-            | Entry::Folder(_)
-            | Entry::Connection(_)
-            | Entry::Held(_)
-    )
-}
-
-/// What a connection is, and since when.
-fn connection_detail(c: &Connection) -> String {
-    use koan_core::remote::proof::Peer;
-    let who = match &c.peer {
-        Some(Peer::Own) => "your device".to_string(),
-        Some(Peer::Shared(owner)) => format!("shared by {owner}"),
-        None => "not proved".into(),
-    };
-    let what = match (c.via, c.inbound) {
-        (Via::Server, false) => "your server".to_string(),
-        (Via::Server, true) => "your device, through the server".into(),
-        (Via::Network, true) => format!("can control this device on this network, {who}"),
-        (Via::Network, false) => format!("connected to it on this network, {who}"),
-    };
-    match c.since.and_then(|t| chrono::DateTime::from_timestamp(t, 0)) {
-        Some(at) => format!(
-            "{what} \u{b7} since {}",
-            at.with_timezone(&chrono::Local).format("%H:%M")
-        ),
-        None => what,
-    }
-}
-
-fn on_off(on: bool) -> String {
-    if on { "on" } else { "off" }.into()
-}
-
-#[derive(Default, Clone)]
-struct Geom {
-    list: Rect,
-    bar: Rect,
-    total: usize,
-    links: Vec<(Rect, SettingsHit)>,
-}
-
-pub struct SettingsPage {
-    cfg: Arc<Config>,
-    connections: Vec<Connection>,
-    held: Vec<Held>,
-    /// The devices' version the connections were read at.
-    devices_seen: u64,
-    entries: Vec<Entry>,
-    /// Index into `entries` of the row the cursor is on; always an item.
-    cursor: usize,
-    scroll: usize,
-    follow: bool,
-    geom: Geom,
-}
-
-impl Default for SettingsPage {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// The cells the section list takes, its rule included.
+const SECTIONS_W: u16 = 17;
+/// Where values start in the pane, after the labels.
+const LABEL_W: u16 = 26;
 
 impl SettingsPage {
-    pub fn new() -> Self {
-        let mut page = Self {
-            cfg: Config::cached(),
-            connections: Vec::new(),
-            held: Vec::new(),
-            devices_seen: u64::MAX,
-            entries: Vec::new(),
-            cursor: 1,
-            scroll: 0,
-            follow: true,
-            geom: Geom::default(),
-        };
-        page.reload();
-        page
-    }
-
-    /// Read the connections again when the devices have moved, and lay the
-    /// page out again only when they are not what it shows.
-    pub fn follow_devices(&mut self) {
-        let version = koan_core::remote::devices::version();
-        if version == self.devices_seen {
-            return;
-        }
-        self.devices_seen = version;
-        let connections = koan_core::remote::connections::list();
-        let held = koan_core::remote::connections::held();
-        if connections != self.connections || held != self.held {
-            let was = self.row_id(self.cursor);
-            self.connections = connections;
-            self.held = held;
-            self.rebuild(was);
-        }
-    }
-
-    pub fn reload(&mut self) {
-        let was = self.row_id(self.cursor);
-        self.cfg = Config::cached();
-        self.devices_seen = koan_core::remote::devices::version();
-        self.connections = koan_core::remote::connections::list();
-        self.held = koan_core::remote::connections::held();
-        self.rebuild(was);
-    }
-
-    /// What the row at `idx` is, whatever place it has: the cursor stays on
-    /// it when rows above it come and go.
-    fn row_id(&self, idx: usize) -> Option<RowId> {
-        Some(match self.entries.get(idx)? {
-            Entry::Item(s) => RowId::Item(*s),
-            Entry::Action(t) => RowId::Action(*t),
-            Entry::Folder(f) => RowId::Folder(self.cfg.library.folders.get(*f)?.clone()),
-            Entry::Connection(c) => {
-                let c = self.connections.get(*c)?;
-                RowId::Connection(c.key, c.id.clone(), c.name.clone())
-            }
-            Entry::Held(h) => RowId::Held(self.held.get(*h)?.addr.clone()),
-            Entry::Section(_) | Entry::Info(..) => return None,
-        })
-    }
-
-    fn rebuild(&mut self, was: Option<RowId>) {
-        let cfg = &self.cfg;
-        let mut entries = vec![
-            Entry::Section("playback"),
-            Entry::Item(Setting::ReplayGain),
-            Entry::Item(Setting::PreAmp),
-            Entry::Item(Setting::FadeOnPause),
-            Entry::Section("terminal"),
-            Entry::Item(Setting::Theme),
-            Entry::Item(Setting::CoverGraphics),
-            Entry::Item(Setting::ArtSize),
-            Entry::Item(Setting::ShowFps),
-            Entry::Item(Setting::FrameRate),
-            Entry::Item(Setting::Palette),
-            Entry::Section("server"),
-        ];
-        if cfg.remote.enabled && !cfg.remote.url.is_empty() {
-            entries.push(Entry::Info(
-                "signed in",
-                format!("{} as {}", cfg.remote.url, cfg.remote.username),
-            ));
-        } else {
-            entries.push(Entry::Info("signed in", "no server".into()));
-        }
-        entries.push(Entry::Item(Setting::AutoSync));
-        if cfg.remote.enabled {
-            entries.push(Entry::Item(Setting::SyncInterval));
-            entries.push(Entry::Item(Setting::PlayQueue));
-            entries.push(Entry::Item(Setting::DownloadWorkers));
-            entries.push(Entry::Item(Setting::CacheLimit));
-            entries.push(Entry::Item(Setting::Offline));
-            entries.push(Entry::Action(Task::Sync));
-        }
-        entries.push(Entry::Section("devices"));
-        entries.push(Entry::Item(Setting::Discoverable));
-        entries.push(Entry::Item(Setting::NearbyControl));
-        if !self.connections.is_empty() || !self.held.is_empty() {
-            entries.push(Entry::Section("connected now"));
-            entries.extend((0..self.connections.len()).map(Entry::Connection));
-            entries.extend((0..self.held.len()).map(Entry::Held));
-        }
-        entries.push(Entry::Section("library"));
-        let folders = &cfg.library.folders;
-        entries.push(Entry::Action(Task::AddFolder));
-        if !folders.is_empty() {
-            entries.push(Entry::Action(Task::Scan));
-        }
-        entries.extend((0..folders.len()).map(Entry::Folder));
-        self.entries = entries;
-        if let Some(at) = was.and_then(|was| {
-            (0..self.entries.len()).find(|&i| self.row_id(i).as_ref() == Some(&was))
-        }) {
-            self.cursor = at;
-            return;
-        }
-        self.cursor = self.cursor.min(self.entries.len() - 1);
-        if !selectable(&self.entries[self.cursor]) {
-            self.cursor = self.step_item(self.cursor, true).unwrap_or(1);
-        }
-    }
-
-    /// The next item row after (or before) `from`.
-    fn step_item(&self, from: usize, forward: bool) -> Option<usize> {
-        let item = |i: &usize| selectable(&self.entries[*i]);
-        if forward {
-            (from + 1..self.entries.len()).find(item)
-        } else {
-            (0..from.min(self.entries.len())).rfind(item)
-        }
-    }
-
-    fn rows(&self) -> usize {
-        (self.geom.list.height as usize).max(1)
-    }
-
-    fn keep_cursor_visible(&mut self) {
-        let rows = self.rows();
-        // The section heading above the first row of a group stays with it.
-        let top = if self.cursor > 0 && matches!(self.entries[self.cursor - 1], Entry::Section(_)) {
-            self.cursor - 1
-        } else {
-            self.cursor
-        };
-        if top < self.scroll {
-            self.scroll = top;
-        } else if self.cursor >= self.scroll + rows {
-            self.scroll = self.cursor + 1 - rows;
-        }
-    }
-
-    fn select(&mut self, idx: usize) {
-        if self.entries.get(idx).is_some_and(selectable) {
-            self.cursor = idx;
-            self.follow = true;
-            self.keep_cursor_visible();
-        }
-    }
-
-    pub fn scroll_by(&mut self, rows: isize) {
-        self.follow = false;
-        let max = self.entries.len().saturating_sub(self.rows());
-        self.scroll = self.scroll.saturating_add_signed(rows).min(max);
-    }
-
-    /// Hang up the connection on row `idx`, which holds that device off
-    /// until it is let back; or let a held device back.
-    fn end(&mut self, idx: usize) {
-        match self.entries.get(idx) {
-            Some(Entry::Connection(c)) => {
-                if let Some(key) = self.connections.get(*c).and_then(|c| c.key) {
-                    koan_core::remote::nearby::end(key);
-                }
-            }
-            Some(Entry::Held(h)) => {
-                if let Some(held) = self.held.get(*h) {
-                    koan_core::remote::nearby::release_addr(&held.addr);
-                }
-            }
-            _ => return,
-        }
-        self.reload();
-    }
-
-    /// Changes the setting on row `idx`, or starts the task on it.
-    fn change(&mut self, idx: usize, forward: bool) -> Option<Outcome> {
-        match self.entries.get(idx)? {
-            Entry::Item(setting) => {
-                let setting = *setting;
-                let wrote = setting.step(forward);
-                self.reload();
-                wrote.then_some(Outcome::Changed(setting))
-            }
-            Entry::Action(task) => forward.then_some(Outcome::Run(*task)),
-            _ => None,
-        }
-    }
-
-    pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> Option<Option<Outcome>> {
-        use crossterm::event::KeyCode;
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                if let Some(i) = self.step_item(self.cursor, false) {
-                    self.select(i);
-                }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(i) = self.step_item(self.cursor, true) {
-                    self.select(i);
-                }
-            }
-            KeyCode::Home | KeyCode::Char('g') => {
-                if let Some(i) = self.step_item(0, true) {
-                    self.select(i);
-                }
-            }
-            KeyCode::End | KeyCode::Char('G') => {
-                if let Some(i) = self.step_item(self.entries.len(), false) {
-                    self.select(i);
-                }
-            }
-            KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('-') => {
-                return Some(self.change(self.cursor, false));
-            }
-            KeyCode::Char('x') | KeyCode::Delete => {
-                return match self.entries.get(self.cursor) {
-                    Some(Entry::Folder(i)) => Some(Some(Outcome::RemoveFolder(*i))),
-                    Some(Entry::Connection(_) | Entry::Held(_)) => {
-                        self.end(self.cursor);
-                        Some(None)
-                    }
-                    _ => None,
-                };
-            }
-            KeyCode::Right
-            | KeyCode::Char('l')
-            | KeyCode::Char('+')
-            | KeyCode::Char('=')
-            | KeyCode::Enter
-            | KeyCode::Char(' ') => return Some(self.change(self.cursor, true)),
-            _ => return None,
-        }
-        Some(None)
-    }
-
-    pub fn hit(&self, col: u16, row: u16) -> Option<SettingsHit> {
-        let g = &self.geom;
-        if let Some((_, hit)) = g.links.iter().find(|(r, _)| inside(*r, col, row)) {
-            return Some(*hit);
-        }
-        if inside(g.list, col, row) {
-            let idx = self.scroll + (row - g.list.y) as usize;
-            if self.entries.get(idx).is_some_and(selectable) {
-                return Some(SettingsHit::Row(idx));
-            }
-        }
-        None
-    }
-
-    pub fn click(&mut self, hit: SettingsHit) -> Option<Outcome> {
-        match hit {
-            SettingsHit::Row(i) => {
-                self.select(i);
-                None
-            }
-            SettingsHit::Dec(i) => {
-                self.select(i);
-                self.change(i, false)
-            }
-            SettingsHit::Remove(i) => {
-                self.select(i);
-                match self.entries.get(i) {
-                    Some(Entry::Folder(f)) => Some(Outcome::RemoveFolder(*f)),
-                    Some(Entry::Connection(_) | Entry::Held(_)) => {
-                        self.end(i);
-                        None
-                    }
-                    _ => None,
-                }
-            }
-            SettingsHit::Inc(i) | SettingsHit::Value(i) => {
-                self.select(i);
-                self.change(i, true)
-            }
-        }
-    }
-
-    pub fn on_scrollbar(&self, col: u16, row: u16) -> bool {
-        inside(self.geom.bar, col, row)
-    }
-
-    pub fn scroll_to_bar(&mut self, row: u16) {
-        self.follow = false;
-        let b = self.geom.bar;
-        if b.height == 0 {
-            return;
-        }
-        let max = self.geom.total.saturating_sub(self.rows());
-        let frac = row.saturating_sub(b.y) as f64 / b.height.saturating_sub(1).max(1) as f64;
-        self.scroll = ((frac.clamp(0.0, 1.0) * max as f64).round() as usize).min(max);
-    }
-
     pub fn render(
         &mut self,
         area: Rect,
@@ -697,286 +1002,153 @@ impl SettingsPage {
         hover: Option<SettingsHit>,
     ) {
         self.geom = Geom::default();
-        if area.width < 12 || area.height < 3 {
+        if area.width < 40 || area.height < 2 {
             return;
         }
-        super::ui::heading(buf, area, theme, "settings", "");
-        let list = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
-        self.geom.list = list;
-        if self.follow {
-            self.keep_cursor_visible();
+        let body = area;
+        let sections = self.sections();
+        if !sections.contains(&self.section) {
+            self.section = Section::Library;
         }
-        let rows = list.height as usize;
-        self.scroll = self.scroll.min(self.entries.len().saturating_sub(rows));
-        let bar = self.entries.len() > rows && list.width > 8;
-        let end = list.x + list.width - if bar { 3 } else { 0 };
-        let value_x = list.x + 2 + 22;
 
-        for r in 0..rows {
-            let idx = self.scroll + r;
-            let Some(entry) = self.entries.get(idx) else {
+        let list = Rect::new(body.x, body.y, SECTIONS_W - 2, body.height);
+        self.geom.sections = Rect::new(
+            list.x,
+            list.y,
+            list.width,
+            (sections.len() as u16).min(list.height),
+        );
+        for (i, s) in sections.iter().enumerate().take(list.height as usize) {
+            let y = list.y + i as u16;
+            let chosen = *s == self.section;
+            let style = match (chosen, self.focus == Focus::Sections) {
+                (true, true) => theme.library_cursor,
+                (true, false) => theme.heading.add_modifier(Modifier::BOLD),
+                _ if hover == Some(SettingsHit::Section(i)) => theme.library_hover,
+                _ => theme.hint_desc,
+            };
+            for cx in list.x..list.x + list.width {
+                buf[(cx, y)].set_style(style);
+            }
+            if chosen {
+                buf[(list.x, y)].set_char('\u{258c}').set_style(theme.bar);
+            }
+            buf.set_stringn(list.x + 2, y, s.label(), list.width as usize - 2, style);
+        }
+        let rule_x = body.x + SECTIONS_W - 1;
+        for y in body.y..body.y + body.height {
+            buf[(rule_x, y)].set_char('\u{2502}').set_style(theme.rule);
+        }
+
+        let pane = Rect::new(
+            rule_x + 2,
+            body.y,
+            (body.x + body.width).saturating_sub(rule_x + 2),
+            body.height,
+        );
+        self.render_pane(pane, buf, theme, hover);
+        if self.dialog.is_some() {
+            self.render_dialog(area, buf, theme, hover);
+        }
+    }
+
+    fn render_pane(
+        &mut self,
+        pane: Rect,
+        buf: &mut Buffer,
+        theme: &Theme,
+        hover: Option<SettingsHit>,
+    ) {
+        self.geom.pane = pane;
+        let rows = self.rows();
+        let text_w = pane.width.saturating_sub(4) as usize;
+        // Each row as the lines it takes: a note wraps, and a heading has a
+        // blank line above it but at the top.
+        let mut lines: Vec<(usize, Option<String>)> = Vec::new();
+        let mut line_of = Vec::with_capacity(rows.len());
+        for (i, row) in rows.iter().enumerate() {
+            if matches!(row.kind, Kind::Heading(_)) && i > 0 {
+                lines.push((i, None));
+            }
+            line_of.push(lines.len());
+            match &row.kind {
+                Kind::Note(text) | Kind::Warn(text) => {
+                    lines.extend(wrap(text, text_w).into_iter().map(|l| (i, Some(l))));
+                }
+                _ => lines.push((i, None)),
+            }
+        }
+        let height = pane.height as usize;
+        let cursor = (self.focus == Focus::Pane)
+            .then(|| self.cursor_at(&rows))
+            .flatten();
+        if let Some(c) = cursor {
+            self.cursor = rows[c].key.clone();
+            if self.follow {
+                let line = line_of[c];
+                // The heading over a group's first row stays with it.
+                let top = (0..c)
+                    .rev()
+                    .take_while(|&j| !rows[j].kind.selectable())
+                    .find(|&j| matches!(rows[j].kind, Kind::Heading(_)))
+                    .map(|j| line_of[j])
+                    .filter(|&l| line - l < height)
+                    .unwrap_or(line);
+                if top < self.scroll {
+                    self.scroll = top;
+                } else if line >= self.scroll + height {
+                    self.scroll = line + 1 - height;
+                }
+            }
+        }
+        self.scroll = self.scroll.min(lines.len().saturating_sub(height));
+        let bar = lines.len() > height;
+        let end = pane.x + pane.width - if bar { 3 } else { 0 };
+
+        for r in 0..height {
+            let Some((idx, text)) = lines.get(self.scroll + r) else {
                 break;
             };
-            let y = list.y + r as u16;
-            match entry {
-                Entry::Section(name) => {
-                    buf.set_string(
-                        list.x + 1,
-                        y,
-                        name,
-                        theme.heading.add_modifier(Modifier::BOLD),
-                    );
-                    let from = list.x + 2 + name.chars().count() as u16;
+            let y = pane.y + r as u16;
+            let row = &rows[*idx];
+            let first = line_of[*idx] == self.scroll + r;
+            let room = (end - pane.x) as usize;
+            match (&row.kind, text) {
+                (Kind::Note(_), Some(t)) => {
+                    buf.set_stringn(pane.x + 2, y, t, room, theme.hint_desc);
+                }
+                (Kind::Warn(_), Some(t)) => {
+                    let style = Style::new().fg(theme.tokens.bad);
+                    buf.set_stringn(pane.x + 2, y, t, room, style);
+                }
+                (Kind::Heading(name), None) if first => {
+                    let style = theme.heading.add_modifier(Modifier::BOLD);
+                    buf.set_stringn(pane.x, y, name, room, style);
+                    let from = pane.x + 1 + name.width() as u16;
                     for cx in from..end {
                         buf[(cx, y)].set_char('\u{2500}').set_style(theme.rule);
                     }
                 }
-                Entry::Connection(_) | Entry::Held(_) => {
-                    let selected = idx == self.cursor;
-                    let row_hover = matches!(
-                        hover,
-                        Some(SettingsHit::Row(n) | SettingsHit::Remove(n)) if n == idx
-                    );
-                    if selected {
-                        for cx in list.x..end {
-                            buf[(cx, y)].set_style(theme.library_cursor);
-                        }
-                        buf[(list.x, y)].set_char('\u{258c}').set_style(theme.bar);
-                    } else if row_hover {
-                        for cx in list.x..end {
-                            buf[(cx, y)].set_style(theme.library_hover);
-                        }
-                    }
-                    let (base, dim) = if selected {
-                        (theme.library_cursor, theme.library_cursor)
-                    } else {
-                        (theme.track_normal, theme.hint_desc)
-                    };
-                    let (name, detail, end_label) = match entry {
-                        Entry::Connection(c) => {
-                            let c = &self.connections[*c];
-                            (
-                                c.name.clone(),
-                                connection_detail(c),
-                                c.key.map(|_| "disconnect"),
-                            )
-                        }
-                        Entry::Held(h) => {
-                            let h = &self.held[*h];
-                            (
-                                h.name.clone().unwrap_or_else(|| h.addr.clone()),
-                                "disconnected until allowed back".to_string(),
-                                Some("allow"),
-                            )
-                        }
-                        _ => unreachable!(),
-                    };
-                    buf.set_stringn(list.x + 2, y, &name, 20, base);
-                    let label_w = end_label.map_or(0, |l| l.len() as u16 + 2);
-                    let room = end.saturating_sub(value_x + label_w) as usize;
-                    buf.set_stringn(value_x, y, &detail, room, dim);
-                    if let Some(label) = end_label {
-                        let x = end.saturating_sub(label_w);
-                        let style = if hover == Some(SettingsHit::Remove(idx)) {
-                            theme.heading.add_modifier(Modifier::BOLD)
-                        } else {
-                            dim
-                        };
-                        buf.set_string(x + 1, y, label, style);
-                        self.geom
-                            .links
-                            .push((Rect::new(x, y, label_w, 1), SettingsHit::Remove(idx)));
-                    }
+                (_, None) if first => {
+                    let line = Rect::new(pane.x, y, end - pane.x, 1);
+                    self.render_row(buf, theme, *idx, row, line, hover);
                 }
-                Entry::Info(label, text) => {
-                    buf.set_stringn(list.x + 2, y, label, 20, theme.hint_desc);
-                    let room = end.saturating_sub(value_x) as usize;
-                    buf.set_stringn(value_x, y, text, room, theme.track_normal);
-                }
-                Entry::Folder(f) => {
-                    let selected = idx == self.cursor;
-                    let row_hover = matches!(
-                        hover,
-                        Some(SettingsHit::Row(n) | SettingsHit::Remove(n)) if n == idx
-                    );
-                    if selected {
-                        for cx in list.x..end {
-                            buf[(cx, y)].set_style(theme.library_cursor);
-                        }
-                        buf[(list.x, y)].set_char('\u{258c}').set_style(theme.bar);
-                    } else if row_hover {
-                        for cx in list.x..end {
-                            buf[(cx, y)].set_style(theme.library_hover);
-                        }
-                    }
-                    let (base, dim) = if selected {
-                        (theme.library_cursor, theme.library_cursor)
-                    } else {
-                        (theme.track_normal, theme.hint_desc)
-                    };
-                    if *f == 0 {
-                        buf.set_stringn(list.x + 2, y, "folders", 20, dim);
-                    }
-                    let path = self
-                        .cfg
-                        .library
-                        .folders
-                        .get(*f)
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_default();
-                    let room = end.saturating_sub(value_x + 4) as usize;
-                    buf.set_stringn(value_x, y, &path, room, base);
-                    let x = end.saturating_sub(4);
-                    buf.set_string(
-                        x + 1,
-                        y,
-                        "\u{d7}",
-                        if hover == Some(SettingsHit::Remove(idx)) {
-                            theme.heading.add_modifier(Modifier::BOLD)
-                        } else {
-                            dim
-                        },
-                    );
-                    self.geom
-                        .links
-                        .push((Rect::new(x, y, 3, 1), SettingsHit::Remove(idx)));
-                }
-                Entry::Action(task) => {
-                    let selected = idx == self.cursor;
-                    let row_hover = matches!(
-                        hover,
-                        Some(SettingsHit::Row(n) | SettingsHit::Value(n)) if n == idx
-                    );
-                    if selected {
-                        for cx in list.x..end {
-                            buf[(cx, y)].set_style(theme.library_cursor);
-                        }
-                        buf[(list.x, y)].set_char('\u{258c}').set_style(theme.bar);
-                    } else if row_hover {
-                        for cx in list.x..end {
-                            buf[(cx, y)].set_style(theme.library_hover);
-                        }
-                    }
-                    let base = if selected {
-                        theme.library_cursor
-                    } else {
-                        theme.track_normal
-                    };
-                    let dim = if selected {
-                        theme.library_cursor
-                    } else {
-                        theme.hint_desc
-                    };
-                    buf.set_stringn(list.x + 2, y, task.label(), 20, base);
-                    let run = if hover == Some(SettingsHit::Value(idx)) {
-                        theme.track_playing.add_modifier(Modifier::UNDERLINED)
-                    } else {
-                        theme.track_playing
-                    };
-                    let run_x = value_x + 2;
-                    let room = end.saturating_sub(run_x).min(3);
-                    if room > 0 {
-                        buf.set_stringn(run_x, y, "run", room as usize, run);
-                        self.geom
-                            .links
-                            .push((Rect::new(run_x, y, room, 1), SettingsHit::Value(idx)));
-                    }
-                    let note_x = value_x + 8;
-                    if note_x + 8 < end {
-                        buf.set_stringn(note_x, y, task.note(), (end - note_x) as usize, dim);
-                    }
-                }
-                Entry::Item(setting) => {
-                    let selected = idx == self.cursor;
-                    let row_hover = matches!(
-                        hover,
-                        Some(
-                            SettingsHit::Row(n)
-                                | SettingsHit::Dec(n)
-                                | SettingsHit::Inc(n)
-                                | SettingsHit::Value(n)
-                        ) if n == idx
-                    );
-                    if selected {
-                        for cx in list.x..end {
-                            buf[(cx, y)].set_style(theme.library_cursor);
-                        }
-                        buf[(list.x, y)].set_char('\u{258c}').set_style(theme.bar);
-                    } else if row_hover {
-                        for cx in list.x..end {
-                            buf[(cx, y)].set_style(theme.library_hover);
-                        }
-                    }
-                    let base = if selected {
-                        theme.library_cursor
-                    } else {
-                        theme.track_normal
-                    };
-                    let dim = if selected {
-                        theme.library_cursor
-                    } else {
-                        theme.hint_desc
-                    };
-                    buf.set_stringn(list.x + 2, y, setting.label(), 20, base);
-
-                    let value = setting.value(&self.cfg);
-                    let vw = value.chars().count() as u16;
-                    let arrow = |on: bool| {
-                        if on {
-                            dim.add_modifier(Modifier::UNDERLINED | Modifier::BOLD)
-                        } else {
-                            dim
-                        }
-                    };
-                    buf.set_string(
-                        value_x,
-                        y,
-                        "\u{2039}",
-                        arrow(hover == Some(SettingsHit::Dec(idx))),
-                    );
-                    let value_style = if hover == Some(SettingsHit::Value(idx)) {
-                        base.add_modifier(Modifier::UNDERLINED)
-                    } else {
-                        base.add_modifier(Modifier::BOLD)
-                    };
-                    buf.set_string(value_x + 2, y, &value, value_style);
-                    buf.set_string(
-                        value_x + 3 + vw,
-                        y,
-                        "\u{203a}",
-                        arrow(hover == Some(SettingsHit::Inc(idx))),
-                    );
-                    self.geom
-                        .links
-                        .push((Rect::new(value_x, y, 2, 1), SettingsHit::Dec(idx)));
-                    self.geom.links.push((
-                        Rect::new(value_x + 2, y, vw + 1, 1),
-                        SettingsHit::Value(idx),
-                    ));
-                    self.geom
-                        .links
-                        .push((Rect::new(value_x + 3 + vw, y, 2, 1), SettingsHit::Inc(idx)));
-
-                    let note_x = value_x + vw + 8;
-                    if note_x + 8 < end {
-                        buf.set_stringn(note_x, y, setting.note(), (end - note_x) as usize, dim);
-                    }
-                }
+                _ => {}
             }
         }
+        self.geom.total = lines.len();
+        self.geom.line_of = line_of;
 
         if bar {
-            let x = list.x + list.width - 1;
-            self.geom.bar = Rect::new(x - 2, list.y, 3, list.height);
-            self.geom.total = self.entries.len();
-            let h = list.height as usize;
-            let total = self.entries.len();
-            let thumb = (h * rows / total).max(1);
-            let top = (h - thumb) * self.scroll / (total - rows).max(1);
-            for row in 0..h {
+            let x = pane.x + pane.width - 1;
+            self.geom.bar = Rect::new(x - 2, pane.y, 3, pane.height);
+            let total = lines.len();
+            let thumb = (height * height / total).max(1);
+            let top = (height - thumb) * self.scroll / (total - height).max(1);
+            for row in 0..height {
                 let on = row >= top && row < top + thumb;
                 for cx in [x - 1, x] {
-                    buf[(cx, list.y + row as u16)]
+                    buf[(cx, pane.y + row as u16)]
                         .set_char(if on { '\u{2588}' } else { ' ' })
                         .set_style(if on {
                             Style::new().fg(theme.scrollbar_thumb)
@@ -987,151 +1159,274 @@ impl SettingsPage {
             }
         }
     }
-}
 
-fn inside(r: Rect, col: u16, row: u16) -> bool {
-    r.width > 0 && col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
+    /// Draws a row that takes one line: its label, then its value or its
+    /// controls from the value column.
+    fn render_row(
+        &mut self,
+        buf: &mut Buffer,
+        theme: &Theme,
+        idx: usize,
+        row: &Row,
+        line: Rect,
+        hover: Option<SettingsHit>,
+    ) {
+        let (x0, y, end) = (line.x, line.y, line.x + line.width);
+        // On a narrow pane the labels give up room before the values do.
+        let value_x = x0 + LABEL_W.min(line.width * 2 / 5);
+        let selected = self.focus == Focus::Pane && row.key == self.cursor;
+        let hovered = matches!(hover,
+            Some(SettingsHit::Row(n) | SettingsHit::Dec(n) | SettingsHit::Inc(n)
+                | SettingsHit::Value(n) | SettingsHit::Action(n, _)) if n == idx);
+        if selected {
+            for cx in x0..end {
+                buf[(cx, y)].set_style(theme.library_cursor);
+            }
+            buf[(x0, y)].set_char('\u{258c}').set_style(theme.bar);
+        } else if hovered {
+            for cx in x0..end {
+                buf[(cx, y)].set_style(theme.library_hover);
+            }
+        }
+        let (base, dim) = if selected {
+            (theme.library_cursor, theme.library_cursor)
+        } else {
+            (theme.track_normal, theme.hint_desc)
+        };
+        let label_w = (value_x - x0).saturating_sub(4) as usize;
+        let room = |x: u16| end.saturating_sub(x) as usize;
+        let lit = |on: bool, s: Style| {
+            if on {
+                s.add_modifier(Modifier::UNDERLINED)
+            } else {
+                s
+            }
+        };
+        let on = |hit: SettingsHit| hover == Some(hit);
+        let mut links = Vec::new();
+        match &row.kind {
+            Kind::Info { label, value, op } => {
+                buf.set_stringn(x0 + 2, y, fit(label, label_w), label_w, dim);
+                let shown = fit(value, room(value_x));
+                let style = lit(op.is_some() && on(SettingsHit::Value(idx)), base);
+                buf.set_stringn(value_x, y, &shown, room(value_x), style);
+                if op.is_some() {
+                    links.push((
+                        Rect::new(value_x, y, shown.width() as u16, 1),
+                        SettingsHit::Value(idx),
+                    ));
+                }
+            }
+            Kind::Choice {
+                label, value, note, ..
+            } => {
+                buf.set_stringn(x0 + 2, y, fit(label, label_w), label_w, base);
+                let vw = value.width() as u16;
+                if value_x + vw + 4 > end {
+                    return;
+                }
+                let arrow = |hit| {
+                    if on(hit) {
+                        dim.add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                    } else {
+                        dim
+                    }
+                };
+                let value_style = lit(
+                    on(SettingsHit::Value(idx)),
+                    base.add_modifier(Modifier::BOLD),
+                );
+                buf.set_string(value_x, y, "\u{2039}", arrow(SettingsHit::Dec(idx)));
+                buf.set_string(value_x + 2, y, value, value_style);
+                buf.set_string(
+                    value_x + 3 + vw,
+                    y,
+                    "\u{203a}",
+                    arrow(SettingsHit::Inc(idx)),
+                );
+                links.push((Rect::new(value_x, y, 2, 1), SettingsHit::Dec(idx)));
+                links.push((
+                    Rect::new(value_x + 2, y, vw + 1, 1),
+                    SettingsHit::Value(idx),
+                ));
+                links.push((Rect::new(value_x + 3 + vw, y, 2, 1), SettingsHit::Inc(idx)));
+                // A note is shown whole or not at all: cut, it says nothing.
+                let note_x = value_x + vw + 7;
+                if !note.is_empty() && note.width() <= room(note_x) {
+                    buf.set_string(note_x, y, note, dim);
+                }
+            }
+            Kind::Field { field, label, .. } => {
+                buf.set_stringn(x0 + 2, y, fit(label, label_w), label_w, base);
+                let typed = self.field(*field);
+                let editing = self.editing == Some(*field);
+                let w = room(value_x).saturating_sub(1);
+                let shown = if field.secret() {
+                    "\u{2022}".repeat(typed.chars().count())
+                } else {
+                    typed.to_string()
+                };
+                let (text, style) = if shown.is_empty() && !editing {
+                    (
+                        fit(field.placeholder(), w),
+                        dim.add_modifier(Modifier::ITALIC),
+                    )
+                } else if editing {
+                    (
+                        tail(&shown, w.saturating_sub(1)),
+                        theme.hint_key.add_modifier(Modifier::UNDERLINED),
+                    )
+                } else {
+                    (fit(&shown, w), lit(on(SettingsHit::Value(idx)), base))
+                };
+                buf.set_stringn(value_x, y, &text, w, style);
+                if editing {
+                    let cx = value_x + text.width() as u16;
+                    if cx < end {
+                        buf[(cx, y)].set_char('\u{2588}').set_style(theme.hint_key);
+                    }
+                }
+                links.push((Rect::new(value_x, y, w as u16, 1), SettingsHit::Value(idx)));
+            }
+            Kind::Button { label, note, .. } => {
+                let shown = format!("[ {label} ]");
+                let style = lit(on(SettingsHit::Value(idx)), theme.track_playing);
+                let style = if selected {
+                    style.add_modifier(Modifier::BOLD)
+                } else {
+                    style
+                };
+                buf.set_stringn(x0 + 2, y, &shown, room(x0 + 2), style);
+                links.push((
+                    Rect::new(x0 + 2, y, (shown.width() as u16).min(end - x0 - 2), 1),
+                    SettingsHit::Value(idx),
+                ));
+                let note_x = (x0 + 4 + shown.width() as u16).max(value_x);
+                if !note.is_empty() && note.width() <= room(note_x) {
+                    buf.set_string(note_x, y, note, dim);
+                }
+            }
+            Kind::Item {
+                title,
+                detail,
+                actions,
+                ..
+            } => {
+                // The actions at the row's end, laid out from the right.
+                let mut x = end;
+                let mut placed = Vec::new();
+                for (a, (name, _)) in actions.iter().enumerate().rev() {
+                    let w = name.width() as u16 + 2;
+                    if x < value_x + w {
+                        break;
+                    }
+                    x -= w;
+                    placed.push((x, a, *name));
+                }
+                for (ax, a, name) in placed {
+                    let hit = SettingsHit::Action(idx, a);
+                    let style = if on(hit) {
+                        theme
+                            .heading
+                            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                    } else {
+                        dim
+                    };
+                    buf.set_string(ax + 1, y, name, style);
+                    links.push((Rect::new(ax, y, name.width() as u16 + 2, 1), hit));
+                }
+                let title_w = (x.saturating_sub(x0 + 2) as usize).saturating_sub(2);
+                let shown = fit(title, title_w);
+                buf.set_stringn(x0 + 2, y, &shown, title_w, base);
+                let dx = (x0 + 4 + shown.width() as u16).max(value_x);
+                if !detail.is_empty() && dx + 4 < x {
+                    let w = (x - dx).saturating_sub(1) as usize;
+                    buf.set_stringn(dx, y, fit(detail, w), w, dim);
+                }
+            }
+            Kind::Heading(_) | Kind::Note(_) | Kind::Warn(_) => {}
+        }
+        self.geom.links.extend(links);
+    }
+
+    fn render_dialog(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+        theme: &Theme,
+        hover: Option<SettingsHit>,
+    ) {
+        let Some(d) = self.dialog.as_ref() else {
+            return;
+        };
+        let w = 64u16.min(area.width.saturating_sub(4));
+        let inner_w = w.saturating_sub(4) as usize;
+        let message = wrap(&d.message, inner_w);
+        let input = if d.input.is_some() { 2 } else { 0 };
+        let h = ((message.len() + input + 5) as u16).min(area.height);
+        let popup = Rect::new(
+            area.x + (area.width - w) / 2,
+            area.y + (area.height - h) / 2,
+            w,
+            h,
+        );
+        crate::shell::clear(buf, popup);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme.rule)
+            .title(ratatui::text::Span::styled(
+                format!(" {} ", fit(&d.title, inner_w)),
+                theme.heading.add_modifier(Modifier::BOLD),
+            ));
+        let inner = block.inner(popup);
+        block.render(popup, buf);
+        if inner.height < 2 {
+            return;
+        }
+        let x = inner.x + 1;
+        let bottom = inner.y + inner.height;
+        let mut y = inner.y + 1;
+        for line in &message {
+            if y + 1 >= bottom {
+                break;
+            }
+            buf.set_stringn(x, y, line, inner_w, theme.track_normal);
+            y += 1;
+        }
+        if let Some(typed) = &d.input
+            && y + 2 < bottom
+        {
+            y += 1;
+            let dots = fit(&"\u{2022}".repeat(typed.chars().count()), inner_w - 1);
+            buf.set_stringn(x, y, &dots, inner_w, theme.hint_key);
+            buf[(x + dots.width() as u16, y)]
+                .set_char('\u{2588}')
+                .set_style(theme.hint_key);
+        }
+        // The choices along the foot, the one under the cursor lit.
+        let y = bottom - 1;
+        let mut cx = x;
+        let mut links = Vec::new();
+        for (i, (label, _)) in d.choices.iter().enumerate() {
+            let shown = format!(" {label} ");
+            let cells = shown.width() as u16;
+            if cx + cells > inner.x + inner.width {
+                break;
+            }
+            let style = if i == d.cursor {
+                theme.picker_cursor
+            } else if hover == Some(SettingsHit::DialogChoice(i)) {
+                theme.library_hover
+            } else {
+                theme.hint_key
+            };
+            buf.set_string(cx, y, &shown, style);
+            links.push((Rect::new(cx, y, cells, 1), SettingsHit::DialogChoice(i)));
+            cx += cells + 1;
+        }
+        self.geom.links.extend(links);
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crossterm::event::{KeyCode, KeyEvent};
-
-    fn theme() -> Theme {
-        Theme::new(super::super::theme::Palette::Ansi, (125, 211, 167))
-    }
-
-    fn draw(p: &mut SettingsPage, w: u16, h: u16) -> Buffer {
-        let area = Rect::new(0, 0, w, h);
-        let mut buf = Buffer::empty(area);
-        p.render(area, &mut buf, &theme(), None);
-        buf
-    }
-
-    #[test]
-    fn a_folder_that_is_not_there_is_refused_before_anything_is_written() {
-        koan_core::config::isolate_config_for_tests();
-        assert!(add_folder("   ").is_err());
-        assert!(add_folder("/no/such/folder/anywhere").is_err());
-    }
-
-    #[test]
-    fn a_folder_is_removed_by_x_or_delete_and_never_by_backspace() {
-        koan_core::config::isolate_config_for_tests();
-        let dir = tempfile::tempdir().unwrap();
-        let added = add_folder(dir.path().to_str().unwrap()).unwrap();
-        let mut p = SettingsPage::new();
-        let (at, i) = p
-            .entries
-            .iter()
-            .enumerate()
-            .find_map(|(at, e)| match e {
-                Entry::Folder(i) if p.cfg.library.folders[*i] == dir.path() => Some((at, *i)),
-                _ => None,
-            })
-            .unwrap();
-        p.select(at);
-        assert_eq!(p.handle_key(KeyEvent::from(KeyCode::Backspace)), None);
-        for code in [KeyCode::Char('x'), KeyCode::Delete] {
-            assert_eq!(
-                p.handle_key(KeyEvent::from(code)),
-                Some(Some(Outcome::RemoveFolder(i)))
-            );
-        }
-        assert_eq!(remove_folder(i).unwrap().display().to_string(), added);
-        assert!(
-            !Config::cached()
-                .library
-                .folders
-                .iter()
-                .any(|f| f == dir.path())
-        );
-    }
-
-    #[test]
-    fn an_unset_cache_limit_reads_as_unlimited() {
-        assert_eq!(cache_limit(None), "unlimited");
-        assert_eq!(cache_limit(Some(" ")), "unlimited");
-        assert_eq!(cache_limit(Some("50GB")), "50GB");
-    }
-
-    #[test]
-    fn a_folder_can_be_added_from_the_page() {
-        koan_core::config::isolate_config_for_tests();
-        let mut p = SettingsPage::new();
-        let shown: String = draw(&mut p, 100, 60)
-            .content()
-            .iter()
-            .map(|c| c.symbol())
-            .collect();
-        assert!(shown.contains("add folder"));
-        let at = p
-            .entries
-            .iter()
-            .position(|e| matches!(e, Entry::Action(Task::AddFolder)))
-            .unwrap();
-        assert_eq!(p.change(at, true), Some(Outcome::Run(Task::AddFolder)));
-    }
-
-    #[test]
-    fn every_setting_is_listed_under_its_section() {
-        koan_core::config::isolate_config_for_tests();
-        let mut p = SettingsPage::new();
-        let buf = draw(&mut p, 100, 40);
-        let shown: String = buf.content().iter().map(|c| c.symbol()).collect();
-        for label in [
-            "replaygain",
-            "theme",
-            "cover graphics",
-            "visible to devices",
-        ] {
-            assert!(shown.contains(label), "{label}");
-        }
-    }
-
-    #[test]
-    fn the_cursor_rests_on_settings_never_on_headings() {
-        koan_core::config::isolate_config_for_tests();
-        let mut p = SettingsPage::new();
-        draw(&mut p, 100, 40);
-        for _ in 0..30 {
-            p.handle_key(KeyEvent::from(KeyCode::Down));
-            assert!(selectable(&p.entries[p.cursor]));
-        }
-        for _ in 0..30 {
-            p.handle_key(KeyEvent::from(KeyCode::Up));
-            assert!(selectable(&p.entries[p.cursor]));
-        }
-    }
-
-    #[test]
-    fn each_value_has_arrows_and_a_value_to_hit() {
-        koan_core::config::isolate_config_for_tests();
-        let mut p = SettingsPage::new();
-        draw(&mut p, 100, 40);
-        let kinds: Vec<_> = p.geom.links.iter().map(|(_, h)| *h).collect();
-        assert!(kinds.iter().any(|h| matches!(h, SettingsHit::Dec(_))));
-        assert!(kinds.iter().any(|h| matches!(h, SettingsHit::Value(_))));
-        assert!(kinds.iter().any(|h| matches!(h, SettingsHit::Inc(_))));
-        let (rect, hit) = p.geom.links[0];
-        assert_eq!(p.hit(rect.x, rect.y), Some(hit));
-    }
-
-    #[test]
-    fn older_palette_names_read_as_the_theme() {
-        assert_eq!(palette_name("spectrum"), "theme");
-        assert_eq!(palette_name("fire"), "fire");
-    }
-
-    #[test]
-    fn it_draws_at_any_size() {
-        koan_core::config::isolate_config_for_tests();
-        let mut p = SettingsPage::new();
-        for w in 0..60 {
-            for h in 0..12 {
-                draw(&mut p, w, h);
-            }
-        }
-    }
-}
+mod tests;

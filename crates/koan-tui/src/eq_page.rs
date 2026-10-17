@@ -22,6 +22,7 @@ use super::eq_graph::{self, Curve, EqGraph, Handle};
 use super::eq_worker::{
     Act, Done, Job, PendingImport, Playing, Reply, RoleAsk, Snapshot, ViewReq, Worker,
 };
+use super::text::{fit, wrap};
 use super::theme::Theme;
 
 /// A stage of a device's chain, to choose what fills it.
@@ -3066,8 +3067,8 @@ impl EqPage {
 
 /// A frame with a title, cleared inside.
 fn box_frame(area: Rect, buf: &mut Buffer, theme: &Theme, title: &str) {
-    use ratatui::widgets::{Clear, Widget};
-    Clear.render(area, buf);
+    use ratatui::widgets::Widget;
+    super::shell::clear(buf, area);
     super::shell::frame(title, theme).render(area, buf);
 }
 
@@ -3471,30 +3472,6 @@ fn expand(path: &str) -> String {
         (Some(rest), Ok(home)) => format!("{home}/{rest}"),
         _ => path.to_owned(),
     }
-}
-
-/// `text` cut to `width` cells, with an ellipsis where it was cut.
-fn fit(text: &str, width: usize) -> String {
-    super::shell::fit(text, width).into_owned()
-}
-
-/// `text` in lines of at most `width`, broken at spaces.
-fn wrap(text: &str, width: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    let mut line = String::new();
-    for word in text.split_whitespace() {
-        if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > width {
-            lines.push(std::mem::take(&mut line));
-        }
-        if !line.is_empty() {
-            line.push(' ');
-        }
-        line.push_str(word);
-    }
-    if !line.is_empty() {
-        lines.push(line);
-    }
-    lines
 }
 
 #[cfg(test)]

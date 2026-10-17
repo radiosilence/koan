@@ -7,16 +7,15 @@
 //! lays the row out, drops the least important controls when it is narrow,
 //! and gives the page the rect below it with the gutters taken off.
 
-use std::borrow::Cow;
 use std::cell::RefCell;
 
 use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::{Modifier, Style};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::NavTarget;
+use crate::text::{fit, width};
 use crate::theme::Theme;
 
 /// Rows between the top of the content area and the toolbar.
@@ -24,6 +23,16 @@ pub const TOP_GUTTER: u16 = 1;
 /// Columns between the content and the sidebar, and the content and the
 /// terminal's right edge.
 pub const SIDE_GUTTER: u16 = 1;
+/// Rows clear between the toolbar and the page's first row of content.
+pub const BODY_GAP: u16 = 1;
+
+/// A page's area with the row under the toolbar left clear: where its
+/// content starts.
+pub fn body(area: Rect) -> Rect {
+    let gap = BODY_GAP.min(area.height);
+    Rect::new(area.x, area.y + gap, area.width, area.height - gap)
+}
+
 /// Columns between a toolbar's items.
 pub const ITEM_GAP: u16 = 2;
 
@@ -43,48 +52,6 @@ pub fn content(area: Rect) -> Rect {
 pub fn inset(area: Rect) -> Rect {
     let side = SIDE_GUTTER.min(area.width / 2);
     Rect::new(area.x + side, area.y, area.width - 2 * side, area.height)
-}
-
-/// How many cells `s` takes.
-pub fn width(s: &str) -> usize {
-    UnicodeWidthStr::width(s)
-}
-
-/// `s` cut to `w` cells, ending in `…` when anything was cut. Never splits a
-/// wide character: one that would straddle the edge is dropped with the rest.
-pub fn fit(s: &str, w: usize) -> Cow<'_, str> {
-    if width(s) <= w {
-        return Cow::Borrowed(s);
-    }
-    if w == 0 {
-        return Cow::Borrowed("");
-    }
-    let mut out = String::new();
-    let mut used = 0;
-    for c in s.chars() {
-        let cw = c.width().unwrap_or(0);
-        if used + cw > w - 1 {
-            break;
-        }
-        out.push(c);
-        used += cw;
-    }
-    out.push('…');
-    Cow::Owned(out)
-}
-
-/// `s` fitted to exactly `w` cells, padded on the right: a column's cell.
-pub fn fit_pad(s: &str, w: usize) -> String {
-    let cut = fit(s, w);
-    let pad = w - width(&cut);
-    format!("{cut}{}", " ".repeat(pad))
-}
-
-/// `s` fitted to exactly `w` cells, padded on the left: a duration, a count.
-pub fn fit_pad_right(s: &str, w: usize) -> String {
-    let cut = fit(s, w);
-    let pad = w - width(&cut);
-    format!("{}{cut}", " ".repeat(pad))
 }
 
 /// One of a page's controls in the toolbar.
@@ -136,6 +103,24 @@ pub fn frame(title: &str, theme: &Theme) -> ratatui::widgets::Block<'static> {
             format!(" {title} "),
             theme.heading,
         ))
+}
+
+/// Blanks `area` for a modal to draw on, and the halves of any wide
+/// character its edges cut through: left half outside, the terminal would
+/// draw the character over the modal's border.
+pub fn clear(buf: &mut Buffer, area: Rect) {
+    use ratatui::widgets::Widget;
+    ratatui::widgets::Clear.render(area, buf);
+    let bounds = buf.area;
+    for y in area.y..area.y + area.height {
+        if area.x > bounds.x && width(buf[(area.x - 1, y)].symbol()) > 1 {
+            buf[(area.x - 1, y)].reset();
+        }
+        let right = area.x + area.width;
+        if right < bounds.x + bounds.width && buf[(right, y)].symbol().is_empty() {
+            buf[(right, y)].reset();
+        }
+    }
 }
 
 /// A modal `w` by `h` cells, centred in `area` and kept inside it.
@@ -366,15 +351,15 @@ mod tests {
     use crossterm::event::KeyCode;
 
     #[test]
-    fn fitting_measures_cells_and_ends_in_an_ellipsis() {
-        assert_eq!(fit("abc", 3), "abc");
-        assert_eq!(fit("abcdef", 4), "abc…");
-        // Each of these takes two cells; none is split at the edge.
-        assert_eq!(fit("東京事変", 5), "東京…");
-        assert_eq!(width(&fit("東京事変", 4)), 3);
-        assert_eq!(fit("abc", 0), "");
-        assert_eq!(width(&fit_pad("東京事変", 5)), 5);
-        assert_eq!(fit_pad_right("3:07", 6), "  3:07");
+    fn a_modal_never_leaves_half_a_wide_character_at_its_edge() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 10, 1));
+        buf.set_string(0, 0, "東京事変", Style::default());
+        // Columns 3 and 4: the second half of 京 and the first of 事.
+        clear(&mut buf, Rect::new(3, 0, 2, 1));
+        assert_eq!(buf[(2, 0)].symbol(), " ");
+        assert_eq!(buf[(5, 0)].symbol(), " ");
+        assert_eq!(buf[(6, 0)].symbol(), "変");
+        assert_eq!(buf[(0, 0)].symbol(), "東");
     }
 
     #[test]
@@ -382,6 +367,12 @@ mod tests {
         let area = Rect::new(10, 5, 40, 12);
         assert_eq!(centred(area, 20, 6), Rect::new(20, 8, 20, 6));
         assert_eq!(centred(area, 90, 60), area);
+    }
+
+    #[test]
+    fn a_body_starts_below_the_gap() {
+        assert_eq!(body(Rect::new(3, 4, 10, 6)), Rect::new(3, 5, 10, 5));
+        assert_eq!(body(Rect::new(3, 4, 10, 0)), Rect::new(3, 4, 10, 0));
     }
 
     #[test]

@@ -265,8 +265,10 @@ pub(crate) fn playlist_items_from_paths(
     items
 }
 
-fn open_db_optional() -> Option<Database> {
-    Database::open_default().ok()
+/// From the pool: this runs while the TUI and the player hold connections,
+/// and opening another checks the schema and checkpoints the WAL.
+fn open_db_optional() -> Option<koan_core::db::pool::Handle<'static>> {
+    koan_core::db::pool::shared().get().ok()
 }
 
 fn playlist_item_from_track_row(track: &queries::TrackRow, path: &Path) -> PlaylistItem {

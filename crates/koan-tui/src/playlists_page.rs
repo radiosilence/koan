@@ -6,15 +6,18 @@ use std::time::{Duration, Instant};
 
 use koan_core::db::queries::{PlaylistEntry, PlaylistRow};
 use koan_core::player::commands::PlayerCommand;
+use koan_core::player::state::{QueueEntry, QueueEntryStatus};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 
+use super::actions_menu::Item;
 use super::app::PickerAction;
-use super::browse::fit;
 use super::playlist_ops as ops;
+use super::shell::{Link, Links, ToolItem, Toolbar};
+use super::text::fit;
 use super::theme::Theme;
-use super::transport::format_time;
+use super::track_rows as rows;
 
 const DOUBLE_CLICK: Duration = Duration::from_millis(500);
 /// How long a delete waits for its second press.
@@ -37,6 +40,19 @@ pub enum PlAction {
     /// Choose a playlist to put these tracks in.
     Choose(Vec<i64>),
     Say(String),
+    Favourite(i64),
+    /// A menu for the row, with its heading.
+    Menu(String, Vec<(String, Item)>),
+    /// Ask where to write the playlist with this id and name.
+    Export(i64, String),
+    /// The playlist on screen, with this name, was deleted.
+    Deleted(String),
+    /// Something for the playlist's own page to do.
+    Page(PageAct),
+    /// Play the playlist with this id, shuffled or not.
+    Play(i64, bool),
+    /// Delete the playlist with this id, as asked for from its menu.
+    Delete(i64),
 }
 
 fn inside(r: Rect, col: u16, row: u16) -> bool {
@@ -82,6 +98,14 @@ fn duration(ms: i64) -> String {
     }
 }
 
+/// Asks for a new name for the playlist, or says why it keeps its own.
+fn rename(list: &PlaylistRow) -> PlAction {
+    match ops::renamable(list) {
+        Ok(()) => PlAction::Rename(list.id, list.name.clone()),
+        Err(e) => PlAction::Say(e),
+    }
+}
+
 // ---------------------------------------------------------------- the list
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,8 +113,6 @@ pub enum ListHit {
     Row(usize),
     Play(usize),
     Delete(usize),
-    New,
-    Filter,
 }
 
 #[derive(Default, Clone)]
@@ -98,8 +120,6 @@ struct ListGeom {
     list: Rect,
     bar: Rect,
     total: usize,
-    new: Rect,
-    filter: Rect,
     links: Vec<(Rect, ListHit)>,
 }
 
@@ -188,14 +208,36 @@ impl PlaylistsPage {
 
     /// Plays the playlist at `idx`.
     fn play(&self, idx: usize) -> PlAction {
+        self.at(idx)
+            .map_or(PlAction::None, |list| PlAction::Play(list.id, false))
+    }
+
+    /// The menu for the playlist at `idx`, as the apps' sidebar row has it.
+    fn menu(&self, idx: usize) -> PlAction {
         let Some(list) = self.at(idx) else {
             return PlAction::None;
         };
-        let entries = ops::entries(list.id);
-        match ops::queue_command(&entries, None, false) {
-            Some(cmd) => PlAction::Command(cmd),
-            None => PlAction::Say(format!("'{}' has nothing to play", list.name)),
+        let item = |label: &str, action| (label.to_string(), Item::Playlist(action));
+        let mut items = vec![
+            item("Play", PlAction::Play(list.id, false)),
+            item("Shuffle", PlAction::Play(list.id, true)),
+            (String::new(), Item::Playlist(PlAction::None)),
+        ];
+        if list.source_path.is_none() {
+            items.push(item(
+                "Rename\u{2026}",
+                PlAction::Rename(list.id, list.name.clone()),
+            ));
         }
+        items.extend([
+            item(
+                "Export as M3U8\u{2026}",
+                PlAction::Export(list.id, list.name.clone()),
+            ),
+            (String::new(), Item::Playlist(PlAction::None)),
+            item("Delete", PlAction::Delete(list.id)),
+        ]);
+        PlAction::Menu(list.name.clone(), items)
     }
 
     fn track_ids(&self, idx: usize) -> Vec<i64> {
@@ -279,12 +321,8 @@ impl PlaylistsPage {
                 ));
             }
             KeyCode::Char('c') | KeyCode::Char('+') => return Some(PlAction::New),
-            KeyCode::Char('r') => {
-                return Some(
-                    self.at(self.cursor)
-                        .map_or(PlAction::None, |p| PlAction::Rename(p.id, p.name.clone())),
-                );
-            }
+            KeyCode::Char('m') => return Some(self.menu(self.cursor)),
+            KeyCode::Char('r') => return Some(self.at(self.cursor).map_or(PlAction::None, rename)),
             KeyCode::Char('x') | KeyCode::Delete => return Some(self.delete(self.cursor)),
             KeyCode::Char('/') => self.filter_active = true,
             KeyCode::Esc if !self.filter.is_empty() => {
@@ -298,12 +336,6 @@ impl PlaylistsPage {
 
     pub fn hit(&self, col: u16, row: u16) -> Option<ListHit> {
         let g = &self.geom;
-        if inside(g.new, col, row) {
-            return Some(ListHit::New);
-        }
-        if inside(g.filter, col, row) {
-            return Some(ListHit::Filter);
-        }
         if let Some((_, hit)) = g.links.iter().find(|(r, _)| inside(*r, col, row)) {
             return Some(*hit);
         }
@@ -317,11 +349,6 @@ impl PlaylistsPage {
     pub fn click(&mut self, hit: ListHit) -> PlAction {
         self.armed = self.armed.filter(|_| matches!(hit, ListHit::Delete(_)));
         match hit {
-            ListHit::New => PlAction::New,
-            ListHit::Filter => {
-                self.filter_active = true;
-                PlAction::None
-            }
             ListHit::Play(i) => {
                 self.move_to(i);
                 self.play(i)
@@ -355,25 +382,32 @@ impl PlaylistsPage {
         self.scroll = scroll_to(self.geom.bar, self.geom.total, self.rows(), row);
     }
 
+    /// The page's toolbar: how many playlists, a new one, the filter and the
+    /// menu.
+    pub fn toolbar(&self) -> Toolbar {
+        use crossterm::event::{KeyCode, KeyEvent};
+        let key = |c| KeyEvent::from(KeyCode::Char(c));
+        let filter = if self.filter_active || !self.filter.is_empty() {
+            format!("/{}", self.filter)
+        } else {
+            "/ filter".into()
+        };
+        Toolbar::new("playlists")
+            .count(super::text::count(self.all.len() as u64, "playlist"))
+            .item(ToolItem::new("+ new", key('c')).priority(3))
+            .item(
+                ToolItem::new(filter, key('/'))
+                    .on(self.filter_active)
+                    .priority(2),
+            )
+            .item(ToolItem::new("actions", key('m')).priority(1))
+    }
+
     pub fn render(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme, hover: Option<ListHit>) {
         self.geom = ListGeom::default();
-        if area.width < 12 || area.height < 3 {
+        if area.width < 12 || area.height == 0 {
             return;
         }
-        super::ui::heading(
-            buf,
-            area,
-            theme,
-            "playlists",
-            &format!(" {} ", self.all.len()),
-        );
-        let mut x = area.x + area.width;
-        let mut control = |buf: &mut Buffer, text: String, style: Style| -> Rect {
-            let w = (text.chars().count() as u16).min(x.saturating_sub(area.x));
-            x -= w;
-            buf.set_stringn(x, area.y, &text, w as usize, style);
-            Rect::new(x, area.y, w, 1)
-        };
         let underline = |on: bool, base: Style| {
             if on {
                 base.add_modifier(Modifier::UNDERLINED)
@@ -381,33 +415,13 @@ impl PlaylistsPage {
                 base
             }
         };
-        self.geom.new = control(
-            buf,
-            " + new ".into(),
-            underline(hover == Some(ListHit::New), theme.hint_key),
-        );
-        let filter_text = if self.filter_active || !self.filter.is_empty() {
-            let cursor = if self.filter_active { "\u{2588}" } else { "" };
-            format!(" /{}{} ", self.filter, cursor)
-        } else {
-            " / filter ".to_string()
-        };
-        self.geom.filter = control(
-            buf,
-            filter_text,
-            underline(
-                hover == Some(ListHit::Filter) || self.filter_active,
-                theme.hint_desc,
-            ),
-        );
-
-        let list = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
+        let list = area;
         self.geom.list = list;
         if self.shown.is_empty() {
             let msg = if !self.filter.is_empty() {
                 "no match"
             } else {
-                "no playlists yet: + new makes one, and w on a record or track adds to one"
+                "no playlists yet: c makes one, and w on an album or a track adds to one"
             };
             buf.set_stringn(
                 list.x + 1,
@@ -505,19 +519,79 @@ impl PlaylistsPage {
 
 // ----------------------------------------------------------- one playlist
 
+/// What the page's own controls and menu ask of it, handed back to it by the
+/// app so a menu item does exactly what its key does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PageAct {
+    /// Play from this entry, or from the top; shuffled or not.
+    Play(Option<i64>, bool),
+    Remove(Vec<i64>),
+    /// Move the entry one place, down or up.
+    Shift(i64, bool),
+    /// Shuffle the playlist itself, for good.
+    Reorder,
+    Grouped(bool),
+    Undo,
+    Redo,
+    Rename,
+    Export,
+    Delete,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaylistHit {
     Row(usize),
-    Artist(usize),
-    Album(usize),
-    Remove(usize),
-    Up(usize),
-    Down(usize),
-    Play,
-    Shuffle,
-    Add,
-    Undo,
-    Redo,
+    Heading(usize),
+    Heart(usize),
+    Menu(usize),
+}
+
+/// One line of a playlist's page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Line {
+    Heading { first: usize, last: usize },
+    Entry(usize),
+}
+
+/// The entries in runs of one album, as they stand: by the album's id where
+/// both have one, else by its title and artist. A track without an album
+/// stands alone.
+fn lines_of(entries: &[PlaylistEntry], grouped: bool) -> Vec<Line> {
+    let same = |a: &PlaylistEntry, b: &PlaylistEntry| match (a.track.album_id, b.track.album_id) {
+        (Some(x), Some(y)) => x == y,
+        _ => {
+            a.track.album_title == b.track.album_title
+                && a.track.album_artist_name == b.track.album_artist_name
+        }
+    };
+    let mut out = Vec::with_capacity(entries.len());
+    let mut i = 0;
+    while i < entries.len() {
+        if !grouped || entries[i].track.album_title.is_empty() {
+            out.push(Line::Entry(i));
+            i += 1;
+            continue;
+        }
+        let last = (i..entries.len())
+            .take_while(|&j| same(&entries[i], &entries[j]))
+            .last()
+            .unwrap_or(i);
+        out.push(Line::Heading { first: i, last });
+        out.extend((i..=last).map(Line::Entry));
+        i = last + 1;
+    }
+    out
+}
+
+/// What the queue says of the playlist's entries while it plays them: the one
+/// playing, and those still arriving or that could not be fetched.
+#[derive(Default)]
+pub struct Live<'a> {
+    pub queue: &'a [QueueEntry],
+    pub links: Option<&'a Links>,
+    pub favourites: Option<&'a std::collections::HashSet<i64>>,
+    pub offline: bool,
+    pub spinner: usize,
 }
 
 #[derive(Default, Clone)]
@@ -531,38 +605,44 @@ struct Geom {
 pub struct PlaylistPage {
     pub list: PlaylistRow,
     entries: Vec<PlaylistEntry>,
+    lines: Vec<Line>,
+    /// The line each entry is on.
+    line_of: Vec<usize>,
+    /// The entry under the cursor.
     cursor: usize,
+    /// The first line shown.
     scroll: usize,
     follow: bool,
+    armed: Option<Instant>,
     geom: Geom,
     last_click: Option<(usize, Instant)>,
 }
 
 impl PlaylistPage {
     pub fn load(id: i64) -> Option<Self> {
-        let list = ops::get(id)?;
-        Some(Self {
+        Some(Self::with(ops::get(id)?, ops::entries(id)))
+    }
+
+    fn with(list: PlaylistRow, entries: Vec<PlaylistEntry>) -> Self {
+        let mut page = Self {
             list,
-            entries: ops::entries(id),
+            entries,
+            lines: Vec::new(),
+            line_of: Vec::new(),
             cursor: 0,
             scroll: 0,
             follow: true,
+            armed: None,
             geom: Geom::default(),
             last_click: None,
-        })
+        };
+        page.relayout();
+        page
     }
 
     #[cfg(test)]
     pub fn for_test(list: PlaylistRow, entries: Vec<PlaylistEntry>) -> Self {
-        Self {
-            list,
-            entries,
-            cursor: 0,
-            scroll: 0,
-            follow: true,
-            geom: Geom::default(),
-            last_click: None,
-        }
+        Self::with(list, entries)
     }
 
     pub fn reload(&mut self) {
@@ -570,8 +650,25 @@ impl PlaylistPage {
             self.list = list;
         }
         self.entries = ops::entries(self.list.id);
+        self.relayout();
         self.cursor = self.cursor.min(self.entries.len().saturating_sub(1));
         self.follow = true;
+    }
+
+    /// A playlist is a sequence someone chose, not a shelf of albums, so it is
+    /// a row per track unless it was asked to group.
+    fn grouped(&self) -> bool {
+        self.list.grouped.unwrap_or(false)
+    }
+
+    fn relayout(&mut self) {
+        self.lines = lines_of(&self.entries, self.grouped());
+        self.line_of = vec![0; self.entries.len()];
+        for (n, line) in self.lines.iter().enumerate() {
+            if let Line::Entry(i) = line {
+                self.line_of[*i] = n;
+            }
+        }
     }
 
     fn rows(&self) -> usize {
@@ -582,16 +679,22 @@ impl PlaylistPage {
         self.cursor = idx.min(self.entries.len().saturating_sub(1));
         self.follow = true;
         let rows = self.rows();
-        if self.cursor < self.scroll {
-            self.scroll = self.cursor;
-        } else if self.cursor >= self.scroll + rows {
-            self.scroll = self.cursor + 1 - rows;
+        let line = self.line_of.get(self.cursor).copied().unwrap_or(0);
+        // A heading stays in view over its first track.
+        let top = match line.checked_sub(1).map(|l| self.lines[l]) {
+            Some(Line::Heading { .. }) => line - 1,
+            _ => line,
+        };
+        if top < self.scroll {
+            self.scroll = top;
+        } else if line >= self.scroll + rows {
+            self.scroll = line + 1 - rows;
         }
     }
 
     pub fn scroll_by(&mut self, rows: isize) {
         self.follow = false;
-        let max = self.entries.len().saturating_sub(self.rows());
+        let max = self.lines.len().saturating_sub(self.rows());
         self.scroll = self.scroll.saturating_add_signed(rows).min(max);
     }
 
@@ -607,48 +710,89 @@ impl PlaylistPage {
     }
 
     fn refuse_if_readonly(&self) -> Option<PlAction> {
-        self.list.readonly.then(|| {
-            PlAction::Say(format!(
-                "'{}' is read-only: its rules, its file or its server decide what it holds",
-                self.list.name
-            ))
-        })
+        self.list
+            .readonly
+            .then(|| PlAction::Say(ops::read_only(&self.list.name)))
     }
 
-    fn remove(&mut self, idx: usize) -> PlAction {
-        if let Some(refused) = self.refuse_if_readonly() {
+    fn here(&self) -> Option<&PlaylistEntry> {
+        self.entries.get(self.cursor)
+    }
+
+    /// Does what a control or a menu item on this page asks.
+    pub fn apply(&mut self, act: PageAct) -> PlAction {
+        let fillable = matches!(
+            act,
+            PageAct::Remove(_)
+                | PageAct::Shift(..)
+                | PageAct::Reorder
+                | PageAct::Undo
+                | PageAct::Redo
+        );
+        if fillable && let Some(refused) = self.refuse_if_readonly() {
             return refused;
         }
-        let Some(id) = self.entries.get(idx).map(|e| e.id) else {
+        if act != PageAct::Delete {
+            self.armed = None;
+        }
+        match act {
+            PageAct::Play(start, shuffled) => self.command(start, shuffled),
+            PageAct::Remove(ids) => {
+                let said = match ops::remove(self.list.id, &ids) {
+                    Ok(n) => format!(
+                        "removed {} from the playlist",
+                        super::text::count(n as u64, "track")
+                    ),
+                    Err(e) => e,
+                };
+                self.reload();
+                PlAction::Say(said)
+            }
+            PageAct::Shift(entry, down) => self.shift(entry, down),
+            PageAct::Reorder => {
+                if self.entries.len() < 2 {
+                    return PlAction::None;
+                }
+                let result = ops::shuffle(self.list.id);
+                self.reload();
+                PlAction::Say(result.map_or_else(|e| e, |()| "shuffled the playlist".into()))
+            }
+            PageAct::Grouped(grouped) => {
+                let result = ops::set_grouped(self.list.id, grouped);
+                self.reload();
+                result.map_or_else(PlAction::Say, |()| PlAction::None)
+            }
+            PageAct::Undo | PageAct::Redo => {
+                let undo = act == PageAct::Undo;
+                let said = match ops::step(self.list.id, undo) {
+                    Ok(true) => if undo { "undone" } else { "redone" }.to_string(),
+                    Ok(false) => format!("nothing to {}", if undo { "undo" } else { "redo" }),
+                    Err(e) => e,
+                };
+                self.reload();
+                PlAction::Say(said)
+            }
+            PageAct::Rename => rename(&self.list),
+            PageAct::Export => PlAction::Export(self.list.id, self.list.name.clone()),
+            PageAct::Delete => {
+                if !self.armed.is_some_and(|at| at.elapsed() < CONFIRM) {
+                    self.armed = Some(Instant::now());
+                    return PlAction::Say(format!("press again to delete '{}'", self.list.name));
+                }
+                self.armed = None;
+                match ops::delete(self.list.id) {
+                    Ok(()) => PlAction::Deleted(self.list.name.clone()),
+                    Err(e) => PlAction::Say(e),
+                }
+            }
+        }
+    }
+
+    /// Moves `entry` one place, and the cursor with it.
+    fn shift(&mut self, entry: i64, down: bool) -> PlAction {
+        let Some(idx) = self.entries.iter().position(|e| e.id == entry) else {
             return PlAction::None;
         };
-        let said = match ops::remove(self.list.id, &[id]) {
-            Ok(_) => "removed from the playlist".to_string(),
-            Err(e) => e,
-        };
-        self.reload();
-        PlAction::Say(said)
-    }
-
-    /// Takes back (or redoes) the last edit made to this playlist.
-    fn step(&mut self, undo: bool) -> PlAction {
-        if let Some(refused) = self.refuse_if_readonly() {
-            return refused;
-        }
-        let said = match ops::step(self.list.id, undo) {
-            Ok(true) => if undo { "undone" } else { "redone" }.to_string(),
-            Ok(false) => format!("nothing to {}", if undo { "undo" } else { "redo" }),
-            Err(e) => e,
-        };
-        self.reload();
-        PlAction::Say(said)
-    }
-
-    /// Moves the entry at `idx` one place, and the cursor with it.
-    fn shift(&mut self, idx: usize, down: bool) -> PlAction {
-        if let Some(refused) = self.refuse_if_readonly() {
-            return refused;
-        }
         let to = if down {
             idx + 1
         } else {
@@ -663,18 +807,74 @@ impl PlaylistPage {
         let order: Vec<i64> = self.entries.iter().map(|e| e.id).collect();
         let result = ops::reorder(self.list.id, &ops::moved(&order, idx, to));
         self.reload();
-        self.move_to(to);
         match result {
-            Ok(()) => PlAction::None,
+            Ok(()) => {
+                self.move_to(to);
+                PlAction::None
+            }
             Err(e) => PlAction::Say(e),
         }
+    }
+
+    /// The menu for the entry at `idx`, as the apps' playlist menu has it.
+    fn menu(&self, idx: usize) -> PlAction {
+        use super::actions_menu::Item::{Browse, Playlist};
+        use super::browse::Action;
+        let Some(e) = self.entries.get(idx) else {
+            return PlAction::None;
+        };
+        let one = vec![e.track.id];
+        let page = |act| Playlist(PlAction::Page(act));
+        let mut items = vec![
+            ("Play".to_string(), page(PageAct::Play(Some(e.id), false))),
+            (
+                "Play next".into(),
+                Browse(Action::Play(one.clone(), PickerAction::PlayNext)),
+            ),
+            (
+                "Add to queue".into(),
+                Browse(Action::Play(one.clone(), PickerAction::Append)),
+            ),
+            (String::new(), Browse(Action::None)),
+            (
+                "Add to playlist\u{2026}".into(),
+                Browse(Action::Choose(one)),
+            ),
+        ];
+        if !self.list.readonly {
+            items.extend([
+                (String::new(), Browse(Action::None)),
+                ("Move up".into(), page(PageAct::Shift(e.id, false))),
+                ("Move down".into(), page(PageAct::Shift(e.id, true))),
+                (
+                    "Remove from playlist".into(),
+                    page(PageAct::Remove(vec![e.id])),
+                ),
+            ]);
+        }
+        items.extend([
+            (String::new(), Browse(Action::None)),
+            (
+                "Favourite or unfavourite".into(),
+                Browse(Action::Favourite(e.track.id)),
+            ),
+            ("Track info".into(), Browse(Action::Info(e.track.id))),
+        ]);
+        if let Some(album) = e.track.album_id {
+            items.push(("Go to album".into(), Browse(Action::OpenAlbum(album))));
+        }
+        if let Some(artist) = e.track.artist_id {
+            items.push(("Go to artist".into(), Browse(Action::OpenArtist(artist))));
+        }
+        PlAction::Menu(e.track.title.clone(), items)
     }
 
     pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> Option<PlAction> {
         use crossterm::event::{KeyCode, KeyModifiers};
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let page = self.rows();
-        let here = self.entries.get(self.cursor).map(|e| e.id);
+        let here = self.here().map(|e| (e.id, e.track.clone()));
+        let act = |a| Some(PlAction::Page(a));
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => self.move_to(self.cursor.saturating_sub(1)),
             KeyCode::Down | KeyCode::Char('j') => self.move_to(self.cursor + 1),
@@ -684,54 +884,52 @@ impl PlaylistPage {
             KeyCode::Char('d') if ctrl => self.move_to(self.cursor + page),
             KeyCode::Home | KeyCode::Char('g') => self.move_to(0),
             KeyCode::End | KeyCode::Char('G') => self.move_to(usize::MAX),
-            KeyCode::Enter => return Some(self.command(here, false)),
-            KeyCode::Char('P') => return Some(self.command(None, false)),
+            KeyCode::Enter => return act(PageAct::Play(here.map(|(id, _)| id), false)),
+            KeyCode::Char('P') => return act(PageAct::Play(None, false)),
+            KeyCode::Char('S') => return act(PageAct::Play(None, true)),
+            KeyCode::Char('Y') => return act(PageAct::Reorder),
+            KeyCode::Char('e') => return act(PageAct::Export),
+            KeyCode::Char('X') => return act(PageAct::Delete),
             KeyCode::Char('a') => {
                 return Some(PlAction::Tracks(self.all_tracks(), PickerAction::Append));
             }
             KeyCode::Char('N') => {
                 return Some(PlAction::Tracks(self.all_tracks(), PickerAction::PlayNext));
             }
+            KeyCode::Char('t') => return act(PageAct::Grouped(!self.grouped())),
+            KeyCode::Char('m') => return Some(self.menu(self.cursor)),
             KeyCode::Char('w') => {
-                return Some(
-                    self.entries
-                        .get(self.cursor)
-                        .map_or(PlAction::None, |e| PlAction::Choose(vec![e.track.id])),
-                );
+                return Some(here.map_or(PlAction::None, |(_, t)| PlAction::Choose(vec![t.id])));
             }
-            KeyCode::Char('r') => {
-                return Some(
-                    self.refuse_if_readonly()
-                        .unwrap_or_else(|| PlAction::Rename(self.list.id, self.list.name.clone())),
-                );
-            }
+            KeyCode::Char('r') => return act(PageAct::Rename),
             KeyCode::Char('x') | KeyCode::Delete | KeyCode::Backspace => {
-                return Some(self.remove(self.cursor));
+                return Some(here.map_or(PlAction::None, |(id, _)| {
+                    PlAction::Page(PageAct::Remove(vec![id]))
+                }));
             }
-            KeyCode::Char('z') if ctrl => return Some(self.step(true)),
-            KeyCode::Char('y') if ctrl => return Some(self.step(false)),
-            KeyCode::Char('K') => return Some(self.shift(self.cursor, false)),
-            KeyCode::Char('J') => return Some(self.shift(self.cursor, true)),
+            KeyCode::Char('z') if ctrl => return act(PageAct::Undo),
+            KeyCode::Char('y') if ctrl => return act(PageAct::Redo),
+            KeyCode::Char('K') | KeyCode::Char('J') => {
+                let down = key.code == KeyCode::Char('J');
+                return Some(here.map_or(PlAction::None, |(id, _)| {
+                    PlAction::Page(PageAct::Shift(id, down))
+                }));
+            }
+            KeyCode::Char('f') => {
+                return Some(here.map_or(PlAction::None, |(_, t)| PlAction::Favourite(t.id)));
+            }
             KeyCode::Char('i') => {
-                return Some(
-                    self.entries
-                        .get(self.cursor)
-                        .map_or(PlAction::None, |e| PlAction::Info(e.track.id)),
-                );
+                return Some(here.map_or(PlAction::None, |(_, t)| PlAction::Info(t.id)));
             }
             KeyCode::Char('A') => {
                 return Some(
-                    self.entries
-                        .get(self.cursor)
-                        .and_then(|e| e.track.artist_id)
+                    here.and_then(|(_, t)| t.artist_id)
                         .map_or(PlAction::None, PlAction::OpenArtist),
                 );
             }
             KeyCode::Char('O') => {
                 return Some(
-                    self.entries
-                        .get(self.cursor)
-                        .and_then(|e| e.track.album_id)
+                    here.and_then(|(_, t)| t.album_id)
                         .map_or(PlAction::None, PlAction::OpenAlbum),
                 );
             }
@@ -746,35 +944,29 @@ impl PlaylistPage {
             return Some(*hit);
         }
         if inside(g.list, col, row) {
-            let idx = self.scroll + (row - g.list.y) as usize;
-            return (idx < self.entries.len()).then_some(PlaylistHit::Row(idx));
+            return match self.lines.get(self.scroll + (row - g.list.y) as usize)? {
+                Line::Entry(i) => Some(PlaylistHit::Row(*i)),
+                Line::Heading { first, .. } => Some(PlaylistHit::Heading(*first)),
+            };
         }
         None
     }
 
     pub fn click(&mut self, hit: PlaylistHit) -> PlAction {
         match hit {
-            PlaylistHit::Play => self.command(None, false),
-            PlaylistHit::Shuffle => self.command(None, true),
-            PlaylistHit::Add => PlAction::Tracks(self.all_tracks(), PickerAction::Append),
-            PlaylistHit::Undo => self.step(true),
-            PlaylistHit::Redo => self.step(false),
-            PlaylistHit::Remove(i) => self.remove(i),
-            PlaylistHit::Up(i) => self.shift(i, false),
-            PlaylistHit::Down(i) => self.shift(i, true),
-            PlaylistHit::Artist(i) => {
+            PlaylistHit::Menu(i) => {
                 self.move_to(i);
-                self.entries
-                    .get(i)
-                    .and_then(|e| e.track.artist_id)
-                    .map_or(PlAction::None, PlAction::OpenArtist)
+                self.menu(i)
             }
-            PlaylistHit::Album(i) => {
+            PlaylistHit::Heart(i) => {
                 self.move_to(i);
                 self.entries
                     .get(i)
-                    .and_then(|e| e.track.album_id)
-                    .map_or(PlAction::None, PlAction::OpenAlbum)
+                    .map_or(PlAction::None, |e| PlAction::Favourite(e.track.id))
+            }
+            PlaylistHit::Heading(first) => {
+                self.move_to(first);
+                PlAction::None
             }
             PlaylistHit::Row(i) => {
                 let double = self
@@ -783,7 +975,7 @@ impl PlaylistPage {
                 self.move_to(i);
                 if double {
                     self.last_click = None;
-                    self.command(self.entries.get(i).map(|e| e.id), false)
+                    self.apply(PageAct::Play(self.entries.get(i).map(|e| e.id), false))
                 } else {
                     self.last_click = Some((i, Instant::now()));
                     PlAction::None
@@ -801,94 +993,98 @@ impl PlaylistPage {
         self.scroll = scroll_to(self.geom.bar, self.geom.total, self.rows(), row);
     }
 
+    /// The toolbar: the name, what it holds, and the controls that apply to
+    /// this playlist, each a key of the page's.
+    pub fn toolbar(&self) -> Toolbar {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let key = |c| KeyEvent::from(KeyCode::Char(c));
+        let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+        let mut facts = vec![super::text::count(self.entries.len() as u64, "track")];
+        let ms: u64 = self
+            .entries
+            .iter()
+            .filter_map(|e| e.track.duration_ms)
+            .map(|d| d as u64)
+            .sum();
+        if ms > 0 {
+            facts.push(rows::total(ms));
+        }
+        if self.list.rules.is_some() {
+            facts.push("smart".into());
+        } else if self.list.readonly {
+            facts.push("read-only".into());
+        }
+        if self.list.remote_id.is_some() {
+            facts.push("synced".into());
+        }
+        let fillable = !self.list.readonly;
+        let armed = self.armed.is_some_and(|at| at.elapsed() < CONFIRM);
+        let mut bar = Toolbar::new(self.list.name.clone())
+            .count(facts.join(" \u{b7} "))
+            .item(ToolItem::new("play", key('P')).on(true).priority(9))
+            .item(ToolItem::new("shuffle", key('S')).priority(8))
+            .item(ToolItem::new("next", key('N')).priority(6))
+            .item(ToolItem::new("queue", key('a')).priority(7));
+        if fillable && self.entries.len() > 1 {
+            bar = bar.item(ToolItem::new("reorder", key('Y')).priority(1));
+        }
+        bar = bar.item(
+            ToolItem::new(
+                if self.grouped() {
+                    "by album"
+                } else {
+                    "by track"
+                },
+                key('t'),
+            )
+            .priority(5),
+        );
+        if fillable {
+            bar = bar
+                .item(ToolItem::new("undo", ctrl('z')).priority(4))
+                .item(ToolItem::new("redo", ctrl('y')).priority(3));
+        }
+        if self.list.source_path.is_none() {
+            bar = bar.item(ToolItem::new("rename", key('r')).priority(2));
+        }
+        bar.item(ToolItem::new("export", key('e')).priority(0))
+            .item(
+                ToolItem::new(if armed { "delete?" } else { "delete" }, key('X'))
+                    .on(armed)
+                    .priority(0),
+            )
+    }
+
     pub fn render(
         &mut self,
         area: Rect,
         buf: &mut Buffer,
         theme: &Theme,
         hover: Option<PlaylistHit>,
+        live: &Live,
     ) {
         self.geom = Geom::default();
-        if area.width < 12 || area.height < 4 {
+        if area.width < 12 || area.height == 0 {
             return;
         }
-        super::ui::heading(buf, area, theme, "playlist", "");
-        let underline = |on: bool, base: Style| {
-            if on {
-                base.add_modifier(Modifier::UNDERLINED)
-            } else {
-                base
-            }
-        };
-        let tw = area.width.saturating_sub(2) as usize;
-        buf.set_stringn(
-            area.x + 1,
-            area.y + 1,
-            &self.list.name,
-            tw,
-            theme.heading.add_modifier(Modifier::BOLD),
-        );
-        let facts = format!(
-            "{} track{} \u{b7} {}{}",
-            self.list.track_count,
-            if self.list.track_count == 1 { "" } else { "s" },
-            duration(self.list.duration_ms),
-            if self.list.readonly {
-                " \u{b7} read-only"
-            } else {
-                ""
-            },
-        );
-        buf.set_stringn(area.x + 1, area.y + 2, &facts, tw, theme.hint_desc);
-
-        // The buttons; play is the one prominent action.
-        let by = area.y + 3;
-        let mut x = area.x + 1;
-        let mut buttons = vec![
-            (" play ", PlaylistHit::Play, true),
-            (" shuffle ", PlaylistHit::Shuffle, false),
-            (" add to queue ", PlaylistHit::Add, false),
-        ];
-        if !self.list.readonly {
-            buttons.push((" undo ", PlaylistHit::Undo, false));
-            buttons.push((" redo ", PlaylistHit::Redo, false));
-        }
-        for (label, hit, prominent) in buttons {
-            let w = label.chars().count() as u16 + 2;
-            if x + w > area.x + area.width {
-                break;
-            }
-            let base = if prominent {
-                theme.track_cursor
-            } else {
-                theme.track_normal
-            };
-            buf.set_string(
-                x,
-                by,
-                format!("[{label}]"),
-                underline(hover == Some(hit), base),
-            );
-            self.geom.links.push((Rect::new(x, by, w, 1), hit));
-            x += w + 2;
-        }
-
-        let list = Rect::new(
-            area.x,
-            area.y + 5,
-            area.width,
-            area.height.saturating_sub(5),
-        );
+        let list = area;
         self.geom.list = list;
         if list.height == 0 {
             return;
         }
         if self.entries.is_empty() {
+            let why = if self.list.rules.is_some() {
+                "nothing in the library matches its rules yet"
+            } else if self.list.readonly {
+                "none of its tracks are in the library"
+            } else {
+                "nothing in here yet: w on an album or a track puts it here"
+            };
             buf.set_stringn(
                 list.x + 1,
                 list.y,
-                "empty: w on a record or a track puts it here",
-                list.width as usize,
+                why,
+                list.width.saturating_sub(1) as usize,
                 theme.hint_desc,
             );
             return;
@@ -896,111 +1092,115 @@ impl PlaylistPage {
         if self.follow {
             self.move_to(self.cursor);
         }
-        let rows = list.height as usize;
-        self.scroll = self.scroll.min(self.entries.len().saturating_sub(rows));
-        let bar = self.entries.len() > rows && list.width > 8;
-        let end = list.x + list.width - if bar { 3 } else { 0 };
+        let rows_shown = list.height as usize;
+        self.scroll = self.scroll.min(self.lines.len().saturating_sub(rows_shown));
+        let bar = self.lines.len() > rows_shown && list.width > 8;
+        // The row's cells, less the menu button and the scrollbar.
+        let menu_x = list.x + list.width.saturating_sub(4);
+        let row_w = menu_x.saturating_sub(list.x + 1);
 
-        for r in 0..rows {
-            let idx = self.scroll + r;
-            let Some(e) = self.entries.get(idx) else {
+        // What the queue says of these entries while it plays them.
+        let mut live_status = std::collections::HashMap::new();
+        for q in live.queue {
+            if let Some(entry) = q.playlist_entry_id {
+                live_status.insert(entry, q);
+            }
+        }
+        for r in 0..rows_shown {
+            let n = self.scroll + r;
+            let Some(&line) = self.lines.get(n) else {
                 break;
             };
-            let t = &e.track;
             let y = list.y + r as u16;
-            let selected = idx == self.cursor;
-            let hovered = matches!(
-                hover,
-                Some(
-                    PlaylistHit::Row(n)
-                        | PlaylistHit::Artist(n)
-                        | PlaylistHit::Album(n)
-                        | PlaylistHit::Remove(n)
-                        | PlaylistHit::Up(n)
-                        | PlaylistHit::Down(n)
-                ) if n == idx
-            );
-            if selected {
-                for cx in list.x..end {
-                    buf[(cx, y)].set_style(theme.library_cursor);
+            let rect = Rect::new(list.x, y, row_w, 1);
+            match line {
+                Line::Heading { first, .. } => {
+                    let t = &self.entries[first].track;
+                    let artist = if t.album_artist_name.is_empty() {
+                        "Unknown Artist"
+                    } else {
+                        &t.album_artist_name
+                    };
+                    rows::heading(
+                        buf,
+                        rect,
+                        theme,
+                        &rows::Heading {
+                            album: (&t.album_title, t.album_id.map(Link::Album)),
+                            artist: (artist, Some(Link::ArtistOfTrack(t.id))),
+                            facts: "",
+                            selected: false,
+                        },
+                        live.links,
+                    );
                 }
-                buf[(list.x, y)].set_char('\u{258c}').set_style(theme.bar);
-            } else if hovered {
-                for cx in list.x..end {
-                    buf[(cx, y)].set_style(theme.library_hover);
-                }
-            }
-            let base = if selected {
-                theme.library_cursor
-            } else {
-                theme.track_normal
-            };
-            let dim = if selected {
-                theme.library_cursor
-            } else {
-                theme.hint_desc
-            };
-            buf.set_string(list.x + 2, y, format!("{:>3}", idx + 1), dim);
-
-            // Buttons: move up, move down, remove: the last nine cells.
-            let remove = Rect::new(end.saturating_sub(3), y, 3, 1);
-            let down = Rect::new(end.saturating_sub(6), y, 3, 1);
-            let up = Rect::new(end.saturating_sub(9), y, 3, 1);
-            for (rect, glyph, hit) in [
-                (up, "\u{25b4}", PlaylistHit::Up(idx)),
-                (down, "\u{25be}", PlaylistHit::Down(idx)),
-                (remove, "\u{d7}", PlaylistHit::Remove(idx)),
-            ] {
-                buf.set_string(rect.x + 1, y, glyph, underline(hover == Some(hit), dim));
-                self.geom.links.push((rect, hit));
-            }
-            let len = t
-                .duration_ms
-                .map(|d| format_time(d as u64))
-                .unwrap_or_default();
-            let len_w = len.chars().count() as u16;
-            let len_x = up.x.saturating_sub(len_w + 1);
-            buf.set_string(len_x, y, &len, dim);
-
-            let left = list.x + 7;
-            let room = len_x.saturating_sub(left + 2) as usize;
-            if room < 24 {
-                buf.set_stringn(left, y, fit(&t.title, room), room, base);
-                continue;
-            }
-            let title_w = room * 2 / 5;
-            let artist_w = room * 3 / 10;
-            let album_w = room - title_w - artist_w - 4;
-            buf.set_stringn(left, y, fit(&t.title, title_w), title_w, base);
-            let artist_x = left + title_w as u16 + 2;
-            let album_x = artist_x + artist_w as u16 + 2;
-            for (text, x, w, hit, linked) in [
-                (
-                    &t.artist_name,
-                    artist_x,
-                    artist_w,
-                    PlaylistHit::Artist(idx),
-                    t.artist_id.is_some(),
-                ),
-                (
-                    &t.album_title,
-                    album_x,
-                    album_w,
-                    PlaylistHit::Album(idx),
-                    t.album_id.is_some(),
-                ),
-            ] {
-                let shown = fit(text, w);
-                let width = shown.chars().count() as u16;
-                buf.set_string(x, y, &shown, underline(linked && hover == Some(hit), dim));
-                if linked {
-                    self.geom.links.push((Rect::new(x, y, width, 1), hit));
+                Line::Entry(i) => {
+                    let e = &self.entries[i];
+                    let t = &e.track;
+                    let queued = live_status.get(&e.id);
+                    let status = match queued.map(|q| q.status) {
+                        Some(QueueEntryStatus::Playing) => rows::Status::Playing,
+                        Some(QueueEntryStatus::PriorityPending) => rows::Status::Pending,
+                        Some(QueueEntryStatus::Failed) => rows::Status::Failed,
+                        _ => rows::Status::None,
+                    };
+                    let on_disk = t.path.is_some() || t.cached_path.is_some();
+                    let avail = match queued {
+                        Some(q) if q.status == QueueEntryStatus::Downloading => {
+                            rows::Avail::Transferring(q.download_progress.and_then(
+                                |(done, total)| (total > 0).then(|| done as f64 / total as f64),
+                            ))
+                        }
+                        _ => rows::Avail::of(t.remote_id.is_some(), on_disk, live.offline),
+                    };
+                    let selected = i == self.cursor;
+                    let hovered = matches!(
+                        hover,
+                        Some(PlaylistHit::Row(n) | PlaylistHit::Heart(n) | PlaylistHit::Menu(n)) if n == i
+                    );
+                    let grouped = self.grouped();
+                    let row = rows::Track {
+                        marker: if selected {
+                            rows::Marker::Cursor
+                        } else {
+                            rows::Marker::None
+                        },
+                        status,
+                        number: Some(format!("{}", i + 1)),
+                        title: &t.title,
+                        artist: Some((&t.artist_name, t.artist_id.map(Link::Artist))),
+                        album: (!grouped)
+                            .then_some((t.album_title.as_str(), t.album_id.map(Link::Album))),
+                        avail,
+                        favourite: Some(live.favourites.is_some_and(|f| f.contains(&t.id))),
+                        codec: t.codec.as_deref(),
+                        duration_ms: t.duration_ms.map(|d| d as u64),
+                        dim: avail == rows::Avail::NotHere,
+                        selected: false,
+                        hovered: hovered && !selected,
+                        current: status == rows::Status::Playing,
+                        spinner: live.spinner,
+                    };
+                    rows::track(buf, rect, theme, &row, live.links);
+                    if let Some(hx) = rows::Columns::new(rect.x, rect.width).heart {
+                        self.geom
+                            .links
+                            .push((Rect::new(hx, y, 1, 1), PlaylistHit::Heart(i)));
+                    }
+                    if selected || hovered {
+                        buf[(menu_x, y)]
+                            .set_char('\u{22ef}')
+                            .set_style(theme.hint_key);
+                        self.geom
+                            .links
+                            .push((Rect::new(menu_x, y, 1, 1), PlaylistHit::Menu(i)));
+                    }
                 }
             }
         }
         if bar {
-            self.geom.total = self.entries.len();
-            self.geom.bar = scrollbar(buf, theme, list, self.entries.len(), self.scroll);
+            self.geom.total = self.lines.len();
+            self.geom.bar = scrollbar(buf, theme, list, self.lines.len(), self.scroll);
         }
     }
 }
@@ -1081,7 +1281,7 @@ mod tests {
     fn draw(p: &mut PlaylistPage, w: u16, h: u16) -> Buffer {
         let area = Rect::new(0, 0, w, h);
         let mut buf = Buffer::empty(area);
-        p.render(area, &mut buf, &theme(), None);
+        p.render(area, &mut buf, &theme(), None, &Live::default());
         buf
     }
 
@@ -1113,7 +1313,7 @@ mod tests {
     fn a_second_click_opens_a_playlist() {
         let mut p = list_page();
         draw_list(&mut p, 90, 10);
-        let hit = p.hit(10, 2).expect("a row");
+        let hit = p.hit(10, 1).expect("a row");
         assert_eq!(hit, ListHit::Row(1));
         assert!(matches!(p.click(hit), PlAction::None));
         assert!(matches!(p.click(hit), PlAction::Open(2)));
@@ -1126,7 +1326,8 @@ mod tests {
         let kinds: Vec<_> = p.geom.links.iter().map(|(_, h)| *h).collect();
         assert!(kinds.contains(&ListHit::Play(0)));
         assert!(kinds.contains(&ListHit::Delete(0)));
-        assert!(inside(p.geom.new, p.geom.new.x, p.geom.new.y));
+        let labels: Vec<String> = p.toolbar().items.into_iter().map(|i| i.label).collect();
+        assert_eq!(labels, ["+ new", "/ filter", "actions"]);
     }
 
     #[test]
@@ -1169,31 +1370,63 @@ mod tests {
     #[test]
     fn a_playlist_page_lists_its_tracks_with_links() {
         let mut p = page(false);
-        let buf = draw(&mut p, 100, 14);
+        let links = Links::default();
+        links.begin((0, 0));
+        let area = Rect::new(0, 0, 100, 14);
+        let mut buf = Buffer::empty(area);
+        let live = Live {
+            links: Some(&links),
+            ..Default::default()
+        };
+        p.render(area, &mut buf, &theme(), None, &live);
         let shown: String = buf.content().iter().map(|c| c.symbol()).collect();
-        assert!(shown.contains("mix") && shown.contains("song 0") && shown.contains("song 2"));
-        let (rect, hit) = p
-            .geom
-            .links
-            .iter()
-            .find(|(_, h)| matches!(h, PlaylistHit::Artist(0)))
-            .cloned()
-            .expect("an artist link");
-        assert_eq!(p.hit(rect.x, rect.y), Some(hit));
-        assert!(matches!(p.click(hit), PlAction::OpenArtist(2)));
+        assert!(shown.contains("song 0") && shown.contains("song 2"));
+        assert_eq!(p.toolbar().title, "mix");
+        let row: String = (0..100).map(|x| buf[(x, 0)].symbol()).collect();
+        let x = row.find("artist").expect("the artist is drawn") as u16;
+        assert_eq!(links.at(x, 0), Some(Link::Artist(2)));
     }
 
     #[test]
     fn a_read_only_playlist_refuses_edits() {
         let mut p = page(true);
         draw(&mut p, 100, 14);
-        for c in ['x', 'J', 'K', 'r'] {
-            let said = p.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        for c in ['x', 'J', 'K'] {
+            let Some(PlAction::Page(act)) = p.handle_key(KeyEvent::from(KeyCode::Char(c))) else {
+                panic!("{c} is the page's");
+            };
+            let said = p.apply(act);
             assert!(
-                matches!(said, Some(PlAction::Say(s)) if s.contains("read-only")),
+                matches!(said, PlAction::Say(s) if s.contains("read-only")),
                 "{c}"
             );
         }
+        let labels: Vec<String> = p.toolbar().items.into_iter().map(|i| i.label).collect();
+        for refused in ["reorder", "undo", "redo"] {
+            assert!(
+                !labels.iter().any(|l| l == refused),
+                "no {refused} for edits it refuses"
+            );
+        }
+        let Some(PlAction::Page(act)) = p.handle_key(KeyEvent::from(KeyCode::Char('r'))) else {
+            panic!("r is the page's");
+        };
+        assert!(
+            matches!(p.apply(act), PlAction::Rename(7, _)),
+            "a smart playlist can still be renamed"
+        );
+    }
+
+    #[test]
+    fn a_playlist_named_by_its_file_is_not_offered_a_new_name() {
+        let mut p = page(true);
+        p.list.source_path = Some("/music/mix.m3u8".into());
+        draw(&mut p, 100, 14);
+        assert!(matches!(
+            p.apply(PageAct::Rename),
+            PlAction::Say(s) if s.contains("named by its file")
+        ));
+        assert!(!p.toolbar().items.iter().any(|i| i.label == "rename"));
     }
 
     #[test]
@@ -1208,21 +1441,14 @@ mod tests {
     }
 
     #[test]
-    fn s_and_m_are_left_to_the_app() {
+    fn s_is_left_to_the_app() {
         let mut p = page(false);
         draw(&mut p, 100, 14);
         let mut l = list_page();
         draw_list(&mut l, 100, 14);
-        for c in ['s', 'm'] {
-            assert!(
-                p.handle_key(KeyEvent::from(KeyCode::Char(c))).is_none(),
-                "{c}"
-            );
-            assert!(
-                l.handle_key(KeyEvent::from(KeyCode::Char(c))).is_none(),
-                "{c}"
-            );
-        }
+        let s = KeyEvent::from(KeyCode::Char('s'));
+        assert!(p.handle_key(s).is_none(), "shuffle stays the app's");
+        assert!(l.handle_key(s).is_none(), "shuffle stays the app's");
     }
 
     #[test]
@@ -1235,5 +1461,100 @@ mod tests {
                 draw_list(&mut l, w, h);
             }
         }
+    }
+
+    fn album_entries() -> Vec<PlaylistEntry> {
+        (0..5)
+            .map(|i| {
+                let mut t = track(i + 1, &format!("song {i}"));
+                t.album_id = Some(if i < 3 { 1 } else { 2 });
+                t.album_title = if i < 3 {
+                    "first".into()
+                } else {
+                    "second".into()
+                };
+                PlaylistEntry {
+                    id: 100 + i,
+                    position: i,
+                    track: t,
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_playlist_is_a_row_per_track_until_it_is_grouped() {
+        let mut list = row(7, "mix", false);
+        let mut p = PlaylistPage::for_test(list.clone(), album_entries());
+        assert!(p.lines.iter().all(|l| matches!(l, Line::Entry(_))));
+        list.grouped = Some(true);
+        p = PlaylistPage::for_test(list, album_entries());
+        assert_eq!(
+            p.lines,
+            [
+                Line::Heading { first: 0, last: 2 },
+                Line::Entry(0),
+                Line::Entry(1),
+                Line::Entry(2),
+                Line::Heading { first: 3, last: 4 },
+                Line::Entry(3),
+                Line::Entry(4),
+            ]
+        );
+        let buf = draw(&mut p, 100, 14);
+        // The list starts under the name and the buttons; a heading's row is
+        // not a track's.
+        assert_eq!(p.hit(60, 0), Some(PlaylistHit::Heading(0)));
+        assert_eq!(p.hit(10, 1), Some(PlaylistHit::Row(0)));
+        assert_eq!(p.hit(10, 5), Some(PlaylistHit::Row(3)));
+        let heading: String = (0..100).map(|x| buf[(x, 0)].symbol()).collect();
+        assert!(heading.contains("first"), "{heading:?}");
+    }
+
+    #[test]
+    fn the_menu_offers_what_the_playlist_takes() {
+        let labels = |readonly| -> Vec<String> {
+            let p = page(readonly);
+            let PlAction::Menu(_, items) = p.menu(0) else {
+                panic!("a menu");
+            };
+            items.into_iter().map(|(l, _)| l).collect()
+        };
+        assert!(labels(false).contains(&"Remove from playlist".to_string()));
+        assert!(!labels(true).contains(&"Remove from playlist".to_string()));
+        assert!(labels(true).contains(&"Play next".to_string()));
+    }
+
+    #[test]
+    fn a_delete_needs_a_second_press_on_the_page_too() {
+        let mut p = page(false);
+        assert!(matches!(p.apply(PageAct::Delete), PlAction::Say(s) if s.contains("press again")));
+        p.apply(PageAct::Rename);
+        assert!(
+            matches!(p.apply(PageAct::Delete), PlAction::Say(s) if s.contains("press again")),
+            "anything else in between disarms it"
+        );
+    }
+
+    #[test]
+    fn a_playlist_in_the_list_has_the_apps_menu() {
+        let mut p = list_page();
+        p.all[0].source_path = Some("/music/a.m3u8".into());
+        let PlAction::Menu(_, items) = p.menu(0) else {
+            panic!("a menu");
+        };
+        let labels: Vec<&str> = items.iter().map(|(l, _)| l.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "Play",
+                "Shuffle",
+                "",
+                "Export as M3U8\u{2026}",
+                "",
+                "Delete"
+            ],
+            "a playlist named by its file is not offered a rename"
+        );
     }
 }

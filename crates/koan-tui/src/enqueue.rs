@@ -13,6 +13,7 @@ use crate::app::PickerAction;
 /// - Append: add to end of queue, don't play.
 /// - AppendAndPlay: add to end, play the first added track.
 /// - ReplaceQueue: replace the queue in one command, play from top.
+/// - Shuffle: replace the queue in one command and play it shuffled.
 /// - PlayNext: insert straight after `playing`, the item at the cursor; with
 ///   none, append.
 ///
@@ -40,13 +41,22 @@ pub fn enqueue_playlist(
 
     // One command, so the playlist is never empty in between: the download
     // queue reads an empty playlist as nothing wanted.
-    if action == PickerAction::ReplaceQueue {
+    let start = match action {
+        PickerAction::ReplaceQueue | PickerAction::Shuffle => Some(0),
+        PickerAction::ReplaceFrom(at) => Some(at.min(items.len() - 1)),
+        _ => None,
+    };
+    if let Some(start) = start {
         tx.send(PlayerCommand::ReplacePlaylist {
             items,
-            start: 0,
+            start,
             position_ms: 0,
             play: true,
-            mode: QueueMode::InOrder,
+            mode: if action == PickerAction::Shuffle {
+                QueueMode::Shuffled
+            } else {
+                QueueMode::InOrder
+            },
         })
         .ok();
         return;

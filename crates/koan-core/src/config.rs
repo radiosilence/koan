@@ -223,6 +223,8 @@ pub struct PlaybackConfig {
     /// The TUI's palette: `koan` for the kōan theme's colours (the cover's
     /// accent included), `ansi` for the terminal's own sixteen.
     pub tui_theme: String,
+    /// The TUI's queue in album runs, rather than a row per track.
+    pub queue_grouped: bool,
     /// Silence played after the output device changes sample rate, so the
     /// start of the track is not lost while the device relocks its clock.
     /// How long that takes is a property of the device.
@@ -298,6 +300,7 @@ impl Default for PlaybackConfig {
             art_size: 24,
             art_graphics: true,
             tui_theme: "koan".into(),
+            queue_grouped: true,
             rate_switch_lead_in_ms: 1000,
         }
     }
@@ -1455,6 +1458,7 @@ pub fn layer_of(path: &str) -> Layer {
         | "playback.art_size"
         | "playback.art_graphics"
         | "playback.tui_theme"
+        | "playback.queue_grouped"
         | "visualizer.enabled"
         | "visualizer.mode"
         | "visualizer.matrix_overlay"

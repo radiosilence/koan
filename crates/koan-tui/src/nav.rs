@@ -33,6 +33,7 @@ pub enum Page {
 impl Page {
     /// Every page that is a place of its own, in the sidebar's order.
     pub const ALL: [Page; 13] = [
+        Page::Search,
         Page::Queue,
         Page::NowPlaying,
         Page::Albums,
@@ -44,7 +45,6 @@ impl Page {
         Page::History,
         Page::Downloads,
         Page::Playlists,
-        Page::Search,
         Page::Settings,
     ];
 
@@ -112,9 +112,9 @@ impl Page {
             Page::Albums => '3',
             Page::Artists => '4',
             Page::Favourites => '5',
-            Page::Playlists => '6',
-            Page::Recent => '7',
-            Page::History => '8',
+            Page::Recent => '6',
+            Page::History => '7',
+            Page::Playlists => '8',
             Page::Settings => '9',
             Page::Search => '0',
             Page::Tracks
@@ -249,8 +249,8 @@ mod tests {
     fn the_pages_wrap() {
         let mut nav = Navigator::default();
         nav.go(Page::Settings);
-        assert_eq!(nav.next_page(), Page::Queue);
-        nav.go(Page::Queue);
+        assert_eq!(nav.next_page(), Page::Search);
+        nav.go(Page::Search);
         assert_eq!(nav.prev_page(), Page::Settings);
     }
 

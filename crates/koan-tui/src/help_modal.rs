@@ -2,7 +2,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
+use ratatui::widgets::{Paragraph, Widget};
 
 use super::theme::Theme;
 
@@ -21,7 +21,6 @@ const SECTIONS: &[Section] = &[
             ("R", "Repeat: off / queue / one"),
             ("T", "Sleep: 15 / 30 / 45 / 60 min / track / record / off"),
             (", .", "Seek backward / forward"),
-            ("+ -", "Volume up / down"),
         ],
     },
     Section {
@@ -29,7 +28,7 @@ const SECTIONS: &[Section] = &[
         bindings: &[
             (
                 "0-9",
-                "Queue / playing / albums / artists / faves / playlists / recent / history / settings / search (0)",
+                "Pages, as the sidebar lists them: search (0), queue (1) … settings (9)",
             ),
             ("tab", "Next page (S-tab previous)"),
             ("[ ]", "Back / forward (also A-\u{2190} A-\u{2192})"),
@@ -87,8 +86,11 @@ const SECTIONS: &[Section] = &[
                 "\u{2191}\u{2193}\u{2190}\u{2192}",
                 "Move (tree: expand / collapse)",
             ),
-            ("enter", "Append & play"),
+            ("enter", "Open (tree: expand, or play a track)"),
+            ("P", "Play"),
             ("a", "Append (C-r replaces the queue)"),
+            ("N", "Play next"),
+            ("m", "Actions"),
             ("/", "Filter"),
             ("v / o", "Tiles or rows / sort order"),
         ],
@@ -140,7 +142,7 @@ const SECTIONS: &[Section] = &[
     Section {
         title: "General",
         bindings: &[
-            ("?", "This help"),
+            ("?", "This help (\u{2191}\u{2193} scroll)"),
             ("q", "Quit"),
             ("esc", "Close modal / cancel"),
         ],
@@ -149,73 +151,102 @@ const SECTIONS: &[Section] = &[
 
 pub struct HelpModalOverlay<'a> {
     theme: &'a Theme,
+    scroll: usize,
 }
 
 impl<'a> HelpModalOverlay<'a> {
-    pub fn new(theme: &'a Theme) -> Self {
-        Self { theme }
+    pub fn new(theme: &'a Theme, scroll: usize) -> Self {
+        Self { theme, scroll }
     }
+}
+
+/// The popup in `area`, and how many rows it shows of each column.
+fn layout(area: Rect) -> (Rect, usize) {
+    let w = 104u16.min(area.width.saturating_sub(4));
+    let h = (column_len() as u16 + 2).min(area.height.saturating_sub(2));
+    let popup = crate::shell::centred(area, w, h);
+    (popup, popup.height.saturating_sub(2) as usize)
+}
+
+/// Lines in a column: the sections, a blank line between each, split in two.
+fn column_len() -> usize {
+    let lines = SECTIONS.iter().map(|s| 1 + s.bindings.len()).sum::<usize>()
+        + SECTIONS.len().saturating_sub(1);
+    lines.div_ceil(2)
+}
+
+/// How far the help scrolls in `area` before its end is on screen.
+pub fn max_scroll(area: Rect) -> usize {
+    column_len().saturating_sub(layout(area).1)
 }
 
 impl Widget for HelpModalOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let w = 72u16.min(area.width.saturating_sub(4));
-        let content_lines = SECTIONS.iter().map(|s| 1 + s.bindings.len()).sum::<usize>()
-            + SECTIONS.len().saturating_sub(1); // blank lines between sections
-        let h = (content_lines as u16 + 2).min(area.height.saturating_sub(2)); // +2 for border
-        let x = area.x + (area.width.saturating_sub(w)) / 2;
-        let y = area.y + (area.height.saturating_sub(h)) / 2;
-        let popup = Rect::new(x, y, w, h);
-
-        Clear.render(popup, buf);
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(self.theme.hint_key)
-            .title(" Keybindings ");
+        use crate::text::{fit, fit_pad_right, width};
+        let (popup, col_height) = layout(area);
+        crate::shell::clear(buf, popup);
+        let block = crate::shell::frame("keys", self.theme);
         let inner = block.inner(popup);
         block.render(popup, buf);
 
-        // Render in two columns.
+        // Each column: a cell of margin, the keys right-aligned to the
+        // widest, two cells, the description cut to what is left.
         let col_width = inner.width / 2;
-        let col_height = inner.height as usize;
-
-        // Build all lines first.
+        let key_w = SECTIONS
+            .iter()
+            .flat_map(|s| s.bindings.iter())
+            .map(|(k, _)| width(k))
+            .max()
+            .unwrap_or(0);
+        let desc_w = (col_width as usize).saturating_sub(key_w + 4);
         let mut lines: Vec<Line> = Vec::new();
         for (si, section) in SECTIONS.iter().enumerate() {
             if si > 0 {
                 lines.push(Line::default());
             }
             lines.push(Line::from(Span::styled(
-                format!(" {}", section.title),
-                self.theme
-                    .hint_key
-                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                format!(" {}", section.title.to_lowercase()),
+                self.theme.heading,
             )));
             for (key, desc) in section.bindings {
                 lines.push(Line::from(vec![
                     Span::styled(
-                        format!("  {:>12}", key),
+                        format!(" {}", fit_pad_right(key, key_w)),
                         self.theme.hint_key.add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(format!("  {}", desc), self.theme.hint_desc),
+                    Span::styled(format!("  {}", fit(desc, desc_w)), self.theme.hint_desc),
                 ]));
             }
         }
 
-        // Split into two columns.
-        let mid = lines.len().div_ceil(2);
-        for (i, line) in lines.iter().enumerate() {
+        // Two columns, scrolled together.
+        let mid = column_len();
+        for (i, line) in lines.into_iter().enumerate() {
             let (col_x, row) = if i < mid {
                 (inner.x, i)
             } else {
                 (inner.x + col_width, i - mid)
             };
-            if row >= col_height {
+            let Some(row) = row.checked_sub(self.scroll).filter(|r| *r < col_height) else {
                 continue;
-            }
+            };
             let row_area = Rect::new(col_x, inner.y + row as u16, col_width, 1);
-            Paragraph::new(line.clone()).render(row_area, buf);
+            Paragraph::new(line).render(row_area, buf);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_whole_help_can_be_scrolled_into_view() {
+        let short = Rect::new(0, 0, 100, 20);
+        let (_, shown) = layout(short);
+        assert!(shown < column_len());
+        assert_eq!(max_scroll(short) + shown, column_len());
+        // Tall enough, nothing scrolls.
+        assert_eq!(max_scroll(Rect::new(0, 0, 100, 200)), 0);
     }
 }
