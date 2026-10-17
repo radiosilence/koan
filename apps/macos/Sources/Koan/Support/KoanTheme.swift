@@ -1599,26 +1599,17 @@ struct KoanSegmentedPicker<Value: Hashable>: View {
     let options: [(label: String, value: Value)]
     @Binding var selection: Value
     var title: String = ""
-    /// A glyph per option, drawn in place of its label, which VoiceOver and
-    /// the help tag still read.
-    var icons: [String]? = nil
     @Environment(\.koanRainbow) private var rainbow
 
     var body: some View {
         if KoanTheme.isOn {
             HStack(spacing: 18) {
-                ForEach(Array(options.enumerated()), id: \.element.value) { index, option in
+                ForEach(options, id: \.value) { option in
                     let chosen = option.value == selection
                     Button {
                         selection = option.value
                     } label: {
-                        Group {
-                            if let icons {
-                                KoanIcon(icons[index]).accessibilityLabel(option.label)
-                            } else {
-                                Text(option.label)
-                            }
-                        }
+                        Text(option.label)
                             .font(.koan(.control))
                             .textCase(.lowercase)
                             .foregroundStyle(chosen ? Color.koanInk : Color.koanMuted)
@@ -1629,7 +1620,6 @@ struct KoanSegmentedPicker<Value: Hashable>: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help(icons == nil ? "" : option.label)
                     .accessibilityAddTraits(chosen ? .isSelected : [])
                 }
             }
@@ -1638,17 +1628,66 @@ struct KoanSegmentedPicker<Value: Hashable>: View {
             .koanAnimation(KoanTheme.Motion.fast, value: selection)
         } else {
             Picker(title, selection: $selection) {
-                ForEach(Array(options.enumerated()), id: \.element.value) { index, option in
-                    if let icons {
-                        Image(systemName: icons[index]).tag(option.value) // theme: raw
-                    } else {
-                        Text(option.label).tag(option.value)
-                    }
+                ForEach(options, id: \.value) { option in
+                    Text(option.label).tag(option.value)
                 }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
         }
+    }
+}
+
+/// A glyph that switches one thing on and off, for a toolbar short of room.
+/// The glyph never changes: lit is on, dimmed is off, so it reads one way,
+/// where a glyph that swapped would have to name either the state in force or
+/// the one a tap gives. In the theme, `ink` and underlined in the accent on,
+/// `muted` off; in the platform's look, the tint on and secondary off. On a
+/// television it keeps the button style its toolbar sets.
+struct KoanIconToggle: View {
+    let icon: String
+    let label: String
+    @Binding var isOn: Bool
+    @Environment(\.koanRainbow) private var rainbow
+    @Environment(\.koanAccent) private var accent
+
+    /// The tint, which a television never sets: there, the accent's own colour.
+    private var lit: AnyShapeStyle {
+        #if os(tvOS)
+        AnyShapeStyle(accent.color)
+        #else
+        AnyShapeStyle(.tint)
+        #endif
+    }
+
+    var body: some View {
+        Button {
+            isOn.toggle()
+        } label: {
+            if KoanTheme.isOn {
+                KoanIcon(icon)
+                    .foregroundStyle(isOn ? Color.koanInk : Color.koanMuted)
+                    .padding(.bottom, KoanTheme.Space.xs)
+                    .overlay(alignment: .bottom) {
+                        if isOn { Rectangle().fill(KoanTheme.marker(rainbow: rainbow)).frame(height: KoanTheme.hairline) }
+                    }
+                    .touchTarget()
+                    .contentShape(Rectangle())
+            } else {
+                Image(systemName: icon) // theme: raw
+                    .foregroundStyle(isOn ? lit : AnyShapeStyle(.secondary)) // theme: raw
+                    .touchTarget()
+                    .contentShape(Rectangle())
+            }
+        }
+        #if !os(tvOS)
+        .buttonStyle(.plain)
+        #endif
+        .help(label)
+        .accessibilityLabel(label)
+        .accessibilityValue(isOn ? "On" : "Off")
+        .accessibilityAddTraits(.isToggle)
+        .koanAnimation(KoanTheme.Motion.fast, value: isOn)
     }
 }
 

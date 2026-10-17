@@ -55,11 +55,11 @@ import cc.blit.koan.ui.nowplaying.clock
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanIcon
+import cc.blit.koan.ui.theme.KoanIconToggle
 import cc.blit.koan.ui.theme.KoanIcons
 import cc.blit.koan.ui.theme.KoanMenu
 import cc.blit.koan.ui.theme.KoanMenuItem
 import cc.blit.koan.ui.theme.KoanRecordAccent
-import cc.blit.koan.ui.theme.KoanSegmented
 import cc.blit.koan.ui.theme.KoanSpace
 import cc.blit.koan.ui.theme.KoanText
 import cc.blit.koan.ui.theme.KoanTone
@@ -301,11 +301,7 @@ private fun PlaylistHeader(
             KoanButton("Shuffle", { edits.play(playlist.id, shuffled = true) }, icon = KoanIcons.shuffle, enabled = entries.isNotEmpty())
         }
         if (showLayout && entries.isNotEmpty()) {
-            KoanSegmented(
-                options = listOf("By album" to true, "By track" to false),
-                selected = grouped,
-                onSelect = { edits.setGrouped(playlist.id, it) },
-            )
+            KoanIconToggle(KoanIcons.album, "Group by album", grouped) { edits.setGrouped(playlist.id, it) }
         }
     }
 }

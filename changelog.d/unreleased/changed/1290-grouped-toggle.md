@@ -1,0 +1,1 @@
+- **The queue and playlist layout is one toggle.** The album glyph is lit while rows are grouped by album and dimmed while they are one per track, taking one toolbar slot instead of two on iPhone, the Mac and Android.
