@@ -4,19 +4,18 @@
 //!
 //! Paths describe the server's filesystem, so only an admin is shown them.
 //!
-//! The UI's script asks for the content alone and shows it in the shell's
-//! dialog; a page load gets it as a page of its own.
+//! A page like any other; the UI's script shows its content in the shell's
+//! dialog.
 
 use axum::Extension;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::HeaderMap;
 use axum::response::Response;
 use koan_core::auth::Role;
 use koan_core::db::queries::{self, UidKind};
 
-use super::pages::respond;
-use super::pages::{COPY_INPUT, COPY_ROW, KICKER, SUB};
-use super::{PARTIAL, UiState, html, open};
+use super::pages::{COPY_INPUT, COPY_ROW, KICKER, SUB, respond, unavailable};
+use super::{UiState, open};
 use crate::auth::AuthUser;
 use crate::share::{blocking, duration, escape, not_found};
 
@@ -33,16 +32,20 @@ pub(super) async fn page(
     let admin = user.role == Role::Admin;
     let state = s.clone();
     match blocking(move || render(&state, id, admin)).await {
-        Some(body) if headers.contains_key(PARTIAL) => html(StatusCode::OK, body),
-        Some(body) => respond(&s, &headers, &user, "Properties", &body),
-        None => not_found(),
+        Some(Some(body)) => respond(&s, &headers, &user, "Properties", &body),
+        Some(None) => not_found(),
+        None => unavailable(),
     }
 }
 
-fn render(s: &UiState, id: i64, admin: bool) -> Option<String> {
+/// `None` when the library cannot be read, `Some(None)` for a track it does
+/// not have.
+fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
     let db = open(&s.pool)?;
     let conn = &db.conn;
-    let t = queries::tracks_by_ids(conn, &[id]).ok()?.pop()?;
+    let Some(t) = queries::tracks_by_ids(conn, &[id]).ok()?.pop() else {
+        return Some(None);
+    };
     let album = t
         .album_id
         .and_then(|a| queries::get_album(conn, a).ok().flatten());
@@ -110,7 +113,7 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<String> {
         out.push_str(&format!("<p class=\"{SECTION}\">{heading}</p>"));
         out.push_str(&list(source.info_fields().into_iter()));
     }
-    Some(out)
+    Some(Some(out))
 }
 
 fn list(fields: impl Iterator<Item = (&'static str, String)>) -> String {

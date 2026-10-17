@@ -109,6 +109,9 @@
   function renderQueue(queue, cur) {
     const list = document.getElementById("queue-list");
     if (!list) return;
+    // A menu open on a queue row would act on the place it had.
+    const open = document.getElementById("track-menu");
+    if (open && open.hasAttribute("data-queued") && open.matches(":popover-open")) open.hidePopover();
     list.replaceChildren();
     if (!queue.length) {
       const p = document.createElement("li");
@@ -277,6 +280,8 @@
       ...group(queued),
       ...group(about),
     );
+    // A queue row's place moves when the queue does; see renderQueue.
+    menu.toggleAttribute("data-queued", li.dataset.q !== undefined);
     if (!menu.matches(":popover-open")) menu.showPopover();
     if (wide.matches) {
       const r = menu.getBoundingClientRect();
@@ -308,7 +313,12 @@
       const html = r.ok ? await r.text() : null;
       if (mine !== asked) return;
       if (html === null) say(r.status === 404 ? "This track is no longer in the library." : "The server could not say.");
-      else propertiesBody.innerHTML = html;
+      else {
+        // The page's content, without the section the UI's navigation swaps in.
+        const t = document.createElement("template");
+        t.innerHTML = html;
+        propertiesBody.replaceChildren(...(t.content.querySelector("section.page") ?? t.content).childNodes);
+      }
     } catch {
       if (mine === asked) say("The server could not be reached.");
     }
