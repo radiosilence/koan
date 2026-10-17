@@ -75,6 +75,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -215,6 +216,22 @@ fun KoanButton(
             icon != null -> KoanLabel(text, icon, style = if (compact) KoanLabelStyle.Compact else KoanLabelStyle.Full)
             else -> Text(KoanTheme.label(text), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
+    }
+}
+
+/**
+ * A glyph that switches one thing on and off, for a toolbar short of room. The glyph never
+ * changes: `ink` is on and `muted` off, so it reads one way, where a glyph that swapped would
+ * have to name either the state in force or the one a tap gives.
+ */
+@Composable
+fun KoanIconToggle(icon: Int, label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    KoanButton(
+        { onCheckedChange(!checked) },
+        Modifier.semantics { stateDescription = if (checked) "On" else "Off" },
+        kind = KoanButtonKind.Icon,
+    ) {
+        KoanIcon(icon, label, color = KoanTheme.color(if (checked) KoanTone.Ink else KoanTone.Muted))
     }
 }
 

@@ -1652,6 +1652,46 @@ struct KoanSegmentedPicker<Value: Hashable>: View {
     }
 }
 
+/// A glyph that switches one thing on and off, for a toolbar short of room.
+/// The glyph never changes: lit is on, dimmed is off, so it reads one way,
+/// where a glyph that swapped would have to name either the state in force or
+/// the one a tap gives. In the theme, `ink` and underlined in the accent on,
+/// `muted` off; in the platform's look, the tint on and secondary off.
+struct KoanIconToggle: View {
+    let icon: String
+    let label: String
+    @Binding var isOn: Bool
+    @Environment(\.koanRainbow) private var rainbow
+
+    var body: some View {
+        Button {
+            isOn.toggle()
+        } label: {
+            if KoanTheme.isOn {
+                KoanIcon(icon)
+                    .foregroundStyle(isOn ? Color.koanInk : Color.koanMuted)
+                    .padding(.bottom, KoanTheme.Space.xs)
+                    .overlay(alignment: .bottom) {
+                        if isOn { Rectangle().fill(KoanTheme.marker(rainbow: rainbow)).frame(height: KoanTheme.hairline) }
+                    }
+                    .touchTarget()
+                    .contentShape(Rectangle())
+            } else {
+                Image(systemName: icon) // theme: raw
+                    .foregroundStyle(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary)) // theme: raw
+                    .touchTarget()
+                    .contentShape(Rectangle())
+            }
+        }
+        .buttonStyle(.plain)
+        .help(label)
+        .accessibilityLabel(label)
+        .accessibilityValue(isOn ? "On" : "Off")
+        .accessibilityAddTraits(.isToggle)
+        .koanAnimation(KoanTheme.Motion.fast, value: isOn)
+    }
+}
+
 /// A pop-up picker. In the theme on the Mac and a phone, a menu whose label
 /// is the chosen option in `control` type and `ink`, in the theme's square
 /// bordered button: AppKit's pop-up button and
