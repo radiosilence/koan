@@ -641,7 +641,8 @@ final class LibraryModel {
         let needsColour = art.cachedColour(for: source) == nil
         guard needsImage || needsColour else { return }
         Task.detached {
-            if needsImage { _ = await art.image(for: source, size: .tile) }
+            // Ahead of need, so behind anything on screen.
+            if needsImage { _ = await art.image(for: source, size: .tile, priority: .ahead(.infinity)) }
             if needsColour { _ = await art.dominantColour(for: source) }
         }
     }
