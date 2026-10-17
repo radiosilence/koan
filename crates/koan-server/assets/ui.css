@@ -406,9 +406,6 @@
   .max-w-full {
     max-width: 100%;
   }
-  .max-w-none {
-    max-width: none;
-  }
   .max-w-panel {
     max-width: var(--container-panel);
   }

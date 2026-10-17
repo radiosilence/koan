@@ -72,6 +72,8 @@
     const { queue, cur } = player.state();
     try { localStorage.setItem(STORE, JSON.stringify({ queue, cur, pos: from ?? player.position() })); } catch {}
   };
+  // The queue's tracks as last drawn; see renderQueue.
+  let queueKey = "";
   const player = window.KoanPlayer({ onChange: render, renew });
 
   function trackOf(li) {
@@ -109,9 +111,12 @@
   function renderQueue(queue, cur) {
     const list = document.getElementById("queue-list");
     if (!list) return;
-    // A menu open on a queue row would act on the place it had.
+    // A menu open on a queue row would act on the place it had, once the
+    // queue itself changes.
+    const key = queue.map((t) => t.id).join();
     const open = document.getElementById("track-menu");
-    if (open && open.hasAttribute("data-queued") && open.matches(":popover-open")) open.hidePopover();
+    if (key !== queueKey && open && open.hasAttribute("data-queued") && open.matches(":popover-open")) open.hidePopover();
+    queueKey = key;
     list.replaceChildren();
     if (!queue.length) {
       const p = document.createElement("li");
@@ -324,11 +329,18 @@
     }
   }
   // A click on the backdrop lands on the dialog itself, as does one in its
-  // padding, so only a click outside its box closes it.
-  properties?.addEventListener("click", (e) => {
-    if (e.target !== properties) return;
+  // padding or a selection dragged out of it, so only a press and release
+  // both outside its box close it.
+  const outside = (e) => {
     const r = properties.getBoundingClientRect();
-    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) properties.close();
+    return e.target === properties &&
+      (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom);
+  };
+  let pressedOutside = false;
+  properties?.addEventListener("pointerdown", (e) => { pressedOutside = outside(e); });
+  properties?.addEventListener("click", (e) => {
+    if (pressedOutside && outside(e)) properties.close();
+    pressedOutside = false;
   });
   // A manual popover: the press that opens it ends on the row (a touch stays
   // captured by what it went down on), which a light-dismissing popover would

@@ -14,7 +14,7 @@ use axum::response::Response;
 use koan_core::auth::Role;
 use koan_core::db::queries::{self, UidKind};
 
-use super::pages::{COPY_INPUT, COPY_ROW, KICKER, SUB, respond, unavailable};
+use super::pages::{COPY_INPUT, KICKER, SUB, respond, unavailable};
 use super::{UiState, open};
 use crate::auth::AuthUser;
 use crate::share::{blocking, duration, escape, not_found};
@@ -48,10 +48,20 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
     };
     let album = t
         .album_id
-        .and_then(|a| queries::get_album(conn, a).ok().flatten());
-    let uid = |kind, id: i64| queries::uids_for(conn, kind, [id]).ok()?.remove(&id);
-    let track_uid = uid(UidKind::Track, t.id);
-    let album_uid = t.album_id.and_then(|a| uid(UidKind::Album, a));
+        .map(|a| queries::get_album(conn, a))
+        .transpose()
+        .ok()?
+        .flatten();
+    let uid = |kind, id: i64| {
+        queries::uids_for(conn, kind, [id])
+            .ok()
+            .map(|mut m| m.remove(&id))
+    };
+    let track_uid = uid(UidKind::Track, t.id)?;
+    let album_uid = match t.album_id {
+        Some(a) => uid(UidKind::Album, a)?,
+        None => None,
+    };
     let sources = queries::sources_of_track(conn, id).ok()?;
     // Facts only a source holds, from the first that has them: the file's.
     let first = |f: fn(&queries::TrackMeta) -> Option<String>| sources.iter().find_map(f);
@@ -68,7 +78,7 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
     );
     if admin && let Some(path) = crate::subsonic::track_file_path(&t) {
         out.push_str(&format!(
-            "<p class=\"{SECTION}\">File on the server</p><div class=\"{COPY_ROW} mt-0 max-w-none\">\
+            "<p class=\"{SECTION}\">File on the server</p><div class=\"flex gap-2\">\
 <input id=track-path readonly value=\"{path}\" aria-label=\"File on the server\" class=\"{COPY_INPUT}\">\
 <button data-copy=track-path>Copy</button></div>",
             path = escape(path)
