@@ -3185,7 +3185,7 @@ impl App {
                     if let Some(sel) = self.dsp_selector.as_mut() {
                         sel.move_by(delta);
                     } else if let Some(p) = self.play_on.as_mut() {
-                        p.move_by(delta as isize);
+                        p.move_by(delta);
                     } else if let Some(sel) = self.device_selector.as_mut()
                         && !sel.devices.is_empty()
                     {
