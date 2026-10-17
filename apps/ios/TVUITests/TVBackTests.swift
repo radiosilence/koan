@@ -125,6 +125,7 @@ final class TVBackTests: XCTestCase {
         let field = app.textFields["name-filter"]
         press(.down)
         XCTAssertFalse(field.hasFocus, "an artist's row has focus")
+        let row = focusedFrame()
         remote.press(.select, forDuration: 1.5)
         pause(2)
         reach(app.buttons[any: "Share…"], by: .down)
@@ -136,6 +137,7 @@ final class TVBackTests: XCTestCase {
         XCTAssertEqual(app.state, .runningForeground, "Menu closes the code, not the app")
         snap("13-after-share")
         XCTAssertFalse(field.hasFocus, "focus is not on the filter field")
+        XCTAssertEqual(focusedFrame(), row, "focus is back on the row the code was shared from")
     }
 
     /// EQ's preset choice takes focus from the page behind it and keeps it
@@ -168,11 +170,16 @@ final class TVBackTests: XCTestCase {
         XCTAssertTrue(flat.waitForExistence(timeout: 5), "the presets")
         snap(shot)
         XCTAssertFalse(preset.hasFocus, "the page behind has lost focus")
-        let focused = app.descendants(matching: .any).matching(NSPredicate(format: "hasFocus == true")).firstMatch
+        // The panel's rows share its width and centre; the page's do not.
+        func inPanel() -> Bool {
+            let focused = focusedFrame()
+            return abs(focused.midX - flat.frame.midX) < 1 && abs(focused.width - flat.frame.width) < 1
+        }
+        XCTAssertTrue(inPanel(), "focus is in the presets")
         for direction in [XCUIRemote.Button.down, .up, .left, .right] {
             press(direction)
-            XCTAssertFalse(preset.hasFocus, "focus stays in the presets after \(direction)")
-            XCTAssertTrue(focused.exists && flat.exists, "the presets are still up")
+            XCTAssertTrue(flat.exists, "the presets are still up")
+            XCTAssertTrue(inPanel(), "focus stays in the presets after \(direction)")
         }
         press(.menu)
         pause(2)
@@ -248,6 +255,12 @@ final class TVBackTests: XCTestCase {
         let titles = records()
         XCTAssertFalse(titles.isEmpty, "the records named stay")
         XCTAssertTrue(titles.allSatisfy { $0.hasPrefix("Album 3") }, "only records named, not \(titles)")
+    }
+
+    /// Where the focused element is: a row's focus is on a container with no
+    /// label to find it by.
+    private func focusedFrame() -> CGRect {
+        app.descendants(matching: .any).matching(NSPredicate(format: "hasFocus == true")).firstMatch.frame
     }
 
     /// The titles of the album tiles on screen.

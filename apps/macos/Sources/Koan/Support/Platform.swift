@@ -278,12 +278,14 @@ private struct TelevisionMenuRow<Menu: View>: ViewModifier {
                     open = false
                 }))
             }
-            .onChange(of: focused) { _, now in
-                if !now, !open { chose = false }
-            }
+            // Focus back on the row, or gone elsewhere: either way the menu's
+            // choice no longer stands for it.
+            .onChange(of: focused) { if !open { chose = false } }
+            .onDisappear { chose = false }
             .onChange(of: player?.sharedLink != nil) { _, shown in
                 if shown {
                     sharing = focused || chose
+                    chose = false
                 } else if sharing {
                     sharing = false
                     focused = true
@@ -972,18 +974,18 @@ extension View {
 private struct TelevisionPanel<Panel: View>: View {
     let title: String?
     @ViewBuilder let content: () -> Panel
+    /// The content's own height: the panel stands as tall as it, to a limit.
+    /// At the limit until measured: a panel drawn shorter than its content
+    /// has nothing focusable in it, and focus stays on the page behind.
+    @State private var height: CGFloat = 880
 
-    // Sized by what fits rather than by a measured height: a panel drawn a
-    // point tall until the measurement lands has nothing focusable in it, and
-    // focus stays on the page behind.
     var body: some View {
-        ViewThatFits(in: .vertical) {
-            stack
-            ScrollView { stack }
+        ScrollView {
+            stack.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
         }
+        .scrollBounceBehavior(.basedOnSize)
         .focusSection()
-        .frame(width: 960)
-        .frame(maxHeight: 880)
+        .frame(width: 960, height: min(max(height, 1), 880))
         .background(Color.koanBg)
         .overlay { Rectangle().strokeBorder(Color.koanRule, lineWidth: KoanTheme.hairline) }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
