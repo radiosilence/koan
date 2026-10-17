@@ -1441,12 +1441,6 @@ pub fn send_then(id: &str, cmd: LinkCommand, then: Option<Then>) -> Result<(), S
     reach(id, cmd, then).map_err(Missed::into_message)
 }
 
-/// `send`, saying whether a command that did not go out failed for want of
-/// any way to the device: what lets a front end play here instead.
-pub fn send_reaching(id: &str, cmd: LinkCommand) -> Result<(), Missed> {
-    reach(id, cmd, None)
-}
-
 /// Every way to `id` in turn. A device listed asleep or reconnecting is
 /// tried all the same, since the list may be from before the link came up:
 /// only the ways themselves say it is out of reach.
@@ -1740,42 +1734,6 @@ fn relay_error(id: &str, e: crate::remote::client::SubsonicError) -> Missed {
     }
 }
 
-/// Stop controlling `id`, which a command could not reach, so that this
-/// device plays instead; the app is told why. Only for a command that asks
-/// for music: one that pauses or seeks has nothing here to act on.
-pub fn fall_back(id: &str, playing: bool) {
-    let name = list()
-        .into_iter()
-        .find(|d| d.id == id)
-        .map_or_else(|| "That device".to_owned(), |d| d.name);
-    log::info!("devices: {id} is out of reach; acting here instead");
-    let here = this_word();
-    let error = if playing {
-        format!("{name} is out of reach, so this {here} is playing.")
-    } else {
-        format!("{name} is out of reach, so it is queued on this {here}.")
-    };
-    // Told while the device is still listed, so the notice has its name.
-    notify(id, acks::AckOutcome::Failed { error }, true);
-    set_target(None);
-}
-
-/// What this device is called in a sentence: its kind, as the person would
-/// say it.
-fn this_word() -> &'static str {
-    if cfg!(target_os = "ios") {
-        "iPhone"
-    } else if cfg!(target_os = "tvos") {
-        "Apple TV"
-    } else if cfg!(target_os = "macos") {
-        "Mac"
-    } else if cfg!(target_os = "android") {
-        "phone"
-    } else {
-        "computer"
-    }
-}
-
 /// `send`, by the server first: for the lock screen's buttons. iOS runs
 /// their intent without waking the app's scene, so the link the app left
 /// open is most likely dead, and `send` would put the command into it and
@@ -1880,11 +1838,11 @@ pub(crate) mod tests {
     }
 
     /// Off the network the controlled device is on, with no server to relay:
-    /// the command is out of reach, and falling back stops controlling it and
-    /// says this device is playing. A device that answered, however it
-    /// answered, is not fallen back from.
+    /// the command is out of reach and the device stays controlled, since
+    /// acting here instead would play on a device nobody asked for. A device
+    /// that answered, however it answered, is told apart from one unreached.
     #[test]
-    fn an_unreachable_target_is_let_go_and_a_refusal_is_not() {
+    fn an_unreachable_target_stays_controlled_and_a_refusal_is_said() {
         use crate::remote::client::SubsonicError;
         let _held = STORE_LOCK.lock();
         crate::config::isolate_config_for_tests();
@@ -1897,27 +1855,9 @@ pub(crate) mod tests {
             })
         });
 
-        let missed = send_reaching("mac", LinkCommand::Resume).unwrap_err();
+        let missed = reach("mac", LinkCommand::Resume, None).unwrap_err();
         assert!(matches!(missed, Missed::OutOfReach(_)), "{missed:?}");
-        assert_eq!(
-            target().as_deref(),
-            Some("mac"),
-            "a miss alone keeps the target"
-        );
-
-        fall_back("mac", true);
-        assert_eq!(target(), None, "this device plays now");
-        let notice = notice().expect("the person is told");
-        assert!(notice.unreached);
-        assert_eq!(
-            notice.outcome,
-            acks::AckOutcome::Failed {
-                error: format!(
-                    "Studio Mac is out of reach, so this {} is playing.",
-                    this_word()
-                ),
-            }
-        );
+        assert_eq!(target().as_deref(), Some("mac"), "a miss keeps the target");
 
         let refused = relay_error(
             "mac",
@@ -1929,7 +1869,7 @@ pub(crate) mod tests {
         assert_eq!(
             refused,
             Missed::Said("Studio Mac is shared for playback only.".into()),
-            "the server answered: no falling back"
+            "the server answered"
         );
         with(|s| *s = Store::default());
     }

@@ -24,9 +24,17 @@ final class NowPlayingCentre {
 
     /// What was last published, so a position tick doesn't republish unchanged
     /// metadata to the system.
-    private var publishedTrack: Int64?
+    ///
+    /// Keyed by queue entry rather than library track: a controlled device's
+    /// queue can hold tracks this library does not have, which carry no
+    /// track id, and each of them is still a new item to the system.
+    private var publishedItem: String?
     private var publishedState: PlayState?
     private var publishedPosition: UInt64 = 0
+    /// When the position was published, so a later reading can be compared
+    /// with where the system has extrapolated it to rather than with where it
+    /// started.
+    private var publishedAt = ContinuousClock.now
     /// Which sleeve made it into the published info.
     ///
     /// Art arrives after the track does — on a remote library the fetch is an
@@ -133,10 +141,10 @@ final class NowPlayingCentre {
         let positionMs = mirror.playhead.at(within: now.durationMs)
 
         guard let entry = now.entry else {
-            if publishedTrack != nil || publishedState != nil {
+            if publishedItem != nil || publishedState != nil {
                 MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
                 MPNowPlayingInfoCenter.default().playbackState = .stopped
-                publishedTrack = nil
+                publishedItem = nil
                 publishedState = nil
             }
             return
@@ -147,9 +155,12 @@ final class NowPlayingCentre {
         // finally arriving.
         let source = player.currentArtwork
         let artwork = source.flatMap { art.cached($0, size: .tile) }
-        let drifted = abs(Int64(positionMs) - Int64(publishedPosition)) > 2000
+        let extrapolated = publishedState == .playing
+            ? Int64(publishedPosition) + Int64((ContinuousClock.now - publishedAt) / .milliseconds(1))
+            : Int64(publishedPosition)
+        let drifted = abs(Int64(positionMs) - extrapolated) > 2000
         let artworkArrived = artwork != nil && publishedArtwork != source
-        guard entry.trackId != publishedTrack || now.state != publishedState || drifted
+        guard entry.queueItemId != publishedItem || now.state != publishedState || drifted
             || artworkArrived
         else {
             return
@@ -176,9 +187,10 @@ final class NowPlayingCentre {
         case .stopped: .stopped
         }
 
-        publishedTrack = entry.trackId
+        publishedItem = entry.queueItemId
         publishedState = now.state
         publishedPosition = positionMs
+        publishedAt = .now
         publishedArtwork = artwork == nil ? nil : source
 
         if artwork == nil, let source {

@@ -30,6 +30,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -99,9 +100,13 @@ class PlaybackService : MediaSessionService() {
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
         audio.registerAudioDeviceCallback(routes, null)
+        // Focus is for sound this phone makes. While another device is
+        // controlled, what plays is that device's, and taking focus for it
+        // would silence the phone's other apps for nothing.
         scope.launch {
-            engine.nowPlaying
-                .map { it?.state == PlayState.PLAYING }
+            combine(engine.nowPlaying, engine.devices) { now, devices ->
+                devices.target == null && now?.state == PlayState.PLAYING
+            }
                 .distinctUntilChanged()
                 .collect { playing -> if (playing) holdFocus() else if (!resumeOnGain) releaseFocus() }
         }

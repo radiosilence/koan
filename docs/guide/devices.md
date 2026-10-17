@@ -275,7 +275,11 @@ for it.
 
 Picking a device controls it. This device pauses, and the transport, the queue
 and what is playing become that device's until you pick another: skip, seek,
-reorder, add an album, favourite the track. Library pages are still this
+reorder, add an album, favourite the track. The system's Now Playing (Control
+Centre and the media keys on a Mac, the media notification on Android) shows
+that device's track and acts on it too. A command that cannot reach the
+controlled device fails and says why; this device does not start playing in
+its place. Pick this device under **Control** to play here again. Library pages are still this
 device's library; what you add goes to the other device's queue by the
 server's id for each track.
 The bars beside the playing track show the controlled device's levels, sent

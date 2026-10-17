@@ -6056,9 +6056,7 @@ impl KoanEngine {
     /// app holds while it shows that device's queue; tracks by the server's
     /// ids, which only a device playing from the same library can resolve.
     fn send_remote(&self, to: &str, cmd: PlayerCommand) -> Result<(), KoanError> {
-        use koan_core::remote::devices::{self, Missed};
         use koan_core::remote::link::LinkCommand;
-        let here = cmd.instead_here();
         let entry = |id: QueueItemId| id.0.to_string();
         let tracks =
             |items: &[koan_core::player::state::PlaylistItem]| -> Result<Vec<String>, KoanError> {
@@ -6179,18 +6177,9 @@ impl KoanEngine {
             | PlayerCommand::RestorePlayMode(_)
             | PlayerCommand::Renderer { .. }) => return self.send_local(local),
         };
-        match (devices::send_reaching(to, link), here) {
-            (Ok(()), _) => Ok(()),
-            // Asked for music the controlled device cannot be reached to
-            // play: this device plays it, and stops controlling that one.
-            (Err(Missed::OutOfReach(_)), Some(here)) => {
-                devices::fall_back(to, here.asks_to_play());
-                self.send_local(here)
-            }
-            (Err(missed), _) => Err(KoanError::Remote {
-                message: missed.into_message(),
-            }),
-        }
+        // A device out of reach is still the one being controlled: the
+        // command fails and says so, rather than playing here instead.
+        koan_core::remote::devices::send(to, link).map_err(|message| KoanError::Remote { message })
     }
 
     /// The server's ids for these library tracks, where they have one.
