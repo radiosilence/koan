@@ -24,6 +24,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -214,10 +215,21 @@ class EngineMirror(deviceName: String) {
 
     /** Change an appearance setting (`setTheme`, `setThemeIcons`, `setRecordColours`), and redraw in it. */
     fun setAppearance(change: KoanEngine.() -> Unit) {
+        appearanceChanges.trySend(change)
+    }
+
+    /**
+     * Appearance changes in the order they were made. The engine saves them
+     * in the order it is handed them, and a coroutine each on
+     * `Dispatchers.Default` could hand over a quick on-then-off reversed.
+     */
+    private val appearanceChanges = Channel<KoanEngine.() -> Unit>(Channel.UNLIMITED).also { changes ->
         scope.launch {
             val engine = opened.await()
-            engine.change()
-            _appearance.value = engine.appearance()
+            for (change in changes) {
+                engine.change()
+                _appearance.value = engine.appearance()
+            }
         }
     }
 

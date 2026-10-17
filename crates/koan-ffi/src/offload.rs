@@ -16,6 +16,8 @@
 //! settings writes.
 
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use crossbeam_channel::Sender;
 use tokio::runtime::Runtime;
@@ -102,13 +104,7 @@ pub fn from_another_device<F>(f: F)
 where
     F: FnOnce() + Send + 'static,
 {
-    REMOTE_LANE
-        .send(Box::new(move || {
-            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_err() {
-                log::error!("a command from another device panicked");
-            }
-        }))
-        .expect("the remote command lane outlives the engine");
+    fire(&REMOTE_LANE, "a command from another device", f);
 }
 
 static REMOTE_LANE: LazyLock<Sender<Job>> = LazyLock::new(|| lane("koan-remote-commands"));
@@ -123,29 +119,18 @@ pub fn save<F>(f: F)
 where
     F: FnOnce() + Send + 'static,
 {
-    SETTINGS_LANE
-        .send(Box::new(move || {
-            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_err() {
-                log::error!("a settings write panicked");
-            }
-        }))
-        .expect("the settings lane outlives the engine");
+    SAVED.store(true, Ordering::Release);
+    fire(&SETTINGS_LANE, "a settings write", f);
 }
 
 /// Run `f` on the settings lane once every [`save`] before it has finished,
-/// and wait for it: a read that must see the writes already made, or a flush
-/// before the process exits. Never from a save, which would wait on itself.
+/// and wait for it: a read that must see the writes already made.
 pub fn after_saves<T, F>(f: F) -> T
 where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
-    let (tx, rx) = crossbeam_channel::bounded(1);
-    SETTINGS_LANE
-        .send(Box::new(move || {
-            let _ = tx.send(std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
-        }))
-        .expect("the settings lane outlives the engine");
+    let rx = after_saves_rx(f);
     match rx.recv() {
         Ok(Ok(value)) => value,
         Ok(Err(payload)) => std::panic::resume_unwind(payload),
@@ -153,7 +138,53 @@ where
     }
 }
 
+/// Wait up to `within` for every [`save`] so far to finish, as the process
+/// exits; false if they had not. Returns at once when nothing was saved.
+pub fn flush_saves(within: Duration) -> bool {
+    !SAVED.load(Ordering::Acquire) || after_saves_rx(|| ()).recv_timeout(within).is_ok()
+}
+
+type Answer<T> = crossbeam_channel::Receiver<std::thread::Result<T>>;
+
+fn after_saves_rx<T, F>(f: F) -> Answer<T>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    // From a save it would wait on itself, and the lane would never run again.
+    assert_ne!(
+        std::thread::current().name(),
+        Some("koan-settings"),
+        "waiting for the settings lane from the settings lane"
+    );
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    SETTINGS_LANE
+        .send(Box::new(move || {
+            let _ = tx.send(std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
+        }))
+        .expect("the settings lane outlives the engine");
+    rx
+}
+
+/// Whether anything has been handed to the settings lane, so a flush at exit
+/// need not start it.
+static SAVED: AtomicBool = AtomicBool::new(false);
+
 static SETTINGS_LANE: LazyLock<Sender<Job>> = LazyLock::new(|| lane("koan-settings"));
+
+/// Send `f` down `lane` without waiting for it. A panic in `f` is logged as
+/// `what` and the lane goes on.
+fn fire<F>(lane: &Sender<Job>, what: &'static str, f: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    lane.send(Box::new(move || {
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_err() {
+            log::error!("{what} panicked");
+        }
+    }))
+    .expect("a lane outlives the engine");
+}
 
 /// One thread running whatever is sent to it, in the order it was sent.
 fn lane(name: &str) -> Sender<Job> {
@@ -278,8 +309,11 @@ mod tests {
             let seen = seen.clone();
             let held = held.clone();
             save(move || {
+                // Times out only if `save` blocked its caller, which leaves
+                // 0 out of what is seen.
                 if i == 0 {
-                    let _ = held.recv();
+                    held.recv_timeout(std::time::Duration::from_secs(5))
+                        .unwrap();
                 }
                 seen.lock().push(i);
             });

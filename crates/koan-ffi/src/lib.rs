@@ -4096,8 +4096,12 @@ impl KoanEngine {
     /// Wait for every setting still being saved to land. For the app to call as
     /// it quits, since a change made just before would otherwise go with the
     /// process: the theme, which takes effect on the next launch, most of all.
+    /// Gives up after two seconds, so a disk that has gone away cannot hang the
+    /// quit.
     pub fn flush_settings(&self) {
-        offload::after_saves(|| ());
+        if !offload::flush_saves(std::time::Duration::from_secs(2)) {
+            log::warn!("settings: still saving as the app quit");
+        }
     }
 
     /// How the app is drawn, from `[appearance]`, once every change still
