@@ -531,8 +531,9 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         UserDefaults.standard.set(Int(gone.seq), forKey: mark)
     }
 
-    /// Disk-cache writes and removals, one at a time in the order asked for,
-    /// so a removal is never overtaken by a write queued before it.
+    /// Disk-cache writes and removals, one at a time. A removal waits here for
+    /// a write already under way, and is done before it returns, so a read
+    /// after an eviction never finds the file it removed.
     private let writes = DispatchQueue(label: "cc.blit.koan.artwork-writes", qos: .utility)
     /// Bumped by every eviction. A download that began before one may hold
     /// the artwork being replaced, and is not written.
@@ -563,7 +564,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
             epoch += 1
         }
         if let file = directory?.appendingPathComponent(Self.filename(for: key)) {
-            writes.async { try? FileManager.default.removeItem(at: file) }
+            writes.sync { _ = try? FileManager.default.removeItem(at: file) }
         }
     }
 
@@ -579,8 +580,8 @@ final class CoverArtCache: Observable, @unchecked Sendable {
             epoch += 1
         }
         guard let directory else { return }
-        writes.async {
-            try? FileManager.default.removeItem(at: directory)
+        writes.sync {
+            _ = try? FileManager.default.removeItem(at: directory)
             _ = Self.makeDirectory()
         }
     }

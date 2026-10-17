@@ -257,8 +257,11 @@ struct AlbumCollection: NSViewRepresentable {
             if elapsed > 0, elapsed < 0.1 {
                 let instant = (offset - heading.offset) / elapsed
                 let velocity = heading.velocity * 0.6 + instant * 0.4
+                // The event behind this scroll, if it is one: a jump the app
+                // makes itself can come just after a flick's last event.
                 let coasting = NSApp.currentEvent.map {
                     $0.type == .scrollWheel && $0.momentumPhase == .changed
+                        && ProcessInfo.processInfo.systemUptime - $0.timestamp < 0.05
                 } ?? false
                 if coasting, velocity * heading.velocity > 0, abs(velocity) < abs(heading.velocity) {
                     let decay = log(abs(heading.velocity) / abs(velocity)) / elapsed
@@ -325,6 +328,12 @@ struct AlbumCollection: NSViewRepresentable {
             let near = visible.insetBy(dx: 0, dy: -2 * row)
             grid.overdraw = near
             grid.prepareContent(in: near)
+            // AppKit can put an item it has prepared for reuse back on screen
+            // without asking for it again, still showing its record, with the
+            // load `prepareForReuse` cancelled.
+            for item in grid.visibleItems() {
+                (item as? AlbumTile)?.resumeSleeve()
+            }
 
             /// Each record in `rect`, with how far it is from `from`.
             func records(in rect: CGRect, from: CGRect) -> [Int64: CGFloat] {
@@ -795,6 +804,13 @@ final class AlbumTile: NSCollectionViewItem {
             spinner.removeFromSuperview()
             self.spinner = nil
         }
+    }
+
+    /// Fetch the sleeve again if the tile shows a record with neither a
+    /// sleeve nor a load for one.
+    func resumeSleeve() {
+        guard load == nil, shown == nil, let album, let context else { return }
+        showSleeve(album.id, art: context.art)
     }
 
     private func showSleeve(_ id: Int64, art: CoverArtCache) {
