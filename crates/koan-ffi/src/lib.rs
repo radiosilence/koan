@@ -5203,6 +5203,9 @@ impl KoanEngine {
                         let list = koan_core::remote::devices::list();
                         out.publish(StateSlice::Devices {
                             devices: engine.device_infos(&list),
+                            target_reach: target
+                                .as_deref()
+                                .map(|t| koan_core::remote::devices::reach_of(&list, t).into()),
                             target: target.clone(),
                         });
                         out.publish(StateSlice::Connection {

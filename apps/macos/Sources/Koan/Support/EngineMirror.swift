@@ -72,6 +72,7 @@ final class EngineMirror: Observable {
     private var _devices: [DeviceInfo] = []
     private var _devicesAt = Date.now
     private var _target: String?
+    private var _targetReach: DeviceReach?
     private var _connection: ConnectionInfo?
     private var _renderers: [RendererInfo] = []
     private var _rendererOutput: RendererOutput?
@@ -163,6 +164,13 @@ final class EngineMirror: Observable {
     var target: String? {
         access(\.devices)
         return _target
+    }
+
+    /// How the device being controlled can be reached, from its connections;
+    /// `nil` while this one is in view.
+    var targetReach: DeviceReach? {
+        access(\.devices)
+        return _targetReach
     }
 
     /// The server and the network, as far as devices go.
@@ -415,11 +423,12 @@ final class EngineMirror: Observable {
             }
         case .sync(let progress):
             mutate(\.syncProgress) { _syncProgress = progress }
-        case .devices(let devices, let target):
+        case .devices(let devices, let target, let targetReach):
             mutate(\.devices) {
                 _devices = devices
                 _devicesAt = .now
                 _target = target
+                _targetReach = targetReach
             }
         case .connection(let connection):
             mutate(\.connection) { _connection = connection }
