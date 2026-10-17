@@ -130,7 +130,7 @@ impl App {
             _ => 0,
         };
         match self.mode {
-            Mode::Normal | Mode::QueueEdit => return false,
+            Mode::Normal => return false,
             Mode::CoverArtZoom => {
                 if down {
                     self.pop_mode();
@@ -695,14 +695,7 @@ impl App {
         ) else {
             return;
         };
-        if self.mode == Mode::QueueEdit {
-            // Editing, a drag extends the selection, for terminals that
-            // report no Shift with a click.
-            self.extend_selection_to(idx);
-            self.queue.cursor = idx;
-            return;
-        }
-        // Otherwise it reorders live: the selection follows the pointer, the
+        // It reorders live: the selection follows the pointer, the
         // grabbed track under it.
         let Some(drag) = self.queue.drag.as_mut() else {
             return;

@@ -18,7 +18,7 @@ use koan_core::player::state::{
     PlaybackState, QueueEntry, QueueEntryStatus, QueueItemId, TrackInfo,
 };
 
-use koan_tui::app::{HoverZone, Mode};
+use koan_tui::app::HoverZone;
 use koan_tui::context_menu::context_menu_rect_at;
 use koan_tui::cover_art::CoverArt;
 use koan_tui::help_modal::HelpModalOverlay;
@@ -307,11 +307,11 @@ fn queue_survives_every_size_and_title() {
 
     let layout = queue::Layout::build(&entries, true);
     for &(w, h) in SIZES {
-        for mode in [Mode::Normal, Mode::QueueEdit] {
+        {
             // Cursor and scroll offset past the end must not index out of bounds.
             for (cursor, scroll) in [(0, 0), (3, 1), (entries.len(), entries.len() + 5)] {
                 render_widget(
-                    QueueView::new(&entries, &layout, &mode, cursor, scroll, &theme)
+                    QueueView::new(&entries, &layout, cursor, scroll, &theme)
                         .with_selected(&selected)
                         .with_spinner(3)
                         .with_drop_indicator(Some(2))
@@ -327,9 +327,8 @@ fn queue_survives_every_size_and_title() {
 
 fn render_empty_queue(w: u16, h: u16) {
     let theme = Theme::default();
-    let mode = Mode::Normal;
     let layout = queue::Layout::default();
-    render_widget(QueueView::new(&[], &layout, &mode, 0, 0, &theme), w, h);
+    render_widget(QueueView::new(&[], &layout, 0, 0, &theme), w, h);
 }
 
 #[test]

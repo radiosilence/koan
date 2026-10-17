@@ -8,7 +8,7 @@ The TUI follows the shape of the Mac and mobile apps: pages you move between, a 
 
 | Key | Page | What it shows |
 |-----|------|---------------|
-| `1` | Queue | The queue, grouped by album. Edit, reorder and select here |
+| `1` | Queue | The queue, in album runs or a row per track. Select, reorder and remove here |
 | `2` | Now playing | The cover, the signal path, levels, the spectrum, lyrics and the EQ curve |
 | `3` | Albums | Every album in the library, as tiles of cover art or as rows |
 | `4` | Artists | Every artist, with how many albums and tracks each has |
@@ -39,7 +39,9 @@ The queue lists what is queued in album runs, as the apps do: a heading over eac
 
 Each row has the same columns, so lengths and formats line up down the page: what the track is doing (`▶` playing, `✓` played, `·` waiting, `↓` next to download, `!` could not be fetched), its number, the title and who it is by (both links), where its bytes are (`●` on the server and downloaded, `○` on the server only, `▪` a file in the library, `⊘` not on this device while offline, or how much of it has arrived), the heart, the format and the length. Played tracks are drawn quieter. Clicking the heart favourites the track.
 
-The row's menu (right click, the `⋯` at its end, or `space` with a selection) offers what the apps' queue menu does: on a track, play, remove, add to playlist, organize files, favourite, go to the album or the artist, download it or remove the download, copy a share link and track info; on an album heading, the same for the whole run; on several tracks, what applies to all of them. A track the library no longer has can only be played or removed.
+The cursor and the selection are always live, with no mode to enter. `↑` and `↓` (or `j` and `k`) move the cursor, `Space` picks the row under it or lets it go, and `Shift` with the arrows, the paging keys or a click extends the selection from where the cursor last stood; `Ctrl+A` selects everything and `Esc` lets the selection go. What the queue's keys do, they do to the selection, or with none to the row under the cursor: `Enter` plays it, `J` and `K` move it down or up (a selection with gaps closes up), `d` removes it, `w` puts it in a playlist, `i` shows its track. On the queue `Space` picks rather than pauses; `c` pauses there.
+
+The row's menu (`m`, a right click, or the `⋯` at its end) offers what the apps' queue menu does: on a track, play, remove, add to playlist, organize files, favourite, go to the album or the artist, download it or remove the download, copy a share link and track info; on an album heading, the same for the whole run; on several tracks, what applies to all of them. A track the library no longer has can only be played or removed.
 
 ## The picker
 
@@ -61,7 +63,7 @@ A playlist's page has its name, how many tracks and how long, and whether it is 
 
 Playlists that a file in the library or a server decides, and smart playlists, refuse edits to what they hold and offer none; a smart or server playlist can still be renamed, and one named by its file cannot. Exporting leaves out tracks that are only on the server and not downloaded, since a playlist file can only point at files.
 
-`w` puts an album, a track or whatever the cursor is on into a playlist from any page that has `a`, and from the queue and Now playing, by choosing one in a list that starts with `+ new playlist…`. In the queue it takes the selection, or with none the track under the cursor in edit mode and the track playing otherwise; on Now playing it is always the track playing. `W` in the queue saves the whole queue as a new playlist.
+`w` puts an album, a track or whatever the cursor is on into a playlist from any page that has `a`, and from the queue and Now playing, by choosing one in a list that starts with `+ new playlist…`. In the queue it takes the selection, or with none the track under the cursor; on Now playing it is always the track playing. `W` in the queue saves the whole queue as a new playlist.
 
 ## Downloads
 
@@ -138,7 +140,7 @@ As in the apps, names that lead somewhere are links. Under a tile, the title ope
 
 ### Without a right button
 
-Nothing needs a right click. The key hints along the foot are buttons: click `[a] add` and it is the `a` key. A queue row shows a `⋯` at its end when the pointer is over it or it is selected, and clicking that opens the row's menu, which a right click also opens; on an album heading the menu is for the whole record, and favouriting there favourites every track unless all of them already are. Dragging a selection moves it as one block that starts under the pointer, so a selection with gaps closes up as it moves, as it does with `j` and `k` in edit mode. The scrollbars on the queue and the browsing pages can be clicked and dragged. A right click on a tile still adds it to the queue, as a shortcut.
+Nothing needs a right click. The key hints along the foot are buttons: click `[a] add` and it is the `a` key. A queue row shows a `⋯` at its end when the pointer is over it or it is selected, and clicking that opens the row's menu, which a right click also opens; on an album heading the menu is for the whole record, and favouriting there favourites every track unless all of them already are. Dragging a selection moves it as one block that starts under the pointer, so a selection with gaps closes up as it moves, as it does with `J` and `K`. The scrollbars on the queue and the browsing pages can be clicked and dragged. A right click on a tile still adds it to the queue, as a shortcut.
 
 With the mouse: click selects, a second click opens, the wheel scrolls, and the sort and view labels in the heading are buttons.
 

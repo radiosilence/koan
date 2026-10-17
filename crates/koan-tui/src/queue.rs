@@ -12,7 +12,7 @@ use ratatui::widgets::Widget;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{QueueEntry, QueueEntryStatus, QueueItemId};
 
-use super::app::{HoverZone, Mode};
+use super::app::HoverZone;
 use super::shell::{Link, Links, ToolItem, Toolbar};
 use super::theme::Theme;
 use super::track_rows::{self as rows, Avail, Marker, Status};
@@ -250,7 +250,6 @@ pub struct QueueView<'a> {
     entries: &'a [QueueEntry],
     layout: &'a Layout,
     facts: Option<&'a Facts>,
-    mode: &'a Mode,
     cursor: usize,
     scroll_offset: usize,
     theme: &'a Theme,
@@ -267,7 +266,6 @@ impl<'a> QueueView<'a> {
     pub fn new(
         entries: &'a [QueueEntry],
         layout: &'a Layout,
-        mode: &'a Mode,
         cursor: usize,
         scroll_offset: usize,
         theme: &'a Theme,
@@ -276,7 +274,6 @@ impl<'a> QueueView<'a> {
             entries,
             layout,
             facts: None,
-            mode,
             cursor,
             scroll_offset,
             theme,
@@ -521,7 +518,6 @@ impl Widget for QueueView<'_> {
             rebuilt = Layout::build(self.entries, self.layout.grouped);
             &rebuilt
         };
-        let is_edit = matches!(self.mode, Mode::QueueEdit);
         let theme = self.theme;
         let inner = area;
         if self.entries.is_empty() {
@@ -567,7 +563,7 @@ impl Widget for QueueView<'_> {
                     );
                 }
                 Line::Track(i) | Line::Single(i) => {
-                    let cursor = is_edit && i == self.cursor;
+                    let cursor = i == self.cursor;
                     let mut t = track_of(
                         self.entries,
                         layout.grouped,
@@ -728,7 +724,6 @@ mod tests {
 
     fn draw(
         entries: &[QueueEntry],
-        mode: &Mode,
         cursor: usize,
         offset: usize,
         w: u16,
@@ -740,7 +735,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
         terminal
             .draw(|f| {
-                let view = QueueView::new(entries, &layout, mode, cursor, offset, &theme)
+                let view = QueueView::new(entries, &layout, cursor, offset, &theme)
                     .with_selected(&selected);
                 f.render_widget(view, f.area());
             })
@@ -752,17 +747,17 @@ mod tests {
     #[test]
     fn empty_queue_renders_in_a_single_row() {
         for (w, h) in [(1, 1), (2, 1), (3, 1), (1, 2), (80, 1), (80, 24)] {
-            draw(&[], &Mode::Normal, 0, 0, w, h);
+            draw(&[], 0, 0, w, h);
         }
     }
 
     #[test]
     fn renders_with_a_scroll_offset_past_the_end() {
         let entries: Vec<_> = (0..5).map(|n| entry(n, "album")).collect();
-        draw(&entries, &Mode::Normal, 0, 9_999, 40, 10);
+        draw(&entries, 0, 9_999, 40, 10);
     }
 
-    /// Find the row holding the edit-mode cursor marker.
+    /// Find the row holding the cursor marker.
     fn cursor_row(terminal: &Terminal<TestBackend>, w: u16, h: u16) -> u16 {
         let buf = terminal.backend().buffer();
         (0..h)
@@ -773,14 +768,14 @@ mod tests {
     /// The renderer and the hit-test must agree on which row a track occupies,
     /// including the step where moving the cursor down forces a scroll.
     #[test]
-    fn clicked_row_is_the_drawn_row_across_an_edit_scroll_boundary() {
+    fn clicked_row_is_the_drawn_row_across_a_scroll_boundary() {
         // 40 tracks over two albums, so header lines shift the mapping.
         let entries: Vec<_> = (0..40)
             .map(|n| entry(n, if n < 17 { "first" } else { "second" }))
             .collect();
         let (w, h) = (60u16, 20u16);
         let area = Rect::new(0, 0, w, h);
-        let visible_height = (h - 1) as usize;
+        let visible_height = h as usize;
 
         let mut offset = 0usize;
         for cursor in 0..entries.len() {
@@ -790,7 +785,7 @@ mod tests {
                 offset,
                 visible_height,
             );
-            let terminal = draw(&entries, &Mode::QueueEdit, cursor, offset, w, h);
+            let terminal = draw(&entries, cursor, offset, w, h);
             let row = cursor_row(&terminal, w, h);
             assert_eq!(
                 QueueView::queue_index_at_y(&Layout::build(&entries, true), area, offset, row),
@@ -806,11 +801,11 @@ mod tests {
     /// The widget renders exactly the offset it is handed. Scrolling to follow
     /// the cursor is `App`'s job — doing it here too desynced every hit-test.
     #[test]
-    fn edit_mode_widget_does_not_scroll_itself() {
+    fn the_widget_does_not_scroll_itself() {
         let entries: Vec<_> = (0..40).map(|n| entry(n, "")).collect();
         let (w, h) = (60u16, 20u16);
         // Cursor far below the window: a self-scrolling widget would jump to it.
-        let terminal = draw(&entries, &Mode::QueueEdit, 39, 0, w, h);
+        let terminal = draw(&entries, 39, 0, w, h);
         let buf = terminal.backend().buffer();
         let first_row: String = (0..w).map(|x| buf[(x, 0)].symbol()).collect();
         assert!(first_row.contains("track 0"), "drew {:?}", first_row);
@@ -1051,7 +1046,7 @@ mod tests {
         let favourites: HashSet<i64> = [2].into_iter().collect();
         let area = Rect::new(0, 0, w, h);
         let mut buf = Buffer::empty(area);
-        QueueView::new(entries, &layout, &Mode::Normal, 0, 0, &theme)
+        QueueView::new(entries, &layout, 0, 0, &theme)
             .with_facts(&facts, false)
             .with_favourites(&favourites)
             .render(area, &mut buf);
@@ -1087,9 +1082,13 @@ mod tests {
         for (w, h) in [(80, 24), (120, 40), (200, 60), (50, 20)] {
             let buf = render(&entries, true, w, h);
             let lines = text(&buf);
-            let shown = &lines[..entries.len() + 4];
+            // The row's menu button is not one of its columns.
+            let shown: Vec<String> = lines[..entries.len() + 4]
+                .iter()
+                .map(|l| l.replace('\u{22ef}', " "))
+                .collect();
             let end = crate::text::width(shown[1].trim_end());
-            for l in shown {
+            for l in &shown {
                 let e = crate::text::width(l.trim_end());
                 // A heading too narrow for its facts leaves them out.
                 let facts = l.contains('\u{b7}');

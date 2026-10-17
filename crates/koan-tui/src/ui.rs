@@ -1061,7 +1061,6 @@ fn render_queue(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let queue_view = QueueView::new(
         app.visible_queue(),
         &app.queue.layout,
-        &app.mode,
         app.queue.cursor,
         app.queue.scroll_offset,
         &app.theme,
@@ -1415,22 +1414,22 @@ mod tests {
         use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
         let mut app = app_with_queue(5);
         draw(&mut app, 120, 40);
-        // `[1-6] pages` is not one key, but `[e] edit` is.
+        // `[<>] skip` is not one key, but `[p] find` is.
         let (rect, key) = app
             .layout
             .hint_hits
             .iter()
-            .find(|(_, k)| k.code == crossterm::event::KeyCode::Char('e'))
+            .find(|(_, k)| k.code == crossterm::event::KeyCode::Char('p'))
             .cloned()
-            .expect("an edit hint");
+            .expect("a find hint");
         app.handle_mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: rect.x,
             row: rect.y,
             modifiers: KeyModifiers::NONE,
         });
-        assert_eq!(key.code, crossterm::event::KeyCode::Char('e'));
-        assert_eq!(app.mode, Mode::QueueEdit);
+        assert_eq!(key.code, crossterm::event::KeyCode::Char('p'));
+        assert!(matches!(app.mode, Mode::Picker(_)), "the click was the key");
     }
 
     #[test]
@@ -1537,12 +1536,12 @@ mod tests {
     }
 
     #[test]
-    fn leaving_the_queue_leaves_editing_it() {
+    fn a_selection_stays_on_the_queue() {
         use crossterm::event::KeyCode;
         let mut app = app_with_queue(5);
         draw(&mut app, 160, 40);
-        key(&mut app, KeyCode::Char('e'));
-        assert_eq!(app.mode, Mode::QueueEdit);
+        key(&mut app, KeyCode::Char(' '));
+        assert_eq!(app.queue.selected_ids.len(), 1);
         let (rect, _) = *app
             .layout
             .nav_hits
@@ -1553,24 +1552,51 @@ mod tests {
         assert_eq!(app.page(), Page::Albums);
         assert_eq!(app.mode, Mode::Normal);
         assert!(app.mode_stack.is_empty());
-        // Keys are the page's again, not the queue editor's.
+        // Keys are the page's, not the queue's.
         key(&mut app, KeyCode::Char('/'));
         key(&mut app, KeyCode::Char('x'));
         assert_eq!(app.albums_page.filter, "x");
     }
 
     #[test]
-    fn closing_track_info_returns_to_editing() {
+    fn closing_track_info_returns_to_the_queue() {
         use crossterm::event::KeyCode;
         let mut app = app_with_queue(5);
-        key(&mut app, KeyCode::Char('e'));
         key(&mut app, KeyCode::Char('i'));
         assert!(matches!(app.mode, Mode::TrackInfo(_)));
         key(&mut app, KeyCode::Esc);
-        assert_eq!(app.mode, Mode::QueueEdit);
-        key(&mut app, KeyCode::Esc);
         assert_eq!(app.mode, Mode::Normal);
         assert!(app.mode_stack.is_empty());
+    }
+
+    #[test]
+    fn the_queue_cursor_and_selection_are_always_live() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = app_with_queue(5);
+        draw(&mut app, 120, 40);
+        let ids: Vec<_> = app.queue.vq_cache.entries.iter().map(|e| e.id).collect();
+        // Moving leaves the selection alone; Space picks the row.
+        key(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.queue.cursor, 1);
+        assert!(app.queue.selected_ids.is_empty());
+        key(&mut app, KeyCode::Char(' '));
+        key(&mut app, KeyCode::Down);
+        key(&mut app, KeyCode::Down);
+        key(&mut app, KeyCode::Char(' '));
+        assert!(
+            app.queue.selected_ids.contains(&ids[1]) && app.queue.selected_ids.contains(&ids[3])
+        );
+        assert_eq!(app.queue.selected_ids.len(), 2, "picked, with a gap");
+        // Shift extends from where the cursor last stood.
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT));
+        assert_eq!(app.queue.selected_ids.len(), 2, "rows 3 and 4");
+        assert!(app.queue.selected_ids.contains(&ids[4]));
+        key(&mut app, KeyCode::Esc);
+        assert!(
+            app.queue.selected_ids.is_empty(),
+            "Esc lets the selection go"
+        );
+        assert_eq!(app.mode, Mode::Normal);
     }
 
     #[test]
@@ -1712,15 +1738,15 @@ mod tests {
     }
 
     #[test]
-    fn editing_the_queue_g_moves_and_ctrl_d_pages() {
+    fn on_the_queue_g_moves_and_ctrl_d_pages() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let (mut app, player) = app_and_player(5);
         draw(&mut app, 100, 30);
-        key(&mut app, KeyCode::Char('e'));
-        // As terminals send it: an uppercase letter, with Shift.
+        // As terminals send it: an uppercase letter, with Shift. It moves,
+        // and picks nothing.
         app.handle_key(KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT));
         assert_eq!(app.queue.cursor, 4);
-        assert_eq!(app.queue.selected_ids.len(), 1);
+        assert!(app.queue.selected_ids.is_empty());
         app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
         // Commands reach the player through the router's thread.
         assert!(

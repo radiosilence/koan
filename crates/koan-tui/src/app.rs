@@ -38,7 +38,6 @@ const TICKER_FPS: u8 = 8;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mode {
     Normal,
-    QueueEdit,
     Picker(PickerKind),
     TrackInfo(QueueItemId),
     /// A track's row from the library, shown from a list other than the queue.
@@ -523,15 +522,6 @@ impl App {
         self.mode = self.mode_stack.pop().unwrap_or(Mode::Normal);
     }
 
-    /// Ends queue editing, letting the selection go.
-    fn leave_queue_edit(&mut self) {
-        if self.mode == Mode::QueueEdit {
-            self.pop_mode();
-        }
-        self.queue.selected_ids.clear();
-        self.queue.anchor_id = None;
-    }
-
     pub fn load_favourites(&mut self) {
         if let Ok(db) = koan_core::db::pool::shared().get()
             && let Ok(favs) = koan_core::db::queries::load_favourites(
@@ -876,7 +866,6 @@ impl App {
 
         match &self.mode {
             Mode::Picker(_) => self.handle_picker_key(key),
-            Mode::QueueEdit => self.handle_edit_key(key),
             Mode::TrackInfo(_) | Mode::TrackDetails => self.handle_info_key(key),
             Mode::CoverArtZoom => self.handle_zoom_key(key),
             Mode::ContextMenu => self.handle_context_menu_key(key),
@@ -1004,11 +993,6 @@ impl App {
     }
 
     fn page_opened(&mut self) {
-        // Editing is the queue's; its keys would otherwise follow to a page
-        // that has none of what they edit.
-        if self.mode == Mode::QueueEdit && self.page() != Page::Queue {
-            self.leave_queue_edit();
-        }
         match self.page() {
             Page::Albums => self.albums_page.reload(),
             Page::Artists => self.artists_page.reload(),
@@ -1604,9 +1588,8 @@ impl App {
         }
     }
 
-    /// The tracks the queue's selection stands for; without one, the track
-    /// under the edit cursor, or else the one playing. Now playing always
-    /// means the one playing.
+    /// The tracks the queue's selection stands for, or without one the track
+    /// under the cursor. Now playing always means the one playing.
     fn queue_choice(&self) -> Vec<i64> {
         let entries = &self.queue.vq_cache.entries;
         let on_queue = self.page() != Page::NowPlaying;
@@ -1617,7 +1600,7 @@ impl App {
                 .filter_map(|e| e.db_id)
                 .collect();
         }
-        let one = if on_queue && self.mode == Mode::QueueEdit {
+        let one = if on_queue {
             entries.get(self.queue.cursor)
         } else {
             entries
@@ -1884,6 +1867,9 @@ impl App {
     }
 
     fn handle_normal_key(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        let len = self.queue.vq_cache.entries.len();
         match key.code {
             KeyCode::Esc => {
                 if self.status_message.is_some() {
@@ -1896,7 +1882,14 @@ impl App {
             KeyCode::Char('q') => {
                 self.quit = true;
             }
+            // On the queue Space picks the row under the cursor, as a list
+            // of things to act on does; `c` pauses there.
+            KeyCode::Char(' ') if self.page() == Page::Queue => {
+                let cursor = self.queue.cursor;
+                self.toggle_selection(cursor);
+            }
             KeyCode::Char(' ') => self.toggle_pause(),
+            KeyCode::Char('c') if self.page() == Page::Queue && !ctrl => self.toggle_pause(),
             KeyCode::Char('>') | KeyCode::Char('n') => self.skip(PlayerCommand::NextTrack),
             KeyCode::Char('<') => self.skip(PlayerCommand::PrevTrack),
             KeyCode::Char('s') => {
@@ -1944,20 +1937,10 @@ impl App {
             KeyCode::Char(',') | KeyCode::Left => {
                 self.seek_to(self.state.position_ms().saturating_sub(10_000));
             }
-            KeyCode::Char('e') => {
-                self.push_mode(Mode::QueueEdit);
-                // Sync selection to cursor so j/k work immediately.
-                if self.queue.selected_ids.len() <= 1 {
-                    self.select_single(self.queue.cursor);
-                }
-            }
             KeyCode::Char('p') => {
                 self.open_picker(PickerKind::Track);
             }
-            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.push_mode(Mode::QueueEdit);
-                self.select_all();
-            }
+            KeyCode::Char('a') if ctrl => self.select_all(),
             KeyCode::Char('a') => {
                 self.open_picker(PickerKind::Album);
             }
@@ -2030,47 +2013,42 @@ impl App {
                 self.viz_fullscreen = true;
                 self.push_mode(Mode::VizPicker);
             }
-            KeyCode::Up => {
-                let visible = self.visible_queue();
-                if !visible.is_empty() {
-                    if self.queue.cursor == 0 {
-                        self.queue.cursor = visible.len() - 1;
-                    } else {
-                        self.queue.cursor -= 1;
-                    }
-                    self.select_single(self.queue.cursor);
-                    self.update_scroll();
-                }
+            // The cursor and the selection, always live: Shift extends.
+            KeyCode::Up | KeyCode::Char('k') if len > 0 => {
+                let to = self.queue.cursor.checked_sub(1).unwrap_or(len - 1);
+                self.move_cursor(to, shift);
             }
-            KeyCode::Down => {
-                let visible = self.visible_queue();
-                if !visible.is_empty() {
-                    if self.queue.cursor + 1 >= visible.len() {
-                        self.queue.cursor = 0;
-                    } else {
-                        self.queue.cursor += 1;
-                    }
-                    self.select_single(self.queue.cursor);
-                    self.update_scroll();
-                }
+            KeyCode::Down | KeyCode::Char('j') if len > 0 => {
+                let to = (self.queue.cursor + 1) % len;
+                self.move_cursor(to, shift);
             }
-            // Vim: page up/down, home/end.
-            KeyCode::PageUp | KeyCode::Char('u')
-                if key.code == KeyCode::PageUp || key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                self.page_up(false);
+            // The selection, or the track under the cursor, moved a place.
+            KeyCode::Char('K') => self.move_selected(false),
+            KeyCode::Char('J') => self.move_selected(true),
+            KeyCode::PageUp => {
+                let page = self.queue_visible_height().max(1);
+                self.move_cursor(self.queue.cursor.saturating_sub(page), shift);
             }
-            KeyCode::PageDown | KeyCode::Char('d')
-                if key.code == KeyCode::PageDown
-                    || key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                self.page_down(false);
+            KeyCode::Char('u') if ctrl => {
+                let page = self.queue_visible_height().max(1);
+                self.move_cursor(self.queue.cursor.saturating_sub(page), false);
             }
-            KeyCode::Home | KeyCode::Char('g') => {
-                self.jump_to_start(false);
+            KeyCode::PageDown => {
+                let page = self.queue_visible_height().max(1);
+                self.move_cursor(self.queue.cursor + page, shift);
             }
-            KeyCode::End | KeyCode::Char('G') => {
-                self.jump_to_end(false);
+            KeyCode::Char('d') if ctrl => {
+                let page = self.queue_visible_height().max(1);
+                self.move_cursor(self.queue.cursor + page, false);
+            }
+            KeyCode::Char('d') | KeyCode::Delete | KeyCode::Backspace => self.delete_selected(),
+            KeyCode::Home => self.move_cursor(0, shift),
+            KeyCode::End => self.move_cursor(usize::MAX, shift),
+            KeyCode::Char('g') => self.move_cursor(0, false),
+            KeyCode::Char('G') => self.move_cursor(usize::MAX, false),
+            KeyCode::Char('m') if self.page() == Page::Queue => self.open_context_menu(None, false),
+            KeyCode::Char('y') if ctrl => {
+                self.tx.send(PlayerCommand::Redo).ok();
             }
             KeyCode::Enter => {
                 self.play_at_cursor();
@@ -2126,9 +2104,6 @@ impl App {
             }
             KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.queue_control(queue::Control::ClearQueue);
-            }
-            KeyCode::Delete if !self.queue.selected_ids.is_empty() => {
-                self.queue_control(queue::Control::RemoveSelected);
             }
             KeyCode::Char('B') => self.toggle_eq(),
             KeyCode::Char('/') => {
@@ -2470,108 +2445,6 @@ impl App {
         let _ = koan_core::config::Config::persist(|cfg| {
             cfg.visualizer.mode = mode_str.clone();
         });
-    }
-
-    fn handle_edit_key(&mut self, key: KeyEvent) {
-        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
-        match key.code {
-            KeyCode::Esc => self.leave_queue_edit(),
-            KeyCode::Char('q') => {
-                self.quit = true;
-            }
-            KeyCode::Up => {
-                let visible = self.visible_queue();
-                if !visible.is_empty() {
-                    if self.queue.cursor == 0 {
-                        self.queue.cursor = visible.len() - 1;
-                    } else {
-                        self.queue.cursor -= 1;
-                    }
-                }
-                if shift {
-                    self.extend_selection_to(self.queue.cursor);
-                } else {
-                    self.select_single(self.queue.cursor);
-                }
-                self.update_scroll();
-            }
-            KeyCode::Down => {
-                let visible = self.visible_queue();
-                if !visible.is_empty() {
-                    if self.queue.cursor + 1 >= visible.len() {
-                        self.queue.cursor = 0;
-                    } else {
-                        self.queue.cursor += 1;
-                    }
-                }
-                if shift {
-                    self.extend_selection_to(self.queue.cursor);
-                } else {
-                    self.select_single(self.queue.cursor);
-                }
-                self.update_scroll();
-            }
-            // Ctrl+D pages, as everywhere else; it never deletes.
-            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.page_down(false);
-            }
-            KeyCode::Char('d') | KeyCode::Delete => {
-                self.delete_selected();
-            }
-            KeyCode::Char('j') => {
-                self.move_selected(true);
-            }
-            KeyCode::Char('k') => {
-                self.move_selected(false);
-            }
-            KeyCode::Char('J') => {
-                let visible_len = self.visible_queue().len();
-                if self.queue.cursor + 1 < visible_len {
-                    self.queue.cursor += 1;
-                    self.extend_selection_to(self.queue.cursor);
-                    self.update_scroll();
-                }
-            }
-            KeyCode::Char('K') if self.queue.cursor > 0 => {
-                self.queue.cursor -= 1;
-                self.extend_selection_to(self.queue.cursor);
-                self.update_scroll();
-            }
-            KeyCode::Char('i') => {
-                self.open_track_info(self.queue.cursor);
-            }
-            KeyCode::Char(' ') if !self.queue.selected_ids.is_empty() => {
-                self.open_context_menu(None, false);
-            }
-            // Shift with the paging keys extends the selection. `g` and `G`
-            // only move: the terminal reports Shift with `G` itself.
-            KeyCode::PageUp => self.page_up(shift),
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.page_up(false);
-            }
-            KeyCode::PageDown => self.page_down(shift),
-            KeyCode::Home => self.jump_to_start(shift),
-            KeyCode::End => self.jump_to_end(shift),
-            KeyCode::Char('g') => self.jump_to_start(false),
-            KeyCode::Char('G') => self.jump_to_end(false),
-            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.select_all();
-            }
-            KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.tx.send(PlayerCommand::Undo).ok();
-            }
-            KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.tx.send(PlayerCommand::Redo).ok();
-            }
-            KeyCode::Char('Z')
-                if key
-                    .modifiers
-                    .contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) =>
-            {
-                self.tx.send(PlayerCommand::Redo).ok();
-            }
-            _ => {}
-        }
     }
 
     fn handle_context_menu_key(&mut self, key: KeyEvent) {
@@ -3316,54 +3189,24 @@ impl App {
         self.push_mode(Mode::Picker(PickerKind::QueueJump));
     }
 
-    /// Move cursor up by one page.
-    fn page_up(&mut self, extend: bool) {
-        let page_size = self.queue_visible_height().max(1);
-        self.queue.cursor = self.queue.cursor.saturating_sub(page_size);
+    /// Puts the queue's cursor on `to`. With `extend` the selection runs
+    /// from its anchor to there; otherwise it is left as it is, and the
+    /// cursor's row is where the next extension starts.
+    fn move_cursor(&mut self, to: usize, extend: bool) {
+        let len = self.queue.vq_cache.entries.len();
+        if len == 0 {
+            return;
+        }
+        self.queue.cursor = to.min(len - 1);
         if extend {
             self.extend_selection_to(self.queue.cursor);
         } else {
-            self.select_single(self.queue.cursor);
-        }
-        self.update_scroll();
-    }
-
-    /// Move cursor down by one page.
-    fn page_down(&mut self, extend: bool) {
-        let visible_len = self.visible_queue().len();
-        let page_size = self.queue_visible_height().max(1);
-        if visible_len > 0 {
-            self.queue.cursor = (self.queue.cursor + page_size).min(visible_len - 1);
-        }
-        if extend {
-            self.extend_selection_to(self.queue.cursor);
-        } else {
-            self.select_single(self.queue.cursor);
-        }
-        self.update_scroll();
-    }
-
-    /// Jump cursor to start of queue.
-    fn jump_to_start(&mut self, extend: bool) {
-        self.queue.cursor = 0;
-        if extend {
-            self.extend_selection_to(self.queue.cursor);
-        } else {
-            self.select_single(self.queue.cursor);
-        }
-        self.update_scroll();
-    }
-
-    /// Jump cursor to end of queue.
-    fn jump_to_end(&mut self, extend: bool) {
-        let visible_len = self.visible_queue().len();
-        if visible_len > 0 {
-            self.queue.cursor = visible_len - 1;
-        }
-        if extend {
-            self.extend_selection_to(self.queue.cursor);
-        } else {
-            self.select_single(self.queue.cursor);
+            self.queue.anchor_id = self
+                .queue
+                .vq_cache
+                .entries
+                .get(self.queue.cursor)
+                .map(|e| e.id);
         }
         self.update_scroll();
     }
