@@ -28,8 +28,8 @@ const SECTIONS: &[Section] = &[
         title: "Pages",
         bindings: &[
             (
-                "1-8",
-                "Queue / playing / albums / artists / faves / recent / history / settings",
+                "1-9",
+                "Queue / playing / albums / artists / faves / playlists / recent / history / settings",
             ),
             ("tab", "Next page (S-tab previous)"),
             ("[ ]", "Back / forward (also A-\u{2190} A-\u{2192})"),
@@ -49,6 +49,7 @@ const SECTIONS: &[Section] = &[
             ("z", "Zoom cover art"),
             ("D", "Output device"),
             ("E", "Choose the EQ"),
+            ("w", "Add to a playlist (W: save the queue as one)"),
             ("B", "Bypass the EQ, or put it back"),
             ("A / O", "Artist / album of the selection"),
         ],
@@ -89,6 +90,14 @@ const SECTIONS: &[Section] = &[
             ("a", "Append (C-r replaces the queue)"),
             ("/", "Filter"),
             ("v / o", "Tiles or rows / sort order"),
+        ],
+    },
+    Section {
+        title: "Playlists",
+        bindings: &[
+            ("P", "Play"),
+            ("c", "New playlist"),
+            ("K / J", "Move a track up / down"),
         ],
     },
     Section {

@@ -24,7 +24,7 @@ See [The terminal UI](../guide/terminal-ui.md). These work from any page.
 
 | Key | Action |
 |-----|--------|
-| `1` to `8` | Queue, Now playing, Albums, Artists, Favourites, Recent, History, Settings |
+| `1` to `9` | Queue, Now playing, Albums, Artists, Favourites, Playlists, Recent, History, Settings |
 | `Tab` / `Shift+Tab` | Next / previous page |
 | `[` / `]` or `Alt+Left` / `Alt+Right` | Back / forward through the pages visited |
 | `Esc` | Leave the page for the one before it |
@@ -109,7 +109,45 @@ Tree view: artist -> album -> track.
 
 ---
 
-## History (`7`)
+## Playlists (`6`)
+
+| Key | Action |
+|-----|--------|
+| `↑` `↓` or `j` `k` | Move |
+| `Enter` or `→` | Open the playlist |
+| `P` | Play it |
+| `a` / `N` | Add it to the queue / put it next |
+| `w` | Put its tracks in another playlist |
+| `c` or `+` | New playlist |
+| `r` | Rename |
+| `x` or `Delete` | Delete (press again to confirm) |
+| `/` | Filter by name |
+
+On a playlist's page:
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Play from the track under the cursor |
+| `P` | Play all (the `shuffle` button plays it shuffled) |
+| `a` / `N` | Add all to the queue / put them next |
+| `K` / `J` | Move the track up / down |
+| `x`, `Delete` or `Backspace` | Take the track out |
+| `r` | Rename |
+| `w` | Put the track in another playlist |
+| `i` | Track info |
+| `A` / `O` | Open the artist / the record |
+
+Everything on both pages is also a click: the row, `▸`, `×`, `▴`, `▾`, the artist and the record in a row, and the buttons under the playlist's name. The wheel and the scrollbar scroll.
+
+---
+
+## Add to a playlist (`w`, `W`)
+
+`w` on the queue (the cursor or the selection), on Now playing (the playing track), on the Albums, Favourites, Recent and artist pages, on an album page, on the Playlists page (the playlist's tracks) and a playlist's page, in History and in the Artists tree opens a list of playlists that can be filled, headed by `+ new playlist…`; `Enter` or a click chooses one, `Esc` or a click outside cancels. `W` in the queue asks for a name and saves the whole queue as a playlist.
+
+---
+
+## History (`8`)
 
 | Key | Action |
 |-----|--------|
@@ -119,6 +157,8 @@ Tree view: artist -> album -> track.
 | `N` | Put the track next, after the one playing |
 | `i` | Show what the library holds of the track |
 | `d` / `u` | Download the track to this device / remove the download |
+| `w` | Put the track in a playlist |
+| `m` | Menu of everything that can be done with the track |
 | `A` / `O` | Open the artist / the record |
 | `x`, `Delete` or `Backspace` | Forget the play |
 | `D` | Forget every play (press again to confirm) |
@@ -128,7 +168,7 @@ Click a play to select it and again to play it; click the artist or the record t
 
 ---
 
-## Settings (`8`)
+## Settings (`9`)
 
 | Key | Action |
 |-----|--------|
@@ -140,7 +180,7 @@ Click the arrows beside a value, or the value, to change it, or `run` to start a
 
 ---
 
-## Albums, Favourites and Recent (`3`, `5`, `6`)
+## Albums, Favourites and Recent (`3`, `5`, `7`)
 
 | Key | Action |
 |-----|--------|
@@ -158,6 +198,8 @@ Click the arrows beside a value, or the value, to change it, or `run` to start a
 | `f` | Favourite the record under the cursor, or the track on a track row |
 | `H` | Favourite the artist (on an artist's page, that artist) |
 | `i` | Show what the library holds of the track (track rows) |
+| `w` | Put the record or track in a playlist |
+| `m` | Menu of everything that can be done with the record or track |
 | `d` / `u` | Download the record or track to this device / remove the download |
 
 ### Mouse
@@ -170,6 +212,7 @@ Click the arrows beside a value, or the value, to change it, or `run` to start a
 | Right-click | Append to the queue (also `a`, and the hint bar) |
 | Wheel | Scroll |
 | Click `sort:` or `view:` in the heading | Cycle the order, switch tiles and rows |
+| Click `⋯ actions` in the heading | Open the menu for what the cursor is on (also `m`) |
 | Click the sidebar or tab bar | Open that page, or go back or forward |
 | Click a key hint along the foot | The same as pressing that key |
 | Drag the scrollbar | Scroll |

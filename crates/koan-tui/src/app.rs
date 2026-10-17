@@ -15,6 +15,7 @@ use koan_core::player::state::{
 };
 
 use super::accent::{self, Accent};
+use super::actions_menu::ActionsMenu;
 use super::album_page::{AlbumHit, AlbumPage};
 use super::browse::{self, Browse, Source};
 use super::history_page::{HistoryHit, HistoryPage};
@@ -22,6 +23,8 @@ use super::library::{self, LibraryState};
 use super::lyrics::LyricsState;
 use super::nav::{Navigator, Page};
 use super::picker::{PickerKind, PickerPartKind, PickerState, picker_results_rect};
+use super::playlist_modals::{Chooser, NamePrompt, Purpose};
+use super::playlists_page::{ListHit, PlAction, PlaylistHit, PlaylistPage, PlaylistsPage};
 use super::queue;
 use super::settings_page::{Outcome, Setting, SettingsHit, SettingsPage, Task};
 use super::theme::{Palette, Theme};
@@ -44,6 +47,12 @@ pub enum Mode {
     Organize,
     DeviceSelector,
     DspSelector,
+    /// Typing the name of a playlist.
+    NamePrompt,
+    /// Choosing the playlist to put tracks in.
+    PlaylistChooser,
+    /// The things that can be done with what the cursor is on.
+    ActionsMenu,
     HelpModal,
     VizPicker,
 }
@@ -72,6 +81,11 @@ pub enum ContextAction {
     TrackInfo,
     Organize,
     CopyShareLink,
+    GoToAlbum,
+    GoToArtist,
+    AddToPlaylist,
+    Download,
+    RemoveDownload,
 }
 
 /// A status bar message with the instant it was created (for auto-clear timeout).
@@ -120,6 +134,8 @@ pub enum HoverZone {
     Album(AlbumHit),
     History(HistoryHit),
     Settings(SettingsHit),
+    Playlists(ListHit),
+    Playlist(PlaylistHit),
     Nav(NavTarget),
     SeekBar,
     ScrollbarQueue,
@@ -174,6 +190,8 @@ pub struct LayoutRects {
     pub organize_area: ratatui::layout::Rect,
     /// The output or EQ chooser, while one is open.
     pub selector_area: ratatui::layout::Rect,
+    /// The name prompt or the playlist chooser, while one is open.
+    pub modal_area: ratatui::layout::Rect,
     /// The sidebar or tab bar, and what each part of it opens.
     pub nav_hits: Vec<(ratatui::layout::Rect, NavTarget)>,
     /// The key hints along the foot, and the key each stands for.
@@ -255,6 +273,11 @@ pub struct App {
     /// The EQ that was on before it was bypassed, for the key that puts it back.
     eq_last: Option<String>,
     pub history_page: HistoryPage,
+    pub playlists_page: PlaylistsPage,
+    pub playlist_page: Option<PlaylistPage>,
+    pub name_prompt: Option<NamePrompt>,
+    pub chooser: Option<Chooser>,
+    pub actions_menu: Option<ActionsMenu>,
     pub settings_page: SettingsPage,
     /// A drag that began on a page's scrollbar.
     browse_drag: bool,
@@ -410,6 +433,11 @@ impl App {
             track_details: None,
             eq_last: None,
             history_page: HistoryPage::new(),
+            playlists_page: PlaylistsPage::new(),
+            playlist_page: None,
+            name_prompt: None,
+            chooser: None,
+            actions_menu: None,
             settings_page: SettingsPage::new(),
             browse_drag: false,
             thumbs: browse::Thumbs::new(),
@@ -883,6 +911,9 @@ impl App {
             Mode::Organize => self.handle_organize_key(key),
             Mode::DeviceSelector => self.handle_device_selector_key(key),
             Mode::DspSelector => self.handle_dsp_selector_key(key),
+            Mode::NamePrompt => self.handle_name_prompt_key(key),
+            Mode::PlaylistChooser => self.handle_chooser_key(key),
+            Mode::ActionsMenu => self.handle_actions_menu_key(key),
             Mode::HelpModal => self.handle_help_modal_key(key),
             Mode::VizPicker => self.handle_viz_picker_key(key),
             Mode::Normal => self.handle_page_key(key),
@@ -902,7 +933,12 @@ impl App {
             Page::Artists => self.library.as_ref().is_some_and(|l| l.filter_active),
             Page::Artist(_) => self.artist_page.filter_active,
             Page::History => self.history_page.filter_active,
-            Page::Queue | Page::NowPlaying | Page::Album(_) | Page::Settings => false,
+            Page::Playlists => self.playlists_page.filter_active,
+            Page::Queue
+            | Page::NowPlaying
+            | Page::Album(_)
+            | Page::Playlist(_)
+            | Page::Settings => false,
         }
     }
 
@@ -928,6 +964,8 @@ impl App {
             Page::Favourites => self.favourites_page.reload(),
             Page::Recent => self.recent_page.reload(),
             Page::History => self.history_page.reload(),
+            Page::Playlists => self.playlists_page.reload(),
+            Page::Playlist(id) => self.playlist_page = PlaylistPage::load(id),
             Page::Settings => self.settings_page.reload(),
             Page::Artists => {
                 if self.library.is_none() {
@@ -1022,6 +1060,19 @@ impl App {
                     self.handle_transport_key(key);
                 }
             }
+            Page::Playlists => match self.playlists_page.handle_key(key) {
+                Some(action) => self.apply_playlist(action),
+                None if key.code == KeyCode::Esc => self.leave_page(),
+                None => self.handle_transport_key(key),
+            },
+            Page::Playlist(_) => {
+                let action = self.playlist_page.as_mut().and_then(|p| p.handle_key(key));
+                match action {
+                    Some(action) => self.apply_playlist(action),
+                    None if key.code == KeyCode::Esc => self.leave_page(),
+                    None => self.handle_transport_key(key),
+                }
+            }
             Page::History => match self.history_page.handle_key(key) {
                 Some(action) => self.apply_browse(action),
                 None if key.code == KeyCode::Esc => self.leave_page(),
@@ -1075,7 +1126,7 @@ impl App {
         let shared = match key.code {
             KeyCode::Char(
                 ' ' | '>' | '<' | 'n' | 's' | 'T' | 'R' | '.' | ',' | 'L' | 'V' | 'F' | 'M' | 'X'
-                | 'S' | 'v' | 'D' | 'E' | 'B' | 'p' | 'q' | '?' | 'z',
+                | 'S' | 'v' | 'D' | 'E' | 'B' | 'w' | 'W' | 'p' | 'q' | '?' | 'z',
             ) => !ctrl,
             KeyCode::Left | KeyCode::Right => true,
             _ => false,
@@ -1105,6 +1156,231 @@ impl App {
             },
             std::time::Instant::now(),
         ));
+    }
+
+    fn say(&mut self, text: impl Into<String>) {
+        self.status_message = Some((text.into(), std::time::Instant::now()));
+    }
+
+    fn apply_playlist(&mut self, action: PlAction) {
+        match action {
+            PlAction::None => {}
+            PlAction::Open(id) => self.go_page(Page::Playlist(id)),
+            PlAction::Command(cmd) => {
+                self.tx.send(cmd).ok();
+            }
+            PlAction::Tracks(ids, how) => {
+                if !ids.is_empty() {
+                    self.picker_result = Some((PickerKind::Track, ids, how));
+                }
+            }
+            PlAction::OpenAlbum(id) => self.go_page(Page::Album(id)),
+            PlAction::OpenArtist(id) => self.go_page(Page::Artist(id)),
+            PlAction::Info(id) => self.open_track_details(id),
+            PlAction::New => self.open_name_prompt(Purpose::New(Vec::new()), String::new()),
+            PlAction::Rename(id, name) => self.open_name_prompt(Purpose::Rename(id), name),
+            PlAction::Choose(ids) => self.open_chooser(ids),
+            PlAction::Say(text) => self.say(text),
+        }
+    }
+
+    fn open_name_prompt(&mut self, purpose: Purpose, text: String) {
+        self.name_prompt = Some(NamePrompt::new(purpose, text));
+        self.push_mode(Mode::NamePrompt);
+    }
+
+    fn close_name_prompt(&mut self) {
+        self.name_prompt = None;
+        self.pop_mode();
+    }
+
+    fn handle_name_prompt_key(&mut self, key: KeyEvent) {
+        let Some(prompt) = self.name_prompt.as_mut() else {
+            self.pop_mode();
+            return;
+        };
+        match key.code {
+            KeyCode::Esc => self.close_name_prompt(),
+            KeyCode::Enter => self.confirm_name_prompt(),
+            KeyCode::Backspace => {
+                prompt.text.pop();
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                prompt.text.clear();
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                prompt.text.push(c);
+            }
+            _ => {}
+        }
+    }
+
+    /// Makes or renames the playlist the prompt was asking about.
+    fn confirm_name_prompt(&mut self) {
+        let Some(prompt) = self.name_prompt.take() else {
+            return;
+        };
+        let said = match &prompt.purpose {
+            Purpose::New(ids) => match super::playlist_ops::create(&prompt.text, ids) {
+                Ok(_) if ids.is_empty() => format!("made '{}'", prompt.text.trim()),
+                Ok(_) => format!(
+                    "made '{}' with {} track{}",
+                    prompt.text.trim(),
+                    ids.len(),
+                    if ids.len() == 1 { "" } else { "s" }
+                ),
+                Err(e) => {
+                    // Kept open: a name that was refused is a name to fix.
+                    self.name_prompt = Some(prompt);
+                    self.say(e);
+                    return;
+                }
+            },
+            Purpose::Rename(id) => match super::playlist_ops::rename(*id, &prompt.text) {
+                Ok(()) => format!("renamed to '{}'", prompt.text.trim()),
+                Err(e) => {
+                    self.name_prompt = Some(prompt);
+                    self.say(e);
+                    return;
+                }
+            },
+        };
+        self.pop_mode();
+        self.playlists_changed();
+        self.say(said);
+    }
+
+    /// Has the pages that show playlists read them again.
+    fn playlists_changed(&mut self) {
+        self.playlists_page.reload();
+        if let Some(p) = self.playlist_page.as_mut() {
+            p.reload();
+        }
+    }
+
+    pub(super) fn open_chooser(&mut self, ids: Vec<i64>) {
+        if ids.is_empty() {
+            self.say("nothing to add");
+            return;
+        }
+        let lists = super::playlist_ops::list();
+        self.chooser = Some(Chooser::new(ids, &lists));
+        self.push_mode(Mode::PlaylistChooser);
+    }
+
+    fn close_actions_menu(&mut self) {
+        self.actions_menu = None;
+        self.pop_mode();
+    }
+
+    /// Runs the menu's item at `idx` as its key would, and closes the menu.
+    fn run_menu_item(&mut self, idx: usize) {
+        let action = self.actions_menu.as_mut().and_then(|m| m.take(idx));
+        self.close_actions_menu();
+        if let Some(action) = action {
+            self.apply_browse(action);
+        }
+    }
+
+    fn handle_actions_menu_key(&mut self, key: KeyEvent) {
+        let Some(menu) = self.actions_menu.as_mut() else {
+            self.pop_mode();
+            return;
+        };
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('m') => self.close_actions_menu(),
+            KeyCode::Up | KeyCode::Char('k') => menu.move_by(-1),
+            KeyCode::Down | KeyCode::Char('j') => menu.move_by(1),
+            KeyCode::Home | KeyCode::Char('g') => menu.cursor = 0,
+            KeyCode::End | KeyCode::Char('G') => {
+                menu.cursor = menu.items.len().saturating_sub(1);
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                let idx = menu.cursor;
+                self.run_menu_item(idx);
+            }
+            _ => {}
+        }
+    }
+
+    fn close_chooser(&mut self) {
+        self.chooser = None;
+        self.pop_mode();
+    }
+
+    /// Puts the chooser's tracks in the playlist at `idx`, or asks for the
+    /// name of a new one.
+    fn apply_chooser(&mut self, idx: usize) {
+        let Some(chooser) = self.chooser.take() else {
+            return;
+        };
+        let Some((target, label)) = chooser.entries.get(idx).cloned() else {
+            self.chooser = Some(chooser);
+            return;
+        };
+        self.pop_mode();
+        match target {
+            None => self.open_name_prompt(Purpose::New(chooser.ids), String::new()),
+            Some(id) => {
+                let name = label.split(" \u{b7} ").next().unwrap_or("").to_string();
+                match super::playlist_ops::add(id, &chooser.ids) {
+                    Ok(n) => {
+                        self.say(format!(
+                            "added {n} track{} to '{name}'",
+                            if n == 1 { "" } else { "s" }
+                        ));
+                        self.playlists_changed();
+                    }
+                    Err(e) => self.say(e),
+                }
+            }
+        }
+    }
+
+    fn handle_chooser_key(&mut self, key: KeyEvent) {
+        let Some(chooser) = self.chooser.as_mut() else {
+            self.pop_mode();
+            return;
+        };
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => self.close_chooser(),
+            KeyCode::Up | KeyCode::Char('k') => chooser.move_by(-1),
+            KeyCode::Down | KeyCode::Char('j') => chooser.move_by(1),
+            KeyCode::Home | KeyCode::Char('g') => chooser.cursor = 0,
+            KeyCode::End | KeyCode::Char('G') => {
+                chooser.cursor = chooser.entries.len().saturating_sub(1);
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                let idx = chooser.cursor;
+                self.apply_chooser(idx);
+            }
+            _ => {}
+        }
+    }
+
+    /// The tracks the queue's cursor or selection stands for.
+    fn queue_choice(&self) -> Vec<i64> {
+        let visible = self.visible_queue();
+        if self.page() == Page::NowPlaying {
+            return visible
+                .iter()
+                .find(|e| e.status == koan_core::player::state::QueueEntryStatus::Playing)
+                .and_then(|e| e.db_id)
+                .into_iter()
+                .collect();
+        }
+        if !self.queue.selected_ids.is_empty() {
+            return visible
+                .iter()
+                .filter(|e| self.queue.selected_ids.contains(&e.id))
+                .filter_map(|e| e.db_id)
+                .collect();
+        }
+        visible
+            .get(self.queue.cursor)
+            .and_then(|e| e.db_id)
+            .into_iter()
+            .collect()
     }
 
     fn apply_outcome(&mut self, outcome: Outcome) {
@@ -1215,6 +1491,11 @@ impl App {
                 self.toggle_collection_favourite(koan_core::helpers::FavouriteKind::Artist, id)
             }
             browse::Action::Info(id) => self.open_track_details(id),
+            browse::Action::Choose(ids) => self.open_chooser(ids),
+            browse::Action::Menu(title, items) => {
+                self.actions_menu = Some(ActionsMenu::new(title, items));
+                self.push_mode(Mode::ActionsMenu);
+            }
             browse::Action::Download(ids) => {
                 let wanted: Vec<i64> = koan_core::db::pool::shared()
                     .get()
@@ -1516,6 +1797,22 @@ impl App {
                 self.open_device_selector();
             }
             KeyCode::Char('E') => self.open_dsp_selector(),
+            KeyCode::Char('w') => {
+                let ids = self.queue_choice();
+                self.open_chooser(ids);
+            }
+            KeyCode::Char('W') => {
+                let ids: Vec<i64> = self
+                    .visible_queue()
+                    .iter()
+                    .filter_map(|e| e.db_id)
+                    .collect();
+                if ids.is_empty() {
+                    self.say("the queue is empty");
+                } else {
+                    self.open_name_prompt(Purpose::New(ids), "queue".into());
+                }
+            }
             KeyCode::Char('B') => self.toggle_eq(),
             KeyCode::Char('/') => {
                 self.open_queue_jump();
@@ -2041,6 +2338,15 @@ impl App {
             (ContextAction::Play, "Play", 'p'),
             (ContextAction::ToggleFavourite, fav_label, 'f'),
             (ContextAction::TrackInfo, "Track info", 'i'),
+            (
+                ContextAction::AddToPlaylist,
+                "Add to a playlist\u{2026}",
+                'w',
+            ),
+            (ContextAction::GoToAlbum, "Go to the record", 'a'),
+            (ContextAction::GoToArtist, "Go to the artist", 'r'),
+            (ContextAction::Download, "Download", 'l'),
+            (ContextAction::RemoveDownload, "Remove the download", 'u'),
             (ContextAction::Remove, "Remove", 'd'),
             (ContextAction::Organize, "Organize files", 'o'),
         ];
@@ -2085,6 +2391,38 @@ impl App {
             }
             ContextAction::CopyShareLink => {
                 self.create_and_copy_share_link();
+            }
+            ContextAction::AddToPlaylist => {
+                let ids = self.queue_choice();
+                self.open_chooser(ids);
+            }
+            ContextAction::GoToAlbum | ContextAction::GoToArtist => {
+                let link = if action == ContextAction::GoToAlbum {
+                    queue::HeaderLink::Album
+                } else {
+                    queue::HeaderLink::Artist
+                };
+                let db_id = self
+                    .visible_queue()
+                    .get(self.queue.cursor)
+                    .and_then(|e| e.db_id);
+                self.open_entry_link(db_id, link);
+            }
+            ContextAction::Download => {
+                let ids = self.queue_choice();
+                if ids.is_empty() {
+                    self.say("that track is not in the library");
+                    return;
+                }
+                self.apply_browse(browse::Action::Download(ids));
+            }
+            ContextAction::RemoveDownload => {
+                let ids = self.queue_choice();
+                if ids.is_empty() {
+                    self.say("that track is not in the library");
+                    return;
+                }
+                self.apply_browse(browse::Action::RemoveDownload(ids));
             }
         }
     }
@@ -2372,6 +2710,85 @@ impl App {
             return;
         }
 
+        // The name prompt and the playlist chooser: click a row, or `ok`;
+        // click outside to cancel.
+        if self.mode == Mode::ActionsMenu {
+            let area = self.layout.modal_area;
+            let inner = ratatui::layout::Rect::new(
+                area.x + 1,
+                area.y + 1,
+                area.width.saturating_sub(2),
+                area.height.saturating_sub(2),
+            );
+            match event.kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if !self.is_in_rect(event.column, event.row, area) {
+                        self.close_actions_menu();
+                    } else if self.is_in_rect(event.column, event.row, inner) {
+                        let top = self
+                            .actions_menu
+                            .as_ref()
+                            .map_or(0, |m| m.top(inner.height as usize));
+                        self.run_menu_item(top + (event.row - inner.y) as usize);
+                    }
+                }
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                    if let Some(m) = self.actions_menu.as_mut() {
+                        m.move_by(if matches!(event.kind, MouseEventKind::ScrollUp) {
+                            -1
+                        } else {
+                            1
+                        });
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        if matches!(self.mode, Mode::NamePrompt | Mode::PlaylistChooser) {
+            let area = self.layout.modal_area;
+            let inner = ratatui::layout::Rect::new(
+                area.x + 1,
+                area.y + 1,
+                area.width.saturating_sub(2),
+                area.height.saturating_sub(2),
+            );
+            match event.kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if !self.is_in_rect(event.column, event.row, area) {
+                        if self.mode == Mode::NamePrompt {
+                            self.close_name_prompt();
+                        } else {
+                            self.close_chooser();
+                        }
+                    } else if self.mode == Mode::NamePrompt {
+                        let ok = super::playlist_modals::prompt_ok_rect(area);
+                        if self.is_in_rect(event.column, event.row, ok) {
+                            self.confirm_name_prompt();
+                        }
+                    } else if self.is_in_rect(event.column, event.row, inner) {
+                        let top = self
+                            .chooser
+                            .as_ref()
+                            .map_or(0, |c| c.top(inner.height as usize));
+                        self.apply_chooser(top + (event.row - inner.y) as usize);
+                    }
+                }
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                    if let Some(c) = self.chooser.as_mut() {
+                        c.move_by(if matches!(event.kind, MouseEventKind::ScrollUp) {
+                            -1
+                        } else {
+                            1
+                        });
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
         // Track info intercepts all mouse events when active.
         if matches!(self.mode, Mode::TrackInfo(_) | Mode::TrackDetails) {
             if let MouseEventKind::Down(MouseButton::Left) = event.kind
@@ -2591,6 +3008,31 @@ impl App {
                     && self.is_in_rect(event.column, event.row, self.layout.browse_area)
                 {
                     let (col, row) = (event.column, event.row);
+                    if self.page() == Page::Playlists {
+                        let p = &mut self.playlists_page;
+                        let mut action = PlAction::None;
+                        if p.on_scrollbar(col, row) {
+                            self.browse_drag = true;
+                            p.scroll_to_bar(row);
+                        } else if let Some(hit) = p.hit(col, row) {
+                            action = p.click(hit);
+                        }
+                        self.apply_playlist(action);
+                        return;
+                    }
+                    if let Page::Playlist(_) = self.page() {
+                        let mut action = PlAction::None;
+                        if let Some(p) = self.playlist_page.as_mut() {
+                            if p.on_scrollbar(col, row) {
+                                self.browse_drag = true;
+                                p.scroll_to_bar(row);
+                            } else if let Some(hit) = p.hit(col, row) {
+                                action = p.click(hit);
+                            }
+                        }
+                        self.apply_playlist(action);
+                        return;
+                    }
                     if self.page() == Page::History {
                         let mut action = browse::Action::None;
                         let p = &mut self.history_page;
@@ -2935,7 +3377,13 @@ impl App {
             }
             MouseEventKind::Drag(MouseButton::Left) if self.browse_drag => {
                 let row = event.row;
-                if self.page() == Page::History {
+                if self.page() == Page::Playlists {
+                    self.playlists_page.scroll_to_bar(row);
+                } else if let Page::Playlist(_) = self.page() {
+                    if let Some(p) = self.playlist_page.as_mut() {
+                        p.scroll_to_bar(row);
+                    }
+                } else if self.page() == Page::History {
                     self.history_page.scroll_to_bar(row);
                 } else if self.page() == Page::Settings {
                     self.settings_page.scroll_to_bar(row);
@@ -3143,7 +3591,13 @@ impl App {
                 } else if self.page() != Page::Queue
                     && self.is_in_rect(event.column, event.row, self.layout.browse_area)
                 {
-                    if self.page() == Page::History {
+                    if self.page() == Page::Playlists {
+                        self.playlists_page.scroll_by(-3);
+                    } else if let Page::Playlist(_) = self.page() {
+                        if let Some(p) = self.playlist_page.as_mut() {
+                            p.scroll_by(-3);
+                        }
+                    } else if self.page() == Page::History {
                         self.history_page.scroll_by(-3);
                     } else if self.page() == Page::Settings {
                         self.settings_page.scroll_by(-3);
@@ -3173,7 +3627,13 @@ impl App {
                 } else if self.page() != Page::Queue
                     && self.is_in_rect(event.column, event.row, self.layout.browse_area)
                 {
-                    if self.page() == Page::History {
+                    if self.page() == Page::Playlists {
+                        self.playlists_page.scroll_by(3);
+                    } else if let Page::Playlist(_) = self.page() {
+                        if let Some(p) = self.playlist_page.as_mut() {
+                            p.scroll_by(3);
+                        }
+                    } else if self.page() == Page::History {
                         self.history_page.scroll_by(3);
                     } else if self.page() == Page::Settings {
                         self.settings_page.scroll_by(3);
@@ -3324,7 +3784,17 @@ impl App {
         }
 
         if self.page() != Page::Queue && self.is_in_rect(col, row, self.layout.browse_area) {
-            if self.page() == Page::History {
+            if self.page() == Page::Playlists {
+                if let Some(hit) = self.playlists_page.hit(col, row) {
+                    self.hover.zone = HoverZone::Playlists(hit);
+                    return;
+                }
+            } else if let Page::Playlist(_) = self.page() {
+                if let Some(hit) = self.playlist_page.as_ref().and_then(|p| p.hit(col, row)) {
+                    self.hover.zone = HoverZone::Playlist(hit);
+                    return;
+                }
+            } else if self.page() == Page::History {
                 if let Some(hit) = self.history_page.hit(col, row) {
                     self.hover.zone = HoverZone::History(hit);
                     return;
@@ -3712,6 +4182,10 @@ impl App {
                 if !ids.is_empty() {
                     self.picker_result = Some((PickerKind::Track, ids, PickerAction::Append));
                 }
+            }
+            KeyCode::Char('w') => {
+                let ids = lib.enqueue_all_under_cursor();
+                self.open_chooser(ids);
             }
             KeyCode::Char('N') => {
                 let ids = lib.enqueue_all_under_cursor();

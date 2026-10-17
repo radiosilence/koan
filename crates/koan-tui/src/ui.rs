@@ -226,6 +226,43 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             heading(frame.buffer_mut(), stage, &app.theme, "now playing", "");
             super::now_playing::render(frame.buffer_mut(), app, stage);
         }
+        Page::Playlists => {
+            app.layout.browse_area = stage;
+            let hover = match app.hover.zone {
+                super::app::HoverZone::Playlists(h) => Some(h),
+                _ => None,
+            };
+            let App {
+                playlists_page,
+                theme,
+                ..
+            } = &mut *app;
+            playlists_page.render(stage, frame.buffer_mut(), theme, hover);
+        }
+        Page::Playlist(_) => {
+            app.layout.browse_area = stage;
+            let hover = match app.hover.zone {
+                super::app::HoverZone::Playlist(h) => Some(h),
+                _ => None,
+            };
+            let App {
+                playlist_page,
+                theme,
+                ..
+            } = &mut *app;
+            match playlist_page {
+                Some(p) => p.render(stage, frame.buffer_mut(), theme, hover),
+                None => {
+                    heading(frame.buffer_mut(), stage, theme, "playlist", "");
+                    frame.buffer_mut().set_string(
+                        stage.x + 1,
+                        stage.y + 1,
+                        "this playlist is gone",
+                        theme.hint_desc,
+                    );
+                }
+            }
+        }
         Page::History => {
             app.layout.browse_area = stage;
             let hover = match app.hover.zone {
@@ -409,6 +446,30 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         app.layout.selector_area =
             super::dsp_selector::dsp_selector_rect(area, selector.entries.len());
         let overlay = super::dsp_selector::DspSelectorOverlay::new(selector, &app.theme);
+        frame.render_widget(overlay, area);
+    }
+
+    // Playlist name prompt and chooser.
+    if app.mode == Mode::NamePrompt
+        && let Some(ref prompt) = app.name_prompt
+    {
+        app.layout.modal_area = super::playlist_modals::prompt_rect(area);
+        let overlay = super::playlist_modals::NamePromptOverlay::new(prompt, &app.theme);
+        frame.render_widget(overlay, area);
+    }
+    if app.mode == Mode::PlaylistChooser
+        && let Some(ref chooser) = app.chooser
+    {
+        app.layout.modal_area = super::playlist_modals::chooser_rect(area, chooser.entries.len());
+        let overlay = super::playlist_modals::ChooserOverlay::new(chooser, &app.theme);
+        frame.render_widget(overlay, area);
+    }
+
+    if app.mode == Mode::ActionsMenu
+        && let Some(ref menu) = app.actions_menu
+    {
+        app.layout.modal_area = super::actions_menu::menu_rect(area, &menu.items, &menu.title);
+        let overlay = super::actions_menu::ActionsMenuOverlay::new(menu, &app.theme);
         frame.render_widget(overlay, area);
     }
 
@@ -1024,9 +1085,58 @@ mod tests {
         app.handle_key(KeyEvent::from(KeyCode::Char(']')));
         assert_eq!(app.page(), Page::Favourites);
         app.handle_key(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.page(), Page::Playlists);
+        app.handle_key(KeyEvent::from(KeyCode::Tab));
         assert_eq!(app.page(), Page::Recent);
         app.handle_key(KeyEvent::from(KeyCode::Char('1')));
         assert_eq!(app.page(), Page::Queue);
+    }
+
+    #[test]
+    fn the_playlist_chooser_leads_to_a_name_prompt_and_back_out() {
+        use crossterm::event::{KeyCode, KeyEvent};
+        let mut app = app_with_queue(5);
+        app.open_chooser(vec![1, 2]);
+        assert_eq!(app.mode, Mode::PlaylistChooser);
+        draw(&mut app, 100, 30);
+        // The first row is always "new playlist", whatever else is held.
+        app.handle_key(KeyEvent::from(KeyCode::Enter));
+        assert_eq!(app.mode, Mode::NamePrompt);
+        for c in "road".chars() {
+            app.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+        draw(&mut app, 100, 30);
+        assert_eq!(
+            app.name_prompt.as_ref().map(|p| p.text.as_str()),
+            Some("road")
+        );
+        app.handle_key(KeyEvent::from(KeyCode::Esc));
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.name_prompt.is_none());
+    }
+
+    #[test]
+    fn a_click_outside_a_playlist_modal_cancels_it() {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let mut app = app_with_queue(5);
+        app.open_chooser(vec![1]);
+        draw(&mut app, 100, 30);
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.chooser.is_none());
+    }
+
+    #[test]
+    fn nothing_to_add_is_said_rather_than_opening_an_empty_chooser() {
+        let mut app = app_with_queue(5);
+        app.open_chooser(Vec::new());
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.status_message.is_some());
     }
 
     #[test]

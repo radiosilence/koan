@@ -4,6 +4,7 @@
 //! Depends on koan-core only.
 
 pub mod accent;
+pub mod actions_menu;
 pub mod album_page;
 pub mod app;
 pub mod artist_header;
@@ -25,6 +26,9 @@ pub mod organize;
 pub mod picker;
 pub mod picker_items;
 pub mod play;
+pub mod playlist_modals;
+pub mod playlist_ops;
+pub mod playlists_page;
 pub mod queue;
 pub mod remote_bridge;
 pub mod settings_page;
