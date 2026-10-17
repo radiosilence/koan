@@ -556,16 +556,12 @@ impl App {
         let Ok(now) = now else {
             return;
         };
-        self.status_message = Some((
-            match (kind, now) {
-                (FavouriteKind::Album, true) => "record favourited",
-                (FavouriteKind::Album, false) => "record unfavourited",
-                (_, true) => "artist favourited",
-                (_, false) => "artist unfavourited",
-            }
-            .into(),
-            std::time::Instant::now(),
-        ));
+        self.say(match (kind, now) {
+            (FavouriteKind::Album, true) => "record favourited",
+            (FavouriteKind::Album, false) => "record unfavourited",
+            (_, true) => "artist favourited",
+            (_, false) => "artist unfavourited",
+        });
         for page in [
             &mut self.albums_page,
             &mut self.recent_page,
@@ -1117,22 +1113,16 @@ impl App {
     /// blocks, and remembers the choice.
     pub fn toggle_graphics(&mut self) {
         if !self.art.gfx.available() {
-            self.status_message = Some((
-                "this terminal draws no graphics; covers stay in half blocks".into(),
-                std::time::Instant::now(),
-            ));
+            self.say("this terminal draws no graphics; covers stay in half blocks");
             return;
         }
         let on = self.art.gfx.set_graphics(!self.art.gfx.graphics());
         let _ = koan_core::config::Config::persist(|cfg| cfg.playback.art_graphics = on);
-        self.status_message = Some((
-            if on {
-                format!("covers drawn as images ({})", self.art.gfx.protocol_name())
-            } else {
-                "covers drawn in half blocks".into()
-            },
-            std::time::Instant::now(),
-        ));
+        self.say(if on {
+            format!("covers drawn as images ({})", self.art.gfx.protocol_name())
+        } else {
+            "covers drawn in half blocks".into()
+        });
     }
 
     fn say(&mut self, text: impl Into<String>) {
@@ -1595,7 +1585,7 @@ impl App {
                     format!("downloading {n} track{}", if n == 1 { "" } else { "s" })
                 };
                 self.tx.send(PlayerCommand::CacheTracks(wanted)).ok();
-                self.status_message = Some((line, std::time::Instant::now()));
+                self.say(line);
             }
             browse::Action::RemoveDownload(ids) => {
                 let (tx, state) = (self.task_tx.clone(), Arc::clone(&self.state));
@@ -1652,10 +1642,7 @@ impl App {
             KeyCode::Char('s') => {
                 let on = !self.state.play_mode().shuffle;
                 self.tx.send(PlayerCommand::SetShuffle(on)).ok();
-                self.status_message = Some((
-                    if on { "shuffle on" } else { "shuffle off" }.into(),
-                    std::time::Instant::now(),
-                ));
+                self.say(if on { "shuffle on" } else { "shuffle off" });
             }
             KeyCode::Char('T') => {
                 use koan_core::player::state::{Sleep, SleepTimer};
@@ -1679,23 +1666,17 @@ impl App {
                     Some(Sleep::EndOfRecord) => None,
                 };
                 self.tx.send(PlayerCommand::SetSleepTimer(next)).ok();
-                self.status_message = Some((
-                    match next {
-                        None => "sleep timer off".into(),
-                        Some(SleepTimer::After { minutes }) => format!("sleep in {minutes} min"),
-                        Some(SleepTimer::EndOfTrack) => "sleep at the end of the track".into(),
-                        Some(SleepTimer::EndOfRecord) => "sleep at the end of the record".into(),
-                    },
-                    std::time::Instant::now(),
-                ));
+                self.say(match next {
+                    None => "sleep timer off".into(),
+                    Some(SleepTimer::After { minutes }) => format!("sleep in {minutes} min"),
+                    Some(SleepTimer::EndOfTrack) => "sleep at the end of the track".into(),
+                    Some(SleepTimer::EndOfRecord) => "sleep at the end of the record".into(),
+                });
             }
             KeyCode::Char('R') => {
                 let repeat = self.state.play_mode().repeat.cycled();
                 self.tx.send(PlayerCommand::SetRepeat(repeat)).ok();
-                self.status_message = Some((
-                    format!("repeat {}", repeat.as_str()),
-                    std::time::Instant::now(),
-                ));
+                self.say(format!("repeat {}", repeat.as_str()));
             }
             KeyCode::Char('.') | KeyCode::Right => {
                 self.seek_to(self.state.position_ms().saturating_add(10_000));
@@ -1741,14 +1722,11 @@ impl App {
             KeyCode::Char('L') => self.lyrics_panel = !self.lyrics_panel,
             KeyCode::Char('V') => {
                 self.viz_config.enabled = !self.viz_config.enabled;
-                self.status_message = Some((
-                    if self.viz_config.enabled {
-                        "visualiser on".into()
-                    } else {
-                        "visualiser off".into()
-                    },
-                    std::time::Instant::now(),
-                ));
+                self.say(if self.viz_config.enabled {
+                    "visualiser on"
+                } else {
+                    "visualiser off"
+                });
                 let viz_enabled = self.viz_config.enabled;
                 let _ = koan_core::config::Config::persist(|cfg| {
                     cfg.visualizer.enabled = viz_enabled;
@@ -1767,14 +1745,11 @@ impl App {
             }
             KeyCode::Char('X') => {
                 self.visualizer.matrix_overlay = !self.visualizer.matrix_overlay;
-                self.status_message = Some((
-                    if self.visualizer.matrix_overlay {
-                        "matrix overlay on".into()
-                    } else {
-                        "matrix overlay off".into()
-                    },
-                    std::time::Instant::now(),
-                ));
+                self.say(if self.visualizer.matrix_overlay {
+                    "matrix overlay on"
+                } else {
+                    "matrix overlay off"
+                });
                 let overlay = self.visualizer.matrix_overlay;
                 let _ = koan_core::config::Config::persist(|cfg| {
                     cfg.visualizer.matrix_overlay = overlay;
@@ -1782,14 +1757,11 @@ impl App {
             }
             KeyCode::Char('S') => {
                 self.visualizer.bass_shake = !self.visualizer.bass_shake;
-                self.status_message = Some((
-                    if self.visualizer.bass_shake {
-                        "bass shake on".into()
-                    } else {
-                        "bass shake off".into()
-                    },
-                    std::time::Instant::now(),
-                ));
+                self.say(if self.visualizer.bass_shake {
+                    "bass shake on"
+                } else {
+                    "bass shake off"
+                });
                 let shake = self.visualizer.bass_shake;
                 let _ = koan_core::config::Config::persist(|cfg| {
                     cfg.visualizer.bass_shake = shake;
@@ -2070,10 +2042,7 @@ impl App {
     fn assign_eq(&mut self, name: Option<String>) -> bool {
         use koan_core::audio::dsp::profiles;
         let Some(device) = self.eq_device() else {
-            self.status_message = Some((
-                "no output device to set an eq on".into(),
-                std::time::Instant::now(),
-            ));
+            self.say("no output device to set an eq on");
             return false;
         };
         let before = profiles::overview_for(Some(device.clone())).active;
@@ -2083,17 +2052,14 @@ impl App {
                     self.eq_last = before;
                 }
                 self.tx.send(PlayerCommand::ReloadDsp).ok();
-                self.status_message = Some((
-                    match name {
-                        Some(n) => format!("eq: {n}"),
-                        None => "eq off".into(),
-                    },
-                    std::time::Instant::now(),
-                ));
+                self.say(match name {
+                    Some(n) => format!("eq: {n}"),
+                    None => "eq off".into(),
+                });
                 true
             }
             Err(e) => {
-                self.status_message = Some((e, std::time::Instant::now()));
+                self.say(e);
                 false
             }
         }
@@ -2203,10 +2169,7 @@ impl App {
         self.visualizer.mode = mode;
         self.viz_config.mode = mode.as_str().to_string();
         self.viz_config.enabled = true;
-        self.status_message = Some((
-            format!("visualiser: {}", mode.label()),
-            std::time::Instant::now(),
-        ));
+        self.say(format!("visualiser: {}", mode.label()));
         let mode_str = mode.as_str().to_string();
         let _ = koan_core::config::Config::persist(|cfg| {
             cfg.visualizer.mode = mode_str.clone();
@@ -2826,10 +2789,7 @@ impl App {
         match found {
             Some(page) => self.go_page(page),
             None => {
-                self.status_message = Some((
-                    "that track is not in the library".into(),
-                    std::time::Instant::now(),
-                ));
+                self.say("that track is not in the library");
             }
         }
     }
@@ -3391,6 +3351,11 @@ impl App {
             self.queue.vq_version = v;
 
             self.clamp_queue_cursor();
+            // A queue that shrank under the scroll would draw its last line
+            // alone at the top, and clicks would land on rows not drawn.
+            let max = queue::display_line_count(&self.queue.vq_cache.entries)
+                .saturating_sub(self.queue_visible_height());
+            self.queue.scroll_offset = self.queue.scroll_offset.min(max);
             self.close_stale_track_info();
             self.note_new_failures();
         }
@@ -3419,7 +3384,7 @@ impl App {
         else {
             return;
         };
-        self.status_message = Some((format!("can't play — {fresh}"), std::time::Instant::now()));
+        self.say(format!("can't play — {fresh}"));
         self.noted_failures.insert(fresh);
     }
 
@@ -3440,9 +3405,8 @@ impl App {
                 .current_download_fraction()
                 .map(|f| format!(" — {}% so far", (f * 100.0) as u32))
                 .unwrap_or_default();
-            self.status_message = Some((
-                format!("still downloading{so_far} — seekable once it lands"),
-                std::time::Instant::now(),
+            self.say(format!(
+                "still downloading{so_far} — seekable once it lands"
             ));
             return;
         }
