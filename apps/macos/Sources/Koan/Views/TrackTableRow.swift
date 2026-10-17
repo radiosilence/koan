@@ -445,11 +445,12 @@ final class TrackTableRow: TableCell, TableRow {
         // Kept when a track has no format, so the marks beside it line up.
         if context.columns.contains(.quality) {
             let qualityHeight = lineHeight(Self.qualityFont)
+            let qualityWidth = Self.qualityWidth
             quality.frame = CGRect(
-                x: right - Self.qualityWidth, y: (height - qualityHeight) / 2,
-                width: Self.qualityWidth, height: qualityHeight
+                x: right - qualityWidth, y: (height - qualityHeight) / 2,
+                width: qualityWidth, height: qualityHeight
             )
-            right -= Self.qualityWidth + Self.spacing
+            right -= qualityWidth + Self.spacing
         }
         if context.columns.contains(.heart) {
             heart.frame = Symbol.frame(of: heartImage, centredIn: CGRect(x: right - 16, y: 0, width: 16, height: height))

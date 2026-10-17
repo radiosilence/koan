@@ -1037,7 +1037,7 @@ extension View {
         modifier(KoanBadgeRole(accent: accent))
     }
 
-    /// A chip that is a choice — a device, a preset, an artist: a `muted`
+    /// A chip that is a choice — a device, a preset: a `muted`
     /// outline, square, in the theme. A filled capsule in the platform's look.
     func koanChip() -> some View {
         modifier(KoanChipRole())
