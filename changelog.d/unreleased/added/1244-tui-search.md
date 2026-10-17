@@ -1,0 +1,1 @@
+- **Search in the terminal UI.** A Search page on `0` searches the library as you type and lists artists, records and tracks, with open, play, queue, favourite and playlist actions by key or click, as the apps' search results do.

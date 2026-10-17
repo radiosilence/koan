@@ -393,6 +393,7 @@ pub fn run_tui(
 
         if let Some((kind, ids, action)) = app.picker_result.take() {
             let tx_bg = tx.clone();
+            let playing = app.state.cursor();
 
             app.loading_message = Some("loading...".into());
 
@@ -423,7 +424,7 @@ pub fn run_tui(
                     };
 
                     if !track_ids.is_empty() {
-                        enqueue_playlist(track_ids, action, tx_bg);
+                        enqueue_playlist(track_ids, action, playing, tx_bg);
                     }
                 })
                 .ok();
