@@ -138,6 +138,24 @@ pub fn frame(title: &str, theme: &Theme) -> ratatui::widgets::Block<'static> {
         ))
 }
 
+/// Blanks `area` for a modal to draw on, and the halves of any wide
+/// character its edges cut through: left half outside, the terminal would
+/// draw the character over the modal's border.
+pub fn clear(buf: &mut Buffer, area: Rect) {
+    use ratatui::widgets::Widget;
+    ratatui::widgets::Clear.render(area, buf);
+    let bounds = buf.area;
+    for y in area.y..area.y + area.height {
+        if area.x > bounds.x && width(buf[(area.x - 1, y)].symbol()) > 1 {
+            buf[(area.x - 1, y)].reset();
+        }
+        let right = area.x + area.width;
+        if right < bounds.x + bounds.width && buf[(right, y)].symbol().is_empty() {
+            buf[(right, y)].reset();
+        }
+    }
+}
+
 /// A modal `w` by `h` cells, centred in `area` and kept inside it.
 pub fn centred(area: Rect, w: u16, h: u16) -> Rect {
     let w = w.min(area.width);
@@ -375,6 +393,18 @@ mod tests {
         assert_eq!(fit("abc", 0), "");
         assert_eq!(width(&fit_pad("東京事変", 5)), 5);
         assert_eq!(fit_pad_right("3:07", 6), "  3:07");
+    }
+
+    #[test]
+    fn a_modal_never_leaves_half_a_wide_character_at_its_edge() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 10, 1));
+        buf.set_string(0, 0, "東京事変", Style::default());
+        // Columns 3 and 4: the second half of 京 and the first of 事.
+        clear(&mut buf, Rect::new(3, 0, 2, 1));
+        assert_eq!(buf[(2, 0)].symbol(), " ");
+        assert_eq!(buf[(5, 0)].symbol(), " ");
+        assert_eq!(buf[(6, 0)].symbol(), "変");
+        assert_eq!(buf[(0, 0)].symbol(), "東");
     }
 
     #[test]
