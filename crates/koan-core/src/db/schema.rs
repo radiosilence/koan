@@ -786,6 +786,10 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("playlists", "refreshed_at", "INTEGER"),
     ("playlists", "source_path", "TEXT"),
     ("playlists", "readonly", "INTEGER NOT NULL DEFAULT 0"),
+    // The server copy's song ids as JSON, kept while the library lacks some
+    // of them, so a library sync can fill the playlist without asking the
+    // server again: see `queries::set_playlist_server_songs`.
+    ("playlists", "server_songs", "TEXT"),
     // How far this device has read the server's play history: see
     // `remote::history`.
     ("remote_servers", "history_cursor", "TEXT"),

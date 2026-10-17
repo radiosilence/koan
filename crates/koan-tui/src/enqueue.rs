@@ -38,8 +38,6 @@ pub fn enqueue_playlist(
         return;
     }
 
-    let first_id = items[0].id;
-
     // One command, so the playlist is never empty in between: the download
     // queue reads an empty playlist as nothing wanted.
     let start = match action {
@@ -67,11 +65,11 @@ pub fn enqueue_playlist(
         return;
     }
 
-    if tx.send(PlayerCommand::AddToPlaylist(items)).is_err() {
-        return;
-    }
-
+    // One command, so a controlled device is told to play what it appended
+    // rather than an entry only this one knows.
     if action == PickerAction::AppendAndPlay {
-        tx.send(PlayerCommand::Play(first_id)).ok();
+        tx.send(PlayerCommand::AddAndPlay(items)).ok();
+    } else {
+        tx.send(PlayerCommand::AddToPlaylist(items)).ok();
     }
 }

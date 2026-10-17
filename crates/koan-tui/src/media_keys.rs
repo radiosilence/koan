@@ -38,7 +38,13 @@ pub struct MediaKeyHandler {
 }
 
 impl MediaKeyHandler {
-    pub fn new(tx: Sender<PlayerCommand>, state: Arc<SharedPlayerState>) -> Option<Self> {
+    /// `shown` is the state the controls act on: this player's, or the
+    /// controlled device's; `local` is this one's, which a quit is asked of.
+    pub fn new(
+        tx: Sender<PlayerCommand>,
+        shown: Arc<parking_lot::RwLock<Arc<SharedPlayerState>>>,
+        local: Arc<SharedPlayerState>,
+    ) -> Option<Self> {
         let config = PlatformConfig {
             dbus_name: "koan",
             display_name: "koan",
@@ -56,7 +62,7 @@ impl MediaKeyHandler {
                     tx.send(PlayerCommand::Pause).ok();
                 }
                 MediaControlEvent::Toggle => {
-                    let cmd = if state.wants_to_play() {
+                    let cmd = if shown.read().wants_to_play() {
                         PlayerCommand::Pause
                     } else {
                         PlayerCommand::Resume
@@ -76,7 +82,7 @@ impl MediaKeyHandler {
                     tx.send(PlayerCommand::Seek(pos.as_millis() as u64)).ok();
                 }
                 MediaControlEvent::SeekBy(direction, duration) => {
-                    let current = state.position_ms();
+                    let current = shown.read().position_ms();
                     let delta = duration.as_millis() as u64;
                     let target = match direction {
                         SeekDirection::Forward => current.saturating_add(delta),
@@ -85,7 +91,7 @@ impl MediaKeyHandler {
                     tx.send(PlayerCommand::Seek(target)).ok();
                 }
                 MediaControlEvent::Seek(direction) => {
-                    let current = state.position_ms();
+                    let current = shown.read().position_ms();
                     let target = match direction {
                         SeekDirection::Forward => current.saturating_add(SEEK_STEP_MS),
                         SeekDirection::Backward => current.saturating_sub(SEEK_STEP_MS),
@@ -93,7 +99,7 @@ impl MediaKeyHandler {
                     tx.send(PlayerCommand::Seek(target)).ok();
                 }
                 MediaControlEvent::Quit => {
-                    state.request_quit();
+                    local.request_quit();
                 }
                 _ => {}
             })

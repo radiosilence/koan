@@ -262,6 +262,68 @@ pub fn mark_playlist_synced(
     Ok(())
 }
 
+/// The server copy of a playlist whose songs the library does not all have:
+/// its song ids in order, and those this copy never held. Pulled songs the
+/// library lacked are left out of the local copy; once they arrive, this is
+/// what puts them back in their places, and until then it is what tells a
+/// push they were never removed here.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ServerSongs {
+    pub songs: Vec<String>,
+    pub missing: Vec<String>,
+}
+
+impl ServerSongs {
+    /// The record for `songs`, given what each resolves to in the library
+    /// (see [`track_ids_for_remote_ids`]).
+    pub fn from_lookup(songs: Vec<String>, track_ids: &[Option<i64>]) -> Self {
+        let missing = songs
+            .iter()
+            .zip(track_ids)
+            .filter(|(_, t)| t.is_none())
+            .map(|(s, _)| s.clone())
+            .collect();
+        Self { songs, missing }
+    }
+}
+
+/// Record the server copy as it stands; nothing once no song is missing.
+pub fn set_playlist_server_songs(
+    conn: &Connection,
+    id: i64,
+    record: &ServerSongs,
+) -> Result<(), DbError> {
+    let record =
+        (!record.missing.is_empty()).then(|| serde_json::to_string(record).unwrap_or_default());
+    conn.execute(
+        "UPDATE playlists SET server_songs = ?2 WHERE id = ?1",
+        params![id, record],
+    )?;
+    Ok(())
+}
+
+/// What [`set_playlist_server_songs`] last recorded for a playlist.
+pub fn playlist_server_songs(conn: &Connection, id: i64) -> Result<Option<ServerSongs>, DbError> {
+    let record: Option<String> = conn
+        .query_row(
+            "SELECT server_songs FROM playlists WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .flatten();
+    Ok(record.and_then(|r| serde_json::from_str(&r).ok()))
+}
+
+/// Playlists with a record of songs missing.
+pub fn playlists_missing_songs(conn: &Connection) -> Result<Vec<i64>, DbError> {
+    let mut stmt = conn.prepare("SELECT id FROM playlists WHERE server_songs IS NOT NULL")?;
+    let rows = stmt
+        .query_map([], |r| r.get(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 /// Turn every playlist tied to a server account other than `account` back
 /// into a local one, which the next sync pushes as new. A playlist with a
 /// server id but no recorded account is taken to be `account`'s.
@@ -274,7 +336,7 @@ pub fn detach_playlists_from_other_accounts(
 ) -> Result<usize, DbError> {
     let detached = conn.execute(
         "UPDATE playlists SET remote_id = NULL, owner = NULL, remote_changed = NULL,
-                synced_revision = NULL, remote_account = NULL
+                synced_revision = NULL, remote_account = NULL, server_songs = NULL
          WHERE remote_id IS NOT NULL AND remote_account IS NOT NULL AND remote_account != ?1",
         params![account],
     )?;

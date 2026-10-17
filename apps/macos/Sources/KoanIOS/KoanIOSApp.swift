@@ -91,9 +91,6 @@ struct KoanIOSApp: App {
                 if phase == .active { state?.player.engine.linkNudge() }
                 if phase == .active, let state { ShareInbox.collect(into: state.dsp) }
             }
-            .onChange(of: state?.player.isPlaying ?? false) { _, playing in
-                state?.player.engine.setPlaying(playing: playing)
-            }
             .task {
                 guard state == nil, startupError == nil else { return }
                 do {
@@ -145,6 +142,19 @@ struct KoanIOSApp: App {
                         }
                     }
                     state = built
+                    // `onChange(of: scenePhase)` reports changes only, and none
+                    // while the engine was being built. A launch into the
+                    // background, as for a push after iOS ended the app, has
+                    // none at all, and would otherwise run as if in front.
+                    engine.setBackground(background: UIApplication.shared.applicationState == .background)
+                    // Followed on the mirror rather than through a view, whose
+                    // updates are not promised while the app is in the background.
+                    var playing: Bool?
+                    built.mirror.follow { [weak built] in
+                        guard let now = built?.player.isPlaying, now != playing else { return }
+                        playing = now
+                        engine.setPlaying(playing: now)
+                    }
                     #if os(tvOS)
                     IntentTarget.set(built)
                     #endif

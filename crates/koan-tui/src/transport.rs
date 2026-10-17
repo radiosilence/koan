@@ -8,6 +8,7 @@ use ratatui::widgets::Widget;
 
 use koan_core::audio::dsp::DspStatus;
 use koan_core::player::state::{PlaybackState, QueueEntry, Sleep, TrackInfo};
+use koan_core::remote::devices::Reach;
 
 use super::theme::Theme;
 
@@ -61,6 +62,10 @@ fn rate_label(rate: u32) -> String {
 }
 
 fn format_source(info: &TrackInfo) -> String {
+    // Another device's track, which says only where it plays.
+    if info.sample_rate == 0 {
+        return info.codec.clone();
+    }
     let rate = info.sample_rate;
     let ch = info.channels;
     let rate_str = rate_label(rate);
@@ -164,6 +169,8 @@ pub struct TransportBar<'a> {
     levels: Option<[f32; MINI_BARS]>,
     /// Where the EQ label was drawn, for a click on it.
     eq_hit: Option<&'a Cell<Rect>>,
+    /// The device being controlled, while it cannot be reached at once.
+    unreachable: Option<(&'a str, &'a Reach)>,
 }
 
 /// How many bars the transport's own spectrum has.
@@ -210,7 +217,46 @@ impl<'a> TransportBar<'a> {
             sleep_fading: false,
             levels: None,
             eq_hit: None,
+            unreachable: None,
         }
+    }
+
+    /// Warns that the device being controlled is out of reach, or asleep.
+    pub fn with_controlled(mut self, controlled: Option<&'a (String, Reach)>) -> Self {
+        self.unreachable = controlled
+            .filter(|(_, r)| *r != Reach::Connected)
+            .map(|(n, r)| (n.as_str(), r));
+        self
+    }
+
+    /// The warning at the end of the second line, drawn over what is there.
+    fn draw_reach(&self, area: Rect, buf: &mut Buffer) {
+        let Some((name, reach)) = self.unreachable else {
+            return;
+        };
+        if area.height < 2 {
+            return;
+        }
+        let soft = Style::new().fg(self.theme.warning);
+        let (text, style) = match reach {
+            Reach::Connected => return,
+            Reach::Asleep => (
+                format!(" \u{263E} {name} asleep; a command wakes it "),
+                soft,
+            ),
+            Reach::Waking => (format!(" \u{263E} waking {name} "), soft),
+            Reach::Reconnecting => (format!(" \u{26A0} {name} reconnecting "), soft),
+            Reach::OutOfReach(why) => (
+                match why {
+                    Some(why) => format!(" \u{26A0} {name} out of reach: {why} "),
+                    None => format!(" \u{26A0} {name} out of reach "),
+                },
+                self.theme.failed.add_modifier(Modifier::BOLD),
+            ),
+        };
+        let width = text.chars().count() as u16;
+        let x = area.x + area.width.saturating_sub(width);
+        buf.set_stringn(x, area.y + 1, &text, area.width as usize, style);
     }
 
     /// Has the bar say where it drew the EQ label.
@@ -285,6 +331,13 @@ impl<'a> TransportBar<'a> {
 
 impl Widget for TransportBar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        self.draw_bar(area, buf);
+        self.draw_reach(area, buf);
+    }
+}
+
+impl TransportBar<'_> {
+    fn draw_bar(&self, area: Rect, buf: &mut Buffer) {
         if area.height < 2 {
             return;
         }
