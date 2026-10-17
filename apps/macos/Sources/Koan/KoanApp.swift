@@ -79,7 +79,7 @@ struct KoanApp: App {
                 ShortcutButton(.lyrics) { state?.ui.toggleLyrics() }
                 Divider()
                 // The theme's text size; the platform's look has none.
-                if KoanTheme.isOn {
+                if KoanTheme.hasTextSize {
                     ShortcutButton(.bigger) { state?.appearance.stepTextSize(1) }
                     ShortcutButton(.smaller) { state?.appearance.stepTextSize(-1) }
                     ShortcutButton(.actualSize) { state?.appearance.textSize = 100 }

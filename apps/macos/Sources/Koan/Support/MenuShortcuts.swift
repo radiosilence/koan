@@ -135,7 +135,7 @@ extension MenuShortcut {
         all += [back, forward]
         all += [next, previous, skipForward, skipBack, favourite]
         all += [lyrics, shortcuts]
-        if KoanTheme.isOn { all += [bigger, smaller, actualSize] }
+        if KoanTheme.hasTextSize { all += [bigger, smaller, actualSize] }
         all += [undo, redo, cut, copy, paste, delete, selectAll, find]
         all.append(rescan)
         return all

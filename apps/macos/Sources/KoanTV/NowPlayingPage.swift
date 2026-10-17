@@ -154,7 +154,7 @@ struct NowPlayingPage: View {
                     .symbolVariant(ui.showLyrics ? .fill : .none)
                     // The theme's glyph has no filled form: on is the accent, as
                     // shuffle and repeat show it.
-                    .foregroundStyle(KoanTheme.isOn && ui.showLyrics ? KoanTheme.style(.accent) : AnyShapeStyle(.foreground))
+                    .foregroundStyle(ui.showLyrics ? KoanTheme.style(.accent, system: .foreground) : AnyShapeStyle(.foreground))
             }
             .koanButton(.icon)
             .accessibilityLabel(ui.showLyrics ? "Show artwork" : "Show lyrics")

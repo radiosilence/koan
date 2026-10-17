@@ -543,10 +543,10 @@ private struct DeviceChoiceRow: View {
         }
         // In the theme the highlight starts where the title does, the row's
         // content inset within it, so the picker has one left edge.
-        .padding(.horizontal, KoanTheme.isOn ? KoanTheme.Space.s : 14)
+        .padding(.horizontal, KoanTheme.metric(KoanTheme.Space.s, system: 14))
         .padding(.vertical, 8)
         .background(selected ? AnyShapeStyle(.tint.opacity(0.12)) : AnyShapeStyle(.clear))
-        .padding(.horizontal, KoanTheme.isOn ? 14 : 0)
+        .padding(.horizontal, KoanTheme.metric(14, system: 0))
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }

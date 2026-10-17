@@ -131,9 +131,19 @@ enum KoanTheme {
     /// The text size steps Settings and the View menu move through.
     static let textSizes = stride(from: 80, through: 130, by: 5).map { $0 }
 
+    /// Whether the text size can be changed: on the Mac, in the theme. The
+    /// platform's look keeps the system's sizes.
+    nonisolated static var hasTextSize: Bool {
+        #if os(macOS)
+        isOn
+        #else
+        false
+        #endif
+    }
+
     static func setTextSize(_ percent: Int) {
         #if os(macOS)
-        guard isOn else { return }
+        guard hasTextSize else { return }
         let size = CGFloat(min(max(percent, textSizes.first!), textSizes.last!)) / 100
         sizeScale = size
         textScale = macFit * size
@@ -835,8 +845,9 @@ extension KoanTheme {
         isOn ? style(tone) : AnyShapeStyle(system)
     }
 
-    /// A measure that differs between the looks: a thickness, a size, a
-    /// margin. The theme's in the theme, the platform's otherwise.
+    /// A value that differs between the looks: a thickness, a size, a
+    /// margin, or a colour, symbol or shape where a view takes one rather
+    /// than a role. The theme's in the theme, the platform's otherwise.
     nonisolated static func metric<T>(_ theme: T, system: T) -> T {
         isOn ? theme : system
     }
@@ -903,6 +914,13 @@ extension UIFont {
         default: .body
         }
         return UIFontMetrics(forTextStyle: style).scaledFont(for: face)
+    }
+
+    /// A role as whichever look is on: Geist Mono in the theme, the given
+    /// system font otherwise.
+    @MainActor
+    static func role(_ role: KoanType, system: @autoclosure () -> UIFont) -> UIFont {
+        KoanTheme.isOn ? koan(role) : system()
     }
 }
 #endif
