@@ -526,17 +526,26 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .cover_art
             .cached()
             .map(|img| (img, app.art.gfx.squash()));
-        let fields = super::track_info::entry_fields(&entry, playing.as_ref());
-        frame.render_widget(TrackInfoOverlay::new(fields, cover, &app.theme), area);
+        let details = app.track_details.as_deref().cloned().unwrap_or_default();
+        let groups = details.with_entry(&entry, playing.as_ref());
+        let overlay =
+            TrackInfoOverlay::new(&entry.title, groups, details.scroll, cover, &app.theme);
+        frame.render_widget(overlay, area);
     }
 
     // Track info for a track picked from any list.
     if app.mode == Mode::TrackDetails
-        && let Some(track) = app.track_details.as_deref()
+        && let Some(details) = app.track_details.as_deref()
     {
         app.layout.track_info_area = super::track_info::popup_rect(area);
-        let fields = super::track_info::row_fields(track);
-        frame.render_widget(TrackInfoOverlay::new(fields, None, &app.theme), area);
+        let overlay = TrackInfoOverlay::new(
+            &details.title,
+            details.groups(),
+            details.scroll,
+            None,
+            &app.theme,
+        );
+        frame.render_widget(overlay, area);
     }
 
     // Cover art zoom overlay — fullscreen, 1:1 aspect ratio.

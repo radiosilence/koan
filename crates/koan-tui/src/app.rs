@@ -274,7 +274,7 @@ pub struct App {
     task_running: bool,
     task_tx: crossbeam_channel::Sender<super::tasks::Report>,
     task_rx: crossbeam_channel::Receiver<super::tasks::Report>,
-    pub track_details: Option<Box<koan_core::db::queries::TrackRow>>,
+    pub track_details: Option<Box<super::track_info::Details>>,
     /// The EQ that was on before it was bypassed, for the key that puts it back.
     eq_last: Option<String>,
     pub history_page: HistoryPage,
@@ -2778,11 +2778,32 @@ impl App {
     }
 
     fn handle_info_key(&mut self, key: KeyEvent) {
+        let scroll = self.track_details.as_mut().map(|d| &mut d.scroll);
         match key.code {
             KeyCode::Esc | KeyCode::Char('i') | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
                 self.track_details = None;
                 self.art.cover_art.clear();
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(s) = scroll {
+                    *s = s.saturating_sub(1);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(s) = scroll {
+                    *s += 1;
+                }
+            }
+            KeyCode::PageUp => {
+                if let Some(s) = scroll {
+                    *s = s.saturating_sub(10);
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(s) = scroll {
+                    *s += 10;
+                }
             }
             _ => {}
         }
@@ -2790,14 +2811,12 @@ impl App {
 
     /// Shows what the library holds of `track_id`.
     fn open_track_details(&mut self, track_id: i64) {
-        let row = koan_core::db::pool::shared()
-            .get()
-            .ok()
-            .and_then(|db| koan_core::db::queries::get_track_row(&db.conn, track_id).ok())
-            .flatten();
-        if let Some(row) = row {
-            self.track_details = Some(Box::new(row));
-            self.mode = Mode::TrackDetails;
+        match super::track_info::Details::load(track_id) {
+            Some(details) => {
+                self.track_details = Some(Box::new(details));
+                self.mode = Mode::TrackDetails;
+            }
+            None => self.say("that track is no longer in the library"),
         }
     }
 
@@ -2815,6 +2834,11 @@ impl App {
             return;
         };
         let (id, path) = (entry.id, entry.path.clone());
+        let details = entry
+            .db_id
+            .and_then(super::track_info::Details::load)
+            .unwrap_or_default();
+        self.track_details = Some(Box::new(details));
         self.mode = Mode::TrackInfo(id);
         // Prime the cache for this track's path.
         self.art.cover_art.get(&path);
