@@ -86,7 +86,13 @@ impl Widget for VizPickerOverlay<'_> {
         // A terminal too short for the whole list scrolls it to the cursor.
         let rows = inner.height as usize;
         let first = (self.state.cursor + 1).saturating_sub(rows);
-        for (row, (i, mode)) in ALL_MODES.iter().enumerate().skip(first).take(rows).enumerate() {
+        for (row, (i, mode)) in ALL_MODES
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(rows)
+            .enumerate()
+        {
             let is_cursor = i == self.state.cursor;
             let is_current = *mode == self.state.current_mode;
 

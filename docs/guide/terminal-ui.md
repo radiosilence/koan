@@ -57,7 +57,7 @@ The layout follows the width of the terminal.
 - **56 to 99 columns:** a tab bar over the page. Page names shorten to fit.
 - **Under 56 columns:** the tab bar shows page numbers and names only the current page.
 
-The transport bar sits at the foot. Drag the hairline above it to resize the cover; the size is saved to `config.local.toml`.
+The transport bar sits at the foot, laid out as the Mac's: on the left the title with its heart, and the artist and album, each a link to its page; in the middle shuffle, previous, play or pause, next and repeat over the seek bar; on the right the format badge (with the EQ, a link to the chooser), the sleep timer and the output. Every part is a click as well as a key. The times either side of the seek bar keep one width, so the bar holds still as they count, and the part of a track still downloading is drawn dim. Under 72 columns the parts stack: the title and the controls, the seek bar, then the artist, album and badge. Drag the hairline above the bar to resize the cover; the size is saved to `config.local.toml`.
 
 ## Browsing records
 
@@ -105,6 +105,10 @@ The palette is the [kōan theme](https://github.com/radiosilence/koan/blob/main/
 
 ![Now playing: the cover, the signal path, levels, the spectrum, lyrics and the EQ curve](../../site/public/screens/tui-now-playing.webp)
 
-The transport bar shrinks to its three lines here, since the page has the cover and the spectrum. The signal path is the part to read. **source** is the file's format. **output** is the rate the device was given, and says `bit-perfect ✓` only when nothing stands between the file and the device. If the output is resampled, DSP is running, or ReplayGain is on, it says which instead. When a DSP profile is active, its frequency response is plotted beside the lyrics, headed with the profile's name and a frequency axis; `E` changes the profile.
+The page follows the apps' Now Playing: the cover, with the title and heart, the artist and the album as links, then the seek bar and the controls. Beside the cover on a wide terminal, under it on a narrow one, comes the signal path. **source** is the file's format. **output** is the rate the device was given, and says `bit-perfect ✓` only when nothing stands between the file and the device; if the output is resampled, DSP is running, or ReplayGain is on, it says which instead. **eq** names the profile, and opens the chooser. **play** is the sleep timer and the output, each a click.
 
-The transport bar carries a small spectrum at the end of its album line.
+Loudness is measured as EBU R128 has it, of what is being heard: **momentary** over the last 400 ms and **short** over the last 3 s, in LUFS, the **true peak** as the highest heard this track, in dBTP, and each channel's level. Below sit the spectrum (in the visualiser chosen with `M`), a spectrogram of the last moments, and the lyrics, with the EQ's frequency response under them while a profile is active. Nothing on the page moves unless the music does: paused, the spectrogram stops and the loudness figures clear.
+
+A click on the cover, or `z`, shows it as large as the terminal allows with the track and its artist and album under it; a click anywhere or `Esc` closes it.
+
+The transport bar carries a small spectrum at the end of its last line when nothing larger is on screen.

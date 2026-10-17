@@ -30,7 +30,7 @@ use super::queue;
 use super::search_page::{SearchHit, SearchPage};
 use super::settings_page::{Outcome, Setting, SettingsHit, SettingsPage, Task};
 use super::theme::{Palette, Theme};
-use super::transport::TransportBar;
+use super::transport::Control;
 use super::visualizer::VisualizerState;
 
 /// Characters per second the transport ticker scrolls when the title overflows.
@@ -189,8 +189,9 @@ pub struct LayoutRects {
     pub library_area: ratatui::layout::Rect,
     pub now_playing_art_area: ratatui::layout::Rect,
     pub transport_text_area: ratatui::layout::Rect,
-    pub seek_bar_start: u16,
-    pub seek_bar_width: u16,
+    /// The transport's controls and seek bar, and Now playing's.
+    pub transport: super::transport::Hits,
+    pub now_playing: super::transport::Hits,
     pub context_menu_area: ratatui::layout::Rect,
     pub organize_area: ratatui::layout::Rect,
     /// The output or EQ chooser, while one is open.
@@ -295,8 +296,8 @@ pub struct App {
     pub accent: Accent,
     pub palette: Palette,
     theme_accent: (u8, u8, u8),
-    /// The EQ curve Now playing plots.
-    pub eq_curve: super::now_playing::EqCurve,
+    /// What Now playing keeps between frames.
+    pub now_playing: super::now_playing::State,
 
     pub art: ArtState,
 
@@ -457,7 +458,7 @@ impl App {
             accent: Accent::default(),
             palette: Palette::detect(&cfg.playback.tui_theme),
             theme_accent: super::theme::MINT,
-            eq_curve: Default::default(),
+            now_playing: Default::default(),
             art: ArtState::default(),
             context_menu: None,
             organize: None,
@@ -1723,54 +1724,9 @@ impl App {
             KeyCode::Char(' ') => self.toggle_pause(),
             KeyCode::Char('>') | KeyCode::Char('n') => self.skip(PlayerCommand::NextTrack),
             KeyCode::Char('<') => self.skip(PlayerCommand::PrevTrack),
-            KeyCode::Char('s') => {
-                let on = !self.state.play_mode().shuffle;
-                self.tx.send(PlayerCommand::SetShuffle(on)).ok();
-                self.status_message = Some((
-                    if on { "shuffle on" } else { "shuffle off" }.into(),
-                    std::time::Instant::now(),
-                ));
-            }
-            KeyCode::Char('T') => {
-                use koan_core::player::state::{Sleep, SleepTimer};
-                // Off, then each choice in turn, then off again.
-                let next = match self.state.sleep() {
-                    None => Some(SleepTimer::After { minutes: 15 }),
-                    Some(Sleep::At { unix_ms }) => {
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis() as u64;
-                        // The choice it was set from: what is left, rounded up.
-                        match unix_ms.saturating_sub(now).div_ceil(60_000) {
-                            0..=15 => Some(SleepTimer::After { minutes: 30 }),
-                            16..=30 => Some(SleepTimer::After { minutes: 45 }),
-                            31..=45 => Some(SleepTimer::After { minutes: 60 }),
-                            _ => Some(SleepTimer::EndOfTrack),
-                        }
-                    }
-                    Some(Sleep::EndOfTrack) => Some(SleepTimer::EndOfRecord),
-                    Some(Sleep::EndOfRecord) => None,
-                };
-                self.tx.send(PlayerCommand::SetSleepTimer(next)).ok();
-                self.status_message = Some((
-                    match next {
-                        None => "sleep timer off".into(),
-                        Some(SleepTimer::After { minutes }) => format!("sleep in {minutes} min"),
-                        Some(SleepTimer::EndOfTrack) => "sleep at the end of the track".into(),
-                        Some(SleepTimer::EndOfRecord) => "sleep at the end of the record".into(),
-                    },
-                    std::time::Instant::now(),
-                ));
-            }
-            KeyCode::Char('R') => {
-                let repeat = self.state.play_mode().repeat.cycled();
-                self.tx.send(PlayerCommand::SetRepeat(repeat)).ok();
-                self.status_message = Some((
-                    format!("repeat {}", repeat.as_str()),
-                    std::time::Instant::now(),
-                ));
-            }
+            KeyCode::Char('s') => self.toggle_shuffle(),
+            KeyCode::Char('T') => self.cycle_sleep(),
+            KeyCode::Char('R') => self.cycle_repeat(),
             KeyCode::Char('.') | KeyCode::Right => {
                 self.seek_to(self.state.position_ms().saturating_add(10_000));
             }
@@ -1977,6 +1933,100 @@ impl App {
                 self.push_mode(Mode::HelpModal);
             }
             _ => {}
+        }
+    }
+
+    fn toggle_shuffle(&mut self) {
+        let on = !self.state.play_mode().shuffle;
+        self.tx.send(PlayerCommand::SetShuffle(on)).ok();
+        self.status_message = Some((
+            if on { "shuffle on" } else { "shuffle off" }.into(),
+            std::time::Instant::now(),
+        ));
+    }
+
+    /// Off, then each choice in turn, then off again.
+    fn cycle_sleep(&mut self) {
+        use koan_core::player::state::{Sleep, SleepTimer};
+        let next = match self.state.sleep() {
+            None => Some(SleepTimer::After { minutes: 15 }),
+            Some(Sleep::At { unix_ms }) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                // The choice it was set from: what is left, rounded up.
+                match unix_ms.saturating_sub(now).div_ceil(60_000) {
+                    0..=15 => Some(SleepTimer::After { minutes: 30 }),
+                    16..=30 => Some(SleepTimer::After { minutes: 45 }),
+                    31..=45 => Some(SleepTimer::After { minutes: 60 }),
+                    _ => Some(SleepTimer::EndOfTrack),
+                }
+            }
+            Some(Sleep::EndOfTrack) => Some(SleepTimer::EndOfRecord),
+            Some(Sleep::EndOfRecord) => None,
+        };
+        self.tx.send(PlayerCommand::SetSleepTimer(next)).ok();
+        self.status_message = Some((
+            match next {
+                None => "sleep timer off".into(),
+                Some(SleepTimer::After { minutes }) => format!("sleep in {minutes} min"),
+                Some(SleepTimer::EndOfTrack) => "sleep at the end of the track".into(),
+                Some(SleepTimer::EndOfRecord) => "sleep at the end of the album".into(),
+            },
+            std::time::Instant::now(),
+        ));
+    }
+
+    fn cycle_repeat(&mut self) {
+        let repeat = self.state.play_mode().repeat.cycled();
+        self.tx.send(PlayerCommand::SetRepeat(repeat)).ok();
+        self.status_message = Some((
+            format!("repeat {}", repeat.as_str()),
+            std::time::Instant::now(),
+        ));
+    }
+
+    /// What a click on a control of the transport or Now playing does.
+    fn run_control(&mut self, control: Control) {
+        let playing = self.state.track_info().and_then(|info| {
+            self.queue
+                .vq_cache
+                .entries
+                .iter()
+                .find(|e| e.id == info.id)
+                .and_then(|e| e.db_id)
+        });
+        let (album, artist) = self.art.now_playing_art.links();
+        match control {
+            Control::PlayPause => self.toggle_pause(),
+            Control::Previous => self.skip(PlayerCommand::PrevTrack),
+            Control::Next => self.skip(PlayerCommand::NextTrack),
+            Control::Shuffle => self.toggle_shuffle(),
+            Control::Repeat => self.cycle_repeat(),
+            Control::Sleep => self.cycle_sleep(),
+            Control::Favourite => {
+                if let Some(id) = playing {
+                    self.toggle_favourite(id);
+                }
+            }
+            Control::Output => self.open_device_selector(),
+            Control::Eq => self.open_dsp_selector(),
+            Control::Artist => {
+                if let Some(id) = artist {
+                    self.go_page(Page::Artist(id));
+                }
+            }
+            Control::Album => {
+                if let Some(id) = album {
+                    self.go_page(Page::Album(id));
+                }
+            }
+            Control::Cover => {
+                if self.art.now_playing_art.cached().is_some() {
+                    self.mode = Mode::CoverArtZoom;
+                }
+            }
         }
     }
 
@@ -3362,30 +3412,32 @@ impl App {
                     return;
                 }
 
-                // Seek bar click — only the first row of the transport area.
-                if event.row == self.layout.transport_text_area.y
-                    && event.column >= self.layout.transport_text_area.x
-                    && event.column
-                        < self.layout.transport_text_area.x + self.layout.transport_text_area.width
-                    && self.state.track_info().is_some()
+                // The transport's controls and seek bar, and Now playing's.
+                let (x, y) = (event.column, event.row);
+                if let Some(c) = self
+                    .layout
+                    .transport
+                    .at(x, y)
+                    .or_else(|| self.layout.now_playing.at(x, y))
                 {
-                    let click_x = event.column;
+                    self.run_control(c);
+                    return;
+                }
+                if let Some(bar) = [self.layout.transport.seek, self.layout.now_playing.seek]
+                    .into_iter()
+                    .find(|r| self.is_in_rect(x, y, *r))
+                {
                     // The duration the bar was drawn against, not the probed
-                    // one: a partial file reports short, and a click would then
-                    // land somewhere other than where it was aimed.
+                    // one: a partial file reports short, and a click would
+                    // then land somewhere other than where it was aimed.
                     let dur = self.state.duration_ms();
-
-                    if let Some(pos) = TransportBar::seek_from_click(
-                        self.layout.seek_bar_start,
-                        self.layout.seek_bar_width,
-                        click_x,
+                    if let Some(pos) = super::transport::seek_from_click(
+                        bar,
+                        x,
                         dur,
                         self.state.seek_ceiling_ms(),
                     ) {
                         self.seek_to(pos);
-                    } else if click_x < self.layout.seek_bar_start {
-                        // Clicked on the play/pause status icon — toggle.
-                        self.toggle_pause();
                     }
                     return;
                 }
@@ -3938,10 +3990,9 @@ impl App {
         let col = self.hover.column;
         let row = self.hover.row;
 
-        // Seek bar (first row of transport text area).
-        if row == self.layout.transport_text_area.y
-            && col >= self.layout.seek_bar_start
-            && col < self.layout.seek_bar_start + self.layout.seek_bar_width
+        if [self.layout.transport.seek, self.layout.now_playing.seek]
+            .into_iter()
+            .any(|r| self.is_in_rect(col, row, r))
         {
             self.hover.zone = HoverZone::SeekBar;
             return;

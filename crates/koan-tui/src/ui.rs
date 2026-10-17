@@ -16,7 +16,7 @@ use super::picker::{PickerOverlay, picker_popup_rect};
 use super::queue::QueueView;
 use super::theme::Theme;
 use super::track_info::TrackInfoOverlay;
-use super::transport::{MINI_BARS, TransportBar};
+use super::transport::MINI_BARS;
 use super::visualizer::VisualizerWidget;
 use super::viz_picker::VizPickerOverlay;
 
@@ -63,6 +63,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     app.layout.now_playing_art_area = Rect::default();
     app.layout.nav_hits.clear();
     app.layout.eq_hits.clear();
+    app.layout.now_playing = Default::default();
 
     let has_art = app.art.now_playing_art.cached().is_some();
     // Now playing carries the cover and the spectrum itself, so the transport
@@ -105,13 +106,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let track_info = app.state.track_info();
 
     // Find the currently playing QueueEntry for rich metadata.
-    let playing_entry = app
-        .queue
-        .vq_cache
-        .entries
-        .iter()
-        .find(|e| e.status == koan_core::player::state::QueueEntryStatus::Playing)
-        .cloned();
+    let playing_entry = track_info.as_ref().and_then(|info| {
+        app.queue
+            .vq_cache
+            .entries
+            .iter()
+            .find(|e| e.id == info.id)
+            .cloned()
+    });
 
     // Always reserve art space — placeholder keeps layout stable.
     let art_width = art_cells.min(transport_rect.width.saturating_sub(2));
@@ -141,46 +143,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
     app.layout.transport_text_area = text_area;
 
-    // Seek bar metrics + transport widget — rendered once.
-    // Prefer the queue entry's DB-sourced duration over the probed duration so
-    // bar_metrics and the rendered time string agree (probing a partial streaming
-    // file returns a truncated duration).
-    let pos_ms = app.state.position_ms();
-    let dur_ms = playing_entry
-        .as_ref()
-        .and_then(|e| e.duration_ms)
-        .or_else(|| track_info.as_ref().map(|t| t.duration_ms))
-        .unwrap_or(0);
-    let (bs, bw) = TransportBar::bar_metrics(text_area, pos_ms, dur_ms);
-    app.layout.seek_bar_start = bs;
-    app.layout.seek_bar_width = bw;
-
-    let seekable_ms = app.state.seek_ceiling_ms();
     // The little spectrum stands in for the big one: only where the transport
     // has none above it and the page is not drawing its own.
     let levels = (app.viz_config.enabled
         && transport_rect.height <= TRANSPORT_HEIGHT_DEFAULT
         && app.page() != Page::NowPlaying)
         .then(|| mini_levels(&app.visualizer.spectrum));
-    let eq_hit = std::cell::Cell::new(Rect::default());
-    let transport = TransportBar::new(
-        track_info.as_ref(),
-        playing_entry.as_ref(),
-        app.state.playback_state(),
-        pos_ms,
-        &app.theme,
-    )
-    .with_ticker_offset(app.ticker_offset)
-    .with_seekable_ms(seekable_ms)
-    .with_output_rate(app.state.output_sample_rate())
-    .with_dsp(app.state.dsp())
-    .with_sleep(app.state.sleep(), app.state.sleep_fading())
-    .with_levels(levels)
-    .with_eq_hit(&eq_hit);
-    frame.render_widget(transport, text_area);
-    if eq_hit.get().width > 0 {
-        app.layout.eq_hits.push(eq_hit.get());
-    }
+    let transport =
+        super::now_playing::transport_for(app, track_info.as_ref(), playing_entry.as_ref(), levels);
+    app.layout.transport = transport.draw(text_area, frame.buffer_mut());
 
     // Visualizer — renders in the space above the transport text.
 
@@ -551,31 +522,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.render_widget(overlay, area);
     }
 
-    // Cover art zoom overlay — fullscreen, 1:1 aspect ratio.
     if app.mode == Mode::CoverArtZoom && app.art.now_playing_art.cached().is_some() {
-        Clear.render(area, frame.buffer_mut());
-
-        // Use the full area minus 1 row for hint.
-        let art_area = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1));
-        // Use cached render to avoid Lanczos3 resize every frame.
-        app.art
-            .now_playing_art
-            .render_to_centered(&mut app.art.gfx, art_area, frame.buffer_mut());
-
-        // Hint at bottom.
-        let hint_area = Rect::new(
-            area.x,
-            area.y + area.height.saturating_sub(1),
-            area.width,
-            1,
-        );
-        let hint = Line::from(vec![
-            Span::styled(" [esc]", app.theme.hint_key),
-            Span::styled(" close  ", app.theme.hint_desc),
-            Span::styled("[z]", app.theme.hint_key),
-            Span::styled(" close", app.theme.hint_desc),
-        ]);
-        frame.render_widget(Paragraph::new(hint), hint_area);
+        super::now_playing::render_zoom(frame.buffer_mut(), app, area);
     }
 
     // Drop/paste import progress bar.
