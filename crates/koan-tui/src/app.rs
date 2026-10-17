@@ -382,6 +382,9 @@ pub struct App {
     /// The artist and album links drawn this frame, wherever they are.
     pub links: super::shell::Links,
 
+    /// Config writes, applied in the order they were made, off the frame.
+    config_tx: Sender<ConfigChange>,
+
     /// The playlists the sidebar lists, by id and name.
     pub sidebar_playlists: Vec<(i64, String)>,
 
@@ -522,6 +525,7 @@ impl App {
             hover: HoverState::default(),
             links: Default::default(),
             sidebar_playlists: Vec::new(),
+            config_tx: config_writer(),
             ticker_offset: 0,
             ticker_tick: 0,
             ticker_divisor,
@@ -539,6 +543,15 @@ impl App {
             display_fps: 0,
             art_size: cfg.playback.art_size.clamp(4, 80),
         }
+    }
+
+    /// Writes `change` to the config on the writer thread, after every change
+    /// asked for before it.
+    pub(super) fn persist(
+        &self,
+        change: impl FnOnce(&mut koan_core::config::Config) + Send + 'static,
+    ) {
+        self.config_tx.send(Box::new(change)).ok();
     }
 
     /// Push current mode onto the stack and switch to a new mode.
@@ -1379,7 +1392,7 @@ impl App {
             return;
         }
         let on = self.art.gfx.set_graphics(!self.art.gfx.graphics());
-        let _ = koan_core::config::Config::persist(|cfg| cfg.playback.art_graphics = on);
+        self.persist(move |cfg| cfg.playback.art_graphics = on);
         self.say(if on {
             format!("covers drawn as images ({})", self.art.gfx.protocol_name())
         } else {
@@ -2085,9 +2098,7 @@ impl App {
                     "matrix overlay off"
                 });
                 let overlay = self.visualizer.matrix_overlay;
-                let _ = koan_core::config::Config::persist(|cfg| {
-                    cfg.visualizer.matrix_overlay = overlay;
-                });
+                self.persist(move |cfg| cfg.visualizer.matrix_overlay = overlay);
             }
             KeyCode::Char('S') => {
                 self.visualizer.bass_shake = !self.visualizer.bass_shake;
@@ -2097,9 +2108,7 @@ impl App {
                     "bass shake off"
                 });
                 let shake = self.visualizer.bass_shake;
-                let _ = koan_core::config::Config::persist(|cfg| {
-                    cfg.visualizer.bass_shake = shake;
-                });
+                self.persist(move |cfg| cfg.visualizer.bass_shake = shake);
             }
             // The cursor and the selection, always live: Shift extends.
             KeyCode::Up | KeyCode::Char('k') if len > 0 => {
@@ -2574,9 +2583,7 @@ impl App {
                     None => {
                         self.viz_config.enabled = false;
                         self.say("visualiser off");
-                        let _ = koan_core::config::Config::persist(|cfg| {
-                            cfg.visualizer.enabled = false;
-                        });
+                        self.persist(|cfg| cfg.visualizer.enabled = false);
                     }
                 }
             }
@@ -2591,8 +2598,8 @@ impl App {
         self.viz_config.enabled = true;
         self.say(format!("visualiser: {}", mode.label()));
         let mode_str = mode.as_str().to_string();
-        let _ = koan_core::config::Config::persist(|cfg| {
-            cfg.visualizer.mode = mode_str.clone();
+        self.persist(move |cfg| {
+            cfg.visualizer.mode = mode_str;
             cfg.visualizer.enabled = true;
         });
     }
@@ -3508,15 +3515,7 @@ impl App {
                 self.queue.flat = !grouped;
                 self.relayout_queue();
                 self.update_scroll();
-                std::thread::Builder::new()
-                    .name("koan-config".into())
-                    .spawn(move || {
-                        koan_core::config::Config::persist(|cfg| {
-                            cfg.playback.queue_grouped = grouped;
-                        })
-                        .ok();
-                    })
-                    .ok();
+                self.persist(move |cfg| cfg.playback.queue_grouped = grouped);
             }
             queue::Control::Undo => {
                 self.tx.send(PlayerCommand::Undo).ok();
@@ -3553,6 +3552,26 @@ impl App {
     pub fn visible_queue(&self) -> &[QueueEntry] {
         &self.queue.vq_cache.entries
     }
+}
+
+/// A write to the config, as the writer thread takes it.
+type ConfigChange = Box<dyn FnOnce(&mut koan_core::config::Config) + Send>;
+
+/// The thread that writes the config: one at a time, in the order asked,
+/// so a later toggle is never overwritten by an earlier one landing after it.
+fn config_writer() -> Sender<ConfigChange> {
+    let (tx, rx) = crossbeam_channel::unbounded::<ConfigChange>();
+    std::thread::Builder::new()
+        .name("koan-config".into())
+        .spawn(move || {
+            for change in rx {
+                if let Err(e) = koan_core::config::Config::persist(change) {
+                    log::warn!("config: {e}");
+                }
+            }
+        })
+        .ok();
+    tx
 }
 
 /// Copy text to the system clipboard. Tries platform-native tools first.

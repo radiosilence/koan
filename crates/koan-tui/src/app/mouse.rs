@@ -105,7 +105,7 @@ impl App {
             }
             (MouseEventKind::Up(MouseButton::Left), Some(_)) => {
                 let size = self.art_size;
-                let _ = koan_core::config::Config::persist(|cfg| cfg.playback.art_size = size);
+                self.persist(move |cfg| cfg.playback.art_size = size);
                 self.transport_drag = None;
                 true
             }
