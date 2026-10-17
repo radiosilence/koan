@@ -113,6 +113,8 @@ pub struct ContextMenuState {
     /// (action, label, hotkey char)
     pub actions: Vec<(ContextAction, &'static str, char)>,
     pub cursor: usize,
+    /// Where it was opened by a click; one opened by a key is centred.
+    pub at: Option<(u16, u16)>,
 }
 
 /// What to do when the picker confirms a selection.
@@ -130,17 +132,14 @@ pub enum PickerAction {
     Shuffle,
 }
 
+/// A drag of the selected tracks through the queue.
 pub struct DragState {
-    pub from_index: usize,
-    pub current_y: u16,
-    /// True if we're dragging a multi-selection group.
-    pub multi: bool,
-    /// Offset of the clicked item within the sorted selection.
-    /// E.g. if selection is [3,4,5] and you click on 4, anchor_offset = 1.
+    /// How many selected tracks sit above the one grabbed, which stays under
+    /// the pointer.
     pub anchor_offset: usize,
-    /// The last desired group-start index during drag.
-    /// Used to avoid redundant moves when the mouse hasn't crossed a row boundary.
-    pub last_group_start: Option<usize>,
+    /// Where the selection was last asked to start, so a move is sent only
+    /// when the pointer crosses a row.
+    pub group_start: usize,
 }
 
 /// Which UI element the mouse cursor is currently hovering over.
@@ -940,7 +939,7 @@ impl App {
                 {
                     let visible_height = self.queue_visible_height();
                     self.queue.scroll_offset = queue::scroll_for_cursor(
-                        &self.visible_queue(),
+                        self.visible_queue(),
                         idx,
                         self.queue.scroll_offset,
                         visible_height,
@@ -2491,10 +2490,10 @@ impl App {
                 self.delete_selected();
             }
             KeyCode::Char('j') => {
-                self.move_selected_down();
+                self.move_selected(true);
             }
             KeyCode::Char('k') => {
-                self.move_selected_up();
+                self.move_selected(false);
             }
             KeyCode::Char('J') => {
                 let visible_len = self.visible_queue().len();
@@ -2516,7 +2515,7 @@ impl App {
             KeyCode::Char(' ')
                 // Open context menu if there's a selection.
                 if !self.queue.selected_ids.is_empty() => {
-                    self.open_context_menu();
+                    self.open_context_menu(None);
                 }
             // Vim: page up/down, home/end.
             KeyCode::PageUp | KeyCode::Char('u')
@@ -2559,12 +2558,12 @@ impl App {
                 self.context_menu = None;
                 self.pop_mode();
             }
-            KeyCode::Up => {
+            KeyCode::Up | KeyCode::Char('k') => {
                 if let Some(ref mut menu) = self.context_menu {
                     menu.cursor = menu.cursor.saturating_sub(1);
                 }
             }
-            KeyCode::Down => {
+            KeyCode::Down | KeyCode::Char('j') => {
                 if let Some(ref mut menu) = self.context_menu
                     && menu.cursor + 1 < menu.actions.len()
                 {
@@ -2670,21 +2669,27 @@ impl App {
             (ContextAction::Remove, "Remove", 'd'),
             (ContextAction::Organize, "Organize files", 'o'),
         ];
-        let cfg = koan_core::config::Config::load().unwrap_or_default();
+        let cfg = koan_core::config::Config::cached();
         if cfg.remote.enabled && koan_core::helpers::remote_credential(&cfg).is_some() {
             actions.push((ContextAction::CopyShareLink, "Share link", 's'));
         }
         actions
     }
 
-    fn open_context_menu(&mut self) {
-        let visible = self.visible_queue();
-        let is_fav = visible
-            .get(self.queue.cursor)
-            .is_some_and(|e| e.db_id.is_some_and(|id| self.favourites.contains(&id)));
-        let fav_label = if is_fav { "Unfavourite" } else { "Favourite" };
+    /// The queue's menu for the selection, or the track under the cursor.
+    fn open_context_menu(&mut self, at: Option<(u16, u16)>) {
+        let ids = self.queue_choice();
+        let fav_label = if !ids.is_empty() && ids.iter().all(|id| self.favourites.contains(id)) {
+            "Unfavourite"
+        } else {
+            "Favourite"
+        };
         let actions = self.build_context_actions(fav_label);
-        self.context_menu = Some(ContextMenuState { actions, cursor: 0 });
+        self.context_menu = Some(ContextMenuState {
+            actions,
+            cursor: 0,
+            at,
+        });
         self.push_mode(Mode::ContextMenu);
     }
 
@@ -2698,9 +2703,13 @@ impl App {
                 self.delete_selected();
             }
             ContextAction::ToggleFavourite => {
-                let visible = self.visible_queue();
-                if let Some(id) = visible.get(self.queue.cursor).and_then(|e| e.db_id) {
-                    self.toggle_favourite(id);
+                // All of them become favourites, unless all of them were.
+                let ids = self.queue_choice();
+                let on = !ids.iter().all(|id| self.favourites.contains(id));
+                for id in ids {
+                    if self.favourites.contains(&id) != on {
+                        self.toggle_favourite(id);
+                    }
                 }
             }
             ContextAction::TrackInfo => {
@@ -2894,14 +2903,14 @@ impl App {
                     }
                     PickerKind::QueueJump => {
                         let idx = ids[0] as usize;
-                        let visible = self.visible_queue();
+                        let visible = &self.queue.vq_cache.entries;
                         if let Some(entry) = visible.get(idx) {
                             self.tx.send(PlayerCommand::Play(entry.id)).ok();
                             self.queue.cursor = idx;
                             // Scroll so the jumped-to track is near the top.
                             let visible_height = self.queue_visible_height();
                             self.queue.scroll_offset =
-                                queue::scroll_cursor_to_top(&visible, idx, visible_height);
+                                queue::scroll_cursor_to_top(visible, idx, visible_height);
                         }
                     }
                 }
@@ -3167,12 +3176,14 @@ impl App {
         if self.mode == Mode::ContextMenu {
             if let MouseEventKind::Down(MouseButton::Left) = event.kind {
                 if self.is_in_rect(event.column, event.row, self.layout.context_menu_area) {
-                    // Click on an action row — compute which one.
-                    let row = (event
+                    // Click on an action row — compute which one. The border
+                    // rows hold none.
+                    let row = event
                         .row
-                        .saturating_sub(self.layout.context_menu_area.y + 1))
-                        as usize;
-                    if let Some(ref mut menu) = self.context_menu
+                        .checked_sub(self.layout.context_menu_area.y + 1)
+                        .map(usize::from);
+                    if let Some(row) = row
+                        && let Some(ref mut menu) = self.context_menu
                         && row < menu.actions.len()
                     {
                         menu.cursor = row;
@@ -3575,7 +3586,7 @@ impl App {
                     let inner_y = q.y + 1;
                     let visible_height = self.queue_visible_height();
                     let visible = self.visible_queue();
-                    let total_lines = super::queue::display_line_count(&visible);
+                    let total_lines = super::queue::display_line_count(visible);
 
                     if total_lines > visible_height && visible_height > 0 {
                         let vis8 = visible_height * 8;
@@ -3608,9 +3619,9 @@ impl App {
                     return;
                 }
 
-                let visible = self.visible_queue();
+                let visible = &self.queue.vq_cache.entries;
                 if let Some((first, link)) = queue::QueueView::header_link_at(
-                    &visible,
+                    visible,
                     self.layout.queue_area,
                     self.queue.scroll_offset,
                     event.column,
@@ -3622,7 +3633,7 @@ impl App {
                 }
                 if event.column == queue::menu_button_x(self.layout.queue_area)
                     && let Some(idx) = queue::QueueView::queue_index_at_y(
-                        &visible,
+                        visible,
                         self.layout.queue_area,
                         self.queue.scroll_offset,
                         event.row,
@@ -3632,14 +3643,14 @@ impl App {
                     return;
                 }
                 let Some(idx) = queue::QueueView::queue_index_at_y(
-                    &visible,
+                    visible,
                     self.layout.queue_area,
                     self.queue.scroll_offset,
                     event.row,
                 ) else {
                     // Check if the click landed on an album header.
                     if let Some((first, last)) = queue::QueueView::album_group_at_y(
-                        &visible,
+                        visible,
                         self.layout.queue_area,
                         self.queue.scroll_offset,
                         event.row,
@@ -3673,11 +3684,8 @@ impl App {
                             }
                             // Start drag so the album group can be reordered.
                             self.queue.drag = Some(DragState {
-                                from_index: first,
-                                current_y: event.row,
-                                multi: true,
                                 anchor_offset: 0,
-                                last_group_start: Some(first),
+                                group_start: first,
                             });
                         }
                     }
@@ -3725,29 +3733,20 @@ impl App {
                     }
                     self.queue.cursor = idx;
 
-                    let multi = self.queue.selected_ids.len() > 1;
-                    let anchor_offset = if multi {
-                        let mut indices: Vec<usize> = self.selected_indices().into_iter().collect();
-                        indices.sort_unstable();
-                        let first = indices.first().copied().unwrap_or(idx);
-                        idx.saturating_sub(first)
-                    } else {
-                        0
-                    };
-                    self.queue.drag = Some(DragState {
-                        from_index: idx,
-                        current_y: event.row,
-                        multi,
-                        anchor_offset,
-                        last_group_start: if multi {
-                            let mut indices: Vec<usize> =
-                                self.selected_indices().into_iter().collect();
-                            indices.sort_unstable();
-                            indices.first().copied()
-                        } else {
-                            Some(idx)
-                        },
-                    });
+                    // A drag moves the selection, with the track grabbed in it.
+                    let entries = &self.queue.vq_cache.entries;
+                    let selected = &self.queue.selected_ids;
+                    self.queue.drag = entries
+                        .get(idx)
+                        .filter(|e| selected.contains(&e.id))
+                        .and_then(|_| entries.iter().position(|e| selected.contains(&e.id)))
+                        .map(|first| DragState {
+                            anchor_offset: entries[first..idx]
+                                .iter()
+                                .filter(|e| selected.contains(&e.id))
+                                .count(),
+                            group_start: first,
+                        });
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) if self.browse_drag => {
@@ -3778,99 +3777,36 @@ impl App {
                 self.scroll_to_scrollbar_y(event.row);
             }
             MouseEventKind::Drag(MouseButton::Left) => {
-                let drag_info = self
-                    .queue
-                    .drag
-                    .as_ref()
-                    .map(|d| (d.from_index, d.multi, d.anchor_offset));
-                if let Some((from_index, _multi, anchor_offset)) = drag_info {
-                    if let Some(ref mut drag) = self.queue.drag {
-                        drag.current_y = event.row;
-                    }
-
-                    if self.mode == Mode::QueueEdit
-                        && self.is_in_rect(event.column, event.row, self.layout.queue_area)
-                    {
-                        // Edit mode: drag extends selection (shift-click workaround).
-                        let visible = self.visible_queue();
-                        if let Some(idx) = queue::QueueView::queue_index_at_y(
-                            &visible,
-                            self.layout.queue_area,
-                            self.queue.scroll_offset,
-                            event.row,
-                        ) {
-                            self.extend_selection_to(idx);
-                            self.queue.cursor = idx;
+                if self.queue.drag.is_none()
+                    || !self.is_in_rect(event.column, event.row, self.layout.queue_area)
+                {
+                    return;
+                }
+                let Some(idx) = queue::QueueView::queue_index_at_y(
+                    &self.queue.vq_cache.entries,
+                    self.layout.queue_area,
+                    self.queue.scroll_offset,
+                    event.row,
+                ) else {
+                    return;
+                };
+                if self.mode == Mode::QueueEdit {
+                    // Edit mode: drag extends selection (shift-click workaround).
+                    self.extend_selection_to(idx);
+                    self.queue.cursor = idx;
+                } else if let Some(drag) = self.queue.drag.as_mut() {
+                    // Live reorder: the selection follows the pointer, the
+                    // grabbed track under it.
+                    let start = idx.saturating_sub(drag.anchor_offset);
+                    if start != drag.group_start {
+                        drag.group_start = start;
+                        let grabbed = drag.anchor_offset;
+                        if !self.drag_undo_active {
+                            self.tx.send(PlayerCommand::BeginUndoBatch).ok();
+                            self.drag_undo_active = true;
                         }
-                    } else if self.mode != Mode::QueueEdit
-                        && self.is_in_rect(event.column, event.row, self.layout.queue_area)
-                    {
-                        // Normal mode: live reorder — move track(s) as mouse crosses rows.
-                        let visible = self.visible_queue();
-                        if let Some(to_idx) = queue::QueueView::queue_index_at_y(
-                            &visible,
-                            self.layout.queue_area,
-                            self.queue.scroll_offset,
-                            event.row,
-                        ) {
-                            if self.queue.selected_ids.len() > 1 {
-                                // Multi-drag: compute desired group start from anchor offset
-                                // so the clicked item stays under the mouse cursor.
-                                let desired_start = to_idx.saturating_sub(anchor_offset);
-                                let last_start =
-                                    self.queue.drag.as_ref().and_then(|d| d.last_group_start);
-
-                                if Some(desired_start) != last_start {
-                                    if !self.drag_undo_active {
-                                        self.tx.send(PlayerCommand::BeginUndoBatch).ok();
-                                        self.drag_undo_active = true;
-                                    }
-
-                                    // Compute target index for send_move_selected.
-                                    let mut indices: Vec<usize> =
-                                        self.selected_indices().into_iter().collect();
-                                    indices.sort_unstable();
-                                    let count = indices.len();
-                                    let first = indices.first().copied().unwrap_or(0);
-
-                                    let target = if desired_start > first {
-                                        // Moving down: place after this index.
-                                        (desired_start + count - 1)
-                                            .min(visible.len().saturating_sub(1))
-                                    } else {
-                                        // Moving up: place at this index.
-                                        desired_start
-                                    };
-
-                                    self.send_move_selected(target);
-                                    if let Some(ref mut drag) = self.queue.drag {
-                                        drag.last_group_start = Some(desired_start);
-                                    }
-                                }
-                            } else {
-                                // Single-track drag.
-                                if to_idx != from_index {
-                                    if !self.drag_undo_active {
-                                        self.tx.send(PlayerCommand::BeginUndoBatch).ok();
-                                        self.drag_undo_active = true;
-                                    }
-                                    // Capture the dragged track's ID before the move —
-                                    // vq_cache won't refresh until next frame, so
-                                    // select_single(to_idx) would grab the displaced track.
-                                    let dragged_id =
-                                        self.queue.vq_cache.entries.get(from_index).map(|e| e.id);
-                                    self.send_move(from_index, to_idx);
-                                    self.queue.cursor = to_idx;
-                                    self.queue.selected_ids.clear();
-                                    if let Some(id) = dragged_id {
-                                        self.queue.selected_ids.insert(id);
-                                        self.queue.anchor_id = Some(id);
-                                    }
-                                    if let Some(ref mut drag) = self.queue.drag {
-                                        drag.from_index = to_idx;
-                                    }
-                                }
-                            }
+                        if let Some(start) = self.place_selected(start) {
+                            self.queue.cursor = start + grabbed;
                         }
                     }
                 }
@@ -3903,61 +3839,20 @@ impl App {
             MouseEventKind::Down(MouseButton::Right)
                 // Right-click on queue item -> context menu at click position.
                 if self.is_in_rect(event.column, event.row, self.layout.queue_area) => {
-                    let visible = self.visible_queue();
-                    if let Some(idx) = queue::QueueView::queue_index_at_y(
-                        &visible,
-                        self.layout.queue_area,
-                        self.queue.scroll_offset,
-                        event.row,
-                    ) {
-                        // Select the clicked item if not already selected.
-                        let id_at_idx = self.queue.vq_cache.entries.get(idx).map(|e| e.id);
-                        if !id_at_idx.is_some_and(|id| self.queue.selected_ids.contains(&id)) {
-                            self.select_single(idx);
-                        }
-                        self.queue.cursor = idx;
-
-
-                        let is_fav = visible
-                            .get(idx)
-                            .is_some_and(|e| e.db_id.is_some_and(|id| self.favourites.contains(&id)));
-                        let fav_label = if is_fav { "Unfavourite" } else { "Favourite" };
-                        let actions = self.build_context_actions(fav_label);
-                        self.context_menu = Some(ContextMenuState { actions, cursor: 0 });
-                        self.push_mode(Mode::ContextMenu);
-                        // Store click position for positioned rendering.
-                        self.hover.column = event.column;
-                        self.hover.row = event.row;
-                    } else if let Some((first, last)) = queue::QueueView::album_group_at_y(
-                        &visible,
-                        self.layout.queue_area,
-                        self.queue.scroll_offset,
-                        event.row,
-                    ) {
-                        // Right-click on album header -> select the whole group and open context menu.
-                        self.queue.selected_ids.clear();
-                        for i in first..=last {
-                            if let Some(entry) = visible.get(i) {
-                                self.queue.selected_ids.insert(entry.id);
-                            }
-                        }
+                    let entries = &self.queue.vq_cache.entries;
+                    let (area, scroll) = (self.layout.queue_area, self.queue.scroll_offset);
+                    if let Some(idx) =
+                        queue::QueueView::queue_index_at_y(entries, area, scroll, event.row)
+                    {
+                        self.open_queue_menu(idx, event.column, event.row);
+                    } else if let Some((first, last)) =
+                        queue::QueueView::album_group_at_y(entries, area, scroll, event.row)
+                    {
+                        // On an album heading: the menu is for the whole record.
+                        self.queue.selected_ids = entries[first..=last].iter().map(|e| e.id).collect();
+                        self.queue.anchor_id = Some(entries[first].id);
                         self.queue.cursor = first;
-                        if let Some(entry) = visible.get(first) {
-                            self.queue.anchor_id = Some(entry.id);
-                        }
-
-                        // Favourite label: true only if ALL tracks in the group are favourited.
-                        let all_fav = (first..=last).all(|i| {
-                            visible
-                                .get(i)
-                                .is_some_and(|e| e.db_id.is_some_and(|id| self.favourites.contains(&id)))
-                        });
-                        let fav_label = if all_fav { "Unfavourite" } else { "Favourite" };
-                        let actions = self.build_context_actions(fav_label);
-                        self.context_menu = Some(ContextMenuState { actions, cursor: 0 });
-                        self.push_mode(Mode::ContextMenu);
-                        self.hover.column = event.column;
-                        self.hover.row = event.row;
+                        self.open_context_menu(Some((event.column, event.row)));
                     }
                 }
             MouseEventKind::ScrollUp => {
@@ -4036,7 +3931,7 @@ impl App {
                 } else if self.page() != Page::Queue {
                 } else {
                     let visible = self.visible_queue();
-                    let total_display = super::queue::display_line_count(&visible);
+                    let total_display = super::queue::display_line_count(visible);
                     let visible_height = self.queue_visible_height();
                     let max_scroll = total_display.saturating_sub(visible_height);
                     self.queue.scroll_offset = (self.queue.scroll_offset + 1).min(max_scroll);
@@ -4051,25 +3946,15 @@ impl App {
         }
     }
 
-    /// Compute the hover zone from current mouse position and layout rects.
     /// The menu of actions for the queue row `idx`, opened at `col`, `row`.
     /// A right click opens it, and so does the row's own button.
     fn open_queue_menu(&mut self, idx: usize, col: u16, row: u16) {
-        let visible = self.visible_queue();
         let id_at_idx = self.queue.vq_cache.entries.get(idx).map(|e| e.id);
         if !id_at_idx.is_some_and(|id| self.queue.selected_ids.contains(&id)) {
             self.select_single(idx);
         }
         self.queue.cursor = idx;
-        let is_fav = visible
-            .get(idx)
-            .is_some_and(|e| e.db_id.is_some_and(|id| self.favourites.contains(&id)));
-        let fav_label = if is_fav { "Unfavourite" } else { "Favourite" };
-        let actions = self.build_context_actions(fav_label);
-        self.context_menu = Some(ContextMenuState { actions, cursor: 0 });
-        self.push_mode(Mode::ContextMenu);
-        self.hover.column = col;
-        self.hover.row = row;
+        self.open_context_menu(Some((col, row)));
     }
 
     /// Opens the record or the artist of the library track `db_id`.
@@ -4111,6 +3996,7 @@ impl App {
         self.mode == Mode::Normal && self.page() == Page::Artists && self.library.is_some()
     }
 
+    /// Compute the hover zone from current mouse position and layout rects.
     fn update_hover_zone(&mut self) {
         let col = self.hover.column;
         let row = self.hover.row;
@@ -4149,7 +4035,7 @@ impl App {
         if self.is_in_rect(col, row, self.layout.queue_area) {
             let visible = self.visible_queue();
             if let Some(idx) = queue::QueueView::queue_index_at_y(
-                &visible,
+                visible,
                 self.layout.queue_area,
                 self.queue.scroll_offset,
                 row,
@@ -4344,107 +4230,51 @@ impl App {
         self.clamp_queue_cursor();
     }
 
-    /// Move all selected tracks down by one position.
-    fn move_selected_down(&mut self) {
-        let visible_len = self.visible_queue().len();
-
-        // Single item: move the track under cursor.
+    /// Moves the selection, or the track under the cursor, one row down or
+    /// up, and the cursor with it. A selection with gaps closes up around its
+    /// first track.
+    fn move_selected(&mut self, down: bool) {
         if self.queue.selected_ids.len() <= 1 {
-            if self.queue.cursor + 1 < visible_len {
-                self.send_move(self.queue.cursor, self.queue.cursor + 1);
-                self.queue.cursor += 1;
-                self.select_single(self.queue.cursor);
-                self.update_scroll();
-            }
-            return;
+            self.select_single(self.queue.cursor);
         }
-
-        let mut indices: Vec<usize> = self.selected_indices().into_iter().collect();
-        indices.sort_unstable();
-
-        let max_idx = indices.last().copied().unwrap_or(0);
-        if max_idx + 1 >= visible_len {
+        let entries = &self.queue.vq_cache.entries;
+        let selected = &self.queue.selected_ids;
+        let Some(first) = entries.iter().position(|e| selected.contains(&e.id)) else {
             return;
+        };
+        let ahead = entries
+            .get(self.queue.cursor)
+            .filter(|e| selected.contains(&e.id))
+            .map(|_| {
+                entries[first..self.queue.cursor]
+                    .iter()
+                    .filter(|e| selected.contains(&e.id))
+                    .count()
+            });
+        let start = if down {
+            first + 1
+        } else if let Some(up) = first.checked_sub(1) {
+            up
+        } else {
+            return;
+        };
+        if let Some(start) = self.place_selected(start)
+            && let Some(ahead) = ahead
+        {
+            self.queue.cursor = start + ahead;
         }
-        let min_idx = indices.first().copied().unwrap_or(0);
-
-        // Swap the item BELOW the group to ABOVE it — single atomic move.
-        self.send_move(max_idx + 1, min_idx);
-
-        // IDs are stable — selection follows automatically. Just update cursor.
-        self.queue.cursor += 1;
         self.update_scroll();
     }
 
-    /// Move all selected tracks up by one position.
-    fn move_selected_up(&mut self) {
-        // Single item: move the track under cursor.
-        if self.queue.selected_ids.len() <= 1 {
-            if self.queue.cursor > 0 {
-                self.send_move(self.queue.cursor, self.queue.cursor - 1);
-                self.queue.cursor -= 1;
-                self.select_single(self.queue.cursor);
-                self.update_scroll();
-            }
-            return;
-        }
-
-        let mut indices: Vec<usize> = self.selected_indices().into_iter().collect();
-        indices.sort_unstable();
-
-        let min_idx = indices.first().copied().unwrap_or(0);
-        if min_idx == 0 {
-            return;
-        }
-        let max_idx = indices.last().copied().unwrap_or(0);
-
-        // Swap the item ABOVE the group to BELOW it — single atomic move.
-        self.send_move(min_idx - 1, max_idx);
-
-        // IDs are stable — selection follows automatically. Just update cursor.
-        self.queue.cursor -= 1;
-        self.update_scroll();
-    }
-
-    /// Send a batch move for all selected tracks to a target position.
-    /// Used for multi-track drag.
-    fn send_move_selected(&mut self, target_idx: usize) {
-        let mut indices: Vec<usize> = self.selected_indices().into_iter().collect();
-        indices.sort_unstable();
-
-        let visible = self.visible_queue();
-        let ids: Vec<_> = indices
-            .iter()
-            .filter_map(|&i| visible.get(i).map(|e| e.id))
-            .collect();
-        let Some(target_entry) = visible.get(target_idx) else {
-            return;
-        };
-        let target_id = target_entry.id;
-
-        // Use MoveItemsInPlaylist to move the whole group atomically.
-        let moving_down = target_idx > indices.first().copied().unwrap_or(0);
-        self.tx
-            .send(PlayerCommand::MoveItemsInPlaylist {
-                ids,
-                target: target_id,
-                after: moving_down,
-            })
-            .ok();
-
-        // IDs are stable — selected_ids already contains the right IDs.
-        // Just update the cursor to the new visual position.
-        let count = indices.len();
-        let new_start = if moving_down {
-            target_idx + 1 - count
-        } else {
-            target_idx
-        };
-        self.queue.cursor = if moving_down {
-            new_start + count - 1
-        } else {
-            new_start
-        };
+    /// Moves the selected tracks so that, together, they start at `start`;
+    /// where they start, once there is room for them, if they moved.
+    fn place_selected(&mut self, start: usize) -> Option<usize> {
+        let entries = &self.queue.vq_cache.entries;
+        let selected = &self.queue.selected_ids;
+        let cmd = queue::placement(entries, selected, start)?;
+        let moving = entries.iter().filter(|e| selected.contains(&e.id)).count();
+        self.tx.send(cmd).ok();
+        Some(start.min(entries.len() - moving))
     }
 
     /// Next or previous, at most once per 150 ms. A held key repeats faster
@@ -4469,26 +4299,6 @@ impl App {
             PlayerCommand::Resume
         };
         self.tx.send(cmd).ok();
-    }
-
-    /// Send a move command for a visible queue index pair.
-    fn send_move(&self, from_visible: usize, to_visible: usize) {
-        let visible = self.visible_queue();
-        let Some(from_entry) = visible.get(from_visible) else {
-            return;
-        };
-        let Some(to_entry) = visible.get(to_visible) else {
-            return;
-        };
-
-        let after = to_visible > from_visible;
-        self.tx
-            .send(PlayerCommand::MoveInPlaylist {
-                id: from_entry.id,
-                target: to_entry.id,
-                after,
-            })
-            .ok();
     }
 
     fn handle_library_key(&mut self, key: KeyEvent) {
@@ -4735,7 +4545,7 @@ impl App {
         let visible = self.visible_queue();
         let visible_height = self.queue_visible_height();
         self.queue.scroll_offset = queue::scroll_for_cursor(
-            &visible,
+            visible,
             self.queue.cursor,
             self.queue.scroll_offset,
             visible_height,
@@ -4753,7 +4563,7 @@ impl App {
         }
 
         let visible = self.visible_queue();
-        let total_lines = super::queue::display_line_count(&visible);
+        let total_lines = super::queue::display_line_count(visible);
         if total_lines <= visible_height {
             return;
         }
@@ -4785,9 +4595,8 @@ impl App {
             return None; // internal drag takes precedence
         }
         let row = self.last_mouse_row?;
-        let visible = self.visible_queue();
         queue::QueueView::queue_index_at_y(
-            &visible,
+            &self.queue.vq_cache.entries,
             self.layout.queue_area,
             self.queue.scroll_offset,
             row,
@@ -4905,8 +4714,8 @@ impl App {
         }
     }
 
-    pub fn visible_queue(&self) -> Vec<QueueEntry> {
-        self.queue.vq_cache.entries.clone()
+    pub fn visible_queue(&self) -> &[QueueEntry] {
+        &self.queue.vq_cache.entries
     }
 }
 

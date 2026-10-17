@@ -81,7 +81,7 @@ As in the apps, names that lead somewhere are links. Under a tile, the title ope
 
 ### Without a right button
 
-Nothing needs a right click. The key hints along the foot are buttons: click `[a] add` and it is the `a` key. A queue row shows a `⋯` at its end when the pointer is over it or it is selected, and clicking that opens the row's menu, which a right click also opens. The scrollbars on the queue and the browsing pages can be clicked and dragged. A right click on a tile still adds it to the queue, as a shortcut.
+Nothing needs a right click. The key hints along the foot are buttons: click `[a] add` and it is the `a` key. A queue row shows a `⋯` at its end when the pointer is over it or it is selected, and clicking that opens the row's menu, which a right click also opens; on an album heading the menu is for the whole record, and favouriting there favourites every track unless all of them already are. Dragging a selection moves it as one block that starts under the pointer, so a selection with gaps closes up as it moves, as it does with `j` and `k` in edit mode. The scrollbars on the queue and the browsing pages can be clicked and dragged. A right click on a tile still adds it to the queue, as a shortcut.
 
 With the mouse: click selects, a second click opens, the wheel scrolls, and the sort and view labels in the heading are buttons.
 
