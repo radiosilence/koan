@@ -273,6 +273,20 @@ pub struct ServerSongs {
     pub missing: Vec<String>,
 }
 
+impl ServerSongs {
+    /// The record for `songs`, given what each resolves to in the library
+    /// (see [`track_ids_for_remote_ids`]).
+    pub fn from_lookup(songs: Vec<String>, track_ids: &[Option<i64>]) -> Self {
+        let missing = songs
+            .iter()
+            .zip(track_ids)
+            .filter(|(_, t)| t.is_none())
+            .map(|(s, _)| s.clone())
+            .collect();
+        Self { songs, missing }
+    }
+}
+
 /// Record the server copy as it stands; nothing once no song is missing.
 pub fn set_playlist_server_songs(
     conn: &Connection,
@@ -301,21 +315,13 @@ pub fn playlist_server_songs(conn: &Connection, id: i64) -> Result<Option<Server
     Ok(record.and_then(|r| serde_json::from_str(&r).ok()))
 }
 
-/// Playlists with songs missing, and their records. Only ones whose local
-/// copy is the server's: an edit made here since is what the next push
-/// sends, and the push records afresh.
-pub fn playlists_awaiting_songs(conn: &Connection) -> Result<Vec<(i64, ServerSongs)>, DbError> {
-    let mut stmt = conn.prepare(
-        "SELECT id, server_songs FROM playlists
-         WHERE server_songs IS NOT NULL AND synced_revision = revision",
-    )?;
+/// Playlists with a record of songs missing.
+pub fn playlists_missing_songs(conn: &Connection) -> Result<Vec<i64>, DbError> {
+    let mut stmt = conn.prepare("SELECT id FROM playlists WHERE server_songs IS NOT NULL")?;
     let rows = stmt
-        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+        .query_map([], |r| r.get(0))?
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows
-        .into_iter()
-        .filter_map(|(id, record)| Some((id, serde_json::from_str(&record).ok()?)))
-        .collect())
+    Ok(rows)
 }
 
 /// Turn every playlist tied to a server account other than `account` back

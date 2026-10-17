@@ -4,7 +4,7 @@
 //! The database module owns what a playlist *is*. This owns what happens to it
 //! next — which is either a Subsonic call or an M3U8 on disk.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -406,15 +406,7 @@ pub fn reconcile_playlists(
                 track_ids.len()
             );
         }
-        let record = queries::ServerSongs {
-            missing: remote_song_ids
-                .iter()
-                .zip(&track_ids)
-                .filter(|(_, t)| t.is_none())
-                .map(|(s, _)| s.clone())
-                .collect(),
-            songs: remote_song_ids,
-        };
+        let record = queries::ServerSongs::from_lookup(remote_song_ids, &track_ids);
         let track_ids: Vec<i64> = track_ids.into_iter().flatten().collect();
 
         // All of it or none: a copy renamed but not refilled, or refilled but
@@ -503,38 +495,39 @@ pub fn reconcile_playlists(
 /// last pull or push; a playlist whose copy has moved on either side since is
 /// pulled or pushed afresh, which records again. So this needs no request:
 /// what the server holds is already known, only the library has changed.
+///
+/// A playlist edited here since is left alone: the edit is what its next push
+/// sends, and the push records afresh. The check is made under the push lock
+/// and in the write transaction, so no edit or push lands between it and the
+/// refill.
 fn fill_missing_songs(db: &Database) {
-    let awaiting = match queries::playlists_awaiting_songs(&db.conn) {
-        Ok(awaiting) => awaiting,
+    let ids = match queries::playlists_missing_songs(&db.conn) {
+        Ok(ids) => ids,
         Err(e) => {
             log::warn!("could not read the playlists missing songs: {e}");
             return;
         }
     };
-    for (id, record) in awaiting {
+    for id in ids {
+        let lock = push_lock(id);
+        let _held = lock.lock();
         let filled = queries::atomically(&db.conn, || {
-            let arrived = queries::track_ids_for_remote_ids(&db.conn, &record.missing)?;
-            if arrived.iter().all(Option::is_none) {
+            let synced = queries::get_playlist(&db.conn, id)?.is_some_and(|p| !p.unsynced());
+            let Some(record) = queries::playlist_server_songs(&db.conn, id)?.filter(|_| synced)
+            else {
                 return Ok(());
-            }
-            let missing = record
-                .missing
-                .iter()
-                .zip(&arrived)
-                .filter(|(_, t)| t.is_none())
-                .map(|(s, _)| s.clone())
-                .collect();
+            };
             let track_ids = queries::track_ids_for_remote_ids(&db.conn, &record.songs)?;
-            let track_ids: Vec<i64> = track_ids.into_iter().flatten().collect();
-            queries::merge_server_tracks(&db.conn, id, &track_ids)?;
-            queries::set_playlist_server_songs(
-                &db.conn,
-                id,
-                &queries::ServerSongs {
-                    songs: record.songs,
-                    missing,
-                },
-            )
+            let now = queries::ServerSongs::from_lookup(record.songs.clone(), &track_ids);
+            let still: HashSet<&str> = now.missing.iter().map(String::as_str).collect();
+            if record.missing.iter().any(|s| !still.contains(s.as_str())) {
+                let track_ids: Vec<i64> = track_ids.into_iter().flatten().collect();
+                queries::merge_server_tracks(&db.conn, id, &track_ids)?;
+            }
+            if now != record {
+                queries::set_playlist_server_songs(&db.conn, id, &now)?;
+            }
+            Ok(())
         });
         if let Err(e) = filled {
             log::warn!("could not fill in playlist {id}: {e}");
@@ -612,14 +605,20 @@ fn push(db: &Database, client: &SubsonicClient, account: &str, id: i64) -> Resul
     // this copy never held would be deleted by it without anyone having
     // chosen to. That is one the library does not know, or one it learnt of
     // after this copy was pulled without it. Those go back in where they were.
-    let missing = match queries::playlist_server_songs(&db.conn, id) {
-        Ok(record) => record.unwrap_or_default().missing,
+    let record = match queries::playlist_server_songs(&db.conn, id) {
+        Ok(record) => record.unwrap_or_default(),
         Err(e) => {
             log::warn!("could not read playlist '{}' to push it: {e}", local.name);
             return Err(());
         }
     };
-    let held = song_ids.clone();
+    let held: HashSet<String> = song_ids.iter().cloned().collect();
+    let never_held: HashSet<&str> = record
+        .missing
+        .iter()
+        .filter(|s| !held.contains(*s))
+        .map(String::as_str)
+        .collect();
     let song_ids = match remote_id {
         None => song_ids,
         Some(remote_id) => {
@@ -637,7 +636,7 @@ fn push(db: &Database, client: &SubsonicClient, account: &str, id: i64) -> Resul
                     let known: Vec<bool> = ids
                         .iter()
                         .zip(&known)
-                        .map(|(id, track)| track.is_some() && !missing.contains(id))
+                        .map(|(id, track)| track.is_some() && !never_held.contains(id.as_str()))
                         .collect();
                     keep_unknown(&ids, &known, song_ids)
                 }
@@ -695,7 +694,7 @@ fn push(db: &Database, client: &SubsonicClient, account: &str, id: i64) -> Resul
                         &queries::ServerSongs {
                             missing: song_ids
                                 .iter()
-                                .filter(|s| !held.contains(s))
+                                .filter(|s| !held.contains(*s))
                                 .cloned()
                                 .collect(),
                             songs: song_ids.clone(),
@@ -1606,6 +1605,33 @@ mod tests {
             entries(&db, id).iter().map(|e| e.1).collect::<Vec<_>>(),
             [r1, r9, r2]
         );
+        assert_eq!(missing(&db, id), None);
+    }
+
+    /// A missing song added here by hand once the library has it is pushed
+    /// once, not once for the server's copy and again for this one.
+    #[test]
+    fn a_missing_song_added_here_is_pushed_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        upsert_track(&db.conn, &remote_meta("One", "s1")).unwrap();
+
+        let server = std::sync::Arc::new(parking_lot::Mutex::new(Server {
+            lists: vec![("p1".into(), vec!["s1".into(), "s9".into()], 1)],
+            ..Default::default()
+        }));
+        let url = serve(server.clone());
+        let client = SubsonicClient::new(&url, "u", "pw");
+        reconcile_playlists(&db, &client, &url, "u");
+        let id = queries::playlist_by_remote_id(&db.conn, "p1")
+            .unwrap()
+            .unwrap()
+            .id;
+
+        let r9 = upsert_track(&db.conn, &remote_meta("Nine", "s9")).unwrap();
+        queries::add_tracks(&db.conn, id, &[r9]).unwrap();
+        assert_eq!(reconcile_playlists(&db, &client, &url, "u").pushed, 1);
+        assert_eq!(server.lock().lists[0].1, ["s1", "s9"]);
         assert_eq!(missing(&db, id), None);
     }
 
