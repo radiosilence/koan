@@ -31,6 +31,9 @@ const TILE_MIN_W: u16 = 14;
 /// Decoded covers kept for tiles before the lot is dropped.
 const THUMB_LIMIT: usize = 240;
 
+/// How many rows beyond the page are loaded ahead of scrolling.
+const PREFETCH_ROWS: usize = 3;
+
 /// A second click this soon after the first is a double click.
 const DOUBLE_CLICK: Duration = Duration::from_millis(500);
 
@@ -208,13 +211,19 @@ impl Thumbs {
     /// The cover for `album`, loading it if it is not here. `None` is either
     /// not yet or no cover.
     pub(super) fn get(&mut self, album: i64) -> Option<&DynamicImage> {
+        self.want(album);
+        self.images.get(&album).and_then(Option::as_ref)
+    }
+
+    /// Starts loading `album`'s cover without drawing it, for tiles about to
+    /// scroll into view.
+    pub(super) fn want(&mut self, album: i64) {
         if let Ok(mut w) = self.wanted.lock() {
             w.insert(album);
         }
         if !self.images.contains_key(&album) && self.asked.insert(album) {
             self.tx.send(album).ok();
         }
-        self.images.get(&album).and_then(Option::as_ref)
     }
 }
 
@@ -1172,6 +1181,15 @@ impl Browse {
                         );
                     }
                 }
+            }
+        }
+        // Covers a few rows either side load before they scroll into view.
+        let ahead =
+            (self.scroll + rows + 1) * cols..(self.scroll + rows + 1 + PREFETCH_ROWS) * cols;
+        let behind = self.scroll.saturating_sub(PREFETCH_ROWS) * cols..self.scroll * cols;
+        for idx in ahead.chain(behind) {
+            if let Some(&i) = self.shown.get(idx) {
+                thumbs.want(self.albums[i].id);
             }
         }
         self.scrollbar(body, buf, theme, total_rows, rows);
