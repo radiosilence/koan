@@ -542,10 +542,14 @@ impl SettingsPage {
                     } else {
                         theme.track_playing
                     };
-                    buf.set_string(value_x + 2, y, "run", run);
-                    self.geom
-                        .links
-                        .push((Rect::new(value_x + 2, y, 3, 1), SettingsHit::Value(idx)));
+                    let run_x = value_x + 2;
+                    let room = end.saturating_sub(run_x).min(3);
+                    if room > 0 {
+                        buf.set_stringn(run_x, y, "run", room as usize, run);
+                        self.geom
+                            .links
+                            .push((Rect::new(run_x, y, room, 1), SettingsHit::Value(idx)));
+                    }
                     let note_x = value_x + 8;
                     if note_x + 8 < end {
                         buf.set_stringn(note_x, y, task.note(), (end - note_x) as usize, dim);

@@ -50,6 +50,7 @@ const SECTIONS: &[Section] = &[
             ("D", "Output device"),
             ("E", "Choose the EQ"),
             ("w", "Add to a playlist (W: save the queue as one)"),
+            ("B", "Bypass the EQ, or put it back"),
             ("A / O", "Artist / album of the selection"),
         ],
     },

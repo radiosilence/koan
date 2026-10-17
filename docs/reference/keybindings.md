@@ -29,7 +29,8 @@ See [The terminal UI](../guide/terminal-ui.md). These work from any page.
 | `[` / `]` or `Alt+Left` / `Alt+Right` | Back / forward through the pages visited |
 | `Esc` | Leave the page for the one before it |
 | `I` | Draw covers as images or in half blocks |
-| `E` | Choose the EQ the output plays through |
+| `E` | Choose the EQ the output plays through (also a click on `EQ` in the transport bar, or on the signal path's `dsp` row or the curve on Now playing) |
+| `B` | Bypass the EQ, or put back the one bypassed |
 | `A` / `O` | Open the artist / the record of the selection |
 
 ### Navigation
@@ -174,7 +175,7 @@ Click a play to select it and again to play it; click the artist or the record t
 | `→`, `Enter` or `Space` | Next value (flips a toggle), or run the task on the row |
 | `←` | Previous value |
 
-Click the arrows beside a value, or the value, to change it, or `run` to start a task. Changes apply at once, except the frame rate, which applies at the next start. `scan library` and `sync now` run in the background and report how they went in the status line; offline mode narrows the library to what is on this device.
+Click the arrows beside a value, or the value, to change it, or `run` to start a task. Changes apply at once, except the frame rate, which applies at the next start. `scan library` and `sync now` run in the background and report how they went in the status line; offline mode narrows the browsing pages, the Artists tree and the pickers to what is on this device.
 
 ---
 
