@@ -1071,6 +1071,8 @@ impl App {
                 let n = self.queue.vq_cache.entries.len();
                 Toolbar::new("queue").count(format!("{n} track{}", if n == 1 { "" } else { "s" }))
             }
+            Page::History => self.history_page.toolbar(),
+            Page::Settings => self.settings_page.toolbar(),
             page => Toolbar::new(page.title()),
         }
     }

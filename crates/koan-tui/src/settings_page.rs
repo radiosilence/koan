@@ -409,6 +409,15 @@ impl SettingsPage {
         self.load_remote();
     }
 
+    /// The page's toolbar: the section in view, and whether work is out.
+    pub fn toolbar(&self) -> super::shell::Toolbar {
+        let count = match self.busy {
+            0 => self.section.label().to_string(),
+            _ => format!("{} \u{b7} working\u{2026}", self.section.label()),
+        };
+        super::shell::Toolbar::new("settings").count(count)
+    }
+
     /// What the EQ section says of the EQ in use.
     pub fn set_eq_summary(&mut self, summary: Option<String>) {
         self.eq_summary = summary;
@@ -993,12 +1002,10 @@ impl SettingsPage {
         hover: Option<SettingsHit>,
     ) {
         self.geom = Geom::default();
-        if area.width < 40 || area.height < 4 {
+        if area.width < 40 || area.height < 2 {
             return;
         }
-        let note = if self.busy > 0 { " \u{2026} " } else { "" };
-        super::ui::heading(buf, area, theme, "settings", note);
-        let body = Rect::new(area.x, area.y + 2, area.width, area.height - 2);
+        let body = area;
         let sections = self.sections();
         if !sections.contains(&self.section) {
             self.section = Section::Library;

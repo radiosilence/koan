@@ -308,9 +308,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             let App {
                 history_page,
                 theme,
+                links,
                 ..
             } = &mut *app;
-            history_page.render(stage, frame.buffer_mut(), theme, hover);
+            history_page.render(stage, frame.buffer_mut(), theme, hover, links);
         }
         Page::Settings => {
             app.layout.browse_area = stage;

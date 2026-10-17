@@ -16,6 +16,7 @@ use ratatui::style::{Modifier, Style};
 
 use super::app::PickerAction;
 use super::browse::Action;
+use super::shell::{Link, Links, ToolItem, Toolbar};
 use super::text::{fit, width};
 use super::theme::Theme;
 use super::transport::format_time;
@@ -31,12 +32,7 @@ const LENGTH_W: u16 = 8;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryHit {
     Play(usize),
-    Artist(usize),
-    Album(usize),
     Forget(usize),
-    Filter,
-    ForgetAll,
-    Menu,
 }
 
 enum Line {
@@ -48,9 +44,6 @@ enum Line {
 struct Geom {
     list: Rect,
     bar: Rect,
-    filter: Rect,
-    clear: Rect,
-    menu: Rect,
     links: Vec<(Rect, HistoryHit)>,
     total: usize,
 }
@@ -564,15 +557,6 @@ impl HistoryPage {
 
     pub fn hit(&self, col: u16, row: u16) -> Option<HistoryHit> {
         let g = &self.geom;
-        if inside(g.filter, col, row) {
-            return Some(HistoryHit::Filter);
-        }
-        if inside(g.clear, col, row) {
-            return Some(HistoryHit::ForgetAll);
-        }
-        if inside(g.menu, col, row) {
-            return Some(HistoryHit::Menu);
-        }
         if let Some((_, hit)) = g.links.iter().find(|(r, _)| inside(*r, col, row)) {
             return Some(*hit);
         }
@@ -594,35 +578,14 @@ impl HistoryPage {
     /// terminals pass no Shift with the mouse, and none pass Cmd.
     pub fn click(&mut self, hit: HistoryHit, modifiers: crossterm::event::KeyModifiers) -> Action {
         use crossterm::event::KeyModifiers;
-        self.armed = self.armed.filter(|_| hit == HistoryHit::ForgetAll);
+        self.armed = None;
         match hit {
-            HistoryHit::Filter => {
-                self.filter_active = true;
-                Action::None
-            }
-            HistoryHit::ForgetAll => {
-                self.forget_all();
-                Action::None
-            }
-            HistoryHit::Menu => self.menu(self.cursor),
             HistoryHit::Forget(i) => {
                 if let Some(e) = self.entries.get(i) {
                     self.picked.remove(&e.id);
                     self.ask(Some(Forget::Plays(vec![e.id])));
                 }
                 Action::None
-            }
-            HistoryHit::Artist(i) => {
-                self.move_to(i);
-                self.track_at(i)
-                    .and_then(|t| t.artist_id)
-                    .map_or(Action::None, Action::OpenArtist)
-            }
-            HistoryHit::Album(i) => {
-                self.move_to(i);
-                self.track_at(i)
-                    .and_then(|t| t.album_id)
-                    .map_or(Action::None, Action::OpenAlbum)
             }
             HistoryHit::Play(i)
                 if modifiers.intersects(KeyModifiers::SHIFT | KeyModifiers::CONTROL) =>
@@ -654,6 +617,40 @@ impl HistoryPage {
         }
     }
 
+    /// The page's toolbar: its count, the filter, the actions menu and
+    /// clearing, each the same as its key.
+    pub fn toolbar(&self) -> Toolbar {
+        use crossterm::event::{KeyCode, KeyEvent};
+        let count = match (self.entries.len(), self.picked.len()) {
+            (1, _) => "1 play".to_string(),
+            (n, 0) => format!("{n} plays"),
+            (n, k) => format!("{n} plays \u{b7} {k} picked"),
+        };
+        let filter = if self.filter_active || !self.filter.is_empty() {
+            let cursor = if self.filter_active { "\u{2588}" } else { "" };
+            format!("/{}{cursor}", self.filter)
+        } else {
+            "/ filter".to_string()
+        };
+        let key = |c| KeyEvent::from(KeyCode::Char(c));
+        let mut bar = Toolbar::new("history").count(count).item(
+            ToolItem::new(filter, key('/'))
+                .on(self.filter_active)
+                .priority(2),
+        );
+        if !self.entries.is_empty() {
+            let clear = if self.armed() {
+                "press D again to clear every play"
+            } else {
+                "clear\u{2026}"
+            };
+            bar = bar
+                .item(ToolItem::new("\u{22ef} actions", key('m')).priority(1))
+                .item(ToolItem::new(clear, key('D')).on(self.armed()));
+        }
+        bar
+    }
+
     pub fn on_scrollbar(&self, col: u16, row: u16) -> bool {
         inside(self.geom.bar, col, row)
     }
@@ -675,62 +672,13 @@ impl HistoryPage {
         buf: &mut Buffer,
         theme: &Theme,
         hover: Option<HistoryHit>,
+        links: &Links,
     ) {
         self.geom = Geom::default();
-        if area.width < 8 || area.height < 3 {
+        if area.width < 8 || area.height < 2 {
             return;
         }
-        let note = match (self.entries.len(), self.picked.len()) {
-            (1, _) => " 1 play ".to_string(),
-            (n, 0) => format!(" {n} plays "),
-            (n, k) => format!(" {n} plays \u{b7} {k} picked "),
-        };
-        super::ui::heading(buf, area, theme, "history", &note);
-
-        // The page's controls sit on the heading's rule, at its right.
-        let end = area.x + area.width;
-        let mut x = end;
-        let mut control = |buf: &mut Buffer, text: String, style: Style| -> Rect {
-            let w = (width(&text) as u16).min(x.saturating_sub(area.x));
-            x -= w;
-            buf.set_stringn(x, area.y, &text, w as usize, style);
-            Rect::new(x, area.y, w, 1)
-        };
-        let clear_text = if self.armed() {
-            " press D again to clear every play: this cannot be undone ".to_string()
-        } else {
-            " clear\u{2026} ".to_string()
-        };
-        let clear_style = if self.armed() {
-            theme.heading.add_modifier(Modifier::BOLD)
-        } else if hover == Some(HistoryHit::ForgetAll) {
-            theme.hint_desc.add_modifier(Modifier::UNDERLINED)
-        } else {
-            theme.hint_desc
-        };
-        if !self.entries.is_empty() {
-            self.geom.clear = control(buf, clear_text, clear_style);
-            let menu_style = if hover == Some(HistoryHit::Menu) {
-                theme.hint_desc.add_modifier(Modifier::UNDERLINED)
-            } else {
-                theme.hint_desc
-            };
-            self.geom.menu = control(buf, " \u{22ef} actions ".into(), menu_style);
-        }
-        let filter_text = if self.filter_active || !self.filter.is_empty() {
-            let cursor = if self.filter_active { "\u{2588}" } else { "" };
-            format!(" /{}{} ", self.filter, cursor)
-        } else {
-            " / filter ".to_string()
-        };
-        let filter_style = if hover == Some(HistoryHit::Filter) || self.filter_active {
-            theme.hint_key.add_modifier(Modifier::UNDERLINED)
-        } else {
-            theme.hint_desc
-        };
-        self.geom.filter = control(buf, filter_text, filter_style);
-
-        let list = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
+        let list = area;
         self.geom.list = list;
         if self.entries.is_empty() {
             let (msg, detail) = if self.filter.is_empty() {
@@ -772,7 +720,7 @@ impl HistoryPage {
                 }
                 Line::Play(i) => {
                     let row = Rect::new(list.x, y, text_end - list.x, 1);
-                    self.render_play(buf, theme, *i, row, hover);
+                    self.render_play(buf, theme, *i, row, hover, links);
                 }
             }
         }
@@ -808,6 +756,7 @@ impl HistoryPage {
         i: usize,
         row: Rect,
         hover: Option<HistoryHit>,
+        links: &Links,
     ) {
         let (x0, y, end) = (row.x, row.y, row.x + row.width);
         let e = &self.entries[i];
@@ -815,7 +764,7 @@ impl HistoryPage {
         let selected = i == self.cursor;
         let hovered = matches!(
             hover,
-            Some(HistoryHit::Play(n) | HistoryHit::Artist(n) | HistoryHit::Album(n) | HistoryHit::Forget(n)) if n == i
+            Some(HistoryHit::Play(n) | HistoryHit::Forget(n)) if n == i
         );
         if selected {
             for cx in x0..end {
@@ -837,16 +786,11 @@ impl HistoryPage {
         } else {
             theme.hint_desc
         };
-        let link = |on: bool| {
-            let base = if selected {
+        let link = || {
+            if selected {
                 theme.library_cursor
             } else {
                 theme.hint_desc
-            };
-            if on {
-                base.add_modifier(Modifier::UNDERLINED)
-            } else {
-                base
             }
         };
 
@@ -899,27 +843,27 @@ impl HistoryPage {
 
         let artist_x = left + title_w as u16 + 2;
         let album_x = artist_x + artist_w as u16 + 2;
-        for (text, x, w, hit, linked) in [
+        for (text, x, w, to) in [
             (
                 &t.artist_name,
                 artist_x,
                 artist_w,
-                HistoryHit::Artist(i),
-                t.artist_id.is_some(),
+                t.artist_id.map(Link::Artist),
             ),
             (
                 &t.album_title,
                 album_x,
                 album_w,
-                HistoryHit::Album(i),
-                t.album_id.is_some(),
+                t.album_id.map(Link::Album),
             ),
         ] {
-            let shown = fit(text, w);
-            let cells = width(&shown) as u16;
-            buf.set_string(x, y, &shown, link(linked && hover == Some(hit)));
-            if linked {
-                self.geom.links.push((Rect::new(x, y, cells, 1), hit));
+            match to {
+                Some(to) => {
+                    links.draw(buf, x, y, text, w as u16, link(), to);
+                }
+                None => {
+                    buf.set_stringn(x, y, fit(text, w), w, link());
+                }
             }
         }
     }
@@ -976,15 +920,22 @@ mod tests {
     }
 
     fn draw(p: &mut HistoryPage, w: u16, h: u16) -> Buffer {
+        draw_with(p, w, h, &Links::default())
+    }
+
+    fn draw_with(p: &mut HistoryPage, w: u16, h: u16, links: &Links) -> Buffer {
         let area = Rect::new(0, 0, w, h);
         let mut buf = Buffer::empty(area);
-        p.render(
-            area,
-            &mut buf,
-            &Theme::new(super::super::theme::Palette::Ansi, (125, 211, 167)),
-            None,
-        );
+        let theme = Theme::new(super::super::theme::Palette::Ansi, (125, 211, 167));
+        p.render(area, &mut buf, &theme, None, links);
         buf
+    }
+
+    /// Where the artist link of each line starts.
+    fn artist_links(links: &Links, w: u16, h: u16) -> Vec<u16> {
+        (0..h)
+            .filter_map(|y| (0..w).find(|&x| matches!(links.at(x, y), Some(Link::Artist(_)))))
+            .collect()
     }
 
     fn text(buf: &Buffer) -> String {
@@ -1015,7 +966,7 @@ mod tests {
     fn a_click_selects_and_a_second_plays() {
         let mut p = page();
         draw(&mut p, 100, 12);
-        let hit = p.hit(40, 3).expect("a play under the pointer");
+        let hit = p.hit(40, 2).expect("a play under the pointer");
         assert_eq!(hit, HistoryHit::Play(1));
         assert_eq!(p.click(hit, KeyModifiers::NONE), Action::None);
         assert!(matches!(p.click(hit, KeyModifiers::NONE), Action::Play(ids, _) if ids == vec![2]));
@@ -1024,16 +975,12 @@ mod tests {
     #[test]
     fn the_artist_and_record_are_links() {
         let mut p = page();
-        draw(&mut p, 100, 12);
-        let (rect, hit) = p
-            .geom
-            .links
-            .iter()
-            .find(|(_, h)| matches!(h, HistoryHit::Artist(0)))
-            .cloned()
-            .expect("an artist link");
-        assert_eq!(p.hit(rect.x, rect.y), Some(hit));
-        assert_eq!(p.click(hit, KeyModifiers::NONE), Action::OpenArtist(2));
+        let links = Links::default();
+        draw_with(&mut p, 100, 12, &links);
+        let x = artist_links(&links, 100, 12)[0];
+        assert_eq!(links.at(x, 1), Some(Link::Artist(2)));
+        let album = (x..100).find(|&cx| links.at(cx, 1) == Some(Link::Album(1)));
+        assert!(album.is_some(), "the album is a link too");
     }
 
     #[test]
@@ -1081,8 +1028,12 @@ mod tests {
                 .iter()
                 .any(|(l, a)| l == "Track info" && *a == Action::Info(2))
         );
-        let menu = p.geom.menu;
-        assert_eq!(p.hit(menu.x, menu.y), Some(HistoryHit::Menu));
+        let bar = p.toolbar();
+        assert!(
+            bar.items
+                .iter()
+                .any(|i| i.key == KeyEvent::from(KeyCode::Char('m')))
+        );
     }
 
     #[test]
@@ -1190,14 +1141,9 @@ mod tests {
         p.entries[0].track.duration_ms = Some(3_723_000);
         p.entries[1].track.duration_ms = Some(9_000);
         p.rebuild();
-        draw(&mut p, 100, 12);
-        let artist_x: Vec<u16> = p
-            .geom
-            .links
-            .iter()
-            .filter(|(_, h)| matches!(h, HistoryHit::Artist(_)))
-            .map(|(r, _)| r.x)
-            .collect();
+        let links = Links::default();
+        draw_with(&mut p, 100, 12, &links);
+        let artist_x = artist_links(&links, 100, 12);
         assert_eq!(artist_x.len(), 3);
         assert!(artist_x.windows(2).all(|w| w[0] == w[1]), "{artist_x:?}");
     }
