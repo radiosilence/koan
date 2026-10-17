@@ -1,0 +1,1 @@
+- **Terminal UI: cover art under tmux.** Kitty images now draw inside tmux, from ratatui-image 11. The minimum supported Rust version is 1.90.
