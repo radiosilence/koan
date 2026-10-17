@@ -768,8 +768,10 @@ impl App {
         } else if super::tasks::take_library_changed() {
             self.reload_library_pages();
         }
-        if self.page() == Page::History && !self.history_page.filter_active {
-            self.history_page.refresh();
+        if self.page() == Page::History
+            && let Some(error) = self.history_page.poll()
+        {
+            self.say(error);
         }
         self.artist_page.poll();
         self.search_page.poll();
