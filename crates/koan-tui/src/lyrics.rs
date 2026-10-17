@@ -5,6 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Widget};
 
 use koan_core::lyrics::{LrcLine, Lyrics, current_line_index, parse_lrc};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::theme::Theme;
 
@@ -161,10 +162,33 @@ fn render_plain(content: &str, area: Rect, buf: &mut Buffer, theme: &Theme) {
 
 /// `s` cut to `max_width` cells, with an ellipsis where it was cut.
 fn truncate_to_width(s: &str, max_width: usize) -> String {
-    if s.chars().count() <= max_width {
+    if s.width() <= max_width {
         return s.to_string();
     }
-    let mut cut: String = s.chars().take(max_width.saturating_sub(1)).collect();
+    let mut cut = String::new();
+    let mut used = 0;
+    for c in s.chars() {
+        used += c.width().unwrap_or(0);
+        if used >= max_width {
+            break;
+        }
+        cut.push(c);
+    }
     cut.push('\u{2026}');
     cut
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_cut_line_fits_its_cells() {
+        assert_eq!(truncate_to_width("abc", 3), "abc");
+        assert_eq!(truncate_to_width("abcdef", 4), "abc\u{2026}");
+        // Wide characters take two cells each.
+        let cut = truncate_to_width("夜に駆ける夜に駆ける", 7);
+        assert!(cut.width() <= 7, "{cut}");
+        assert!(cut.ends_with('\u{2026}'));
+    }
 }
