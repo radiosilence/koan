@@ -15,7 +15,7 @@ use nucleo::pattern::{CaseMatching, Normalization};
 use nucleo::{Config, Nucleo};
 
 use super::shell;
-use super::text::width;
+use super::text::{fit, fit_pad, fit_pad_right, width};
 use super::theme::Theme;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -378,6 +378,69 @@ impl<'a> PickerOverlay<'a> {
     }
 }
 
+/// The cells a row's number takes: "2.01 ".
+const NUMBER_W: usize = 5;
+/// The cells the length or codec at a row's end takes.
+const TAIL_W: usize = 9;
+
+/// A row's parts laid out in columns `cells` wide in all: its number,
+/// then its artist and its title (or album), each cut to its column with an
+/// ellipsis, and its length or codec right-aligned at the end, so every row
+/// of a list lines up with the others.
+fn columns(parts: &[(String, PickerPartKind)], cells: usize) -> Vec<(String, PickerPartKind)> {
+    use PickerPartKind::{Artist, Codec, Duration, Separator, TrackNum};
+    let joined = |kinds: &dyn Fn(PickerPartKind) -> bool| -> (String, Option<PickerPartKind>) {
+        let mut text = String::new();
+        let mut kind = None;
+        for (t, k) in parts.iter().filter(|(_, k)| kinds(*k)) {
+            text.push_str(t.trim_matches(' '));
+            text.push(' ');
+            kind.get_or_insert(*k);
+        }
+        (text.trim_end().to_string(), kind)
+    };
+    let (number, _) = joined(&|k| k == TrackNum);
+    let (artist, _) = joined(&|k| k == Artist);
+    let (tail, tail_kind) = joined(&|k| matches!(k, Duration | Codec));
+    let rest: Vec<&(String, PickerPartKind)> = parts
+        .iter()
+        .filter(|(_, k)| !matches!(k, TrackNum | Artist | Duration | Codec | Separator))
+        .collect();
+    let mut out = Vec::new();
+    let mut left = cells;
+    if !number.is_empty() {
+        let w = NUMBER_W.min(left);
+        out.push((fit_pad(&number, w), TrackNum));
+        left -= w;
+    }
+    let tail_w = if tail.is_empty() { 0 } else { TAIL_W.min(left) };
+    left -= tail_w;
+    if rest.is_empty() {
+        out.push((fit_pad(&artist, left), Artist));
+    } else {
+        let artist_w = if artist.is_empty() { 0 } else { left * 2 / 5 };
+        if artist_w > 0 {
+            out.push((fit_pad(&artist, artist_w.saturating_sub(2)), Artist));
+            out.push(("  ".into(), Separator));
+        }
+        // The rest in one column, each part in its own style.
+        let mut room = left - artist_w;
+        for (i, (text, kind)) in rest.iter().enumerate() {
+            let text = if i + 1 == rest.len() {
+                fit_pad(text, room)
+            } else {
+                fit(text, room)
+            };
+            room -= width(&text).min(room);
+            out.push((text, *kind));
+        }
+    }
+    if tail_w > 0 {
+        out.push((fit_pad_right(&tail, tail_w), tail_kind.unwrap_or(Duration)));
+    }
+    out
+}
+
 impl Widget for PickerOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let popup = picker_popup_rect(area);
@@ -451,12 +514,13 @@ impl Widget for PickerOverlay<'_> {
                 Span::styled(" ", row_style),
                 Span::styled(marker, row_style),
             ];
+            let room = (results.width as usize).saturating_sub(4);
             if item.parts.is_empty() {
-                spans.push(Span::styled(item.display.as_str(), row_style));
+                spans.push(Span::styled(fit(&item.display, room), row_style));
             } else {
-                for (text, kind) in &item.parts {
-                    let style = theme.picker_part_style(*kind).patch(row_style);
-                    spans.push(Span::styled(text.as_str(), style));
+                for (text, kind) in columns(&item.parts, room) {
+                    let style = theme.picker_part_style(kind).patch(row_style);
+                    spans.push(Span::styled(text, style));
                 }
             }
             buf.set_line(results.x, y, &Line::from(spans), results.width);
@@ -543,6 +607,54 @@ mod tests {
             picked: Vec::new(),
             multi: true,
         }
+    }
+
+    fn track(
+        number: &str,
+        artist: &str,
+        title: &str,
+        length: &str,
+    ) -> Vec<(String, PickerPartKind)> {
+        use PickerPartKind::*;
+        vec![
+            (format!("{number} "), TrackNum),
+            (artist.into(), Artist),
+            (" - ".into(), Separator),
+            (title.into(), Title),
+            (format!(" {length}"), Duration),
+        ]
+    }
+
+    fn row(parts: &[(String, PickerPartKind)]) -> String {
+        parts.iter().map(|(t, _)| t.as_str()).collect()
+    }
+
+    #[test]
+    fn rows_line_up_and_a_long_title_ends_in_an_ellipsis() {
+        let long = columns(
+            &track(
+                "01",
+                "Pnau",
+                "No More Violence — Extended Club Mix With An Unreasonably Long Title",
+                "0:20",
+            ),
+            60,
+        );
+        let short = columns(&track("2.01", "久石譲", "あの夏へ", "12:34"), 60);
+        let (long, short) = (row(&long), row(&short));
+        assert_eq!(width(&long), 60);
+        assert_eq!(width(&short), 60);
+        assert!(long.contains('\u{2026}'), "{long}");
+        assert!(long.ends_with("0:20") && short.ends_with("12:34"));
+        let title_at = |r: &str, t: &str| width(&r[..r.find(t).unwrap()]);
+        assert_eq!(title_at(&long, "No More"), title_at(&short, "あの夏へ"));
+    }
+
+    #[test]
+    fn an_artist_alone_takes_the_row() {
+        let parts = vec![("DJ 🔥 Fuego".to_string(), PickerPartKind::Artist)];
+        assert_eq!(width(&row(&columns(&parts, 20))), 20);
+        assert_eq!(width(&row(&columns(&parts, 4))), 4);
     }
 
     #[test]
