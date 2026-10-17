@@ -3080,6 +3080,7 @@ dependencies = [
  "reqwest",
  "souvlaki",
  "tempfile",
+ "unicode-width",
  "uuid",
 ]
 

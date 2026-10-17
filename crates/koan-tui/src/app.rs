@@ -1278,6 +1278,25 @@ impl App {
                 self.say(format!("deleted '{name}'"));
                 self.go_page(Page::Playlists);
             }
+            PlAction::Play(id, shuffled) => {
+                let entries = super::playlist_ops::entries(id);
+                match super::playlist_ops::queue_command(&entries, None, shuffled) {
+                    Some(cmd) => {
+                        self.tx.send(cmd).ok();
+                    }
+                    None => self.say("nothing in it to play"),
+                }
+            }
+            PlAction::Delete(id) => {
+                let name = super::playlist_ops::get(id)
+                    .map(|p| p.name)
+                    .unwrap_or_default();
+                match super::playlist_ops::delete(id) {
+                    Ok(()) => self.say(format!("deleted '{name}'")),
+                    Err(e) => self.say(e),
+                }
+                self.playlists_changed();
+            }
             PlAction::Page(act) => {
                 let next = self
                     .playlist_page

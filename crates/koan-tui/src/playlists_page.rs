@@ -48,6 +48,10 @@ pub enum PlAction {
     Deleted(String),
     /// Something for the playlist's own page to do.
     Page(PageAct),
+    /// Play the playlist with this id, shuffled or not.
+    Play(i64, bool),
+    /// Delete the playlist with this id, as asked for from its menu.
+    Delete(i64),
 }
 
 fn inside(r: Rect, col: u16, row: u16) -> bool {
@@ -207,14 +211,36 @@ impl PlaylistsPage {
 
     /// Plays the playlist at `idx`.
     fn play(&self, idx: usize) -> PlAction {
+        self.at(idx)
+            .map_or(PlAction::None, |list| PlAction::Play(list.id, false))
+    }
+
+    /// The menu for the playlist at `idx`, as the apps' sidebar row has it.
+    fn menu(&self, idx: usize) -> PlAction {
         let Some(list) = self.at(idx) else {
             return PlAction::None;
         };
-        let entries = ops::entries(list.id);
-        match ops::queue_command(&entries, None, false) {
-            Some(cmd) => PlAction::Command(cmd),
-            None => PlAction::Say(format!("'{}' has nothing to play", list.name)),
+        let item = |label: &str, action| (label.to_string(), Item::Playlist(action));
+        let mut items = vec![
+            item("Play", PlAction::Play(list.id, false)),
+            item("Shuffle", PlAction::Play(list.id, true)),
+            (String::new(), Item::Playlist(PlAction::None)),
+        ];
+        if list.source_path.is_none() {
+            items.push(item(
+                "Rename\u{2026}",
+                PlAction::Rename(list.id, list.name.clone()),
+            ));
         }
+        items.extend([
+            item(
+                "Export as M3U8\u{2026}",
+                PlAction::Export(list.id, list.name.clone()),
+            ),
+            (String::new(), Item::Playlist(PlAction::None)),
+            item("Delete", PlAction::Delete(list.id)),
+        ]);
+        PlAction::Menu(list.name.clone(), items)
     }
 
     fn track_ids(&self, idx: usize) -> Vec<i64> {
@@ -298,6 +324,7 @@ impl PlaylistsPage {
                 ));
             }
             KeyCode::Char('c') | KeyCode::Char('+') => return Some(PlAction::New),
+            KeyCode::Char('m') => return Some(self.menu(self.cursor)),
             KeyCode::Char('r') => return Some(self.at(self.cursor).map_or(PlAction::None, rename)),
             KeyCode::Char('x') | KeyCode::Delete => return Some(self.delete(self.cursor)),
             KeyCode::Char('/') => self.filter_active = true,
@@ -1639,6 +1666,28 @@ mod tests {
         assert!(
             matches!(p.apply(PageAct::Delete), PlAction::Say(s) if s.contains("press again")),
             "anything else in between disarms it"
+        );
+    }
+
+    #[test]
+    fn a_playlist_in_the_list_has_the_apps_menu() {
+        let mut p = list_page();
+        p.all[0].source_path = Some("/music/a.m3u8".into());
+        let PlAction::Menu(_, items) = p.menu(0) else {
+            panic!("a menu");
+        };
+        let labels: Vec<&str> = items.iter().map(|(l, _)| l.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "Play",
+                "Shuffle",
+                "",
+                "Export as M3U8\u{2026}",
+                "",
+                "Delete"
+            ],
+            "a playlist named by its file is not offered a rename"
         );
     }
 }

@@ -354,28 +354,36 @@ impl Widget for PickerOverlay<'_> {
             }
         }
 
-        // Hint bar.
-        let hints = if self.state.multi {
-            vec![
-                Span::styled(" \u{2191}\u{2193}", self.theme.hint_key),
-                Span::styled(" navigate  ", self.theme.hint_desc),
-                Span::styled("tab", self.theme.hint_key),
-                Span::styled(" select  ", self.theme.hint_desc),
-                Span::styled("enter", self.theme.hint_key),
-                Span::styled(" confirm  ", self.theme.hint_desc),
-                Span::styled("esc", self.theme.hint_key),
-                Span::styled(" cancel", self.theme.hint_desc),
-            ]
+        // What Enter and its neighbours do with what is picked.
+        let key = |k: &'static str| Span::styled(k, self.theme.hint_key);
+        let desc = |d: &'static str| Span::styled(d, self.theme.hint_desc);
+        let mut hints = vec![Span::raw(" ")];
+        let picked = self.state.selected.len();
+        if picked > 0 {
+            hints.push(Span::styled(
+                format!("{picked} selected  "),
+                self.theme.album_header_album,
+            ));
+        }
+        if self.state.multi {
+            hints.extend([key("tab"), desc(" select  ")]);
+        }
+        let commits = matches!(self.state.kind, PickerKind::Track | PickerKind::Album);
+        if commits {
+            hints.extend([
+                key("ret"),
+                desc(" add  "),
+                key("C-ret"),
+                desc(" add & play  "),
+                key("C-r"),
+                desc(" replace queue  "),
+            ]);
+        } else if self.state.kind == PickerKind::QueueJump {
+            hints.extend([key("ret"), desc(" play  ")]);
         } else {
-            vec![
-                Span::styled(" \u{2191}\u{2193}", self.theme.hint_key),
-                Span::styled(" navigate  ", self.theme.hint_desc),
-                Span::styled("enter", self.theme.hint_key),
-                Span::styled(" select  ", self.theme.hint_desc),
-                Span::styled("esc", self.theme.hint_key),
-                Span::styled(" cancel", self.theme.hint_desc),
-            ]
-        };
+            hints.extend([key("ret"), desc(" open  ")]);
+        }
+        hints.extend([key("esc"), desc(" cancel")]);
         let hint_line = Line::from(hints);
         buf.set_line(chunks[2].x, chunks[2].y, &hint_line, chunks[2].width);
     }
