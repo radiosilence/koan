@@ -183,8 +183,6 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         private var selectAllToken: Int?
         private var rewinds: Int?
         private var restored = false
-        /// How far the list could scroll at its last layout, while restoring.
-        private var lastReach: CGFloat?
         /// Set while the rows are reloaded, whose selection changes are not
         /// the person's.
         private var reloading = false
@@ -296,9 +294,9 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         /// during SwiftUI's update, where laying the table out is an AppKit
         /// exception. Until then the offset is not noted, so a distance the
         /// first page cannot reach is not overwritten by one it can. A complete
-        /// listing that still falls short, laid out twice at the same size, is
-        /// scrolled to its end and the wait is over; so is anything the person
-        /// does in the list meanwhile.
+        /// listing that still falls short, laid out in its window, is scrolled
+        /// to its end and the wait is over; so is anything the person does in
+        /// the list meanwhile.
         func laidOut() {
             guard !restored, !ids.isEmpty, let parent, let table, let scroll else { return }
             guard let offset = parent.offset else {
@@ -307,8 +305,7 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             }
             let reach = table.frame.height - scroll.contentView.bounds.height
                 + scroll.contentInsets.top + scroll.contentInsets.bottom
-            let settled = parent.complete && reach == lastReach
-            lastReach = reach
+            let settled = parent.complete && table.window != nil && scroll.contentView.bounds.height > 0
             if offset <= reach || settled { restored = true }
             self.scroll(to: min(offset, max(reach, 0)))
         }

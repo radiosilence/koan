@@ -89,7 +89,11 @@ final class LibraryModel {
     /// Adopt a listing, at the moment the navigator moves to it.
     func show(_ listing: Listing) {
         loading?.cancel()
-        leftFilters[section] = filter
+        if case .playlist(let id) = section, playlistIds?.contains(id) == false {
+            leftFilters[section] = nil
+        } else {
+            leftFilters[section] = filter
+        }
         section = listing.section
         // Quietly: the rows for this section are already in hand, so emptying
         // the filter it arrives with is not a reason to ask for them again.
@@ -129,11 +133,16 @@ final class LibraryModel {
     /// otherwise open with its filter.
     func keepPlaylists(_ ids: [Int64]) {
         let kept = Set(ids)
+        playlistIds = kept
         leftFilters = leftFilters.filter { section, _ in
             guard case .playlist(let id) = section else { return true }
             return kept.contains(id)
         }
     }
+
+    /// The playlists that exist, once read: a playlist deleted while on
+    /// screen can be gone from them before the move away from it lands.
+    @ObservationIgnored private var playlistIds: Set<Int64>?
 
     /// Point a browser at a shelf: its filters and sort set to the shelf's, so
     /// the listing it opens on is the one the shelf's preview is the head of
@@ -380,7 +389,7 @@ final class LibraryModel {
     /// appended as it lands. Part of the load it follows: anything that
     /// reloads cancels it, so a page of the old listing never lands on the new.
     private func continueTracks() {
-        pagingTracks = false
+        if pagingTracks { pagingTracks = false }
         guard section == .tracks, UInt64(visibleTracks.count) < trackTotal else { return }
         let request = self.request
         let from = visibleTracks.count
