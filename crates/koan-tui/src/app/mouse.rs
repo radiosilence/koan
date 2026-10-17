@@ -480,6 +480,11 @@ impl App {
                 }
                 self.apply_browse(action);
             }
+            Page::Eq => {
+                if self.eq_page.click(col, row) == Some(crate::eq_page::Outcome::Leave) {
+                    self.leave_page();
+                }
+            }
             Page::Settings => {
                 let p = &mut self.settings_page;
                 let mut outcome = None;
@@ -790,6 +795,12 @@ impl App {
                 }
                 Page::History => self.history_page.scroll_by(3 * delta),
                 Page::Settings => self.settings_page.scroll_by(3 * delta),
+                // Over a band's figure the wheel nudges it.
+                Page::Eq => {
+                    if !self.eq_page.wheel_at(col, row, delta < 0) {
+                        self.eq_page.scroll_by(delta);
+                    }
+                }
                 Page::Album(_) => {
                     if let Some(p) = self.album_page.as_mut() {
                         p.scroll_by(3 * delta);

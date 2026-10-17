@@ -410,6 +410,10 @@ pub fn run_tui(
             match event {
                 Event::Key(key) => app.handle_key(key),
                 Event::Mouse(mouse) => app.handle_mouse(mouse),
+                // Files dropped on the EQ page are EQs to import.
+                Event::Paste(text) if app.page() == super::nav::Page::Eq => {
+                    app.eq_page.paste(&text);
+                }
                 // Into the text field that has the keys, or else the queue.
                 Event::Paste(text) if app.takes_text() => app.type_text(&text),
                 Event::Paste(text) => import_dropped(&mut app, text, &callbacks),

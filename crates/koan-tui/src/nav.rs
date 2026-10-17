@@ -26,6 +26,8 @@ pub enum Page {
     Album(i64),
     /// One artist's records, by id.
     Artist(i64),
+    /// What the output plays: its correction, EQs and preset.
+    Eq,
 }
 
 impl Page {
@@ -64,6 +66,7 @@ impl Page {
             Page::Playlist(_) => "playlist",
             Page::Album(_) => "album",
             Page::Artist(_) => "artist",
+            Page::Eq => "eq",
         }
     }
 
@@ -73,6 +76,7 @@ impl Page {
             Page::Album(_) => Page::Albums,
             Page::Artist(_) => Page::Artists,
             Page::Playlist(_) => Page::Playlists,
+            Page::Eq => Page::Settings,
             other => other,
         }
     }
@@ -96,6 +100,7 @@ impl Page {
             Page::Playlist(_) => "playlist",
             Page::Album(_) => "album",
             Page::Artist(_) => "artist",
+            Page::Eq => "eq",
         }
     }
 
@@ -117,7 +122,8 @@ impl Page {
             | Page::Downloads
             | Page::Album(_)
             | Page::Artist(_)
-            | Page::Playlist(_) => return None,
+            | Page::Playlist(_)
+            | Page::Eq => return None,
         })
     }
 

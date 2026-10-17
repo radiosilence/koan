@@ -2908,81 +2908,23 @@ impl KoanEngine {
         rate: Option<u32>,
     ) -> Result<DspImportSummary, KoanError> {
         offload::sequenced(move || {
-            use koan_core::audio::dsp::{
-                import::{self, Batch, Outcome},
-                profiles,
-            };
             let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
-            let taken: Vec<String> = koan_core::config::Config::cached()
-                .dsp
-                .profiles
-                .iter()
-                .map(|p| p.name.clone())
-                .collect();
-            let batch = import::import_batch(&paths, rate, &taken).map_err(|e| {
-                log::warn!("dsp import: {e}");
-                dsp_error(e)
-            })?;
-            let mut summary = DspImportSummary {
-                imported: Vec::new(),
-                refused: Vec::new(),
-                notes: Vec::new(),
-                group: None,
-            };
-            match batch {
-                Batch::One(imported) => {
-                    // Never written over: a name already taken is numbered.
-                    let wanted = name
-                        .filter(|n| !n.trim().is_empty())
-                        .unwrap_or_else(|| imported.name.clone());
-                    let free = profiles::free_name(&wanted);
-                    if free != wanted {
-                        summary
-                            .notes
-                            .push(format!("{wanted} is taken; imported as {free}"));
-                    }
-                    summary.imported.push(self.save_dsp(imported, Some(free))?)
-                }
-                Batch::Group(each) => {
-                    for item in each {
-                        let file = item.file;
-                        let saved = match item.outcome {
-                            Outcome::Skipped(why) => {
-                                summary.notes.push(format!("{file} left out: {why}"));
-                                continue;
-                            }
-                            Outcome::Refused(e) => Err(e.to_string()),
-                            Outcome::Imported(i, note) => {
-                                summary.notes.extend(note.map(|n| format!("{file}: {n}")));
-                                self.save_dsp(i, None).map_err(|e| e.to_string())
-                            }
-                        };
-                        match saved {
-                            Ok(name) => summary.imported.push(name),
-                            Err(reason) => {
-                                log::warn!("dsp import: {file}: {reason}");
-                                summary.refused.push(DspImportRefusal { file, reason });
-                            }
-                        }
-                    }
-                    if summary.imported.len() > 1 {
-                        let wanted = name
-                            .filter(|n| !n.trim().is_empty())
-                            .unwrap_or_else(|| import::group_name(&summary.imported));
-                        let group = profiles::free_name(&wanted);
-                        if group != wanted {
-                            summary
-                                .notes
-                                .push(format!("{wanted} is taken; the group is {group}"));
-                        }
-                        profiles::make_group(&group, &summary.imported)
-                            .map_err(|message| KoanError::BadArgument { message })?;
-                        self.send_local(PlayerCommand::ReloadDsp)?;
-                        summary.group = Some(group);
-                    }
-                }
+            let summary =
+                koan_core::audio::dsp::profiles::import_files(&paths, name.as_deref(), rate)
+                    .map_err(dsp_error)?;
+            if !summary.imported.is_empty() {
+                self.send_local(PlayerCommand::ReloadDsp)?;
             }
-            Ok(summary)
+            Ok(DspImportSummary {
+                imported: summary.imported,
+                refused: summary
+                    .refused
+                    .into_iter()
+                    .map(|(file, reason)| DspImportRefusal { file, reason })
+                    .collect(),
+                notes: summary.notes,
+                group: summary.group,
+            })
         })
         .await
     }

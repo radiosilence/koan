@@ -19,6 +19,9 @@ pub mod dsp_selector;
 #[cfg(test)]
 mod dumps;
 pub mod enqueue;
+pub mod eq_graph;
+pub mod eq_page;
+pub mod eq_worker;
 pub mod help_modal;
 pub mod history_page;
 pub mod keys;

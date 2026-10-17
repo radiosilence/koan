@@ -6,9 +6,6 @@
 //! spectrogram, the lyrics and the EQ's curve. Everything moving on the page
 //! is driven by the music.
 
-use std::sync::Arc;
-
-use crossbeam_channel::Receiver;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -16,7 +13,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
 use koan_core::audio::dsp::DspStatus;
-use koan_core::config::{Config, ReplayGainMode};
+use koan_core::config::ReplayGainMode;
 use koan_core::player::state::{PlaybackState, QueueEntry, QueueItemId, TrackInfo};
 
 use super::app::App;
@@ -27,7 +24,7 @@ use super::transport::{
     self, Act, Control, MINI_BARS, TransportBar, badge, dsp_label, format_quality, place, press,
     width_of,
 };
-use super::visualizer::{BrailleGrid, VisualizerWidget, render_spectrogram};
+use super::visualizer::{VisualizerWidget, render_spectrogram};
 
 /// Narrower than this and the page stacks the cover over the words.
 const SIDE_BY_SIDE: u16 = 90;
@@ -38,61 +35,8 @@ const INFO_MAX: u16 = 76;
 /// What the page keeps between frames.
 #[derive(Default)]
 pub struct State {
-    pub eq_curve: EqCurve,
     /// The track the true-peak hold belongs to.
     peak_track: Option<QueueItemId>,
-}
-
-/// A response curve and the profile it is the curve of.
-type Curve = (String, Vec<f64>);
-
-/// The curve the page plots, worked out on a thread of its own whenever the
-/// profile, the rate or the profiles it is built from change: building a
-/// profile can read and resample impulse files, which no frame can wait for.
-/// The last curve stays up until its replacement arrives.
-#[derive(Default)]
-pub struct EqCurve {
-    made_for: Option<(String, u32, Arc<Config>)>,
-    /// The curve shown, with the profile it is the curve of.
-    total: Option<Curve>,
-    pending: Option<Receiver<Option<Curve>>>,
-}
-
-impl EqCurve {
-    /// The curve to plot and the profile it belongs to, which is the last
-    /// one's until a new profile's curve arrives.
-    fn get(&mut self, profile: &str, rate: u32, cfg: &Arc<Config>) -> Option<(&str, &[f64])> {
-        // Every config write is a new `Arc`; only the profiles shape the curve.
-        let current = self.made_for.as_mut().is_some_and(|(p, r, c)| {
-            let same = p == profile
-                && *r == rate
-                && (Arc::ptr_eq(c, cfg) || c.dsp.profiles == cfg.dsp.profiles);
-            if same {
-                *c = cfg.clone();
-            }
-            same
-        });
-        if !current {
-            self.made_for = Some((profile.to_owned(), rate, cfg.clone()));
-            let (tx, rx) = crossbeam_channel::bounded(1);
-            let profile = profile.to_owned();
-            std::thread::Builder::new()
-                .name("koan-eq-curve".into())
-                .spawn(move || {
-                    let curve = koan_core::audio::dsp::profiles::response(&profile, rate);
-                    tx.send(curve.map(|c| (profile, c.total))).ok();
-                })
-                .ok();
-            self.pending = Some(rx);
-        }
-        if let Some(rx) = &self.pending
-            && let Ok(total) = rx.try_recv()
-        {
-            self.total = total;
-            self.pending = None;
-        }
-        self.total.as_ref().map(|(p, c)| (p.as_str(), c.as_slice()))
-    }
 }
 
 /// What stands between the file and the device. `None` is bit-perfect.
@@ -143,11 +87,11 @@ fn db_label(level: f32) -> String {
 /// zero line, dB labels down the side and a frequency axis under it. The
 /// vertical range is the curve's own, at least ±6 dB. The first row says what
 /// the curve is.
-fn eq_plot(area: Rect, buf: &mut Buffer, theme: &Theme, profile: &str, db: &[f64]) {
+fn eq_plot(area: Rect, buf: &mut Buffer, theme: &Theme, title: &str, freqs: &[f64], db: &[f64]) {
     if area.width < 14 || area.height < 5 || db.is_empty() {
         return;
     }
-    let heading = format!("eq \u{b7} {profile}");
+    let heading = format!("eq \u{b7} {title}");
     buf.set_stringn(
         area.x,
         area.y,
@@ -155,53 +99,22 @@ fn eq_plot(area: Rect, buf: &mut Buffer, theme: &Theme, profile: &str, db: &[f64
         area.width as usize,
         theme.hint_desc,
     );
-    let label_w = 5u16;
-    let plot = Rect::new(
-        area.x + label_w,
-        area.y + 1,
-        area.width - label_w,
-        area.height - 2,
+    super::eq_graph::EqGraph {
+        freqs,
+        curves: vec![super::eq_graph::Curve {
+            db,
+            color: theme.tokens.accent,
+            dash: super::eq_graph::SOLID,
+        }],
+        handles: Vec::new(),
+        level: 0.0,
+        note: None,
+    }
+    .render(
+        Rect::new(area.x, area.y + 1, area.width, area.height - 1),
+        buf,
+        theme,
     );
-    let range = db.iter().fold(6.0f64, |m, v| m.max(v.abs())).ceil();
-    let mut grid = BrailleGrid::new(plot.width as usize, plot.height as usize);
-    let (pw, ph) = (grid.px_width(), grid.px_height());
-    let y_of = |v: f64| {
-        ((1.0 - (v + range) / (2.0 * range)) * (ph - 1) as f64).clamp(0.0, (ph - 1) as f64)
-    };
-    let zero = y_of(0.0) as usize;
-    for x in (0..pw).step_by(2) {
-        grid.set_dot(x, zero, theme.tokens.rule);
-    }
-    let mut prev: Option<(f32, f32)> = None;
-    for x in 0..pw {
-        let i = x * (db.len() - 1) / (pw - 1).max(1);
-        let point = (x as f32, y_of(db[i]) as f32);
-        if let Some((px, py)) = prev {
-            grid.draw_line(px, py, point.0, point.1, theme.tokens.accent);
-        }
-        prev = Some(point);
-    }
-    grid.render_to(plot, buf);
-    let label = |v: f64| format!("{:>+4.0} ", v);
-    let style = theme.hint_desc;
-    buf.set_string(area.x, plot.y, label(range), style);
-    buf.set_string(area.x, plot.y + plot.height / 2, label(0.0), style);
-    buf.set_string(area.x, plot.y + plot.height - 1, label(-range), style);
-    // The frequency axis: the curve runs 20 Hz to 20 kHz on a log scale.
-    let axis_y = area.y + area.height - 1;
-    for (hz, text) in [
-        (50.0f64, "50"),
-        (200.0, "200"),
-        (1000.0, "1k"),
-        (5000.0, "5k"),
-        (15000.0, "15k"),
-    ] {
-        let t = (hz / 20.0).log10() / (20000.0f64 / 20.0).log10();
-        let x = plot.x + (t * plot.width.saturating_sub(1) as f64).round() as u16;
-        if x + text.len() as u16 <= plot.x + plot.width {
-            buf.set_string(x, axis_y, text, style);
-        }
-    }
 }
 
 /// The transport bar, as everything that draws it fills it in.
@@ -307,10 +220,6 @@ pub fn render(buf: &mut Buffer, app: &mut App, area: Rect) {
         app.now_playing.peak_track = Some(info.id);
         app.visualizer.true_peak_hold = 0.0;
     }
-    let cfg = app.cfg.clone();
-    let output_rate = app.state.output_sample_rate();
-    let dsp = app.state.dsp();
-
     // The cover, square in the terminal's cells: beside the words where the
     // page is wide, over them where it is not.
     let wide = page.width >= SIDE_BY_SIDE;
@@ -420,11 +329,14 @@ pub fn render(buf: &mut Buffer, app: &mut App, area: Rect) {
         }
     }
 
-    let curve = dsp.as_ref().and_then(|d| {
-        let rate = output_rate.unwrap_or(info.sample_rate);
-        app.now_playing.eq_curve.get(&d.profile, rate, &cfg)
-    });
-    let plot_h = match curve {
+    // Read off the frame by the EQ page's worker: what the output in use
+    // plays, its correction and the EQs on it together.
+    let curve = app
+        .state
+        .dsp()
+        .and(app.eq_page.playing.clone())
+        .filter(|p| !p.db.is_empty());
+    let plot_h = match &curve {
         Some(_) if words_side.height >= 14 => 9,
         _ => 0,
     };
@@ -436,14 +348,14 @@ pub fn render(buf: &mut Buffer, app: &mut App, area: Rect) {
     );
     let pos = app.state.position_ms();
     LyricsPanel::new(&app.lyrics, pos, &app.theme, app.spinner_tick).render(lyrics_area, buf);
-    if let (Some((profile, curve)), true) = (curve, plot_h > 0) {
+    if let (Some(curve), true) = (&curve, plot_h > 0) {
         let plot = Rect::new(
             words_side.x + 1,
             lyrics_area.y + lyrics_area.height,
             words_side.width.saturating_sub(1),
             plot_h,
         );
-        eq_plot(plot, buf, &app.theme, profile, curve);
+        eq_plot(plot, buf, &app.theme, &curve.title, &curve.freqs, &curve.db);
         app.layout.eq_hits.push(plot);
     }
 }
@@ -900,35 +812,6 @@ pub(crate) mod tests {
             channels: 2,
             duration_ms: 1000,
         }
-    }
-
-    #[test]
-    fn the_curve_survives_config_writes_that_leave_the_profiles_alone() {
-        let cfg = Arc::new(Config::default());
-        let mut curve = EqCurve {
-            made_for: Some(("flat".into(), 44100, cfg.clone())),
-            total: Some(("flat".into(), vec![1.0])),
-            pending: None,
-        };
-        let mut unrelated = (*cfg).clone();
-        unrelated.visualizer.enabled = !unrelated.visualizer.enabled;
-        assert_eq!(
-            curve.get("flat", 44100, &Arc::new(unrelated)),
-            Some(("flat", &[1.0][..]))
-        );
-        assert!(curve.pending.is_none(), "nothing is rebuilt");
-
-        let mut edited = (*cfg).clone();
-        edited.dsp.profiles.push(koan_core::config::DspProfile {
-            name: "flat".into(),
-            ..Default::default()
-        });
-        assert_eq!(
-            curve.get("flat", 44100, &Arc::new(edited)),
-            Some(("flat", &[1.0][..])),
-            "the old curve stays up while the new one is worked out"
-        );
-        assert!(curve.pending.is_some());
     }
 
     #[test]
