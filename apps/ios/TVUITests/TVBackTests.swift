@@ -125,7 +125,6 @@ final class TVBackTests: XCTestCase {
         let field = app.textFields["name-filter"]
         press(.down)
         XCTAssertFalse(field.hasFocus, "an artist's row has focus")
-        let row = focusedFrame()
         remote.press(.select, forDuration: 1.5)
         pause(2)
         reach(app.buttons[any: "Share…"], by: .down)
@@ -137,7 +136,14 @@ final class TVBackTests: XCTestCase {
         XCTAssertEqual(app.state, .runningForeground, "Menu closes the code, not the app")
         snap("13-after-share")
         XCTAssertFalse(field.hasFocus, "focus is not on the filter field")
-        XCTAssertEqual(focusedFrame(), row, "focus is back on the row the code was shared from")
+        // The row is not reported as focused; what it does shows it is.
+        remote.press(.select, forDuration: 1.5)
+        pause(2)
+        XCTAssertTrue(app.buttons[any: "Share…"].exists, "a long press opens an artist's menu: a row has focus")
+        press(.menu)
+        pause(2)
+        press(.up)
+        XCTAssertTrue(field.hasFocus, "Up reaches the filter field: the row is the first, the one shared from")
     }
 
     /// EQ's preset choice takes focus from the page behind it and keeps it
@@ -147,7 +153,7 @@ final class TVBackTests: XCTestCase {
         reach(app.buttons[any: "EQ"], by: .down)
         press(.select)
         pause(3)
-        choosePreset("14-eq-presets")
+        choosePreset("14-eq-presets", by: .down)
         let manage = app.buttons[any: "Manage EQ"]
         reach(manage, by: .down)
         press(.select)
@@ -155,15 +161,15 @@ final class TVBackTests: XCTestCase {
         press(.menu)
         pause(2)
         XCTAssertTrue(manage.waitForExistence(timeout: 3), "back on the EQ page")
-        choosePreset("15-eq-presets-after-manage")
+        choosePreset("15-eq-presets-after-manage", by: .up)
     }
 
     /// Opens the preset choice, checks that focus is in it and stays there,
     /// and closes it with Menu.
-    private func choosePreset(_ shot: String) {
+    private func choosePreset(_ shot: String, by direction: XCUIRemote.Button) {
         // The row reads its choice too: "Preset, Flat" or as tvOS joins them.
         let preset = app.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] %@", "preset")).firstMatch
-        reach(preset, by: .up)
+        reach(preset, by: direction)
         press(.select)
         pause(2)
         let flat = app.buttons[any: "Flat"]
@@ -176,10 +182,10 @@ final class TVBackTests: XCTestCase {
             return abs(focused.midX - flat.frame.midX) < 1 && abs(focused.width - flat.frame.width) < 1
         }
         XCTAssertTrue(inPanel(), "focus is in the presets")
-        for direction in [XCUIRemote.Button.down, .up, .left, .right] {
-            press(direction)
+        for step in [XCUIRemote.Button.down, .up, .left, .right] {
+            press(step)
             XCTAssertTrue(flat.exists, "the presets are still up")
-            XCTAssertTrue(inPanel(), "focus stays in the presets after \(direction)")
+            XCTAssertTrue(inPanel(), "focus stays in the presets after \(step)")
         }
         press(.menu)
         pause(2)
@@ -257,8 +263,7 @@ final class TVBackTests: XCTestCase {
         XCTAssertTrue(titles.allSatisfy { $0.hasPrefix("Album 3") }, "only records named, not \(titles)")
     }
 
-    /// Where the focused element is: a row's focus is on a container with no
-    /// label to find it by.
+    /// Where the focused element is.
     private func focusedFrame() -> CGRect {
         app.descendants(matching: .any).matching(NSPredicate(format: "hasFocus == true")).firstMatch.frame
     }
