@@ -80,6 +80,13 @@ fn settle(page: &mut EqPage, device: &str) {
     }
 }
 
+/// Asks again after a change made behind the page's back, and waits for
+/// that read: the snapshot already held would satisfy `settle` at once.
+fn reread(page: &mut EqPage) {
+    page.snap = None;
+    page.request();
+}
+
 fn key(page: &mut EqPage, code: KeyCode) {
     page.handle_key(KeyEvent::from(code));
 }
@@ -324,7 +331,7 @@ fn bypass_keeps_what_played_as_a_preset_and_puts_it_back() {
     let (_g, _d, mut page) = page();
     profiles::set_tunings(RENDERER, &[("Warm".into(), true)]).unwrap();
     page.picked = None;
-    page.request();
+    reread(&mut page);
     settle(&mut page, RENDERER);
     assert_eq!(page.bypass(), None);
     settle(&mut page, RENDERER);
@@ -359,7 +366,7 @@ fn quick_chain_edits_build_on_each_other() {
     let (_g, _d, mut page) = page();
     profiles::create_eq("Desk", Starter::Flat).unwrap();
     profiles::set_tunings(DEVICE, &[("Warm".into(), true), ("Desk".into(), true)]).unwrap();
-    page.request();
+    reread(&mut page);
     settle(&mut page, DEVICE);
     page.toggle_eq(0);
     page.toggle_eq(0);
@@ -406,7 +413,7 @@ fn wide_names_are_measured_in_cells() {
     let (_g, _d, mut page) = page();
     profiles::create_eq("東京事変", Starter::Flat).unwrap();
     profiles::set_tunings(DEVICE, &[("東京事変".into(), false)]).unwrap();
-    page.request();
+    reread(&mut page);
     settle(&mut page, DEVICE);
     let text = dump(&mut page, "wide");
     assert!(text.contains("東京事変  off"), "{text}");
