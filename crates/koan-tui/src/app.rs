@@ -1796,7 +1796,7 @@ impl App {
         }
     }
 
-    fn apply_browse(&mut self, action: browse::Action) {
+    pub(crate) fn apply_browse(&mut self, action: browse::Action) {
         match action {
             browse::Action::None => {}
             // A list played from a row takes the queue's place: asked first

@@ -1165,6 +1165,45 @@ mod tests {
         terminal.draw(|f| render(f, app)).unwrap();
     }
 
+    /// A row's list replaces the queue at once when nothing is queued, asks
+    /// first when something is, and an explicit play button never asks.
+    #[test]
+    fn replacing_the_queue_from_a_row_asks_only_when_it_has_something() {
+        use crate::app::PickerAction;
+        use crate::browse::Action;
+        let from_row = || Action::Play(vec![1, 2, 3], PickerAction::ReplaceFrom(1));
+
+        let mut empty = app_with_queue(0);
+        empty.apply_browse(from_row());
+        assert_eq!(
+            empty.mode,
+            Mode::Normal,
+            "nothing queued: plays straight away"
+        );
+        assert!(empty.replace_dialog.is_none());
+
+        let mut queued = app_with_queue(4);
+        queued.apply_browse(from_row());
+        assert_eq!(queued.mode, Mode::ReplaceQueue, "something queued: asks");
+        let dialog = queued.replace_dialog.as_ref().expect("the dialog");
+        assert_eq!((dialog.ids.clone(), dialog.start), (vec![1, 2, 3], 1));
+        draw(&mut queued, 80, 24);
+        queued.handle_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Esc,
+        ));
+        assert_eq!(queued.mode, Mode::Normal, "cancelled");
+        assert!(queued.replace_dialog.is_none());
+
+        let mut button = app_with_queue(4);
+        button.apply_browse(Action::Play(vec![1, 2, 3], PickerAction::ReplaceQueue));
+        assert_eq!(
+            button.mode,
+            Mode::Normal,
+            "a play button replaces without asking"
+        );
+        assert!(button.replace_dialog.is_none());
+    }
+
     /// Transport geometry must come from the height the layout solver granted,
     /// not the height requested, or it writes below the buffer.
     #[test]
