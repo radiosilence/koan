@@ -42,12 +42,12 @@ internal object WashRules {
 internal object WashBake {
     /**
      * The texture's side. Blurred to mush, so drawn small and magnified: the
-     * Apple apps blur 14 points of a 360-point texture, which is 5 pixels of
+     * Apple apps blur 28 points of a 360-point texture, which is 10 pixels of
      * this one, and bilinear magnification of something that soft adds nothing
      * the eye can find.
      */
     const val SIDE = 128
-    private const val RADIUS = 5
+    private const val RADIUS = 10
     private const val SATURATION = 1.6
 
     fun bake(pixels: IntArray, side: Int, tone: WashTone, ground: Int, strength: Float): IntArray {

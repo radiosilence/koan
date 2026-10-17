@@ -62,10 +62,10 @@ final class WashView: LayerView {
     /// How far the drift travels, and the overscan that lets it.
     ///
     /// What decides whether motion is visible is not its speed but how far it
-    /// goes against how soft the thing moving is. Blurred at 14 points and
-    /// magnified about five times, the wash has no feature narrower than eighty
-    /// points on screen, so travel has to be read in multiples of that. These
-    /// reach about four of them.
+    /// goes against how soft the thing moving is. Blurred at 28 points and
+    /// magnified about five times, the wash has no feature narrower than about
+    /// 160 points on screen, so travel has to be read in multiples of that.
+    /// These reach about two of them.
     ///
     /// `near` is a floor, not a taste: at full reach the offset carries the
     /// texture 12% of the window sideways and the rotation eats another 3.5%,
@@ -188,15 +188,18 @@ final class WashView: LayerView {
     /// transparent black past the edge and leaves the sleeve with a soft dark
     /// border all the way round.
     ///
-    /// It is measured against `side`, so the wash is blurred at 14 points of a
+    /// It is measured against `side`, so the wash is blurred at 28 points of a
     /// 360pt reference and then magnified along with the texture. A live filter
-    /// blurs *after* magnification, so 14 points there is a fifth of this blur
-    /// and a different picture — matching it would take a radius around 70, and
+    /// blurs *after* magnification, so 28 points there is a fifth of this blur
+    /// and a different picture — matching it would take a radius around 140, and
     /// the live filter costs more at that radius, not less.
+    ///
+    /// 28 rather than less because a sleeve with hard, high-contrast shapes
+    /// otherwise keeps them as visible edges across the window.
     private nonisolated static func bake(_ image: PlatformImage) -> CGImage? {
         guard let source = image.bitmap else { return nil }
         let extent = CGRect(x: 0, y: 0, width: source.width, height: source.height)
-        let radius = 14 * Double(source.width) / Double(side)
+        let radius = 28 * Double(source.width) / Double(side)
         let output = CIImage(cgImage: source)
             .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 1.6])
             .clampedToExtent()
