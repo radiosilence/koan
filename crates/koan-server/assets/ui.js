@@ -484,6 +484,7 @@
     const html = await r.text();
     if (n !== navigating) return;
     closeMenu();
+    if (properties?.open) properties.close();
     main.innerHTML = html;
     if (push) history.pushState(null, "", url);
     settle();
