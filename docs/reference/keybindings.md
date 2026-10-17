@@ -114,7 +114,7 @@ Tree view: artist -> album -> track.
 |-----|--------|
 | `↑` `↓` or `j` `k` | Move |
 | `Enter` or `→` | Open the playlist |
-| `P` / `m` | Play it / play it shuffled |
+| `P` | Play it |
 | `a` / `N` | Add it to the queue / put it next |
 | `w` | Put its tracks in another playlist |
 | `c` or `+` | New playlist |
@@ -127,7 +127,7 @@ On a playlist's page:
 | Key | Action |
 |-----|--------|
 | `Enter` | Play from the track under the cursor |
-| `P` / `m` | Play all / shuffled |
+| `P` | Play all (the `shuffle` button plays it shuffled) |
 | `a` / `N` | Add all to the queue / put them next |
 | `K` / `J` | Move the track up / down |
 | `x`, `Delete` or `Backspace` | Take the track out |

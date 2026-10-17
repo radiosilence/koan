@@ -94,7 +94,7 @@ const SECTIONS: &[Section] = &[
     Section {
         title: "Playlists",
         bindings: &[
-            ("P / m", "Play / play shuffled"),
+            ("P", "Play"),
             ("c", "New playlist"),
             ("K / J", "Move a track up / down"),
         ],
