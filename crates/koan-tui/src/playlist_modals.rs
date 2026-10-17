@@ -288,4 +288,23 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn a_name_with_a_middle_dot_comes_back_whole() {
+        // The label adds " · 2 tracks"; the name is the row's, never read
+        // back out of the label.
+        let c = Chooser::new(vec![1], vec![list(1, "dawn \u{b7} dusk", false)]);
+        let picked = c.entries[1].as_ref().expect("the playlist");
+        assert_eq!(picked.name, "dawn \u{b7} dusk");
+        assert_eq!(picked.id, 1);
+        let theme = Theme::new(super::super::theme::Palette::Ansi, (125, 211, 167));
+        let area = Rect::new(0, 0, 70, 10);
+        let mut buf = Buffer::empty(area);
+        ChooserOverlay::new(&c, &theme).render(area, &mut buf);
+        let shown: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(
+            shown.contains("dawn \u{b7} dusk \u{b7} 2 tracks"),
+            "{shown}"
+        );
+    }
 }

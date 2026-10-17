@@ -1401,6 +1401,15 @@ mod tests {
                 "{c}"
             );
         }
+        let PlAction::Menu(_, items) = p.menu(0) else {
+            panic!("a row's menu");
+        };
+        assert!(
+            !items
+                .iter()
+                .any(|(l, _)| l.starts_with("Move") || l.starts_with("Remove")),
+            "no move or remove offered on a read-only playlist's rows"
+        );
         let labels: Vec<String> = p.toolbar().items.into_iter().map(|i| i.label).collect();
         for refused in ["reorder", "undo", "redo"] {
             assert!(
