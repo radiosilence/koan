@@ -38,9 +38,37 @@ pub fn router(
     tx
 }
 
+/// How the device being controlled can be reached, for the transport to
+/// warn of before anything is pressed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reach {
+    Connected,
+    /// Asleep, and a command wakes it.
+    Asleep,
+    /// Its connection dropped a moment ago.
+    Reconnecting,
+    /// Gone, or found and not connectable.
+    OutOfReach,
+}
+
+impl Reach {
+    fn of(device: Option<&Device>) -> Self {
+        match device {
+            None => Self::OutOfReach,
+            Some(d) if d.problem.is_some() => Self::OutOfReach,
+            Some(d) if d.awake => Self::Connected,
+            Some(d) if !d.asleep => Self::Reconnecting,
+            Some(d) if d.wakeable => Self::Asleep,
+            Some(_) => Self::OutOfReach,
+        }
+    }
+}
+
 /// The state the pages draw, kept up with the device being controlled.
 pub struct View {
     pub local: Arc<SharedPlayerState>,
+    /// The device being controlled, by name, and how it can be reached.
+    pub controlled: Option<(String, Reach)>,
     mirror: Arc<SharedPlayerState>,
     /// The devices' version last mirrored, and the target then.
     seen: Option<(u64, Option<String>)>,
@@ -51,6 +79,7 @@ impl View {
     pub fn new(local: Arc<SharedPlayerState>) -> Self {
         Self {
             local,
+            controlled: None,
             mirror: SharedPlayerState::new(),
             seen: None,
             queue: Vec::new(),
@@ -63,12 +92,21 @@ impl View {
         let target = devices::target();
         if target.is_none() {
             self.seen = None;
+            self.controlled = None;
             return &self.local;
         }
         let version = devices::version();
         if self.seen.as_ref() != Some(&(version, target.clone())) {
-            self.seen = Some((version, target));
             let device = devices::target_device();
+            let name = device.as_ref().map_or_else(
+                || devices::name_of(target.as_deref().unwrap_or_default()),
+                |d| Some(d.name.clone()),
+            );
+            self.controlled = Some((
+                name.unwrap_or_else(|| "the device".into()),
+                Reach::of(device.as_ref()),
+            ));
+            self.seen = Some((version, target));
             self.mirror(device.as_ref());
         }
         if let Some((position, _)) = devices::target_playhead() {
