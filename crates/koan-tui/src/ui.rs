@@ -290,7 +290,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 None => {
                     frame.buffer_mut().set_string(
                         stage.x,
-                        stage.y + 1,
+                        super::shell::body(stage).y,
                         "this playlist is gone",
                         theme.hint_desc,
                     );
@@ -385,7 +385,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 None => {
                     frame.buffer_mut().set_string(
                         stage.x,
-                        stage.y + 1,
+                        super::shell::body(stage).y,
                         "this album is not in the library",
                         theme.hint_desc,
                     );
