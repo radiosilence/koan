@@ -109,7 +109,7 @@ struct ApiKeysSettings: View {
     }
 
     private func row(_ key: ApiKeyInfo) -> some View {
-        HStack {
+        HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(key.name)
                 Text(detail(key))
@@ -120,7 +120,7 @@ struct ApiKeysSettings: View {
                 // Revoking it is signing out, which Sign Out does properly.
                 Text("This device").koanCase()
                     .font(.role(.control, system: .body))
-                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+                    .foregroundStyle(KoanTheme.style(.muted))
                     .help("To stop using it, sign out")
             } else {
                 Button("Revoke", role: .destructive) { revoking = key }
