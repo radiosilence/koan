@@ -114,8 +114,9 @@ Tree view: artist -> album -> track.
 |-----|--------|
 | `↑` `↓` or `j` `k` | Move |
 | `Enter` or `→` | Open the playlist |
-| `P` / `s` | Play it / play it shuffled |
+| `P` / `m` | Play it / play it shuffled |
 | `a` / `N` | Add it to the queue / put it next |
+| `w` | Put its tracks in another playlist |
 | `c` or `+` | New playlist |
 | `r` | Rename |
 | `x` or `Delete` | Delete (press again to confirm) |
@@ -126,7 +127,7 @@ On a playlist's page:
 | Key | Action |
 |-----|--------|
 | `Enter` | Play from the track under the cursor |
-| `P` / `s` | Play all / shuffled |
+| `P` / `m` | Play all / shuffled |
 | `a` / `N` | Add all to the queue / put them next |
 | `K` / `J` | Move the track up / down |
 | `x`, `Delete` or `Backspace` | Take the track out |
@@ -141,7 +142,7 @@ Everything on both pages is also a click: the row, `▸`, `×`, `▴`, `▾`, th
 
 ## Add to a playlist (`w`, `W`)
 
-`w` on the queue (the cursor or the selection), on Now playing (the playing track), on the Albums, Favourites, Recent and artist pages, on an album page, in History and in the Artists tree opens a list of playlists that can be filled, headed by `+ new playlist…`; `Enter` or a click chooses one, `Esc` or a click outside cancels. `W` in the queue asks for a name and saves the whole queue as a playlist.
+`w` on the queue (the cursor or the selection), on Now playing (the playing track), on the Albums, Favourites, Recent and artist pages, on an album page, on the Playlists page (the playlist's tracks) and a playlist's page, in History and in the Artists tree opens a list of playlists that can be filled, headed by `+ new playlist…`; `Enter` or a click chooses one, `Esc` or a click outside cancels. `W` in the queue asks for a name and saves the whole queue as a playlist.
 
 ---
 

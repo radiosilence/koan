@@ -265,7 +265,8 @@ impl PlaylistsPage {
                 );
             }
             KeyCode::Char('P') => return Some(self.play(self.cursor, false)),
-            KeyCode::Char('s') => return Some(self.play(self.cursor, true)),
+            KeyCode::Char('m') => return Some(self.play(self.cursor, true)),
+            KeyCode::Char('w') => return Some(PlAction::Choose(self.track_ids(self.cursor))),
             KeyCode::Char('a') => {
                 return Some(PlAction::Tracks(
                     self.track_ids(self.cursor),
@@ -407,7 +408,7 @@ impl PlaylistsPage {
             let msg = if !self.filter.is_empty() {
                 "no match"
             } else {
-                "no playlists yet: + new makes one, and + on a record or track adds to one"
+                "no playlists yet: + new makes one, and w on a record or track adds to one"
             };
             buf.set_stringn(
                 list.x + 1,
@@ -670,14 +671,14 @@ impl PlaylistPage {
             KeyCode::End | KeyCode::Char('G') => self.move_to(usize::MAX),
             KeyCode::Enter => return Some(self.command(here, false)),
             KeyCode::Char('P') => return Some(self.command(None, false)),
-            KeyCode::Char('s') => return Some(self.command(None, true)),
+            KeyCode::Char('m') => return Some(self.command(None, true)),
             KeyCode::Char('a') => {
                 return Some(PlAction::Tracks(self.all_tracks(), PickerAction::Append));
             }
             KeyCode::Char('N') => {
                 return Some(PlAction::Tracks(self.all_tracks(), PickerAction::PlayNext));
             }
-            KeyCode::Char('+') => {
+            KeyCode::Char('w') => {
                 return Some(
                     self.entries
                         .get(self.cursor)
@@ -863,7 +864,7 @@ impl PlaylistPage {
             buf.set_stringn(
                 list.x + 1,
                 list.y,
-                "empty: + on a record or a track puts it here",
+                "empty: w on a record or a track puts it here",
                 list.width as usize,
                 theme.hint_desc,
             );
@@ -1173,14 +1174,24 @@ mod tests {
     }
 
     #[test]
-    fn plus_chooses_a_playlist_for_the_track_under_the_cursor() {
+    fn w_chooses_a_playlist_for_the_track_under_the_cursor() {
         let mut p = page(false);
         draw(&mut p, 100, 14);
         p.handle_key(KeyEvent::from(KeyCode::Down));
         assert!(matches!(
-            p.handle_key(KeyEvent::from(KeyCode::Char('+'))),
+            p.handle_key(KeyEvent::from(KeyCode::Char('w'))),
             Some(PlAction::Choose(ids)) if ids == vec![2]
         ));
+    }
+
+    #[test]
+    fn s_is_left_to_the_shuffle_toggle() {
+        let mut p = page(false);
+        draw(&mut p, 100, 14);
+        assert!(p.handle_key(KeyEvent::from(KeyCode::Char('s'))).is_none());
+        let mut l = list_page();
+        draw_list(&mut l, 100, 14);
+        assert!(l.handle_key(KeyEvent::from(KeyCode::Char('s'))).is_none());
     }
 
     #[test]

@@ -4,8 +4,8 @@
 
 ### Added
 
-- **More of the apps' actions in the terminal UI.** `N` puts a record, track or tree node next in the queue; `f` and `H` favourite a record and its artist (queued for the server as in the apps), with a heart on the tile and in the album and artist headers; `i` shows what the library holds of any listed track; `d` and `u` download a record or track to this device or remove the download; and Settings gains offline mode, `scan library` and `sync now`.
 - **Playlists in the terminal UI.** A Playlists page and a page for each playlist, with play, shuffle, create, rename, delete, and moving or removing tracks; `w` puts a record, track or queue selection into a playlist from any page, and `W` saves the queue as one. They are the apps' playlists, pushed to the server as the apps push them. Pages are now numbered `1` to `9`, with Playlists at `6`, so Recent, History and Settings are `7`, `8` and `9`.
+- **More of the apps' actions in the terminal UI.** `N` puts a record, track or tree node next in the queue; `f` and `H` favourite a record and its artist (queued for the server as in the apps), with a heart on the tile and in the album and artist headers; `i` shows what the library holds of any listed track; `d` and `u` download a record or track to this device or remove the download; and Settings gains offline mode, `scan library` and `sync now`.
 
 ### Fixed
 

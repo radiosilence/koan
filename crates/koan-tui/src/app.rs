@@ -1305,20 +1305,20 @@ impl App {
     /// The tracks the queue's cursor or selection stands for.
     fn queue_choice(&self) -> Vec<i64> {
         let visible = self.visible_queue();
+        if self.page() == Page::NowPlaying {
+            return visible
+                .iter()
+                .find(|e| e.status == koan_core::player::state::QueueEntryStatus::Playing)
+                .and_then(|e| e.db_id)
+                .into_iter()
+                .collect();
+        }
         if !self.queue.selected_ids.is_empty() {
             return visible
                 .iter()
                 .filter(|e| self.queue.selected_ids.contains(&e.id))
                 .filter_map(|e| e.db_id)
                 .collect();
-        }
-        if self.page() == Page::NowPlaying
-            && let Some(id) = visible
-                .iter()
-                .find(|e| e.status == koan_core::player::state::QueueEntryStatus::Playing)
-                .and_then(|e| e.db_id)
-        {
-            return vec![id];
         }
         visible
             .get(self.queue.cursor)
