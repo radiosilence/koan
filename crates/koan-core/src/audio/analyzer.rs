@@ -644,10 +644,6 @@ struct LoudnessMeter {
     loudness: Loudness,
 }
 
-/// The most a pass reads back from the play head, in interleaved samples:
-/// what the delay line is sure to hold behind it.
-const MEASURE_SAMPLES: usize = WAVEFORM_SAMPLES * 4;
-
 impl LoudnessMeter {
     fn new() -> Self {
         Self {
@@ -667,12 +663,10 @@ impl LoudnessMeter {
             }
             return self.loudness;
         }
-        let new = (played - previous).min(MEASURE_SAMPLES as u64) as usize;
-        buffer.snapshot_at(played, MEASURE_SAMPLES, &mut self.heard);
+        buffer.played_between(previous, played, &mut self.heard);
         let channels = self.heard.channels.max(1) as usize;
         let rate = self.heard.sample_rate;
-        let fresh = &self.heard.samples[self.heard.samples.len().saturating_sub(new)..];
-        let fresh = &fresh[fresh.len() % channels..];
+        let fresh = &self.heard.samples[..];
         let stale = self
             .r128
             .as_ref()
@@ -757,7 +751,8 @@ fn analysis_loop(
         let played = samples_played.load(Ordering::Relaxed);
         let heard = played != last_played;
         let previous = std::mem::replace(&mut last_played, played);
-        let mut loudness = meter.loudness;
+        // Nothing heard is silence, not the last reading held.
+        let mut loudness = Loudness::default();
 
         if !heard {
             if state.is_silent() {
@@ -915,6 +910,54 @@ mod tests {
             "expected nonzero spectrum for 440 Hz sine, max = {}",
             max_bar
         );
+    }
+
+    #[test]
+    fn a_pause_publishes_silence_rather_than_the_last_loudness() {
+        let rate = 44100u32;
+        let buf = VizBuffer::new();
+        let samples = sine(rate as usize, 997.0, 0.5, rate);
+        buf.push_samples(&samples, 2, rate);
+        let played = Arc::new(AtomicU64::new(0));
+        let snapshot = VizSnapshot::new();
+        let mut analyzer = VizAnalyzer::spawn_with_snapshot(
+            Arc::clone(&buf),
+            &make_cfg(),
+            Arc::clone(&snapshot),
+            Arc::clone(&played),
+        );
+        let until = |done: &dyn Fn(Loudness) -> bool| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                if done(snapshot.read().loudness) {
+                    return true;
+                }
+                if std::time::Instant::now() >= deadline {
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        // Playing: the play head moves a pass's worth at a time.
+        let heard = {
+            let played = Arc::clone(&played);
+            let total = samples.len() as u64;
+            std::thread::spawn(move || {
+                while played.load(Ordering::Relaxed) + 1470 <= total {
+                    played.fetch_add(1470, Ordering::Relaxed);
+                    std::thread::sleep(Duration::from_millis(16));
+                }
+            })
+        };
+        assert!(
+            until(&|l| l.momentary.is_finite()),
+            "no reading while playing"
+        );
+        heard.join().unwrap();
+        // Paused: the play head stands still.
+        let silent = until(&|l| l == Loudness::default());
+        analyzer.shutdown();
+        assert!(silent, "the last reading was held through the pause");
     }
 
     #[test]

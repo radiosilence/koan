@@ -21,7 +21,11 @@ pub const WAVEFORM_SAMPLES: usize = 2048;
 /// which is up to a full ring ahead of what the DAC is playing. To show what is
 /// being *heard*, the buffer must reach back one whole ring plus the longest
 /// window the analyzer asks for.
-const DELAY_LINE_SIZE: usize = crate::player::RING_BUFFER_SIZE + WAVEFORM_SAMPLES * 2;
+const DELAY_LINE_SIZE: usize = crate::player::RING_BUFFER_SIZE + HELD_BEHIND_HEAD;
+
+/// Interleaved samples the delay line is sure to hold behind the play head,
+/// with the decoder a whole ring ahead of it.
+pub const HELD_BEHIND_HEAD: usize = WAVEFORM_SAMPLES * 2;
 
 // ── VizFrame / VizSnapshot (high-level UI-facing snapshot API) ────────────────
 
@@ -400,6 +404,16 @@ impl VizBuffer {
     /// ends on the sample currently reaching the DAC rather than on whatever
     /// the decode thread wrote last. History older than the delay line is gone,
     /// so the lookback is clamped to what the buffer still holds.
+    /// Fill `out` with the samples played after `previous` and up to
+    /// `played`, both counts of interleaved samples, as far back as the
+    /// delay line holds behind the play head. Whole frames, ending on the
+    /// sample reaching the DAC.
+    pub fn played_between(&self, previous: u64, played: u64, out: &mut RawVizSnapshot) {
+        let channels = self.samples.lock().channels.max(1) as usize;
+        let new = played.saturating_sub(previous).min(HELD_BEHIND_HEAD as u64) as usize;
+        self.snapshot_at(played, new / channels, out);
+    }
+
     pub fn snapshot_at(&self, played: u64, frames: usize, out: &mut RawVizSnapshot) {
         let inner = self.samples.lock();
         let buf_len = inner.buf.len();
@@ -499,6 +513,24 @@ mod tests {
         buf.snapshot_at(0, 64, &mut snap);
         assert_eq!(snap.samples.len(), 128);
         assert_eq!(snap.samples[0], DELAY_LINE_SIZE as f32);
+    }
+
+    #[test]
+    fn what_was_played_ends_at_the_play_head_with_the_ring_full() {
+        let buf = VizBuffer::new();
+        // The decoder a whole ring ahead of what is heard.
+        push_ramp(&buf, DELAY_LINE_SIZE);
+        let played = (DELAY_LINE_SIZE - crate::player::RING_BUFFER_SIZE) as u64;
+        let mut out = RawVizSnapshot::default();
+        // More played since the last read than the line holds behind the head.
+        buf.played_between(0, played, &mut out);
+        assert_eq!(out.samples.len(), HELD_BEHIND_HEAD);
+        assert_eq!(*out.samples.last().unwrap(), (played - 1) as f32);
+        // And a pass's worth, exactly.
+        buf.played_between(played - 1470, played, &mut out);
+        assert_eq!(out.samples.len(), 1470);
+        assert_eq!(out.samples[0], (played - 1470) as f32);
+        assert_eq!(*out.samples.last().unwrap(), (played - 1) as f32);
     }
 
     #[test]
