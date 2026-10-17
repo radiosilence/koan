@@ -207,7 +207,12 @@ final class CoverArtCache: Observable, @unchecked Sendable {
             guard let decoded else { return nil }
             guard let image = decoded else {
                 // Bytes that do not decode will not decode next time either.
+                // The cached copy goes too, so a later launch asks the server
+                // again rather than reading the same bytes back.
                 self.locked { _ = self.absent.insert(record) }
+                if let file = self.directory?.appendingPathComponent(Self.filename(for: record)) {
+                    self.writes.async { _ = try? FileManager.default.removeItem(at: file) }
+                }
                 return nil
             }
             // Full size belongs to whichever sheet asked for it and goes when
