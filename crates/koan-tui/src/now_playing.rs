@@ -30,8 +30,9 @@ const COVER_MIN_WIDTH: u16 = 48;
 const TEXT_ROWS: u16 = 10;
 
 /// The curve the page plots, worked out on a thread of its own whenever the
-/// profile, the rate or the config changes: building a profile can read and
-/// resample impulse files, which no frame can wait for.
+/// profile, the rate or the profiles it is built from change: building a
+/// profile can read and resample impulse files, which no frame can wait for.
+/// The last curve stays up until its replacement arrives.
 #[derive(Default)]
 pub struct EqCurve {
     made_for: Option<(String, u32, Arc<Config>)>,
@@ -41,13 +42,18 @@ pub struct EqCurve {
 
 impl EqCurve {
     fn get(&mut self, profile: &str, rate: u32, cfg: &Arc<Config>) -> Option<&[f64]> {
-        let current = self
-            .made_for
-            .as_ref()
-            .is_some_and(|(p, r, c)| p == profile && *r == rate && Arc::ptr_eq(c, cfg));
+        // Every config write is a new `Arc`; only the profiles shape the curve.
+        let current = self.made_for.as_mut().is_some_and(|(p, r, c)| {
+            let same = p == profile
+                && *r == rate
+                && (Arc::ptr_eq(c, cfg) || c.dsp.profiles == cfg.dsp.profiles);
+            if same {
+                *c = cfg.clone();
+            }
+            same
+        });
         if !current {
             self.made_for = Some((profile.to_owned(), rate, cfg.clone()));
-            self.total = None;
             let (tx, rx) = crossbeam_channel::bounded(1);
             let profile = profile.to_owned();
             std::thread::Builder::new()
@@ -401,6 +407,35 @@ mod tests {
             channels: 2,
             duration_ms: 1000,
         }
+    }
+
+    #[test]
+    fn the_curve_survives_config_writes_that_leave_the_profiles_alone() {
+        let cfg = Arc::new(Config::default());
+        let mut curve = EqCurve {
+            made_for: Some(("flat".into(), 44100, cfg.clone())),
+            total: Some(vec![1.0]),
+            pending: None,
+        };
+        let mut unrelated = (*cfg).clone();
+        unrelated.visualizer.enabled = !unrelated.visualizer.enabled;
+        assert_eq!(
+            curve.get("flat", 44100, &Arc::new(unrelated)),
+            Some(&[1.0][..])
+        );
+        assert!(curve.pending.is_none(), "nothing is rebuilt");
+
+        let mut edited = (*cfg).clone();
+        edited.dsp.profiles.push(koan_core::config::DspProfile {
+            name: "flat".into(),
+            ..Default::default()
+        });
+        assert_eq!(
+            curve.get("flat", 44100, &Arc::new(edited)),
+            Some(&[1.0][..]),
+            "the old curve stays up while the new one is worked out"
+        );
+        assert!(curve.pending.is_some());
     }
 
     #[test]
