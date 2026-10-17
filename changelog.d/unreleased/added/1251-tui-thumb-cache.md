@@ -1,0 +1,1 @@
+- **Terminal UI: album covers load faster.** Thumbnails are kept on disk, shrunk to what a tile draws, in a 256 MB cache that drops the least recently used first, so a cover seen before no longer needs the audio file read and decoded again.
