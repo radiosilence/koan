@@ -329,15 +329,15 @@ struct PlaylistView: View {
             .koanShadow(0.3, radius: 10, y: 4)
     }
 
+    /// The compact header's title, which only a phone draws: a television is
+    /// never compact.
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 12) {
-                #if !os(tvOS)
                 if let playable {
                     PlayableHeaderButton(playable: playable)
                     ShuffleHeaderButton(playable: playable)
                 }
-                #endif
                 Text(playlist?.name ?? "Playlist")
                     .font(.role(.title, system: .system(size: 26, weight: .semibold)))
                     .foregroundStyle(KoanTheme.style(.strong, system: .primary))
@@ -347,15 +347,6 @@ struct PlaylistView: View {
             Text(summary)
                 .font(.role(.control, system: .callout))
                 .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-            #if os(tvOS)
-            if let playable {
-                HStack {
-                    PlayableHeaderButton(playable: playable)
-                    ShuffleHeaderButton(playable: playable)
-                }
-                .padding(.top, 12)
-            }
-            #endif
         }
     }
 
