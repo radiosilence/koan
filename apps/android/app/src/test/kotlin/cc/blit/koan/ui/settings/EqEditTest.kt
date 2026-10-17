@@ -201,9 +201,9 @@ class EqEditTest {
         model.setStereo("Warm", false, keep = 1)
         model.addBand("Warm", channel = 1)
         advanceUntilIdle()
-        // An unsigned argument reaches the engine as its bits: a plain Int.
-        assertEquals(listOf(listOf<Any?>("Warm", true, 0), listOf<Any?>("Warm", false, 1)), fake.called("dspSetStereo"))
-        assertEquals(listOf(listOf<Any?>("Warm", 1)), fake.called("dspAddBand"))
+        // A u16 reaches the engine as its bits, a Short; an optional one stays boxed, a UShort.
+        assertEquals(listOf(listOf<Any?>("Warm", true, 0.toShort()), listOf<Any?>("Warm", false, 1.toShort())), fake.called("dspSetStereo"))
+        assertEquals(listOf(listOf<Any?>("Warm", 1.toUShort())), fake.called("dspAddBand"))
     }
 
     @Test fun theChainAndPresetsAreTheOutputsOwn() = runTest(dispatcher) {
