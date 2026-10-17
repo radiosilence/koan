@@ -273,10 +273,14 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             rewinds = parent.rewinds
             if let token = jumpToken, token != parent.jump.token,
                let target = parent.jump.to, let row = index[target] {
+                restored = true
                 jump(to: row, place: parent.jump.place)
             }
             jumpToken = parent.jump.token
             follow(parent.follow)
+            // The listing can finish without a row changing, a failed last
+            // page, and only a layout settles the restore.
+            if !restored, parent.complete { table.needsLayout = true }
             if table.rowHeight != parent.rowHeight {
                 table.rowHeight = parent.rowHeight
                 table.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<items.count))

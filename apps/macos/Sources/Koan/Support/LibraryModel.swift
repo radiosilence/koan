@@ -59,22 +59,14 @@ final class LibraryModel {
     /// it where it is drawn instead.
     func prepare(section: Section) async -> Listing? {
         guard section != self.section else {
-            // A See all onto the section already here: its query applies to
-            // the rows on screen, and spent, it cannot reach the next move.
-            if let carried {
-                self.carried = nil
-                adopting = true
-                filter = carried
-                adopting = false
-                reload()
-            }
+            carried = nil
             return nil
         }
         // Nothing carries over from another section: a filter left behind on
         // another view is invisible here, and an apparently empty library is
         // the result. A section comes back with its own, as it was left, unless
         // a shelf's heading arrives with the shelf's query.
-        let filter = carried ?? leftFilters[section] ?? ""
+        let filter = section.filterPlaceholder == nil ? "" : carried ?? leftFilters[section] ?? ""
         carried = nil
         return await Listing(
             section: section,
@@ -89,11 +81,9 @@ final class LibraryModel {
     /// Adopt a listing, at the moment the navigator moves to it.
     func show(_ listing: Listing) {
         loading?.cancel()
-        if case .playlist(let id) = section, playlistIds?.contains(id) == false {
-            leftFilters[section] = nil
-        } else {
-            leftFilters[section] = filter
-        }
+        // Only where there is a field to show it and clear it: a playlist has
+        // none, and its row id goes to the next one made once it is deleted.
+        leftFilters[section] = section.filterPlaceholder == nil ? nil : filter
         section = listing.section
         // Quietly: the rows for this section are already in hand, so emptying
         // the filter it arrives with is not a reason to ask for them again.
@@ -128,21 +118,6 @@ final class LibraryModel {
     /// the session.
     @ObservationIgnored private var leftFilters: [Section: String] = [:]
 
-    /// Drop the filters left on playlists that are gone, wherever they went:
-    /// a deleted playlist's row id is given to the next one made, which would
-    /// otherwise open with its filter.
-    func keepPlaylists(_ ids: [Int64]) {
-        let kept = Set(ids)
-        playlistIds = kept
-        leftFilters = leftFilters.filter { section, _ in
-            guard case .playlist(let id) = section else { return true }
-            return kept.contains(id)
-        }
-    }
-
-    /// The playlists that exist, once read: a playlist deleted while on
-    /// screen can be gone from them before the move away from it lands.
-    @ObservationIgnored private var playlistIds: Set<Int64>?
 
     /// Point a browser at a shelf: its filters and sort set to the shelf's, so
     /// the listing it opens on is the one the shelf's preview is the head of
@@ -181,6 +156,15 @@ final class LibraryModel {
             trackSort = .artist
         }
         browseFilter = filter
+        // Already there, the navigator does not move, so nothing prepares the
+        // section: the shelf's query and filters apply to the rows in place.
+        if list.section == section {
+            adopting = true
+            self.filter = carried ?? ""
+            adopting = false
+            carried = nil
+            reload()
+        }
         return list.section
     }
 

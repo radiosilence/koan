@@ -13,7 +13,6 @@ struct SidebarView: View {
     @Environment(SearchModel.self) private var search
     @Environment(UIState.self) private var ui
     @Environment(PlaylistsModel.self) private var playlists
-    @Environment(LibraryModel.self) private var library
     @FocusState private var searchFocused: Bool
     /// Highlights the Queue row while something is held over it — without it a
     /// drop is a guess.
@@ -53,11 +52,6 @@ struct SidebarView: View {
                 }
             }
             .onDisappear { ui.sidebarWidth = 0 }
-            #if os(macOS)
-            // Here rather than at the root, which would otherwise redraw on
-            // every playlist reload. iOS does this in `TabShell`.
-            .onChange(of: playlists.playlists.map(\.id)) { _, ids in library.keepPlaylists(ids) }
-            #endif
     }
 
     @ViewBuilder

@@ -196,13 +196,8 @@ struct TabShell: View {
         #else
         .modifier(AdaptableTabs(sidebar: sidebar))
         .onChange(of: sidebar) { regroup() }
+        .onChange(of: playlists.playlists.map(\.id)) { _, ids in dropDeleted(ids) }
         #endif
-        .onChange(of: playlists.playlists.map(\.id)) { _, ids in
-            library.keepPlaylists(ids)
-            #if !os(tvOS)
-            dropDeleted(ids)
-            #endif
-        }
         .toggleStyle(SystemSwitch())
         .modifier(Transport(
             showingNowPlaying: $showingNowPlaying,
