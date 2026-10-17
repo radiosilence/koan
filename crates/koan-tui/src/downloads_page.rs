@@ -13,7 +13,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 
 use super::browse::Action;
-use super::rows::fit;
+use super::shell::{ToolItem, Toolbar, fit};
 use super::theme::Theme;
 
 const DOUBLE_CLICK: Duration = Duration::from_millis(500);
@@ -24,13 +24,11 @@ const ROW: u16 = 2;
 pub enum DownloadsHit {
     Row(usize),
     Show(usize),
-    Clear,
 }
 
 #[derive(Default, Clone)]
 struct Geom {
     list: Rect,
-    clear: Rect,
     links: Vec<(Rect, DownloadsHit)>,
 }
 
@@ -207,11 +205,25 @@ impl DownloadsPage {
         Some(Action::None)
     }
 
+    /// The toolbar: how many are still to come, and clearing the rest.
+    pub fn toolbar(&self) -> Toolbar {
+        use crossterm::event::{KeyCode, KeyEvent};
+        let unsettled = self.unsettled();
+        let mut bar = Toolbar::new("downloads");
+        if unsettled > 0 {
+            bar = bar.count(format!("{unsettled} to go"));
+        }
+        if self.settled() {
+            bar = bar.item(ToolItem::new(
+                "clear finished",
+                KeyEvent::from(KeyCode::Char('c')),
+            ));
+        }
+        bar
+    }
+
     pub fn hit(&self, col: u16, row: u16) -> Option<DownloadsHit> {
         let g = &self.geom;
-        if inside(g.clear, col, row) {
-            return Some(DownloadsHit::Clear);
-        }
         if let Some((_, hit)) = g.links.iter().find(|(r, _)| inside(*r, col, row)) {
             return Some(*hit);
         }
@@ -222,12 +234,8 @@ impl DownloadsPage {
         None
     }
 
-    pub fn click(&mut self, hit: DownloadsHit, state: &SharedPlayerState) -> Action {
+    pub fn click(&mut self, hit: DownloadsHit) -> Action {
         match hit {
-            DownloadsHit::Clear => {
-                self.clear(state);
-                Action::None
-            }
             DownloadsHit::Show(i) => {
                 self.move_to(i);
                 self.show(i)
@@ -256,35 +264,10 @@ impl DownloadsPage {
         hover: Option<DownloadsHit>,
     ) {
         self.geom = Geom::default();
-        if area.width < 12 || area.height < 3 {
+        if area.width < 12 || area.height == 0 {
             return;
         }
-        let unsettled = self.unsettled();
-        let note = if unsettled > 0 {
-            format!(" {unsettled} to go ")
-        } else {
-            " ".to_string()
-        };
-        super::ui::heading(buf, area, theme, "downloads", &note);
-        if self.settled() {
-            let label = " clear finished ";
-            let w = label.chars().count() as u16;
-            let x = (area.x + area.width).saturating_sub(w);
-            let style = if hover == Some(DownloadsHit::Clear) {
-                theme.hint_key.add_modifier(Modifier::UNDERLINED)
-            } else {
-                theme.hint_key
-            };
-            buf.set_stringn(x, area.y, label, w as usize, style);
-            self.geom.clear = Rect::new(x, area.y, w, 1);
-        }
-
-        let list = Rect::new(
-            area.x + 1,
-            area.y + 2,
-            area.width.saturating_sub(2),
-            area.height.saturating_sub(2),
-        );
+        let list = area;
         self.geom.list = list;
         if self.transfers.is_empty() {
             buf.set_stringn(
@@ -475,19 +458,17 @@ mod tests {
         assert!(shown.contains("artist \u{2014} waiting"));
         assert!(shown.contains("artist \u{2014} downloaded"));
         assert!(shown.contains("server said no"));
-        assert!(shown.contains("clear finished"));
-        assert!(shown.contains("2 to go"));
+        let bar = p.toolbar();
+        assert_eq!(bar.count.as_deref(), Some("2 to go"));
+        assert_eq!(bar.items[0].label, "clear finished");
     }
 
     #[test]
     fn a_figure_sits_at_the_end_of_its_line() {
         let mut p = page();
         let buf = draw(&mut p, 60, 14);
-        let first: String = (0..60).map(|x| buf[(x, 2)].symbol()).collect();
-        assert!(
-            first.ends_with("46% "),
-            "against the side gutter: {first:?}"
-        );
+        let first: String = (0..60).map(|x| buf[(x, 0)].symbol()).collect();
+        assert!(first.ends_with("46%"), "against the right edge: {first:?}");
     }
 
     #[test]
@@ -525,9 +506,9 @@ mod tests {
     fn a_click_lands_on_the_transfer_drawn_there() {
         let mut p = page();
         draw(&mut p, 90, 14);
-        assert_eq!(p.hit(5, 2), Some(DownloadsHit::Row(0)));
-        assert_eq!(p.hit(5, 3), Some(DownloadsHit::Row(0)));
-        assert_eq!(p.hit(5, 4), Some(DownloadsHit::Row(1)));
+        assert_eq!(p.hit(5, 0), Some(DownloadsHit::Row(0)));
+        assert_eq!(p.hit(5, 1), Some(DownloadsHit::Row(0)));
+        assert_eq!(p.hit(5, 2), Some(DownloadsHit::Row(1)));
     }
 
     #[test]

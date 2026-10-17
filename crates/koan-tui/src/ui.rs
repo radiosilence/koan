@@ -277,10 +277,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 queue,
                 favourites,
                 spinner_tick,
+                links,
                 ..
             } = &mut *app;
             let live = super::playlists_page::Live {
                 queue: &queue.vq_cache.entries,
+                links: Some(links),
                 favourites: Some(favourites),
                 offline: koan_core::remote::offline::active(),
                 spinner: *spinner_tick,
@@ -288,10 +290,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             match playlist_page {
                 Some(p) => p.render(stage, frame.buffer_mut(), theme, hover, &live),
                 None => {
-                    heading(frame.buffer_mut(), stage, theme, "playlist", "");
                     frame.buffer_mut().set_string(
-                        stage.x + 1,
-                        stage.y + 1,
+                        stage.x,
+                        stage.y,
                         "this playlist is gone",
                         theme.hint_desc,
                     );
@@ -404,7 +405,22 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 hover,
             );
         }
-        Page::Tracks | Page::Downloaded | Page::Downloads => {
+        Page::Downloads => {
+            app.layout.browse_area = stage;
+            let hover = match app.hover.zone {
+                super::app::HoverZone::Downloads(h) => Some(h),
+                _ => None,
+            };
+            let App {
+                downloads_page,
+                state,
+                theme,
+                ..
+            } = &mut *app;
+            downloads_page.refresh(state);
+            downloads_page.render(stage, frame.buffer_mut(), theme, hover);
+        }
+        Page::Tracks | Page::Downloaded => {
             app.layout.browse_area = stage;
         }
         Page::Artists => {
@@ -957,7 +973,7 @@ fn render_queue(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
     .with_selected(&selected_indices)
     .with_spinner(app.spinner_tick)
     .with_drop_indicator(drop_indicator)
-    .with_pointer(Some((app.hover.column, app.hover.row)))
+    .with_links(&app.links)
     .with_hover(&app.hover.zone)
     .with_favourites(&app.favourites);
     frame.render_widget(queue_view, area);
@@ -1320,22 +1336,36 @@ mod tests {
     #[test]
     fn the_queue_headings_name_links_and_a_row_has_a_menu_button() {
         use crate::queue::{QueueView, menu_button_x};
-        use crate::rows::Link;
-        let app = app_with_queue(3);
-        let entries = &app.queue.vq_cache.entries;
-        let layout = &app.queue.layout;
-        let area = Rect::new(0, 0, 80, 20);
-        // Row 1 is the heading: " album  artist ... 2024 · 3 tracks · 10:00 · FLAC".
-        let at = |col, row| QueueView::header_link_at(entries, layout, area, 0, col, row);
-        assert_eq!(at(1, 1), Some((0, Link::Album)));
+        use crate::shell::Link;
+        let mut app = app_with_queue(3);
+        for (i, e) in app.queue.vq_cache.entries.iter_mut().enumerate() {
+            e.db_id = Some(i as i64 + 1);
+        }
+        app.relayout_queue();
+        draw(&mut app, 120, 30);
+        let area = app.layout.queue_area;
+        // The first line is the heading: " album  artist ... 2024 · 3 tracks".
         assert_eq!(
-            at(1 + "album  ".len() as u16, 1),
-            Some((0, Link::AlbumArtist))
+            app.links.at(area.x + 1, area.y),
+            Some(Link::AlbumOfTrack(1))
         );
-        // Off the text, and on a track's title, there is no link.
-        assert_eq!(at(40, 1), None);
-        assert_eq!(at(10, 2), None);
-        assert_eq!(menu_button_x(area), 77);
+        assert_eq!(
+            app.links.at(area.x + 1 + "album  ".len() as u16, area.y),
+            Some(Link::ArtistOfTrack(1))
+        );
+        assert_eq!(app.links.at(area.x + 40, area.y), None);
+        // A track's heart is its own hit.
+        let entries = &app.queue.vq_cache.entries;
+        let heart = (area.x..area.x + area.width)
+            .find(|&x| {
+                QueueView::heart_at(entries, &app.queue.layout, area, 0, x, area.y + 1).is_some()
+            })
+            .expect("a heart column");
+        assert!(
+            heart > area.x + 40,
+            "the heart sits at the right, among the figures"
+        );
+        assert_eq!(menu_button_x(area), area.x + area.width - 3);
     }
 
     #[test]

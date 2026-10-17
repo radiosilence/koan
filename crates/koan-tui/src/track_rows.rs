@@ -3,51 +3,44 @@
 //! title and who it is by, then availability, heart, format and length
 //! against the right edge. Every width here is measured in terminal cells.
 
-use std::ops::Range;
-
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use super::shell::{Link, Links, fit, width};
 use super::theme::Theme;
 use super::transport::format_time;
 
-/// `text` cut to `width` cells, ending in `…` when anything was cut. A wide
-/// character that would straddle the edge is left out whole.
-pub fn fit(text: &str, width: usize) -> String {
-    if text.width() <= width {
-        return text.to_string();
-    }
-    let mut out = String::new();
-    let mut used = 0;
-    for c in text.chars() {
-        let w = c.width().unwrap_or(0);
-        if used + w + 1 > width {
-            break;
-        }
-        out.push(c);
-        used += w;
-    }
-    if width > 0 {
-        out.push('\u{2026}');
-    }
-    out
-}
-
-/// Writes `text` at `x`, cut to `width` cells; the cells it covered.
-fn put(buf: &mut Buffer, x: u16, y: u16, text: &str, width: usize, style: Style) -> Range<u16> {
-    let shown = fit(text, width);
-    let w = shown.width() as u16;
-    buf.set_stringn(x, y, &shown, width, style);
-    x..x + w
+/// Writes `text` at `x`, cut to `room` cells; where it ends.
+fn put(buf: &mut Buffer, x: u16, y: u16, text: &str, room: usize, style: Style) -> u16 {
+    let shown = fit(text, room);
+    buf.set_stringn(x, y, &shown, room, style);
+    x + width(&shown) as u16
 }
 
 /// Writes `text` so that it ends at `end`.
-fn put_right(buf: &mut Buffer, end: u16, y: u16, text: &str, width: usize, style: Style) {
-    let shown = fit(text, width);
-    let x = end.saturating_sub(shown.width() as u16);
-    buf.set_stringn(x, y, &shown, width, style);
+fn put_right(buf: &mut Buffer, end: u16, y: u16, text: &str, room: usize, style: Style) {
+    let shown = fit(text, room);
+    let x = end.saturating_sub(width(&shown) as u16);
+    buf.set_stringn(x, y, &shown, room, style);
+}
+
+/// Writes `text` as a link when there is one to draw it with; where it ends.
+#[allow(clippy::too_many_arguments)]
+fn put_link(
+    buf: &mut Buffer,
+    links: Option<&Links>,
+    link: Option<Link>,
+    x: u16,
+    y: u16,
+    text: &str,
+    room: usize,
+    style: Style,
+) -> u16 {
+    match (links, link) {
+        (Some(links), Some(link)) => x + links.draw(buf, x, y, text, room as u16, style, link),
+        _ => put(buf, x, y, text, room, style),
+    }
 }
 
 /// What the row's left edge says about it.
@@ -104,17 +97,6 @@ impl Avail {
     }
 }
 
-/// A link on a row, for the pointer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Link {
-    /// The album's artist, on a heading.
-    AlbumArtist,
-    /// The track's own artist.
-    Artist,
-    Album,
-    Heart,
-}
-
 /// One track row's content.
 #[derive(Debug, Clone, Default)]
 pub struct Track<'a> {
@@ -123,10 +105,10 @@ pub struct Track<'a> {
     /// The number column; `None` leaves it out, as an ungrouped row does.
     pub number: Option<String>,
     pub title: &'a str,
-    /// Who it is by, after the title; linked to the artist.
-    pub artist: Option<&'a str>,
-    /// The album, after the artist; linked to the album.
-    pub album: Option<&'a str>,
+    /// Who it is by, after the title, and where that leads.
+    pub artist: Option<(&'a str, Option<Link>)>,
+    /// The album, after the artist, and where that leads.
+    pub album: Option<(&'a str, Option<Link>)>,
     pub avail: Avail,
     /// `Some` for a library track: whether it is a favourite.
     pub favourite: Option<bool>,
@@ -196,12 +178,11 @@ impl Columns {
     }
 }
 
-/// Draws a track row across `area` (one row high); the links it drew, for
-/// the pointer.
-pub fn track(buf: &mut Buffer, area: Rect, theme: &Theme, t: &Track) -> Vec<(Range<u16>, Link)> {
-    let mut links = Vec::new();
+/// Draws a track row across `area` (one row high), its names as links
+/// through `links`.
+pub fn track(buf: &mut Buffer, area: Rect, theme: &Theme, t: &Track, links: Option<&Links>) {
     if area.width < 8 || area.height == 0 {
-        return links;
+        return;
     }
     let y = area.y;
     let cols = Columns::new(area.x, area.width);
@@ -260,24 +241,20 @@ pub fn track(buf: &mut Buffer, area: Rect, theme: &Theme, t: &Track) -> Vec<(Ran
         x = cols.text;
     }
     let text_end = cols.right.saturating_sub(2).max(x);
-    let title = put(buf, x, y, t.title, (text_end - x) as usize, text);
-    x = title.end;
-    let by = [(t.artist, Link::Artist), (t.album, Link::Album)];
+    x = put(buf, x, y, t.title, (text_end - x) as usize, text);
     let mut first = true;
-    for (name, link) in by {
-        let Some(name) = name.filter(|n| !n.is_empty()) else {
+    for (name, link) in [t.artist, t.album].into_iter().flatten() {
+        if name.is_empty() {
             continue;
-        };
+        }
         let sep = if first { "  " } else { " \u{2014} " };
         first = false;
         let room = text_end.saturating_sub(x) as usize;
-        if room <= sep.width() + 1 {
+        if room <= width(sep) + 1 {
             break;
         }
-        let s = put(buf, x, y, sep, room, quiet);
-        let r = put(buf, s.end, y, name, room - sep.width(), quiet);
-        x = r.end;
-        links.push((r, link));
+        let at = put(buf, x, y, sep, room, quiet);
+        x = put_link(buf, links, link, at, y, name, room - width(sep), quiet);
     }
 
     if let Some(ax) = cols.avail {
@@ -320,7 +297,6 @@ pub fn track(buf: &mut Buffer, area: Rect, theme: &Theme, t: &Track) -> Vec<(Ran
         } else if t.hovered {
             buf[(hx, y)].set_char('\u{2661}').set_style(quiet);
         }
-        links.push((hx..hx + 1, Link::Heart));
     }
     if let (Some(cx), Some(codec)) = (cols.codec, t.codec) {
         put(buf, cx, y, &codec.to_uppercase(), CODEC_W as usize, quiet);
@@ -328,92 +304,68 @@ pub fn track(buf: &mut Buffer, area: Rect, theme: &Theme, t: &Track) -> Vec<(Ran
     if let Some(ms) = t.duration_ms {
         put_right(buf, cols.end, y, &format_time(ms), LEN_W as usize, quiet);
     }
-    links
 }
 
 /// One album heading's content.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Heading<'a> {
-    pub album: &'a str,
-    pub artist: &'a str,
+    pub album: (&'a str, Option<Link>),
+    pub artist: (&'a str, Option<Link>),
     /// Said against the right edge, under the length column.
     pub facts: &'a str,
-    pub hover: Option<Link>,
     pub selected: bool,
 }
 
-/// Draws an album heading across `area`; the links it drew.
-pub fn heading(
-    buf: &mut Buffer,
-    area: Rect,
-    theme: &Theme,
-    h: &Heading,
-) -> Vec<(Range<u16>, Link)> {
-    let Heading {
-        album,
-        artist,
-        facts,
-        hover,
-        selected,
-    } = *h;
-    let mut links = Vec::new();
+/// Draws an album heading across `area`, its names as links through `links`.
+pub fn heading(buf: &mut Buffer, area: Rect, theme: &Theme, h: &Heading, links: Option<&Links>) {
     if area.width < 8 || area.height == 0 {
-        return links;
+        return;
     }
     let y = area.y;
-    if selected {
+    if h.selected {
         for x in area.x..area.x + area.width {
             buf[(x, y)].set_style(theme.track_selected);
         }
     }
-    let underline = |style: Style, link: Link| {
-        if hover == Some(link) {
-            style.add_modifier(Modifier::UNDERLINED)
-        } else {
-            style
-        }
-    };
     let cols = Columns::new(area.x, area.width);
+    let (album, album_link) = h.album;
+    let (artist, artist_link) = h.artist;
     // The facts give way before the album's name does.
-    let facts = if (album.width() + facts.width() + 6) as u16 <= area.width {
-        facts
+    let facts = if (width(album) + width(h.facts) + 6) as u16 <= area.width {
+        h.facts
     } else {
         ""
     };
-    let facts_w = facts.width() as u16;
-    let facts_x = cols.end.saturating_sub(facts_w);
+    let facts_x = cols.end.saturating_sub(width(facts) as u16);
     let text_end = facts_x.saturating_sub(2).max(cols.status);
-    let mut x = cols.status;
     let room = |x: u16| text_end.saturating_sub(x) as usize;
-    let a = put(
+    let bold = theme.album_header_album.add_modifier(Modifier::BOLD);
+    let mut x = put_link(
         buf,
-        x,
+        links,
+        album_link,
+        cols.status,
         y,
         album,
-        room(x),
-        underline(
-            theme.album_header_album.add_modifier(Modifier::BOLD),
-            Link::Album,
-        ),
+        room(cols.status),
+        bold,
     );
-    links.push((a.clone(), Link::Album));
-    x = a.end;
     if !artist.is_empty() && room(x) > 3 {
-        let s = put(buf, x, y, "  ", room(x), theme.hint_desc);
-        let r = put(
+        x = put(buf, x, y, "  ", room(x), theme.hint_desc);
+        put_link(
             buf,
-            s.end,
+            links,
+            artist_link,
+            x,
             y,
             artist,
-            room(s.end),
-            underline(theme.album_header_artist, Link::AlbumArtist),
+            room(x),
+            theme.album_header_artist,
         );
-        links.push((r, Link::AlbumArtist));
     }
     if facts_x > cols.status + 8 {
         buf.set_string(facts_x, y, facts, theme.hint_desc);
     }
-    links
 }
 
 /// "2007 · 11 tracks · 59:10 · FLAC": what a heading says of its run.
@@ -473,30 +425,10 @@ mod tests {
                 continue;
             }
             let s = buf[(x, y)].symbol();
-            skip = s.width().saturating_sub(1);
+            skip = width(s).saturating_sub(1);
             out.push_str(s);
         }
         out
-    }
-
-    #[test]
-    fn fit_measures_cells_and_ends_in_an_ellipsis() {
-        assert_eq!(fit("abc", 3), "abc");
-        assert_eq!(fit("abcdef", 4), "abc\u{2026}");
-        assert_eq!(
-            fit("\u{65e5}\u{672c}\u{8a9e}", 6),
-            "\u{65e5}\u{672c}\u{8a9e}"
-        );
-        // Five cells: two wide characters and the ellipsis, never half of one.
-        assert_eq!(
-            fit("\u{65e5}\u{672c}\u{8a9e}\u{6587}", 5),
-            "\u{65e5}\u{672c}\u{2026}"
-        );
-        assert_eq!(
-            fit("\u{65e5}\u{672c}\u{8a9e}\u{6587}", 4),
-            "\u{65e5}\u{2026}"
-        );
-        assert_eq!(fit("abc", 0), "");
     }
 
     #[test]
@@ -517,12 +449,13 @@ mod tests {
                 &Track {
                     number: Some("12".into()),
                     title,
-                    artist: Some("someone"),
+                    artist: Some(("someone", None)),
                     codec: Some("flac"),
                     duration_ms: Some(61_000),
                     favourite: Some(true),
                     ..Default::default()
                 },
+                None,
             );
         }
         for y in 0..3 {
@@ -556,6 +489,7 @@ mod tests {
                     title: "title",
                     ..Default::default()
                 },
+                None,
             );
         }
         let cols = Columns::new(0, 60);
@@ -573,26 +507,25 @@ mod tests {
     fn the_links_cover_the_names_drawn() {
         let theme = theme();
         let mut buf = Buffer::empty(Rect::new(0, 0, 80, 1));
-        let links = track(
+        let links = Links::default();
+        links.begin((0, 0));
+        track(
             &mut buf,
             Rect::new(0, 0, 80, 1),
             &theme,
             &Track {
                 title: "song",
-                artist: Some("who"),
-                album: Some("what"),
+                artist: Some(("who", Some(Link::ArtistOfTrack(1)))),
+                album: Some(("what", Some(Link::AlbumOfTrack(1)))),
                 ..Default::default()
             },
+            Some(&links),
         );
         let l = line(&buf, 0);
-        for (r, link) in links {
-            let name: String = l.chars().skip(r.start as usize).take(r.len()).collect();
-            match link {
-                Link::Artist => assert_eq!(name, "who"),
-                Link::Album => assert_eq!(name, "what"),
-                _ => {}
-            }
-        }
+        let at = |name: &str| width(&l[..l.find(name).expect(name)]) as u16;
+        assert_eq!(links.at(at("who"), 0), Some(Link::ArtistOfTrack(1)));
+        assert_eq!(links.at(at("what") + 3, 0), Some(Link::AlbumOfTrack(1)));
+        assert_eq!(links.at(at("song"), 0), None, "the title is not a link");
     }
 
     #[test]
@@ -606,11 +539,12 @@ mod tests {
             Rect::new(0, 0, 80, 1),
             &theme,
             &Heading {
-                album: "Album",
-                artist: "Artist",
+                album: ("Album", None),
+                artist: ("Artist", None),
                 facts: &facts,
                 ..Default::default()
             },
+            None,
         );
         let l = line(&buf, 0);
         assert!(l.ends_with(&facts), "{l:?}");
@@ -638,8 +572,8 @@ mod tests {
                 &Track {
                     number: Some("1-02".into()),
                     title: "\u{65e5}\u{672c}\u{8a9e}\u{306e}\u{66f2}",
-                    artist: Some("artist"),
-                    album: Some("album"),
+                    artist: Some(("artist", None)),
+                    album: Some(("album", None)),
                     avail: Avail::Transferring(Some(0.42)),
                     favourite: Some(false),
                     codec: Some("flac"),
@@ -648,18 +582,19 @@ mod tests {
                     status: Status::Playing,
                     ..Default::default()
                 },
+                None,
             );
             heading(
                 &mut buf,
                 area,
                 &theme,
                 &Heading {
-                    album: "album",
-                    artist: "artist",
+                    album: ("album", None),
+                    artist: ("artist", None),
                     facts: "2007 \u{b7} 2 tracks",
-                    hover: None,
                     selected: true,
                 },
+                None,
             );
         }
     }

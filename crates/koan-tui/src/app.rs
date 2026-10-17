@@ -146,6 +146,7 @@ pub enum HoverZone {
     Settings(SettingsHit),
     Playlists(ListHit),
     Playlist(PlaylistHit),
+    Downloads(super::downloads_page::DownloadsHit),
     Nav(NavTarget),
     SeekBar,
     ScrollbarQueue,
@@ -303,6 +304,7 @@ pub struct App {
     pub search_page: SearchPage,
     pub playlists_page: PlaylistsPage,
     pub playlist_page: Option<PlaylistPage>,
+    pub downloads_page: super::downloads_page::DownloadsPage,
     pub name_prompt: Option<NamePrompt>,
     pub chooser: Option<Chooser>,
     pub actions_menu: Option<ActionsMenu>,
@@ -487,6 +489,7 @@ impl App {
             search_page: SearchPage::new(),
             playlists_page: PlaylistsPage::new(),
             playlist_page: None,
+            downloads_page: Default::default(),
             name_prompt: None,
             chooser: None,
             actions_menu: None,
@@ -1088,10 +1091,18 @@ impl App {
     pub fn toolbar(&self) -> super::shell::Toolbar {
         use super::shell::Toolbar;
         match self.page() {
-            Page::Queue => {
-                let n = self.queue.vq_cache.entries.len();
-                Toolbar::new("queue").count(format!("{n} track{}", if n == 1 { "" } else { "s" }))
-            }
+            Page::Queue => queue::toolbar(
+                &self.queue.vq_cache.entries,
+                &self.queue.layout,
+                &self.queue.facts,
+                self.queue.selected_ids.len(),
+            ),
+            Page::Playlists => self.playlists_page.toolbar(),
+            Page::Playlist(_) => match self.playlist_page.as_ref() {
+                Some(p) => p.toolbar(),
+                None => Toolbar::new("playlist"),
+            },
+            Page::Downloads => self.downloads_page.toolbar(),
             page => Toolbar::new(page.title()),
         }
     }
@@ -1111,12 +1122,8 @@ impl App {
             None => match self.links.at(col, row) {
                 Some(Link::Artist(id)) => self.go_page(Page::Artist(id)),
                 Some(Link::Album(id)) => self.go_page(Page::Album(id)),
-                Some(Link::ArtistOfTrack(id)) => {
-                    self.open_entry_link(Some(id), queue::HeaderLink::Artist)
-                }
-                Some(Link::AlbumOfTrack(id)) => {
-                    self.open_entry_link(Some(id), queue::HeaderLink::Album)
-                }
+                Some(Link::ArtistOfTrack(id)) => self.open_entry_link(Some(id), false),
+                Some(Link::AlbumOfTrack(id)) => self.open_entry_link(Some(id), true),
                 None => return false,
             },
         }
@@ -1182,7 +1189,12 @@ impl App {
         match self.page() {
             Page::Queue => self.handle_normal_key(key),
             Page::Artists => self.handle_library_key(key),
-            Page::Tracks | Page::Downloaded | Page::Downloads => {
+            Page::Downloads => match self.downloads_page.handle_key(key, &self.state) {
+                Some(action) => self.apply_browse(action),
+                None if key.code == KeyCode::Esc => self.leave_page(),
+                None => self.handle_transport_key(key),
+            },
+            Page::Tracks | Page::Downloaded => {
                 if key.code == KeyCode::Esc {
                     self.leave_page();
                 } else {
@@ -1982,11 +1994,7 @@ impl App {
                 self.go_page(Page::Artists);
             }
             KeyCode::Char('A') | KeyCode::Char('O') => {
-                let link = if key.code == KeyCode::Char('A') {
-                    crate::rows::Link::Artist
-                } else {
-                    crate::rows::Link::Album
-                };
+                let link = key.code == KeyCode::Char('O');
                 let db_id = self
                     .visible_queue()
                     .get(self.queue.cursor)
@@ -2152,6 +2160,15 @@ impl App {
             KeyCode::Char('W') => self.queue_control(queue::Control::Save),
             KeyCode::Char('t') if self.page() == Page::Queue => {
                 self.queue_control(queue::Control::Grouped(self.queue.flat));
+            }
+            KeyCode::Char('o') if self.page() == Page::Queue => {
+                self.queue_control(queue::Control::Playing);
+            }
+            KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.queue_control(queue::Control::ClearQueue);
+            }
+            KeyCode::Delete if !self.queue.selected_ids.is_empty() => {
+                self.queue_control(queue::Control::RemoveSelected);
             }
             KeyCode::Char('B') => self.toggle_eq(),
             KeyCode::Char('/') => {
@@ -2837,11 +2854,7 @@ impl App {
                 self.open_chooser(ids);
             }
             ContextAction::GoToAlbum | ContextAction::GoToArtist => {
-                let link = if action == ContextAction::GoToAlbum {
-                    crate::rows::Link::Album
-                } else {
-                    crate::rows::Link::Artist
-                };
+                let link = action == ContextAction::GoToAlbum;
                 let db_id = self
                     .visible_queue()
                     .get(self.queue.cursor)
@@ -3525,6 +3538,13 @@ impl App {
                         self.apply_playlist(action);
                         return;
                     }
+                    if self.page() == Page::Downloads {
+                        if let Some(hit) = self.downloads_page.hit(col, row) {
+                            let action = self.downloads_page.click(hit);
+                            self.apply_browse(action);
+                        }
+                        return;
+                    }
                     if self.page() == Page::Search {
                         let mut action = browse::Action::None;
                         let p = &mut self.search_page;
@@ -3737,34 +3757,17 @@ impl App {
                 }
 
                 let visible = &self.queue.vq_cache.entries;
-                let area = self.layout.queue_area;
-                if let Some(control) = queue::QueueView::control_at(
-                    area,
-                    self.queue.selected_ids.len(),
-                    !self.queue.flat,
-                    event.column,
-                    event.row,
-                ) {
-                    self.queue_control(control);
-                    return;
-                }
-                if let Some((idx, link)) = queue::QueueView::header_link_at(
+                if let Some(id) = queue::QueueView::heart_at(
                     visible,
                     &self.queue.layout,
-                    area,
+                    self.layout.queue_area,
                     self.queue.scroll_offset,
                     event.column,
                     event.row,
-                ) {
-                    let db_id = visible.get(idx).and_then(|e| e.db_id);
-                    match link {
-                        crate::rows::Link::Heart => {
-                            if let Some(id) = db_id {
-                                self.toggle_favourite(id);
-                            }
-                        }
-                        link => self.open_entry_link(db_id, link),
-                    }
+                )
+                .and_then(|i| visible[i].db_id)
+                {
+                    self.toggle_favourite(id);
                     return;
                 }
                 if event.column == queue::menu_button_x(self.layout.queue_area)
@@ -4001,7 +4004,9 @@ impl App {
                 } else if self.page() != Page::Queue
                     && self.is_in_rect(event.column, event.row, self.layout.browse_area)
                 {
-                    if self.page() == Page::Playlists {
+                    if self.page() == Page::Downloads {
+                        self.downloads_page.scroll_by(-1);
+                    } else if self.page() == Page::Playlists {
                         self.playlists_page.scroll_by(-3);
                     } else if let Page::Playlist(_) = self.page() {
                         if let Some(p) = self.playlist_page.as_mut() {
@@ -4039,7 +4044,9 @@ impl App {
                 } else if self.page() != Page::Queue
                     && self.is_in_rect(event.column, event.row, self.layout.browse_area)
                 {
-                    if self.page() == Page::Playlists {
+                    if self.page() == Page::Downloads {
+                        self.downloads_page.scroll_by(1);
+                    } else if self.page() == Page::Playlists {
                         self.playlists_page.scroll_by(3);
                     } else if let Page::Playlist(_) = self.page() {
                         if let Some(p) = self.playlist_page.as_mut() {
@@ -4094,8 +4101,8 @@ impl App {
         self.open_context_menu(Some((col, row)), false);
     }
 
-    /// Opens the record or the artist of the library track `db_id`.
-    pub fn open_entry_link(&mut self, db_id: Option<i64>, link: crate::rows::Link) {
+    /// Opens the album, or the artist, of the library track `db_id`.
+    pub fn open_entry_link(&mut self, db_id: Option<i64>, album_page: bool) {
         let found = db_id.and_then(|id| {
             let db = koan_core::db::pool::shared().get().ok()?;
             let track = koan_core::db::queries::get_track_row(&db.conn, id)
@@ -4104,12 +4111,11 @@ impl App {
             let album = koan_core::db::queries::get_album(&db.conn, track.album_id?)
                 .ok()
                 .flatten()?;
-            match link {
-                crate::rows::Link::Album => Some(Page::Album(album.id)),
-                crate::rows::Link::AlbumArtist => Some(Page::Artist(album.artist_id)),
-                crate::rows::Link::Artist => track.artist_id.map(Page::Artist),
-                crate::rows::Link::Heart => None,
-            }
+            Some(if album_page {
+                Page::Album(album.id)
+            } else {
+                Page::Artist(track.artist_id.unwrap_or(album.artist_id))
+            })
         });
         match found {
             Some(page) => self.go_page(page),
@@ -4197,6 +4203,11 @@ impl App {
             } else if let Page::Playlist(_) = self.page() {
                 if let Some(hit) = self.playlist_page.as_ref().and_then(|p| p.hit(col, row)) {
                     self.hover.zone = HoverZone::Playlist(hit);
+                    return;
+                }
+            } else if self.page() == Page::Downloads {
+                if let Some(hit) = self.downloads_page.hit(col, row) {
+                    self.hover.zone = HoverZone::Downloads(hit);
                     return;
                 }
             } else if self.page() == Page::Search {
@@ -4904,10 +4915,6 @@ impl App {
                 self.tx.send(PlayerCommand::ClearPlaylist).ok();
                 self.queue.selected_ids.clear();
                 self.say("cleared the queue: ctrl+z puts it back");
-            }
-            queue::Control::Deselect => {
-                self.queue.selected_ids.clear();
-                self.queue.anchor_id = None;
             }
             queue::Control::RemoveSelected => self.delete_selected(),
         }
