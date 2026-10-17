@@ -184,6 +184,7 @@ pub fn run_tui(
     }
 
     app.load_favourites();
+    app.refresh_sidebar_playlists();
 
     let mut media = crate::media_keys::MediaKeyHandler::new(
         app.tx.clone(),

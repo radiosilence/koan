@@ -159,6 +159,8 @@ pub enum NavTarget {
     Page(Page),
     Back,
     Forward,
+    /// The sidebar's "new playlist" row.
+    NewPlaylist,
 }
 
 /// Tracks the current mouse hover position and zone.
@@ -212,6 +214,8 @@ pub struct LayoutRects {
     pub nav_hits: Vec<(ratatui::layout::Rect, NavTarget)>,
     /// The key hints along the foot, and the key each stands for.
     pub hint_hits: Vec<(ratatui::layout::Rect, KeyEvent)>,
+    /// Back, forward and the page's controls in the toolbar row.
+    pub toolbar_hits: Vec<(ratatui::layout::Rect, super::shell::ToolHit)>,
     /// The page the stage is showing, below the sidebar or tab bar.
     pub stage_area: ratatui::layout::Rect,
     pub browse_area: ratatui::layout::Rect,
@@ -375,6 +379,12 @@ pub struct App {
     /// Mouse hover state — updated on MouseEventKind::Moved.
     pub hover: HoverState,
 
+    /// The artist and album links drawn this frame, wherever they are.
+    pub links: super::shell::Links,
+
+    /// The playlists the sidebar lists, by id and name.
+    pub sidebar_playlists: Vec<(i64, String)>,
+
     /// Ticker offset for scrolling long transport text.
     pub ticker_offset: usize,
     /// Counter for ticker animation speed (increments each tick).
@@ -509,6 +519,8 @@ impl App {
             lyrics_panel: false,
             lyrics_rx: None,
             hover: HoverState::default(),
+            links: Default::default(),
+            sidebar_playlists: Vec::new(),
             ticker_offset: 0,
             ticker_tick: 0,
             ticker_divisor,
@@ -990,7 +1002,10 @@ impl App {
             | Page::NowPlaying
             | Page::Album(_)
             | Page::Playlist(_)
-            | Page::Settings => false,
+            | Page::Settings
+            | Page::Tracks
+            | Page::Downloaded
+            | Page::Downloads => false,
         }
     }
 
@@ -1041,7 +1056,7 @@ impl App {
                 self.artist_page = Browse::new(Source::Artist(id));
                 self.artist_page.reload();
             }
-            Page::Queue => {}
+            Page::Queue | Page::Tracks | Page::Downloaded | Page::Downloads => {}
         }
     }
 
@@ -1062,7 +1077,58 @@ impl App {
             NavTarget::Page(p) => self.go_page(p),
             NavTarget::Back => self.go_back(),
             NavTarget::Forward => self.go_forward(),
+            NavTarget::NewPlaylist => {
+                self.open_name_prompt(Purpose::New(Vec::new()), String::new())
+            }
         }
+    }
+
+    /// What the page in front shows in the toolbar row. Each page's own
+    /// controls are its arm here.
+    pub fn toolbar(&self) -> super::shell::Toolbar {
+        use super::shell::Toolbar;
+        match self.page() {
+            Page::Queue => {
+                let n = self.queue.vq_cache.entries.len();
+                Toolbar::new("queue").count(format!("{n} track{}", if n == 1 { "" } else { "s" }))
+            }
+            page => Toolbar::new(page.title()),
+        }
+    }
+
+    /// A click on the toolbar or on a link. True when it was one.
+    fn shell_click(&mut self, col: u16, row: u16) -> bool {
+        use super::shell::{Link, ToolHit};
+        let toolbar = self
+            .layout
+            .toolbar_hits
+            .iter()
+            .find(|(r, _)| r.contains(ratatui::layout::Position::new(col, row)))
+            .map(|(_, h)| *h);
+        match toolbar {
+            Some(ToolHit::Nav(target)) => self.activate(target),
+            Some(ToolHit::Key(key)) => self.handle_key(key),
+            None => match self.links.at(col, row) {
+                Some(Link::Artist(id)) => self.go_page(Page::Artist(id)),
+                Some(Link::Album(id)) => self.go_page(Page::Album(id)),
+                Some(Link::ArtistOfTrack(id)) => {
+                    self.open_entry_link(Some(id), queue::HeaderLink::Artist)
+                }
+                Some(Link::AlbumOfTrack(id)) => {
+                    self.open_entry_link(Some(id), queue::HeaderLink::Album)
+                }
+                None => return false,
+            },
+        }
+        true
+    }
+
+    /// Reads the playlists the sidebar lists.
+    pub fn refresh_sidebar_playlists(&mut self) {
+        self.sidebar_playlists = super::playlist_ops::list()
+            .into_iter()
+            .map(|p| (p.id, p.name))
+            .collect();
     }
 
     /// The keys that move between pages. True when `key` was one.
@@ -1116,6 +1182,13 @@ impl App {
         match self.page() {
             Page::Queue => self.handle_normal_key(key),
             Page::Artists => self.handle_library_key(key),
+            Page::Tracks | Page::Downloaded | Page::Downloads => {
+                if key.code == KeyCode::Esc {
+                    self.leave_page();
+                } else {
+                    self.handle_transport_key(key);
+                }
+            }
             Page::NowPlaying => {
                 if key.code == KeyCode::Esc {
                     self.leave_page();
@@ -1392,6 +1465,7 @@ impl App {
 
     /// Has the pages that show playlists read them again.
     fn playlists_changed(&mut self) {
+        self.refresh_sidebar_playlists();
         self.playlists_page.reload();
         if let Some(p) = self.playlist_page.as_mut() {
             p.reload();
@@ -3414,6 +3488,10 @@ impl App {
                 // Sidebar and tab bar.
                 if let Some(target) = self.nav_target_at(event.column, event.row) {
                     self.activate(target);
+                    return;
+                }
+
+                if self.shell_click(event.column, event.row) {
                     return;
                 }
 

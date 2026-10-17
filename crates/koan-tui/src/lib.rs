@@ -37,6 +37,7 @@ pub mod remote_bridge;
 pub mod rows;
 pub mod search_page;
 pub mod settings_page;
+pub mod shell;
 pub mod tasks;
 pub mod theme;
 pub mod thumb_cache;
