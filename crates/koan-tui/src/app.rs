@@ -1454,8 +1454,12 @@ impl App {
 
     /// Runs the menu's item at `idx` as its key would, and closes the menu.
     fn run_menu_item(&mut self, idx: usize) {
-        let action = self.actions_menu.as_mut().and_then(|m| m.take(idx));
-        self.close_actions_menu();
+        let action = self
+            .actions_menu
+            .take()
+            .and_then(|m| m.items.into_iter().nth(idx))
+            .map(|(_, action)| action);
+        self.pop_mode();
         if let Some(action) = action {
             self.apply_browse(action);
         }
