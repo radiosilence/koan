@@ -18,7 +18,7 @@ struct QueueRowContent: Equatable {
     /// printed.
     var number: Int64?
     /// Its disc, set only where its record in the list runs past disc 1, so
-    /// the place reads "2-03" there and stays a bare number everywhere else.
+    /// the place reads "2.03" there and stays a bare number everywhere else.
     var disc: Int64?
     var codec: String?
     var durationMs: Int64?
@@ -296,11 +296,11 @@ struct QueueRow: View {
 }
 
 extension QueueRowContent {
-    /// The place as the number column prints it: "2-03" on a record that
+    /// The place as the number column prints it: "2.03" on a record that
     /// spans discs, the bare number otherwise.
     var place: String {
         guard let number else { return "" }
         guard let disc else { return String(number) }
-        return "\(disc)-" + (number < 10 ? "0\(number)" : String(number))
+        return "\(disc)." + (number < 10 ? "0\(number)" : String(number))
     }
 }

@@ -355,7 +355,7 @@ final class QueueTableRow: TableCell, TableRow {
             x += side + 10
         } else {
             let numberHeight = lineHeight(Self.numberFont)
-            // Wide enough for a disc's "2-03" where the row carries one.
+            // Wide enough for a disc's "2.03" where the row carries one.
             let numberWidth = max(20, ceil(number.intrinsicContentSize.width))
             number.frame = CGRect(x: x, y: (height - numberHeight) / 2, width: numberWidth, height: numberHeight)
             x += numberWidth + 10
