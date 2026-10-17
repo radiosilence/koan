@@ -36,12 +36,15 @@ const TEXT_ROWS: u16 = 10;
 #[derive(Default)]
 pub struct EqCurve {
     made_for: Option<(String, u32, Arc<Config>)>,
-    total: Option<Vec<f64>>,
-    pending: Option<Receiver<Option<Vec<f64>>>>,
+    /// The curve shown, with the profile it is the curve of.
+    total: Option<(String, Vec<f64>)>,
+    pending: Option<Receiver<Option<(String, Vec<f64>)>>>,
 }
 
 impl EqCurve {
-    fn get(&mut self, profile: &str, rate: u32, cfg: &Arc<Config>) -> Option<&[f64]> {
+    /// The curve to plot and the profile it belongs to, which is the last
+    /// one's until a new profile's curve arrives.
+    fn get(&mut self, profile: &str, rate: u32, cfg: &Arc<Config>) -> Option<(&str, &[f64])> {
         // Every config write is a new `Arc`; only the profiles shape the curve.
         let current = self.made_for.as_mut().is_some_and(|(p, r, c)| {
             let same = p == profile
@@ -60,7 +63,7 @@ impl EqCurve {
                 .name("koan-eq-curve".into())
                 .spawn(move || {
                     let curve = koan_core::audio::dsp::profiles::response(&profile, rate);
-                    tx.send(curve.map(|c| c.total)).ok();
+                    tx.send(curve.map(|c| (profile, c.total))).ok();
                 })
                 .ok();
             self.pending = Some(rx);
@@ -71,7 +74,7 @@ impl EqCurve {
             self.total = total;
             self.pending = None;
         }
-        self.total.as_deref()
+        self.total.as_ref().map(|(p, c)| (p.as_str(), c.as_slice()))
     }
 }
 
@@ -202,7 +205,7 @@ pub fn render(buf: &mut Buffer, app: &mut App, area: Rect) {
         return;
     }
     let theme = &app.theme;
-    let cfg = Config::cached();
+    let cfg = app.cfg.clone();
     let output_rate = app.state.output_sample_rate();
     let dsp = app.state.dsp();
 
@@ -385,8 +388,8 @@ pub fn render(buf: &mut Buffer, app: &mut App, area: Rect) {
     };
     let pos = app.state.position_ms();
     LyricsPanel::new(&app.lyrics, pos, &app.theme, app.spinner_tick).render(lyrics_area, buf);
-    if let (Some(plot), Some(curve), Some(d)) = (plot_area, curve, &dsp) {
-        eq_plot(plot, buf, &app.theme, &d.profile, curve);
+    if let (Some(plot), Some((profile, curve))) = (plot_area, curve) {
+        eq_plot(plot, buf, &app.theme, profile, curve);
         app.layout.eq_hits.push(plot);
     }
 }
@@ -414,14 +417,14 @@ mod tests {
         let cfg = Arc::new(Config::default());
         let mut curve = EqCurve {
             made_for: Some(("flat".into(), 44100, cfg.clone())),
-            total: Some(vec![1.0]),
+            total: Some(("flat".into(), vec![1.0])),
             pending: None,
         };
         let mut unrelated = (*cfg).clone();
         unrelated.visualizer.enabled = !unrelated.visualizer.enabled;
         assert_eq!(
             curve.get("flat", 44100, &Arc::new(unrelated)),
-            Some(&[1.0][..])
+            Some(("flat", &[1.0][..]))
         );
         assert!(curve.pending.is_none(), "nothing is rebuilt");
 
@@ -432,7 +435,7 @@ mod tests {
         });
         assert_eq!(
             curve.get("flat", 44100, &Arc::new(edited)),
-            Some(&[1.0][..]),
+            Some(("flat", &[1.0][..])),
             "the old curve stays up while the new one is worked out"
         );
         assert!(curve.pending.is_some());
