@@ -335,14 +335,22 @@ struct AlbumCollection: NSViewRepresentable {
             for id in records(in: visible, from: visible).keys { ranked[id] = .visible }
             context.art.prioritise(ranked.map { (.album($0.key), $0.value) })
 
-            for (id, task) in fetching where ranked[id].map({ $0.tier == .visible }) ?? true {
+            // Kept while the record is on screen too: its tile may not have
+            // joined the fetch yet, and dropping the last claim would start
+            // it again from nothing.
+            for (id, task) in fetching where ranked[id] == nil {
                 task.cancel()
                 fetching[id] = nil
             }
             let art = context.art
             for (id, priority) in ranked where priority.tier != .visible && fetching[id] == nil
                 && art.cached(.album(id), size: .tile) == nil {
-                fetching[id] = Task { _ = await art.image(for: .album(id), size: .tile, priority: priority) }
+                fetching[id] = Task { [weak self] in
+                    _ = await art.image(for: .album(id), size: .tile, priority: priority)
+                    // Done, or failed and worth another try while it is still
+                    // in range. A cancelled one has already been replaced.
+                    if !Task.isCancelled { self?.fetching[id] = nil }
+                }
             }
         }
 
@@ -790,10 +798,10 @@ final class AlbumTile: NSCollectionViewItem {
             return
         }
         shown = nil
-        // The ensō stands in until the sleeve arrives. No spinner: the grid
-        // fetches ahead of the scroll, so a sleeve is usually here before its
-        // tile shows, and a spinner is an AppKit control — a SwiftUI graph of
-        // its own — made for every tile that scrolls in.
+        // The ensō stands in until the sleeve arrives, without a spinner: the
+        // grid fetches ahead of the scroll, so a sleeve is usually here before
+        // its tile shows, and a spinner is an AppKit control — a SwiftUI graph
+        // of its own — that would be made for every tile that scrolls in.
         ensō.isHidden = false
         // A tile made ahead of the scroll waits its turn behind the ones on
         // screen; the grid promotes it as it comes into view.

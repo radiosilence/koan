@@ -15,7 +15,7 @@ enum ImageWork {
     /// computing, so having several costs a stack and nothing else. The same
     /// trade koan-ffi's blocking pool makes on the Rust side. At the decode
     /// lane's quality of service, because a sleeve read off disk is one
-    /// someone is waiting to see; on a busy machine, utility work waited
+    /// someone is waiting to see, and on a busy machine utility work can wait
     /// hundreds of milliseconds for a thread.
     private static let disk = DispatchQueue(
         label: "cc.blit.koan.image-disk",
@@ -32,8 +32,7 @@ enum ImageWork {
     /// more of it in flight than the machine can run finishes no sooner and
     /// delays whatever is behind it. Two cores are left for the main thread
     /// and the render server, which is where a scroll is drawn. A fast scroll
-    /// through a cold grid wants a hundred sleeves a second or more, and half
-    /// the cores fell behind it.
+    /// through a cold grid wants a hundred sleeves a second or more.
     private static let cpu = Lane(width: max(2, ProcessInfo.processInfo.activeProcessorCount - 2))
 
     /// How much a piece of work matters to what is on screen. The lane runs the
