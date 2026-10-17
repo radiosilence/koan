@@ -14,6 +14,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 
+use super::actions_menu::{Playable, playable};
 use super::app::PickerAction;
 use super::browse::Action;
 use super::shell::{Link, Links, ToolItem, Toolbar};
@@ -399,7 +400,12 @@ impl HistoryPage {
         self.armed.is_some_and(|at| at.elapsed() < CONFIRM)
     }
 
-    pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> Option<Action> {
+    /// A key. `favourites` is what the menu says the track is.
+    pub fn handle_key(
+        &mut self,
+        key: crossterm::event::KeyEvent,
+        favourites: &HashSet<i64>,
+    ) -> Option<Action> {
         use crossterm::event::{KeyCode, KeyModifiers};
         if self.filter_active {
             match key.code {
@@ -478,7 +484,7 @@ impl HistoryPage {
             KeyCode::Enter => return Some(self.play(self.cursor, PickerAction::AppendAndPlay)),
             KeyCode::Char('a') => return Some(self.play(self.cursor, PickerAction::Append)),
             KeyCode::Char('N') => return Some(self.play(self.cursor, PickerAction::PlayNext)),
-            KeyCode::Char('m') => return Some(self.menu(self.cursor)),
+            KeyCode::Char('m') => return Some(self.menu(self.cursor, favourites)),
             KeyCode::Char('w') => return Some(Action::Choose(self.chosen_tracks(self.cursor))),
             KeyCode::Char('d') => return Some(Action::Download(self.chosen_tracks(self.cursor))),
             KeyCode::Char('u') => {
@@ -520,37 +526,30 @@ impl HistoryPage {
         Some(Action::None)
     }
 
-    /// What can be done with the plays picked out, or the one at `idx`.
-    fn menu(&self, idx: usize) -> Action {
-        use PickerAction::{Append, AppendAndPlay, PlayNext};
+    /// What can be done with the plays picked out, or the one at `idx`: the
+    /// apps' menu for a track or for several, then forgetting them.
+    fn menu(&self, idx: usize, favourites: &HashSet<i64>) -> Action {
         let chosen = self.chosen(idx);
-        let ids: Vec<i64> = chosen.iter().map(|e| e.track.id).collect();
-        let (title, single) = match chosen.as_slice() {
+        let (title, thing) = match chosen.as_slice() {
             [] => return Action::None,
-            [one] => (one.track.title.clone(), Some(&one.track)),
-            many => (format!("{} plays", many.len()), None),
-        };
-        let mut items = vec![
-            ("Play".to_string(), Action::Play(ids.clone(), AppendAndPlay)),
-            ("Add to the queue".into(), Action::Play(ids.clone(), Append)),
-            ("Play next".into(), Action::Play(ids.clone(), PlayNext)),
-            (
-                "Add to a playlist\u{2026}".into(),
-                Action::Choose(ids.clone()),
+            [one] => {
+                let t = &one.track;
+                let thing = Playable::Track {
+                    id: t.id,
+                    favourite: favourites.contains(&t.id),
+                    on_disk: t.path.is_some() || t.cached_path.is_some(),
+                    album: t.album_id,
+                    artist: t.artist_id,
+                };
+                (t.title.clone(), thing)
+            }
+            many => (
+                format!("{} plays", many.len()),
+                Playable::Tracks(many.iter().map(|e| e.track.id).collect()),
             ),
-        ];
-        if let Some(t) = single {
-            items.push(("Favourite or unfavourite".into(), Action::Favourite(t.id)));
-            if let Some(a) = t.album_id {
-                items.push(("Go to the album".into(), Action::OpenAlbum(a)));
-            }
-            if let Some(a) = t.artist_id {
-                items.push(("Go to the artist".into(), Action::OpenArtist(a)));
-            }
-            items.push(("Track info".into(), Action::Info(t.id)));
-        }
-        items.push(("Download".into(), Action::Download(ids.clone())));
-        items.push(("Remove the download".into(), Action::RemoveDownload(ids)));
+        };
+        let mut items = playable(&thing);
+        items.push((String::new(), Action::None));
         items.push(("Remove from History".into(), Action::ForgetPlays));
         Action::Menu(title, items)
     }
@@ -956,7 +955,7 @@ mod tests {
         let mut p = page();
         draw(&mut p, 100, 12);
         for _ in 0..2 {
-            p.handle_key(KeyEvent::from(KeyCode::Down));
+            p.handle_key(KeyEvent::from(KeyCode::Down), &HashSet::new());
         }
         assert_eq!(p.cursor, 2);
         assert!(matches!(p.lines[p.line_of[2] - 1], Line::Day(_)));
@@ -987,15 +986,18 @@ mod tests {
     fn forgetting_everything_takes_two_presses() {
         let mut p = page();
         draw(&mut p, 100, 12);
-        p.handle_key(KeyEvent::from(KeyCode::Char('D')));
+        p.handle_key(KeyEvent::from(KeyCode::Char('D')), &HashSet::new());
         assert!(p.armed());
         assert_eq!(
-            p.handle_key(KeyEvent::from(KeyCode::Esc)),
+            p.handle_key(KeyEvent::from(KeyCode::Esc), &HashSet::new()),
             Some(Action::None),
             "esc lets it be and stays on the page"
         );
         assert!(!p.armed());
-        assert_eq!(p.handle_key(KeyEvent::from(KeyCode::Esc)), None);
+        assert_eq!(
+            p.handle_key(KeyEvent::from(KeyCode::Esc), &HashSet::new()),
+            None
+        );
     }
 
     #[test]
@@ -1004,13 +1006,19 @@ mod tests {
         draw(&mut p, 100, 12);
         let key = |c| KeyEvent::from(KeyCode::Char(c));
         assert_eq!(
-            p.handle_key(key('N')),
+            p.handle_key(key('N'), &HashSet::new()),
             Some(Action::Play(vec![1], PickerAction::PlayNext))
         );
-        assert_eq!(p.handle_key(key('i')), Some(Action::Info(1)));
-        assert_eq!(p.handle_key(key('d')), Some(Action::Download(vec![1])));
         assert_eq!(
-            p.handle_key(key('u')),
+            p.handle_key(key('i'), &HashSet::new()),
+            Some(Action::Info(1))
+        );
+        assert_eq!(
+            p.handle_key(key('d'), &HashSet::new()),
+            Some(Action::Download(vec![1]))
+        );
+        assert_eq!(
+            p.handle_key(key('u'), &HashSet::new()),
             Some(Action::RemoveDownload(vec![1]))
         );
     }
@@ -1019,7 +1027,7 @@ mod tests {
     fn the_menu_acts_on_the_play_under_the_cursor() {
         let mut p = page();
         draw(&mut p, 100, 12);
-        let Action::Menu(title, items) = p.menu(1) else {
+        let Action::Menu(title, items) = p.menu(1, &HashSet::from([2])) else {
             panic!("a menu");
         };
         assert_eq!(title, "two");
@@ -1028,6 +1036,13 @@ mod tests {
                 .iter()
                 .any(|(l, a)| l == "Track info" && *a == Action::Info(2))
         );
+        assert!(
+            items.iter().any(|(l, _)| l == "Remove favourite"),
+            "the menu knows it is a favourite"
+        );
+        let n = items.len();
+        assert_eq!(items[n - 2], (String::new(), Action::None), "a rule");
+        assert_eq!(items[n - 1].1, Action::ForgetPlays);
         let bar = p.toolbar();
         assert!(
             bar.items
@@ -1104,21 +1119,27 @@ mod tests {
     fn shift_picks_out_a_run_that_plays_and_is_forgotten_together() {
         let mut p = page();
         draw(&mut p, 100, 12);
-        p.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT));
-        p.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT));
+        p.handle_key(
+            KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT),
+            &HashSet::new(),
+        );
+        p.handle_key(
+            KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT),
+            &HashSet::new(),
+        );
         assert_eq!(p.picked.len(), 3);
         assert_eq!(
-            p.handle_key(KeyEvent::from(KeyCode::Enter)),
+            p.handle_key(KeyEvent::from(KeyCode::Enter), &HashSet::new()),
             Some(Action::Play(vec![1, 2, 3], PickerAction::AppendAndPlay))
         );
-        let Action::Menu(title, items) = p.menu(p.cursor) else {
+        let Action::Menu(title, items) = p.menu(p.cursor, &HashSet::new()) else {
             panic!("a menu");
         };
         assert_eq!(title, "3 plays");
         assert!(items.iter().any(|(_, a)| *a == Action::ForgetPlays));
         let (tx, rx) = crossbeam_channel::unbounded();
         p.tx = tx;
-        p.handle_key(KeyEvent::from(KeyCode::Char('x')));
+        p.handle_key(KeyEvent::from(KeyCode::Char('x')), &HashSet::new());
         let asked = rx.try_recv().unwrap();
         assert!(matches!(asked.forget, Some(Forget::Plays(ids)) if ids == vec![1, 2, 3]));
         assert!(p.picked.is_empty());
@@ -1131,7 +1152,7 @@ mod tests {
         p.click(HistoryHit::Play(0), KeyModifiers::ALT);
         p.click(HistoryHit::Play(2), KeyModifiers::ALT);
         assert_eq!(p.chosen_tracks(0), vec![1, 3]);
-        p.handle_key(KeyEvent::from(KeyCode::Esc));
+        p.handle_key(KeyEvent::from(KeyCode::Esc), &HashSet::new());
         assert!(p.picked.is_empty());
     }
 

@@ -23,6 +23,16 @@ pub const TOP_GUTTER: u16 = 1;
 /// Columns between the content and the sidebar, and the content and the
 /// terminal's right edge.
 pub const SIDE_GUTTER: u16 = 1;
+/// Rows clear between the toolbar and the page's first row of content.
+pub const BODY_GAP: u16 = 1;
+
+/// A page's area with the row under the toolbar left clear: where its
+/// content starts.
+pub fn body(area: Rect) -> Rect {
+    let gap = BODY_GAP.min(area.height);
+    Rect::new(area.x, area.y + gap, area.width, area.height - gap)
+}
+
 /// Columns between a toolbar's items.
 pub const ITEM_GAP: u16 = 2;
 
@@ -357,6 +367,12 @@ mod tests {
         let area = Rect::new(10, 5, 40, 12);
         assert_eq!(centred(area, 20, 6), Rect::new(20, 8, 20, 6));
         assert_eq!(centred(area, 90, 60), area);
+    }
+
+    #[test]
+    fn a_body_starts_below_the_gap() {
+        assert_eq!(body(Rect::new(3, 4, 10, 6)), Rect::new(3, 5, 10, 5));
+        assert_eq!(body(Rect::new(3, 4, 10, 0)), Rect::new(3, 4, 10, 0));
     }
 
     #[test]

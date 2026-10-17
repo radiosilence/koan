@@ -290,7 +290,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 None => {
                     frame.buffer_mut().set_string(
                         stage.x,
-                        stage.y + 1,
+                        super::shell::body(stage).y,
                         "this playlist is gone",
                         theme.hint_desc,
                     );
@@ -385,7 +385,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 None => {
                     frame.buffer_mut().set_string(
                         stage.x,
-                        stage.y + 1,
+                        super::shell::body(stage).y,
                         "this album is not in the library",
                         theme.hint_desc,
                     );
@@ -1470,6 +1470,31 @@ mod tests {
             "the heart sits at the right, among the figures"
         );
         assert_eq!(menu_button_x(area), area.x + area.width - 3);
+    }
+
+    #[test]
+    fn the_queue_draws_no_heading_of_its_own_under_the_toolbar() {
+        let mut app = app_with_queue(3);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+        let buf = terminal.backend().buffer();
+        let q = app.layout.queue_area;
+        let row =
+            |y: u16| -> String { (q.x..q.x + q.width).map(|x| buf[(x, y)].symbol()).collect() };
+        let toolbar = row(q.y - 1);
+        assert!(
+            toolbar.contains("queue") && toolbar.contains("3 tracks"),
+            "{toolbar:?}"
+        );
+        let first = row(q.y);
+        assert!(
+            first.trim_start().starts_with("album"),
+            "the album's heading: {first:?}"
+        );
+        assert!(
+            !first.contains('\u{2500}'),
+            "no rule of a heading row: {first:?}"
+        );
     }
 
     #[test]
