@@ -5,6 +5,7 @@
 use std::time::{Duration, Instant};
 
 use chrono::{Local, NaiveDate, TimeZone};
+use crossbeam_channel::{Receiver, Sender};
 use koan_core::db::queries::{self, PlayHistoryRow};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -48,11 +49,100 @@ struct Geom {
     total: usize,
 }
 
+enum Forget {
+    Plays(Vec<i64>),
+    Everything,
+}
+
+/// A read of the plays under `filter`, after forgetting what `forget` names.
+struct Request {
+    generation: u64,
+    forget: Option<Forget>,
+    filter: String,
+}
+
+struct Reply {
+    generation: u64,
+    /// The history's version the plays were read at.
+    version: u64,
+    entries: Option<Vec<PlayHistoryRow>>,
+    error: Option<String>,
+}
+
+/// Reads and forgets plays off the TUI thread. A burst of requests is
+/// answered with one read, after every forgetting in it.
+fn spawn_reader() -> (Sender<Request>, Receiver<Reply>) {
+    let (tx, req) = crossbeam_channel::unbounded::<Request>();
+    let (done, rx) = crossbeam_channel::unbounded();
+    std::thread::Builder::new()
+        .name("koan-history".into())
+        .spawn(move || {
+            while let Ok(mut next) = req.recv() {
+                let mut error = None;
+                loop {
+                    if let Some(forget) = next.forget.take()
+                        && let Err(e) = forget_plays(forget)
+                    {
+                        error = Some(e);
+                    }
+                    match req.try_recv() {
+                        Ok(newer) => next = newer,
+                        Err(_) => break,
+                    }
+                }
+                let version = koan_core::player::history::version();
+                let entries = match read(&next.filter) {
+                    Ok(entries) => Some(entries),
+                    Err(e) => {
+                        error = Some(e);
+                        None
+                    }
+                };
+                let reply = Reply {
+                    generation: next.generation,
+                    version,
+                    entries,
+                    error,
+                };
+                if done.send(reply).is_err() {
+                    return;
+                }
+            }
+        })
+        .ok();
+    (tx, rx)
+}
+
+fn read(filter: &str) -> Result<Vec<PlayHistoryRow>, String> {
+    let db = koan_core::db::pool::shared()
+        .get()
+        .map_err(|e| format!("history could not be read: {e}"))?;
+    let search = (!filter.is_empty()).then_some(filter);
+    queries::play_history_with_tracks(&db.conn, queries::LOCAL_USER, search, Some(LIMIT), 0)
+        .map_err(|e| format!("history could not be read: {e}"))
+}
+
+fn forget_plays(forget: Forget) -> Result<(), String> {
+    let failed = |e: String| format!("could not forget: {e}");
+    let db = koan_core::db::pool::shared()
+        .get()
+        .map_err(|e| failed(e.to_string()))?;
+    match forget {
+        Forget::Plays(ids) => koan_core::remote::history::forget(&db, &ids),
+        Forget::Everything => koan_core::remote::history::clear(&db),
+    }
+    .map_err(|e| failed(e.to_string()))?;
+    koan_core::player::history::changed();
+    Ok(())
+}
+
 pub struct HistoryPage {
     entries: Vec<PlayHistoryRow>,
     lines: Vec<Line>,
     /// The line each entry is on.
     line_of: Vec<usize>,
+    /// The day the headings were named against.
+    today: NaiveDate,
     cursor: usize,
     scroll: usize,
     follow: bool,
@@ -61,6 +151,11 @@ pub struct HistoryPage {
     armed: Option<Instant>,
     /// The history's version when it was read; a play moves it on.
     seen: u64,
+    /// The last read asked for, and the last one shown.
+    generation: u64,
+    shown: u64,
+    tx: Sender<Request>,
+    rx: Receiver<Reply>,
     geom: Geom,
     last_click: Option<(usize, Instant)>,
 }
@@ -89,10 +184,12 @@ impl Default for HistoryPage {
 
 impl HistoryPage {
     pub fn new() -> Self {
+        let (tx, rx) = spawn_reader();
         Self {
             entries: Vec::new(),
             lines: Vec::new(),
             line_of: Vec::new(),
+            today: Local::now().date_naive(),
             cursor: 0,
             scroll: 0,
             follow: true,
@@ -100,36 +197,57 @@ impl HistoryPage {
             filter_active: false,
             armed: None,
             seen: 0,
+            generation: 0,
+            shown: 0,
+            tx,
+            rx,
             geom: Geom::default(),
             last_click: None,
         }
     }
 
-    /// Reads the plays again if one was recorded or forgotten since the last
-    /// read, so the page stays current while it is open.
-    pub fn refresh(&mut self) {
-        if koan_core::player::history::version() != self.seen {
+    /// Takes in what the reader has finished, asks again if a play was
+    /// recorded or forgotten since the last read, and renames the days once
+    /// midnight passes, so the page stays current while it is open. Returns
+    /// what failed, to be said.
+    pub fn poll(&mut self) -> Option<String> {
+        let mut error = None;
+        while let Ok(reply) = self.rx.try_recv() {
+            error = reply.error.or(error);
+            if reply.generation != self.generation {
+                continue;
+            }
+            // A failed read still counts as shown, so the next play asks again.
+            self.shown = reply.generation;
+            self.seen = reply.version;
+            if let Some(entries) = reply.entries {
+                self.take(entries);
+            }
+        }
+        if self.shown == self.generation && koan_core::player::history::version() != self.seen {
             self.reload();
         }
+        let today = Local::now().date_naive();
+        if today != self.today {
+            self.today = today;
+            self.rebuild();
+        }
+        error
     }
 
     /// Reads the plays again, narrowed by the filter.
     pub fn reload(&mut self) {
-        self.seen = koan_core::player::history::version();
-        let Ok(db) = koan_core::db::pool::shared().get() else {
-            return;
+        self.ask(None);
+    }
+
+    fn ask(&mut self, forget: Option<Forget>) {
+        self.generation += 1;
+        let request = Request {
+            generation: self.generation,
+            forget,
+            filter: self.filter.clone(),
         };
-        let search = (!self.filter.is_empty()).then_some(self.filter.as_str());
-        let entries = queries::play_history_with_tracks(
-            &db.conn,
-            queries::LOCAL_USER,
-            search,
-            Some(LIMIT),
-            0,
-        )
-        .unwrap_or_default();
-        drop(db);
-        self.take(entries);
+        self.tx.send(request).ok();
     }
 
     /// Shows `entries`, keeping the selected play selected and where it was
@@ -140,6 +258,7 @@ impl HistoryPage {
             .get(self.cursor)
             .map(|e| (e.id, self.line_of[self.cursor]));
         self.entries = entries;
+        self.today = Local::now().date_naive();
         self.rebuild();
         let Some((id, was)) = kept else { return };
         if let Some(idx) = self.entries.iter().position(|e| e.id == id) {
@@ -152,7 +271,6 @@ impl HistoryPage {
     }
 
     fn rebuild(&mut self) {
-        let today = Local::now().date_naive();
         self.lines.clear();
         self.line_of.clear();
         let mut current = None;
@@ -160,7 +278,7 @@ impl HistoryPage {
             let day = day_of(e.played_at);
             if day != current || self.lines.is_empty() {
                 current = day;
-                let label = day.map_or_else(|| "earlier".into(), |d| day_label(d, today));
+                let label = day.map_or_else(|| "earlier".into(), |d| day_label(d, self.today));
                 self.lines.push(Line::Day(label));
             }
             self.line_of.push(self.lines.len());
@@ -212,29 +330,29 @@ impl HistoryPage {
             .map_or(Action::None, |t| Action::Play(vec![t.id], how))
     }
 
-    /// Forgets the play at `idx`.
+    /// Forgets the play at `idx`. The row goes at once, so the next press
+    /// acts on the play below it; the read that follows the forgetting puts
+    /// it back if that failed.
     fn forget(&mut self, idx: usize) {
-        let Some(id) = self.entries.get(idx).map(|e| e.id) else {
+        if idx >= self.entries.len() {
             return;
-        };
-        if let Ok(db) = koan_core::db::pool::shared().get() {
-            koan_core::remote::history::forget(&db, &[id]).ok();
-            koan_core::player::history::changed();
         }
-        self.reload();
+        let id = self.entries.remove(idx).id;
+        if idx < self.cursor {
+            self.cursor -= 1;
+        }
+        self.rebuild();
+        self.keep_cursor_visible();
+        self.ask(Some(Forget::Plays(vec![id])));
     }
 
     /// Forgets every play, on a second press within a few seconds of the first.
     fn forget_all(&mut self) {
-        if self.armed.is_some_and(|at| at.elapsed() < CONFIRM) {
+        if self.armed() {
             self.armed = None;
-            if let Ok(db) = koan_core::db::pool::shared().get() {
-                koan_core::remote::history::clear(&db).ok();
-                koan_core::player::history::changed();
-            }
             self.cursor = 0;
             self.scroll = 0;
-            self.reload();
+            self.ask(Some(Forget::Everything));
         } else {
             self.armed = Some(Instant::now());
         }
@@ -270,7 +388,11 @@ impl HistoryPage {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let page = self.rows();
         if key.code != KeyCode::Char('D') {
+            let asked = self.armed();
             self.armed = None;
+            if asked && key.code == KeyCode::Esc {
+                return Some(Action::None);
+            }
         }
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => self.move_to(self.cursor.saturating_sub(1)),
@@ -326,7 +448,6 @@ impl HistoryPage {
             KeyCode::Char('/') => self.filter_active = true,
             KeyCode::Char('x') | KeyCode::Delete | KeyCode::Backspace => self.forget(self.cursor),
             KeyCode::Char('D') => self.forget_all(),
-            KeyCode::Esc if self.armed.take().is_some() => {}
             KeyCode::Esc if !self.filter.is_empty() => {
                 self.filter.clear();
                 self.reload();
@@ -543,8 +664,8 @@ impl HistoryPage {
                     }
                 }
                 Line::Play(i) => {
-                    let i = *i;
-                    self.render_play(buf, theme, i, y, list.x, text_end, hover);
+                    let row = Rect::new(list.x, y, text_end - list.x, 1);
+                    self.render_play(buf, theme, *i, row, hover);
                 }
             }
         }
@@ -572,17 +693,16 @@ impl HistoryPage {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// Draws the play at `i` across `row`.
     fn render_play(
         &mut self,
         buf: &mut Buffer,
         theme: &Theme,
         i: usize,
-        y: u16,
-        x0: u16,
-        end: u16,
+        row: Rect,
         hover: Option<HistoryHit>,
     ) {
+        let (x0, y, end) = (row.x, row.y, row.x + row.width);
         let e = &self.entries[i];
         let t = &e.track;
         let selected = i == self.cursor;
@@ -682,7 +802,7 @@ impl HistoryPage {
             ),
         ] {
             let shown = fit(text, w);
-            let width = shown.chars().count() as u16;
+            let width = unicode_width::UnicodeWidthStr::width(shown.as_str()) as u16;
             buf.set_string(x, y, &shown, link(linked && hover == Some(hit)));
             if linked {
                 self.geom.links.push((Rect::new(x, y, width, 1), hit));
@@ -727,9 +847,11 @@ mod tests {
         }
     }
 
+    /// A page whose reads go nowhere: tests never touch the library.
     fn page() -> HistoryPage {
         let now = Local::now().timestamp();
         let mut p = HistoryPage::new();
+        p.tx = crossbeam_channel::unbounded().0;
         p.entries = vec![
             entry(1, now, "one"),
             entry(2, now - 60, "two"),
@@ -806,8 +928,13 @@ mod tests {
         draw(&mut p, 100, 12);
         p.handle_key(KeyEvent::from(KeyCode::Char('D')));
         assert!(p.armed());
-        p.handle_key(KeyEvent::from(KeyCode::Esc));
+        assert_eq!(
+            p.handle_key(KeyEvent::from(KeyCode::Esc)),
+            Some(Action::None),
+            "esc lets it be and stays on the page"
+        );
         assert!(!p.armed());
+        assert_eq!(p.handle_key(KeyEvent::from(KeyCode::Esc)), None);
     }
 
     #[test]
@@ -864,6 +991,86 @@ mod tests {
             line - scroll,
             "and stays put on screen"
         );
+    }
+
+    #[test]
+    fn each_forget_acts_on_the_next_play() {
+        let mut p = page();
+        let (tx, sent) = crossbeam_channel::unbounded();
+        p.tx = tx;
+        draw(&mut p, 100, 12);
+        p.handle_key(KeyEvent::from(KeyCode::Char('x')));
+        p.handle_key(KeyEvent::from(KeyCode::Char('x')));
+        let forgot: Vec<_> = sent
+            .try_iter()
+            .map(|r| match r.forget {
+                Some(Forget::Plays(ids)) => ids,
+                _ => panic!("a forget of plays"),
+            })
+            .collect();
+        assert_eq!(forgot, vec![vec![1], vec![2]]);
+        assert_eq!(p.entries.len(), 1);
+        assert_eq!(p.entries[p.cursor].id, 3);
+    }
+
+    #[test]
+    fn forgetting_the_last_play_selects_the_one_above() {
+        let mut p = page();
+        draw(&mut p, 100, 12);
+        p.move_to(2);
+        p.handle_key(KeyEvent::from(KeyCode::Char('x')));
+        assert_eq!(p.entries[p.cursor].id, 2);
+        p.handle_key(KeyEvent::from(KeyCode::Char('x')));
+        assert_eq!(p.entries[p.cursor].id, 1);
+    }
+
+    #[test]
+    fn a_failed_read_still_follows_new_plays() {
+        let mut p = page();
+        let (done, rx) = crossbeam_channel::unbounded();
+        p.rx = rx;
+        p.reload();
+        done.send(Reply {
+            generation: p.generation,
+            version: koan_core::player::history::version(),
+            entries: None,
+            error: Some("history could not be read".into()),
+        })
+        .unwrap();
+        assert!(p.poll().is_some());
+        assert_eq!(p.shown, p.generation, "the failed read is the one shown");
+    }
+
+    #[test]
+    fn a_superseded_read_is_not_shown_but_its_failure_is() {
+        let mut p = page();
+        let (done, rx) = crossbeam_channel::unbounded();
+        p.rx = rx;
+        p.reload();
+        p.reload();
+        let reply = |generation, title: &str, error: Option<&str>| Reply {
+            generation,
+            version: koan_core::player::history::version(),
+            entries: Some(vec![entry(9, Local::now().timestamp(), title)]),
+            error: error.map(Into::into),
+        };
+        done.send(reply(p.generation - 1, "old", Some("could not forget")))
+            .unwrap();
+        assert_eq!(p.poll().as_deref(), Some("could not forget"));
+        assert_eq!(p.entries.len(), 3, "the older read is dropped");
+        done.send(reply(p.generation, "new", None)).unwrap();
+        assert_eq!(p.poll(), None);
+        assert_eq!(p.entries[0].track.title, "new");
+    }
+
+    #[test]
+    fn the_days_are_renamed_after_midnight() {
+        let mut p = page();
+        p.today = p.today.pred_opt().unwrap();
+        p.rebuild();
+        assert!(matches!(&p.lines[0], Line::Day(l) if l != "today"));
+        p.poll();
+        assert!(matches!(&p.lines[0], Line::Day(l) if l == "today"));
     }
 
     #[test]

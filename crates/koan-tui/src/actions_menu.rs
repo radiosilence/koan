@@ -2,18 +2,22 @@
 //! that have no room in a hint bar, as a menu for a pointer. A page builds the
 //! items; choosing one runs the same action its key would.
 
+use std::cell::Cell;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Clear, Widget};
 
-use super::browse::Action;
+use super::browse::{Action, scroll_to};
 use super::theme::Theme;
 
 pub struct ActionsMenu {
     pub title: String,
     pub items: Vec<(String, Action)>,
     pub cursor: usize,
+    /// The first item shown.
+    scroll: Cell<usize>,
 }
 
 impl ActionsMenu {
@@ -22,6 +26,7 @@ impl ActionsMenu {
             title,
             items,
             cursor: 0,
+            scroll: Cell::default(),
         }
     }
 
@@ -34,12 +39,7 @@ impl ActionsMenu {
 
     /// The first item shown when `rows` fit.
     pub fn top(&self, rows: usize) -> usize {
-        (self.cursor + 1).saturating_sub(rows.max(1))
-    }
-
-    /// The action of the item at `idx`, taken out of the menu.
-    pub fn take(&mut self, idx: usize) -> Option<Action> {
-        (idx < self.items.len()).then(|| self.items.swap_remove(idx).1)
+        scroll_to(&self.scroll, self.cursor, rows)
     }
 }
 
@@ -137,12 +137,12 @@ mod tests {
     }
 
     #[test]
-    fn the_cursor_wraps_and_an_item_is_taken_whole() {
+    fn the_cursor_wraps() {
         let mut m = menu();
         m.move_by(-1);
         assert_eq!(m.cursor, 2);
-        assert_eq!(m.take(1), Some(Action::ToggleAlbum(1)));
-        assert_eq!(m.take(9), None);
+        m.move_by(1);
+        assert_eq!(m.cursor, 0);
     }
 
     #[test]

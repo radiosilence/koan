@@ -18,6 +18,9 @@ pub struct Tokens {
     pub surface: Color,
     /// Selection, progress, the playing row. The cover's, while one plays.
     pub accent: Color,
+    /// The accent where it is text: `ink` when the cover's does not reach
+    /// 4.5:1 on the grounds.
+    pub accent_text: Color,
     /// Errors and destructive actions.
     pub bad: Color,
 }
@@ -92,13 +95,32 @@ pub struct Theme {
     pub bar: Style,
 }
 
-/// The nearest of the 256-colour palette's colour cube and grey ramp.
+/// The nearest of the 256-colour palette's colour cube and grey ramp. The
+/// cube's levels are xterm's, which are not evenly spaced.
 fn indexed(r: u8, g: u8, b: u8) -> Color {
-    let level = |v: u8| ((v as u16 * 5 + 127) / 255) as u8;
-    let cube = 16 + 36 * level(r) + 6 * level(g) + level(b);
-    let grey = (((r as u16 + g as u16 + b as u16) / 3).saturating_sub(8) / 10).min(23) as u8;
-    let is_grey = r.abs_diff(g) < 10 && g.abs_diff(b) < 10;
-    Color::Indexed(if is_grey { 232 + grey } else { cube })
+    Color::Indexed(nearest(r, g, b).0)
+}
+
+/// The 256-colour palette's index nearest a colour, and the colour it draws.
+fn nearest(r: u8, g: u8, b: u8) -> (u8, (u8, u8, u8)) {
+    const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+    let level = |v: u8| (0..6).min_by_key(|&i| LEVELS[i].abs_diff(v)).unwrap_or(0);
+    let distance = |(x, y, z): (u8, u8, u8)| {
+        [(x, r), (y, g), (z, b)]
+            .iter()
+            .map(|&(a, b)| u32::from(a.abs_diff(b)).pow(2))
+            .sum::<u32>()
+    };
+    let (lr, lg, lb) = (level(r), level(g), level(b));
+    let cube = (LEVELS[lr], LEVELS[lg], LEVELS[lb]);
+    let mean = (u16::from(r) + u16::from(g) + u16::from(b)) / 3;
+    let step = (mean.saturating_sub(3) / 10).min(23) as u8;
+    let grey = 8 + 10 * step;
+    if distance((grey, grey, grey)) < distance(cube) {
+        (232 + step, (grey, grey, grey))
+    } else {
+        (16 + 36 * lr as u8 + 6 * lg as u8 + lb as u8, cube)
+    }
 }
 
 impl Theme {
@@ -117,41 +139,60 @@ impl Theme {
                 indexed(r, g, b)
             }
         };
+        let ink = c(0xcc, 0xcc, 0xcc);
         let t = Tokens {
-            ink: c(0xcc, 0xcc, 0xcc),
+            ink,
             strong: c(0xff, 0xff, 0xff),
             muted: c(0x91, 0x91, 0x91),
             rule: c(0x38, 0x38, 0x38),
             surface: c(0x2a, 0x2a, 0x2a),
             accent: c(accent.0, accent.1, accent.2),
+            // Judged on the colour drawn, which in 256 colours can be a
+            // fair way from the accent.
+            accent_text: if super::accent::reads_as_text(if truecolor {
+                accent
+            } else {
+                nearest(accent.0, accent.1, accent.2).1
+            }) {
+                c(accent.0, accent.1, accent.2)
+            } else {
+                ink
+            },
             bad: c(0xef, 0x6b, 0x73),
         };
         let bold = Modifier::BOLD;
+        let warning = c(0xe5, 0xc0, 0x7b);
         Self {
             palette: Palette::Koan { truecolor },
             tokens: t,
-            warning: c(0xe5, 0xc0, 0x7b),
+            warning,
             album_header_artist: Style::new().fg(t.strong).add_modifier(bold),
             album_header_album: Style::new().fg(t.ink),
-            track_playing: Style::new().fg(t.accent),
+            track_playing: Style::new().fg(t.accent_text),
             track_normal: Style::new().fg(t.ink),
-            track_cursor: Style::new().fg(t.accent).add_modifier(bold),
-            track_selected: Style::new().fg(t.accent),
+            track_cursor: Style::new().fg(t.accent_text).add_modifier(bold),
+            track_selected: Style::new().fg(t.accent_text),
             track_number: Style::new().fg(t.muted),
-            picker_cursor: Style::new().fg(t.accent).bg(t.surface).add_modifier(bold),
+            picker_cursor: Style::new()
+                .fg(t.accent_text)
+                .bg(t.surface)
+                .add_modifier(bold),
             hint_key: Style::new().fg(t.ink),
             hint_desc: Style::new().fg(t.muted),
             progress_filled: Style::new().fg(t.accent),
             progress_empty: Style::new().fg(t.rule),
-            status_playing: Style::new().fg(t.accent),
-            status_paused: Style::new().fg(c(0xe5, 0xc0, 0x7b)),
+            status_playing: Style::new().fg(t.accent_text),
+            status_paused: Style::new().fg(warning),
             status_stopped: Style::new().fg(t.muted),
             spinner: Style::new().fg(t.accent),
             failed: Style::new().fg(t.bad),
             library_artist: Style::new().fg(t.strong).add_modifier(bold),
             library_album: Style::new().fg(t.ink),
             library_track: Style::new().fg(t.ink),
-            library_cursor: Style::new().fg(t.accent).bg(t.surface).add_modifier(bold),
+            library_cursor: Style::new()
+                .fg(t.accent_text)
+                .bg(t.surface)
+                .add_modifier(bold),
             track_hover: Style::new().fg(t.strong).add_modifier(Modifier::UNDERLINED),
             library_hover: Style::new().fg(t.strong).add_modifier(Modifier::UNDERLINED),
             favourite: Style::new().fg(t.accent),
@@ -175,6 +216,7 @@ impl Theme {
             rule: Color::DarkGray,
             surface: Color::Reset,
             accent: Color::Cyan,
+            accent_text: Color::Cyan,
             bad: Color::Red,
         };
         Self {
@@ -214,7 +256,7 @@ impl Theme {
             spectrum_high: Style::new().fg(Color::Red),
             spectrum_peak: Style::new().fg(Color::White),
             scrollbar_thumb: Color::White,
-            scrollbar_bg: Color::Rgb(0x1c, 0x1c, 0x1e),
+            scrollbar_bg: Color::DarkGray,
             heading: Style::new().add_modifier(Modifier::BOLD),
             rule: Style::new().fg(Color::DarkGray),
             bar: Style::new().fg(Color::Cyan),
@@ -229,7 +271,7 @@ impl Theme {
             PickerPartKind::Album if ansi => Style::new().fg(Color::Green),
             PickerPartKind::Date if ansi => Style::new().fg(Color::Yellow),
             PickerPartKind::Artist => Style::new().fg(t.strong),
-            PickerPartKind::Album => Style::new().fg(t.accent),
+            PickerPartKind::Album => Style::new().fg(t.accent_text),
             PickerPartKind::Title | PickerPartKind::Plain => Style::new(),
             PickerPartKind::Date
             | PickerPartKind::TrackNum
@@ -243,5 +285,49 @@ impl Theme {
 impl Default for Theme {
     fn default() -> Self {
         Self::koan(true, MINT)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_nearest_256_colour_is_on_xterm_levels() {
+        // muted, #919191: the grey ramp's 145.
+        assert_eq!(indexed(0x91, 0x91, 0x91), Color::Indexed(232 + 14));
+        // 135 is a cube level; an even spacing would pick 153.
+        assert_eq!(indexed(135, 0, 0), Color::Indexed(16 + 36 * 2));
+        // Mint: 125/211/167 is nearest 135/215/175.
+        assert_eq!(
+            indexed(0x7d, 0xd3, 0xa7),
+            Color::Indexed(16 + 36 * 2 + 6 * 4 + 3)
+        );
+        assert_eq!(indexed(0, 0, 0), Color::Indexed(16));
+        assert_eq!(indexed(255, 255, 255), Color::Indexed(231));
+    }
+
+    #[test]
+    fn an_accent_that_fails_as_text_leaves_text_in_ink() {
+        let t = Theme::new(Palette::Koan { truecolor: true }, (40, 60, 200));
+        assert_eq!(t.tokens.accent, Color::Rgb(40, 60, 200));
+        assert_eq!(t.track_playing.fg, Some(t.tokens.ink));
+        assert_eq!(t.progress_filled.fg, Some(t.tokens.accent));
+        // Reads as text exactly, but its nearest of the 256 colours does not.
+        let blue = (0, 152, 232);
+        assert!(super::super::accent::reads_as_text(blue));
+        let exact = Theme::new(Palette::Koan { truecolor: true }, blue);
+        assert_eq!(exact.track_playing.fg, Some(exact.tokens.accent));
+        let drawn = Theme::new(Palette::Koan { truecolor: false }, blue);
+        assert_eq!(drawn.track_playing.fg, Some(drawn.tokens.ink));
+        let mint = Theme::new(Palette::Koan { truecolor: true }, MINT);
+        assert_eq!(mint.track_playing.fg, Some(mint.tokens.accent));
+    }
+
+    #[test]
+    fn the_ansi_palette_uses_only_the_terminal_colours() {
+        let t = Theme::new(Palette::Ansi, MINT);
+        let rgb = |c: Color| matches!(c, Color::Rgb(..) | Color::Indexed(_));
+        assert!(!rgb(t.scrollbar_bg) && !rgb(t.scrollbar_thumb) && !rgb(t.tokens.accent));
     }
 }

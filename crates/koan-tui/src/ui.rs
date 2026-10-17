@@ -414,20 +414,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if app.mode == Mode::ContextMenu
         && let Some(ref menu) = app.context_menu
     {
-        let click_col = if app.hover.column > 0 {
-            Some(app.hover.column)
-        } else {
-            None
-        };
-        let click_row = if app.hover.row > 0 {
-            Some(app.hover.row)
-        } else {
-            None
-        };
+        let (click_col, click_row) = menu.at.unzip();
         app.layout.context_menu_area =
             context_menu_rect_at(area, menu.actions.len(), click_col, click_row);
         let mut overlay = ContextMenuOverlay::new(menu, &app.theme);
-        if let (Some(c), Some(r)) = (click_col, click_row) {
+        if let Some((c, r)) = menu.at {
             overlay = overlay.at_position(c, r);
         }
         frame.render_widget(overlay, area);
@@ -528,38 +519,26 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .find(|e| e.id == id)
             .cloned()
     {
-        let current_track_info = app.state.track_info();
-        let is_playing = entry.status == koan_core::player::state::QueueEntryStatus::Playing;
-        let ti_ref = if is_playing {
-            current_track_info.as_ref()
-        } else {
-            None
-        };
-
-        // Calculate popup rect for mouse hit-testing.
-        let popup_width = (area.width as f32 * 0.7).max(40.0).min(area.width as f32) as u16;
-        let popup_height = (area.height as f32 * 0.7).max(14.0).min(area.height as f32) as u16;
-        let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
-        let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
-        app.layout.track_info_area = Rect::new(x, y, popup_width, popup_height);
-
-        let overlay = TrackInfoOverlay::new(
-            &entry,
-            ti_ref,
-            app.art.cover_art.cached(),
-            &app.theme,
-            app.art.gfx.squash(),
-        );
-        frame.render_widget(overlay, area);
+        let playing = (entry.status == koan_core::player::state::QueueEntryStatus::Playing)
+            .then(|| app.state.track_info())
+            .flatten();
+        app.layout.track_info_area = super::track_info::popup_rect(area);
+        let cover = app
+            .art
+            .cover_art
+            .cover_for(&entry.path)
+            .map(|c| (c, &mut app.art.gfx));
+        let fields = super::track_info::entry_fields(&entry, playing.as_ref());
+        frame.render_widget(TrackInfoOverlay::new(fields, cover, &app.theme), area);
     }
 
-    // Track details overlay, for a track picked from any list.
+    // Track info for a track picked from any list.
     if app.mode == Mode::TrackDetails
         && let Some(track) = app.track_details.as_deref()
     {
-        app.layout.track_info_area = super::track_details::popup_rect(area);
-        let overlay = super::track_details::TrackDetailsOverlay::new(track, &app.theme);
-        frame.render_widget(overlay, area);
+        app.layout.track_info_area = super::track_info::popup_rect(area);
+        let fields = super::track_info::row_fields(track);
+        frame.render_widget(TrackInfoOverlay::new(fields, None, &app.theme), area);
     }
 
     // Cover art zoom overlay — fullscreen, 1:1 aspect ratio.
@@ -870,18 +849,17 @@ fn render_queue(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
         app.queue.cursor = vq_len - 1;
     }
 
-    let visible = app.visible_queue();
     let drop_indicator = app.drop_indicator_index();
     let selected_indices = app.selected_indices();
     let queue_view = QueueView::new(
-        &visible,
+        &app.queue.vq_cache.entries,
         &app.mode,
         app.queue.cursor,
         app.queue.scroll_offset,
         &app.theme,
-        &selected_indices,
-        app.spinner_tick,
     )
+    .with_selected(&selected_indices)
+    .with_spinner(app.spinner_tick)
     .with_drop_indicator(drop_indicator)
     .with_pointer(Some((app.hover.column, app.hover.row)))
     .with_hover(&app.hover.zone)

@@ -6,7 +6,8 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
-use koan_core::player::state::{QueueEntry, QueueEntryStatus};
+use koan_core::player::commands::PlayerCommand;
+use koan_core::player::state::{QueueEntry, QueueEntryStatus, QueueItemId};
 
 use super::app::{HoverZone, Mode};
 use super::theme::Theme;
@@ -53,6 +54,38 @@ pub fn menu_button_x(area: Rect) -> u16 {
     area.x + area.width.saturating_sub(3)
 }
 
+/// How to move the entries in `moving` so that, together and in queue order,
+/// they start at `start`. `None` when that is where they already are.
+///
+/// Placed against the entries that are not moving, whose order no move of
+/// these changes: asking again from a snapshot taken before the last move
+/// landed asks for the same thing.
+pub fn placement(
+    entries: &[QueueEntry],
+    moving: &HashSet<QueueItemId>,
+    start: usize,
+) -> Option<PlayerCommand> {
+    let (ids, rest): (Vec<_>, Vec<_>) = entries
+        .iter()
+        .map(|e| e.id)
+        .partition(|id| moving.contains(id));
+    let start = start.min(rest.len());
+    let at: Vec<usize> = entries
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| moving.contains(&e.id))
+        .map(|(i, _)| i)
+        .collect();
+    if ids.is_empty() || rest.is_empty() || at.iter().copied().eq(start..start + ids.len()) {
+        return None;
+    }
+    let (target, after) = match start.checked_sub(1) {
+        Some(before) => (rest[before], true),
+        None => (rest[0], false),
+    };
+    Some(PlayerCommand::MoveItemsInPlaylist { ids, target, after })
+}
+
 pub struct QueueView<'a> {
     entries: &'a [QueueEntry],
     mode: &'a Mode,
@@ -60,7 +93,7 @@ pub struct QueueView<'a> {
     scroll_offset: usize,
     theme: &'a Theme,
     drop_indicator: Option<usize>,
-    selected: &'a HashSet<usize>,
+    selected: Option<&'a HashSet<usize>>,
     spinner_tick: usize,
     hover_index: Option<usize>,
     favourites: Option<&'a HashSet<i64>>,
@@ -68,15 +101,12 @@ pub struct QueueView<'a> {
 }
 
 impl<'a> QueueView<'a> {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         entries: &'a [QueueEntry],
         mode: &'a Mode,
         cursor: usize,
         scroll_offset: usize,
         theme: &'a Theme,
-        selected: &'a HashSet<usize>,
-        spinner_tick: usize,
     ) -> Self {
         Self {
             entries,
@@ -85,12 +115,22 @@ impl<'a> QueueView<'a> {
             scroll_offset,
             theme,
             drop_indicator: None,
-            selected,
-            spinner_tick,
+            selected: None,
+            spinner_tick: 0,
             hover_index: None,
             favourites: None,
             pointer: None,
         }
+    }
+
+    pub fn with_selected(mut self, selected: &'a HashSet<usize>) -> Self {
+        self.selected = Some(selected);
+        self
+    }
+
+    pub fn with_spinner(mut self, tick: usize) -> Self {
+        self.spinner_tick = tick;
+        self
     }
 
     pub fn with_drop_indicator(mut self, indicator: Option<usize>) -> Self {
@@ -120,14 +160,14 @@ impl<'a> QueueView<'a> {
         col: u16,
         row: u16,
     ) -> Option<(usize, HeaderLink)> {
-        let rel_y = row.checked_sub(area.y)? as usize;
-        let lines = build_display_lines(entries);
-        let (idx, is_header) = *lines.get(scroll_offset + rel_y.checked_sub(1)?)?;
-        if !is_header {
-            return None;
-        }
-        let idx = idx?;
-        link_at(&entries[idx], area.x, col).map(|l| (idx, l))
+        header_link_in(
+            entries,
+            &build_display_lines(entries),
+            area,
+            scroll_offset,
+            col,
+            row,
+        )
     }
 
     pub fn with_favourites(mut self, favourites: &'a HashSet<i64>) -> Self {
@@ -143,17 +183,10 @@ impl<'a> QueueView<'a> {
         scroll_offset: usize,
         y: u16,
     ) -> Option<usize> {
-        let rel_y = (y.saturating_sub(area.y)) as usize;
-
-        let display_lines = build_display_lines(entries);
-
-        // +1 to account for the block border (TOP) consuming the first row.
-        let target_line = scroll_offset + rel_y.saturating_sub(1);
-        if target_line < display_lines.len() {
-            let (idx, is_header) = display_lines[target_line];
-            if is_header { None } else { idx }
-        } else {
-            None
+        let line = line_at(area, scroll_offset, y)?;
+        match build_display_lines(entries).get(line) {
+            Some(&(idx, false)) => Some(idx),
+            _ => None,
         }
     }
 
@@ -165,68 +198,84 @@ impl<'a> QueueView<'a> {
         scroll_offset: usize,
         y: u16,
     ) -> Option<(usize, usize)> {
-        let rel_y = (y.saturating_sub(area.y)) as usize;
-        let display_lines = build_display_lines(entries);
-        let target_line = scroll_offset + rel_y.saturating_sub(1);
-
-        if target_line >= display_lines.len() {
+        let line = line_at(area, scroll_offset, y)?;
+        let &(first, true) = build_display_lines(entries).get(line)? else {
             return None;
-        }
-        let (first_idx, is_header) = display_lines[target_line];
-        if !is_header {
-            return None;
-        }
-        let first = first_idx?;
+        };
         let key = (&entries[first].album_artist, &entries[first].album);
-
-        // Walk forward from first to find the end of the contiguous group.
         let last = (first..entries.len())
             .take_while(|&i| entries[i].album_artist == *key.0 && entries[i].album == *key.1)
             .last()
             .unwrap_or(first);
-
         Some((first, last))
     }
 }
 
-/// Count total display lines (tracks + album headers) without allocating.
-/// Must use identical grouping logic as `build_display_lines`.
-pub(super) fn display_line_count(entries: &[QueueEntry]) -> usize {
-    let mut count = entries.len();
-    let mut current_album_key: Option<(&str, &str)> = None;
-    for entry in entries {
-        let album_key = (entry.album_artist.as_str(), entry.album.as_str());
-        if !entry.album.is_empty() && current_album_key != Some(album_key) {
-            current_album_key = Some(album_key);
-            count += 1;
-        }
-    }
-    count
+/// The display line on row `y`: the queue's heading takes the area's first row.
+fn line_at(area: Rect, scroll_offset: usize, y: u16) -> Option<usize> {
+    let rel = y.checked_sub(area.y)?.checked_sub(1)?;
+    Some(scroll_offset + rel as usize)
 }
 
-/// Each display line: (Option<queue_index>, is_header).
-/// For headers, the index points to the first entry of that album group
-/// (so callers can look up album info for rendering).
-fn build_display_lines(entries: &[QueueEntry]) -> Vec<(Option<usize>, bool)> {
-    let mut lines = Vec::new();
-    let mut current_album_key: Option<(&str, &str)> = None;
+fn header_link_in(
+    entries: &[QueueEntry],
+    lines: &[(usize, bool)],
+    area: Rect,
+    scroll_offset: usize,
+    col: u16,
+    row: u16,
+) -> Option<(usize, HeaderLink)> {
+    let &(idx, true) = lines.get(line_at(area, scroll_offset, row)?)? else {
+        return None;
+    };
+    link_at(&entries[idx], area.x, col).map(|l| (idx, l))
+}
 
+/// Whether `entry` opens a new album group after `current`. A track with no
+/// album ends the group before it.
+fn starts_group<'e>(entry: &'e QueueEntry, current: &mut Option<(&'e str, &'e str)>) -> bool {
+    if entry.album.is_empty() {
+        *current = None;
+        return false;
+    }
+    let key = Some((entry.album_artist.as_str(), entry.album.as_str()));
+    let starts = *current != key;
+    *current = key;
+    starts
+}
+
+/// Count total display lines (tracks + album headers) without allocating.
+pub(super) fn display_line_count(entries: &[QueueEntry]) -> usize {
+    let mut current = None;
+    entries.len()
+        + entries
+            .iter()
+            .filter(|e| starts_group(e, &mut current))
+            .count()
+}
+
+/// Each display line: the queue index it shows, and whether it is the album
+/// heading above that entry.
+fn build_display_lines(entries: &[QueueEntry]) -> Vec<(usize, bool)> {
+    let mut lines = Vec::with_capacity(entries.len() + entries.len() / 8);
+    let mut current = None;
     for (i, entry) in entries.iter().enumerate() {
-        let album_key = (entry.album_artist.as_str(), entry.album.as_str());
-        let show_header = if entry.album.is_empty() {
-            false
-        } else {
-            current_album_key != Some(album_key)
-        };
-
-        if show_header {
-            current_album_key = Some(album_key);
-            lines.push((Some(i), true));
+        if starts_group(entry, &mut current) {
+            lines.push((i, true));
         }
-
-        lines.push((Some(i), false));
+        lines.push((i, false));
     }
     lines
+}
+
+/// How a track row is marked.
+#[derive(Clone, Copy)]
+struct RowLook {
+    cursor: bool,
+    selected: bool,
+    drop_target: bool,
+    hovered: bool,
+    favourite: bool,
 }
 
 impl Widget for QueueView<'_> {
@@ -257,68 +306,42 @@ impl Widget for QueueView<'_> {
             return;
         }
 
-        // Build display lines using shared index map to avoid duplicating
-        // the album-grouping logic.
-        let index_map = build_display_lines(self.entries);
-        let mut display_lines: Vec<(Option<usize>, Line)> = Vec::with_capacity(index_map.len());
+        let lines = build_display_lines(self.entries);
         let hovered_link = self.pointer.and_then(|(col, row)| {
-            Self::header_link_at(self.entries, area, self.scroll_offset, col, row)
+            header_link_in(self.entries, &lines, area, self.scroll_offset, col, row)
         });
-        for &(entry_idx, is_header) in &index_map {
-            if is_header {
-                if let Some(i) = entry_idx {
-                    let hover = hovered_link
-                        .filter(|(first, _)| *first == i)
-                        .map(|(_, l)| l);
-                    display_lines.push((
-                        None,
-                        render_album_header(&self.entries[i], self.theme, hover),
-                    ));
-                }
-            } else if let Some(i) = entry_idx {
-                let is_cursor = is_edit && i == self.cursor;
-                let is_selected = self.selected.contains(&i);
-                let is_drop_target = self.drop_indicator == Some(i);
-                let is_hovered = self.hover_index == Some(i) && !is_cursor && !is_selected;
-                let is_favourite = self
-                    .favourites
-                    .is_some_and(|f| self.entries[i].db_id.is_some_and(|id| f.contains(&id)));
-                let line = render_track_line(
-                    &self.entries[i],
-                    is_cursor,
-                    is_selected,
-                    is_drop_target,
-                    is_hovered,
-                    is_favourite,
-                    self.theme,
-                    self.spinner_tick,
-                );
-                display_lines.push((Some(i), line));
-            }
-        }
-
+        let selected = |i: usize| self.selected.is_some_and(|s| s.contains(&i));
         let visible_height = inner.height as usize;
-        let start = self
-            .scroll_offset
-            .min(display_lines.len().saturating_sub(1));
-        let end = (start + visible_height).min(display_lines.len());
+        let start = self.scroll_offset.min(lines.len().saturating_sub(1));
+        let end = (start + visible_height).min(lines.len());
 
-        for (row, (idx, line)) in display_lines
-            .iter()
-            .skip(start)
-            .take(end - start)
-            .enumerate()
-        {
-            buf.set_line(inner.x, inner.y + row as u16, line, inner.width);
+        for (row, &(i, is_header)) in lines[start..end].iter().enumerate() {
+            let y = inner.y + row as u16;
+            let entry = &self.entries[i];
+            if is_header {
+                let hover = hovered_link
+                    .filter(|(first, _)| *first == i)
+                    .map(|(_, l)| l);
+                let line = render_album_header(entry, self.theme, hover);
+                buf.set_line(inner.x, y, &line, inner.width);
+                continue;
+            }
+            let cursor = is_edit && i == self.cursor;
+            let look = RowLook {
+                cursor,
+                selected: selected(i),
+                drop_target: self.drop_indicator == Some(i),
+                hovered: self.hover_index == Some(i) && !cursor && !selected(i),
+                favourite: self
+                    .favourites
+                    .is_some_and(|f| entry.db_id.is_some_and(|id| f.contains(&id))),
+            };
+            let line = render_track_line(entry, &look, self.theme, self.spinner_tick);
+            buf.set_line(inner.x, y, &line, inner.width);
             // The row's menu, for anyone without a right button: on the row
             // the pointer is over and on the ones selected.
-            if let Some(i) = *idx
-                && inner.width > 24
-                && (self.hover_index == Some(i)
-                    || self.selected.contains(&i)
-                    || (is_edit && i == self.cursor))
-            {
-                buf[(menu_button_x(area), inner.y + row as u16)]
+            if inner.width > 24 && (self.hover_index == Some(i) || look.selected || cursor) {
+                buf[(menu_button_x(area), y)]
                     .set_char('\u{22ef}')
                     .set_style(self.theme.hint_key);
             }
@@ -326,7 +349,7 @@ impl Widget for QueueView<'_> {
 
         // Scrollbar — only when content overflows.
         // Uses sub-pixel rendering with 1/8th-cell resolution via Unicode block elements.
-        let total_lines = display_lines.len();
+        let total_lines = lines.len();
         if total_lines > visible_height && visible_height > 0 && inner.width > 1 {
             let bar_x = inner.x + inner.width - 1;
 
@@ -431,17 +454,19 @@ fn render_album_header<'a>(
     ])
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_track_line<'a>(
     entry: &QueueEntry,
-    is_cursor: bool,
-    is_selected: bool,
-    is_drop_target: bool,
-    is_hovered: bool,
-    is_favourite: bool,
+    look: &RowLook,
     theme: &Theme,
     spinner_tick: usize,
 ) -> Line<'a> {
+    let RowLook {
+        cursor: is_cursor,
+        selected: is_selected,
+        drop_target: is_drop_target,
+        hovered: is_hovered,
+        favourite: is_favourite,
+    } = *look;
     let spin_char = SPINNER[spinner_tick % SPINNER.len()];
 
     let progress = entry.download_progress.as_ref();
@@ -593,7 +618,7 @@ pub fn scroll_for_cursor(
     let display_lines = build_display_lines(entries);
     let cursor_line = display_lines
         .iter()
-        .position(|(idx, is_header)| *idx == Some(cursor) && !is_header)
+        .position(|&line| line == (cursor, false))
         .unwrap_or(0);
 
     if cursor_line < current_scroll {
@@ -611,7 +636,7 @@ pub fn scroll_cursor_to_top(entries: &[QueueEntry], cursor: usize, visible_heigh
     let display_lines = build_display_lines(entries);
     let cursor_line = display_lines
         .iter()
-        .position(|(idx, is_header)| *idx == Some(cursor) && !is_header)
+        .position(|&line| line == (cursor, false))
         .unwrap_or(0);
 
     // Include the album header if it's directly above the cursor line.
@@ -634,7 +659,6 @@ pub fn scroll_cursor_to_top(entries: &[QueueEntry], cursor: usize, visible_heigh
 #[cfg(test)]
 mod tests {
     use super::*;
-    use koan_core::player::state::QueueItemId;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -672,7 +696,8 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
         terminal
             .draw(|f| {
-                let view = QueueView::new(entries, mode, cursor, offset, &theme, &selected, 0);
+                let view =
+                    QueueView::new(entries, mode, cursor, offset, &theme).with_selected(&selected);
                 f.render_widget(view, f.area());
             })
             .unwrap();
@@ -755,5 +780,107 @@ mod tests {
             Some((0, 2))
         );
         assert_eq!(QueueView::queue_index_at_y(&entries, area, 0, 2), Some(0));
+    }
+
+    /// The queue's order after `cmd`, as the player applies a move.
+    fn after(entries: &[QueueEntry], cmd: PlayerCommand) -> Vec<QueueItemId> {
+        let PlayerCommand::MoveItemsInPlaylist { ids, target, after } = cmd else {
+            panic!("a move");
+        };
+        let mut rest: Vec<_> = entries
+            .iter()
+            .map(|e| e.id)
+            .filter(|id| !ids.contains(id))
+            .collect();
+        let at = rest
+            .iter()
+            .position(|id| *id == target)
+            .expect("target stays")
+            + after as usize;
+        rest.splice(at..at, ids);
+        rest
+    }
+
+    fn picked(entries: &[QueueEntry], idx: &[usize]) -> HashSet<QueueItemId> {
+        idx.iter().map(|&i| entries[i].id).collect()
+    }
+
+    #[test]
+    fn a_selection_lands_where_it_is_placed() {
+        let entries: Vec<_> = (0..6).map(|n| entry(n, "album")).collect();
+        let id = |i: usize| entries[i].id;
+        let moving = picked(&entries, &[1, 2]);
+        let down = placement(&entries, &moving, 2).expect("a move");
+        assert_eq!(
+            after(&entries, down),
+            [id(0), id(3), id(1), id(2), id(4), id(5)]
+        );
+        let top = placement(&entries, &moving, 0).expect("a move");
+        assert_eq!(
+            after(&entries, top),
+            [id(1), id(2), id(0), id(3), id(4), id(5)]
+        );
+        let past_the_end = placement(&entries, &moving, 99).expect("a move");
+        assert_eq!(
+            after(&entries, past_the_end),
+            [id(0), id(3), id(4), id(5), id(1), id(2)]
+        );
+    }
+
+    #[test]
+    fn a_selection_with_gaps_closes_up_and_never_targets_itself() {
+        let entries: Vec<_> = (0..6).map(|n| entry(n, "album")).collect();
+        let id = |i: usize| entries[i].id;
+        // Placed over its own second track, which the old drag sent to the end.
+        let moving = picked(&entries, &[0, 4]);
+        let cmd = placement(&entries, &moving, 3).expect("a move");
+        assert_eq!(
+            after(&entries, cmd),
+            [id(1), id(2), id(3), id(0), id(4), id(5)]
+        );
+    }
+
+    #[test]
+    fn a_selection_already_in_place_does_not_move() {
+        let entries: Vec<_> = (0..4).map(|n| entry(n, "album")).collect();
+        assert!(placement(&entries, &picked(&entries, &[1, 2]), 1).is_none());
+        assert!(placement(&entries, &picked(&entries, &[2, 3]), 9).is_none());
+        assert!(placement(&entries, &picked(&entries, &[0, 1, 2, 3]), 1).is_none());
+        assert!(placement(&entries, &HashSet::new(), 1).is_none());
+    }
+
+    #[test]
+    fn a_placement_asked_twice_from_the_same_snapshot_is_the_same() {
+        // Two key presses in one frame both read the queue as it was.
+        let entries: Vec<_> = (0..5).map(|n| entry(n, "album")).collect();
+        let moving = picked(&entries, &[1]);
+        let first = after(&entries, placement(&entries, &moving, 2).unwrap());
+        let second = after(&entries, placement(&entries, &moving, 2).unwrap());
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn a_track_without_an_album_ends_the_group_above_it() {
+        let mut entries: Vec<_> = (0..3).map(|n| entry(n, "album")).collect();
+        entries[1].album.clear();
+        let area = Rect::new(0, 0, 60, 20);
+        // heading, 0, 1, heading, 2
+        assert_eq!(display_line_count(&entries), 5);
+        assert_eq!(
+            QueueView::album_group_at_y(&entries, area, 0, 1),
+            Some((0, 0))
+        );
+        assert_eq!(
+            QueueView::album_group_at_y(&entries, area, 0, 4),
+            Some((2, 2))
+        );
+    }
+
+    #[test]
+    fn the_heading_row_is_not_the_first_track() {
+        let entries: Vec<_> = (0..3).map(|n| entry(n, "")).collect();
+        let area = Rect::new(0, 0, 60, 20);
+        assert_eq!(QueueView::queue_index_at_y(&entries, area, 0, 0), None);
+        assert_eq!(QueueView::queue_index_at_y(&entries, area, 0, 1), Some(0));
     }
 }

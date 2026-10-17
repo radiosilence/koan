@@ -1,8 +1,11 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
+use crossbeam_channel::{Receiver, Sender};
 use image::DynamicImage;
+use image::imageops::FilterType;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Rect, Size};
 use ratatui::style::{Color, Style};
@@ -21,11 +24,8 @@ struct RenderedCell {
     bg: Color,
 }
 
-/// Cached rendered output at a specific size. Avoids re-running
-/// Lanczos3 resize + pixel iteration every frame.
-struct RenderedArt {
-    cells: Vec<RenderedCell>,
-}
+/// A cover in half blocks at one size.
+type RenderedArt = Vec<RenderedCell>;
 
 /// Draws images into the buffer, in the terminal's graphics protocol when it
 /// has one and the person has not turned it off, otherwise in half blocks.
@@ -47,7 +47,6 @@ enum Drawn {
     /// With the kitty image id, when it is one the terminal holds.
     Protocol(Protocol, Option<u32>),
     Cells(RenderedArt),
-    Unsupported,
 }
 
 impl Drawn {
@@ -129,11 +128,7 @@ impl Gfx {
         Self {
             graphics: picker.as_ref().is_some_and(|p| usable(p.protocol_type())),
             picker,
-            drawn: HashMap::new(),
-            tick: 0,
-            fresh: 0,
-            stale: Vec::new(),
-            next_id: seed_id(),
+            ..Self::halfblocks()
         }
     }
 
@@ -221,17 +216,19 @@ impl Gfx {
             *used = self.tick;
         } else {
             self.make_room();
-            let made = if self.graphics {
-                self.protocol(img, area)
-            } else {
-                Drawn::Cells(pre_render(
-                    img,
-                    area.width,
-                    area.height,
-                    center,
-                    self.squash(),
-                ))
-            };
+            let made = self
+                .graphics
+                .then(|| self.protocol(img, area))
+                .flatten()
+                .unwrap_or_else(|| {
+                    Drawn::Cells(pre_render(
+                        img,
+                        area.width,
+                        area.height,
+                        center,
+                        self.squash(),
+                    ))
+                });
             self.drawn.insert(slot, (self.tick, made));
         }
         match self.drawn.get(&slot).map(|(_, d)| d) {
@@ -247,7 +244,7 @@ impl Gfx {
                 Image::new(proto).render(rect, buf);
             }
             Some(Drawn::Cells(rendered)) => blit(rendered, area, area.height, buf),
-            _ => {}
+            None => {}
         }
     }
 
@@ -271,30 +268,34 @@ impl Gfx {
     /// A kitty image whose pixels the terminal keeps until told otherwise,
     /// so each evicted cover is deleted there too. Sized to the cell grid and
     /// transmitted once, as `Picker::new_protocol` does, but with an id of
-    /// our own to delete by.
-    fn protocol(&mut self, img: &DynamicImage, area: Rect) -> Drawn {
-        self.next_id = self.next_id.wrapping_add(1).max(1);
-        let id = self.next_id;
-        let Some(picker) = self.picker.as_ref() else {
-            return Drawn::Unsupported;
-        };
+    /// our own to delete by. `None` where the protocol cannot encode it, and
+    /// the cover is drawn in half blocks instead.
+    fn protocol(&mut self, img: &DynamicImage, area: Rect) -> Option<Drawn> {
+        let picker = self.picker.as_ref()?;
+        let font = picker.font_size();
+        let img = near(
+            img,
+            u32::from(area.width) * u32::from(font.width),
+            u32::from(area.height) * u32::from(font.height),
+        );
         let size = Size::new(area.width, area.height);
-        let resize = Resize::Scale(Some(image::imageops::FilterType::Triangle));
+        let resize = Resize::Scale(Some(FilterType::Triangle));
         if picker.protocol_type() != ProtocolType::Kitty {
             return picker
-                .new_protocol(img.clone(), size, resize)
-                .map_or(Drawn::Unsupported, |p| Drawn::Protocol(p, None));
+                .new_protocol(img.into_owned(), size, resize)
+                .ok()
+                .map(|p| Drawn::Protocol(p, None));
         }
-        let font = picker.font_size();
-        let fit = resize.size_for(img, font, size);
-        let scaled = resize.resize(img, font, fit, None);
+        let fit = resize.size_for(&img, font, size);
+        let scaled = resize.resize(&img, font, fit, None);
         let compress = picker
             .capabilities()
             .contains(&Capability::KittyCompression);
+        self.next_id = self.next_id.wrapping_add(1).max(1);
+        let id = self.next_id;
         Kitty::new(scaled, fit, id, picker.tmux_detected(), compress)
-            .map_or(Drawn::Unsupported, |k| {
-                Drawn::Protocol(Protocol::Kitty(k), Some(id))
-            })
+            .ok()
+            .map(|k| Drawn::Protocol(Protocol::Kitty(k), Some(id)))
     }
 
     /// The escape sequences that delete, from the terminal, the covers that
@@ -378,7 +379,7 @@ impl Gfx {
 }
 
 fn blit(rendered: &RenderedArt, area: Rect, visible: u16, buf: &mut Buffer) {
-    for cell in rendered.cells.iter().filter(|c| c.ry < visible) {
+    for cell in rendered.iter().filter(|c| c.ry < visible) {
         if let Some(c) = buf.cell_mut(ratatui::layout::Position::new(
             area.x + cell.rx,
             area.y + cell.ry,
@@ -389,77 +390,208 @@ fn blit(rendered: &RenderedArt, area: Rect, visible: u16, buf: &mut Buffer) {
     }
 }
 
-/// The key a file's cover is drawn under.
-pub fn path_key(path: &Path) -> u64 {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    path.hash(&mut h);
-    h.finish() & !(1 << 63)
-}
-
-/// The key an album's tile is drawn under. Apart from `path_key`'s by the top
+/// The key an album's tile is drawn under. Apart from a `Cover`'s by the top
 /// bit, so a tile and a cover never share a drawing.
 pub fn album_key(album_id: i64) -> u64 {
     (album_id as u64) | (1 << 63)
 }
 
-/// Single-entry cache for cover art images: at most ONE decoded image. When a
-/// new path is loaded the old image is dropped, keeping memory bounded.
-pub struct CoverArtCache {
-    path: Option<PathBuf>,
-    image: Option<DynamicImage>,
+/// The longest side a cover is kept at. Past it a sleeve is more pixels than
+/// a terminal shows, held in memory for nothing.
+const COVER_SIDE: u32 = 2048;
+
+/// A track's cover, read and decoded off the main thread.
+pub struct Cover {
+    /// What it is drawn under: a hash of its bytes, so the tracks of one
+    /// record share a drawing rather than each making its own.
+    pub key: u64,
+    pub image: DynamicImage,
+    /// The accent it gives; see `accent::from_image`.
+    pub accent: Option<(u8, u8, u8)>,
 }
 
-impl Default for CoverArtCache {
-    fn default() -> Self {
-        Self::new()
-    }
+type Request = (PathBuf, Option<i64>);
+type Loader = (Sender<Request>, Receiver<(PathBuf, Option<Cover>)>);
+
+/// The cover of one track at a time, loaded on a thread of its own. The cover
+/// shown stays until the next one arrives, so the tracks of a record follow
+/// one another without a blank between them.
+#[derive(Default)]
+pub struct CoverArtCache {
+    wanted: Option<PathBuf>,
+    /// Whether the file was still arriving when it was last asked for.
+    asked_arriving: bool,
+    /// Whether the last answer for `wanted` was no cover.
+    missed: bool,
+    cover: Option<Cover>,
+    /// The file `cover` was read for.
+    cover_of: Option<PathBuf>,
+    loader: Option<Loader>,
 }
 
 impl CoverArtCache {
-    pub fn new() -> Self {
-        Self {
-            path: None,
-            image: None,
+    /// Asks for the cover of the file at `path`. `track` is its row, for the
+    /// server's art when the file has none, as a download still arriving may
+    /// not; it is only asked for when the path is new, or when a file that
+    /// gave no cover while `arriving` has since arrived.
+    pub fn want(&mut self, path: &Path, arriving: bool, track: impl FnOnce() -> Option<i64>) {
+        let again = self.missed && self.asked_arriving && !arriving;
+        if self.wanted.as_deref() == Some(path) && !again {
+            return;
         }
+        self.wanted = Some(path.to_path_buf());
+        self.asked_arriving = arriving;
+        self.missed = false;
+        let (tx, _) = self.loader.get_or_insert_with(spawn_loader);
+        tx.send((path.to_path_buf(), track())).ok();
     }
 
-    /// Get cover art for a file. Transparently caches — only reads the file
-    /// on first call for a given path. Returns None if no art is embedded.
-    pub fn get(&mut self, path: &Path) -> Option<&DynamicImage> {
-        if self.path.as_deref() != Some(path) {
-            self.path = Some(path.to_path_buf());
-            self.image = koan_core::index::folder_art::cover_art(path)
-                .and_then(|bytes| image::load_from_memory(&bytes).ok());
+    /// Takes in what the loader finished. Returns whether the cover changed.
+    pub fn poll(&mut self) -> bool {
+        let Some((_, rx)) = &self.loader else {
+            return false;
+        };
+        let mut changed = false;
+        while let Ok((path, cover)) = rx.try_recv() {
+            if self.wanted.as_ref() == Some(&path) {
+                self.missed = cover.is_none();
+                self.cover = cover;
+                self.cover_of = Some(path);
+                changed = true;
+            }
         }
-        self.image.as_ref()
+        changed
     }
 
-    /// Peek at the cached image without triggering a load.
+    pub fn cover(&self) -> Option<&Cover> {
+        self.cover.as_ref()
+    }
+
+    /// The cover only if it was read for `path`, not one left up from the
+    /// file before.
+    pub fn cover_for(&self, path: &Path) -> Option<&Cover> {
+        self.cover
+            .as_ref()
+            .filter(|_| self.cover_of.as_deref() == Some(path))
+    }
+
     pub fn cached(&self) -> Option<&DynamicImage> {
-        self.image.as_ref()
+        self.cover.as_ref().map(|c| &c.image)
     }
 
-    /// The key the cached image is drawn under.
-    pub fn key(&self) -> u64 {
-        self.path.as_deref().map_or(0, path_key)
-    }
-
-    /// Clear the cache.
     pub fn clear(&mut self) {
-        self.path = None;
-        self.image = None;
+        self.wanted = None;
+        self.missed = false;
+        self.cover = None;
+        self.cover_of = None;
     }
 
     pub fn render_to(&self, gfx: &mut Gfx, area: Rect, buf: &mut Buffer) {
-        if let Some(img) = &self.image {
-            gfx.draw(self.key(), img, area, buf, false);
+        if let Some(c) = &self.cover {
+            gfx.draw(c.key, &c.image, area, buf, false);
         }
     }
 
     pub fn render_to_centered(&self, gfx: &mut Gfx, area: Rect, buf: &mut Buffer) {
-        if let Some(img) = &self.image {
-            gfx.draw(self.key(), img, area, buf, true);
+        if let Some(c) = &self.cover {
+            gfx.draw(c.key, &c.image, area, buf, true);
         }
+    }
+}
+
+/// A thread that loads the latest cover asked for, passing over any asked
+/// for since that nobody wants any more. A file without a cover of its own is
+/// handed to a second thread for the server's, so a slow or unreachable
+/// server never holds up the next file's. Both end with their cache.
+fn spawn_loader() -> Loader {
+    let (tx, req) = crossbeam_channel::unbounded::<Request>();
+    let (done, rx) = crossbeam_channel::unbounded();
+    let (fetch, fetches) = crossbeam_channel::unbounded::<(PathBuf, i64)>();
+    let fetched = done.clone();
+    std::thread::Builder::new()
+        .name("koan-cover".into())
+        .spawn(move || {
+            while let Ok(mut next) = req.recv() {
+                while let Ok(later) = req.try_recv() {
+                    next = later;
+                }
+                let (path, track) = next;
+                let local = koan_core::index::folder_art::cover_art(&path);
+                let sent = match (local, track) {
+                    (Some(bytes), _) => done.send((path, decode(&bytes))).is_ok(),
+                    (None, Some(track)) => fetch.send((path, track)).is_ok(),
+                    (None, None) => done.send((path, None)).is_ok(),
+                };
+                if !sent {
+                    break;
+                }
+            }
+        })
+        .ok();
+    std::thread::Builder::new()
+        .name("koan-cover-server".into())
+        .spawn(move || {
+            while let Ok(mut next) = fetches.recv() {
+                while let Ok(later) = fetches.try_recv() {
+                    next = later;
+                }
+                let (path, track) = next;
+                let cover = server_cover(track).and_then(|bytes| decode(&bytes));
+                if fetched.send((path, cover)).is_err() {
+                    break;
+                }
+            }
+        })
+        .ok();
+    (tx, rx)
+}
+
+fn decode(bytes: &[u8]) -> Option<Cover> {
+    let mut image = image::load_from_memory(bytes).ok()?;
+    if image.width().max(image.height()) > COVER_SIDE {
+        image = image.resize(COVER_SIDE, COVER_SIDE, FilterType::Lanczos3);
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    Some(Cover {
+        key: h.finish() & !(1 << 63),
+        accent: super::accent::from_image(&image),
+        image,
+    })
+}
+
+/// The server's cover for a track the library has from one.
+fn server_cover(track: i64) -> Option<Vec<u8>> {
+    let remote_id = {
+        let db = koan_core::db::pool::shared().get().ok()?;
+        koan_core::db::queries::get_track_row(&db.conn, track)
+            .ok()??
+            .remote_id?
+    };
+    let cfg = koan_core::config::Config::cached();
+    if !cfg.remote.enabled || koan_core::remote::offline::active() {
+        return None;
+    }
+    let client = koan_core::helpers::subsonic_client(&cfg)?;
+    // A server known to be down would hold this thread for the whole timeout.
+    if client.outage().is_down() {
+        return None;
+    }
+    client
+        .get_cover_art(&remote_id, Some(COVER_SIDE))
+        .ok()
+        .filter(|b| !b.is_empty())
+}
+
+/// `img` brought down to about twice `w`×`h` pixels where it is larger, so
+/// the filter that makes a drawing reads a few times the pixels it writes
+/// rather than the whole sleeve.
+fn near(img: &DynamicImage, w: u32, h: u32) -> Cow<'_, DynamicImage> {
+    let (w, h) = (w.max(1) * 2, h.max(1) * 2);
+    if img.width() > w || img.height() > h {
+        Cow::Owned(img.thumbnail(w, h))
+    } else {
+        Cow::Borrowed(img)
     }
 }
 
@@ -481,110 +613,34 @@ fn pre_render(
         .max(1.0);
     // Whole cells, rounded up as the terminal rounds its own images.
     let rows = ((aspect * cols / 2.0).ceil() * 2.0).clamp(2.0, f32::from(height) * 2.0);
-    let resized = img.resize_exact(
-        cols.round() as u32,
-        rows as u32,
-        image::imageops::FilterType::Lanczos3,
-    );
-    // Force even pixel height — halfblocks need pixel pairs, odd heights cause
-    // a black bar on the last row.
-    let rgba = if !resized.height().is_multiple_of(2) {
-        let cropped = resized.crop_imm(0, 0, resized.width(), resized.height() - 1);
-        cropped.to_rgba8()
-    } else {
-        resized.to_rgba8()
-    };
-    let (img_w, img_h) = rgba.dimensions();
-
-    let y_cell_count = img_h / 2;
+    let (cols, rows) = (cols.round() as u32, rows as u32);
+    // `rows` is even, so every cell has its pair of pixels.
+    let rgba = near(img, cols, rows)
+        .resize_exact(cols, rows, FilterType::Lanczos3)
+        .to_rgba8();
+    let (img_w, img_h) = (rgba.width() as u16, (rgba.height() / 2) as u16);
     let (x_offset, y_offset) = if center {
         (
-            (width.saturating_sub(img_w as u16)) / 2,
-            (height.saturating_sub(y_cell_count as u16)) / 2,
+            width.saturating_sub(img_w) / 2,
+            height.saturating_sub(img_h) / 2,
         )
     } else {
         (0, 0)
     };
-
-    let mut cells = Vec::new();
-
-    for cy in 0..height {
-        for cx in 0..width {
-            if cx < x_offset
-                || cx >= x_offset + img_w as u16
-                || cy < y_offset
-                || cy >= y_offset + y_cell_count as u16
-            {
-                continue;
-            }
-
-            let px = cx.saturating_sub(x_offset) as u32;
-            let top_py = (cy.saturating_sub(y_offset) as u32) * 2;
-            let bot_py = top_py + 1;
-
-            let top = rgba.get_pixel(px.min(img_w - 1), top_py.min(img_h - 1));
-            // bot_py is always in bounds because we forced even pixel height.
-            let bot = *rgba.get_pixel(px.min(img_w - 1), bot_py.min(img_h - 1));
-
+    let mut cells = Vec::with_capacity(usize::from(img_w) * usize::from(img_h));
+    for cy in 0..img_h.min(height) {
+        for cx in 0..img_w.min(width) {
+            let top = rgba.get_pixel(u32::from(cx), u32::from(cy) * 2);
+            let bot = rgba.get_pixel(u32::from(cx), u32::from(cy) * 2 + 1);
             cells.push(RenderedCell {
-                rx: cx,
-                ry: cy,
+                rx: cx + x_offset,
+                ry: cy + y_offset,
                 fg: Color::Rgb(top[0], top[1], top[2]),
                 bg: Color::Rgb(bot[0], bot[1], bot[2]),
             });
         }
     }
-
-    RenderedArt { cells }
-}
-
-/// Widget that renders a `DynamicImage` using Unicode halfblock characters.
-/// Use this for one-shot renders (e.g. track info modal, zoom overlay).
-/// For repeated renders at the same size, prefer `CoverArtCache::render_to()`.
-pub struct CoverArt<'a> {
-    image: &'a DynamicImage,
-    center: bool,
-    squash: f32,
-}
-
-impl<'a> CoverArt<'a> {
-    pub fn new(image: &'a DynamicImage) -> Self {
-        Self {
-            image,
-            center: false,
-            squash: 1.0,
-        }
-    }
-
-    /// Shapes the half blocks to the terminal's cell; see `Gfx::squash`.
-    pub fn shaped(mut self, squash: f32) -> Self {
-        self.squash = squash;
-        self
-    }
-}
-
-impl Widget for CoverArt<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-        let rendered = pre_render(
-            self.image,
-            area.width,
-            area.height,
-            self.center,
-            self.squash,
-        );
-        for cell in &rendered.cells {
-            if let Some(c) = buf.cell_mut(ratatui::layout::Position::new(
-                area.x + cell.rx,
-                area.y + cell.ry,
-            )) {
-                c.set_char('\u{2580}')
-                    .set_style(Style::new().fg(cell.fg).bg(cell.bg));
-            }
-        }
-    }
+    cells
 }
 
 #[cfg(test)]
@@ -596,11 +652,7 @@ impl Gfx {
         Self {
             picker: Some(picker),
             graphics: usable(protocol),
-            drawn: HashMap::new(),
-            tick: 0,
-            fresh: 0,
-            stale: Vec::new(),
-            next_id: seed_id(),
+            ..Self::halfblocks()
         }
     }
 }
@@ -712,7 +764,7 @@ mod tests {
             DynamicImage::ImageRgb8(image::RgbImage::from_pixel(300, 300, image::Rgb([200; 3])));
         let rows = |cols, squash| {
             let drawn = pre_render(&square, cols, cols, false, squash);
-            drawn.cells.iter().map(|c| c.ry).max().map_or(0, |r| r + 1)
+            drawn.iter().map(|c| c.ry).max().map_or(0, |r| r + 1)
         };
         // A 13x29 px cell: 22 columns are 286 px, 9.9 rows of 29, and 30 are
         // 390 px, 13.4 rows; the terminal rounds both up.
@@ -754,5 +806,66 @@ mod tests {
         let mut buf = Buffer::empty(area);
         Gfx::forced(ProtocolType::Iterm2).draw_clipped(3, &img, area, 10, true, &mut buf);
         assert!(buf.content.iter().all(|c| c.symbol() != "\u{2580}"));
+    }
+
+    /// Polls until the loader has answered, as frames would.
+    fn settle(cache: &mut CoverArtCache) {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !cache.poll() {
+            assert!(
+                std::time::Instant::now() < until,
+                "the loader never answered"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn the_tracks_of_a_record_share_one_drawing() {
+        let dir = tempfile::tempdir().unwrap();
+        picture().save(dir.path().join("cover.png")).unwrap();
+        let (a, b) = (dir.path().join("01.flac"), dir.path().join("02.flac"));
+        std::fs::write(&a, b"x").unwrap();
+        std::fs::write(&b, b"x").unwrap();
+        let mut cache = CoverArtCache::default();
+        cache.want(&a, false, || None);
+        settle(&mut cache);
+        let first = cache.cover().expect("the folder's cover").key;
+        cache.want(&b, false, || None);
+        // The first record's cover stays up while the second's loads.
+        assert_eq!(cache.cover().map(|c| c.key), Some(first));
+        assert!(cache.cover_for(&b).is_none(), "but is not the second's");
+        settle(&mut cache);
+        assert_eq!(cache.cover().map(|c| c.key), Some(first));
+        assert_eq!(first >> 63, 0, "apart from the album tiles' keys");
+    }
+
+    #[test]
+    fn a_file_with_no_cover_while_arriving_is_asked_again_once_it_has() {
+        let dir = tempfile::tempdir().unwrap();
+        let track = dir.path().join("01.flac");
+        std::fs::write(&track, b"x").unwrap();
+        let mut cache = CoverArtCache::default();
+        cache.want(&track, true, || None);
+        settle(&mut cache);
+        assert!(cache.cover().is_none());
+        picture().save(dir.path().join("cover.png")).unwrap();
+        cache.want(&track, false, || None);
+        settle(&mut cache);
+        assert!(cache.cover().is_some(), "asked again once it arrived");
+    }
+
+    #[test]
+    fn a_cover_that_arrives_after_the_track_ended_is_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        picture().save(dir.path().join("cover.png")).unwrap();
+        let track = dir.path().join("01.flac");
+        std::fs::write(&track, b"x").unwrap();
+        let mut cache = CoverArtCache::default();
+        cache.want(&track, false, || None);
+        cache.clear();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(!cache.poll());
+        assert!(cache.cover().is_none());
     }
 }

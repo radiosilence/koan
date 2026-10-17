@@ -82,6 +82,14 @@ fn duration(ms: i64) -> String {
     }
 }
 
+/// Asks for a new name for the playlist, or says why it keeps its own.
+fn rename(list: &PlaylistRow) -> PlAction {
+    match ops::renamable(list) {
+        Ok(()) => PlAction::Rename(list.id, list.name.clone()),
+        Err(e) => PlAction::Say(e),
+    }
+}
+
 // ---------------------------------------------------------------- the list
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -279,12 +287,7 @@ impl PlaylistsPage {
                 ));
             }
             KeyCode::Char('c') | KeyCode::Char('+') => return Some(PlAction::New),
-            KeyCode::Char('r') => {
-                return Some(
-                    self.at(self.cursor)
-                        .map_or(PlAction::None, |p| PlAction::Rename(p.id, p.name.clone())),
-                );
-            }
+            KeyCode::Char('r') => return Some(self.at(self.cursor).map_or(PlAction::None, rename)),
             KeyCode::Char('x') | KeyCode::Delete => return Some(self.delete(self.cursor)),
             KeyCode::Char('/') => self.filter_active = true,
             KeyCode::Esc if !self.filter.is_empty() => {
@@ -607,12 +610,9 @@ impl PlaylistPage {
     }
 
     fn refuse_if_readonly(&self) -> Option<PlAction> {
-        self.list.readonly.then(|| {
-            PlAction::Say(format!(
-                "'{}' is read-only: its rules, its file or its server decide what it holds",
-                self.list.name
-            ))
-        })
+        self.list
+            .readonly
+            .then(|| PlAction::Say(ops::read_only(&self.list.name)))
     }
 
     fn remove(&mut self, idx: usize) -> PlAction {
@@ -663,9 +663,11 @@ impl PlaylistPage {
         let order: Vec<i64> = self.entries.iter().map(|e| e.id).collect();
         let result = ops::reorder(self.list.id, &ops::moved(&order, idx, to));
         self.reload();
-        self.move_to(to);
         match result {
-            Ok(()) => PlAction::None,
+            Ok(()) => {
+                self.move_to(to);
+                PlAction::None
+            }
             Err(e) => PlAction::Say(e),
         }
     }
@@ -699,12 +701,7 @@ impl PlaylistPage {
                         .map_or(PlAction::None, |e| PlAction::Choose(vec![e.track.id])),
                 );
             }
-            KeyCode::Char('r') => {
-                return Some(
-                    self.refuse_if_readonly()
-                        .unwrap_or_else(|| PlAction::Rename(self.list.id, self.list.name.clone())),
-                );
-            }
+            KeyCode::Char('r') => return Some(rename(&self.list)),
             KeyCode::Char('x') | KeyCode::Delete | KeyCode::Backspace => {
                 return Some(self.remove(self.cursor));
             }
@@ -942,24 +939,30 @@ impl PlaylistPage {
             };
             buf.set_string(list.x + 2, y, format!("{:>3}", idx + 1), dim);
 
-            // Buttons: move up, move down, remove: the last nine cells.
-            let remove = Rect::new(end.saturating_sub(3), y, 3, 1);
-            let down = Rect::new(end.saturating_sub(6), y, 3, 1);
-            let up = Rect::new(end.saturating_sub(9), y, 3, 1);
-            for (rect, glyph, hit) in [
-                (up, "\u{25b4}", PlaylistHit::Up(idx)),
-                (down, "\u{25be}", PlaylistHit::Down(idx)),
-                (remove, "\u{d7}", PlaylistHit::Remove(idx)),
-            ] {
-                buf.set_string(rect.x + 1, y, glyph, underline(hover == Some(hit), dim));
-                self.geom.links.push((rect, hit));
-            }
+            // Buttons: move up, move down, remove: the last nine cells, on
+            // a playlist that takes edits.
+            let buttons_x = if self.list.readonly {
+                end
+            } else {
+                let remove = Rect::new(end.saturating_sub(3), y, 3, 1);
+                let down = Rect::new(end.saturating_sub(6), y, 3, 1);
+                let up = Rect::new(end.saturating_sub(9), y, 3, 1);
+                for (rect, glyph, hit) in [
+                    (up, "\u{25b4}", PlaylistHit::Up(idx)),
+                    (down, "\u{25be}", PlaylistHit::Down(idx)),
+                    (remove, "\u{d7}", PlaylistHit::Remove(idx)),
+                ] {
+                    buf.set_string(rect.x + 1, y, glyph, underline(hover == Some(hit), dim));
+                    self.geom.links.push((rect, hit));
+                }
+                up.x
+            };
             let len = t
                 .duration_ms
                 .map(|d| format_time(d as u64))
                 .unwrap_or_default();
             let len_w = len.chars().count() as u16;
-            let len_x = up.x.saturating_sub(len_w + 1);
+            let len_x = buttons_x.saturating_sub(len_w + 1);
             buf.set_string(len_x, y, &len, dim);
 
             let left = list.x + 7;
@@ -991,7 +994,7 @@ impl PlaylistPage {
                 ),
             ] {
                 let shown = fit(text, w);
-                let width = shown.chars().count() as u16;
+                let width = unicode_width::UnicodeWidthStr::width(shown.as_str()) as u16;
                 buf.set_string(x, y, &shown, underline(linked && hover == Some(hit), dim));
                 if linked {
                     self.geom.links.push((Rect::new(x, y, width, 1), hit));
@@ -1187,13 +1190,38 @@ mod tests {
     fn a_read_only_playlist_refuses_edits() {
         let mut p = page(true);
         draw(&mut p, 100, 14);
-        for c in ['x', 'J', 'K', 'r'] {
+        for c in ['x', 'J', 'K'] {
             let said = p.handle_key(KeyEvent::from(KeyCode::Char(c)));
             assert!(
                 matches!(said, Some(PlAction::Say(s)) if s.contains("read-only")),
                 "{c}"
             );
         }
+        assert!(
+            !p.geom.links.iter().any(|(_, h)| matches!(
+                h,
+                PlaylistHit::Up(_) | PlaylistHit::Down(_) | PlaylistHit::Remove(_)
+            )),
+            "no buttons for edits it refuses"
+        );
+        assert!(
+            matches!(
+                p.handle_key(KeyEvent::from(KeyCode::Char('r'))),
+                Some(PlAction::Rename(7, _))
+            ),
+            "a smart playlist can still be renamed"
+        );
+    }
+
+    #[test]
+    fn a_playlist_named_by_its_file_is_not_offered_a_new_name() {
+        let mut p = page(true);
+        p.list.source_path = Some("/music/mix.m3u8".into());
+        draw(&mut p, 100, 14);
+        assert!(matches!(
+            p.handle_key(KeyEvent::from(KeyCode::Char('r'))),
+            Some(PlAction::Say(s)) if s.contains("named by its file")
+        ));
     }
 
     #[test]

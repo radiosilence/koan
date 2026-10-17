@@ -2,6 +2,8 @@
 //! one in use marked. It does what the apps' EQ page and `koan dsp assign` do,
 //! through the same calls, so the three never disagree about what is chosen.
 
+use std::cell::Cell;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
@@ -10,6 +12,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
 use koan_core::audio::dsp::profiles;
 
+use super::browse::{fit, scroll_to};
 use super::theme::Theme;
 
 pub struct DspEntry {
@@ -23,6 +26,8 @@ pub struct DspSelectorState {
     pub cursor: usize,
     /// The profile the output plays through now.
     pub active: Option<String>,
+    /// The first entry shown.
+    scroll: Cell<usize>,
 }
 
 impl DspSelectorState {
@@ -51,6 +56,7 @@ impl DspSelectorState {
             entries,
             cursor,
             active,
+            scroll: Cell::default(),
         }
     }
 
@@ -67,7 +73,7 @@ impl DspSelectorState {
 
     /// The first entry shown when `rows` fit: the cursor stays on screen.
     pub fn top(&self, rows: usize) -> usize {
-        (self.cursor + 1).saturating_sub(rows.max(1))
+        scroll_to(&self.scroll, self.cursor, rows)
     }
 }
 
@@ -131,14 +137,7 @@ impl Widget for DspSelectorOverlay<'_> {
                     buf[(x, inner.y + row as u16)].set_style(style);
                 }
             }
-            let max = inner.width.saturating_sub(3) as usize;
-            let label: String = if entry.label.chars().count() > max {
-                let mut cut: String = entry.label.chars().take(max.saturating_sub(1)).collect();
-                cut.push('\u{2026}');
-                cut
-            } else {
-                entry.label.clone()
-            };
+            let label = fit(&entry.label, inner.width.saturating_sub(3) as usize);
             Paragraph::new(Line::from(vec![
                 Span::styled(marker, marker_style),
                 Span::styled(label, style),
@@ -165,6 +164,7 @@ mod tests {
                 .collect(),
             cursor: 0,
             active: Some("p1".into()),
+            scroll: Cell::default(),
         }
     }
 
