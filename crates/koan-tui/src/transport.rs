@@ -451,15 +451,16 @@ impl Widget for TransportBar<'_> {
                         .filter(|_| area.width >= 48)
                         .map_or(0, |_| MINI_BARS as u16 + 1);
                 if let Some(dsp) = self.dsp.as_ref() {
-                    let used: usize = album_spans.iter().map(|s| s.content.chars().count()).sum();
+                    let used: usize = album_spans.iter().map(|s| s.width()).sum();
                     let label = dsp_label(dsp);
                     album_spans.push(Span::styled(" \u{00B7} ", self.theme.hint_desc));
                     album_spans.push(Span::styled(label, self.theme.track_playing));
                     let x = used as u16 + 3;
+                    let w = label.len() as u16;
                     if let Some(hit) = self.eq_hit
-                        && x + label.len() as u16 <= text_end
+                        && x + w <= text_end
                     {
-                        hit.set(Rect::new(area.x + x, area.y + 2, label.len() as u16, 1));
+                        hit.set(Rect::new(area.x + x, area.y + 2, w, 1));
                     }
                 }
                 if let Some(sleep) = self.sleep {

@@ -1472,7 +1472,9 @@ impl App {
     }
 
     pub fn open_dsp_selector(&mut self) {
-        self.dsp_selector = Some(super::dsp_selector::DspSelectorState::load());
+        self.dsp_selector = Some(super::dsp_selector::DspSelectorState::load(
+            self.eq_device(),
+        ));
         self.push_mode(Mode::DspSelector);
     }
 
@@ -1494,24 +1496,28 @@ impl App {
         }
     }
 
+    /// The output an EQ applies to: the renderer playing, else this machine's
+    /// device.
+    fn eq_device(&self) -> Option<String> {
+        self.state
+            .renderer()
+            .map(|r| r.udn)
+            .or_else(koan_core::audio::dsp::profiles::current_device)
+    }
+
     /// Plays the output through `name`, or untouched for `None`, and says so.
     /// True when it took. Turning the EQ off remembers what was on, for
     /// [`Self::toggle_eq`].
     fn assign_eq(&mut self, name: Option<String>) -> bool {
         use koan_core::audio::dsp::profiles;
-        let device = self
-            .state
-            .renderer()
-            .map(|r| r.udn)
-            .or_else(profiles::current_device);
-        let Some(device) = device else {
+        let Some(device) = self.eq_device() else {
             self.status_message = Some((
                 "no output device to set an eq on".into(),
                 std::time::Instant::now(),
             ));
             return false;
         };
-        let before = profiles::overview().active;
+        let before = profiles::overview_for(Some(device.clone())).active;
         match profiles::assign(name.as_deref(), &device) {
             Ok(()) => {
                 if name.is_none() && before.is_some() {
@@ -1537,7 +1543,10 @@ impl App {
     /// Bypasses the EQ, or puts back what was bypassed. With nothing to put
     /// back, the chooser opens.
     fn toggle_eq(&mut self) {
-        if koan_core::audio::dsp::profiles::overview().active.is_some() {
+        if koan_core::audio::dsp::profiles::overview_for(self.eq_device())
+            .active
+            .is_some()
+        {
             self.assign_eq(None);
         } else if let Some(last) = self.eq_last.clone() {
             self.assign_eq(Some(last));
