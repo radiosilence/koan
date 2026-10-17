@@ -32,6 +32,9 @@ const TILE_MIN_W: u16 = 14;
 /// Decoded covers kept for tiles before the lot is dropped.
 const THUMB_LIMIT: usize = 800;
 
+/// How long the grid must be still before its covers are drawn as images.
+const SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
+
 /// How many rows beyond the page are loaded ahead of scrolling.
 const PREFETCH_ROWS: usize = 3;
 
@@ -318,6 +321,10 @@ pub struct Browse {
     loaded: bool,
     geom: Geom,
     last_click: Option<(usize, Instant)>,
+    /// The scroll the last frame drew, and when it last changed: covers are
+    /// drawn as images only once the grid has stopped.
+    drawn_scroll: usize,
+    moved: Option<Instant>,
 }
 
 impl Browse {
@@ -342,6 +349,8 @@ impl Browse {
             loaded: false,
             geom: Geom::default(),
             last_click: None,
+            drawn_scroll: 0,
+            moved: None,
         }
     }
 
@@ -1127,6 +1136,11 @@ impl Browse {
         let total_rows = self.shown.len().div_ceil(cols);
         self.scroll = self.scroll.min(total_rows.saturating_sub(rows));
         let bottom = body.y + body.height;
+        if self.scroll != self.drawn_scroll {
+            self.drawn_scroll = self.scroll;
+            self.moved = Some(Instant::now());
+        }
+        let moving = self.moved.is_some_and(|at| at.elapsed() < SETTLE);
 
         for r in 0..=rows {
             for c in 0..cols {
@@ -1142,7 +1156,7 @@ impl Browse {
                 let art = Rect::new(x + 1, y, art_w, art_h);
                 let art_visible = (bottom - y).min(art_h);
                 if let Some(img) = thumbs.get(album.id) {
-                    gfx.draw_clipped(album_key(album.id), img, art, art_visible, buf);
+                    gfx.draw_clipped(album_key(album.id), img, art, art_visible, moving, buf);
                 } else {
                     placeholder(art, art_visible, buf, theme, &album.title);
                 }

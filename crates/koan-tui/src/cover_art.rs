@@ -73,10 +73,11 @@ fn usable(protocol: ProtocolType) -> bool {
     matches!(protocol, ProtocolType::Kitty | ProtocolType::Iterm2)
 }
 
-/// How many drawings are kept. A screenful of tiles is well under this;
+/// How many drawings are kept. A screenful of tiles, each drawn both as an
+/// image and in half blocks, is well under this;
 /// scrolling a long library through it is not, so the least recently drawn
 /// go first and the tiles in view stay put.
-const DRAWN_LIMIT: usize = 192;
+const DRAWN_LIMIT: usize = 384;
 
 impl Default for Gfx {
     fn default() -> Self {
@@ -276,16 +277,20 @@ impl Gfx {
 
     /// Draws the top `visible` rows of the image that would fill `area`, for a
     /// tile the page ends part-way through. A graphics protocol cannot be
-    /// cropped by a cell, so the part drawn is half blocks.
+    /// cropped by a cell, so the part drawn is half blocks. So is a whole tile
+    /// while the page is `moving`: kitty draws an image as one placeholder per
+    /// cell, and a grid of them moving every frame is more than terminals keep
+    /// up with.
     pub fn draw_clipped(
         &mut self,
         key: u64,
         img: &DynamicImage,
         area: Rect,
         visible: u16,
+        moving: bool,
         buf: &mut Buffer,
     ) {
-        if visible >= area.height {
+        if visible >= area.height && !(moving && self.graphics) {
             return self.draw(key, img, area, buf, true);
         }
         if visible == 0 || area.width == 0 {
@@ -527,9 +532,11 @@ mod tests {
                 gfx.draw(7, &img, area, &mut buf, center);
             }
             for visible in [0u16, 1, h / 2, h, h + 3] {
-                let area = Rect::new(2, 1, w, h);
-                let mut buf = Buffer::empty(Rect::new(0, 0, 80, 40));
-                gfx.draw_clipped(9, &img, area, visible, &mut buf);
+                for moving in [false, true] {
+                    let area = Rect::new(2, 1, w, h);
+                    let mut buf = Buffer::empty(Rect::new(0, 0, 80, 40));
+                    gfx.draw_clipped(9, &img, area, visible, moving, &mut buf);
+                }
             }
         }
     }
@@ -583,8 +590,27 @@ mod tests {
         let img = picture();
         let area = Rect::new(0, 0, 20, 10);
         let mut buf = Buffer::empty(Rect::new(0, 0, 20, 12));
-        Gfx::forced(ProtocolType::Kitty).draw_clipped(3, &img, area, 4, &mut buf);
+        Gfx::forced(ProtocolType::Kitty).draw_clipped(3, &img, area, 4, false, &mut buf);
         assert!((0..20).any(|x| buf[(x, 3)].symbol() != " "));
         assert!((0..20).all(|x| buf[(x, 4)].symbol() == " "));
+    }
+
+    #[test]
+    fn a_moving_tile_is_half_blocks_and_a_still_one_an_image() {
+        let img = picture();
+        let area = Rect::new(0, 0, 20, 10);
+        let mut gfx = Gfx::forced(ProtocolType::Kitty);
+        let mut moving = Buffer::empty(area);
+        gfx.draw_clipped(3, &img, area, 10, true, &mut moving);
+        assert!(moving.content.iter().any(|c| c.symbol() == "\u{2580}"));
+        let mut still = Buffer::empty(area);
+        gfx.draw_clipped(3, &img, area, 10, false, &mut still);
+        assert!(still.content.iter().all(|c| c.symbol() != "\u{2580}"));
+        assert!(
+            still
+                .content
+                .iter()
+                .any(|c| c.symbol().contains('\u{10EEEE}'))
+        );
     }
 }

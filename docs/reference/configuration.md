@@ -185,7 +185,7 @@ When a track needs the output device at a different sample rate, the device relo
 
 ### Cover graphics
 
-With `art_graphics` on, the TUI asks the terminal at startup whether it draws images (the kitty or iTerm2 protocol; sixel is not used) and uses them for covers and album tiles. Terminals that do not answer get half blocks, which is also what `art_graphics = false` gives, and skips the question. `I` in the TUI switches for the session and saves the choice. It lives in `config.local.toml`: whether images work is a property of the terminal at hand.
+With `art_graphics` on, the TUI asks the terminal at startup whether it draws images (the kitty or iTerm2 protocol; sixel is not used) and uses them for covers and album tiles. While the album grid scrolls its tiles are half blocks, turning back into images when it stops: terminals draw a kitty image as a placeholder in every cell, and a screen of those moving every frame is slow. Terminals that do not answer get half blocks, which is also what `art_graphics = false` gives, and skips the question. `I` in the TUI switches for the session and saves the choice. It lives in `config.local.toml`: whether images work is a property of the terminal at hand.
 
 ### TUI palette
 
