@@ -1,0 +1,1 @@
+- **iOS: a pause after an interruption stops the output.** When a call or another app had already stopped koan's audio, pausing left the player waiting for a fade that could never finish, waking it twenty times a second and holding the audio session until the next play.
