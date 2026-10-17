@@ -59,7 +59,15 @@ final class LibraryModel {
     /// it where it is drawn instead.
     func prepare(section: Section) async -> Listing? {
         guard section != self.section else {
-            carried = nil
+            // A See all onto the section already here: its query applies to
+            // the rows on screen, and spent, it cannot reach the next move.
+            if let carried {
+                self.carried = nil
+                adopting = true
+                filter = carried
+                adopting = false
+                reload()
+            }
             return nil
         }
         // Nothing carries over from another section: a filter left behind on
@@ -116,10 +124,15 @@ final class LibraryModel {
     /// the session.
     @ObservationIgnored private var leftFilters: [Section: String] = [:]
 
-    /// A section that no longer exists. A deleted playlist's row id is given
-    /// to the next one made, which would otherwise open with its filter.
-    func forget(_ section: Section) {
-        leftFilters[section] = nil
+    /// Drop the filters left on playlists that are gone, wherever they went:
+    /// a deleted playlist's row id is given to the next one made, which would
+    /// otherwise open with its filter.
+    func keepPlaylists(_ ids: [Int64]) {
+        let kept = Set(ids)
+        leftFilters = leftFilters.filter { section, _ in
+            guard case .playlist(let id) = section else { return true }
+            return kept.contains(id)
+        }
     }
 
     /// Point a browser at a shelf: its filters and sort set to the shelf's, so
@@ -273,6 +286,9 @@ final class LibraryModel {
     /// at a time — see `continueTracks()`.
     private(set) var visibleTracks: [Track] = []
     private(set) var trackTotal: UInt64 = 0
+    /// Whether more of the track browser's pages are on their way. A page
+    /// that fails to arrive ends the listing short of `trackTotal`.
+    private(set) var pagingTracks = false
 
     // Favourite state is read from here rather than from the copy baked into
     // each Track when it was fetched. A track appears in the album view, the
@@ -364,10 +380,14 @@ final class LibraryModel {
     /// appended as it lands. Part of the load it follows: anything that
     /// reloads cancels it, so a page of the old listing never lands on the new.
     private func continueTracks() {
+        pagingTracks = false
         guard section == .tracks, UInt64(visibleTracks.count) < trackTotal else { return }
         let request = self.request
         let from = visibleTracks.count
+        pagingTracks = true
         loading = Task {
+            // A cancelled load is followed by the one that replaced it.
+            defer { if !Task.isCancelled { pagingTracks = false } }
             var offset = from
             while !Task.isCancelled, UInt64(offset) < trackTotal {
                 guard let page = await request.tracks(offset: UInt32(offset)), !page.tracks.isEmpty

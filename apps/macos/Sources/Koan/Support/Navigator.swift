@@ -264,7 +264,6 @@ final class Navigator {
     /// query, and a deleted playlist no longer exists at all; once either is
     /// gone, they are not somewhere Back can return to.
     func forget(_ section: Section) {
-        library.forget(section)
         guard history.contains(.section(section)) else { return }
         // Whatever survives behind the cursor keeps its order, so the cursor
         // lands on the entry it was on — or on the last one, if that entry was

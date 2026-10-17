@@ -121,7 +121,7 @@ struct TrackBrowser: View {
                 selectAllToken: ui.selectAllToken,
                 offset: library.tracksOffset,
                 noteOffset: { library.tracksOffset = $0 },
-                complete: UInt64(tracks.count) >= library.trackTotal,
+                complete: !library.pagingTracks,
                 rewinds: nav.rewinds[.tracks] ?? 0,
                 insets: insets
             )

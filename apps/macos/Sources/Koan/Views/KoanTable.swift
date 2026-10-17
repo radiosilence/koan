@@ -183,6 +183,11 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         private var selectAllToken: Int?
         private var rewinds: Int?
         private var restored = false
+        /// How far the list could scroll at its last layout, while restoring.
+        private var lastReach: CGFloat?
+        /// Set while the rows are reloaded, whose selection changes are not
+        /// the person's.
+        private var reloading = false
         private var jumpToken: Int?
         private var followed: ID?
         private var liveScroll: (any NSObjectProtocol)?
@@ -244,7 +249,9 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
                 self.items = parent.items
                 self.ids = ids
                 index = Dictionary(ids.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+                reloading = true
                 table.reloadData()
+                reloading = false
                 shownKey = parent.contextKey
             } else if parent.contextKey != shownKey || parent.changed?(self.items, parent.items) == true {
                 self.items = parent.items
@@ -262,6 +269,8 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             if let rewinds, rewinds != parent.rewinds {
                 restored = true
                 scroll(to: 0)
+                // Noted here too: a list already at its top does not move.
+                parent.noteOffset(0)
             }
             rewinds = parent.rewinds
             if let token = jumpToken, token != parent.jump.token,
@@ -287,8 +296,9 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         /// during SwiftUI's update, where laying the table out is an AppKit
         /// exception. Until then the offset is not noted, so a distance the
         /// first page cannot reach is not overwritten by one it can. A complete
-        /// listing that still falls short is scrolled to its end and the wait
-        /// is over; so is anything the person does in the list meanwhile.
+        /// listing that still falls short, laid out twice at the same size, is
+        /// scrolled to its end and the wait is over; so is anything the person
+        /// does in the list meanwhile.
         func laidOut() {
             guard !restored, !ids.isEmpty, let parent, let table, let scroll else { return }
             guard let offset = parent.offset else {
@@ -297,7 +307,9 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             }
             let reach = table.frame.height - scroll.contentView.bounds.height
                 + scroll.contentInsets.top + scroll.contentInsets.bottom
-            if offset <= reach || parent.complete { restored = true }
+            let settled = parent.complete && reach == lastReach
+            lastReach = reach
+            if offset <= reach || settled { restored = true }
             self.scroll(to: min(offset, max(reach, 0)))
         }
 
@@ -419,7 +431,7 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
 
         func tableViewSelectionDidChange(_ notification: Notification) {
             guard !applying, let table, let parent else { return }
-            restored = true
+            if !reloading { restored = true }
             let picked = Set(table.selectedRowIndexes.compactMap { $0 < ids.count ? ids[$0] : nil })
             if picked != parent.selection { parent.selection = picked }
         }
