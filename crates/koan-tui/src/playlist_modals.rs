@@ -115,25 +115,15 @@ impl Widget for NamePromptOverlay<'_> {
 /// A list of playlists for something to go in, with "new playlist" first.
 pub struct Chooser {
     pub ids: Vec<i64>,
-    /// `None` is a playlist yet to be made.
-    pub entries: Vec<(Option<i64>, String)>,
+    /// The playlists that can be filled; `None` is one yet to be made.
+    pub entries: Vec<Option<PlaylistRow>>,
     pub cursor: usize,
 }
 
 impl Chooser {
-    pub fn new(ids: Vec<i64>, lists: &[PlaylistRow]) -> Self {
-        let mut entries = vec![(None, "+ new playlist\u{2026}".to_string())];
-        entries.extend(lists.iter().filter(|l| !l.readonly).map(|l| {
-            (
-                Some(l.id),
-                format!(
-                    "{} \u{b7} {} track{}",
-                    l.name,
-                    l.track_count,
-                    if l.track_count == 1 { "" } else { "s" }
-                ),
-            )
-        }));
+    pub fn new(ids: Vec<i64>, lists: Vec<PlaylistRow>) -> Self {
+        let mut entries = vec![None];
+        entries.extend(lists.into_iter().filter(|l| !l.readonly).map(Some));
         Self {
             ids,
             entries,
@@ -192,7 +182,7 @@ impl Widget for ChooserOverlay<'_> {
         let inner = block.inner(popup);
         block.render(popup, buf);
         let top = self.chooser.top(inner.height as usize);
-        for (row, (i, (_, label))) in self
+        for (row, (i, entry)) in self
             .chooser
             .entries
             .iter()
@@ -202,6 +192,15 @@ impl Widget for ChooserOverlay<'_> {
             .enumerate()
         {
             let y = inner.y + row as u16;
+            let label = match entry {
+                Some(l) => format!(
+                    "{} \u{b7} {} track{}",
+                    l.name,
+                    l.track_count,
+                    if l.track_count == 1 { "" } else { "s" }
+                ),
+                None => "+ new playlist\u{2026}".into(),
+            };
             let selected = i == self.chooser.cursor;
             let style = if selected {
                 for x in inner.x..inner.x + inner.width {
@@ -216,7 +215,7 @@ impl Widget for ChooserOverlay<'_> {
             buf.set_stringn(
                 inner.x + 1,
                 y,
-                label,
+                &label,
                 inner.width.saturating_sub(2) as usize,
                 style,
             );
@@ -257,20 +256,19 @@ mod tests {
     fn the_chooser_leaves_out_what_cannot_be_filled() {
         let c = Chooser::new(
             vec![1, 2],
-            &[list(1, "mine", false), list(2, "smart", true)],
+            vec![list(1, "mine", false), list(2, "smart", true)],
         );
+        let ids: Vec<_> = c.entries.iter().map(|e| e.as_ref().map(|l| l.id)).collect();
         assert_eq!(
-            c.entries.len(),
-            2,
+            ids,
+            [None, Some(1)],
             "new playlist, and the one that can be filled"
         );
-        assert_eq!(c.entries[0].0, None);
-        assert_eq!(c.entries[1].0, Some(1));
     }
 
     #[test]
     fn the_cursor_wraps() {
-        let mut c = Chooser::new(vec![1], &[list(1, "a", false)]);
+        let mut c = Chooser::new(vec![1], vec![list(1, "a", false)]);
         c.move_by(-1);
         assert_eq!(c.cursor, 1);
         c.move_by(1);
@@ -281,7 +279,7 @@ mod tests {
     fn both_draw_at_any_size() {
         let theme = Theme::new(super::super::theme::Palette::Ansi, (125, 211, 167));
         let prompt = NamePrompt::new(Purpose::New(vec![1]), "a long name to type".into());
-        let chooser = Chooser::new(vec![1], &[list(1, "a", false), list(2, "b", false)]);
+        let chooser = Chooser::new(vec![1], vec![list(1, "a", false), list(2, "b", false)]);
         for w in 0..70 {
             for h in 0..14 {
                 let area = Rect::new(0, 0, w, h);

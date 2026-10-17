@@ -96,17 +96,19 @@ pub fn entries(id: i64) -> Vec<PlaylistEntry> {
     queries::playlist_entries(&db.conn, id).unwrap_or_default()
 }
 
-fn db() -> Result<koan_core::db::pool::Handle<'static>, String> {
+fn db() -> Result<pool::Handle<'static>, String> {
     pool::shared().get().map_err(|e| e.to_string())
 }
 
+/// Why the playlist `name` takes no edits to what it holds.
+pub fn read_only(name: &str) -> String {
+    format!("'{name}' is read-only: its rules, its file or its server decide what it holds")
+}
+
 /// The playlist, if its contents are the user's to change.
-fn fillable(db: &koan_core::db::connection::Database, id: i64) -> Result<PlaylistRow, String> {
+fn fillable(db: &Database, id: i64) -> Result<PlaylistRow, String> {
     match queries::get_playlist(&db.conn, id).map_err(|e| e.to_string())? {
-        Some(list) if list.readonly => Err(format!(
-            "'{}' is read-only: its rules, its file or its server decide what it holds",
-            list.name
-        )),
+        Some(list) if list.readonly => Err(read_only(&list.name)),
         Some(list) => Ok(list),
         None => Err("that playlist is gone".into()),
     }
@@ -128,19 +130,26 @@ pub fn create(name: &str, track_ids: &[i64]) -> Result<i64, String> {
     Ok(id)
 }
 
+/// Whether the playlist's name is the user's to change: one read from a file
+/// is named by it.
+pub fn renamable(list: &PlaylistRow) -> Result<(), String> {
+    match list.source_path {
+        Some(_) => Err(format!(
+            "'{}' is named by its file in the library",
+            list.name
+        )),
+        None => Ok(()),
+    }
+}
+
 pub fn rename(id: i64, name: &str) -> Result<(), String> {
     let name = name.trim();
     if name.is_empty() {
         return Err("a playlist needs a name".into());
     }
     let db = db()?;
-    if let Some(list) = queries::get_playlist(&db.conn, id).map_err(|e| e.to_string())?
-        && list.source_path.is_some()
-    {
-        return Err(format!(
-            "'{}' is named by its file in the library",
-            list.name
-        ));
+    if let Some(list) = queries::get_playlist(&db.conn, id).map_err(|e| e.to_string())? {
+        renamable(&list)?;
     }
     queries::rename_playlist(&db.conn, id, name).map_err(|e| e.to_string())?;
     koan_core::playlists::push_to_remote(id);
@@ -204,29 +213,20 @@ pub fn queue_command(
     start_entry: Option<i64>,
     shuffled: bool,
 ) -> Option<PlayerCommand> {
-    let db = pool::shared().get().ok()?;
-    let tracks: Vec<_> = entries.iter().map(|e| e.track.clone()).collect();
-    let mut items = koan_core::helpers::playlist_items_for_tracks(&db, &tracks);
-    // Zipped against the entries whose track resolved, not against all of
-    // them: a playlist naming a track the library has lost yields fewer items
-    // than entries, and zipping the two directly would hand every entry after
-    // the gap the wrong id.
-    let resolved: std::collections::HashSet<i64> = items.iter().filter_map(|i| i.db_id).collect();
-    let kept = entries.iter().filter(|e| resolved.contains(&e.track.id));
-    for (item, entry) in items.iter_mut().zip(kept) {
-        item.playlist_entry_id = Some(entry.id);
-    }
-    if items.is_empty() {
+    if entries.is_empty() {
         return None;
     }
-    let start = match start_entry.filter(|_| !shuffled) {
-        Some(entry) => entries
-            .iter()
-            .skip_while(|e| e.id != entry)
-            .find_map(|e| items.iter().position(|i| i.playlist_entry_id == Some(e.id)))
-            .unwrap_or(0),
-        None => 0,
-    };
+    let db = pool::shared().get().ok()?;
+    let tracks: Vec<_> = entries.iter().map(|e| e.track.clone()).collect();
+    // One item per track, in order: the entries already hold their tracks.
+    let mut items = koan_core::helpers::playlist_items_for_tracks(&db, &tracks);
+    for (item, entry) in items.iter_mut().zip(entries) {
+        item.playlist_entry_id = Some(entry.id);
+    }
+    let start = start_entry
+        .filter(|_| !shuffled)
+        .and_then(|entry| entries.iter().position(|e| e.id == entry))
+        .unwrap_or(0);
     Some(PlayerCommand::ReplacePlaylist {
         items,
         start,

@@ -1307,8 +1307,7 @@ impl App {
             self.say("nothing to add");
             return;
         }
-        let lists = super::playlist_ops::list();
-        self.chooser = Some(Chooser::new(ids, &lists));
+        self.chooser = Some(Chooser::new(ids, super::playlist_ops::list()));
         self.push_mode(Mode::PlaylistChooser);
     }
 
@@ -1443,16 +1442,16 @@ impl App {
         let Some(chooser) = self.chooser.take() else {
             return;
         };
-        let Some((target, label)) = chooser.entries.get(idx).cloned() else {
+        let Some(target) = chooser.entries.get(idx) else {
             self.chooser = Some(chooser);
             return;
         };
         self.pop_mode();
         match target {
             None => self.open_name_prompt(Purpose::New(chooser.ids), String::new()),
-            Some(id) => {
-                let name = label.split(" \u{b7} ").next().unwrap_or("").to_string();
-                match super::playlist_ops::add(id, &chooser.ids) {
+            Some(list) => {
+                let name = &list.name;
+                match super::playlist_ops::add(list.id, &chooser.ids) {
                     Ok(n) => {
                         self.say(format!(
                             "added {n} track{} to '{name}'",
@@ -1487,29 +1486,27 @@ impl App {
         }
     }
 
-    /// The tracks the queue's cursor or selection stands for.
+    /// The tracks the queue's selection stands for; without one, the track
+    /// under the edit cursor, or else the one playing. Now playing always
+    /// means the one playing.
     fn queue_choice(&self) -> Vec<i64> {
-        let visible = self.visible_queue();
-        if self.page() == Page::NowPlaying {
-            return visible
-                .iter()
-                .find(|e| e.status == koan_core::player::state::QueueEntryStatus::Playing)
-                .and_then(|e| e.db_id)
-                .into_iter()
-                .collect();
-        }
-        if !self.queue.selected_ids.is_empty() {
-            return visible
+        let entries = &self.queue.vq_cache.entries;
+        let on_queue = self.page() != Page::NowPlaying;
+        if on_queue && !self.queue.selected_ids.is_empty() {
+            return entries
                 .iter()
                 .filter(|e| self.queue.selected_ids.contains(&e.id))
                 .filter_map(|e| e.db_id)
                 .collect();
         }
-        visible
-            .get(self.queue.cursor)
-            .and_then(|e| e.db_id)
-            .into_iter()
-            .collect()
+        let one = if on_queue && self.mode == Mode::QueueEdit {
+            entries.get(self.queue.cursor)
+        } else {
+            entries
+                .iter()
+                .find(|e| e.status == QueueEntryStatus::Playing)
+        };
+        one.and_then(|e| e.db_id).into_iter().collect()
     }
 
     fn apply_outcome(&mut self, outcome: Outcome) {
@@ -1574,6 +1571,7 @@ impl App {
             Page::Recent => self.recent_page.reload(),
             Page::Artist(_) => self.artist_page.reload(),
             Page::History => self.history_page.reload(),
+            Page::Playlists | Page::Playlist(_) => self.playlists_changed(),
             Page::Artists => {
                 let mut lib = LibraryState::load();
                 if let Some(old) = old {
