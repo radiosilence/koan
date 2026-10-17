@@ -214,11 +214,13 @@ impl HistoryPage {
         let mut error = None;
         while let Ok(reply) = self.rx.try_recv() {
             error = reply.error.or(error);
-            if reply.generation == self.generation
-                && let Some(entries) = reply.entries
-            {
-                self.shown = reply.generation;
-                self.seen = reply.version;
+            if reply.generation != self.generation {
+                continue;
+            }
+            // A failed read still counts as shown, so the next play asks again.
+            self.shown = reply.generation;
+            self.seen = reply.version;
+            if let Some(entries) = reply.entries {
                 self.take(entries);
             }
         }
@@ -328,11 +330,20 @@ impl HistoryPage {
             .map_or(Action::None, |t| Action::Play(vec![t.id], how))
     }
 
-    /// Forgets the play at `idx`.
+    /// Forgets the play at `idx`. The row goes at once, so the next press
+    /// acts on the play below it; the read that follows the forgetting puts
+    /// it back if that failed.
     fn forget(&mut self, idx: usize) {
-        if let Some(id) = self.entries.get(idx).map(|e| e.id) {
-            self.ask(Some(Forget::Plays(vec![id])));
+        if idx >= self.entries.len() {
+            return;
         }
+        let id = self.entries.remove(idx).id;
+        if idx < self.cursor {
+            self.cursor -= 1;
+        }
+        self.rebuild();
+        self.keep_cursor_visible();
+        self.ask(Some(Forget::Plays(vec![id])));
     }
 
     /// Forgets every play, on a second press within a few seconds of the first.
@@ -791,7 +802,7 @@ impl HistoryPage {
             ),
         ] {
             let shown = fit(text, w);
-            let width = shown.chars().count() as u16;
+            let width = unicode_width::UnicodeWidthStr::width(shown.as_str()) as u16;
             buf.set_string(x, y, &shown, link(linked && hover == Some(hit)));
             if linked {
                 self.geom.links.push((Rect::new(x, y, width, 1), hit));
@@ -980,6 +991,43 @@ mod tests {
             line - scroll,
             "and stays put on screen"
         );
+    }
+
+    #[test]
+    fn each_forget_acts_on_the_next_play() {
+        let mut p = page();
+        let (tx, sent) = crossbeam_channel::unbounded();
+        p.tx = tx;
+        draw(&mut p, 100, 12);
+        p.handle_key(KeyEvent::from(KeyCode::Char('x')));
+        p.handle_key(KeyEvent::from(KeyCode::Char('x')));
+        let forgot: Vec<_> = sent
+            .try_iter()
+            .map(|r| match r.forget {
+                Some(Forget::Plays(ids)) => ids,
+                _ => panic!("a forget of plays"),
+            })
+            .collect();
+        assert_eq!(forgot, vec![vec![1], vec![2]]);
+        assert_eq!(p.entries.len(), 1);
+        assert_eq!(p.entries[p.cursor].id, 3);
+    }
+
+    #[test]
+    fn a_failed_read_still_follows_new_plays() {
+        let mut p = page();
+        let (done, rx) = crossbeam_channel::unbounded();
+        p.rx = rx;
+        p.reload();
+        done.send(Reply {
+            generation: p.generation,
+            version: koan_core::player::history::version(),
+            entries: None,
+            error: Some("history could not be read".into()),
+        })
+        .unwrap();
+        assert!(p.poll().is_some());
+        assert_eq!(p.shown, p.generation, "the failed read is the one shown");
     }
 
     #[test]
