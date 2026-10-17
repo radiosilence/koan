@@ -112,6 +112,9 @@ pub enum ShelfHit {
 #[derive(Default)]
 struct Layout {
     width: u16,
+    /// The width the page had to lay out in: `width`, or that less the
+    /// scrollbar's when the page overflows.
+    room: u16,
     view: Option<View>,
     generation: u64,
     items: Vec<(Item, Rect)>,
@@ -969,16 +972,23 @@ impl ShelfPage {
             return;
         }
         // Laid out across the whole width first; narrowed for the scrollbar
-        // if that overflows.
-        self.lay_out(list.width, list.height, gfx);
-        let bar = self.layout.height > list.height && list.width > 20;
+        // if that overflows. Once a frame has decided, the next with the
+        // same shelf and room lays nothing out.
+        let fresh = self.layout.room == list.width
+            && self.layout.view == Some(self.view)
+            && self.layout.generation == self.shown;
+        if !fresh {
+            self.lay_out(list.width, list.height, gfx);
+            if self.layout.height > list.height && list.width > 20 {
+                self.lay_out(list.width - BAR_W, list.height, gfx);
+            }
+            self.layout.room = list.width;
+        }
+        let bar = self.layout.width < list.width;
         let text = Rect {
-            width: list.width - if bar { BAR_W } else { 0 },
+            width: self.layout.width,
             ..list
         };
-        if bar {
-            self.lay_out(text.width, list.height, gfx);
-        }
         self.geom.list = text;
         self.cursor = self.cursor.min(self.layout.items.len().saturating_sub(1));
         if self.follow {
