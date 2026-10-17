@@ -153,7 +153,8 @@ fn scan_folders_in_lane(
             result.cancelled = cancelled;
             result.incomplete = stopped;
             let prune = !found.audio.is_empty();
-            indexed.push((path, found.playlists, Vec::new(), prune, seen, result));
+            // Its playlists wait for a scan that reads the tracks they name.
+            indexed.push((path, Vec::new(), Vec::new(), prune, seen, result));
             continue;
         }
         // A folder with no audio is taken for one not mounted, as stale
@@ -322,10 +323,12 @@ pub fn scan_dirs(
     );
     let arrived = std::mem::take(&mut result.arrived);
     let remove = !result.incomplete && !result.cancelled;
+    // A library root scanned above has already taken its moves off `added`.
+    let counted = result.moved;
     for dir in &settled {
         remove_stale(db, dir, true, remove, &arrived, &seen, &mut result);
     }
-    result.added = result.added.saturating_sub(result.moved);
+    result.added = result.added.saturating_sub(result.moved - counted);
     if result.cancelled {
         return result;
     }
@@ -456,7 +459,7 @@ fn walk(path: &Path, result: &mut ScanResult) -> Walked {
 /// `scope` holds the directories and files they were walked from: the scan
 /// cache is read for those alone.
 ///
-/// A file it could not write marks the result `incomplete`, with the reason
+/// A run it could not finish marks the result `incomplete`, with the reason
 /// in `result.errors` against `context`. A transaction that will not begin or
 /// commit ends the run; batches committed before it stay committed.
 fn index_files(
