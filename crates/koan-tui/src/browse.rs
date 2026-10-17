@@ -390,6 +390,7 @@ struct Ask {
 /// A listing as the database answered it.
 #[derive(Default)]
 struct Listing {
+    favourites: Favourites,
     albums: Vec<AlbumRow>,
     artists: Vec<ArtistRow>,
     tracks: Vec<TrackRow>,
@@ -399,12 +400,34 @@ struct Listing {
     artist: Option<String>,
 }
 
+/// What is a favourite, read with each listing so the hearts drawn match it.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Favourites {
+    pub albums: HashSet<i64>,
+    pub artists: HashSet<i64>,
+    pub tracks: HashSet<i64>,
+}
+
+impl Favourites {
+    pub(crate) fn read(db: &koan_core::db::connection::Database) -> Self {
+        let (conn, user) = (&db.conn, queries::LOCAL_USER);
+        Self {
+            albums: queries::favourite_album_id_set(conn, user).unwrap_or_default(),
+            artists: queries::favourite_artist_id_set(conn, user).unwrap_or_default(),
+            tracks: queries::load_favourites(conn, user).unwrap_or_default(),
+        }
+    }
+}
+
 fn read(ask: &Ask) -> Listing {
     let Ok(db) = koan_core::db::pool::shared().get() else {
         return Listing::default();
     };
     let text = Some(ask.text.as_str());
-    let mut listing = Listing::default();
+    let mut listing = Listing {
+        favourites: Favourites::read(&db),
+        ..Listing::default()
+    };
     match ask.source {
         Source::Albums => {
             let query = core_browse::albums(&ask.filter, text, ask.album_sort, ask.seed);
@@ -642,28 +665,11 @@ impl Browse {
             limit: self.limit,
         };
         self.tx.send((self.asked, ask)).ok();
-        self.reload_favourites();
     }
 
     pub fn ensure_loaded(&mut self) {
         if self.stale {
             self.reload();
-        }
-    }
-
-    /// Reads which albums and artists are favourites.
-    pub fn reload_favourites(&mut self) {
-        let Ok(db) = koan_core::db::pool::shared().get() else {
-            return;
-        };
-        self.fav_albums =
-            queries::favourite_album_id_set(&db.conn, queries::LOCAL_USER).unwrap_or_default();
-        self.fav_artists =
-            queries::favourite_artist_id_set(&db.conn, queries::LOCAL_USER).unwrap_or_default();
-        self.fav_tracks =
-            queries::load_favourites(&db.conn, queries::LOCAL_USER).unwrap_or_default();
-        if let (Some(header), Source::Artist(id)) = (self.header.as_mut(), self.source) {
-            header.set_favourite(self.fav_artists.contains(&id));
         }
     }
 
@@ -689,6 +695,12 @@ impl Browse {
         self.artists = listing.artists;
         self.tracks = listing.tracks;
         self.track_total = listing.track_total;
+        self.fav_albums = listing.favourites.albums;
+        self.fav_artists = listing.favourites.artists;
+        self.fav_tracks = listing.favourites.tracks;
+        if let (Some(header), Source::Artist(id)) = (self.header.as_mut(), self.source) {
+            header.set_favourite(self.fav_artists.contains(&id));
+        }
         if let Some(name) = listing.artist {
             self.title = name;
         }

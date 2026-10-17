@@ -19,8 +19,8 @@ use unicode_width::UnicodeWidthStr;
 use super::actions_menu::{Playable, playable};
 use super::app::PickerAction;
 use super::browse::{
-    Action, SeeAll, Source, Thumbs, Tile, View, album_tracks, album_year, artist_tracks, tile_grid,
-    track_playable,
+    Action, Favourites, SeeAll, Source, Thumbs, Tile, View, album_tracks, album_year,
+    artist_tracks, tile_grid, track_playable,
 };
 use super::cover_art::Gfx;
 use super::rows::{self, Columns, Emphasis, Row, Target};
@@ -157,11 +157,11 @@ pub struct ShelfPage {
     generation: u64,
     shown: u64,
     tx: Sender<Ask>,
-    rx: Receiver<(u64, Summary)>,
+    rx: Receiver<(u64, Summary, Favourites)>,
 }
 
 /// Reads summaries off the UI thread, the last ask of a burst only.
-fn spawn_reader(kind: ShelfKind) -> (Sender<Ask>, Receiver<(u64, Summary)>) {
+fn spawn_reader(kind: ShelfKind) -> (Sender<Ask>, Receiver<(u64, Summary, Favourites)>) {
     let (tx, req) = crossbeam_channel::unbounded::<Ask>();
     let (done, rx) = crossbeam_channel::unbounded();
     std::thread::Builder::new()
@@ -192,9 +192,10 @@ fn spawn_reader(kind: ShelfKind) -> (Sender<Ask>, Receiver<(u64, Summary)>) {
                     shelves::now(),
                     koan_core::remote::offline::active(),
                 );
+                let favourites = Favourites::read(&db);
                 drop(db);
                 if let Ok(summary) = summary
-                    && done.send((generation, summary)).is_err()
+                    && done.send((generation, summary, favourites)).is_err()
                 {
                     return;
                 }
@@ -270,12 +271,6 @@ impl ShelfPage {
     /// Asks for the summary again; an empty search clears at once.
     pub fn reload(&mut self) {
         self.generation += 1;
-        if let Ok(db) = koan_core::db::pool::shared().get() {
-            let user = queries::LOCAL_USER;
-            self.fav_albums = queries::favourite_album_id_set(&db.conn, user).unwrap_or_default();
-            self.fav_artists = queries::favourite_artist_id_set(&db.conn, user).unwrap_or_default();
-            self.fav_tracks = queries::load_favourites(&db.conn, user).unwrap_or_default();
-        }
         let q = self.query.trim().to_string();
         if self.searching() && q.is_empty() {
             self.summary = None;
@@ -290,7 +285,12 @@ impl ShelfPage {
     /// Takes in what the reader has finished. Returns whether anything came.
     pub fn poll(&mut self) -> bool {
         let mut any = false;
-        while let Ok((generation, summary)) = self.rx.try_recv() {
+        while let Ok((generation, summary, favourites)) = self.rx.try_recv() {
+            if generation == self.generation {
+                self.fav_albums = favourites.albums;
+                self.fav_artists = favourites.artists;
+                self.fav_tracks = favourites.tracks;
+            }
             any |= self.show(generation, summary);
         }
         any
