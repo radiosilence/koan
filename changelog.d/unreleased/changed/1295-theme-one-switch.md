@@ -1,0 +1,1 @@
+- **kōan theme.** Views choose between the theme and the platform's look through its roles rather than checking the theme themselves, so the two looks are defined in one place. Nothing on screen changes.
