@@ -377,7 +377,11 @@ impl HistoryPage {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let page = self.rows();
         if key.code != KeyCode::Char('D') {
+            let asked = self.armed();
             self.armed = None;
+            if asked && key.code == KeyCode::Esc {
+                return Some(Action::None);
+            }
         }
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => self.move_to(self.cursor.saturating_sub(1)),
@@ -433,7 +437,6 @@ impl HistoryPage {
             KeyCode::Char('/') => self.filter_active = true,
             KeyCode::Char('x') | KeyCode::Delete | KeyCode::Backspace => self.forget(self.cursor),
             KeyCode::Char('D') => self.forget_all(),
-            KeyCode::Esc if self.armed.take().is_some() => {}
             KeyCode::Esc if !self.filter.is_empty() => {
                 self.filter.clear();
                 self.reload();
@@ -914,8 +917,13 @@ mod tests {
         draw(&mut p, 100, 12);
         p.handle_key(KeyEvent::from(KeyCode::Char('D')));
         assert!(p.armed());
-        p.handle_key(KeyEvent::from(KeyCode::Esc));
+        assert_eq!(
+            p.handle_key(KeyEvent::from(KeyCode::Esc)),
+            Some(Action::None),
+            "esc lets it be and stays on the page"
+        );
         assert!(!p.armed());
+        assert_eq!(p.handle_key(KeyEvent::from(KeyCode::Esc)), None);
     }
 
     #[test]
