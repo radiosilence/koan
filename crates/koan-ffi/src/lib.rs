@@ -6200,30 +6200,6 @@ impl KoanEngine {
         }
     }
 
-    /// Send this device's music to `to`, asked by `source`: see
-    /// `control::hand_off`, and `devices::send_for`, which keeps a hand-off
-    /// asked by anyone but the account off the account's own devices.
-    fn hand_off_blocking(
-        &self,
-        to: &str,
-        source: koan_core::remote::link::CommandSource,
-    ) -> Result<HandedOff, KoanError> {
-        let (then, answer) = outcome_channel();
-        let sent =
-            koan_core::remote::control::hand_off(to, source, &self.tx, &self.state, Some(then))
-                .map_err(|message| KoanError::Remote { message })?;
-        Ok(HandedOff {
-            left_out: sent.left_out,
-            to: Some(to.to_owned()),
-            track: Some(sent.track),
-            before: sent.before,
-            cursor_before: None,
-            answer: Some(answer),
-            answer_is_arrival: true,
-            was_playing: sent.was_playing,
-        })
-    }
-
     /// The queue entry under this device's cursor, and the server's id for
     /// its track.
     fn under_cursor(&self) -> Option<(QueueItemId, Option<String>)> {
