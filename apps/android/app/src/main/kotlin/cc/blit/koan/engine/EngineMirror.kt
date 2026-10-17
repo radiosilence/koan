@@ -4,6 +4,7 @@ import android.os.SystemClock
 import cc.blit.koan.ffi.Appearance
 import cc.blit.koan.ffi.ConnectionInfo
 import cc.blit.koan.ffi.DeviceInfo
+import cc.blit.koan.ffi.DeviceReach
 import cc.blit.koan.ffi.KoanEngine
 import cc.blit.koan.ffi.KoanException
 import cc.blit.koan.ffi.NowPlaying
@@ -59,7 +60,8 @@ data class QueueState(val items: List<QueueItem>, val version: Long)
 
 data class Tasks(val scanning: Boolean, val syncing: Boolean)
 
-data class Devices(val devices: List<DeviceInfo>, val target: String?)
+/** `targetReach` is how the controlled device can be reached, from its connections; `null` while this phone is in view. */
+data class Devices(val devices: List<DeviceInfo>, val target: String?, val targetReach: DeviceReach? = null)
 
 data class Renderers(val renderers: List<RendererInfo>, val output: RendererOutput?)
 
@@ -251,7 +253,7 @@ class EngineMirror(deviceName: String) {
             is StateSlice.Cache -> _cacheBytes.value = slice.bytes.toLong()
             is StateSlice.Tasks -> _tasks.value = Tasks(slice.scanning, slice.syncing)
             is StateSlice.Sync -> _sync.value = slice.progress
-            is StateSlice.Devices -> _devices.value = Devices(slice.devices, slice.target)
+            is StateSlice.Devices -> _devices.value = Devices(slice.devices, slice.target, slice.targetReach)
             is StateSlice.Connection -> {
                 _connection.value = slice.connection
                 // A command already on its way that then did not arrive.

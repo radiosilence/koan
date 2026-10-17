@@ -30,6 +30,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -57,6 +58,8 @@ class PlaybackService : MediaSessionService() {
 
     private val noisy = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            // `focusCommand` drops it while another device is controlled: the
+            // phone's headphones say nothing about that device.
             if (intent.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) focusCommand { pause() }
         }
     }
@@ -99,11 +102,23 @@ class PlaybackService : MediaSessionService() {
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
         audio.registerAudioDeviceCallback(routes, null)
+        // Focus is for sound this phone makes. While another device is
+        // controlled, what plays is that device's, and taking focus for it
+        // would silence the phone's other apps for nothing.
         scope.launch {
-            engine.nowPlaying
-                .map { it?.state == PlayState.PLAYING }
+            combine(engine.nowPlaying, engine.devices) { now, devices ->
+                devices.target == null && now?.state == PlayState.PLAYING
+            }
                 .distinctUntilChanged()
                 .collect { playing -> if (playing) holdFocus() else if (!resumeOnGain) releaseFocus() }
+        }
+        // A resume owed to a transient loss here is not owed to the device
+        // control moves to: let the focus go with it.
+        scope.launch {
+            engine.devices
+                .map { it.target != null }
+                .distinctUntilChanged()
+                .collect { controlling -> if (controlling) releaseFocus() }
         }
         scope.launch {
             engine.nowPlaying

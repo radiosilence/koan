@@ -28,10 +28,17 @@ struct MiniPlayer: View {
                 if player.isControllingAnother {
                     // Where it is playing matters more than who by, when it
                     // is not here.
-                    Label(player.controlled?.name ?? "Another device", koan: Icon.devices)
-                        .font(.role(.fine, system: .caption))
-                        .foregroundStyle(.tint)
-                        .lineLimit(1)
+                    if player.controlledOutOfReach {
+                        Label("\(player.controlled?.name ?? "Another device") is out of reach", koan: Icon.warning)
+                            .font(.role(.fine, system: .caption))
+                            .foregroundStyle(KoanTheme.style(.bad, system: .orange))
+                            .lineLimit(1)
+                    } else {
+                        Label(player.controlled?.name ?? "Another device", koan: Icon.devices)
+                            .font(.role(.fine, system: .caption))
+                            .foregroundStyle(.tint)
+                            .lineLimit(1)
+                    }
                 } else if player.resolving == nil, let artist = entry?.artist, !artist.isEmpty {
                     Text(artist)
                         .font(.role(.fine, system: .caption))

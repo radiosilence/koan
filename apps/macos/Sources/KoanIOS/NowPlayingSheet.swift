@@ -270,6 +270,8 @@ struct NowPlayingSheet: View {
             ? player.controlled?.name ?? "Another device"
             : "This \(UIDevice.current.model)"
         let outputName = player.outputName ?? "Output"
+        // Of the device in view, which is the controlled one's while another is.
+        let playsToRenderer = if case .renderer = player.outputs?.current { true } else { false }
         return HStack(spacing: natural ? 0 : 8) {
             if natural { Spacer(minLength: 0) }
             if player.hasOtherDevices || player.isControllingAnother {
@@ -277,19 +279,20 @@ struct NowPlayingSheet: View {
                     // This phone in control is the usual case, and its glyph
                     // says enough; the room goes to the preset's name.
                     Pill(
-                        icon: Action.control.glyph,
+                        icon: player.controlledOutOfReach ? Icon.warning : Action.control.glyph,
                         text: player.isControllingAnother ? device : nil,
-                        tinted: player.isControllingAnother
+                        tinted: player.isControllingAnother,
+                        bad: player.controlledOutOfReach
                     )
                 }
-                .accessibilityLabel(player.isControllingAnother ? "Controlling \(device)" : device)
+                .accessibilityLabel(player.controlledReachNote ?? (player.isControllingAnother ? "Controlling \(device)" : device))
                 .accessibilityHint(player.isControllingAnother ? "" : "Control another kōan")
                 .pillWidth(natural, name: player.isControllingAnother ? device : "")
                 if natural { Spacer(minLength: 8) }
             }
             if player.canChooseOutput {
                 Button { showingDevices = true } label: {
-                    Pill(icon: Icon.speaker, text: outputName, tinted: player.renderer != nil)
+                    Pill(icon: Icon.speaker, text: outputName, tinted: playsToRenderer)
                 }
                 .accessibilityLabel("Output: \(player.outputName ?? "default")")
                 .pillWidth(natural, name: outputName)
@@ -333,19 +336,26 @@ private struct Pill: View {
     let icon: String
     let text: String?
     let tinted: Bool
+    /// What it names cannot be reached.
+    var bad = false
 
     var body: some View {
         HStack(spacing: 5) {
             KoanIcon(icon)
-                .foregroundStyle(KoanTheme.style(tinted ? .accent : .muted, system: tinted ? AnyShapeStyle(.tint) : KoanTheme.style(.muted, system: .secondary)))
+                .foregroundStyle(iconStyle)
             if let text {
                 Text(text)
                     .lineLimit(1)
-                    .foregroundStyle(KoanTheme.style(.ink, system: .primary))
+                    .foregroundStyle(bad ? KoanTheme.style(.bad, system: .orange) : KoanTheme.style(.ink, system: .primary))
             }
         }
         .font(.role(.meta, system: .subheadline))
         .koanChip()
+    }
+
+    private var iconStyle: AnyShapeStyle {
+        if bad { return KoanTheme.style(.bad, system: .orange) }
+        return KoanTheme.style(tinted ? .accent : .muted, system: tinted ? AnyShapeStyle(.tint) : KoanTheme.style(.muted, system: .secondary))
     }
 }
 

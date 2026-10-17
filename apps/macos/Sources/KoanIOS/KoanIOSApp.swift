@@ -115,7 +115,11 @@ struct KoanIOSApp: App {
                     // Whether the music was playing when the interruption
                     // began, which the pause below makes unreadable after.
                     var interruptedPlaying = false
+                    // The phone's own audio events are about the phone. While
+                    // another device is controlled this phone plays nothing, and
+                    // a pause or resume sent from here would land on that device.
                     session.onInterrupted = { [weak built] in
+                        guard built?.player.isControllingAnother == false else { return }
                         // iOS can send several "began" for one interruption.
                         // The later ones find playback already paused (by the
                         // first), so they must not overwrite what the first saw,
@@ -124,11 +128,15 @@ struct KoanIOSApp: App {
                         built?.player.engine.logNote(message: "interrupted while playing: \(interruptedPlaying)")
                         built?.player.pause()
                     }
-                    session.onRouteLost = { [weak built] in built?.player.pause() }
+                    session.onRouteLost = { [weak built] in
+                        guard built?.player.isControllingAnother == false else { return }
+                        built?.player.pause()
+                    }
                     session.note = { [weak built] message in built?.player.engine.logNote(message: message) }
                     session.onInterruptionEnded = { [weak built] shouldResume in
                         guard let engine = built?.player.engine else { return }
                         let resume = shouldResume && interruptedPlaying
+                            && built?.player.isControllingAnother == false
                         engine.logNote(message: "interruption over: resume=\(resume) (system says \(shouldResume), was playing \(interruptedPlaying))")
                         interruptedPlaying = false
                         Task {
