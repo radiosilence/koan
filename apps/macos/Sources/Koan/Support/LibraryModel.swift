@@ -562,8 +562,9 @@ final class LibraryModel {
         /// The records they are credited on and someone else is the album
         /// artist of, ordered as `albums` are.
         var features: [Album] = []
-        /// For an artist who owns no albums (a guest, a compilation track):
-        /// the tracks credited to them, which are then the whole page.
+        /// For an artist who owns no albums and features on none listed (offline,
+        /// or credits without a record): the tracks credited to them, which
+        /// are then the whole page.
         var appearances: [Track] = []
         /// Biography and photograph, as cached. Filled in from the network
         /// after the page is up — see `enrich(artist:)`.
@@ -602,8 +603,7 @@ final class LibraryModel {
                     stamp: stamp,
                     artist: await artist ?? nil,
                     albums: owned,
-                    // The appearances page shows no features.
-                    features: owned.isEmpty ? [] : await features ?? [],
+                    features: await features ?? [],
                     appearances: appearances,
                     info: cached,
                     infoLoading: cached == nil

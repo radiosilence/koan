@@ -74,12 +74,12 @@ fun ArtistPage(artistId: Long) {
     val scrolled by remember { derivedStateOf { grid.firstVisibleItemIndex > 0 || list.firstVisibleItemIndex > 0 } }
     Column {
         PageBar(if (scrolled) held?.artist?.name.orEmpty() else "", appText = false) {
-            if (held != null && (held.albums.isNotEmpty() || held.appearances.isNotEmpty())) SelectButton(selection)
+            if (held != null && (held.albums.isNotEmpty() || held.features.isNotEmpty() || held.appearances.isNotEmpty())) SelectButton(selection)
         }
         Box(Modifier.weight(1f)) {
             if (held == null) return@Box
             val artist = held.artist ?: return@Box KoanUnavailable("This artist isn't in the library any more", KoanIcons.artist, null)
-            if (held.albums.isEmpty() && held.appearances.isNotEmpty()) {
+            if (held.albums.isEmpty() && held.features.isEmpty() && held.appearances.isNotEmpty()) {
                 val ids = remember(held) { held.appearances.map { it.id } }
                 val records = held.appearances.mapNotNull { it.albumId }.toSet().size
                 LazyColumn(state = list, modifier = Modifier.fillMaxSize()) {

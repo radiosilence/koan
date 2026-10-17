@@ -266,9 +266,9 @@ struct ArtistDetailView: View {
     private let columns = GridItem.tiles(minimum: 150, maximum: 210, spacing: 18)
 
     var body: some View {
-        if let record, record.albums.isEmpty, !record.appearances.isEmpty {
-            // Credited only on other people's records: the tracks, each with
-            // the album it is on, rather than an empty grid.
+        if let record, record.albums.isEmpty, record.features.isEmpty, !record.appearances.isEmpty {
+            // Credited only on tracks no record here holds: the tracks, each
+            // with the album it is on, rather than an empty grid.
             TrackListView(
                 title: artist?.name ?? "",
                 subtitle: "Appears on \(Set(record.appearances.map(\.albumId)).count) "
@@ -331,7 +331,7 @@ struct ArtistDetailView: View {
         .onChange(of: artistId) { _, _ in library.artistSelection.end() }
         .onDisappear { library.artistSelection.end() }
         #if os(iOS)
-        .playableSelectMode(library.artistSelection, engine: library.engine, available: !albums.isEmpty)
+        .playableSelectMode(library.artistSelection, engine: library.engine, available: !albums.isEmpty || !features.isEmpty)
         #endif
     }
 

@@ -272,7 +272,7 @@ data class ArtistRecord(
     val albums: List<Album>,
     /** The records they are credited on and someone else is the album artist of, ordered as [albums] are. */
     val features: List<Album>,
-    /** For an artist who owns no records: the tracks credited to them elsewhere. */
+    /** For an artist who owns no records and features on none listed: the tracks credited to them. */
     val appearances: List<Track>,
 )
 
@@ -293,8 +293,7 @@ class ArtistModel(mirror: EngineMirror, artistId: Long) : ViewModel() {
                 ArtistRecord(
                     engine.artist(artistId),
                     albums,
-                    // The appearances page shows no features, and a failed read leaves the page without them.
-                    if (albums.isEmpty()) emptyList() else runCatching { engine.artistFeatures(artistId) }.getOrDefault(emptyList()),
+                    engine.artistFeatures(artistId),
                     if (albums.isEmpty()) engine.tracks(null, artistId, TrackSort.ALBUM, 500u, 0u) else emptyList(),
                 )
             }.getOrNull()
