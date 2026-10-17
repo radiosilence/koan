@@ -204,6 +204,26 @@ fn spawn_reader(kind: ShelfKind) -> (Sender<Ask>, Receiver<(u64, Summary)>) {
     (tx, rx)
 }
 
+/// Every item of a summary in the order the page lays them out.
+fn items_of(s: &Summary) -> Vec<Item> {
+    let mut items = Vec::new();
+    for (part, len, item) in [
+        (
+            Part::Artists,
+            s.artists.preview.len(),
+            Item::Artist as fn(usize) -> Item,
+        ),
+        (Part::Albums, s.albums.preview.len(), Item::Album),
+        (Part::Tracks, s.tracks.preview.len(), Item::Track),
+    ] {
+        if len > 0 {
+            items.push(Item::Heading(part));
+            items.extend((0..len).map(item));
+        }
+    }
+    items
+}
+
 fn inside(r: &Rect, col: u16, row: u16) -> bool {
     r.width > 0 && col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
 }
@@ -291,11 +311,33 @@ impl ShelfPage {
             self.follow = true;
         } else {
             // A shelf read again keeps its place: the cursor on the same kind
-            // of item at the same place, as near as there is one.
-            self.cursor = self.cursor.min(self.count().saturating_sub(1));
-            if on.is_none() {
-                self.cursor = 0;
-            }
+            // of item at the same place, as near as there is one, else on
+            // its section's heading.
+            let s = self.summary.as_ref().expect("just set");
+            let order = items_of(s);
+            let at = |item: Item| order.iter().position(|i| *i == item);
+            let near = |i: usize, len: usize| i.min(len.saturating_sub(1));
+            self.cursor = match on {
+                None => 0,
+                Some(on) => {
+                    let (same, part) = match on {
+                        Item::Heading(part) => (on, part),
+                        Item::Artist(i) => (
+                            Item::Artist(near(i, s.artists.preview.len())),
+                            Part::Artists,
+                        ),
+                        Item::Album(i) => {
+                            (Item::Album(near(i, s.albums.preview.len())), Part::Albums)
+                        }
+                        Item::Track(i) => {
+                            (Item::Track(near(i, s.tracks.preview.len())), Part::Tracks)
+                        }
+                    };
+                    at(same)
+                        .or_else(|| at(Item::Heading(part)))
+                        .unwrap_or(self.cursor.min(order.len().saturating_sub(1)))
+                }
+            };
         }
         true
     }
@@ -1245,6 +1287,26 @@ mod tests {
             p.toolbar().count.as_deref(),
             Some("23 artists \u{b7} 2 albums \u{b7} 4 tracks")
         );
+    }
+
+    #[test]
+    fn a_shelf_read_again_keeps_the_cursor_on_its_item() {
+        let mut p = page(ShelfKind::Favourites, summary(2, 0, 3));
+        draw(&mut p, 100, 40);
+        // On the second track, after the artists' heading and pills and the
+        // tracks' heading.
+        p.cursor = 5;
+        assert_eq!(p.item(p.cursor), Some(Item::Track(1)));
+        // One artist fewer: the track is a row higher, and the cursor too.
+        p.generation = 2;
+        p.show(2, summary(1, 0, 3));
+        draw(&mut p, 100, 40);
+        assert_eq!(p.item(p.cursor), Some(Item::Track(1)));
+        // No artists at all: their heading goes as well.
+        p.generation = 3;
+        p.show(3, summary(0, 0, 3));
+        draw(&mut p, 100, 40);
+        assert_eq!(p.item(p.cursor), Some(Item::Track(1)));
     }
 
     #[test]
