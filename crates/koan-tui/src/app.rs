@@ -247,8 +247,8 @@ pub struct App {
     pub artist_page: Browse,
     pub album_page: Option<AlbumPage>,
     task_running: bool,
-    task_tx: crossbeam_channel::Sender<String>,
-    task_rx: crossbeam_channel::Receiver<String>,
+    task_tx: crossbeam_channel::Sender<super::tasks::Report>,
+    task_rx: crossbeam_channel::Receiver<super::tasks::Report>,
     pub track_details: Option<Box<koan_core::db::queries::TrackRow>>,
     pub history_page: HistoryPage,
     pub settings_page: SettingsPage,
@@ -688,11 +688,16 @@ impl App {
             }
         }
         self.thumbs.poll();
-        if let Ok(done) = self.task_rx.try_recv() {
-            self.task_running = false;
-            self.status_message = Some((done, std::time::Instant::now()));
-            self.albums_page.reload();
-            self.history_page.reload();
+        if let Ok(report) = self.task_rx.try_recv() {
+            let line = match report {
+                super::tasks::Report::Task(line) => {
+                    self.task_running = false;
+                    line
+                }
+                super::tasks::Report::Work(line) => line,
+            };
+            self.status_message = Some((line, std::time::Instant::now()));
+            self.reload_library_pages();
         }
         if self.page() == Page::History && !self.history_page.filter_active {
             self.history_page.refresh();
@@ -1126,9 +1131,34 @@ impl App {
         std::thread::Builder::new()
             .name("koan-task".into())
             .spawn(move || {
-                tx.send(super::tasks::run(task)).ok();
+                tx.send(super::tasks::Report::Task(super::tasks::run(task)))
+                    .ok();
             })
             .ok();
+    }
+
+    /// Has the page on screen, and the artist tree when it is next opened,
+    /// read the library again: after a scan or a sync, downloads removed, or
+    /// offline turned on or off. The other pages read it as they open.
+    fn reload_library_pages(&mut self) {
+        let old = self.library.take();
+        match self.page() {
+            Page::Albums => self.albums_page.reload(),
+            Page::Favourites => self.favourites_page.reload(),
+            Page::Recent => self.recent_page.reload(),
+            Page::Artist(_) => self.artist_page.reload(),
+            Page::History => self.history_page.reload(),
+            Page::Artists => {
+                let mut lib = LibraryState::load();
+                if let Some(old) = old {
+                    lib.filter = old.filter;
+                    lib.filter_active = old.filter_active;
+                    lib.apply_filter();
+                }
+                self.library = Some(lib);
+            }
+            _ => {}
+        }
     }
 
     /// Puts a setting just written to the config into effect in the running
@@ -1153,6 +1183,7 @@ impl App {
                         super::visualizer::VisualizerPalette::Record(self.theme_accent);
                 }
             }
+            Setting::Offline => self.reload_library_pages(),
             _ => {}
         }
     }
@@ -1180,27 +1211,42 @@ impl App {
             }
             browse::Action::Info(id) => self.open_track_details(id),
             browse::Action::Download(ids) => {
-                let n = ids.len();
-                self.tx.send(PlayerCommand::CacheTracks(ids)).ok();
-                self.status_message = Some((
-                    format!("downloading {n} track{}", if n == 1 { "" } else { "s" }),
-                    std::time::Instant::now(),
-                ));
+                let wanted: Vec<i64> = koan_core::db::pool::shared()
+                    .get()
+                    .ok()
+                    .and_then(|db| koan_core::db::queries::tracks_by_ids(&db.conn, &ids).ok())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(super::tasks::needs_fetch)
+                    .map(|t| t.id)
+                    .collect();
+                let n = wanted.len();
+                let line = if n == 0 {
+                    "nothing to download: already on this device".into()
+                } else {
+                    format!("downloading {n} track{}", if n == 1 { "" } else { "s" })
+                };
+                self.tx.send(PlayerCommand::CacheTracks(wanted)).ok();
+                self.status_message = Some((line, std::time::Instant::now()));
             }
             browse::Action::RemoveDownload(ids) => {
-                let cleared = koan_core::db::pool::shared()
-                    .get()
-                    .map(|db| koan_core::helpers::clear_downloads_for(&db, &ids))
-                    .unwrap_or_default();
-                koan_core::helpers::requeue_cleared_downloads(&self.state);
-                self.status_message = Some((
-                    format!(
-                        "removed {} downloaded file{}",
-                        cleared.files,
-                        if cleared.files == 1 { "" } else { "s" }
-                    ),
-                    std::time::Instant::now(),
-                ));
+                let (tx, state) = (self.task_tx.clone(), Arc::clone(&self.state));
+                std::thread::Builder::new()
+                    .name("koan-uncache".into())
+                    .spawn(move || {
+                        let cleared = koan_core::db::pool::shared()
+                            .get()
+                            .map(|db| koan_core::helpers::clear_downloads_for(&db, &ids))
+                            .unwrap_or_default();
+                        koan_core::helpers::requeue_cleared_downloads(&state);
+                        tx.send(super::tasks::Report::Work(format!(
+                            "removed {} downloaded file{}",
+                            cleared.files,
+                            if cleared.files == 1 { "" } else { "s" }
+                        )))
+                        .ok();
+                    })
+                    .ok();
             }
             browse::Action::OpenUrl(url) => {
                 let opener = if cfg!(target_os = "macos") {

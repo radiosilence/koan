@@ -25,13 +25,13 @@ The wheel and the scrollbars (which can be dragged) scroll every page. Opening a
 
 ## Favourites, play next and downloads
 
-As in the apps, a record and an artist can be favourites as well as tracks. `f` favourites the record under the cursor on the browsing pages, `H` its artist (on an artist's page, that artist; the heart beside the name does the same with a click), and a favourite record wears a `♥` under its tile. `N` puts a record, a track or whatever the cursor is on next in the queue instead of last, on every page that has `a`. `i` shows what the library knows of a track, wherever it is listed, and `d` and `u` download a record or track to this device or remove the download; the apps' menus offer the same.
+As in the apps, a record and an artist can be favourites as well as tracks. `f` favourites the record under the cursor on the browsing pages, `H` its artist (on an artist's page, that artist; the heart beside the name does the same with a click), and a favourite record wears a `♥` under its tile. `N` puts a record, a track or whatever the cursor is on next in the queue instead of last, on the browsing pages, the album page, History and the Artists tree. `i` shows what the library knows of a track, wherever it is listed, and `d` and `u` download a record or track to this device or remove the download; the apps' menus offer the same.
 
 ## History and settings
 
 History lists every play, grouped by day. `x` (or the `×` at the end of a row) forgets a play and `D` forgets all of them, on a second press; signed in to a koan server, a forgotten play is forgotten on the account's other devices too, as in the apps. The artist and the record in a row are links, `/` filters by title, artist or record, and `Enter` or a second click plays the track.
 
-Settings holds the playback, terminal, server and device settings that are a choice rather than a path or a password: ReplayGain and pre-amp, fading on pause, the theme, cover graphics and size, the frame counter and rate, the visualiser's colours, syncing, and what other devices on the network may do. `←` and `→` (or the arrows beside each value, or a click on the value) change one, and each is written to the file that owns it, so a setting that belongs to this machine stays out of a `config.toml` you share. Folders and the server account are shown and are set up in the apps or the config. `scan library` and `sync now` are rows too, and run in the background; offline mode narrows the library to what is on this device.
+Settings holds the playback, terminal, server and device settings that are a choice rather than a path or a password: ReplayGain and pre-amp, fading on pause, the theme, cover graphics and size, the frame counter and rate, the visualiser's colours, syncing, and what other devices on the network may do. `←` and `→` (or the arrows beside each value, or a click on the value) change one, and each is written to the file that owns it, so a setting that belongs to this machine stays out of a `config.toml` you share. Folders and the server account are shown and are set up in the apps or the config. `scan library` and `sync now` are rows too, and run in the background; offline mode narrows the browsing pages, the Artists tree and the pickers to what is on this device.
 
 ## Layout
 
@@ -55,7 +55,7 @@ Albums, Favourites and Recent draw each record as a tile. `v` switches to rows (
 | `P` | Add to the queue and play |
 | `a` | Add to the end of the queue |
 | `Ctrl+R` | Replace the queue and play |
-| `f` | On a list of tracks, favourite or unfavourite |
+| `f` | Favourite or unfavourite the record, or on a list of tracks the track |
 
 On the album page `Enter` plays from the track under the cursor to the end of the record; `P` plays all of it, `a` adds it, `Ctrl+R` replaces the queue with it, and `A` opens the artist. The buttons under the title do the same. `N` puts it next in the queue, `H` or the heart beside the title favourites the record, `i` shows what the library holds of the track, and `d` and `u` download the record to this device or remove the download.
 
