@@ -863,7 +863,10 @@ impl SettingsPage {
                         buf.set_stringn(list.x + 2, y, "folders", 20, dim);
                     }
                     let room = end.saturating_sub(value_x + 4) as usize;
-                    if self.armed_on().is_some_and(|a| self.cfg.library.folders.get(*f) == Some(a)) {
+                    if self
+                        .armed_on()
+                        .is_some_and(|a| self.cfg.library.folders.get(*f) == Some(a))
+                    {
                         let ask = "press x again to remove it and forget its tracks";
                         let style = Style::new().fg(theme.warning).add_modifier(Modifier::BOLD);
                         buf.set_stringn(value_x, y, ask, room, style);
