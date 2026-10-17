@@ -53,11 +53,13 @@ Settings holds the playback, terminal, server and device settings that are a cho
 
 The layout follows the width of the terminal.
 
-- **100 columns or more:** a sidebar beside the page, with back and forward at its foot.
-- **56 to 99 columns:** a tab bar over the page. Page names shorten to fit.
+- **100 columns or more:** a sidebar beside the page, laid out as in the apps: the queue and Now playing; the library's pages (albums, artists, tracks, favourites, recently played, downloaded, history, downloads); your playlists, with a row for a new one; and search and settings at its foot.
+- **56 to 99 columns:** a tab bar over the page, a tab for each page with a number. Page names shorten to fit.
 - **Under 56 columns:** the tab bar shows page numbers and names only the current page.
 
-The transport bar sits at the foot, laid out as the Mac's: on the left the title with its heart, and the artist and album, each a link to its page; in the middle shuffle, previous, play or pause, next and repeat over the seek bar; on the right the format badge (with the EQ, a link to the chooser), the sleep timer and the output. Every part is a click as well as a key. The times either side of the seek bar keep one width, so the bar holds still as they count, and the part of a track still downloading is drawn dim. Under 72 columns the parts stack: the title and the controls, the seek bar, then the artist, album and badge. Drag the hairline above the bar to resize the cover; the size is saved to `config.local.toml`.
+Every page has a toolbar along its top: back and forward (`‹` `›`), the page's name and how much it holds, and the page's own controls at the right, such as its filter, sort and view. Each control is also a key, and a click on it is that key. On a narrow terminal the least used controls give way first.
+
+The transport bar sits at the foot, laid out as the Mac's: on the left the title with its heart, and the artist and album, each a link to its page; in the middle shuffle, previous, play or pause, next and repeat over the seek bar; on the right the format badge (with the EQ, a link to the chooser), the sleep timer and the output. Every part is a click as well as a key. The times either side of the seek bar keep one width, so the bar holds still as they count, and the part of a track still downloading is drawn dim. Under 72 columns the parts stack: the title and the controls, the seek bar, then the artist, album and badge. Drag the hairline above the bar to resize the cover; the size is saved to `config.local.toml`. The frame counter, when `playback.show_fps` is on, sits at the right of that hairline.
 
 ## Browsing records
 

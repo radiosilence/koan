@@ -8,10 +8,16 @@ pub enum Page {
     NowPlaying,
     Albums,
     Artists,
+    /// Every track in the library, as a list.
+    Tracks,
     Favourites,
     Playlists,
     Recent,
+    /// What is on this device: local files and finished downloads.
+    Downloaded,
     History,
+    /// Transfers from the server, running and waiting.
+    Downloads,
     Settings,
     Search,
     /// One playlist, by its id.
@@ -23,17 +29,21 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 10] = [
+    /// Every page that is a place of its own, in the sidebar's order.
+    pub const ALL: [Page; 13] = [
         Page::Queue,
         Page::NowPlaying,
         Page::Albums,
         Page::Artists,
+        Page::Tracks,
         Page::Favourites,
-        Page::Playlists,
         Page::Recent,
+        Page::Downloaded,
         Page::History,
-        Page::Settings,
+        Page::Downloads,
+        Page::Playlists,
         Page::Search,
+        Page::Settings,
     ];
 
     pub fn title(self) -> &'static str {
@@ -42,10 +52,13 @@ impl Page {
             Page::NowPlaying => "now playing",
             Page::Albums => "albums",
             Page::Artists => "artists",
+            Page::Tracks => "tracks",
             Page::Favourites => "favourites",
             Page::Playlists => "playlists",
-            Page::Recent => "recent",
+            Page::Recent => "recently played",
+            Page::Downloaded => "downloaded",
             Page::History => "history",
+            Page::Downloads => "downloads",
             Page::Settings => "settings",
             Page::Search => "search",
             Page::Playlist(_) => "playlist",
@@ -71,10 +84,13 @@ impl Page {
             Page::NowPlaying => "playing",
             Page::Albums => "albums",
             Page::Artists => "artists",
+            Page::Tracks => "tracks",
             Page::Favourites => "faves",
             Page::Playlists => "lists",
             Page::Recent => "recent",
+            Page::Downloaded => "on device",
             Page::History => "history",
+            Page::Downloads => "transfers",
             Page::Settings => "settings",
             Page::Search => "search",
             Page::Playlist(_) => "playlist",
@@ -83,9 +99,9 @@ impl Page {
         }
     }
 
-    /// The key that opens it.
-    pub fn key(self) -> char {
-        match self {
+    /// The digit that opens it, for the pages that have one.
+    pub fn key(self) -> Option<char> {
+        Some(match self {
             Page::Queue => '1',
             Page::NowPlaying => '2',
             Page::Albums => '3',
@@ -96,12 +112,17 @@ impl Page {
             Page::History => '8',
             Page::Settings => '9',
             Page::Search => '0',
-            Page::Album(_) | Page::Artist(_) | Page::Playlist(_) => ' ',
-        }
+            Page::Tracks
+            | Page::Downloaded
+            | Page::Downloads
+            | Page::Album(_)
+            | Page::Artist(_)
+            | Page::Playlist(_) => return None,
+        })
     }
 
     pub fn from_key(c: char) -> Option<Page> {
-        Self::ALL.into_iter().find(|p| p.key() == c)
+        Self::ALL.into_iter().find(|p| p.key() == Some(c))
     }
 }
 
@@ -221,10 +242,10 @@ mod tests {
     #[test]
     fn the_pages_wrap() {
         let mut nav = Navigator::default();
-        nav.go(Page::Search);
+        nav.go(Page::Settings);
         assert_eq!(nav.next_page(), Page::Queue);
         nav.go(Page::Queue);
-        assert_eq!(nav.prev_page(), Page::Search);
+        assert_eq!(nav.prev_page(), Page::Settings);
     }
 
     #[test]
@@ -242,7 +263,11 @@ mod tests {
     #[test]
     fn every_page_has_its_key() {
         for page in Page::ALL {
-            assert_eq!(Page::from_key(page.key()), Some(page));
+            if let Some(c) = page.key() {
+                assert_eq!(Page::from_key(c), Some(page));
+            }
         }
+        // Ten digits, ten pages.
+        assert_eq!(Page::ALL.iter().filter(|p| p.key().is_some()).count(), 10);
     }
 }
