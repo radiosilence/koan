@@ -770,6 +770,94 @@ pub fn save(imported: Imported, name: Option<&str>) -> Result<String, String> {
     Ok(name)
 }
 
+/// What importing a selection of files did: the profiles it made or added
+/// to, and each file it refused, with why.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ImportSummary {
+    pub imported: Vec<String>,
+    /// Each file refused, by name, and why.
+    pub refused: Vec<(String, String)>,
+    /// Files imported under another name than their own, and files left
+    /// out, each with what happened.
+    pub notes: Vec<String>,
+    /// The group the presets became, where they became one.
+    pub group: Option<String>,
+}
+
+/// Import a selection of files. Whole presets become a profile each and a
+/// group of them called `name`, the first playing; parts of one profile
+/// combine into one called `name`. A file refused does not stop the others;
+/// each refusal is reported, and logged. A name already taken is never
+/// written over: it is numbered.
+pub fn import_files(
+    paths: &[PathBuf],
+    name: Option<&str>,
+    rate: Option<u32>,
+) -> Result<ImportSummary, super::import::ImportError> {
+    use super::import::{self, Batch, ImportError, Outcome};
+    let taken: Vec<String> = Config::cached()
+        .dsp
+        .profiles
+        .iter()
+        .map(|p| p.name.clone())
+        .collect();
+    let batch = import::import_batch(paths, rate, &taken).inspect_err(|e| {
+        log::warn!("dsp import: {e}");
+    })?;
+    let name = name.map(str::trim).filter(|n| !n.is_empty());
+    let mut summary = ImportSummary::default();
+    match batch {
+        Batch::One(imported) => {
+            let wanted = name.map_or_else(|| imported.name.clone(), str::to_owned);
+            let free = free_name(&wanted);
+            if free != wanted {
+                summary
+                    .notes
+                    .push(format!("{wanted} is taken; imported as {free}"));
+            }
+            summary
+                .imported
+                .push(save(imported, Some(&free)).map_err(ImportError::Failed)?);
+        }
+        Batch::Group(each) => {
+            for item in each {
+                let file = item.file;
+                let saved = match item.outcome {
+                    Outcome::Skipped(why) => {
+                        summary.notes.push(format!("{file} left out: {why}"));
+                        continue;
+                    }
+                    Outcome::Refused(e) => Err(e.to_string()),
+                    Outcome::Imported(i, note) => {
+                        summary.notes.extend(note.map(|n| format!("{file}: {n}")));
+                        save(i, None)
+                    }
+                };
+                match saved {
+                    Ok(name) => summary.imported.push(name),
+                    Err(reason) => {
+                        log::warn!("dsp import: {file}: {reason}");
+                        summary.refused.push((file, reason));
+                    }
+                }
+            }
+            if summary.imported.len() > 1 {
+                let wanted =
+                    name.map_or_else(|| import::group_name(&summary.imported), str::to_owned);
+                let group = free_name(&wanted);
+                if group != wanted {
+                    summary
+                        .notes
+                        .push(format!("{wanted} is taken; the group is {group}"));
+                }
+                make_group(&group, &summary.imported).map_err(ImportError::Failed)?;
+                summary.group = Some(group);
+            }
+        }
+    }
+    Ok(summary)
+}
+
 fn write_impulses(name: &str, imported: &Imported) -> Result<Vec<PathBuf>, String> {
     let rel = Path::new("dsp").join(slug(name));
     let dir = config::config_dir().join(&rel);
