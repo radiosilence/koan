@@ -62,10 +62,10 @@ final class WashView: LayerView {
     /// How far the drift travels, and the overscan that lets it.
     ///
     /// What decides whether motion is visible is not its speed but how far it
-    /// goes against how soft the thing moving is. Blurred at 14 points and
-    /// magnified about five times, the wash has no feature narrower than eighty
-    /// points on screen, so travel has to be read in multiples of that. These
-    /// reach about four of them.
+    /// goes against how soft the thing moving is. Blurred at 28 points and
+    /// magnified about five times, the wash has no feature narrower than about
+    /// 160 points on screen, so travel has to be read in multiples of that.
+    /// These reach about two of them.
     ///
     /// `near` is a floor, not a taste: at full reach the offset carries the
     /// texture 12% of the window sideways and the rotation eats another 3.5%,
@@ -188,15 +188,18 @@ final class WashView: LayerView {
     /// transparent black past the edge and leaves the sleeve with a soft dark
     /// border all the way round.
     ///
-    /// It is measured against `side`, so the wash is blurred at 14 points of a
+    /// It is measured against `side`, so the wash is blurred at 28 points of a
     /// 360pt reference and then magnified along with the texture. A live filter
-    /// blurs *after* magnification, so 14 points there is a fifth of this blur
-    /// and a different picture — matching it would take a radius around 70, and
+    /// blurs *after* magnification, so 28 points there is a fifth of this blur
+    /// and a different picture — matching it would take a radius around 140, and
     /// the live filter costs more at that radius, not less.
+    ///
+    /// 28 rather than less because a sleeve with hard, high-contrast shapes
+    /// otherwise keeps them as visible edges across the window.
     private nonisolated static func bake(_ image: PlatformImage) -> CGImage? {
         guard let source = image.bitmap else { return nil }
         let extent = CGRect(x: 0, y: 0, width: source.width, height: source.height)
-        let radius = 14 * Double(source.width) / Double(side)
+        let radius = 28 * Double(source.width) / Double(side)
         let output = CIImage(cgImage: source)
             .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 1.6])
             .clampedToExtent()
@@ -334,21 +337,32 @@ private extension CALayer {
 /// 4.6:1 — no brighter in dark mode, no darker in light. The hue survives; the
 /// brightness that would cost contrast does not. Run once per record and
 /// appearance, on the baked texture, which is small.
-enum WashTone: Sendable, Equatable {
-    case dark, light
+///
+/// `hold` is the person's "theme tint": how far each sample moves toward the
+/// limit, from 1, all the way, to 0, the sleeve as it is.
+struct WashTone: Sendable, Equatable {
+    enum Side: Sendable, Equatable { case dark, light }
+    let side: Side
+    var hold: Double = 1
+
+    static let dark = WashTone(side: .dark)
+    static let light = WashTone(side: .light)
+
+    func holding(_ hold: Double) -> WashTone { WashTone(side: side, hold: hold) }
 
     /// Dark: no brighter than `muted` (`#919191`) at 4.6:1 allows. Light: no
     /// darker than keeps the wash, drawn at `KoanTheme.wash` over white, at
     /// least as light as `surface` (Y 0.888) — so anything that reads on
     /// `surface`, the accent and `bad` included, reads over the wash.
     private var limit: Double {
-        switch self {
+        switch side {
         case .dark: (0.2831 + 0.05) / 4.6 - 0.05
         case .light: 0.86
         }
     }
 
     nonisolated func apply(to image: CGImage) -> CGImage? {
+        guard hold > 0 else { return image }
         let width = image.width, height = image.height
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(
@@ -368,16 +382,16 @@ enum WashTone: Sendable, Equatable {
             let g = c <= 0.0031308 ? 12.92 * c : 1.055 * pow(c, 1 / 2.4) - 0.055
             return UInt8((g * 255).rounded())
         }
-        let limit = limit
+        let limit = limit, hold = hold
         for i in stride(from: 0, to: width * height * 4, by: 4) {
             var r = decode[Int(pixels[i])], g = decode[Int(pixels[i + 1])], b = decode[Int(pixels[i + 2])]
             let y = 0.2126 * r + 0.7152 * g + 0.0722 * b
-            switch self {
+            switch side {
             case .dark where y > limit:
-                let k = limit / y
+                let k = 1 + (limit / y - 1) * hold
                 r *= k; g *= k; b *= k
             case .light where y < limit:
-                let t = (limit - y) / (1 - y)
+                let t = (limit - y) / (1 - y) * hold
                 r += (1 - r) * t; g += (1 - g) * t; b += (1 - b) * t
             default:
                 continue

@@ -1,0 +1,1 @@
+- **The record wash is softer.** It blurs a sleeve twice as far, so hard, high-contrast shapes no longer show as edges across the window.

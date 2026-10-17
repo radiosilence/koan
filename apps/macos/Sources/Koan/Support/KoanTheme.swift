@@ -246,6 +246,13 @@ final class AppearanceModel {
         didSet { if washWindow != oldValue { engine.setWashWindow(on: washWindow) } }
     }
 
+    /// "Theme tint": in the kōan theme, how far the wash is held to the
+    /// contrast limit (`WashTone`), in percent. 100 holds it fully; 0 leaves the
+    /// sleeve's own colours. Takes effect at once, from the next bake.
+    var washTint: Int {
+        didSet { if washTint != oldValue { engine.setWashTint(percent: UInt8(clamping: washTint)) } }
+    }
+
     /// Gay mode as it was left on this device (see `Rainbow`). Saved to
     /// config.local.toml; never synced, never offered in Settings.
     var rainbow: Bool {
@@ -278,6 +285,7 @@ final class AppearanceModel {
         self.recordColours = appearance.recordColours
         self.washWindow = appearance.washWindow
         self.textSize = Int(appearance.textSize)
+        self.washTint = Int(appearance.washTint)
         self.rainbow = appearance.rainbow
         Rainbow.drawn = appearance.rainbow
     }

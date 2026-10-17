@@ -205,7 +205,7 @@ Run `koan devices` to list available audio outputs.
 
 ## `[appearance]`
 
-How the macOS, iOS and tvOS apps are drawn. The theme is read once as an app
+How the macOS, iOS, tvOS and Android apps are drawn. The theme is read once as an app
 opens, so a change of theme shows the next time it starts; the others apply at
 once.
 
@@ -214,6 +214,7 @@ once.
 theme = "koan"     # "koan": the site's look throughout (the default); "system": the platform's own
 theme_icons = true # in the kōan theme, icons beside labels; false for labels alone
 record_colours = true # the record playing colours the wash and the accent; false for neither
+wash_tint = 100       # kōan theme: how far the wash is held to the theme's contrast limit, 0–100; 0 keeps the sleeve's own colours
 wash_window = true    # provisional. Mac, kōan theme: the wash under the whole window; false gives panels their own grounds
 text_size = 100       # Mac, kōan theme: text size in percent, 80–130 in steps of 5; spacing follows at half the rate. In config.local.toml
 ```
@@ -226,7 +227,12 @@ type as large as the system's. The
 kōan theme draws its own icon set, thin square-ended lines; the system look
 always draws its icons, which are Apple's SF Symbols. **Colours from the record** sets
 `record_colours`: off, there is no wash behind the window and the accent is
-koan's mint, in either theme. `wash_window` (the Mac, kōan theme only) is provisional,
+koan's mint, in either theme. **Theme tint**, shown in the kōan theme while
+colours come from the record, sets `wash_tint`: at 100 the wash is darkened in
+dark mode, or lightened in light, far enough that `muted` text over it keeps its
+contrast; lower lets more of the sleeve's own colour through, and 0 none of the
+hold at all. Text over a bright sleeve can then lose contrast, which is the
+trade. `wash_window` (the Mac, kōan theme only) is provisional,
 there to live with both looks while one is chosen, and likely to go: on, the
 sidebar, toolbar, transport and lyrics are drawn clear over one wash; off, they
 keep grounds of their own. The graphics level is separate, and governs what the
