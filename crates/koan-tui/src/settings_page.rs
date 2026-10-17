@@ -63,10 +63,9 @@ impl Task {
 pub enum Outcome {
     Changed(Setting),
     Run(Task),
-    /// Ask for the path of a folder to add to the library.
-    AddFolder,
-    /// A line to show about something the page did itself.
-    Said(&'static str),
+    /// Take the library folder at this place in the config out, and forget
+    /// its tracks.
+    RemoveFolder(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -288,6 +287,16 @@ pub fn add_folder(typed: &str) -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Takes the folder at place `i` out of the library's folders; the folder.
+pub fn remove_folder(i: usize) -> Result<std::path::PathBuf, String> {
+    let Some(path) = Config::cached().library.folders.get(i).cloned() else {
+        return Err("that folder is no longer in the library".into());
+    };
+    Config::persist(|c| c.library.folders.retain(|f| *f != path))
+        .map(|_| path)
+        .map_err(|e| e.to_string())
+}
+
 /// The palette's name as the page lists it: `spectrum` and `record` are older
 /// names for the themed palette.
 fn palette_name(configured: &str) -> &str {
@@ -447,24 +456,9 @@ impl SettingsPage {
                 self.reload();
                 wrote.then_some(Outcome::Changed(setting))
             }
-            Entry::Action(Task::AddFolder) => forward.then_some(Outcome::AddFolder),
             Entry::Action(task) => forward.then_some(Outcome::Run(*task)),
             _ => None,
         }
-    }
-
-    /// Takes a folder out of the library's folders.
-    fn remove_folder(&mut self, i: usize) -> Option<Outcome> {
-        let wrote = Config::persist(|c| {
-            if i < c.library.folders.len() {
-                c.library.folders.remove(i);
-            }
-        })
-        .is_ok();
-        self.reload();
-        wrote.then_some(Outcome::Said(
-            "removed from the library folders; scan the library to update it",
-        ))
     }
 
     pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> Option<Option<Outcome>> {
@@ -493,12 +487,11 @@ impl SettingsPage {
             KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('-') => {
                 return Some(self.change(self.cursor, false));
             }
-            KeyCode::Char('x') | KeyCode::Delete | KeyCode::Backspace => {
-                if let Some(Entry::Folder(i)) = self.entries.get(self.cursor) {
-                    let i = *i;
-                    return Some(self.remove_folder(i));
-                }
-                return None;
+            KeyCode::Char('x') | KeyCode::Delete => {
+                return match self.entries.get(self.cursor) {
+                    Some(Entry::Folder(i)) => Some(Some(Outcome::RemoveFolder(*i))),
+                    _ => None,
+                };
             }
             KeyCode::Right
             | KeyCode::Char('l')
@@ -538,10 +531,7 @@ impl SettingsPage {
             SettingsHit::Remove(i) => {
                 self.select(i);
                 match self.entries.get(i) {
-                    Some(Entry::Folder(f)) => {
-                        let f = *f;
-                        self.remove_folder(f)
-                    }
+                    Some(Entry::Folder(f)) => Some(Outcome::RemoveFolder(*f)),
                     _ => None,
                 }
             }
@@ -834,6 +824,39 @@ mod tests {
     }
 
     #[test]
+    fn a_folder_is_removed_by_x_or_delete_and_never_by_backspace() {
+        koan_core::config::isolate_config_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let added = add_folder(dir.path().to_str().unwrap()).unwrap();
+        let mut p = SettingsPage::new();
+        let (at, i) = p
+            .entries
+            .iter()
+            .enumerate()
+            .find_map(|(at, e)| match e {
+                Entry::Folder(i) if p.cfg.library.folders[*i] == dir.path() => Some((at, *i)),
+                _ => None,
+            })
+            .unwrap();
+        p.select(at);
+        assert_eq!(p.handle_key(KeyEvent::from(KeyCode::Backspace)), None);
+        for code in [KeyCode::Char('x'), KeyCode::Delete] {
+            assert_eq!(
+                p.handle_key(KeyEvent::from(code)),
+                Some(Some(Outcome::RemoveFolder(i)))
+            );
+        }
+        assert_eq!(remove_folder(i).unwrap().display().to_string(), added);
+        assert!(
+            !Config::cached()
+                .library
+                .folders
+                .iter()
+                .any(|f| f == dir.path())
+        );
+    }
+
+    #[test]
     fn an_unset_cache_limit_reads_as_unlimited() {
         assert_eq!(cache_limit(None), "unlimited");
         assert_eq!(cache_limit(Some(" ")), "unlimited");
@@ -855,7 +878,7 @@ mod tests {
             .iter()
             .position(|e| matches!(e, Entry::Action(Task::AddFolder)))
             .unwrap();
-        assert_eq!(p.change(at, true), Some(Outcome::AddFolder));
+        assert_eq!(p.change(at, true), Some(Outcome::Run(Task::AddFolder)));
     }
 
     #[test]

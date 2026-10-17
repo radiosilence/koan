@@ -1,1 +1,0 @@
-- **More settings in the terminal UI.** Settings lists the library's folders with `add folder` and a way to remove one, and, signed in to a server, the sync interval, keeping the queue on the server, parallel downloads and the download cache limit.
