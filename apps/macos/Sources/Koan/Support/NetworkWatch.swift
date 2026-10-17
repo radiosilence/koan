@@ -34,6 +34,10 @@ final class NetworkWatch: @unchecked Sendable {
     private let engine: KoanEngine
     private let monitor = NWPathMonitor()
     private let queue = DispatchQueue(label: "koan-network-watch")
+    /// Where the engine is told, one call at a time: renewing the clients and
+    /// restarting nearby discovery can take a while, and updates must not wait
+    /// behind it.
+    private let telling = DispatchQueue(label: "koan-network-changed", qos: .utility)
     /// The last route seen. The first is the network the app started on,
     /// which is no change.
     private var current: Route?
@@ -57,16 +61,11 @@ final class NetworkWatch: @unchecked Sendable {
             self.current = next
             pending?.cancel()
             pending = nil
-            guard path.status != .unsatisfied else {
-                burst = nil
-                return
-            }
+            guard path.status != .unsatisfied else { return }
             let tell = DispatchWorkItem { [weak self] in
                 guard let self else { return }
                 burst = nil
-                // Off the watch's queue: renewing the clients and restarting
-                // nearby discovery can take a while, and updates wait behind it.
-                DispatchQueue.global(qos: .utility).async { self.engine.networkChanged() }
+                telling.async { self.engine.networkChanged() }
             }
             pending = tell
             let began = burst ?? .now()
