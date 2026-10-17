@@ -3,9 +3,10 @@ name: iOS
 # Builds the iOS and tvOS apps for a device, signs them and uploads them to
 # TestFlight.
 #
-# Called by CI/CD when a release goes out, rather than listening for the
-# release event: releases are published with the workflow token, and events
-# raised by that token start no other workflows. Runnable by hand for a build
+# Called by CI/CD on every push to main that passes, a release or not: the
+# version is the workspace's and the build number rises with the time. Called
+# rather than listening for the release event: releases are published with the
+# workflow token, and events raised by that token start no other workflows. Runnable by hand for a build
 # between releases, for either platform: a dispatch from a branch should not
 # put its shared code on the other platform's TestFlight.
 on:
