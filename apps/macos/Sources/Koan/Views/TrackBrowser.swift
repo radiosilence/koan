@@ -127,9 +127,6 @@ struct TrackBrowser: View {
             )
         }
         .clearsSelection($selection)
-        // Back at the top, a pick further down is out of sight: ⌫ would act on
-        // rows nobody can see.
-        .onChange(of: nav.rewinds[.tracks]) { selection = [] }
     }
     #endif
 

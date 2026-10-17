@@ -186,7 +186,7 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         /// While restoring a complete listing: how far it could scroll at its
         /// last layout, and whether the listing was complete at the last update.
         private var lastReach: CGFloat?
-        private var complete = false
+        private var complete: Bool?
         /// Set while the rows are reloaded, whose selection changes are not
         /// the person's.
         private var reloading = false
@@ -273,6 +273,12 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
                 scroll(to: 0)
                 // Noted here too: a list already at its top does not move.
                 parent.noteOffset(0)
+                // Back at the top, a pick further down is out of sight, and ⌫
+                // would act on rows nobody can see. After the update, which
+                // must not write the state it is drawing.
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated { self?.parent?.selection = [] }
+                }
             }
             rewinds = parent.rewinds
             if let token = jumpToken, token != parent.jump.token,
@@ -284,10 +290,8 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             follow(parent.follow)
             // The listing can finish without a row changing, a failed last
             // page, and only a layout settles the restore.
-            if parent.complete != complete {
-                complete = parent.complete
-                if !restored { table.needsLayout = true }
-            }
+            if let complete, complete != parent.complete, !restored { table.needsLayout = true }
+            complete = parent.complete
             if table.rowHeight != parent.rowHeight {
                 table.rowHeight = parent.rowHeight
                 table.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<items.count))
@@ -322,6 +326,8 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             } else if parent.complete {
                 if reach == lastReach {
                     restored = true
+                    // Already at the end, the list does not move to say so.
+                    parent.noteOffset(max(reach, 0))
                 } else {
                     lastReach = reach
                     // One more pass, after this one: nothing else may ask.
