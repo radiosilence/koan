@@ -35,13 +35,16 @@ import cc.blit.koan.ffi.AutoEqOffer
 import cc.blit.koan.ffi.DspOverview
 import cc.blit.koan.ffi.DspResponse
 import cc.blit.koan.ffi.DspRole
+import cc.blit.koan.ffi.DspStarter
 import cc.blit.koan.ui.koanApp
 import cc.blit.koan.ui.navigation.LocalNavigator
 import cc.blit.koan.ui.navigation.nonce
 import cc.blit.koan.ui.theme.KoanButton
 import cc.blit.koan.ui.theme.KoanButtonKind
 import cc.blit.koan.ui.theme.KoanField
+import cc.blit.koan.ui.theme.KoanFormRow
 import cc.blit.koan.ui.theme.KoanIcons
+import cc.blit.koan.ui.theme.KoanPicker
 import cc.blit.koan.ui.theme.KoanSpace
 import cc.blit.koan.ui.theme.KoanText
 import cc.blit.koan.ui.theme.KoanTheme
@@ -78,6 +81,7 @@ fun EqPane(model: SettingsModel) {
     val library by app.mirror.library.collectAsStateWithLifecycle()
     var naming by remember { mutableStateOf(false) }
     var adding by remember { mutableStateOf(false) }
+    var creating by rememberSaveable { mutableStateOf(false) }
     // Profiles sync from the account's other devices, which the engine
     // reports as the library moving.
     LaunchedEffect(library) { dsp.reload() }
@@ -128,6 +132,7 @@ fun EqPane(model: SettingsModel) {
                 KoanButton("Import files…", { pick.launch(arrayOf("*/*")) }, kind = KoanButtonKind.Bordered)
             }
         }
+        item { ButtonRow { KoanButton("New EQ…", { creating = true }, kind = KoanButtonKind.Bordered) } }
         item {
             ButtonRow {
                 KoanButton("Paste EQ text", {
@@ -165,8 +170,77 @@ fun EqPane(model: SettingsModel) {
                 }
             },
             confirmButton = { KoanButton("Cancel", { adding = false }) },
+            dismissButton = {
+                KoanButton("New EQ…", {
+                    adding = false
+                    creating = true
+                })
+            },
         )
     }
+    if (creating) {
+        NewEqDialog(dsp, { creating = false }) { name -> nav.push(DspProfileRoute(name)) }
+    }
+}
+
+/** Where a new EQ can start: flat, or tilted the way most people first reach for. */
+private val starters = listOf(
+    "Flat" to DspStarter.FLAT,
+    "Bass boost" to DspStarter.BASS_BOOST,
+    "Warm" to DspStarter.WARM,
+    "Bright" to DspStarter.BRIGHT,
+)
+
+/**
+ * A new EQ: eight bands across the range, flat or from a starting curve,
+ * named before it is made. Made, it goes on the end of the tuning and opens
+ * to edit.
+ */
+@Composable
+private fun NewEqDialog(dsp: DspModel, dismiss: () -> Unit, made: (String) -> Unit) {
+    var name by rememberSaveable { mutableStateOf("") }
+    var starter by rememberSaveable { mutableStateOf(DspStarter.FLAT) }
+    var refusal by remember { mutableStateOf<String?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    // Held open while the EQ is made: what happens next is this dialog's.
+    AlertDialog(
+        onDismissRequest = { if (!saving) dismiss() },
+        title = { KoanText("New EQ", role = KoanType.TitleSmall, appText = true) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(KoanSpace.s)) {
+                KoanField(name, {
+                    if (!saving) {
+                        name = it
+                        refusal = null
+                    }
+                }, Modifier.fillMaxWidth(), placeholder = "Name")
+                KoanFormRow("Start from") { KoanPicker(starters, starter, { starter = it }) }
+                KoanText(
+                    "A low shelf, six peaks an octave apart from 200 Hz, and a high shelf, each at 0 dB unless the " +
+                        "starting curve says otherwise. Every band can be moved, retyped or removed.",
+                    role = KoanType.Fine,
+                    tone = KoanTone.Muted,
+                )
+                refusal?.let { KoanText(it, role = KoanType.Fine, tone = KoanTone.Bad) }
+            }
+        },
+        confirmButton = {
+            KoanButton("Create", {
+                saving = true
+                val chosen = name.trim()
+                dsp.createEq(chosen, starter) { why ->
+                    saving = false
+                    if (why == null) {
+                        dismiss()
+                        made(chosen)
+                    } else {
+                        refusal = why
+                    }
+                }
+            }, enabled = name.isNotBlank() && !saving)
+        },
+        dismissButton = { KoanButton("Cancel", dismiss, enabled = !saving) },
+    )
 }
 
 /**
