@@ -175,6 +175,8 @@ pub struct QueueState {
 /// Cached layout rects from last render, used for mouse hit-testing.
 #[derive(Default)]
 pub struct LayoutRects {
+    /// Where the EQ is shown, each a click that opens the chooser.
+    pub eq_hits: Vec<ratatui::layout::Rect>,
     pub transport_area: ratatui::layout::Rect,
     pub queue_area: ratatui::layout::Rect,
     pub picker_area: ratatui::layout::Rect,
@@ -265,9 +267,11 @@ pub struct App {
     pub artist_page: Browse,
     pub album_page: Option<AlbumPage>,
     task_running: bool,
-    task_tx: crossbeam_channel::Sender<String>,
-    task_rx: crossbeam_channel::Receiver<String>,
+    task_tx: crossbeam_channel::Sender<super::tasks::Report>,
+    task_rx: crossbeam_channel::Receiver<super::tasks::Report>,
     pub track_details: Option<Box<koan_core::db::queries::TrackRow>>,
+    /// The EQ that was on before it was bypassed, for the key that puts it back.
+    eq_last: Option<String>,
     pub history_page: HistoryPage,
     pub playlists_page: PlaylistsPage,
     pub playlist_page: Option<PlaylistPage>,
@@ -428,6 +432,7 @@ impl App {
             task_tx: task_channel.0,
             task_rx: task_channel.1,
             track_details: None,
+            eq_last: None,
             history_page: HistoryPage::new(),
             playlists_page: PlaylistsPage::new(),
             playlist_page: None,
@@ -717,11 +722,16 @@ impl App {
             }
         }
         self.thumbs.poll();
-        if let Ok(done) = self.task_rx.try_recv() {
-            self.task_running = false;
-            self.status_message = Some((done, std::time::Instant::now()));
-            self.albums_page.reload();
-            self.history_page.reload();
+        if let Ok(report) = self.task_rx.try_recv() {
+            let line = match report {
+                super::tasks::Report::Task(line) => {
+                    self.task_running = false;
+                    line
+                }
+                super::tasks::Report::Work(line) => line,
+            };
+            self.status_message = Some((line, std::time::Instant::now()));
+            self.reload_library_pages();
         }
         if self.page() == Page::History && !self.history_page.filter_active {
             self.history_page.refresh();
@@ -1117,7 +1127,7 @@ impl App {
         let shared = match key.code {
             KeyCode::Char(
                 ' ' | '>' | '<' | 'n' | 's' | 'T' | 'R' | '.' | ',' | 'L' | 'V' | 'F' | 'M' | 'X'
-                | 'S' | 'v' | 'D' | 'E' | 'w' | 'W' | 'p' | 'q' | '?' | 'z',
+                | 'S' | 'v' | 'D' | 'E' | 'B' | 'w' | 'W' | 'p' | 'q' | '?' | 'z',
             ) => !ctrl,
             KeyCode::Left | KeyCode::Right => true,
             _ => false,
@@ -1352,20 +1362,20 @@ impl App {
     /// The tracks the queue's cursor or selection stands for.
     fn queue_choice(&self) -> Vec<i64> {
         let visible = self.visible_queue();
+        if self.page() == Page::NowPlaying {
+            return visible
+                .iter()
+                .find(|e| e.status == koan_core::player::state::QueueEntryStatus::Playing)
+                .and_then(|e| e.db_id)
+                .into_iter()
+                .collect();
+        }
         if !self.queue.selected_ids.is_empty() {
             return visible
                 .iter()
                 .filter(|e| self.queue.selected_ids.contains(&e.id))
                 .filter_map(|e| e.db_id)
                 .collect();
-        }
-        if self.page() == Page::NowPlaying
-            && let Some(id) = visible
-                .iter()
-                .find(|e| e.status == koan_core::player::state::QueueEntryStatus::Playing)
-                .and_then(|e| e.db_id)
-        {
-            return vec![id];
         }
         visible
             .get(self.queue.cursor)
@@ -1403,9 +1413,34 @@ impl App {
         std::thread::Builder::new()
             .name("koan-task".into())
             .spawn(move || {
-                tx.send(super::tasks::run(task)).ok();
+                tx.send(super::tasks::Report::Task(super::tasks::run(task)))
+                    .ok();
             })
             .ok();
+    }
+
+    /// Has the page on screen, and the artist tree when it is next opened,
+    /// read the library again: after a scan or a sync, downloads removed, or
+    /// offline turned on or off. The other pages read it as they open.
+    fn reload_library_pages(&mut self) {
+        let old = self.library.take();
+        match self.page() {
+            Page::Albums => self.albums_page.reload(),
+            Page::Favourites => self.favourites_page.reload(),
+            Page::Recent => self.recent_page.reload(),
+            Page::Artist(_) => self.artist_page.reload(),
+            Page::History => self.history_page.reload(),
+            Page::Artists => {
+                let mut lib = LibraryState::load();
+                if let Some(old) = old {
+                    lib.filter = old.filter;
+                    lib.filter_active = old.filter_active;
+                    lib.apply_filter();
+                }
+                self.library = Some(lib);
+            }
+            _ => {}
+        }
     }
 
     /// Puts a setting just written to the config into effect in the running
@@ -1430,6 +1465,7 @@ impl App {
                         super::visualizer::VisualizerPalette::Record(self.theme_accent);
                 }
             }
+            Setting::Offline => self.reload_library_pages(),
             _ => {}
         }
     }
@@ -1462,27 +1498,42 @@ impl App {
                 self.push_mode(Mode::ActionsMenu);
             }
             browse::Action::Download(ids) => {
-                let n = ids.len();
-                self.tx.send(PlayerCommand::CacheTracks(ids)).ok();
-                self.status_message = Some((
-                    format!("downloading {n} track{}", if n == 1 { "" } else { "s" }),
-                    std::time::Instant::now(),
-                ));
+                let wanted: Vec<i64> = koan_core::db::pool::shared()
+                    .get()
+                    .ok()
+                    .and_then(|db| koan_core::db::queries::tracks_by_ids(&db.conn, &ids).ok())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(super::tasks::needs_fetch)
+                    .map(|t| t.id)
+                    .collect();
+                let n = wanted.len();
+                let line = if n == 0 {
+                    "nothing to download: already on this device".into()
+                } else {
+                    format!("downloading {n} track{}", if n == 1 { "" } else { "s" })
+                };
+                self.tx.send(PlayerCommand::CacheTracks(wanted)).ok();
+                self.status_message = Some((line, std::time::Instant::now()));
             }
             browse::Action::RemoveDownload(ids) => {
-                let cleared = koan_core::db::pool::shared()
-                    .get()
-                    .map(|db| koan_core::helpers::clear_downloads_for(&db, &ids))
-                    .unwrap_or_default();
-                koan_core::helpers::requeue_cleared_downloads(&self.state);
-                self.status_message = Some((
-                    format!(
-                        "removed {} downloaded file{}",
-                        cleared.files,
-                        if cleared.files == 1 { "" } else { "s" }
-                    ),
-                    std::time::Instant::now(),
-                ));
+                let (tx, state) = (self.task_tx.clone(), Arc::clone(&self.state));
+                std::thread::Builder::new()
+                    .name("koan-uncache".into())
+                    .spawn(move || {
+                        let cleared = koan_core::db::pool::shared()
+                            .get()
+                            .map(|db| koan_core::helpers::clear_downloads_for(&db, &ids))
+                            .unwrap_or_default();
+                        koan_core::helpers::requeue_cleared_downloads(&state);
+                        tx.send(super::tasks::Report::Work(format!(
+                            "removed {} downloaded file{}",
+                            cleared.files,
+                            if cleared.files == 1 { "" } else { "s" }
+                        )))
+                        .ok();
+                    })
+                    .ok();
             }
             browse::Action::OpenUrl(url) => {
                 let opener = if cfg!(target_os = "macos") {
@@ -1763,6 +1814,7 @@ impl App {
                     self.open_name_prompt(Purpose::New(ids), "queue".into());
                 }
             }
+            KeyCode::Char('B') => self.toggle_eq(),
             KeyCode::Char('/') => {
                 self.open_queue_jump();
             }
@@ -1899,36 +1951,58 @@ impl App {
     }
 
     pub fn open_dsp_selector(&mut self) {
-        self.dsp_selector = Some(super::dsp_selector::DspSelectorState::load());
+        self.dsp_selector = Some(super::dsp_selector::DspSelectorState::load(
+            self.eq_device(),
+        ));
         self.push_mode(Mode::DspSelector);
     }
 
     /// Plays the output through the EQ at `idx`, or untouched for the first.
     fn apply_dsp(&mut self, idx: usize) {
-        let Some(sel) = self.dsp_selector.as_mut() else {
+        let Some(name) = self
+            .dsp_selector
+            .as_ref()
+            .and_then(|s| s.entries.get(idx))
+            .map(|e| e.name.clone())
+        else {
             return;
         };
-        let Some(entry) = sel.entries.get(idx) else {
-            return;
-        };
-        let name = entry.name.clone();
-        let device = self
-            .state
+        if self.assign_eq(name.clone())
+            && let Some(sel) = self.dsp_selector.as_mut()
+        {
+            sel.active = name;
+            sel.cursor = idx;
+        }
+    }
+
+    /// The output an EQ applies to: the renderer playing, else this machine's
+    /// device.
+    fn eq_device(&self) -> Option<String> {
+        self.state
             .renderer()
             .map(|r| r.udn)
-            .or_else(koan_core::audio::dsp::profiles::current_device);
-        let Some(device) = device else {
+            .or_else(koan_core::audio::dsp::profiles::current_device)
+    }
+
+    /// Plays the output through `name`, or untouched for `None`, and says so.
+    /// True when it took. Turning the EQ off remembers what was on, for
+    /// [`Self::toggle_eq`].
+    fn assign_eq(&mut self, name: Option<String>) -> bool {
+        use koan_core::audio::dsp::profiles;
+        let Some(device) = self.eq_device() else {
             self.status_message = Some((
                 "no output device to set an eq on".into(),
                 std::time::Instant::now(),
             ));
-            return;
+            return false;
         };
-        match koan_core::audio::dsp::profiles::assign(name.as_deref(), &device) {
+        let before = profiles::overview_for(Some(device.clone())).active;
+        match profiles::assign(name.as_deref(), &device) {
             Ok(()) => {
+                if name.is_none() && before.is_some() {
+                    self.eq_last = before;
+                }
                 self.tx.send(PlayerCommand::ReloadDsp).ok();
-                sel.active = name.clone();
-                sel.cursor = idx;
                 self.status_message = Some((
                     match name {
                         Some(n) => format!("eq: {n}"),
@@ -1936,8 +2010,27 @@ impl App {
                     },
                     std::time::Instant::now(),
                 ));
+                true
             }
-            Err(e) => self.status_message = Some((e, std::time::Instant::now())),
+            Err(e) => {
+                self.status_message = Some((e, std::time::Instant::now()));
+                false
+            }
+        }
+    }
+
+    /// Bypasses the EQ, or puts back what was bypassed. With nothing to put
+    /// back, the chooser opens.
+    fn toggle_eq(&mut self) {
+        if koan_core::audio::dsp::profiles::overview_for(self.eq_device())
+            .active
+            .is_some()
+        {
+            self.assign_eq(None);
+        } else if let Some(last) = self.eq_last.clone() {
+            self.assign_eq(Some(last));
+        } else {
+            self.open_dsp_selector();
         }
     }
 
@@ -2318,10 +2411,18 @@ impl App {
             }
             ContextAction::Download => {
                 let ids = self.queue_choice();
+                if ids.is_empty() {
+                    self.say("that track is not in the library");
+                    return;
+                }
                 self.apply_browse(browse::Action::Download(ids));
             }
             ContextAction::RemoveDownload => {
                 let ids = self.queue_choice();
+                if ids.is_empty() {
+                    self.say("that track is not in the library");
+                    return;
+                }
                 self.apply_browse(browse::Action::RemoveDownload(ids));
             }
         }
@@ -2883,6 +2984,17 @@ impl App {
                     .map(|(_, k)| *k)
                 {
                     self.handle_key(key);
+                    return;
+                }
+
+                // Wherever the EQ is shown, a click opens the chooser.
+                if self.layout.eq_hits.iter().any(|r| {
+                    event.column >= r.x
+                        && event.column < r.x + r.width
+                        && event.row >= r.y
+                        && event.row < r.y + r.height
+                }) {
+                    self.open_dsp_selector();
                     return;
                 }
 
