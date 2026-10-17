@@ -12,7 +12,6 @@ use koan_core::player::commands::PlayerCommand;
 use super::{App, DragState, HoverZone, Mode, NavTarget, Page, PickerAction, browse, queue};
 use crate::picker::picker_results_rect;
 use crate::playlists_page::PlAction;
-use crate::transport::TransportBar;
 
 /// What a click landed on, so a second click is a double click only on the
 /// same thing.
@@ -380,6 +379,34 @@ impl App {
             return;
         }
 
+        // The transport's controls and seek bar, and Now playing's.
+        if let Some(c) = self
+            .layout
+            .transport
+            .at(col, row)
+            .or_else(|| self.layout.now_playing.at(col, row))
+        {
+            self.press(c);
+            return;
+        }
+        if let Some(bar) = [self.layout.transport.seek, self.layout.now_playing.seek]
+            .into_iter()
+            .find(|r| hit(*r, col, row))
+        {
+            // The duration the bar was drawn against, not the probed one: a
+            // partial file reports short, and a click would then land
+            // somewhere other than where it was aimed.
+            if let Some(pos) = crate::transport::seek_from_click(
+                bar,
+                col,
+                self.state.duration_ms(),
+                self.state.seek_ceiling_ms(),
+            ) {
+                self.seek_to(pos);
+            }
+            return;
+        }
+
         if self.page() != Page::Queue && hit(self.layout.browse_area, col, row) {
             self.page_click(col, row, event.modifiers);
             return;
@@ -389,31 +416,6 @@ impl App {
             && hit(self.layout.now_playing_art_area, col, row)
         {
             self.push_mode(Mode::CoverArtZoom);
-            return;
-        }
-
-        // The seek bar is the first row of the transport's text.
-        let text = self.layout.transport_text_area;
-        if row == text.y
-            && col >= text.x
-            && col < text.x + text.width
-            && self.state.track_info().is_some()
-        {
-            // The duration the bar was drawn against, not the probed one: a
-            // partial file reports short, and a click would then land
-            // somewhere other than where it was aimed.
-            if let Some(pos) = TransportBar::seek_from_click(
-                self.layout.seek_bar_start,
-                self.layout.seek_bar_width,
-                col,
-                self.state.duration_ms(),
-                self.state.seek_ceiling_ms(),
-            ) {
-                self.seek_to(pos);
-            } else if col < self.layout.seek_bar_start {
-                // The play/pause status icon.
-                self.toggle_pause();
-            }
             return;
         }
 

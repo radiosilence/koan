@@ -28,6 +28,7 @@ use super::queue;
 use super::settings_page::{Outcome, Setting, SettingsHit, SettingsPage, Task};
 use super::shelf_page::{ShelfHit, ShelfKind, ShelfPage};
 use super::theme::{Palette, Theme};
+use super::transport::Control;
 use super::visualizer::VisualizerState;
 
 mod mouse;
@@ -196,8 +197,9 @@ pub struct LayoutRects {
     pub track_info_area: ratatui::layout::Rect,
     pub now_playing_art_area: ratatui::layout::Rect,
     pub transport_text_area: ratatui::layout::Rect,
-    pub seek_bar_start: u16,
-    pub seek_bar_width: u16,
+    /// The transport's controls and seek bar, and Now playing's.
+    pub transport: super::transport::Hits,
+    pub now_playing: super::transport::Hits,
     pub context_menu_area: ratatui::layout::Rect,
     pub organize_area: ratatui::layout::Rect,
     /// The output or EQ chooser, while one is open.
@@ -303,8 +305,6 @@ pub struct App {
     pub accent: Accent,
     pub palette: Palette,
     theme_accent: (u8, u8, u8),
-    /// The EQ curve Now playing plots.
-    pub eq_curve: super::now_playing::EqCurve,
     /// The config as of this tick, read once for the tick and its frame.
     pub cfg: Arc<koan_core::config::Config>,
     /// The playing track's queue entry, as the cover needs it: its id, the
@@ -314,6 +314,8 @@ pub struct App {
     /// Whether the file of the track info popup's entry is still arriving,
     /// so its cover is asked for again until it has.
     info_arriving: bool,
+    /// What Now playing keeps between frames.
+    pub now_playing: super::now_playing::State,
 
     pub art: ArtState,
 
@@ -490,8 +492,8 @@ impl App {
             thumbs: browse::Thumbs::new(),
             accent: Accent::default(),
             palette: Palette::detect(&cfg.playback.tui_theme),
+            now_playing: Default::default(),
             theme_accent: super::theme::MINT,
-            eq_curve: Default::default(),
             cfg: koan_core::config::Config::cached(),
             playing_entry: None,
             info_arriving: false,
@@ -1127,8 +1129,20 @@ impl App {
                 Some(p) => p.toolbar(),
                 None => Toolbar::new("album"),
             },
+            Page::NowPlaying => {
+                use super::shell::ToolItem;
+                let key = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+                Toolbar::new("now playing")
+                    .item(ToolItem::new("cover", key('z')).priority(1))
+                    .item(ToolItem::new("visualiser", key('M')).priority(2))
+                    .item(ToolItem::new("play on", key('C')).priority(3))
+                    .item(
+                        ToolItem::new("eq", key('E'))
+                            .on(self.state.dsp().is_some())
+                            .priority(4),
+                    )
+            }
             Page::Settings => self.settings_page.toolbar(),
-            page => Toolbar::new(page.title()),
         }
     }
 
@@ -1974,45 +1988,9 @@ impl App {
             }
             KeyCode::Char('>') | KeyCode::Char('n') => self.skip(PlayerCommand::NextTrack),
             KeyCode::Char('<') => self.skip(PlayerCommand::PrevTrack),
-            KeyCode::Char('s') => {
-                let on = !self.state.play_mode().shuffle;
-                self.tx.send(PlayerCommand::SetShuffle(on)).ok();
-                self.say(if on { "shuffle on" } else { "shuffle off" });
-            }
-            KeyCode::Char('T') => {
-                use koan_core::player::state::{Sleep, SleepTimer};
-                // Off, then each choice in turn, then off again.
-                let next = match self.state.sleep() {
-                    None => Some(SleepTimer::After { minutes: 15 }),
-                    Some(Sleep::At { unix_ms }) => {
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis() as u64;
-                        // The choice it was set from: what is left, rounded up.
-                        match unix_ms.saturating_sub(now).div_ceil(60_000) {
-                            0..=15 => Some(SleepTimer::After { minutes: 30 }),
-                            16..=30 => Some(SleepTimer::After { minutes: 45 }),
-                            31..=45 => Some(SleepTimer::After { minutes: 60 }),
-                            _ => Some(SleepTimer::EndOfTrack),
-                        }
-                    }
-                    Some(Sleep::EndOfTrack) => Some(SleepTimer::EndOfRecord),
-                    Some(Sleep::EndOfRecord) => None,
-                };
-                self.tx.send(PlayerCommand::SetSleepTimer(next)).ok();
-                self.say(match next {
-                    None => "sleep timer off".into(),
-                    Some(SleepTimer::After { minutes }) => format!("sleep in {minutes} min"),
-                    Some(SleepTimer::EndOfTrack) => "sleep at the end of the track".into(),
-                    Some(SleepTimer::EndOfRecord) => "sleep at the end of the record".into(),
-                });
-            }
-            KeyCode::Char('R') => {
-                let repeat = self.state.play_mode().repeat.cycled();
-                self.tx.send(PlayerCommand::SetRepeat(repeat)).ok();
-                self.say(format!("repeat {}", repeat.as_str()));
-            }
+            KeyCode::Char('s') => self.toggle_shuffle(),
+            KeyCode::Char('T') => self.cycle_sleep(),
+            KeyCode::Char('R') => self.cycle_repeat(),
             KeyCode::Char('.') | KeyCode::Right => {
                 self.seek_to(self.state.position_ms().saturating_add(10_000));
             }
@@ -2158,10 +2136,7 @@ impl App {
                     self.open_device_selector();
                 }
             }
-            KeyCode::Char('C') => {
-                self.play_on = Some(super::control::PlayOnState::new(&self.view.local));
-                self.push_mode(Mode::PlayOn);
-            }
+            KeyCode::Char('C') => self.open_play_on(),
             KeyCode::Char('E') => self.open_dsp_selector(),
             KeyCode::Char('w') => {
                 let ids = self.queue_choice();
@@ -2279,6 +2254,99 @@ impl App {
             };
             report.send(super::tasks::Report::Work(line)).ok();
         });
+    }
+
+    fn open_play_on(&mut self) {
+        self.play_on = Some(super::control::PlayOnState::new(&self.view.local));
+        self.push_mode(Mode::PlayOn);
+    }
+
+    fn toggle_shuffle(&mut self) {
+        let on = !self.state.play_mode().shuffle;
+        self.tx.send(PlayerCommand::SetShuffle(on)).ok();
+        self.status_message = Some((
+            if on { "shuffle on" } else { "shuffle off" }.into(),
+            std::time::Instant::now(),
+        ));
+    }
+
+    /// Off, then each choice in turn, then off again.
+    fn cycle_sleep(&mut self) {
+        use koan_core::player::state::{Sleep, SleepTimer};
+        let next = match self.state.sleep() {
+            None => Some(SleepTimer::After { minutes: 15 }),
+            Some(Sleep::At { unix_ms }) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                // The choice it was set from: what is left, rounded up.
+                match unix_ms.saturating_sub(now).div_ceil(60_000) {
+                    0..=15 => Some(SleepTimer::After { minutes: 30 }),
+                    16..=30 => Some(SleepTimer::After { minutes: 45 }),
+                    31..=45 => Some(SleepTimer::After { minutes: 60 }),
+                    _ => Some(SleepTimer::EndOfTrack),
+                }
+            }
+            Some(Sleep::EndOfTrack) => Some(SleepTimer::EndOfRecord),
+            Some(Sleep::EndOfRecord) => None,
+        };
+        self.tx.send(PlayerCommand::SetSleepTimer(next)).ok();
+        self.status_message = Some((
+            match next {
+                None => "sleep timer off".into(),
+                Some(SleepTimer::After { minutes }) => format!("sleep in {minutes} min"),
+                Some(SleepTimer::EndOfTrack) => "sleep at the end of the track".into(),
+                Some(SleepTimer::EndOfRecord) => "sleep at the end of the album".into(),
+            },
+            std::time::Instant::now(),
+        ));
+    }
+
+    fn cycle_repeat(&mut self) {
+        let repeat = self.state.play_mode().repeat.cycled();
+        self.tx.send(PlayerCommand::SetRepeat(repeat)).ok();
+        self.status_message = Some((
+            format!("repeat {}", repeat.as_str()),
+            std::time::Instant::now(),
+        ));
+    }
+
+    /// What a click on a control of the transport or Now playing does.
+    fn press(&mut self, control: Control) {
+        let playing = self.state.track_info().and_then(|info| {
+            self.queue
+                .vq_cache
+                .entries
+                .iter()
+                .find(|e| e.id == info.id)
+                .and_then(|e| e.db_id)
+        });
+        match control {
+            Control::PlayPause => self.toggle_pause(),
+            Control::Previous => self.skip(PlayerCommand::PrevTrack),
+            Control::Next => self.skip(PlayerCommand::NextTrack),
+            Control::Shuffle => self.toggle_shuffle(),
+            Control::Repeat => self.cycle_repeat(),
+            Control::Sleep => self.cycle_sleep(),
+            Control::Favourite => {
+                if let Some(id) = playing {
+                    self.toggle_favourite(id);
+                }
+            }
+            Control::Output => {
+                if self.this_device_shown() {
+                    self.open_device_selector();
+                }
+            }
+            Control::PlayOn => self.open_play_on(),
+            Control::Eq => self.open_dsp_selector(),
+            Control::Cover => {
+                if self.art.now_playing_art.cached().is_some() {
+                    self.mode = Mode::CoverArtZoom;
+                }
+            }
+        }
     }
 
     fn open_device_selector(&mut self) {
