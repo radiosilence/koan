@@ -517,38 +517,26 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .find(|e| e.id == id)
             .cloned()
     {
-        let current_track_info = app.state.track_info();
-        let is_playing = entry.status == koan_core::player::state::QueueEntryStatus::Playing;
-        let ti_ref = if is_playing {
-            current_track_info.as_ref()
-        } else {
-            None
-        };
-
-        // Calculate popup rect for mouse hit-testing.
-        let popup_width = (area.width as f32 * 0.7).max(40.0).min(area.width as f32) as u16;
-        let popup_height = (area.height as f32 * 0.7).max(14.0).min(area.height as f32) as u16;
-        let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
-        let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
-        app.layout.track_info_area = Rect::new(x, y, popup_width, popup_height);
-
-        let overlay = TrackInfoOverlay::new(
-            &entry,
-            ti_ref,
-            app.art.cover_art.cached(),
-            &app.theme,
-            app.art.gfx.squash(),
-        );
-        frame.render_widget(overlay, area);
+        let playing = (entry.status == koan_core::player::state::QueueEntryStatus::Playing)
+            .then(|| app.state.track_info())
+            .flatten();
+        app.layout.track_info_area = super::track_info::popup_rect(area);
+        let cover = app
+            .art
+            .cover_art
+            .cached()
+            .map(|img| (img, app.art.gfx.squash()));
+        let fields = super::track_info::entry_fields(&entry, playing.as_ref());
+        frame.render_widget(TrackInfoOverlay::new(fields, cover, &app.theme), area);
     }
 
-    // Track details overlay, for a track picked from any list.
+    // Track info for a track picked from any list.
     if app.mode == Mode::TrackDetails
         && let Some(track) = app.track_details.as_deref()
     {
-        app.layout.track_info_area = super::track_details::popup_rect(area);
-        let overlay = super::track_details::TrackDetailsOverlay::new(track, &app.theme);
-        frame.render_widget(overlay, area);
+        app.layout.track_info_area = super::track_info::popup_rect(area);
+        let fields = super::track_info::row_fields(track);
+        frame.render_widget(TrackInfoOverlay::new(fields, None, &app.theme), area);
     }
 
     // Cover art zoom overlay — fullscreen, 1:1 aspect ratio.
