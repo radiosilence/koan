@@ -199,7 +199,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     ) async -> PlatformImage? {
         await decodes.join(key) { [weak self] in
             guard let self else { return nil }
-            let epoch = self.locked { self.epoch }
+            let epoch = self.locked { self.generation(of: record) }
             guard let data = await self.bytes(for: source) else { return nil }
             let space = self.displaySpace
             let decoded = await ImageWork.ifWanted(priority: { [weak self] in self?.priority(of: record) ?? .ahead(.infinity) }) {
@@ -220,7 +220,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
             // that sheet does. A bitmap matched to a display the window has
             // since left, or made from bytes an eviction has since replaced,
             // is drawn this once and not kept.
-            if size != .full, self.displaySpace == space, self.locked({ self.epoch }) == epoch {
+            if size != .full, self.displaySpace == space, self.locked({ self.generation(of: record) }) == epoch {
                 self.memory.setObject(image, forKey: key as NSString, cost: Self.cost(image))
             }
             return image
@@ -302,7 +302,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
 
         let engine = self.engine
         let file = directory?.appendingPathComponent(Self.filename(for: key))
-        let keep = keeper(file, from: locked { epoch })
+        let keep = keeper(file, of: key, from: locked { generation(of: key) })
         let priority: @Sendable () -> ImageWork.Priority = { [weak self] in self?.priority(of: key) ?? .ahead(.infinity) }
         let payload = await loads.join(key) {
             guard !Task.isCancelled else { return .failed }
@@ -550,33 +550,43 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// a write already under way, and is done before it returns, so a read
     /// after an eviction never finds the file it removed.
     private let writes = DispatchQueue(label: "cc.blit.koan.artwork-writes", qos: .utility)
-    /// Bumped by every eviction. A download that began before one may hold
-    /// the artwork being replaced, and is not written.
+    /// Bumped by a purge, and per record by an eviction. Work that read a
+    /// record's artwork before either may hold what is being replaced, and
+    /// is neither written to disk nor kept in memory. Both only grow, so
+    /// their sum changes whenever either does.
     private var epoch = 0
+    private var evictions: [String: Int] = [:]
 
-    private func discard(_ record: String, from epoch: Int) {
+    /// Call with the lock held.
+    private func generation(of record: String) -> Int {
+        epoch + evictions[record, default: 0]
+    }
+
+    private func discard(_ record: String, from generation: Int) {
         let marked: Bool = locked {
-            guard self.epoch == epoch else { return false }
+            guard self.generation(of: record) == generation else { return false }
             absent.insert(record)
+            colours.removeValue(forKey: record)
+            for hash in hashOwners.keys { hashOwners[hash]?.remove(record) }
             return true
         }
         guard marked, let file = directory?.appendingPathComponent(Self.filename(for: record)) else { return }
         writes.async { [weak self] in
-            guard let self, self.locked({ self.epoch }) == epoch else { return }
+            guard let self, self.locked({ self.generation(of: record) }) == generation else { return }
             _ = try? FileManager.default.removeItem(at: file)
         }
     }
 
-    private func keeper(_ file: URL?, from epoch: Int) -> (@Sendable (Data) -> Void)? {
+    private func keeper(_ file: URL?, of record: String, from generation: Int) -> (@Sendable (Data) -> Void)? {
         guard let file else { return nil }
-        return { [weak self] data in self?.store(data, to: file, from: epoch) }
+        return { [weak self] data in self?.store(data, to: file, of: record, from: generation) }
     }
 
     /// Not waited for, and best effort: a cache that fails to write is still
     /// a cache.
-    private func store(_ data: Data, to file: URL, from epoch: Int) {
+    private func store(_ data: Data, to file: URL, of record: String, from generation: Int) {
         writes.async { [weak self] in
-            guard let self, self.locked({ self.epoch }) == epoch else { return }
+            guard let self, self.locked({ self.generation(of: record) }) == generation else { return }
             try? data.write(to: file, options: .atomic)
         }
     }
@@ -589,7 +599,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         locked {
             absent.remove(key)
             colours.removeValue(forKey: key)
-            epoch += 1
+            evictions[key, default: 0] += 1
         }
         if let file = directory?.appendingPathComponent(Self.filename(for: key)) {
             writes.sync { _ = try? FileManager.default.removeItem(at: file) }
