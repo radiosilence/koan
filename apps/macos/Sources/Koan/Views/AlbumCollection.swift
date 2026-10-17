@@ -118,6 +118,11 @@ struct AlbumCollection: NSViewRepresentable {
         private var restored = false
         private var watching: (any NSObjectProtocol)?
         private var shownState: TileState?
+        private var heading = Heading()
+        /// Covers being fetched for records not on screen yet, by record.
+        private var fetching: [Int64: Task<Void, Never>] = [:]
+        /// Re-aims once a scroll has stopped, so an idle grid looks both ways.
+        private var stopped: DispatchWorkItem?
 
         /// What the tiles on screen were last brought up to date with.
         private struct TileState: Equatable {
@@ -142,6 +147,9 @@ struct AlbumCollection: NSViewRepresentable {
         func attach(grid: AlbumGridView, scroll: NSScrollView, library: LibraryModel) {
             self.grid = grid
             grid.laidOut = { [weak self] in self?.restoreOnce() }
+            grid.displayChanged = { [weak self, weak grid] in
+                self?.context?.art.displaySpace = grid?.window?.colorSpace?.cgColorSpace
+            }
             self.scroll = scroll
             self.library = library
             source = NSCollectionViewDiffableDataSource(collectionView: grid) { [weak self] grid, path, id in
@@ -161,15 +169,22 @@ struct AlbumCollection: NSViewRepresentable {
                 MainActor.assumeIsolated {
                     self?.noteOffset()
                     self?.grid?.pointerMayHaveMoved()
+                    self?.scrolled()
                 }
             }
         }
 
         func detach() {
             if let watching { NotificationCenter.default.removeObserver(watching) }
+            stopped?.cancel()
+            for task in fetching.values { task.cancel() }
+            fetching = [:]
         }
 
         func show(_ albums: [Album]) {
+            if let context, context.art.displaySpace == nil {
+                context.art.displaySpace = grid?.window?.colorSpace?.cgColorSpace
+            }
             let state = TileState(context)
             let restyled = state != shownState
             shownState = state
@@ -187,6 +202,7 @@ struct AlbumCollection: NSViewRepresentable {
                 source?.apply(snapshot, animatingDifferences: false)
             }
             if restyled || !changed.isEmpty { refreshVisible(reshow: Set(changed)) }
+            aim()
         }
 
         func rewind(to count: Int) {
@@ -214,6 +230,122 @@ struct AlbumCollection: NSViewRepresentable {
             }
         }
 
+        /// Where the scroll is, how fast it is going, and — in a flick's
+        /// momentum — how quickly it is slowing.
+        private struct Heading {
+            var offset: CGFloat = 0
+            var at: CFTimeInterval = 0
+            /// Points per second, positive downwards.
+            var velocity: CGFloat = 0
+            /// How fast the momentum is dying away, per second: the velocity
+            /// falls as e^(-decay·t), so the flick comes to rest `velocity /
+            /// decay` points on. Nil outside momentum.
+            var decay: CGFloat?
+        }
+
+        private func scrolled() {
+            guard let scroll else { return }
+            let now = CACurrentMediaTime()
+            let offset = scroll.contentView.bounds.minY
+            let elapsed = now - heading.at
+            if elapsed > 0, elapsed < 0.1 {
+                let instant = (offset - heading.offset) / elapsed
+                let velocity = heading.velocity * 0.6 + instant * 0.4
+                let coasting = NSApp.currentEvent.map {
+                    $0.type == .scrollWheel && $0.momentumPhase == .changed
+                } ?? false
+                if coasting, velocity * heading.velocity > 0, abs(velocity) < abs(heading.velocity) {
+                    let decay = log(abs(heading.velocity) / abs(velocity)) / elapsed
+                    heading.decay = min(12, max(1, heading.decay.map { $0 * 0.7 + decay * 0.3 } ?? decay))
+                } else if !coasting {
+                    heading.decay = nil
+                }
+                heading.velocity = velocity
+            } else {
+                heading.velocity = 0
+                heading.decay = nil
+            }
+            heading.offset = offset
+            heading.at = now
+            aim()
+
+            stopped?.cancel()
+            let stop = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.heading.velocity = 0
+                    self.heading.decay = nil
+                    self.aim()
+                }
+            }
+            stopped = stop
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: stop)
+        }
+
+        /// Fetch the covers the scroll is about to show, ahead of it.
+        ///
+        /// Rows in the direction of travel as far as the scroll will reach in
+        /// the next few hundred milliseconds, and a few past them, with one row
+        /// behind; at rest, three rows either way. In a flick's momentum, the
+        /// screenful where it will come to rest comes first, ahead of the rows
+        /// it only passes through. What falls out of that is cancelled, and
+        /// tiles on screen always come before any of it.
+        ///
+        /// The nearest of those rows also get tiles, made off screen, so a
+        /// sleeve is already on its tile as the tile scrolls in.
+        private func aim() {
+            guard let grid, let scroll, let source, let context,
+                  let layout = grid.collectionViewLayout as? NSCollectionViewFlowLayout,
+                  !order.isEmpty
+            else { return }
+            let visible = scroll.contentView.bounds
+            let row = layout.itemSize.height + layout.minimumLineSpacing
+            guard row > 0, visible.height > 0 else { return }
+            let velocity = heading.velocity
+            let speed = abs(velocity)
+            let still = speed < 60
+            let reach = still ? 3 * row : min(speed * 0.3, 3 * visible.height) + 4 * row
+            let behind = still ? 3 * row : row
+            let path = velocity >= 0
+                ? CGRect(x: visible.minX, y: visible.minY - behind, width: visible.width, height: visible.height + behind + reach)
+                : CGRect(x: visible.minX, y: visible.minY - reach, width: visible.width, height: visible.height + behind + reach)
+            let landing = heading.decay.map { decay in
+                visible.offsetBy(dx: 0, dy: velocity / decay).insetBy(dx: 0, dy: -row)
+            }
+
+            let near = visible.insetBy(dx: 0, dy: -2 * row)
+            grid.overdraw = near
+            grid.prepareContent(in: near)
+
+            /// Each record in `rect`, with how far it is from `from`.
+            func records(in rect: CGRect, from: CGRect) -> [Int64: CGFloat] {
+                var found: [Int64: CGFloat] = [:]
+                for attributes in layout.layoutAttributesForElements(in: rect) {
+                    guard let path = attributes.indexPath, let id = source.itemIdentifier(for: path) else { continue }
+                    let frame = attributes.frame
+                    found[id] = max(0, frame.minY - from.maxY, from.minY - frame.maxY)
+                }
+                return found
+            }
+            var ranked: [Int64: ImageWork.Priority] = [:]
+            for (id, distance) in records(in: path, from: visible) { ranked[id] = .ahead(distance) }
+            if let landing {
+                for (id, distance) in records(in: landing, from: landing) { ranked[id] = .landing(distance) }
+            }
+            for id in records(in: visible, from: visible).keys { ranked[id] = .visible }
+            context.art.prioritise(ranked.map { (.album($0.key), $0.value) })
+
+            for (id, task) in fetching where ranked[id].map({ $0.tier == .visible }) ?? true {
+                task.cancel()
+                fetching[id] = nil
+            }
+            let art = context.art
+            for (id, priority) in ranked where priority.tier != .visible && fetching[id] == nil
+                && art.cached(.album(id), size: .tile) == nil {
+                fetching[id] = Task { _ = await art.image(for: .album(id), size: .tile, priority: priority) }
+            }
+        }
+
         /// Back to where the grid was left, once there is a grid to scroll:
         /// the first layout with the records in it.
         private func restoreOnce() {
@@ -235,6 +367,21 @@ struct AlbumCollection: NSViewRepresentable {
 /// remembered scroll position can be put back.
 final class AlbumGridView: NSCollectionView {
     var laidOut: (() -> Void)?
+    /// Beyond the visible rows, where tiles are made ahead of the scroll. See
+    /// `Coordinator.aim`.
+    var overdraw: NSRect = .zero
+    /// The window moved to a display with other colours.
+    var displayChanged: (() -> Void)?
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        displayChanged?()
+    }
+
+    override func prepareContent(in rect: NSRect) {
+        super.prepareContent(in: overdraw.isEmpty ? rect : rect.union(overdraw))
+    }
+
     private var hovered: AlbumTile?
     private var linked = false
 
@@ -250,6 +397,7 @@ final class AlbumGridView: NSCollectionView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        displayChanged?()
         // Ours, alongside whatever the view keeps for itself.
         guard tracking == nil else { return }
         let area = NSTrackingArea(
@@ -547,6 +695,7 @@ final class AlbumTile: NSCollectionViewItem {
         ])
         if changedRecord {
             playing = false
+            spin(false)
             hovered = nil
             showSleeve(album.id, art: context.art)
         }
@@ -638,29 +787,32 @@ final class AlbumTile: NSCollectionViewItem {
         if let held = art.cached(.album(id), size: .tile) {
             shown = held.bitmap
             ensō.isHidden = true
-            if !playing { spin(false) }
             return
         }
         shown = nil
+        // The ensō stands in until the sleeve arrives. No spinner: the grid
+        // fetches ahead of the scroll, so a sleeve is usually here before its
+        // tile shows, and a spinner is an AppKit control — a SwiftUI graph of
+        // its own — made for every tile that scrolls in.
         ensō.isHidden = false
-        // Settle first, as `AlbumArtwork` does: flying past a sleeve should
-        // not fetch it.
+        // A tile made ahead of the scroll waits its turn behind the ones on
+        // screen; the grid promotes it as it comes into view.
+        let priority: ImageWork.Priority = view.visibleRect.isEmpty ? .ahead(.infinity) : .visible
         load = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(180))
-            guard !Task.isCancelled, let self else { return }
+            let image = await art.image(for: .album(id), size: .tile, priority: priority)
+            guard !Task.isCancelled, let self, self.album?.id == id, let bitmap = image?.bitmap else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
             self.ensō.isHidden = true
-            self.spin(true)
-            let image = await art.image(for: .album(id), size: .tile)
-            guard !Task.isCancelled, self.album?.id == id else { return }
-            if !self.playing { self.spin(false) }
-            guard let bitmap = image?.bitmap else {
-                self.ensō.isHidden = false
-                return
+            // Only a sleeve arriving in view fades in; one filled off screen
+            // is simply there when the tile scrolls in.
+            if !self.view.visibleRect.isEmpty {
+                let fade = CABasicAnimation(keyPath: "contents")
+                fade.duration = 0.2
+                self.sleeve.add(fade, forKey: "contents")
             }
-            let fade = CABasicAnimation(keyPath: "contents")
-            fade.duration = 0.2
-            self.sleeve.add(fade, forKey: "contents")
             self.shown = bitmap
+            CATransaction.commit()
         }
     }
 
@@ -836,6 +988,11 @@ private final class TileView: NSView, NSDraggingSource {
     private var pressedAt: NSPoint?
 
     override var isFlipped: Bool { true }
+
+    // Layers only. Without this AppKit gives the view a backing store the size
+    // of the tile and draws nothing into it, for every tile that scrolls in.
+    override var wantsUpdateLayer: Bool { true }
+    override func updateLayer() {}
 
     override func mouseDown(with event: NSEvent) { pressedAt = point(event) }
 

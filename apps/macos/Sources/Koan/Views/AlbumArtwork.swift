@@ -31,7 +31,10 @@ struct AlbumArtwork: View {
         var pixels: Int? {
             switch self {
             case .thumb: 128
-            case .tile: 512
+            // Half the 1000px the cache stores, which JPEG decodes at half
+            // scale rather than in full and then resampled. A tile is at
+            // most 210pt.
+            case .tile: 500
             case .full: nil
             }
         }
