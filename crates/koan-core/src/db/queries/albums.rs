@@ -801,7 +801,7 @@ mod tests {
             meta.date = Some(date.into());
             crate::db::queries::upsert_track(&db.conn, &meta).unwrap();
         }
-        let artist = |name| get_or_create_artist(&db.conn, name).unwrap();
+        let artist = |name| get_or_create_artist(&db.conn, name, None).unwrap();
         let titles = |q: AlbumQuery| -> Vec<String> {
             list_albums(&db.conn, &q)
                 .unwrap()
