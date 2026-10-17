@@ -1518,7 +1518,8 @@ impl App {
         match outcome {
             Outcome::Changed(setting) => self.apply_setting(setting),
             Outcome::Run(task) => self.run_task(task),
-            Outcome::RemoveFolder(i) => self.remove_folder(i),
+            Outcome::Failed(why) => self.say(why),
+            Outcome::RemoveFolder(path) => self.remove_folder(path),
         }
     }
 
@@ -1533,13 +1534,13 @@ impl App {
 
     /// Takes a library folder out of the config, then forgets its tracks in
     /// the background: a scan never prunes a folder it is no longer given.
-    fn remove_folder(&mut self, i: usize) {
+    fn remove_folder(&mut self, path: std::path::PathBuf) {
         if self.task_running {
             self.say("a scan or sync is already running");
             return;
         }
-        match super::settings_page::remove_folder(i) {
-            Ok(path) => {
+        match super::settings_page::remove_folder(&path) {
+            Ok(()) => {
                 self.settings_page.reload();
                 self.spawn_task("removing the folder's tracks...", move || {
                     super::tasks::forget(&path)

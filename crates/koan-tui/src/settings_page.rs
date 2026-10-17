@@ -2,7 +2,9 @@
 //! `config.toml`. Each change is written through `Config::persist`, which
 //! puts it in the file that owns it, as the apps' Settings does.
 
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use koan_core::config::{Config, NearbyControl, ReplayGainMode};
 use ratatui::buffer::Buffer;
@@ -27,7 +29,6 @@ pub enum Setting {
     NearbyControl,
     Offline,
     SyncInterval,
-    PlayQueue,
     DownloadWorkers,
     CacheLimit,
 }
@@ -59,14 +60,18 @@ impl Task {
 }
 
 /// What a change on the page asks of the app.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     Changed(Setting),
+    /// The setting could not be written; why.
+    Failed(String),
     Run(Task),
-    /// Take the library folder at this place in the config out, and forget
-    /// its tracks.
-    RemoveFolder(usize),
+    /// Take this library folder out of the config, and forget its tracks.
+    RemoveFolder(PathBuf),
 }
+
+/// How long removing a folder waits for the second press.
+const CONFIRM: Duration = Duration::from_secs(4);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsHit {
@@ -121,7 +126,6 @@ impl Setting {
             Setting::NearbyControl => "devices may",
             Setting::Offline => "offline mode",
             Setting::SyncInterval => "sync every",
-            Setting::PlayQueue => "queue on server",
             Setting::DownloadWorkers => "downloads at once",
             Setting::CacheLimit => "download cache",
         }
@@ -139,12 +143,11 @@ impl Setting {
             Setting::ShowFps => "top right",
             Setting::FrameRate => "applies at the next start",
             Setting::Palette => "theme follows the cover",
-            Setting::AutoSync => "at start and on a timer",
+            Setting::AutoSync => "in the apps, at start and on a timer",
             Setting::Discoverable => "announce this device on the network",
             Setting::NearbyControl => "full, or the queue and playback only",
             Setting::Offline => "play only what is on this device",
-            Setting::SyncInterval => "between automatic syncs",
-            Setting::PlayQueue => "pick this queue up on another device",
+            Setting::SyncInterval => "between the apps' automatic syncs",
             Setting::DownloadWorkers => "applies at the next start",
             Setting::CacheLimit => "oldest records go first when full",
         }
@@ -178,17 +181,16 @@ impl Setting {
                 0 => "start only".into(),
                 n => format!("{n} min"),
             },
-            Setting::PlayQueue => on_off(cfg.remote.play_queue),
             Setting::DownloadWorkers => cfg.remote.download_workers.to_string(),
             Setting::CacheLimit => cache_limit(cfg.remote.cache_limit.as_deref()).to_string(),
         }
     }
 
     /// Moves the setting one step, `forward` or back, and writes it.
-    fn step(self, forward: bool) -> bool {
+    fn step(self, forward: bool) -> Result<(), String> {
         if self == Setting::Offline {
             koan_core::remote::offline::set_manual(!koan_core::remote::offline::manual());
-            return true;
+            return Ok(());
         }
         let d: isize = if forward { 1 } else { -1 };
         let cycle = |names: &[&str], now: &str| -> String {
@@ -240,7 +242,6 @@ impl Setting {
                 c.remote.auto_sync_interval_mins =
                     SYNC_MINUTES[(at + d).rem_euclid(SYNC_MINUTES.len() as isize) as usize];
             }
-            Setting::PlayQueue => c.remote.play_queue = !c.remote.play_queue,
             Setting::DownloadWorkers => {
                 c.remote.download_workers =
                     (c.remote.download_workers as isize + d).clamp(1, 16) as usize;
@@ -261,7 +262,11 @@ impl Setting {
                 };
             }
         })
-        .is_ok()
+        .map_err(|e| format!("{} could not be saved: {e}", self.label()))?;
+        if self == Setting::CacheLimit {
+            koan_core::remote::queue::cache_limit_changed();
+        }
+        Ok(())
     }
 }
 
@@ -271,9 +276,11 @@ pub fn add_folder(typed: &str) -> Result<String, String> {
     if typed.is_empty() {
         return Err("type the path of a folder".into());
     }
-    let path = match (typed.strip_prefix("~/"), std::env::var_os("HOME")) {
-        (Some(rest), Some(home)) => std::path::Path::new(&home).join(rest),
-        _ => std::path::PathBuf::from(typed),
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let path = match (typed, typed.strip_prefix("~/"), home) {
+        ("~", _, Some(home)) => home,
+        (_, Some(rest), Some(home)) => home.join(rest),
+        _ => PathBuf::from(typed),
     };
     if !path.is_dir() {
         return Err(format!("{} is not a folder", path.display()));
@@ -287,14 +294,12 @@ pub fn add_folder(typed: &str) -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Takes the folder at place `i` out of the library's folders; the folder.
-pub fn remove_folder(i: usize) -> Result<std::path::PathBuf, String> {
-    let Some(path) = Config::cached().library.folders.get(i).cloned() else {
+/// Takes `path` out of the library's folders.
+pub fn remove_folder(path: &std::path::Path) -> Result<(), String> {
+    if !Config::cached().library.folders.iter().any(|f| f == path) {
         return Err("that folder is no longer in the library".into());
-    };
-    Config::persist(|c| c.library.folders.retain(|f| *f != path))
-        .map(|_| path)
-        .map_err(|e| e.to_string())
+    }
+    Config::persist(|c| c.library.folders.retain(|f| f != path)).map_err(|e| e.to_string())
 }
 
 /// The palette's name as the page lists it: `spectrum` and `record` are older
@@ -330,6 +335,8 @@ pub struct SettingsPage {
     cursor: usize,
     scroll: usize,
     follow: bool,
+    /// The folder row asked to be removed, and when: a second ask removes it.
+    armed: Option<(usize, Instant)>,
     geom: Geom,
 }
 
@@ -347,6 +354,7 @@ impl SettingsPage {
             cursor: 1,
             scroll: 0,
             follow: true,
+            armed: None,
             geom: Geom::default(),
         };
         page.reload();
@@ -378,10 +386,9 @@ impl SettingsPage {
         } else {
             entries.push(Entry::Info("signed in", "no server".into()));
         }
-        entries.push(Entry::Item(Setting::AutoSync));
         if cfg.remote.enabled {
+            entries.push(Entry::Item(Setting::AutoSync));
             entries.push(Entry::Item(Setting::SyncInterval));
-            entries.push(Entry::Item(Setting::PlayQueue));
             entries.push(Entry::Item(Setting::DownloadWorkers));
             entries.push(Entry::Item(Setting::CacheLimit));
             entries.push(Entry::Item(Setting::Offline));
@@ -454,15 +461,48 @@ impl SettingsPage {
                 let setting = *setting;
                 let wrote = setting.step(forward);
                 self.reload();
-                wrote.then_some(Outcome::Changed(setting))
+                Some(match wrote {
+                    Ok(()) => Outcome::Changed(setting),
+                    Err(e) => Outcome::Failed(e),
+                })
             }
             Entry::Action(task) => forward.then_some(Outcome::Run(*task)),
             _ => None,
         }
     }
 
+    /// Removes the folder on row `idx` when this is the second ask within a
+    /// few seconds: removing one forgets its tracks.
+    fn remove(&mut self, idx: usize) -> Option<Outcome> {
+        let Some(Entry::Folder(f)) = self.entries.get(idx) else {
+            return None;
+        };
+        let path = self.cfg.library.folders.get(*f)?.clone();
+        if self.armed_on() == Some(idx) {
+            self.armed = None;
+            Some(Outcome::RemoveFolder(path))
+        } else {
+            self.armed = Some((idx, Instant::now()));
+            None
+        }
+    }
+
+    /// The folder row waiting for a second ask to be removed.
+    fn armed_on(&self) -> Option<usize> {
+        self.armed
+            .filter(|(_, at)| at.elapsed() < CONFIRM)
+            .map(|(idx, _)| idx)
+    }
+
     pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> Option<Option<Outcome>> {
         use crossterm::event::KeyCode;
+        if !matches!(key.code, KeyCode::Char('x') | KeyCode::Delete) {
+            let asked = self.armed_on().is_some();
+            self.armed = None;
+            if asked && key.code == KeyCode::Esc {
+                return Some(None);
+            }
+        }
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
                 if let Some(i) = self.step_item(self.cursor, false) {
@@ -488,10 +528,10 @@ impl SettingsPage {
                 return Some(self.change(self.cursor, false));
             }
             KeyCode::Char('x') | KeyCode::Delete => {
-                return match self.entries.get(self.cursor) {
-                    Some(Entry::Folder(i)) => Some(Some(Outcome::RemoveFolder(*i))),
-                    _ => None,
-                };
+                if !matches!(self.entries.get(self.cursor), Some(Entry::Folder(_))) {
+                    return None;
+                }
+                return Some(self.remove(self.cursor));
             }
             KeyCode::Right
             | KeyCode::Char('l')
@@ -519,6 +559,9 @@ impl SettingsPage {
     }
 
     pub fn click(&mut self, hit: SettingsHit) -> Option<Outcome> {
+        if !matches!(hit, SettingsHit::Remove(_)) {
+            self.armed = None;
+        }
         match hit {
             SettingsHit::Row(i) => {
                 self.select(i);
@@ -530,10 +573,7 @@ impl SettingsPage {
             }
             SettingsHit::Remove(i) => {
                 self.select(i);
-                match self.entries.get(i) {
-                    Some(Entry::Folder(f)) => Some(Outcome::RemoveFolder(*f)),
-                    _ => None,
-                }
+                self.remove(i)
             }
             SettingsHit::Inc(i) | SettingsHit::Value(i) => {
                 self.select(i);
@@ -628,15 +668,21 @@ impl SettingsPage {
                     if *f == 0 {
                         buf.set_stringn(list.x + 2, y, "folders", 20, dim);
                     }
-                    let path = self
-                        .cfg
-                        .library
-                        .folders
-                        .get(*f)
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_default();
                     let room = end.saturating_sub(value_x + 4) as usize;
-                    buf.set_stringn(value_x, y, &path, room, base);
+                    if self.armed_on() == Some(idx) {
+                        let ask = "press x again to remove it and forget its tracks";
+                        let style = Style::new().fg(theme.warning).add_modifier(Modifier::BOLD);
+                        buf.set_stringn(value_x, y, ask, room, style);
+                    } else {
+                        let path = self
+                            .cfg
+                            .library
+                            .folders
+                            .get(*f)
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_default();
+                        buf.set_stringn(value_x, y, &path, room, base);
+                    }
                     let x = end.saturating_sub(4);
                     buf.set_string(
                         x + 1,
@@ -828,29 +874,33 @@ mod tests {
     }
 
     #[test]
-    fn a_folder_is_removed_by_x_or_delete_and_never_by_backspace() {
+    fn a_folder_is_removed_by_a_second_x_or_delete_and_never_by_backspace() {
         koan_core::config::isolate_config_for_tests();
         let dir = tempfile::tempdir().unwrap();
-        let added = add_folder(dir.path().to_str().unwrap()).unwrap();
+        add_folder(dir.path().to_str().unwrap()).unwrap();
         let mut p = SettingsPage::new();
-        let (at, i) = p
+        let at = p
             .entries
             .iter()
-            .enumerate()
-            .find_map(|(at, e)| match e {
-                Entry::Folder(i) if p.cfg.library.folders[*i] == dir.path() => Some((at, *i)),
-                _ => None,
-            })
+            .position(|e| matches!(e, Entry::Folder(i) if p.cfg.library.folders[*i] == dir.path()))
             .unwrap();
         p.select(at);
-        assert_eq!(p.handle_key(KeyEvent::from(KeyCode::Backspace)), None);
-        for code in [KeyCode::Char('x'), KeyCode::Delete] {
-            assert_eq!(
-                p.handle_key(KeyEvent::from(code)),
-                Some(Some(Outcome::RemoveFolder(i)))
-            );
-        }
-        assert_eq!(remove_folder(i).unwrap().display().to_string(), added);
+        let key = |code| KeyEvent::from(code);
+        assert_eq!(p.handle_key(key(KeyCode::Backspace)), None);
+        assert_eq!(
+            p.handle_key(key(KeyCode::Char('x'))),
+            Some(None),
+            "asks first"
+        );
+        assert_eq!(
+            p.handle_key(key(KeyCode::Esc)),
+            Some(None),
+            "esc lets it be"
+        );
+        assert_eq!(p.handle_key(key(KeyCode::Char('x'))), Some(None));
+        let removed = Some(Some(Outcome::RemoveFolder(dir.path().to_path_buf())));
+        assert_eq!(p.handle_key(key(KeyCode::Delete)), removed);
+        remove_folder(dir.path()).unwrap();
         assert!(
             !Config::cached()
                 .library
@@ -858,6 +908,7 @@ mod tests {
                 .iter()
                 .any(|f| f == dir.path())
         );
+        assert!(remove_folder(dir.path()).is_err(), "already gone");
     }
 
     #[test]
