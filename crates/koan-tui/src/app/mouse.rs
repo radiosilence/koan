@@ -261,23 +261,19 @@ impl App {
                             p.cursor = at;
                             self.handle_play_on_key(KeyEvent::from(KeyCode::Enter));
                         }
-                    } else if let Some(sel) = self.device_selector.as_mut()
-                        && at < sel.devices.len()
+                    } else if let Some(picker) = self.device_selector.as_mut()
+                        && let Some(idx) = picker.row_at(col, row)
                     {
-                        sel.cursor = at;
-                        self.handle_device_selector_key(KeyEvent::from(KeyCode::Enter));
+                        let picked = picker.click(idx);
+                        self.apply_output(picked);
                     }
                 } else if wheel != 0 {
                     if let Some(sel) = self.dsp_selector.as_mut() {
                         sel.move_by(wheel);
                     } else if let Some(p) = self.play_on.as_mut() {
                         p.move_by(wheel);
-                    } else if let Some(sel) = self.device_selector.as_mut()
-                        && !sel.devices.is_empty()
-                    {
-                        sel.cursor = (sel.cursor as isize + wheel)
-                            .rem_euclid(sel.devices.len() as isize)
-                            as usize;
+                    } else if let Some(picker) = self.device_selector.as_mut() {
+                        picker.scroll(wheel);
                     }
                 }
             }
@@ -365,7 +361,7 @@ impl App {
         }
 
         if self.page() != Page::Queue && hit(self.layout.browse_area, col, row) {
-            self.page_click(col, row);
+            self.page_click(col, row, event.modifiers);
             return;
         }
 
@@ -412,7 +408,7 @@ impl App {
     }
 
     /// A click on the page in front, which is not the queue.
-    fn page_click(&mut self, col: u16, row: u16) {
+    fn page_click(&mut self, col: u16, row: u16, modifiers: KeyModifiers) {
         match self.page() {
             Page::Playlists => {
                 let p = &mut self.playlists_page;
@@ -458,7 +454,7 @@ impl App {
                     self.browse_drag = true;
                     p.scroll_to_bar(row);
                 } else if let Some(hit) = p.hit(col, row) {
-                    action = p.click(hit);
+                    action = p.click(hit, modifiers);
                 }
                 self.apply_browse(action);
             }

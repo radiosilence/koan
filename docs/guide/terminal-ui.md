@@ -47,11 +47,33 @@ Playlists are the apps' playlists, the same rows and the same server copies: an 
 
 `w` puts a record, a track or whatever the cursor is on into a playlist from any page that has `a`, and from the queue and Now playing, by choosing one in a list that starts with `+ new playlist…`. `W` in the queue saves the whole queue as a new playlist.
 
-## History and settings
+## History
 
-History lists every play, grouped by day. `x` (or the `×` at the end of a row) forgets a play and `D` forgets all of them, on a second press; signed in to a koan server, a forgotten play is forgotten on the account's other devices too, as in the apps. The artist and the record in a row are links, `/` filters by title, artist or record, and `Enter` or a second click plays the track.
+History lists every play, newest first, under the day it was played: an album played three times is three runs of rows. Each row has the time, the track, its artist and album (both links) and its length; a `↪` marks a play another client scrobbled in, which did not happen here. `Enter` or a second click plays the track, `/` filters by title, artist or album, and `m` or `⋯ actions` opens the menu, which includes Remove from History.
 
-Settings holds the playback, terminal, server and device settings that are a choice rather than a path or a password: ReplayGain and pre-amp, fading on pause, the theme, cover graphics and size, the frame counter and rate, the visualiser's colours, syncing, and what other devices on the network may do. Under **connected now** it lists who is connected to this terminal and whom it is connected to, as the apps' Settings → Devices does; `x` (or `disconnect` at the end of the row) hangs up a device on the network and holds it off, and on a held device's row lets it back. `←` and `→` (or the arrows beside each value, or a click on the value) change one, and each is written to the file that owns it, so a setting that belongs to this machine stays out of a `config.toml` you share. Signed in to a server, the page also sets how often it syncs, whether this device's queue is kept on the server, how many downloads run at once (from the next start) and how large the download cache may grow. The library's folders are rows: `add folder` asks for a path, which `scan library` then reads, and `x` or the `×` takes one out and forgets its tracks in the background (a track the server also has keeps its row). The server account is shown and is set up in the apps or the config. `scan library` and `sync now` run in the background; offline mode narrows the browsing pages, the Artists tree and the pickers to what is on this device.
+Plays can be picked out to act on together: `Space` picks out the play under the cursor or puts it back, `Shift+↑` and `Shift+↓` pick out a run, and `Ctrl+A` picks out every play shown. With the mouse, `Shift`- or `Ctrl`-click picks out a run and `Alt`-click one play (most terminals pass no `Shift` with a click). `Enter`, `a`, `N`, `w`, `d` and the menu then act on everything picked out, and `x` forgets it. `Esc` lets the picks go. The `×` at the end of a row forgets that play alone. `D`, or `clear…` in the heading, forgets every play, on a second press. Signed in to a koan server, a forgotten play is forgotten on the account's other devices too, as in the apps.
+
+## Settings
+
+Settings is the apps' Settings: a list of sections beside the pane of the one chosen. `↑` and `↓` choose a section, `Enter` or `→` goes into it, and `Esc` or `←` comes back out; a click on a section shows it. In the pane, `←` and `→` (or the arrows beside a value, or a click on it) change a value, `Enter` starts typing in a field, runs a button or opens a row's actions, `m` opens a list row's actions, and `x` removes or revokes what a list row names. A field takes every key until `Enter` keeps it or `Esc` leaves it as typed. Anything that would lose something asks first, with the apps' words; `Esc` cancels. Each change is written to the file that owns it, so a setting that belongs to this machine stays out of a `config.toml` you share, and whatever happens, or fails, is said on the status line.
+
+- **Library**: the folders, each with how many tracks it holds; removing one asks whether to forget its tracks or keep them (a track the server also has keeps its row either way). `add folder` takes a path and scans it. Scan, rescan everything (ignoring the scan cache), and clear the library index.
+- **Server**: signed out, the server's address, a username and a password or API key; pasting an invite into the address joins with it. Signed in, the server (`Enter` copies its address), the account, how many tracks came from it, sync, sign out (forgetting its tracks or keeping them), offline mode, and what the server offers. Downloads: parallel downloads (from the next start), the cache limit as a size such as `50GB` (applies at once), what the cache holds, and clearing it. The automatic sync settings are the apps': the terminal syncs when `sync` is run.
+- **Account**, on a koan server that has them: changing your password, your API keys and app passwords. A new key or app password is shown once, with a button to copy it.
+- **People**, for an admin of a koan server: each account with its access, which `access` cycles; invites, setting a password, a new password with an invite, and deleting. A new person is added with an access level and comes back as an invite to copy or send.
+- **Playback**: the output (which opens the output list), fade on pause, ReplayGain and its pre-amp.
+- **EQ**: what the output plays through, and the way to the EQ.
+- **Devices**: pairing a device that shows a code, being discoverable on the network and what devices there may do, who is connected now (disconnect, refuse, allow back), devices by address for networks that do not announce them, and sharing this device with other accounts on the server.
+- **Integrations**, on a koan server that has them: the address an assistant connects to, and scrobbling. ListenBrainz connects with its user token; Last.fm signs in through the server's own page, which the button opens.
+- **Terminal**: the theme, cover graphics and their size, the frame counter and rate, and the visualiser's colours.
+
+Whether a device's queue is kept on the server is set in the apps: the terminal keeps no server queue.
+
+## Output and track info
+
+`D` lists where this device plays, as the apps' Output menu does: the system default, this machine's audio devices and the UPnP renderers on the network, each with how it is connected and the EQ preset it plays through. One in use by something else says so; picking it takes it over. Picking one moves only the sound. While a renderer plays, `←` and `→` set its volume. `e` opens the EQ.
+
+`i` shows everything the library knows of a track, as each of its sources says it: the file's tags, the server's entry, the ReplayGain in the file, and its ids. From the queue it also says where the entry stands and, while it plays, what the decoder reports. `↑` and `↓` scroll a long list.
 
 ## Layout
 
@@ -99,14 +121,6 @@ As in the apps, names that lead somewhere are links. Under a tile, the title ope
 Nothing needs a right click. The key hints along the foot are buttons: click `[a] add` and it is the `a` key. A queue row shows a `⋯` at its end when the pointer is over it or it is selected, and clicking that opens the row's menu, which a right click also opens. The scrollbars on the queue and the browsing pages can be clicked and dragged. A right click on a tile still adds it to the queue, as a shortcut.
 
 With the mouse: click selects, a second click opens, the wheel scrolls, and the sort and view labels in the heading are buttons.
-
-## Play on
-
-`koan` in the terminal is a device of its own, as the apps are. It links to the server it is signed in to and, unless Settings turns it off, listens and announces itself on the local network, so the apps list it under Control as "*hostname* (terminal)" and can play, pause, skip and change its queue. It keeps an id of its own (`terminal-device-id` in the config directory), so it is a separate device from the Mac app sharing that directory, and both can run at once. One terminal on a machine is that device: a second `koan` started beside it plays here only, neither listed nor able to control another. Quitting it hangs up on the server and the network at once.
-
-`C` opens **Play on**: this terminal, then every kōan device it can reach, each with what it is doing. `Enter` controls the one under the cursor (a click does the same): this terminal pauses, and the transport, the queue and Now playing show that device and command it until another is chosen. The queue's keys, the pickers and the browsing pages queue and play there, from the server's ids for the tracks, so the device has to play from the same library. `m` moves the music of the device in view to the one under the cursor, queue and playhead, and controls it from then on; on this terminal's row it brings the music here. `x` forgets a device that is asleep. The device chosen is kept for the next start, except when `koan` is started with music to play, which plays on this terminal.
-
-While another device is controlled the terminal is its remote: the transport, the queue, Now playing, shuffle and repeat, the sleep timer and the media keys all show that device and act on it, and a heart on a queue row marks the track in this library when the device plays from it. Nothing acts on this terminal's own player behind it. While the device cannot be reached at once the transport says so at the end of its second line: in the warning colour while it is reconnecting, being woken or asleep (a command wakes it), and in red with ⚠ when nothing reaches it. A command it cannot be reached for fails, says so on the status line, and leaves it the one controlled. `D`, `E` and `B`, this terminal's outputs and EQ, are refused until this terminal is chosen again; the apps change another device's output and preset, and the terminal does not yet. The visualiser draws this terminal's analyser, which is at rest.
 
 ## The EQ
 

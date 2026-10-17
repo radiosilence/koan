@@ -5,7 +5,6 @@ use ratatui::widgets::{Clear, Paragraph, Widget};
 
 use super::app::{App, Mode, NavTarget};
 use super::context_menu::{ContextMenuOverlay, context_menu_rect_at};
-use super::device_selector::DeviceSelectorOverlay;
 use super::help_modal::HelpModalOverlay;
 use super::keys::HintBar;
 use super::lyrics::LyricsPanel;
@@ -332,9 +331,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             let App {
                 history_page,
                 theme,
+                links,
                 ..
             } = &mut *app;
-            history_page.render(stage, frame.buffer_mut(), theme, hover);
+            history_page.render(stage, frame.buffer_mut(), theme, hover, links);
         }
         Page::Settings => {
             app.layout.browse_area = stage;
@@ -485,12 +485,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Device selector overlay.
     if app.mode == Mode::DeviceSelector
-        && let Some(ref selector) = app.device_selector
+        && let Some(picker) = app.device_selector.as_mut()
     {
-        app.layout.selector_area =
-            super::device_selector::device_selector_rect(area, selector.devices.len());
-        let overlay = DeviceSelectorOverlay::new(selector, &app.theme);
-        frame.render_widget(overlay, area);
+        app.layout.selector_area = picker.rect(area);
+        let problem = app.state.renderer().and_then(|r| r.problem);
+        picker.render(area, frame.buffer_mut(), &app.theme, problem.as_deref());
     }
 
     // Play on overlay.
@@ -571,37 +570,34 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .find(|e| e.id == id)
             .cloned()
     {
-        let current_track_info = app.state.track_info();
-        let is_playing = entry.status == koan_core::player::state::QueueEntryStatus::Playing;
-        let ti_ref = if is_playing {
-            current_track_info.as_ref()
-        } else {
-            None
-        };
-
-        // Calculate popup rect for mouse hit-testing.
-        let popup_width = (area.width as f32 * 0.7).max(40.0).min(area.width as f32) as u16;
-        let popup_height = (area.height as f32 * 0.7).max(14.0).min(area.height as f32) as u16;
-        let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
-        let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
-        app.layout.track_info_area = Rect::new(x, y, popup_width, popup_height);
-
-        let overlay = TrackInfoOverlay::new(
-            &entry,
-            ti_ref,
-            app.art.cover_art.cached(),
-            &app.theme,
-            app.art.gfx.squash(),
-        );
+        let playing = (entry.status == koan_core::player::state::QueueEntryStatus::Playing)
+            .then(|| app.state.track_info())
+            .flatten();
+        app.layout.track_info_area = super::track_info::popup_rect(area);
+        let cover = app
+            .art
+            .cover_art
+            .cached()
+            .map(|img| (img, app.art.gfx.squash()));
+        let details = app.track_details.as_deref().cloned().unwrap_or_default();
+        let groups = details.with_entry(&entry, playing.as_ref());
+        let overlay =
+            TrackInfoOverlay::new(&entry.title, groups, details.scroll, cover, &app.theme);
         frame.render_widget(overlay, area);
     }
 
-    // Track details overlay, for a track picked from any list.
+    // Track info for a track picked from any list.
     if app.mode == Mode::TrackDetails
-        && let Some(track) = app.track_details.as_deref()
+        && let Some(details) = app.track_details.as_deref()
     {
-        app.layout.track_info_area = super::track_details::popup_rect(area);
-        let overlay = super::track_details::TrackDetailsOverlay::new(track, &app.theme);
+        app.layout.track_info_area = super::track_info::popup_rect(area);
+        let overlay = TrackInfoOverlay::new(
+            &details.title,
+            details.groups(),
+            details.scroll,
+            None,
+            &app.theme,
+        );
         frame.render_widget(overlay, area);
     }
 

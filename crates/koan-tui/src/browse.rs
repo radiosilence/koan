@@ -134,6 +134,8 @@ pub enum Action {
     RemoveDownload(Vec<i64>),
     /// Open a browser set up as a shelf is: its "See all".
     SeeAll(SeeAll),
+    /// Forget the plays History has picked out, or the one under its cursor.
+    ForgetPlays,
 }
 
 /// A browser to open, and what to open it with.

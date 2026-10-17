@@ -66,22 +66,6 @@ pub enum Mode {
     VizPicker,
 }
 
-/// State for the output device selector modal.
-pub struct DeviceSelectorState {
-    pub devices: Vec<String>,
-    pub cursor: usize,
-    /// Name of the currently active device (for marking).
-    pub current_device: Option<String>,
-    /// The UPnP renderers listed after the local devices, by UDN, in the
-    /// order their labels end `devices`.
-    pub renderers: Vec<String>,
-}
-
-/// How a UPnP renderer is labelled among the output devices.
-fn renderer_label(name: &str) -> String {
-    format!("{name} · UPnP")
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextAction {
     Play,
@@ -282,7 +266,7 @@ pub struct App {
     pub activity: Option<Arc<super::tasks::Activity>>,
     task_tx: crossbeam_channel::Sender<super::tasks::Report>,
     task_rx: crossbeam_channel::Receiver<super::tasks::Report>,
-    pub track_details: Option<Box<koan_core::db::queries::TrackRow>>,
+    pub track_details: Option<Box<super::track_info::Details>>,
     /// The EQ that was on before it was bypassed, for the key that puts it back.
     eq_last: Option<String>,
     pub history_page: HistoryPage,
@@ -316,7 +300,7 @@ pub struct App {
     pub organize: Option<super::organize::OrganizeModalState>,
 
     /// Device selector modal state (when in DeviceSelector mode).
-    pub device_selector: Option<DeviceSelectorState>,
+    pub device_selector: Option<super::device_selector::OutputPicker>,
 
     /// The Play on chooser (when in PlayOn mode).
     pub play_on: Option<super::control::PlayOnState>,
@@ -759,8 +743,15 @@ impl App {
         if super::tasks::take_library_changed() {
             self.reload_library_pages();
         }
-        if self.page() == Page::History && !self.history_page.filter_active {
-            self.history_page.refresh();
+        if self.page() == Page::History
+            && let Some(error) = self.history_page.poll()
+        {
+            self.say(error);
+        }
+        if self.page() == Page::Settings
+            && let Some(said) = self.settings_page.poll()
+        {
+            self.say(said);
         }
         for page in [
             &mut self.albums_page,
@@ -918,8 +909,8 @@ impl App {
             | Page::Downloaded
             | Page::Album(_)
             | Page::Playlist(_)
-            | Page::Settings
             | Page::Downloads => false,
+            Page::Settings => self.settings_page.typing(),
         }
     }
 
@@ -1068,6 +1059,8 @@ impl App {
                 let n = self.queue.vq_cache.entries.len();
                 Toolbar::new("queue").count(format!("{n} track{}", if n == 1 { "" } else { "s" }))
             }
+            Page::History => self.history_page.toolbar(),
+            Page::Settings => self.settings_page.toolbar(),
             page => Toolbar::new(page.title()),
         }
     }
@@ -1366,14 +1359,6 @@ impl App {
                     return;
                 }
             },
-            Purpose::Folder => match super::settings_page::add_folder(&prompt.text) {
-                Ok(path) => format!("added {path}; run scan library to index it"),
-                Err(e) => {
-                    self.name_prompt = Some(prompt);
-                    self.say(e);
-                    return;
-                }
-            },
             Purpose::Rename(id) => match super::playlist_ops::rename(*id, &prompt.text) {
                 Ok(()) => format!("renamed to '{}'", prompt.text.trim()),
                 Err(e) => {
@@ -1385,7 +1370,6 @@ impl App {
         };
         self.pop_mode();
         self.playlists_changed();
-        self.settings_page.reload();
         self.say(said);
     }
 
@@ -1567,35 +1551,63 @@ impl App {
         match outcome {
             Outcome::Changed(setting) => self.apply_setting(setting),
             Outcome::Run(task) => self.run_task(task),
-            Outcome::RemoveFolder(i) => self.remove_folder(i),
+            Outcome::Say(said) => self.say(said),
+            Outcome::OpenEq => {
+                if self.this_device_shown() {
+                    self.open_dsp_selector();
+                }
+            }
+            Outcome::OpenOutputs => {
+                if self.this_device_shown() {
+                    self.open_device_selector();
+                }
+            }
+            Outcome::OpenUrl(url) => self.apply_browse(browse::Action::OpenUrl(url)),
+            Outcome::Copy(text) => {
+                copy_to_clipboard(&text);
+                self.say("copied");
+            }
         }
     }
 
-    /// Starts a scan or a sync on a thread of its own and says how it went.
+    /// Starts long work on the library on a thread of its own and says how
+    /// it went. Forgetting runs beside a scan: the core's lane orders them.
     fn run_task(&mut self, task: Task) {
+        use super::tasks;
         match task {
-            Task::Scan => self.spawn_task("scanning the library", true, super::tasks::scan),
-            Task::Sync => self.spawn_task("syncing with the server", false, super::tasks::sync),
-            Task::AddFolder => self.open_name_prompt(Purpose::Folder, String::new()),
-        }
-    }
-
-    /// Takes a library folder out of the config, then forgets its tracks in
-    /// the background: a scan never prunes a folder it is no longer given.
-    fn remove_folder(&mut self, i: usize) {
-        if self.activity.is_some() {
-            self.say("a scan or sync is already running");
-            return;
-        }
-        match super::settings_page::remove_folder(i) {
-            Ok(path) => {
-                self.settings_page.reload();
-                self.spawn_task("forgetting a folder", false, move |_| {
-                    super::tasks::forget(&path)
+            Task::Scan { force } => {
+                self.spawn_task("scanning the library", true, move |a| tasks::scan(force, a))
+            }
+            Task::Sync => self.spawn_task("syncing with the server", false, tasks::sync),
+            Task::RebuildIndex => self.spawn_task("clearing the library index", false, |_| {
+                tasks::rebuild_index()
+            }),
+            Task::ClearCache => {
+                let state = self.view.local.clone();
+                self.spawn_task("clearing downloads", false, move |_| {
+                    tasks::clear_cache(&state)
                 });
             }
-            Err(e) => self.say(e),
+            Task::ForgetFolder(path) => self
+                .spawn_work("forgetting the folder's tracks...", move || {
+                    tasks::forget(&path)
+                }),
+            Task::ForgetRemote => {
+                self.spawn_work("forgetting the server's tracks...", tasks::forget_remote)
+            }
         }
+    }
+
+    /// Runs `work` beside whatever task is running, and says how it went.
+    fn spawn_work(&mut self, said: &str, work: impl FnOnce() -> String + Send + 'static) {
+        self.say(said);
+        let tx = self.task_tx.clone();
+        std::thread::Builder::new()
+            .name("koan-work".into())
+            .spawn(move || {
+                tx.send(super::tasks::Report::Work(work())).ok();
+            })
+            .ok();
     }
 
     /// One at a time; the sidebar shows how it is going.
@@ -1637,6 +1649,7 @@ impl App {
         self.thumbs.retry_missing();
         match self.page() {
             Page::History => self.history_page.reload(),
+            Page::Settings => self.settings_page.reload(),
             Page::Album(id) => self.album_page = AlbumPage::load(id),
             Page::Favourites | Page::Recent | Page::Downloaded | Page::Search => {
                 if let Some(page) = self.shelf_mut() {
@@ -1674,9 +1687,6 @@ impl App {
                 }
             }
             Setting::Offline => self.reload_library_pages(),
-            Setting::Discoverable | Setting::NearbyControl => {
-                koan_core::remote::nearby::reconfigure();
-            }
             _ => {}
         }
     }
@@ -1700,6 +1710,7 @@ impl App {
                 self.toggle_collection_favourite(koan_core::helpers::FavouriteKind::Artist, id)
             }
             browse::Action::Info(id) => self.open_track_details(id),
+            browse::Action::ForgetPlays => self.history_page.forget_chosen(),
             browse::Action::Choose(ids) => self.open_chooser(ids),
             browse::Action::OpenFilters => {
                 let lossless = self.browse().is_none_or(Browse::offers_lossless);
@@ -2062,9 +2073,6 @@ impl App {
         if let Some(p) = self.play_on.as_mut() {
             p.refresh(&self.view.local);
         }
-        if self.page() == Page::Settings {
-            self.settings_page.follow_devices();
-        }
     }
 
     fn handle_play_on_key(&mut self, key: KeyEvent) {
@@ -2145,130 +2153,60 @@ impl App {
     }
 
     fn open_device_selector(&mut self) {
-        match koan_core::audio::list_output_devices() {
-            Ok(devices) => {
-                // "System Default" as first entry, then real devices.
-                let mut device_names: Vec<String> = Vec::with_capacity(devices.len() + 1);
-                device_names.push("System Default".to_string());
-                device_names.extend(devices.iter().map(|d| d.name.clone()));
-
-                // Renderers answer over the next second or two; the list
-                // picks them up as they do (`refresh_device_selector`).
-                koan_core::upnp::discovery::search();
-                let renderers = koan_core::upnp::discovery::renderers();
-                device_names.extend(renderers.iter().map(|r| renderer_label(&r.name)));
-
-                let current = match self.state.renderer() {
-                    Some(output) => Some(renderer_label(&output.name)),
-                    None => koan_core::config::Config::cached()
-                        .playback
-                        .output_device
-                        .clone(),
-                };
-
-                // Position cursor: None (system default) → index 0, else find the device.
-                let cursor = current
-                    .as_ref()
-                    .and_then(|name| device_names.iter().position(|d| d == name))
-                    .unwrap_or(0);
-
-                self.device_selector = Some(DeviceSelectorState {
-                    devices: device_names,
-                    cursor,
-                    current_device: current,
-                    renderers: renderers.into_iter().map(|r| r.udn).collect(),
-                });
-                self.push_mode(Mode::DeviceSelector);
-            }
-            Err(e) => {
-                log::error!("failed to list output devices: {}", e);
-            }
-        }
+        self.device_selector = Some(super::device_selector::OutputPicker::open(&self.state));
+        self.push_mode(Mode::DeviceSelector);
     }
 
-    /// Follow renderers coming and going while the selector is open.
+    /// Follow renderers coming and going while the picker is open.
     fn refresh_device_selector(&mut self) {
-        let Some(selector) = self.device_selector.as_mut() else {
-            return;
-        };
-        let renderers = koan_core::upnp::discovery::renderers();
-        if renderers
-            .iter()
-            .map(|r| &r.udn)
-            .eq(selector.renderers.iter())
-        {
-            return;
+        if let Some(picker) = self.device_selector.as_mut() {
+            picker.refresh(&self.state);
         }
-        let local = selector.devices.len() - selector.renderers.len();
-        selector.devices.truncate(local);
-        selector
-            .devices
-            .extend(renderers.iter().map(|r| renderer_label(&r.name)));
-        selector.renderers = renderers.into_iter().map(|r| r.udn).collect();
-        selector.cursor = selector
-            .cursor
-            .min(selector.devices.len().saturating_sub(1));
     }
 
     fn handle_device_selector_key(&mut self, key: KeyEvent) {
-        let Some(ref mut selector) = self.device_selector else {
+        let Some(picker) = self.device_selector.as_mut() else {
             self.pop_mode();
             return;
         };
+        let picked = picker.handle_key(key);
+        self.apply_output(picked);
+    }
 
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
+    /// Does what the output picker asked.
+    fn apply_output(&mut self, picked: super::device_selector::Picked) {
+        use super::device_selector::Picked;
+        match picked {
+            Picked::Nothing => {}
+            Picked::Close => {
                 self.device_selector = None;
                 self.pop_mode();
             }
-            KeyCode::Up | KeyCode::Char('k') if !selector.devices.is_empty() => {
-                if selector.cursor == 0 {
-                    selector.cursor = selector.devices.len() - 1;
-                } else {
-                    selector.cursor -= 1;
-                }
+            Picked::OpenEq => {
+                self.device_selector = None;
+                self.pop_mode();
+                self.open_dsp_selector();
             }
-            KeyCode::Down | KeyCode::Char('j') if !selector.devices.is_empty() => {
-                if selector.cursor + 1 >= selector.devices.len() {
-                    selector.cursor = 0;
-                } else {
-                    selector.cursor += 1;
-                }
+            Picked::Volume(v) => {
+                self.tx.send(PlayerCommand::SetRendererVolume(v)).ok();
             }
-            KeyCode::Enter => {
-                let idx = selector.cursor;
-                let local = selector.devices.len() - selector.renderers.len();
-                if idx >= local {
-                    let udn = selector.renderers[idx - local].clone();
-                    let label = selector.devices[idx].clone();
-                    selector.current_device = Some(label);
-                    let tx = self.tx.clone();
-                    let choice = koan_core::upnp::choose();
-                    // Opening a session is a few round trips to the renderer.
-                    std::thread::spawn(move || {
-                        if let Err(e) = koan_core::upnp::connect(&udn, choice, &tx) {
-                            log::error!("upnp: {e}");
+            Picked::Choose(output) => {
+                if let Some(p) = self.device_selector.as_mut() {
+                    p.chose(output.clone());
+                }
+                // Taken now, in the order picked: opening a renderer's
+                // session is a few round trips, and a later pick drops it.
+                let choice = koan_core::upnp::choose();
+                let tx = self.tx.clone();
+                std::thread::Builder::new()
+                    .name("koan-output".into())
+                    .spawn(move || {
+                        if let Err(e) = koan_core::remote::outputs::set(output, choice, &tx) {
+                            log::error!("output: {e}");
                         }
-                    });
-                } else if idx == 0 {
-                    koan_core::upnp::choose();
-                    // "System Default" — clear the configured device.
-                    self.tx.send(PlayerCommand::ClearOutputDevice).ok();
-                    if let Some(ref mut sel) = self.device_selector {
-                        sel.current_device = None;
-                    }
-                } else {
-                    let name = selector.devices[idx].clone();
-                    koan_core::upnp::choose();
-                    self.tx
-                        .send(PlayerCommand::SetOutputDevice(name.clone()))
-                        .ok();
-                    if let Some(ref mut sel) = self.device_selector {
-                        sel.current_device = Some(name);
-                    }
-                }
+                    })
+                    .ok();
             }
-            _ => {}
         }
     }
 
@@ -3003,11 +2941,30 @@ impl App {
     }
 
     fn handle_info_key(&mut self, key: KeyEvent) {
-        if matches!(
-            key.code,
-            KeyCode::Esc | KeyCode::Char('i') | KeyCode::Char('q')
-        ) {
-            self.close_info();
+        let scroll = self.track_details.as_mut().map(|d| &mut d.scroll);
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('i') | KeyCode::Char('q') => self.close_info(),
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(s) = scroll {
+                    *s = s.saturating_sub(1);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(s) = scroll {
+                    *s += 1;
+                }
+            }
+            KeyCode::PageUp => {
+                if let Some(s) = scroll {
+                    *s = s.saturating_sub(10);
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(s) = scroll {
+                    *s += 10;
+                }
+            }
+            _ => {}
         }
     }
 
@@ -3019,14 +2976,12 @@ impl App {
 
     /// Shows what the library holds of `track_id`.
     fn open_track_details(&mut self, track_id: i64) {
-        let row = koan_core::db::pool::shared()
-            .get()
-            .ok()
-            .and_then(|db| koan_core::db::queries::get_track_row(&db.conn, track_id).ok())
-            .flatten();
-        if let Some(row) = row {
-            self.track_details = Some(Box::new(row));
-            self.push_mode(Mode::TrackDetails);
+        match super::track_info::Details::load(track_id) {
+            Some(details) => {
+                self.track_details = Some(Box::new(details));
+                self.push_mode(Mode::TrackDetails);
+            }
+            None => self.say("that track is no longer in the library"),
         }
     }
 
@@ -3044,6 +2999,11 @@ impl App {
             return;
         };
         let (id, path) = (entry.id, entry.path.clone());
+        let details = entry
+            .db_id
+            .and_then(super::track_info::Details::load)
+            .unwrap_or_default();
+        self.track_details = Some(Box::new(details));
         self.push_mode(Mode::TrackInfo(id));
         // Prime the cache for this track's path.
         self.art.cover_art.get(&path);
