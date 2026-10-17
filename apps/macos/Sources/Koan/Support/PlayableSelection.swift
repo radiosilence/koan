@@ -86,11 +86,15 @@ final class PlayableSelection {
     /// picked under another filter or query.
     func selectAll() {
         isActive = true
-        let page = grid()
-        let shown = Set(page.map(\.key))
-        picked.removeAll { shown.contains($0.key) }
-        members.subtract(shown)
-        add(page)
+        takeTogether(grid())
+    }
+
+    /// Items taken together, in the order given, after the rest of the pick.
+    private func takeTogether(_ items: [Playable]) {
+        let keys = Set(items.map(\.key))
+        picked.removeAll { keys.contains($0.key) }
+        members.subtract(keys)
+        add(items)
     }
 
     private func toggle(_ playable: Playable) {
@@ -110,7 +114,7 @@ final class PlayableSelection {
               let end = grid.firstIndex(where: { $0.key == playable.key })
         else { return toggle(playable) }
         let range = start <= end ? start...end : end...start
-        add(Array(grid[range]))
+        takeTogether(Array(grid[range]))
     }
 
     private func add(_ items: [Playable]) {

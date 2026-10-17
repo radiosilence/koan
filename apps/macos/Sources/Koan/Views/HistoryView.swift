@@ -115,6 +115,7 @@ struct HistoryView: View {
                 selectAllToken: ui.selectAllToken,
                 offset: library.historyOffset,
                 noteOffset: { library.historyOffset = $0 },
+                rewinds: nav.rewinds[.playHistory] ?? 0,
                 insets: insets
             )
         }

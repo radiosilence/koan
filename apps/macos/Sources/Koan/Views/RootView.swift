@@ -568,7 +568,7 @@ private struct StageView: View {
             return nil
         // A browser goes back to its top by scrolling, not by being rebuilt,
         // since rebuilt it would put itself back where it was.
-        case .section(let section) where section == .albums || section == .artists:
+        case .section(let section) where [.albums, .artists, .tracks, .playHistory].contains(section):
             return AnyView(page(section))
         case .section(let section):
             return AnyView(page(section).id(nav.rewinds[section, default: 0]))

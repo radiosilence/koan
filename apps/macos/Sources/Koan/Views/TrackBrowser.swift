@@ -121,6 +121,7 @@ struct TrackBrowser: View {
                 selectAllToken: ui.selectAllToken,
                 offset: library.tracksOffset,
                 noteOffset: { library.tracksOffset = $0 },
+                rewinds: nav.rewinds[.tracks] ?? 0,
                 insets: insets
             )
         }

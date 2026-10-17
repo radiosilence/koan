@@ -123,6 +123,14 @@ final class LibraryModel {
         seeding = true
         defer { seeding = false }
         var filter = BrowseFilter.none
+        // The listing the shelf's count is for: no name filter but its own,
+        // and from the top.
+        carried = ""
+        switch list {
+        case .albums: albumsOffset = nil
+        case .artists: artistsOffset = nil
+        case .tracks: tracksOffset = nil
+        }
         switch shelf {
         case .favourites:
             filter.favourites = true
