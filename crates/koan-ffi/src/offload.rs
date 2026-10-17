@@ -131,6 +131,58 @@ static REMOTE_LANE: LazyLock<Sender<Job>> = LazyLock::new(|| {
     tx
 });
 
+/// Run `f` on the lane for settings writes, in call order, without waiting
+/// for it. Each write reads and rewrites the config files, which on a slow disk
+/// is long enough to stall the UI thread that changed the setting; the change
+/// itself is already drawn from the app's own copy. One lane, so two changes
+/// in quick succession land in the order they were made. A panic in `f` is
+/// logged and the lane goes on.
+pub fn save<F>(f: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    SETTINGS_LANE
+        .send(Box::new(move || {
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_err() {
+                log::error!("a settings write panicked");
+            }
+        }))
+        .expect("the settings lane outlives the engine");
+}
+
+/// Run `f` on the settings lane once every [`save`] before it has finished,
+/// and wait for it: a read that must see the writes already made.
+pub fn after_saves<T, F>(f: F) -> T
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    SETTINGS_LANE
+        .send(Box::new(move || {
+            let _ = tx.send(std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
+        }))
+        .expect("the settings lane outlives the engine");
+    match rx.recv() {
+        Ok(Ok(value)) => value,
+        Ok(Err(payload)) => std::panic::resume_unwind(payload),
+        Err(_) => panic!("the settings lane stopped running"),
+    }
+}
+
+static SETTINGS_LANE: LazyLock<Sender<Job>> = LazyLock::new(|| {
+    let (tx, rx) = crossbeam_channel::unbounded::<Job>();
+    std::thread::Builder::new()
+        .name("koan-settings".into())
+        .spawn(move || {
+            for job in rx {
+                job();
+            }
+        })
+        .expect("the settings lane needs one thread");
+    tx
+});
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,5 +280,28 @@ mod tests {
         }));
         assert!(escaped.is_err(), "the panicking call fails to its caller");
         assert_eq!(7, sequenced(|| 7).await, "and the next command still runs");
+    }
+
+    #[test]
+    fn saves_return_at_once_and_a_read_after_them_sees_them_all() {
+        let seen = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let started = std::time::Instant::now();
+        for i in 0..8 {
+            let seen = seen.clone();
+            save(move || {
+                // A slow disk: the caller must not wait, and later writes
+                // must not overtake it.
+                if i == 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
+                seen.lock().push(i);
+            });
+        }
+        assert!(started.elapsed() < std::time::Duration::from_millis(100));
+        let read = after_saves({
+            let seen = seen.clone();
+            move || seen.lock().clone()
+        });
+        assert_eq!(read, (0..8).collect::<Vec<_>>());
     }
 }
