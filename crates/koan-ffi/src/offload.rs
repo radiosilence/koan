@@ -16,7 +16,7 @@
 //! settings writes.
 
 use std::sync::LazyLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use crossbeam_channel::Sender;
@@ -119,18 +119,23 @@ pub fn save<F>(f: F)
 where
     F: FnOnce() + Send + 'static,
 {
-    SAVED.store(true, Ordering::Release);
-    fire(&SETTINGS_LANE, "a settings write", f);
+    PENDING.fetch_add(1, Ordering::AcqRel);
+    fire(&SETTINGS_LANE, "a settings write", move || {
+        // Counted down however `f` ends, a panic included.
+        let _done = Pending;
+        f();
+    });
 }
 
 /// Run `f` on the settings lane once every [`save`] before it has finished,
-/// and wait for it: a read that must see the writes already made.
+/// and wait for it: a read that must see the writes already made. With none
+/// waiting, `f` runs here.
 pub fn after_saves<T, F>(f: F) -> T
 where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
-    if !SAVED.load(Ordering::Acquire) {
+    if PENDING.load(Ordering::Acquire) == 0 {
         return f();
     }
     let rx = after_saves_rx(f);
@@ -142,9 +147,9 @@ where
 }
 
 /// Wait up to `within` for every [`save`] so far to finish, as the process
-/// exits; false if they had not. Returns at once when nothing was saved.
+/// exits; false if they had not. Returns at once when none is waiting.
 pub fn flush_saves(within: Duration) -> bool {
-    !SAVED.load(Ordering::Acquire) || after_saves_rx(|| ()).recv_timeout(within).is_ok()
+    PENDING.load(Ordering::Acquire) == 0 || after_saves_rx(|| ()).recv_timeout(within).is_ok()
 }
 
 type Answer<T> = crossbeam_channel::Receiver<std::thread::Result<T>>;
@@ -169,9 +174,17 @@ where
     rx
 }
 
-/// Whether anything has been handed to the settings lane, so a flush at exit
-/// need not start it.
-static SAVED: AtomicBool = AtomicBool::new(false);
+/// How many saves are on the settings lane, so a read or a flush with none
+/// waiting need not go through it.
+static PENDING: AtomicUsize = AtomicUsize::new(0);
+
+struct Pending;
+
+impl Drop for Pending {
+    fn drop(&mut self) {
+        PENDING.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 static SETTINGS_LANE: LazyLock<Sender<Job>> = LazyLock::new(|| lane("koan-settings"));
 

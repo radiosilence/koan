@@ -224,16 +224,20 @@ class EngineMirror(deviceName: String) {
      * over a change.
      */
     private val appearanceChanges = Channel<KoanEngine.() -> Unit>(Channel.UNLIMITED).also { changes ->
-        scope.launch {
+        // On IO: a read after a change waits for it to reach the disk.
+        scope.launch(Dispatchers.IO) {
             val engine = opened.await()
-            _appearance.value = engine.appearance()
-            for (change in changes) {
+            var change: (KoanEngine.() -> Unit)? = null
+            while (true) {
                 try {
-                    engine.change()
+                    change?.invoke(engine)
                     _appearance.value = engine.appearance()
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     report(e)
                 }
+                change = changes.receive()
             }
         }
     }

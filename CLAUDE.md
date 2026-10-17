@@ -232,7 +232,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 
 | Module | What |
 |--------|------|
-| `lib.rs` | `KoanEngine` — the whole facade. Transport, queue ops, library queries, favourites, playlists, devices, scan. Every call that can block is `async`; only single-atomic reads stay sync |
+| `lib.rs` | `KoanEngine` — the whole facade. Transport, queue ops, library queries, favourites, playlists, devices, scan. Every call that can block is `async`; only single-atomic reads stay sync, apart from `appearance()` and `flush_settings()`, which wait for queued settings writes (see ARCHITECTURE) |
 | `offload.rs` | Where blocking work goes — a growing thread pool for reads, one ordered lane for anything that ends in a `PlayerCommand`, one for commands from other devices and one for settings writes |
 | `state.rs` | The engine's state as slices, and one cursor per client. Whole snapshots, batched at a tick, cut by rate of change |
 | `queue_slice.rs` | The queue as clients are sent it: whole on an edit, and between edits a patch of the rows whose status moved |
