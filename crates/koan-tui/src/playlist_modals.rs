@@ -6,8 +6,7 @@ use std::cell::Cell;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
-use ratatui::text::Span;
-use ratatui::widgets::{Block, Borders, Clear, Widget};
+use ratatui::widgets::Widget;
 
 use koan_core::db::queries::PlaylistRow;
 
@@ -20,8 +19,8 @@ pub enum Purpose {
     /// A new playlist holding these tracks.
     New(Vec<i64>),
     Rename(i64),
-    /// A folder to add to the library.
-    Folder,
+    /// Where to write the playlist with this id as an M3U8.
+    Export(i64),
 }
 
 pub struct NamePrompt {
@@ -36,9 +35,9 @@ impl NamePrompt {
 
     fn title(&self) -> &'static str {
         match self.purpose {
-            Purpose::New(_) => " new playlist ",
-            Purpose::Rename(_) => " rename playlist ",
-            Purpose::Folder => " add library folder ",
+            Purpose::New(_) => "new playlist",
+            Purpose::Rename(_) => "rename playlist",
+            Purpose::Export(_) => "export as m3u8 to",
         }
     }
 }
@@ -76,11 +75,8 @@ impl<'a> NamePromptOverlay<'a> {
 impl Widget for NamePromptOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let popup = prompt_rect(area);
-        Clear.render(popup, buf);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(self.theme.rule)
-            .title(Span::styled(self.prompt.title(), self.theme.heading));
+        super::shell::clear(buf, popup);
+        let block = super::shell::frame(self.prompt.title(), self.theme);
         let inner = block.inner(popup);
         block.render(popup, buf);
         if inner.height < 3 || inner.width < 8 {
@@ -175,16 +171,13 @@ impl<'a> ChooserOverlay<'a> {
 impl Widget for ChooserOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let popup = chooser_rect(area, self.chooser.entries.len());
-        Clear.render(popup, buf);
+        super::shell::clear(buf, popup);
         let n = self.chooser.ids.len();
         let title = format!(
-            " add {n} track{} to a playlist ",
+            "add {n} track{} to a playlist",
             if n == 1 { "" } else { "s" }
         );
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(self.theme.rule)
-            .title(Span::styled(title, self.theme.heading));
+        let block = super::shell::frame(&title, self.theme);
         let inner = block.inner(popup);
         block.render(popup, buf);
         let top = self.chooser.top(inner.height as usize);
@@ -294,5 +287,24 @@ mod tests {
                 ChooserOverlay::new(&chooser, &theme).render(area, &mut buf);
             }
         }
+    }
+
+    #[test]
+    fn a_name_with_a_middle_dot_comes_back_whole() {
+        // The label adds " · 2 tracks"; the name is the row's, never read
+        // back out of the label.
+        let c = Chooser::new(vec![1], vec![list(1, "dawn \u{b7} dusk", false)]);
+        let picked = c.entries[1].as_ref().expect("the playlist");
+        assert_eq!(picked.name, "dawn \u{b7} dusk");
+        assert_eq!(picked.id, 1);
+        let theme = Theme::new(super::super::theme::Palette::Ansi, (125, 211, 167));
+        let area = Rect::new(0, 0, 70, 10);
+        let mut buf = Buffer::empty(area);
+        ChooserOverlay::new(&c, &theme).render(area, &mut buf);
+        let shown: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(
+            shown.contains("dawn \u{b7} dusk \u{b7} 2 tracks"),
+            "{shown}"
+        );
     }
 }

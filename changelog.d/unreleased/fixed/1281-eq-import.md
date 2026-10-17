@@ -1,0 +1,1 @@
+- **EQ import keeps what it saved.** Importing several presets keeps them imported and playing when their group cannot be made.

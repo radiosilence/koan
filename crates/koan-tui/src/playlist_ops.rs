@@ -205,6 +205,44 @@ pub fn reorder(id: i64, order: &[i64]) -> Result<(), String> {
     })
 }
 
+/// Shuffles the playlist itself, for good: its entries in a new order.
+pub fn shuffle(id: i64) -> Result<(), String> {
+    edit(id, |db| {
+        let mut entries = queries::playlist_entries(&db.conn, id).map_err(|e| e.to_string())?;
+        koan_core::helpers::shuffle(&mut entries);
+        let order: Vec<i64> = entries.iter().map(|e| e.id).collect();
+        queries::reorder_entries(&db.conn, id, &order).map_err(|e| e.to_string())
+    })
+}
+
+/// Remembers whether the playlist is looked at grouped by album.
+pub fn set_grouped(id: i64, grouped: bool) -> Result<(), String> {
+    let db = db()?;
+    queries::set_playlist_grouped(&db.conn, id, Some(grouped)).map_err(|e| e.to_string())
+}
+
+/// Writes the playlist as an M3U8 at `path`; what was written, in words.
+pub fn export(id: i64, path: &str) -> Result<String, String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("a file to write to, please".into());
+    }
+    let path = match path.strip_prefix("~/") {
+        Some(rest) => std::env::var("HOME").map_or(path.into(), |home| format!("{home}/{rest}")),
+        None => path.to_string(),
+    };
+    let db = db()?;
+    let done = koan_core::playlists::export_m3u8(&db, id, std::path::Path::new(&path))
+        .map_err(|e| format!("couldn't write {path}: {e}"))?;
+    let tracks = super::text::count(done.written as u64, "track");
+    Ok(match done.skipped {
+        0 => format!("exported {tracks} to {path}"),
+        n => format!(
+            "exported {tracks} to {path}; {n} aren't downloaded, so they have no file to point at"
+        ),
+    })
+}
+
 /// The queue from the playlist's entries, as the player is told to play it.
 /// Each item remembers the row it came from, which says which of two copies
 /// of a song is playing.

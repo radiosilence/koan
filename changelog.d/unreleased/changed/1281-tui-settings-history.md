@@ -1,0 +1,1 @@
+- **Settings and History in the terminal UI follow the apps.** Settings has the apps' sections (library, server, account, people, playback, EQ, devices, integrations and terminal) beside a pane, and History's plays can be picked out and acted on together.

@@ -18,18 +18,17 @@ use koan_core::player::state::{
     PlaybackState, QueueEntry, QueueEntryStatus, QueueItemId, TrackInfo,
 };
 
-use koan_tui::app::{HoverZone, Mode};
+use koan_tui::app::HoverZone;
 use koan_tui::context_menu::context_menu_rect_at;
 use koan_tui::cover_art::Gfx;
 use koan_tui::help_modal::HelpModalOverlay;
-use koan_tui::library::{LibraryNode, LibraryState, LibraryView};
 use koan_tui::lyrics::{LyricsPanel, LyricsState};
 use koan_tui::organize::organize_popup_rect;
 use koan_tui::picker::{
     PickerItem, PickerKind, PickerOverlay, PickerPartKind, PickerState, picker_popup_rect,
     picker_results_rect,
 };
-use koan_tui::queue::QueueView;
+use koan_tui::queue::{self, QueueView};
 use koan_tui::theme::Theme;
 use koan_tui::transport::TransportBar;
 use koan_tui::visualizer::VisualizerMode;
@@ -191,44 +190,35 @@ fn layout_is_deterministic() {
 // Transport / seek bar
 // ---------------------------------------------------------------------------
 
-/// The click-to-seek hit test uses `bar_metrics`; the bar itself is drawn by
-/// `TransportBar::render`. If those two disagree, clicking seeks to the wrong
-/// place — and it still compiles.
+/// The click-to-seek hit test uses the bar `draw` reports. If that and the
+/// cells drawn disagree, clicking seeks to the wrong place — and it still
+/// compiles.
 #[test]
-fn seek_bar_metrics_match_rendered_bar() {
+fn seek_bar_hits_match_rendered_bar() {
     let info = track_info(215_000);
     let e = entry("Title", QueueEntryStatus::Playing);
     let theme = Theme::default();
 
     for width in [20u16, 40, 60, 80, 120, 200] {
         let area = Rect::new(0, 0, width, 3);
-        let (bar_start, bar_width) = TransportBar::bar_metrics(area, 107_500, 215_000);
-
-        let buf = render_widget(
-            TransportBar::new(
-                Some(&info),
-                Some(&e),
-                PlaybackState::Playing,
-                107_500,
-                &theme,
-            ),
-            width,
-            3,
-        );
-
-        // Column 0..4 is " " + 2-cell status icon + " ".
-        let prefix: String = (0..4.min(width))
-            .map(|x| buf[(x, 0)].symbol())
-            .collect::<Vec<_>>()
-            .concat();
-        assert_eq!(&prefix[..1], " ", "width={width}");
-        assert_eq!(bar_start, 4, "width={width}");
-
+        let mut buf = Buffer::empty(area);
+        let hits = TransportBar::new(
+            Some(&info),
+            Some(&e),
+            PlaybackState::Playing,
+            107_500,
+            &theme,
+        )
+        .draw(area, &mut buf);
+        let bar = hits.seek;
+        if bar.width == 0 {
+            continue;
+        }
         // Every cell inside the reported bar span is a bar glyph — filled,
         // empty, or the one that marks the playhead.
         let mut heads = 0;
-        for x in bar_start..bar_start + bar_width {
-            let sym = buf[(x, 0)].symbol();
+        for x in bar.x..bar.x + bar.width {
+            let sym = buf[(x, bar.y)].symbol();
             heads += usize::from(sym == "\u{25CF}");
             assert!(
                 sym == "\u{2501}" || sym == "\u{2500}" || sym == "\u{25CF}",
@@ -236,14 +226,12 @@ fn seek_bar_metrics_match_rendered_bar() {
             );
         }
         assert_eq!(heads, 1, "width={width}");
-        // The cell just past the bar is the separating space, not a bar glyph.
-        if bar_start + bar_width < width {
-            assert_eq!(
-                buf[(bar_start + bar_width, 0)].symbol(),
-                " ",
-                "width={width}"
-            );
-        }
+        assert_eq!(
+            buf[(bar.x + bar.width, bar.y)].symbol(),
+            " ",
+            "width={width}"
+        );
+        assert_eq!(buf[(bar.x - 1, bar.y)].symbol(), " ", "width={width}");
     }
 }
 
@@ -261,7 +249,6 @@ fn transport_survives_every_size_and_title() {
             ] {
                 render_widget(
                     TransportBar::new(Some(&info), Some(&e), state, 107_500, &theme)
-                        .with_ticker_offset(7)
                         .with_seekable_ms(Some(86_000)),
                     w,
                     h,
@@ -306,12 +293,13 @@ fn queue_survives_every_size_and_title() {
     let selected: HashSet<usize> = [0usize, 2].into_iter().collect();
     let favourites: HashSet<i64> = [1].into_iter().collect();
 
+    let layout = queue::Layout::build(&entries, true);
     for &(w, h) in SIZES {
-        for mode in [Mode::Normal, Mode::QueueEdit] {
+        {
             // Cursor and scroll offset past the end must not index out of bounds.
             for (cursor, scroll) in [(0, 0), (3, 1), (entries.len(), entries.len() + 5)] {
                 render_widget(
-                    QueueView::new(&entries, &mode, cursor, scroll, &theme)
+                    QueueView::new(&entries, &layout, cursor, scroll, &theme)
                         .with_selected(&selected)
                         .with_spinner(3)
                         .with_drop_indicator(Some(2))
@@ -327,8 +315,8 @@ fn queue_survives_every_size_and_title() {
 
 fn render_empty_queue(w: u16, h: u16) {
     let theme = Theme::default();
-    let mode = Mode::Normal;
-    render_widget(QueueView::new(&[], &mode, 0, 0, &theme), w, h);
+    let layout = queue::Layout::default();
+    render_widget(QueueView::new(&[], &layout, 0, 0, &theme), w, h);
 }
 
 #[test]
@@ -352,52 +340,39 @@ fn empty_queue_panics_with_no_inner_row() {
 }
 
 // ---------------------------------------------------------------------------
-// Library
+// Library rows
 // ---------------------------------------------------------------------------
 
-fn library_state() -> LibraryState {
-    // Loading reads the library, so it has to be this process's own.
-    koan_core::config::isolate_config_for_tests();
-    let mut st = LibraryState::load();
-    for (i, name) in NASTY.iter().enumerate() {
-        st.nodes.push(LibraryNode::Artist {
-            id: i as i64,
-            name: (*name).into(),
-            expanded: true,
-        });
-        st.nodes.push(LibraryNode::Album {
-            id: i as i64,
-            title: (*name).into(),
-            year: Some("2026".into()),
-            expanded: true,
-        });
-        st.nodes.push(LibraryNode::Track {
-            id: i as i64,
-            title: (*name).into(),
-            number: Some(i as i32),
-            duration_ms: Some(215_000),
-            source: if i % 2 == 0 { "local" } else { "remote" }.into(),
-        });
-    }
-    st
-}
-
+/// Every list row stays in its row and its columns at every width, whatever
+/// the names hold.
 #[test]
-fn library_survives_every_size() {
+fn list_rows_survive_every_size() {
+    use koan_tui::rows::{Columns, Emphasis, Row, Target};
     let theme = Theme::default();
-    let mut st = library_state();
-    for &(w, h) in SIZES {
-        for focused in [true, false] {
-            for (cursor, scroll, filter, filter_active) in [
-                (0usize, 0usize, "", false),
-                (5, 2, "東京", true),
-                (st.nodes.len() + 10, st.nodes.len() + 10, "🎵", true),
-            ] {
-                st.cursor = cursor;
-                st.scroll_offset = scroll;
-                st.filter = filter.into();
-                st.filter_active = filter_active;
-                render_widget(LibraryView::new(&st, &theme, focused), w, h);
+    for &(w, _) in SIZES {
+        let area = Rect::new(0, 0, w, 1);
+        let cols = Columns::new(area, 3, 7, true, true);
+        for name in NASTY {
+            for emphasis in [Emphasis::Plain, Emphasis::Hovered, Emphasis::Selected] {
+                let mut buf = Buffer::empty(area);
+                let mut links = Vec::new();
+                Row {
+                    favourite: true,
+                    lead: "12",
+                    name,
+                    artist: Some((name, Some(1))),
+                    detail: Some((name, Some(Target::Album(1)))),
+                    tail: "1:02:03",
+                }
+                .draw(&mut buf, &cols, area, &theme, emphasis, None, &mut links);
+                // Each link ends before the next column starts.
+                for (r, target) in links {
+                    let next = match target {
+                        Target::Artist(_) => cols.detail.x,
+                        Target::Album(_) => cols.tail.x,
+                    };
+                    assert!(r.x + r.width <= next.max(r.x), "{w}: {name} at {r:?}");
+                }
             }
         }
     }
@@ -463,7 +438,7 @@ fn popup_rects_stay_inside_the_terminal() {
             assert!(popup.bottom() <= area.bottom(), "{popup:?} in {area:?}");
         }
 
-        let results = picker_results_rect(picker_popup_rect(area));
+        let results = picker_results_rect(picker_popup_rect(area), true);
         assert!(results.right() <= area.right(), "{results:?} in {area:?}");
         assert!(results.bottom() <= area.bottom(), "{results:?} in {area:?}");
     }
@@ -561,9 +536,11 @@ fn cover_art_halfblock_fills_expected_cells() {
 #[test]
 fn overlays_survive_every_size() {
     let theme = Theme::default();
-    let viz = VizPickerState::new(VisualizerMode::Bars);
+    let viz = VizPickerState::new(VisualizerMode::Bars, true);
     for &(w, h) in SIZES {
-        render_widget(HelpModalOverlay::new(&theme), w, h);
+        for scroll in [0, usize::MAX] {
+            render_widget(HelpModalOverlay::new(&theme, scroll), w, h);
+        }
         render_widget(VizPickerOverlay::new(&viz, &theme), w, h);
     }
 }

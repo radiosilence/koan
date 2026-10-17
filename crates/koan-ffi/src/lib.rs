@@ -1108,24 +1108,10 @@ impl KoanEngine {
     ) -> Result<Vec<Artist>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let played = recent(&filter);
+            let filter = filter.into();
             let rows = queries::list_artists(
                 &db.conn,
-                &queries::ArtistQuery {
-                    search: trimmed(&search),
-                    favourites_of: filter.favourites.then_some(queries::LOCAL_USER),
-                    // Recently Played's own order, or the search shelf's: the
-                    // artist browser has no sort to choose another by.
-                    // Without a search, relevance is by name.
-                    order: if played.is_some() {
-                        queries::ArtistOrder::LastPlayed
-                    } else {
-                        queries::ArtistOrder::Relevance
-                    },
-                    played,
-                    filter: album_filter(&filter),
-                    ..Default::default()
-                },
+                &koan_core::browse::artists(&filter, search.as_deref()),
             )
             .map_err(db_err)?;
             Ok(rows.into_iter().map(Artist::from).collect())
@@ -1166,16 +1152,12 @@ impl KoanEngine {
     ) -> Result<Vec<Album>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            let filter = filter.into();
             let rows = queries::list_albums(
                 &db.conn,
                 &queries::AlbumQuery {
                     artist_id,
-                    search: trimmed(&search),
-                    order: album_order(sort, seed),
-                    favourites_of: filter.favourites.then_some(queries::LOCAL_USER),
-                    played: recent(&filter),
-                    filter: album_filter(&filter),
-                    ..Default::default()
+                    ..koan_core::browse::albums(&filter, search.as_deref(), sort.into(), seed)
                 },
             )
             .map_err(db_err)?;
@@ -1193,7 +1175,7 @@ impl KoanEngine {
                 &db.conn,
                 &queries::AlbumQuery {
                     features_of: Some(artist_id),
-                    order: album_order(AlbumSort::Year, 0),
+                    order: queries::AlbumOrder::YearDesc,
                     filter: offline_filter(),
                     ..Default::default()
                 },
@@ -1284,34 +1266,9 @@ impl KoanEngine {
         limit: u32,
         offset: u32,
     ) -> Result<TrackListing, KoanError> {
-        use koan_core::shelves::{self, Shelf};
         offload::offload(move || {
             let db = self.db()?;
-            let (order, descending) = match sort {
-                TrackBrowseSort::Artist => (queries::TrackOrder::ArtistAlbumDiscTrack, false),
-                TrackBrowseSort::Title => (queries::TrackOrder::Title, false),
-                TrackBrowseSort::Album => (queries::TrackOrder::Album, false),
-                TrackBrowseSort::Duration => (queries::TrackOrder::Duration, false),
-                TrackBrowseSort::LastPlayed => (queries::TrackOrder::LastPlayed, true),
-                TrackBrowseSort::BestMatch => (queries::TrackOrder::Relevance, false),
-            };
-            let (user, now) = (queries::LOCAL_USER, shelves::now());
-            let listing = shelves::Tracks {
-                filter: queries::TrackFilter {
-                    search: trimmed(&search)
-                        .and_then(|q| Shelf::Search(q).tracks(user, now).filter.search),
-                    favourites_of: filter.favourites.then_some(user),
-                    played: recent(&filter),
-                    codec: trimmed(&filter.codec).map(str::to_owned),
-                    genre: trimmed(&filter.genre).map(str::to_owned),
-                    year_start: filter.year_from,
-                    year_end: filter.year_to,
-                    on_device: filter.downloaded || offline(),
-                    ..Default::default()
-                },
-                order,
-                descending,
-            };
+            let listing = koan_core::browse::tracks(&filter.into(), search.as_deref(), sort.into());
             let total = listing.count(&db.conn).map_err(db_err)?;
             let rows = listing.page(&db.conn, limit, offset).map_err(db_err)?;
             Ok(TrackListing {
@@ -2972,81 +2929,23 @@ impl KoanEngine {
         rate: Option<u32>,
     ) -> Result<DspImportSummary, KoanError> {
         offload::sequenced(move || {
-            use koan_core::audio::dsp::{
-                import::{self, Batch, Outcome},
-                profiles,
-            };
             let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
-            let taken: Vec<String> = koan_core::config::Config::cached()
-                .dsp
-                .profiles
-                .iter()
-                .map(|p| p.name.clone())
-                .collect();
-            let batch = import::import_batch(&paths, rate, &taken).map_err(|e| {
-                log::warn!("dsp import: {e}");
-                dsp_error(e)
-            })?;
-            let mut summary = DspImportSummary {
-                imported: Vec::new(),
-                refused: Vec::new(),
-                notes: Vec::new(),
-                group: None,
-            };
-            match batch {
-                Batch::One(imported) => {
-                    // Never written over: a name already taken is numbered.
-                    let wanted = name
-                        .filter(|n| !n.trim().is_empty())
-                        .unwrap_or_else(|| imported.name.clone());
-                    let free = profiles::free_name(&wanted);
-                    if free != wanted {
-                        summary
-                            .notes
-                            .push(format!("{wanted} is taken; imported as {free}"));
-                    }
-                    summary.imported.push(self.save_dsp(imported, Some(free))?)
-                }
-                Batch::Group(each) => {
-                    for item in each {
-                        let file = item.file;
-                        let saved = match item.outcome {
-                            Outcome::Skipped(why) => {
-                                summary.notes.push(format!("{file} left out: {why}"));
-                                continue;
-                            }
-                            Outcome::Refused(e) => Err(e.to_string()),
-                            Outcome::Imported(i, note) => {
-                                summary.notes.extend(note.map(|n| format!("{file}: {n}")));
-                                self.save_dsp(i, None).map_err(|e| e.to_string())
-                            }
-                        };
-                        match saved {
-                            Ok(name) => summary.imported.push(name),
-                            Err(reason) => {
-                                log::warn!("dsp import: {file}: {reason}");
-                                summary.refused.push(DspImportRefusal { file, reason });
-                            }
-                        }
-                    }
-                    if summary.imported.len() > 1 {
-                        let wanted = name
-                            .filter(|n| !n.trim().is_empty())
-                            .unwrap_or_else(|| import::group_name(&summary.imported));
-                        let group = profiles::free_name(&wanted);
-                        if group != wanted {
-                            summary
-                                .notes
-                                .push(format!("{wanted} is taken; the group is {group}"));
-                        }
-                        profiles::make_group(&group, &summary.imported)
-                            .map_err(|message| KoanError::BadArgument { message })?;
-                        self.send_local(PlayerCommand::ReloadDsp)?;
-                        summary.group = Some(group);
-                    }
-                }
+            let summary =
+                koan_core::audio::dsp::profiles::import_files(&paths, name.as_deref(), rate)
+                    .map_err(dsp_error)?;
+            if !summary.imported.is_empty() {
+                self.send_local(PlayerCommand::ReloadDsp)?;
             }
-            Ok(summary)
+            Ok(DspImportSummary {
+                imported: summary.imported,
+                refused: summary
+                    .refused
+                    .into_iter()
+                    .map(|(file, reason)| DspImportRefusal { file, reason })
+                    .collect(),
+                notes: summary.notes,
+                group: summary.group,
+            })
         })
         .await
     }
@@ -6448,43 +6347,6 @@ fn offline_filter() -> queries::AlbumFilter<'static> {
         on_device: offline(),
         ..Default::default()
     }
-}
-
-fn album_filter(f: &BrowseFilter) -> queries::AlbumFilter<'_> {
-    queries::AlbumFilter {
-        lossless: f.lossless,
-        codec: trimmed(&f.codec),
-        year_from: f.year_from,
-        year_to: f.year_to,
-        genre: trimmed(&f.genre),
-        on_device: f.downloaded || offline(),
-    }
-}
-
-/// The browser's sort as an order the database can apply.
-fn album_order(sort: AlbumSort, seed: i64) -> queries::AlbumOrder {
-    match sort {
-        AlbumSort::RecentlyAdded => queries::AlbumOrder::RecentlyAdded,
-        AlbumSort::Title => queries::AlbumOrder::Title,
-        AlbumSort::Artist => queries::AlbumOrder::ArtistThenDate,
-        AlbumSort::Year => queries::AlbumOrder::YearDesc,
-        AlbumSort::Random => queries::AlbumOrder::Random(seed),
-        AlbumSort::LastPlayed => queries::AlbumOrder::LastPlayed,
-        AlbumSort::Downloaded => queries::AlbumOrder::Downloaded,
-        AlbumSort::BestMatch => queries::AlbumOrder::Relevance,
-    }
-}
-
-/// The Recently Played shelf's window, when the filter asks for it.
-fn recent(f: &BrowseFilter) -> Option<queries::PlayedSince> {
-    use koan_core::shelves::{self, Shelf};
-    f.recent
-        .then(|| {
-            Shelf::Recent
-                .albums(queries::LOCAL_USER, shelves::now())
-                .played
-        })
-        .flatten()
 }
 
 /// Rank `texts` against `query`, best first, and return the indices of the top

@@ -22,7 +22,9 @@ use std::time::{Duration, Instant};
 
 use realfft::RealFftPlanner;
 
-use super::viz::{NUM_BARS, RawVizSnapshot, VizBuffer, VizFrame, VizSnapshot, WAVEFORM_SAMPLES};
+use super::viz::{
+    Loudness, NUM_BARS, RawVizSnapshot, VizBuffer, VizFrame, VizSnapshot, WAVEFORM_SAMPLES,
+};
 use crate::config::VisualizerConfig;
 
 // ── FFT constants ────────────────────────────────────────────────────────────
@@ -631,6 +633,65 @@ impl Drop for VizAnalyzer {
     }
 }
 
+// ── Loudness ────────────────────────────────────────────────────────────────
+
+/// The R128 meter, fed every sample heard and nothing twice: each pass reads
+/// the samples played since the last one, rather than the window the FFT
+/// takes, which overlaps from pass to pass.
+struct LoudnessMeter {
+    r128: Option<ebur128::EbuR128>,
+    heard: RawVizSnapshot,
+    loudness: Loudness,
+}
+
+impl LoudnessMeter {
+    fn new() -> Self {
+        Self {
+            r128: None,
+            heard: RawVizSnapshot::default(),
+            loudness: Loudness::default(),
+        }
+    }
+
+    /// Takes in what was played between `previous` and `played`, both
+    /// counts of interleaved samples. A count that went back is a new
+    /// decode session, which starts the meter over.
+    fn measure(&mut self, buffer: &VizBuffer, previous: u64, played: u64) -> Loudness {
+        if played < previous || previous == u64::MAX {
+            if let Some(r) = &mut self.r128 {
+                r.reset();
+            }
+            return self.loudness;
+        }
+        buffer.played_between(previous, played, &mut self.heard);
+        let channels = self.heard.channels.max(1) as usize;
+        let rate = self.heard.sample_rate;
+        let fresh = &self.heard.samples[..];
+        let stale = self
+            .r128
+            .as_ref()
+            .is_none_or(|r| r.channels() as usize != channels || r.rate() != rate);
+        if stale {
+            let mode = ebur128::Mode::M | ebur128::Mode::S | ebur128::Mode::TRUE_PEAK;
+            self.r128 = ebur128::EbuR128::new(channels as u32, rate, mode).ok();
+        }
+        let Some(r) = &mut self.r128 else {
+            return self.loudness;
+        };
+        if fresh.is_empty() || r.add_frames_f32(fresh).is_err() {
+            return self.loudness;
+        }
+        self.loudness = Loudness {
+            momentary: r.loudness_momentary().unwrap_or(f64::NEG_INFINITY),
+            short_term: r.loudness_shortterm().unwrap_or(f64::NEG_INFINITY),
+            true_peak: (0..channels as u32)
+                .filter_map(|c| r.prev_true_peak(c).ok())
+                .fold(0.0, f64::max),
+        };
+        self.loudness
+    }
+}
+
 // ── Analysis thread loop ─────────────────────────────────────────────────────
 
 /// Frames read from the delay line each pass: enough for both the FFT window
@@ -653,6 +714,7 @@ fn analysis_loop(
     peak_half_life: f32,
 ) {
     let mut state = AnalysisState::new(scale, bar_half_life, peak_half_life, amplitude_scale);
+    let mut meter = LoudnessMeter::new();
     let mut snap = RawVizSnapshot::default();
     let mut last_reads = u64::MAX;
     let mut last_read_at = Instant::now();
@@ -688,7 +750,9 @@ fn analysis_loop(
         // and once they have fallen there is nothing left to publish.
         let played = samples_played.load(Ordering::Relaxed);
         let heard = played != last_played;
-        last_played = played;
+        let previous = std::mem::replace(&mut last_played, played);
+        // Nothing heard is silence, not the last reading held.
+        let mut loudness = Loudness::default();
 
         if !heard {
             if state.is_silent() {
@@ -703,6 +767,7 @@ fn analysis_loop(
             }
         } else {
             viz_buffer.snapshot_at(played, WINDOW_FRAMES, &mut snap);
+            loudness = meter.measure(&viz_buffer, previous, played);
 
             // ── Phase 2: compute (no lock held) ──────────────────────────────
             state.analyze(
@@ -724,6 +789,7 @@ fn analysis_loop(
             beat_energy: state.beat_energy,
             timestamp: Instant::now(),
             waveform: snap.samples[waveform_start..].to_vec(),
+            loudness,
         });
 
         // ── Sleep for the remainder of the interval ───────────────────────────
@@ -791,6 +857,28 @@ mod tests {
     }
 
     #[test]
+    fn loudness_measures_every_sample_heard_once() {
+        let rate = 44100u32;
+        let buf = VizBuffer::new();
+        let samples = sine(rate as usize, 997.0, 0.5, rate);
+        buf.push_samples(&samples, 2, rate);
+        let mut meter = LoudnessMeter::new();
+        let mut previous = u64::MAX;
+        let mut loudness = Loudness::default();
+        // Passes of 1/60 s, as the analyser makes them.
+        for played in (0..=samples.len() as u64).step_by(1470) {
+            loudness = meter.measure(&buf, previous, played);
+            previous = played;
+        }
+        // A sine at half scale in both channels is -6 LUFS; at 997 Hz the
+        // K-weighting is all but flat.
+        assert!((loudness.momentary + 6.0).abs() < 0.5, "{loudness:?}");
+        // A second heard of a three-second window.
+        assert!(loudness.short_term.is_finite() && loudness.short_term < -6.0);
+        assert!((loudness.true_peak - 0.5).abs() < 0.02, "{loudness:?}");
+    }
+
+    #[test]
     fn analyzer_produces_nonzero_output_for_sine() {
         let buf = VizBuffer::new();
         let sample_rate = 44100u32;
@@ -822,6 +910,54 @@ mod tests {
             "expected nonzero spectrum for 440 Hz sine, max = {}",
             max_bar
         );
+    }
+
+    #[test]
+    fn a_pause_publishes_silence_rather_than_the_last_loudness() {
+        let rate = 44100u32;
+        let buf = VizBuffer::new();
+        let samples = sine(rate as usize, 997.0, 0.5, rate);
+        buf.push_samples(&samples, 2, rate);
+        let played = Arc::new(AtomicU64::new(0));
+        let snapshot = VizSnapshot::new();
+        let mut analyzer = VizAnalyzer::spawn_with_snapshot(
+            Arc::clone(&buf),
+            &make_cfg(),
+            Arc::clone(&snapshot),
+            Arc::clone(&played),
+        );
+        let until = |done: &dyn Fn(Loudness) -> bool| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                if done(snapshot.read().loudness) {
+                    return true;
+                }
+                if std::time::Instant::now() >= deadline {
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        // Playing: the play head moves a pass's worth at a time.
+        let heard = {
+            let played = Arc::clone(&played);
+            let total = samples.len() as u64;
+            std::thread::spawn(move || {
+                while played.load(Ordering::Relaxed) + 1470 <= total {
+                    played.fetch_add(1470, Ordering::Relaxed);
+                    std::thread::sleep(Duration::from_millis(16));
+                }
+            })
+        };
+        assert!(
+            until(&|l| l.momentary.is_finite()),
+            "no reading while playing"
+        );
+        heard.join().unwrap();
+        // Paused: the play head stands still.
+        let silent = until(&|l| l == Loudness::default());
+        analyzer.shutdown();
+        assert!(silent, "the last reading was held through the pause");
     }
 
     #[test]

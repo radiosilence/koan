@@ -1,53 +1,21 @@
-use std::collections::HashSet;
+//! The queue page: what is queued, in album runs or a row per track, with
+//! what each track is doing, where its bytes are, and the links to its album
+//! and artist, as the apps' queue lays it out.
+
+use std::collections::{HashMap, HashSet};
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
-use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{QueueEntry, QueueEntryStatus, QueueItemId};
 
-use super::app::{HoverZone, Mode};
+use super::app::HoverZone;
+use super::shell::{Link, Links, ToolItem, Toolbar};
 use super::theme::Theme;
-use super::transport::format_time;
-
-const SPINNER: &[char] = &[
-    '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}', '\u{2834}', '\u{2826}', '\u{2827}',
-];
-
-/// The two links in an album heading: who it is by and which record it is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HeaderLink {
-    Artist,
-    Album,
-}
-
-/// Where each link sits in the heading's text, as column offsets from the
-/// start of its line: the artist, then " \u{2014} ", the year, the record.
-fn header_ranges(entry: &QueueEntry) -> [(HeaderLink, std::ops::Range<u16>); 2] {
-    let artist = entry.album_artist.chars().count() as u16;
-    let year = entry
-        .year
-        .as_deref()
-        .map_or(0, |y| y.chars().count() as u16 + 3);
-    let album = entry.album.chars().count() as u16;
-    let start = 1;
-    let album_start = start + artist + 3 + year;
-    [
-        (HeaderLink::Artist, start..start + artist),
-        (HeaderLink::Album, album_start..album_start + album),
-    ]
-}
-
-fn link_at(entry: &QueueEntry, area_x: u16, col: u16) -> Option<HeaderLink> {
-    let off = col.checked_sub(area_x)?;
-    header_ranges(entry)
-        .into_iter()
-        .find(|(_, r)| r.contains(&off))
-        .map(|(l, _)| l)
-}
+use super::track_rows::{self as rows, Avail, Marker, Status};
 
 /// Where the row's `\u{22ef}` button sits: left of the scrollbar.
 pub fn menu_button_x(area: Rect) -> u16 {
@@ -86,9 +54,202 @@ pub fn placement(
     Some(PlayerCommand::MoveItemsInPlaylist { ids, target, after })
 }
 
+/// One line of the queue as drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Line {
+    /// An album heading over the run `first..=last`.
+    Heading { first: usize, last: usize },
+    /// A track under its heading.
+    Track(usize),
+    /// A track standing alone: ungrouped, a single, or without an album. It
+    /// says who it is by and what it is from itself.
+    Single(usize),
+}
+
+/// The queue's lines: built when the queue changes or is regrouped, and read
+/// by the drawing and every hit test until then.
+#[derive(Debug, Default, Clone)]
+pub struct Layout {
+    pub grouped: bool,
+    lines: Vec<Line>,
+    /// The line each entry is drawn on.
+    line_of: Vec<usize>,
+    /// The whole queue's length.
+    pub total_ms: u64,
+}
+
+impl Layout {
+    /// Whether it was built from these entries' count; a queue changed under
+    /// it is drawn from a layout built on the spot instead.
+    fn fits(&self, entries: &[QueueEntry]) -> bool {
+        self.line_of.len() == entries.len()
+    }
+}
+
+impl Layout {
+    /// Contiguous runs of one album by one album artist, never sorted or
+    /// merged. A run of one that is its own album, a single, is a row of its
+    /// own, as is a track without an album.
+    pub fn build(entries: &[QueueEntry], grouped: bool) -> Self {
+        let mut lines = Vec::with_capacity(entries.len() + entries.len() / 8);
+        let mut line_of = Vec::with_capacity(entries.len());
+        fn key(e: &QueueEntry) -> (&str, &str) {
+            (&e.album_artist, &e.album)
+        }
+        let mut i = 0;
+        while i < entries.len() {
+            let e = &entries[i];
+            if !grouped || e.album.is_empty() {
+                line_of.push(lines.len());
+                lines.push(Line::Single(i));
+                i += 1;
+                continue;
+            }
+            let last = (i..entries.len())
+                .take_while(|&j| key(&entries[j]) == key(e))
+                .last()
+                .unwrap_or(i);
+            if last == i && e.title.trim().to_lowercase() == e.album.trim().to_lowercase() {
+                line_of.push(lines.len());
+                lines.push(Line::Single(i));
+            } else {
+                lines.push(Line::Heading { first: i, last });
+                for j in i..=last {
+                    line_of.push(lines.len());
+                    lines.push(Line::Track(j));
+                }
+            }
+            i = last + 1;
+        }
+        Self {
+            grouped,
+            lines,
+            line_of,
+            total_ms: entries.iter().filter_map(|e| e.duration_ms).sum(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.lines.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.lines.is_empty()
+    }
+
+    pub fn lines(&self) -> &[Line] {
+        &self.lines
+    }
+
+    /// The line entry `idx` is drawn on.
+    pub fn line_of(&self, idx: usize) -> Option<usize> {
+        self.line_of.get(idx).copied()
+    }
+}
+
+/// What the library knows of the queue's tracks: read when the queue
+/// changes, never per frame.
+#[derive(Debug, Default, Clone)]
+pub struct Facts {
+    /// (on the server, on this device) for each library track.
+    pub sources: HashMap<i64, (bool, bool)>,
+    /// What the queue is, when it is exactly a playlist or an album.
+    pub lock: Option<String>,
+}
+
+impl Facts {
+    pub fn read(
+        entries: &[QueueEntry],
+        state: &koan_core::player::state::SharedPlayerState,
+    ) -> Self {
+        use koan_core::db::queries;
+        let Ok(db) = koan_core::db::pool::shared().get() else {
+            return Self::default();
+        };
+        let ids: Vec<i64> = entries.iter().filter_map(|e| e.db_id).collect();
+        let lock = match koan_core::playlists::queue_lock(&db, state) {
+            Some(koan_core::playlists::QueueLock::Playlist(id)) => {
+                queries::get_playlist(&db.conn, id)
+                    .ok()
+                    .flatten()
+                    .map(|p| p.name)
+            }
+            Some(koan_core::playlists::QueueLock::Album(id)) => queries::get_album(&db.conn, id)
+                .ok()
+                .flatten()
+                .map(|a| a.title),
+            None => None,
+        };
+        Self {
+            sources: queries::sources_for_tracks(&db.conn, &ids).unwrap_or_default(),
+            lock,
+        }
+    }
+}
+
+/// What the queue's toolbar controls do; each is a key as well.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Control {
+    /// Scroll to what is playing.
+    Playing,
+    /// Group by album (`true`) or a row per track.
+    Grouped(bool),
+    Undo,
+    Redo,
+    /// Save the queue as a playlist.
+    Save,
+    ClearQueue,
+    RemoveSelected,
+}
+
+/// The queue's toolbar: what it is, how long, and its controls.
+pub fn toolbar(entries: &[QueueEntry], layout: &Layout, facts: &Facts, selected: usize) -> Toolbar {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let key = |c| KeyEvent::from(KeyCode::Char(c));
+    let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+    let title = match facts.lock.as_deref() {
+        Some(name) => format!("playing {name}"),
+        None => "queue".to_string(),
+    };
+    let mut count = super::text::count(entries.len() as u64, "track");
+    if layout.total_ms > 0 {
+        count.push_str(&format!(" \u{b7} {}", rows::total(layout.total_ms)));
+    }
+    if selected > 0 {
+        count.push_str(&format!(" \u{b7} {selected} selected"));
+    }
+    let mut bar = Toolbar::new(title).count(count);
+    if entries.is_empty() {
+        return bar;
+    }
+    if selected > 0 {
+        bar = bar
+            .item(ToolItem::new("remove", KeyEvent::from(KeyCode::Delete)).priority(6))
+            .item(ToolItem::new("deselect", KeyEvent::from(KeyCode::Esc)).priority(5));
+    }
+    bar.item(ToolItem::new("playing", key('o')).priority(4))
+        .item(
+            ToolItem::new(
+                if layout.grouped {
+                    "by album"
+                } else {
+                    "by track"
+                },
+                key('v'),
+            )
+            .on(true)
+            .priority(7),
+        )
+        .item(ToolItem::new("undo", ctrl('z')).priority(3))
+        .item(ToolItem::new("redo", ctrl('y')).priority(2))
+        .item(ToolItem::new("save", key('W')).priority(1))
+        .item(ToolItem::new("clear", ctrl('x')).priority(0))
+}
+
 pub struct QueueView<'a> {
     entries: &'a [QueueEntry],
-    mode: &'a Mode,
+    layout: &'a Layout,
+    facts: Option<&'a Facts>,
     cursor: usize,
     scroll_offset: usize,
     theme: &'a Theme,
@@ -97,20 +258,22 @@ pub struct QueueView<'a> {
     spinner_tick: usize,
     hover_index: Option<usize>,
     favourites: Option<&'a HashSet<i64>>,
-    pointer: Option<(u16, u16)>,
+    links: Option<&'a Links>,
+    offline: bool,
 }
 
 impl<'a> QueueView<'a> {
     pub fn new(
         entries: &'a [QueueEntry],
-        mode: &'a Mode,
+        layout: &'a Layout,
         cursor: usize,
         scroll_offset: usize,
         theme: &'a Theme,
     ) -> Self {
         Self {
             entries,
-            mode,
+            layout,
+            facts: None,
             cursor,
             scroll_offset,
             theme,
@@ -119,8 +282,15 @@ impl<'a> QueueView<'a> {
             spinner_tick: 0,
             hover_index: None,
             favourites: None,
-            pointer: None,
+            links: None,
+            offline: false,
         }
+    }
+
+    pub fn with_facts(mut self, facts: &'a Facts, offline: bool) -> Self {
+        self.facts = Some(facts);
+        self.offline = offline;
+        self
     }
 
     pub fn with_selected(mut self, selected: &'a HashSet<usize>) -> Self {
@@ -145,29 +315,10 @@ impl<'a> QueueView<'a> {
         self
     }
 
-    /// Where the pointer is, so a link under it is drawn underlined.
-    pub fn with_pointer(mut self, pointer: Option<(u16, u16)>) -> Self {
-        self.pointer = pointer;
+    /// Where the artist and album names are drawn as links.
+    pub fn with_links(mut self, links: &'a Links) -> Self {
+        self.links = Some(links);
         self
-    }
-
-    /// The link under `col`, `row` when that is on an album heading, with the
-    /// index of the heading's first entry.
-    pub fn header_link_at(
-        entries: &[QueueEntry],
-        area: Rect,
-        scroll_offset: usize,
-        col: u16,
-        row: u16,
-    ) -> Option<(usize, HeaderLink)> {
-        header_link_in(
-            entries,
-            &build_display_lines(entries),
-            area,
-            scroll_offset,
-            col,
-            row,
-        )
     }
 
     pub fn with_favourites(mut self, favourites: &'a HashSet<i64>) -> Self {
@@ -175,452 +326,355 @@ impl<'a> QueueView<'a> {
         self
     }
 
-    /// Given a y-coordinate within the queue area, return the queue entry index
-    /// it corresponds to (accounting for album headers and scroll offset).
-    pub fn queue_index_at_y(
+    /// The entry whose heart is under `col`, `row`.
+    pub fn heart_at(
         entries: &[QueueEntry],
+        layout: &Layout,
+        area: Rect,
+        scroll_offset: usize,
+        col: u16,
+        row: u16,
+    ) -> Option<usize> {
+        let (Line::Track(i) | Line::Single(i)) =
+            *layout.lines.get(line_at(area, scroll_offset, row)?)?
+        else {
+            return None;
+        };
+        let rect = row_rect(area, row);
+        let heart = rows::Columns::new(rect.x, rect.width).heart?;
+        (col == heart && entries.get(i)?.db_id.is_some()).then_some(i)
+    }
+
+    /// The entry drawn on row `y`, if a track is.
+    pub fn queue_index_at_y(
+        layout: &Layout,
         area: Rect,
         scroll_offset: usize,
         y: u16,
     ) -> Option<usize> {
-        let line = line_at(area, scroll_offset, y)?;
-        match build_display_lines(entries).get(line) {
-            Some(&(idx, false)) => Some(idx),
-            _ => None,
+        match layout.lines.get(line_at(area, scroll_offset, y)?)? {
+            Line::Track(i) | Line::Single(i) => Some(*i),
+            Line::Heading { .. } => None,
         }
     }
 
-    /// If the y-coordinate lands on an album header, return the range of
-    /// contiguous queue indices that belong to that album group (inclusive).
+    /// The run of entries the heading on row `y` stands for, inclusive.
     pub fn album_group_at_y(
-        entries: &[QueueEntry],
+        layout: &Layout,
         area: Rect,
         scroll_offset: usize,
         y: u16,
     ) -> Option<(usize, usize)> {
-        let line = line_at(area, scroll_offset, y)?;
-        let &(first, true) = build_display_lines(entries).get(line)? else {
-            return None;
-        };
-        let key = (&entries[first].album_artist, &entries[first].album);
-        let last = (first..entries.len())
-            .take_while(|&i| entries[i].album_artist == *key.0 && entries[i].album == *key.1)
-            .last()
-            .unwrap_or(first);
-        Some((first, last))
-    }
-}
-
-/// The display line on row `y`: the queue's heading takes the area's first row.
-fn line_at(area: Rect, scroll_offset: usize, y: u16) -> Option<usize> {
-    let rel = y.checked_sub(area.y)?.checked_sub(1)?;
-    Some(scroll_offset + rel as usize)
-}
-
-fn header_link_in(
-    entries: &[QueueEntry],
-    lines: &[(usize, bool)],
-    area: Rect,
-    scroll_offset: usize,
-    col: u16,
-    row: u16,
-) -> Option<(usize, HeaderLink)> {
-    let &(idx, true) = lines.get(line_at(area, scroll_offset, row)?)? else {
-        return None;
-    };
-    link_at(&entries[idx], area.x, col).map(|l| (idx, l))
-}
-
-/// Whether `entry` opens a new album group after `current`. A track with no
-/// album ends the group before it.
-fn starts_group<'e>(entry: &'e QueueEntry, current: &mut Option<(&'e str, &'e str)>) -> bool {
-    if entry.album.is_empty() {
-        *current = None;
-        return false;
-    }
-    let key = Some((entry.album_artist.as_str(), entry.album.as_str()));
-    let starts = *current != key;
-    *current = key;
-    starts
-}
-
-/// Count total display lines (tracks + album headers) without allocating.
-pub(super) fn display_line_count(entries: &[QueueEntry]) -> usize {
-    let mut current = None;
-    entries.len()
-        + entries
-            .iter()
-            .filter(|e| starts_group(e, &mut current))
-            .count()
-}
-
-/// Each display line: the queue index it shows, and whether it is the album
-/// heading above that entry.
-fn build_display_lines(entries: &[QueueEntry]) -> Vec<(usize, bool)> {
-    let mut lines = Vec::with_capacity(entries.len() + entries.len() / 8);
-    let mut current = None;
-    for (i, entry) in entries.iter().enumerate() {
-        if starts_group(entry, &mut current) {
-            lines.push((i, true));
+        match layout.lines.get(line_at(area, scroll_offset, y)?)? {
+            Line::Heading { first, last } => Some((*first, *last)),
+            _ => None,
         }
-        lines.push((i, false));
     }
-    lines
 }
 
-/// How a track row is marked.
-#[derive(Clone, Copy)]
-struct RowLook {
-    cursor: bool,
+/// The display line on row `y`.
+fn line_at(area: Rect, scroll_offset: usize, y: u16) -> Option<usize> {
+    let rel = y.checked_sub(area.y)?;
+    (rel < area.height).then_some(scroll_offset + rel as usize)
+}
+
+/// The cells a row is drawn in: the area's width, less the row's menu button
+/// and the scrollbar.
+fn row_rect(area: Rect, y: u16) -> Rect {
+    Rect::new(area.x, y, menu_button_x(area).saturating_sub(area.x + 1), 1)
+}
+
+/// How many display lines the queue takes.
+pub(super) fn display_line_count(layout: &Layout) -> usize {
+    layout.len()
+}
+
+/// A track row's content, from its entry; `look` adds what the frame knows.
+fn track_of<'e>(
+    entries: &'e [QueueEntry],
+    grouped: bool,
+    line: Line,
+    look: Option<&Look>,
+    current: bool,
+) -> rows::Track<'e> {
+    let (Line::Track(i) | Line::Single(i)) = line else {
+        unreachable!("a heading is not a track");
+    };
+    let e = &entries[i];
+    let single = matches!(line, Line::Single(_));
+    let artist = if single {
+        Some(if e.artist.is_empty() {
+            e.album_artist.as_str()
+        } else {
+            e.artist.as_str()
+        })
+    } else {
+        (!e.artist.is_empty() && e.artist != e.album_artist).then_some(e.artist.as_str())
+    };
+    let number = match (single, e.disc, e.track_number) {
+        (true, ..) if !grouped => None,
+        (true, ..) => Some(String::new()),
+        (false, Some(d), Some(n)) if d > 1 => Some(format!("{d}-{n:02}")),
+        (false, _, Some(n)) => Some(format!("{n:02}")),
+        (false, ..) => Some(String::new()),
+    };
+    let mut t = rows::Track {
+        number,
+        title: &e.title,
+        artist: artist.map(|a| (a, e.db_id.map(Link::ArtistOfTrack))),
+        album: (!grouped).then_some((e.album.as_str(), e.db_id.map(Link::AlbumOfTrack))),
+        favourite: e.db_id.map(|_| false),
+        codec: e.codec.as_deref(),
+        duration_ms: e.duration_ms,
+        current,
+        ..Default::default()
+    };
+    if let Some(look) = look {
+        let playing = e.status == QueueEntryStatus::Playing;
+        let (on_server, on_disk) = e
+            .db_id
+            .and_then(|id| look.facts.and_then(|f| f.sources.get(&id)))
+            .copied()
+            .unwrap_or((false, !e.path.as_os_str().is_empty() && e.db_id.is_none()));
+        t.avail = if e.status == QueueEntryStatus::Downloading {
+            Avail::Transferring(
+                e.download_progress
+                    .and_then(|(done, total)| (total > 0).then(|| done as f64 / total as f64)),
+            )
+        } else if playing {
+            Avail::of(on_server, on_disk, false)
+        } else {
+            Avail::of(on_server, on_disk, look.offline)
+        };
+        t.status = match e.status {
+            QueueEntryStatus::Playing => Status::Playing,
+            QueueEntryStatus::Played => Status::Played,
+            QueueEntryStatus::Queued => Status::Queued,
+            QueueEntryStatus::Downloading => Status::None,
+            QueueEntryStatus::PriorityPending => Status::Pending,
+            QueueEntryStatus::Failed => Status::Failed,
+        };
+        t.dim = e.status == QueueEntryStatus::Played || t.avail == Avail::NotHere;
+        t.favourite = e
+            .db_id
+            .map(|id| look.favourites.is_some_and(|f| f.contains(&id)));
+        t.spinner = look.spinner;
+    }
+    t
+}
+
+/// What a frame knows beyond the entries.
+struct Look<'a> {
+    facts: Option<&'a Facts>,
+    favourites: Option<&'a HashSet<i64>>,
+    offline: bool,
+    spinner: usize,
+}
+
+fn draw_heading(
+    buf: &mut Buffer,
+    rect: Rect,
+    theme: &Theme,
+    run: &[QueueEntry],
     selected: bool,
-    drop_target: bool,
-    hovered: bool,
-    favourite: bool,
+    links: Option<&Links>,
+) {
+    let e = &run[0];
+    let codec = run
+        .iter()
+        .map(|t| t.codec.as_deref())
+        .reduce(|a, b| if a == b { a } else { None })
+        .flatten();
+    let ms = run.iter().filter_map(|t| t.duration_ms).sum();
+    let facts = rows::facts(e.year.as_deref(), run.len(), ms, codec);
+    let artist = if e.album_artist.is_empty() {
+        "Unknown Artist"
+    } else {
+        &e.album_artist
+    };
+    rows::heading(
+        buf,
+        rect,
+        theme,
+        &rows::Heading {
+            album: (&e.album, e.db_id.map(Link::AlbumOfTrack)),
+            artist: (artist, e.db_id.map(Link::AlbumArtistOfTrack)),
+            facts: &facts,
+            selected,
+        },
+        links,
+    );
 }
 
 impl Widget for QueueView<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let is_edit = matches!(self.mode, Mode::QueueEdit);
-
-        let note = if is_edit {
-            format!(" edit \u{b7} {} ", self.entries.len())
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let rebuilt;
+        let layout = if self.layout.fits(self.entries) {
+            self.layout
         } else {
-            format!(" {} ", self.entries.len())
+            rebuilt = Layout::build(self.entries, self.layout.grouped);
+            &rebuilt
         };
-        super::ui::heading(buf, area, self.theme, "queue", &note);
-        let inner = Rect::new(
-            area.x,
-            area.y + 1,
-            area.width,
-            area.height.saturating_sub(1),
-        );
-
-        // The top border can consume the only row there is.
-        if inner.height == 0 {
-            return;
-        }
-
+        let theme = self.theme;
+        let inner = area;
         if self.entries.is_empty() {
-            let line = Line::from(Span::styled(" empty", self.theme.hint_desc));
-            buf.set_line(inner.x, inner.y, &line, inner.width);
+            let room = inner.width as usize;
+            buf.set_stringn(inner.x, inner.y, "the queue is empty", room, theme.heading);
+            if inner.height > 1 {
+                buf.set_stringn(
+                    inner.x,
+                    inner.y + 1,
+                    "p finds a track, a an album, r an artist",
+                    room,
+                    theme.hint_desc,
+                );
+            }
             return;
         }
 
-        let lines = build_display_lines(self.entries);
-        let hovered_link = self.pointer.and_then(|(col, row)| {
-            header_link_in(self.entries, &lines, area, self.scroll_offset, col, row)
-        });
+        let lines = &layout.lines;
         let selected = |i: usize| self.selected.is_some_and(|s| s.contains(&i));
+        let look = Look {
+            facts: self.facts,
+            favourites: self.favourites,
+            offline: self.offline,
+            spinner: self.spinner_tick,
+        };
         let visible_height = inner.height as usize;
         let start = self.scroll_offset.min(lines.len().saturating_sub(1));
         let end = (start + visible_height).min(lines.len());
 
-        for (row, &(i, is_header)) in lines[start..end].iter().enumerate() {
+        for (row, &line) in lines[start..end].iter().enumerate() {
             let y = inner.y + row as u16;
-            let entry = &self.entries[i];
-            if is_header {
-                let hover = hovered_link
-                    .filter(|(first, _)| *first == i)
-                    .map(|(_, l)| l);
-                let line = render_album_header(entry, self.theme, hover);
-                buf.set_line(inner.x, y, &line, inner.width);
-                continue;
-            }
-            let cursor = is_edit && i == self.cursor;
-            let look = RowLook {
-                cursor,
-                selected: selected(i),
-                drop_target: self.drop_indicator == Some(i),
-                hovered: self.hover_index == Some(i) && !cursor && !selected(i),
-                favourite: self
-                    .favourites
-                    .is_some_and(|f| entry.db_id.is_some_and(|id| f.contains(&id))),
-            };
-            let line = render_track_line(entry, &look, self.theme, self.spinner_tick);
-            buf.set_line(inner.x, y, &line, inner.width);
-            // The row's menu, for anyone without a right button: on the row
-            // the pointer is over and on the ones selected.
-            if inner.width > 24 && (self.hover_index == Some(i) || look.selected || cursor) {
-                buf[(menu_button_x(area), y)]
-                    .set_char('\u{22ef}')
-                    .set_style(self.theme.hint_key);
+            let rect = row_rect(area, y);
+            match line {
+                Line::Heading { first, last } => {
+                    let all = (first..=last).all(selected);
+                    draw_heading(
+                        buf,
+                        rect,
+                        theme,
+                        &self.entries[first..=last],
+                        all,
+                        self.links,
+                    );
+                }
+                Line::Track(i) | Line::Single(i) => {
+                    let cursor = i == self.cursor;
+                    let mut t = track_of(
+                        self.entries,
+                        layout.grouped,
+                        line,
+                        Some(&look),
+                        self.entries[i].status == QueueEntryStatus::Playing,
+                    );
+                    t.selected = selected(i);
+                    t.hovered = self.hover_index == Some(i) && !cursor && !t.selected;
+                    t.marker = if cursor {
+                        Marker::Cursor
+                    } else if self.drop_indicator == Some(i) {
+                        Marker::Drop
+                    } else if t.selected {
+                        Marker::Selected
+                    } else {
+                        Marker::None
+                    };
+                    rows::track(buf, rect, theme, &t, self.links);
+                    // The row's menu, for anyone without a right button: on
+                    // the row the pointer is over and on the ones selected.
+                    if inner.width > 24 && (self.hover_index == Some(i) || t.selected || cursor) {
+                        buf[(menu_button_x(area), y)]
+                            .set_char('\u{22ef}')
+                            .set_style(theme.hint_key);
+                    }
+                }
             }
         }
 
-        // Scrollbar — only when content overflows.
-        // Uses sub-pixel rendering with 1/8th-cell resolution via Unicode block elements.
-        let total_lines = lines.len();
-        if total_lines > visible_height && visible_height > 0 && inner.width > 1 {
-            let bar_x = inner.x + inner.width - 1;
+        scrollbar(buf, inner, theme, lines.len(), start);
+    }
+}
 
-            // All math in eighths of a cell for sub-pixel precision.
-            let vis8 = visible_height * 8;
-            let max_scroll = total_lines.saturating_sub(visible_height);
+/// The scrollbar, in eighths of a cell, when the lines overflow.
+fn scrollbar(buf: &mut Buffer, inner: Rect, theme: &Theme, total_lines: usize, start: usize) {
+    let visible_height = inner.height as usize;
+    if total_lines > visible_height && visible_height > 0 && inner.width > 1 {
+        let bar_x = inner.x + inner.width - 1;
 
-            // Constant thumb size in eighths — depends only on content ratio.
-            let thumb_8 = (vis8 * visible_height / total_lines).max(8);
+        // All math in eighths of a cell for sub-pixel precision.
+        let vis8 = visible_height * 8;
+        let max_scroll = total_lines.saturating_sub(visible_height);
 
-            // Thumb top position in eighths, proportional to scroll progress.
-            let track_8 = vis8.saturating_sub(thumb_8);
-            let thumb_top_8 = if max_scroll > 0 && track_8 > 0 {
-                start * track_8 / max_scroll
+        // Constant thumb size in eighths — depends only on content ratio.
+        let thumb_8 = (vis8 * visible_height / total_lines).max(8);
+
+        // Thumb top position in eighths, proportional to scroll progress.
+        let track_8 = vis8.saturating_sub(thumb_8);
+        let thumb_top_8 = if max_scroll > 0 && track_8 > 0 {
+            start * track_8 / max_scroll
+        } else {
+            0
+        };
+        let thumb_bot_8 = thumb_top_8 + thumb_8;
+
+        // Lower block elements indexed by eighths filled from bottom (0..=8).
+        const BLOCKS: [char; 9] = [
+            ' ', '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}',
+            '\u{2587}', '\u{2588}',
+        ];
+
+        let thumb_color = theme.scrollbar_thumb;
+        let bg_color = theme.scrollbar_bg;
+        let thumb_style = Style::new().fg(thumb_color);
+        // Bottom edge: invert the block to fill from top.
+        // BLOCKS[8-N] in bg color covers the empty bottom, thumb bg fills the top.
+        let bot_style = Style::new().fg(bg_color).bg(thumb_color);
+
+        for row in 0..visible_height {
+            let cell_top = row * 8;
+            let cell_bot = cell_top + 8;
+
+            let overlap_start = thumb_top_8.max(cell_top);
+            let overlap_end = thumb_bot_8.min(cell_bot);
+            let eighths = overlap_end.saturating_sub(overlap_start);
+
+            let y = inner.y + row as u16;
+            if eighths == 0 {
+                // Empty track cell.
+                buf[(bar_x, y)]
+                    .set_char(' ')
+                    .set_style(Style::new().bg(bg_color));
+                continue;
+            }
+            if overlap_start > cell_top && eighths < 8 {
+                // Top edge — lower block fills from bottom. Correct.
+                buf[(bar_x, y)]
+                    .set_char(BLOCKS[eighths])
+                    .set_style(Style::new().fg(thumb_color).bg(bg_color));
+            } else if overlap_end < cell_bot && eighths < 8 {
+                // Bottom edge — flip: draw empty portion in bg, thumb as bg color.
+                buf[(bar_x, y)]
+                    .set_char(BLOCKS[8 - eighths])
+                    .set_style(bot_style);
             } else {
-                0
-            };
-            let thumb_bot_8 = thumb_top_8 + thumb_8;
-
-            // Lower block elements indexed by eighths filled from bottom (0..=8).
-            const BLOCKS: [char; 9] = [
-                ' ', '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}',
-                '\u{2587}', '\u{2588}',
-            ];
-
-            let thumb_color = self.theme.scrollbar_thumb;
-            let bg_color = self.theme.scrollbar_bg;
-            let thumb_style = Style::new().fg(thumb_color);
-            // Bottom edge: invert the block to fill from top.
-            // BLOCKS[8-N] in bg color covers the empty bottom, thumb bg fills the top.
-            let bot_style = Style::new().fg(bg_color).bg(thumb_color);
-
-            for row in 0..visible_height {
-                let cell_top = row * 8;
-                let cell_bot = cell_top + 8;
-
-                let overlap_start = thumb_top_8.max(cell_top);
-                let overlap_end = thumb_bot_8.min(cell_bot);
-                let eighths = overlap_end.saturating_sub(overlap_start);
-
-                let y = inner.y + row as u16;
-                if eighths == 0 {
-                    // Empty track cell.
-                    buf[(bar_x, y)]
-                        .set_char(' ')
-                        .set_style(Style::new().bg(bg_color));
-                    continue;
-                }
-                if overlap_start > cell_top && eighths < 8 {
-                    // Top edge — lower block fills from bottom. Correct.
-                    buf[(bar_x, y)]
-                        .set_char(BLOCKS[eighths])
-                        .set_style(Style::new().fg(thumb_color).bg(bg_color));
-                } else if overlap_end < cell_bot && eighths < 8 {
-                    // Bottom edge — flip: draw empty portion in bg, thumb as bg color.
-                    buf[(bar_x, y)]
-                        .set_char(BLOCKS[8 - eighths])
-                        .set_style(bot_style);
-                } else {
-                    // Full cell.
-                    buf[(bar_x, y)].set_char('\u{2588}').set_style(thumb_style);
-                }
+                // Full cell.
+                buf[(bar_x, y)].set_char('\u{2588}').set_style(thumb_style);
             }
         }
     }
 }
 
-fn render_album_header<'a>(
-    entry: &QueueEntry,
-    theme: &Theme,
-    hover: Option<HeaderLink>,
-) -> Line<'a> {
-    let year = entry
-        .year
-        .as_deref()
-        .map(|y| format!("({}) ", y))
-        .unwrap_or_default();
-    let codec = entry
-        .codec
-        .as_deref()
-        .map(|c| format!(" [{}]", c))
-        .unwrap_or_default();
-
-    let underline = |style: ratatui::style::Style, on: bool| {
-        if on {
-            style.add_modifier(ratatui::style::Modifier::UNDERLINED)
-        } else {
-            style
-        }
-    };
-    let artist_style = underline(theme.album_header_artist, hover == Some(HeaderLink::Artist));
-    let album_style = underline(theme.album_header_album, hover == Some(HeaderLink::Album));
-    let dim = theme.hint_desc;
-
-    Line::from(vec![
-        Span::raw(" "),
-        Span::styled(entry.album_artist.clone(), artist_style),
-        Span::styled(" \u{2014} ", dim),
-        Span::styled(year, dim),
-        Span::styled(entry.album.clone(), album_style),
-        Span::styled(codec, dim),
-    ])
-}
-
-fn render_track_line<'a>(
-    entry: &QueueEntry,
-    look: &RowLook,
-    theme: &Theme,
-    spinner_tick: usize,
-) -> Line<'a> {
-    let RowLook {
-        cursor: is_cursor,
-        selected: is_selected,
-        drop_target: is_drop_target,
-        hovered: is_hovered,
-        favourite: is_favourite,
-    } = *look;
-    let spin_char = SPINNER[spinner_tick % SPINNER.len()];
-
-    let progress = entry.download_progress.as_ref();
-
-    let status_icon = match entry.status {
-        QueueEntryStatus::Queued => Span::raw(" "),
-        QueueEntryStatus::Playing => Span::styled("\u{25b6}", theme.track_playing),
-        QueueEntryStatus::Played => {
-            if is_selected {
-                Span::styled(" ", theme.track_selected)
-            } else {
-                Span::raw(" ")
-            }
-        }
-        QueueEntryStatus::Downloading => {
-            if let Some(&(downloaded, total)) = progress {
-                if let Some(pct) = (downloaded * 100).checked_div(total) {
-                    Span::styled(format!("{:2}%", pct.min(99)), theme.spinner)
-                } else {
-                    let kb = downloaded / 1024;
-                    Span::styled(format!("{}K", kb), theme.spinner)
-                }
-            } else {
-                Span::styled(format!(" {} ", spin_char), theme.hint_desc)
-            }
-        }
-        QueueEntryStatus::PriorityPending => {
-            if let Some(&(downloaded, total)) = progress {
-                if let Some(pct) = (downloaded * 100).checked_div(total) {
-                    Span::styled(format!("{:2}%", pct.min(99)), theme.track_playing)
-                } else {
-                    let kb = downloaded / 1024;
-                    Span::styled(format!("{}K", kb), theme.track_playing)
-                }
-            } else {
-                Span::styled(format!(">{} ", spin_char), theme.track_playing)
-            }
-        }
-        QueueEntryStatus::Failed => Span::styled("!", theme.failed),
-    };
-
-    let track_num = match (entry.disc, entry.track_number) {
-        (Some(d), Some(n)) if d > 1 => format!("{}-{:02}", d, n),
-        (_, Some(n)) => format!("{:02}", n),
-        _ => "  ".into(),
-    };
-
-    let dur = entry.duration_ms.map(format_time).unwrap_or_default();
-
-    let is_playing = matches!(entry.status, QueueEntryStatus::Playing);
-    let bold = ratatui::style::Modifier::BOLD;
-    let artist_part = if !entry.artist.is_empty() && entry.artist != entry.album_artist {
-        let artist_style = if is_selected {
-            theme.track_selected
-        } else if is_hovered {
-            theme.track_hover
-        } else if is_playing {
-            theme.track_playing.add_modifier(bold)
-        } else {
-            theme.track_playing
-        };
-        let sep_style = if is_selected {
-            theme.track_selected
-        } else if is_playing {
-            theme.hint_desc.add_modifier(bold)
-        } else {
-            theme.hint_desc
-        };
-        vec![
-            Span::styled(entry.artist.clone(), artist_style),
-            Span::styled(" \u{2014} ", sep_style),
-        ]
-    } else {
-        vec![]
-    };
-
-    // Visual markers: cursor > selected, drop indicator.
-    let cursor_marker = if is_cursor {
-        Span::styled("\u{258c}", theme.bar)
-    } else if is_drop_target {
-        Span::styled("\u{25be}", theme.hint_key) // ▾ drop indicator
-    } else if is_selected {
-        Span::styled("\u{2502}", theme.track_selected)
-    } else {
-        Span::raw(" ")
-    };
-
-    // Favourite star in gutter (between padding and cursor marker).
-    let fav_marker = if is_favourite {
-        Span::styled("\u{2605}", theme.favourite) // ★
-    } else {
-        Span::raw(" ")
-    };
-
-    let title_style = if is_cursor {
-        theme.track_cursor
-    } else if is_selected {
-        theme.track_selected
-    } else if is_hovered {
-        theme.track_hover
-    } else if is_playing {
-        theme
-            .track_playing
-            .add_modifier(ratatui::style::Modifier::BOLD)
-    } else {
-        theme.track_normal
-    };
-
-    let num_style = if is_selected {
-        theme.track_selected
-    } else if is_playing {
-        theme.track_number.add_modifier(bold)
-    } else {
-        theme.track_number
-    };
-
-    let dur_style = if is_selected {
-        theme.track_selected
-    } else if is_playing {
-        theme.hint_desc.add_modifier(bold)
-    } else {
-        theme.hint_desc
-    };
-
-    let mut spans = vec![
-        Span::raw(" "),
-        fav_marker,
-        cursor_marker,
-        status_icon,
-        Span::raw(" "),
-        Span::styled(track_num, num_style),
-        Span::raw(" "),
-    ];
-    spans.extend(artist_part);
-    spans.push(Span::styled(entry.title.clone(), title_style));
-    spans.push(Span::raw("  "));
-    spans.push(Span::styled(dur, dur_style));
-
-    Line::from(spans)
-}
-
 /// Calculate the scroll offset needed to keep a queue index visible.
 pub fn scroll_for_cursor(
-    entries: &[QueueEntry],
+    layout: &Layout,
     cursor: usize,
     current_scroll: usize,
     visible_height: usize,
 ) -> usize {
-    let display_lines = build_display_lines(entries);
-    let cursor_line = display_lines
-        .iter()
-        .position(|&line| line == (cursor, false))
-        .unwrap_or(0);
-
+    let cursor_line = layout.line_of(cursor).unwrap_or(0);
     if cursor_line < current_scroll {
         cursor_line
     } else if cursor_line >= current_scroll + visible_height {
@@ -632,28 +686,13 @@ pub fn scroll_for_cursor(
 
 /// Scroll so the cursor is near the top of the visible area.
 /// If the cursor's album header is just above, include it.
-pub fn scroll_cursor_to_top(entries: &[QueueEntry], cursor: usize, visible_height: usize) -> usize {
-    let display_lines = build_display_lines(entries);
-    let cursor_line = display_lines
-        .iter()
-        .position(|&line| line == (cursor, false))
-        .unwrap_or(0);
-
-    // Include the album header if it's directly above the cursor line.
-    let top = if cursor_line > 0 {
-        let (_, is_header) = display_lines[cursor_line - 1];
-        if is_header {
-            cursor_line - 1
-        } else {
-            cursor_line
-        }
-    } else {
-        cursor_line
+pub fn scroll_cursor_to_top(layout: &Layout, cursor: usize, visible_height: usize) -> usize {
+    let cursor_line = layout.line_of(cursor).unwrap_or(0);
+    let top = match cursor_line.checked_sub(1).map(|l| layout.lines[l]) {
+        Some(Line::Heading { .. }) => cursor_line - 1,
+        _ => cursor_line,
     };
-
-    // Don't overscroll past the end.
-    let max_scroll = display_lines.len().saturating_sub(visible_height);
-    top.min(max_scroll)
+    top.min(layout.len().saturating_sub(visible_height))
 }
 
 #[cfg(test)]
@@ -685,7 +724,6 @@ mod tests {
 
     fn draw(
         entries: &[QueueEntry],
-        mode: &Mode,
         cursor: usize,
         offset: usize,
         w: u16,
@@ -693,11 +731,12 @@ mod tests {
     ) -> Terminal<TestBackend> {
         let theme = Theme::default();
         let selected = HashSet::new();
+        let layout = Layout::build(entries, true);
         let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
         terminal
             .draw(|f| {
-                let view =
-                    QueueView::new(entries, mode, cursor, offset, &theme).with_selected(&selected);
+                let view = QueueView::new(entries, &layout, cursor, offset, &theme)
+                    .with_selected(&selected);
                 f.render_widget(view, f.area());
             })
             .unwrap();
@@ -708,17 +747,17 @@ mod tests {
     #[test]
     fn empty_queue_renders_in_a_single_row() {
         for (w, h) in [(1, 1), (2, 1), (3, 1), (1, 2), (80, 1), (80, 24)] {
-            draw(&[], &Mode::Normal, 0, 0, w, h);
+            draw(&[], 0, 0, w, h);
         }
     }
 
     #[test]
     fn renders_with_a_scroll_offset_past_the_end() {
         let entries: Vec<_> = (0..5).map(|n| entry(n, "album")).collect();
-        draw(&entries, &Mode::Normal, 0, 9_999, 40, 10);
+        draw(&entries, 0, 9_999, 40, 10);
     }
 
-    /// Find the row holding the edit-mode cursor marker.
+    /// Find the row holding the cursor marker.
     fn cursor_row(terminal: &Terminal<TestBackend>, w: u16, h: u16) -> u16 {
         let buf = terminal.backend().buffer();
         (0..h)
@@ -729,22 +768,27 @@ mod tests {
     /// The renderer and the hit-test must agree on which row a track occupies,
     /// including the step where moving the cursor down forces a scroll.
     #[test]
-    fn clicked_row_is_the_drawn_row_across_an_edit_scroll_boundary() {
+    fn clicked_row_is_the_drawn_row_across_a_scroll_boundary() {
         // 40 tracks over two albums, so header lines shift the mapping.
         let entries: Vec<_> = (0..40)
             .map(|n| entry(n, if n < 17 { "first" } else { "second" }))
             .collect();
         let (w, h) = (60u16, 20u16);
         let area = Rect::new(0, 0, w, h);
-        let visible_height = (h - 1) as usize;
+        let visible_height = h as usize;
 
         let mut offset = 0usize;
         for cursor in 0..entries.len() {
-            offset = scroll_for_cursor(&entries, cursor, offset, visible_height);
-            let terminal = draw(&entries, &Mode::QueueEdit, cursor, offset, w, h);
+            offset = scroll_for_cursor(
+                &Layout::build(&entries, true),
+                cursor,
+                offset,
+                visible_height,
+            );
+            let terminal = draw(&entries, cursor, offset, w, h);
             let row = cursor_row(&terminal, w, h);
             assert_eq!(
-                QueueView::queue_index_at_y(&entries, area, offset, row),
+                QueueView::queue_index_at_y(&Layout::build(&entries, true), area, offset, row),
                 Some(cursor),
                 "cursor {} drawn on row {} with offset {}",
                 cursor,
@@ -757,13 +801,13 @@ mod tests {
     /// The widget renders exactly the offset it is handed. Scrolling to follow
     /// the cursor is `App`'s job — doing it here too desynced every hit-test.
     #[test]
-    fn edit_mode_widget_does_not_scroll_itself() {
+    fn the_widget_does_not_scroll_itself() {
         let entries: Vec<_> = (0..40).map(|n| entry(n, "")).collect();
         let (w, h) = (60u16, 20u16);
         // Cursor far below the window: a self-scrolling widget would jump to it.
-        let terminal = draw(&entries, &Mode::QueueEdit, 39, 0, w, h);
+        let terminal = draw(&entries, 39, 0, w, h);
         let buf = terminal.backend().buffer();
-        let first_row: String = (0..w).map(|x| buf[(x, 1)].symbol()).collect();
+        let first_row: String = (0..w).map(|x| buf[(x, 0)].symbol()).collect();
         assert!(first_row.contains("track 0"), "drew {:?}", first_row);
     }
 
@@ -773,13 +817,14 @@ mod tests {
             .map(|n| entry(n, if n < 3 { "first" } else { "second" }))
             .collect();
         let area = Rect::new(0, 0, 60, 20);
-        // Row 1 is the first album header.
-        assert_eq!(QueueView::queue_index_at_y(&entries, area, 0, 1), None);
+        // Row 0 is the first album header.
+        let layout = Layout::build(&entries, true);
+        assert_eq!(QueueView::queue_index_at_y(&layout, area, 0, 0), None);
         assert_eq!(
-            QueueView::album_group_at_y(&entries, area, 0, 1),
+            QueueView::album_group_at_y(&layout, area, 0, 0),
             Some((0, 2))
         );
-        assert_eq!(QueueView::queue_index_at_y(&entries, area, 0, 2), Some(0));
+        assert_eq!(QueueView::queue_index_at_y(&layout, area, 0, 1), Some(0));
     }
 
     /// The queue's order after `cmd`, as the player applies a move.
@@ -865,22 +910,241 @@ mod tests {
         entries[1].album.clear();
         let area = Rect::new(0, 0, 60, 20);
         // heading, 0, 1, heading, 2
-        assert_eq!(display_line_count(&entries), 5);
+        assert_eq!(display_line_count(&Layout::build(&entries, true)), 5);
         assert_eq!(
-            QueueView::album_group_at_y(&entries, area, 0, 1),
+            QueueView::album_group_at_y(&Layout::build(&entries, true), area, 0, 0),
             Some((0, 0))
         );
         assert_eq!(
-            QueueView::album_group_at_y(&entries, area, 0, 4),
+            QueueView::album_group_at_y(&Layout::build(&entries, true), area, 0, 3),
             Some((2, 2))
         );
     }
 
     #[test]
-    fn the_heading_row_is_not_the_first_track() {
+    fn rows_below_the_list_are_no_track() {
         let entries: Vec<_> = (0..3).map(|n| entry(n, "")).collect();
-        let area = Rect::new(0, 0, 60, 20);
-        assert_eq!(QueueView::queue_index_at_y(&entries, area, 0, 0), None);
-        assert_eq!(QueueView::queue_index_at_y(&entries, area, 0, 1), Some(0));
+        let area = Rect::new(0, 5, 60, 2);
+        let layout = Layout::build(&entries, true);
+        assert_eq!(QueueView::queue_index_at_y(&layout, area, 0, 4), None);
+        assert_eq!(QueueView::queue_index_at_y(&layout, area, 0, 5), Some(0));
+        assert_eq!(
+            QueueView::queue_index_at_y(&layout, area, 0, 7),
+            None,
+            "past the area"
+        );
+    }
+
+    /// A queue with the shapes real ones have: albums, a multi-disc one, a
+    /// long and a CJK name, a single, a track without an album, the same
+    /// track twice, and every status.
+    fn fixture() -> Vec<QueueEntry> {
+        let mut out = Vec::new();
+        let mut push = |title: &str,
+                        artist: &str,
+                        album_artist: &str,
+                        album: &str,
+                        n: i64,
+                        disc: Option<i64>,
+                        status| {
+            let mut e = entry(out.len(), album);
+            e.title = title.into();
+            e.artist = artist.into();
+            e.album_artist = album_artist.into();
+            e.track_number = Some(n);
+            e.disc = disc;
+            e.status = status;
+            e.year = Some("2007".into());
+            e.codec = Some("flac".into());
+            e.db_id = Some(out.len() as i64 + 1);
+            e.duration_ms = Some(180_000 + 7_000 * out.len() as u64);
+            out.push(e);
+        };
+        use QueueEntryStatus::*;
+        push(
+            "Wild Strawberries",
+            "Pnau",
+            "Pnau",
+            "No More Violence",
+            1,
+            None,
+            Played,
+        );
+        push("Baby", "Pnau", "Pnau", "No More Violence", 2, None, Playing);
+        push(
+            "With You Forever (featuring a very long list of guests who all sang)",
+            "Pnau feat. Everyone",
+            "Pnau",
+            "No More Violence",
+            3,
+            None,
+            Queued,
+        );
+        push(
+            "\u{6625}\u{306e}\u{6d77}",
+            "\u{5742}\u{672c}\u{9f8d}\u{4e00}",
+            "\u{5742}\u{672c}\u{9f8d}\u{4e00}",
+            "\u{6226}\u{5834}\u{306e}\u{30e1}\u{30ea}\u{30fc}\u{30af}\u{30ea}\u{30b9}\u{30de}\u{30b9}",
+            1,
+            None,
+            Downloading,
+        );
+        push(
+            "Disc two opener",
+            "Band",
+            "Band",
+            "Double",
+            1,
+            Some(2),
+            PriorityPending,
+        );
+        push(
+            "Disc two closer",
+            "Band",
+            "Band",
+            "Double",
+            12,
+            Some(2),
+            Failed,
+        );
+        push("Single", "Solo", "Solo", "Single", 1, None, Queued);
+        push("Loose track", "Someone", "", "", 1, None, Queued);
+        push("Baby", "Pnau", "Pnau", "No More Violence", 2, None, Queued);
+        out
+    }
+
+    fn text(buf: &Buffer) -> Vec<String> {
+        (0..buf.area.height)
+            .map(|y| {
+                let mut line = String::new();
+                let mut skip = 0;
+                for x in 0..buf.area.width {
+                    if skip > 0 {
+                        skip -= 1;
+                        continue;
+                    }
+                    let s = buf[(x, y)].symbol();
+                    skip = crate::text::width(s).saturating_sub(1);
+                    line.push_str(s);
+                }
+                line
+            })
+            .collect()
+    }
+
+    fn render(entries: &[QueueEntry], grouped: bool, w: u16, h: u16) -> Buffer {
+        let theme = Theme::default();
+        let layout = Layout::build(entries, grouped);
+        let mut facts = Facts::default();
+        for e in entries {
+            facts.sources.insert(
+                e.db_id.unwrap_or(0),
+                (true, e.status == QueueEntryStatus::Played),
+            );
+        }
+        facts.lock = Some("No More Violence".into());
+        let favourites: HashSet<i64> = [2].into_iter().collect();
+        let area = Rect::new(0, 0, w, h);
+        let mut buf = Buffer::empty(area);
+        QueueView::new(entries, &layout, 0, 0, &theme)
+            .with_facts(&facts, false)
+            .with_favourites(&favourites)
+            .render(area, &mut buf);
+        buf
+    }
+
+    #[test]
+    fn a_single_and_a_loose_track_have_no_heading() {
+        let entries = fixture();
+        let layout = Layout::build(&entries, true);
+        let singles: Vec<usize> = layout
+            .lines()
+            .iter()
+            .filter_map(|l| match l {
+                Line::Single(i) => Some(*i),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(singles, [6, 7]);
+        let headings = layout
+            .lines()
+            .iter()
+            .filter(|l| matches!(l, Line::Heading { .. }))
+            .count();
+        assert_eq!(headings, 4, "the repeated track opens a run of its own");
+        let flat = Layout::build(&entries, false);
+        assert!(flat.lines().iter().all(|l| matches!(l, Line::Single(_))));
+    }
+
+    #[test]
+    fn lengths_and_facts_end_in_one_column() {
+        let entries = fixture();
+        for (w, h) in [(80, 24), (120, 40), (200, 60), (50, 20)] {
+            let buf = render(&entries, true, w, h);
+            let lines = text(&buf);
+            // The row's menu button is not one of its columns.
+            let shown: Vec<String> = lines[..entries.len() + 4]
+                .iter()
+                .map(|l| l.replace('\u{22ef}', " "))
+                .collect();
+            let end = crate::text::width(shown[1].trim_end());
+            for l in &shown {
+                let e = crate::text::width(l.trim_end());
+                // A heading too narrow for its facts leaves them out.
+                let facts = l.contains('\u{b7}');
+                let track = !l.starts_with(" No More")
+                    && !l.starts_with(" Double")
+                    && !l.starts_with(" \u{6226}");
+                assert!(
+                    if track || facts { e == end } else { e <= end },
+                    "{w}x{h}: rows end at {end}, not {e}: {l:?}\n{}",
+                    lines.join("\n")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_heading_says_what_is_queued() {
+        let entries = fixture();
+        let layout = Layout::build(&entries, true);
+        let facts = Facts {
+            lock: Some("No More Violence".into()),
+            ..Default::default()
+        };
+        let bar = toolbar(&entries, &layout, &facts, 2);
+        assert_eq!(bar.title, "playing No More Violence");
+        assert_eq!(
+            bar.count.as_deref(),
+            Some("9 tracks \u{b7} 31:12 \u{b7} 2 selected")
+        );
+        let labels: Vec<&str> = bar.items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            labels.contains(&"by album") && labels.contains(&"remove"),
+            "{labels:?}"
+        );
+        let lines = text(&render(&entries, true, 120, 20));
+        assert!(lines[0].contains("No More Violence  Pnau"), "{}", lines[0]);
+        assert!(lines[0].contains("2007 \u{b7} 3 tracks"), "{}", lines[0]);
+    }
+
+    /// Writes the queue at each size to `$KOAN_DUMP_DIR` to be read.
+    #[test]
+    #[ignore]
+    fn dump() {
+        let Ok(dir) = std::env::var("KOAN_DUMP_DIR") else {
+            return;
+        };
+        let entries = fixture();
+        for grouped in [true, false] {
+            for (w, h) in [(80, 24), (120, 40), (200, 60), (50, 20)] {
+                let lines = text(&render(&entries, grouped, w, h));
+                let name = format!(
+                    "{dir}/queue-{}-{w}x{h}.txt",
+                    if grouped { "albums" } else { "tracks" }
+                );
+                std::fs::write(name, lines.join("\n")).unwrap();
+            }
+        }
     }
 }

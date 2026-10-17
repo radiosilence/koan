@@ -1,84 +1,41 @@
-//! The Now Playing page: the cover, what is playing, the path the sound takes
-//! to the output, the spectrum, and the lyrics. The signal path is the part a
-//! terminal can afford to show in full: the source, what the device was given,
-//! and what, if anything, stood between them.
+//! The Now Playing page, as the apps' Now Playing sheet lays it out: the
+//! cover, the track with its artist and album as links and its heart, the
+//! seek bar and the controls, then what the output is handed and where it
+//! goes. Beside and below it, what a terminal can show besides: the signal
+//! path in full, loudness as EBU R128 measures it, the spectrum, a
+//! spectrogram, the lyrics and the EQ's curve. Everything moving on the page
+//! is driven by the music.
 
-use std::sync::Arc;
-
-use crossbeam_channel::Receiver;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
 use koan_core::audio::dsp::DspStatus;
-use koan_core::config::{Config, ReplayGainMode};
-use koan_core::player::state::{QueueEntry, TrackInfo};
+use koan_core::config::ReplayGainMode;
+use koan_core::player::state::{PlaybackState, QueueEntry, QueueItemId, TrackInfo};
 
 use super::app::App;
 use super::lyrics::LyricsPanel;
+use super::shell::Link;
 use super::theme::Theme;
-use super::transport::format_quality;
-use super::visualizer::{BrailleGrid, VisualizerWidget};
+use super::transport::{
+    self, Act, Control, MINI_BARS, TransportBar, badge, dsp_label, place, press, width_of,
+};
+use super::visualizer::{VisualizerWidget, render_spectrogram};
 
-/// Wider than this and the cover has a column of its own.
-const COVER_MIN_WIDTH: u16 = 48;
+/// Narrower than this and the page stacks the cover over the words.
+const SIDE_BY_SIDE: u16 = 90;
 
-/// The rows the text beside the cover takes: three of the track, the signal
-/// path and the two meters, with a gap before each block.
-const TEXT_ROWS: u16 = 10;
+/// The widest the words beside the cover run.
+const INFO_MAX: u16 = 76;
 
-/// A response curve and the profile it is the curve of.
-type Curve = (String, Vec<f64>);
-
-/// The curve the page plots, worked out on a thread of its own whenever the
-/// profile, the rate or the profiles it is built from change: building a
-/// profile can read and resample impulse files, which no frame can wait for.
-/// The last curve stays up until its replacement arrives.
+/// What the page keeps between frames.
 #[derive(Default)]
-pub struct EqCurve {
-    made_for: Option<(String, u32, Arc<Config>)>,
-    /// The curve shown, with the profile it is the curve of.
-    total: Option<Curve>,
-    pending: Option<Receiver<Option<Curve>>>,
-}
-
-impl EqCurve {
-    /// The curve to plot and the profile it belongs to, which is the last
-    /// one's until a new profile's curve arrives.
-    fn get(&mut self, profile: &str, rate: u32, cfg: &Arc<Config>) -> Option<(&str, &[f64])> {
-        // Every config write is a new `Arc`; only the profiles shape the curve.
-        let current = self.made_for.as_mut().is_some_and(|(p, r, c)| {
-            let same = p == profile
-                && *r == rate
-                && (Arc::ptr_eq(c, cfg) || c.dsp.profiles == cfg.dsp.profiles);
-            if same {
-                *c = cfg.clone();
-            }
-            same
-        });
-        if !current {
-            self.made_for = Some((profile.to_owned(), rate, cfg.clone()));
-            let (tx, rx) = crossbeam_channel::bounded(1);
-            let profile = profile.to_owned();
-            std::thread::Builder::new()
-                .name("koan-eq-curve".into())
-                .spawn(move || {
-                    let curve = koan_core::audio::dsp::profiles::response(&profile, rate);
-                    tx.send(curve.map(|c| (profile, c.total))).ok();
-                })
-                .ok();
-            self.pending = Some(rx);
-        }
-        if let Some(rx) = &self.pending
-            && let Ok(total) = rx.try_recv()
-        {
-            self.total = total;
-            self.pending = None;
-        }
-        self.total.as_ref().map(|(p, c)| (p.as_str(), c.as_slice()))
-    }
+pub struct State {
+    /// The track the true-peak hold belongs to.
+    peak_track: Option<QueueItemId>,
 }
 
 /// What stands between the file and the device. `None` is bit-perfect.
@@ -129,11 +86,11 @@ fn db_label(level: f32) -> String {
 /// zero line, dB labels down the side and a frequency axis under it. The
 /// vertical range is the curve's own, at least ±6 dB. The first row says what
 /// the curve is.
-fn eq_plot(area: Rect, buf: &mut Buffer, theme: &Theme, profile: &str, db: &[f64]) {
+fn eq_plot(area: Rect, buf: &mut Buffer, theme: &Theme, title: &str, freqs: &[f64], db: &[f64]) {
     if area.width < 14 || area.height < 5 || db.is_empty() {
         return;
     }
-    let heading = format!("eq \u{b7} {profile}");
+    let heading = format!("eq \u{b7} {title}");
     buf.set_stringn(
         area.x,
         area.y,
@@ -141,265 +98,725 @@ fn eq_plot(area: Rect, buf: &mut Buffer, theme: &Theme, profile: &str, db: &[f64
         area.width as usize,
         theme.hint_desc,
     );
-    let label_w = 5u16;
-    let plot = Rect::new(
-        area.x + label_w,
-        area.y + 1,
-        area.width - label_w,
-        area.height - 2,
+    super::eq_graph::EqGraph {
+        freqs,
+        curves: vec![super::eq_graph::Curve {
+            db,
+            color: theme.tokens.accent,
+            dash: super::eq_graph::SOLID,
+        }],
+        handles: Vec::new(),
+        level: 0.0,
+        note: None,
+    }
+    .render(
+        Rect::new(area.x, area.y + 1, area.width, area.height - 1),
+        buf,
+        theme,
     );
-    let range = db.iter().fold(6.0f64, |m, v| m.max(v.abs())).ceil();
-    let mut grid = BrailleGrid::new(plot.width as usize, plot.height as usize);
-    let (pw, ph) = (grid.px_width(), grid.px_height());
-    let y_of = |v: f64| {
-        ((1.0 - (v + range) / (2.0 * range)) * (ph - 1) as f64).clamp(0.0, (ph - 1) as f64)
-    };
-    let zero = y_of(0.0) as usize;
-    for x in (0..pw).step_by(2) {
-        grid.set_dot(x, zero, theme.tokens.rule);
-    }
-    let mut prev: Option<(f32, f32)> = None;
-    for x in 0..pw {
-        let i = x * (db.len() - 1) / (pw - 1).max(1);
-        let point = (x as f32, y_of(db[i]) as f32);
-        if let Some((px, py)) = prev {
-            grid.draw_line(px, py, point.0, point.1, theme.tokens.accent);
-        }
-        prev = Some(point);
-    }
-    grid.render_to(plot, buf);
-    let label = |v: f64| format!("{:>+4.0} ", v);
-    let style = theme.hint_desc;
-    buf.set_string(area.x, plot.y, label(range), style);
-    buf.set_string(area.x, plot.y + plot.height / 2, label(0.0), style);
-    buf.set_string(area.x, plot.y + plot.height - 1, label(-range), style);
-    // The frequency axis: the curve runs 20 Hz to 20 kHz on a log scale.
-    let axis_y = area.y + area.height - 1;
-    for (hz, text) in [
-        (50.0f64, "50"),
-        (200.0, "200"),
-        (1000.0, "1k"),
-        (5000.0, "5k"),
-        (15000.0, "15k"),
-    ] {
-        let t = (hz / 20.0).log10() / (20000.0f64 / 20.0).log10();
-        let x = plot.x + (t * plot.width.saturating_sub(1) as f64).round() as u16;
-        if x + text.len() as u16 <= plot.x + plot.width {
-            buf.set_string(x, axis_y, text, style);
-        }
+}
+
+/// The transport bar, as everything that draws it fills it in.
+pub fn transport_for<'a>(
+    app: &'a App,
+    info: Option<&'a TrackInfo>,
+    entry: Option<&'a QueueEntry>,
+    levels: Option<[f32; MINI_BARS]>,
+) -> TransportBar<'a> {
+    let mode = app.state.play_mode();
+    let mut bar = TransportBar::new(
+        info,
+        entry,
+        app.state.playback_state(),
+        app.state.position_ms(),
+        &app.theme,
+    )
+    .with_seekable_ms(app.state.seek_ceiling_ms());
+    bar.output_rate = app.state.output_sample_rate();
+    bar.dsp = app.state.dsp();
+    bar.sleep = app.state.sleep();
+    bar.sleep_fading = app.state.sleep_fading();
+    bar.shuffle = mode.shuffle;
+    bar.repeat = mode.repeat;
+    bar.favourite = entry
+        .and_then(|e| e.db_id)
+        .map(|id| app.favourites.contains(&id));
+    bar.output = Some(output_name(app));
+    bar.controlled = app.view.controlled.as_ref().map(|(n, r)| (n.as_str(), r));
+    bar.links = Some(&app.links);
+    bar.levels = levels;
+    bar
+}
+
+/// What the output is: the renderer played to, or the device chosen.
+fn output_name(app: &App) -> String {
+    match app.state.renderer() {
+        Some(r) => r.name,
+        None => app
+            .cfg
+            .playback
+            .output_device
+            .clone()
+            .unwrap_or_else(|| "system output".into()),
     }
 }
 
-fn row(buf: &mut Buffer, area: Rect, y: u16, key: &str, value: Vec<Span<'_>>, theme: &Theme) {
-    if y >= area.y + area.height {
-        return;
-    }
-    let mut spans = vec![Span::styled(format!(" {key:<8}"), theme.hint_desc)];
+/// A key and its value, the key in a column of its own.
+fn field(buf: &mut Buffer, x: u16, y: u16, w: u16, key: &str, value: Vec<Span<'_>>, theme: &Theme) {
+    let mut spans = vec![Span::styled(format!("{key:<10}"), theme.hint_desc)];
     spans.extend(value);
-    buf.set_line(area.x, y, &Line::from(spans), area.width);
+    buf.set_line(x, y, &Line::from(spans), w);
+}
+
+/// A loudness in LUFS as a bar over the meter's range, -60 to 0, and its
+/// figure.
+fn lufs_bar(lufs: f64, width: usize) -> (String, String) {
+    let level = if lufs.is_finite() {
+        ((lufs + 60.0) / 60.0) as f32
+    } else {
+        0.0
+    };
+    let figure = if lufs.is_finite() && lufs > -70.0 {
+        format!("{lufs:>6.1}")
+    } else {
+        "     -".into()
+    };
+    (meter(level, width), figure)
+}
+
+/// A linear peak in dBTP, to a tenth.
+fn dbtp(peak: f64) -> String {
+    if peak <= 0.0 {
+        "-".into()
+    } else {
+        format!("{:+.1}", 20.0 * peak.log10())
+    }
 }
 
 pub fn render(buf: &mut Buffer, app: &mut App, area: Rect) {
-    if area.width == 0 || area.height == 0 {
+    let page = area;
+    if page.width < 12 || page.height < 3 {
         return;
     }
-    let body = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
-    if body.height == 0 {
+    let Some(info) = app.state.track_info() else {
+        buf.set_stringn(
+            page.x,
+            page.y,
+            "nothing playing",
+            page.width as usize,
+            app.theme.hint_desc,
+        );
         return;
-    }
-    let theme = &app.theme;
-    let cfg = app.cfg.clone();
-    let output_rate = app.state.output_sample_rate();
-    let dsp = app.state.dsp();
-
-    let info = app.state.track_info();
-    let entry: Option<QueueEntry> = app
+    };
+    let entry = app
         .queue
         .vq_cache
         .entries
         .iter()
-        .find(|e| e.status == koan_core::player::state::QueueEntryStatus::Playing)
+        .find(|e| e.id == info.id)
         .cloned();
-
-    let Some(info) = info else {
-        buf.set_line(
-            body.x,
-            body.y,
-            &Line::from(Span::styled(" nothing playing", theme.hint_desc)),
-            body.width,
-        );
-        return;
-    };
-
-    // The cover's column, square in the terminal's cells.
-    let mut art_w = match body.width {
-        100.. => 36u16,
-        70..=99 => 28,
-        COVER_MIN_WIDTH..=69 => 16,
-        _ => 0,
-    };
-    // The cover takes under half the page's height, so the spectrum and the
-    // lyrics keep room under it.
-    let max_art_h = (body.height * 9 / 20).clamp(1, body.height.saturating_sub(4).max(1));
-    if app.art.gfx.rows_for(art_w) > max_art_h {
-        art_w = (f32::from(max_art_h) * 2.0 / app.art.gfx.squash()) as u16;
+    if app.now_playing.peak_track != Some(info.id) {
+        app.now_playing.peak_track = Some(info.id);
+        app.visualizer.true_peak_hold = 0.0;
     }
-    let art_h = app.art.gfx.rows_for(art_w).min(max_art_h.max(1));
-    let top_h = art_h.max(TEXT_ROWS).min(body.height);
-    let text_x = body.x + if art_w > 0 { art_w + 2 } else { 0 } + 1;
-    let text_w = (body.x + body.width).saturating_sub(text_x);
-
-    if art_w > 0 {
-        let art_area = Rect::new(body.x + 1, body.y, art_w, art_h);
-        app.layout.now_playing_art_area = art_area;
-        let cache = &app.art.now_playing_art;
-        cache.render_to(&mut app.art.gfx, art_area, buf);
-    }
-
-    let text = Rect::new(text_x, body.y, text_w, top_h);
-    let theme = &app.theme;
-    if text.width > 4 {
-        let (title, artist, album) = match &entry {
-            Some(e) => (
-                e.title.clone(),
-                e.artist.clone(),
-                [
-                    Some(e.album.clone()),
-                    e.year.as_ref().map(|y| format!("({y})")),
-                ]
-                .into_iter()
-                .flatten()
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join(" "),
-            ),
-            None => (
-                info.path
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-                String::new(),
-                String::new(),
-            ),
-        };
-        let w = text.width as usize;
-        buf.set_stringn(
-            text.x,
-            text.y,
-            &title,
-            w,
-            theme.heading.add_modifier(ratatui::style::Modifier::BOLD),
-        );
-        buf.set_stringn(text.x, text.y + 1, &artist, w, theme.track_playing);
-        buf.set_stringn(text.x, text.y + 2, &album, w, theme.hint_desc);
-
-        let off = deviation(&info, output_rate, dsp.as_ref(), cfg.playback.replaygain);
-        let value = |s: String| vec![Span::styled(s, theme.track_normal)];
-        let sy = text.y + 4;
-        let pad = |k: &str, y, v: Vec<Span<'_>>, buf: &mut Buffer| {
-            row(buf, text, y, k, v, theme);
-        };
-        // The text column starts one cell in already; `row` adds its own pad.
-        let source = format_quality(&info, None, None);
-        pad("source", sy, value(source), buf);
-        let output = match (&off, output_rate) {
-            (None, Some(rate)) => vec![
-                Span::styled(format!("{rate} Hz \u{b7} "), theme.track_normal),
-                Span::styled("bit-perfect \u{2713}", theme.track_playing),
-            ],
-            (None, None) => vec![Span::styled("bit-perfect \u{2713}", theme.track_playing)],
-            (Some(why), rate) => vec![
-                Span::styled(
-                    rate.map_or(String::new(), |r| format!("{r} Hz \u{b7} ")),
-                    theme.track_normal,
-                ),
-                Span::styled(why.clone(), Style::new().fg(theme.warning)),
-            ],
-        };
-        pad("output", sy + 1, output, buf);
-        let dsp_text = match &dsp {
-            Some(d) => format!(
-                "{} ({})",
-                d.profile,
-                match (d.eq, d.convolution_rate.is_some()) {
-                    (true, true) => "EQ + FIR",
-                    (false, true) => "FIR",
-                    _ => "EQ",
-                }
-            ),
-            None => "none".into(),
-        };
-        pad("dsp", sy + 2, value(dsp_text), buf);
-        if sy + 2 < text.y + text.height {
+    // The cover, square in the terminal's cells: beside the words where the
+    // page is wide, over them where it is not.
+    let wide = page.width >= SIDE_BY_SIDE;
+    let squash = app.art.gfx.squash();
+    let (max_w, max_h) = if wide {
+        (page.width * 2 / 5, page.height * 11 / 20)
+    } else {
+        (page.width, page.height * 2 / 5)
+    };
+    let tallest = (f32::from(max_h) * 2.0 / squash) as u16;
+    let cover_w = max_w.min(tallest).min(56);
+    let cover_h = app.art.gfx.rows_for(cover_w).min(max_h);
+    let cover = if wide {
+        Rect::new(page.x, page.y, cover_w, cover_h)
+    } else {
+        Rect::new(
+            page.x + (page.width - cover_w) / 2,
+            page.y,
+            cover_w,
+            cover_h,
+        )
+    };
+    if cover.width > 0 && cover.height > 0 {
+        app.layout.now_playing_art_area = cover;
+        app.art
+            .now_playing_art
+            .render_to_centered(&mut app.art.gfx, cover, buf);
+        if app.art.now_playing_art.cached().is_some() {
             app.layout
-                .eq_hits
-                .push(Rect::new(text.x, sy + 2, text.width, 1));
+                .now_playing
+                .controls
+                .push((cover, Control::Cover));
         }
+    }
+    let words = if wide {
+        let x = cover.x + cover.width + 3;
+        Rect::new(
+            x,
+            page.y,
+            (page.x + page.width).saturating_sub(x).min(INFO_MAX),
+            page.height,
+        )
+    } else {
+        let y = cover.y + cover.height + 1;
+        Rect::new(
+            page.x,
+            y,
+            page.width.min(INFO_MAX),
+            (page.y + page.height).saturating_sub(y),
+        )
+    };
+    let used = draw_words(buf, app, words, &info, entry.as_ref());
+    let top = if wide {
+        cover.height.max(used)
+    } else {
+        cover.height + 1 + used
+    };
 
-        let [l, r] = app.visualizer.vu_levels;
-        let bar_w = (text.width as usize).saturating_sub(18).clamp(4, 30);
-        for (i, (name, level)) in [("L", l), ("R", r)].into_iter().enumerate() {
-            pad(
-                if i == 0 { "level" } else { "" },
-                sy + 4 + i as u16,
-                vec![
-                    Span::styled(format!("{name} "), theme.hint_desc),
-                    Span::styled(meter(level, bar_w), theme.progress_filled),
-                    Span::styled(format!(" {} dB", db_label(level)), theme.hint_desc),
-                ],
+    // Below: the spectrum and the spectrogram beside the lyrics and the EQ.
+    let rest_y = page.y + top + 1;
+    let rest_h = (page.y + page.height).saturating_sub(rest_y);
+    if rest_h < 4 {
+        return;
+    }
+    let rest = Rect::new(page.x, rest_y, page.width, rest_h);
+    let (scopes, words_side) = if rest.width >= 70 {
+        let right = rest.width * 2 / 5;
+        (
+            Rect::new(rest.x, rest.y, rest.width - right - 1, rest.height),
+            Rect::new(rest.x + rest.width - right, rest.y, right, rest.height),
+        )
+    } else {
+        let half = rest.height / 2;
+        (
+            Rect::new(rest.x, rest.y, rest.width, half),
+            Rect::new(rest.x, rest.y + half, rest.width, rest.height - half),
+        )
+    };
+    if app.viz_config.enabled && scopes.height >= 2 {
+        let spectrum_h = (scopes.height / 2).clamp(1, 10);
+        let label = |buf: &mut Buffer, y: u16, text: &str| {
+            buf.set_stringn(
+                scopes.x,
+                y,
+                text,
+                scopes.width as usize,
+                app.theme.hint_desc,
+            );
+        };
+        label(buf, scopes.y, "spectrum");
+        let spectrum = Rect::new(
+            scopes.x,
+            scopes.y + 1,
+            scopes.width,
+            spectrum_h.saturating_sub(1).max(1),
+        );
+        VisualizerWidget::new(&mut app.visualizer, &app.theme).render(spectrum, buf);
+        let gram_y = spectrum.y + spectrum.height + 1;
+        let gram_h = (scopes.y + scopes.height).saturating_sub(gram_y + 1);
+        if gram_h >= 2 {
+            label(buf, gram_y, "spectrogram");
+            render_spectrogram(
+                &app.visualizer,
+                Rect::new(scopes.x, gram_y + 1, scopes.width, gram_h),
                 buf,
             );
         }
     }
 
-    // Below the top block: the spectrum, then lyrics beside the EQ curve.
-    let rest_y = body.y + top_h + 1;
-    let rest_h = (body.y + body.height).saturating_sub(rest_y);
-    if rest_h < 3 {
-        return;
-    }
-    let spectrum_h = (rest_h * 2 / 5).clamp(3, 12).min(rest_h);
-    let spectrum = Rect::new(body.x + 1, rest_y, body.width.saturating_sub(2), spectrum_h);
-    if app.viz_config.enabled {
-        VisualizerWidget::new(&mut app.visualizer, &app.theme).render(spectrum, buf);
-    }
-    let low_y = rest_y + spectrum_h + 1;
-    let low_h = (body.y + body.height).saturating_sub(low_y);
-    if low_h < 3 {
-        return;
-    }
-    let low = Rect::new(body.x, low_y, body.width, low_h);
-
-    let curve = dsp.as_ref().and_then(|d| {
-        let rate = output_rate.unwrap_or(info.sample_rate);
-        app.eq_curve.get(&d.profile, rate, &cfg)
-    });
-    let (lyrics_area, plot_area) = match curve {
-        Some(_) if low.width >= 70 => {
-            let plot_w = (low.width * 2 / 5).min(48);
-            (
-                Rect::new(low.x, low.y, low.width - plot_w, low.height),
-                Some(Rect::new(
-                    low.x + low.width - plot_w + 2,
-                    low.y,
-                    plot_w - 2,
-                    low.height.min(12),
-                )),
-            )
-        }
-        _ => (low, None),
+    // Read off the frame by the EQ page's worker: what the output in use
+    // plays, its correction and the EQs on it together.
+    let curve = app
+        .state
+        .dsp()
+        .and(app.eq_page.playing.clone())
+        .filter(|p| !p.db.is_empty());
+    let plot_h = match &curve {
+        Some(_) if words_side.height >= 14 => 9,
+        _ => 0,
     };
+    let lyrics_area = Rect::new(
+        words_side.x,
+        words_side.y,
+        words_side.width,
+        words_side.height - plot_h,
+    );
     let pos = app.state.position_ms();
     LyricsPanel::new(&app.lyrics, pos, &app.theme, app.spinner_tick).render(lyrics_area, buf);
-    if let (Some(plot), Some((profile, curve))) = (plot_area, curve) {
-        eq_plot(plot, buf, &app.theme, profile, curve);
+    if let (Some(curve), true) = (&curve, plot_h > 0) {
+        let plot = Rect::new(
+            words_side.x + 1,
+            lyrics_area.y + lyrics_area.height,
+            words_side.width.saturating_sub(1),
+            plot_h,
+        );
+        eq_plot(plot, buf, &app.theme, &curve.title, &curve.freqs, &curve.db);
         app.layout.eq_hits.push(plot);
     }
 }
 
+/// The cover as large as the screen allows, with the track and who it is by
+/// centred under it, as the apps' artwork viewer has it. A click anywhere or
+/// Escape closes it.
+pub fn render_zoom(buf: &mut Buffer, app: &mut App, area: Rect) {
+    ratatui::widgets::Clear.render(area, buf);
+    // A margin all round, and two rows of caption under a gap.
+    const CAPTION: u16 = 3;
+    let (room_w, room_h) = (
+        area.width.saturating_sub(4),
+        area.height.saturating_sub(2 + CAPTION),
+    );
+    if room_w == 0 || room_h == 0 {
+        return;
+    }
+    let tallest = (f32::from(room_h) * 2.0 / app.art.gfx.squash()) as u16;
+    let side = room_w.min(tallest).max(1);
+    let rows = app.art.gfx.rows_for(side).min(room_h);
+    let block = rows + CAPTION;
+    let cover = Rect::new(
+        area.x + (area.width - side) / 2,
+        area.y + (area.height - block) / 2,
+        side,
+        rows,
+    );
+    app.art
+        .now_playing_art
+        .render_to_centered(&mut app.art.gfx, cover, buf);
+    let entry = app.state.track_info().and_then(|info| {
+        app.queue
+            .vq_cache
+            .entries
+            .iter()
+            .find(|e| e.id == info.id)
+            .cloned()
+    });
+    let Some(e) = entry else {
+        return;
+    };
+    let subtitle = [e.artist.as_str(), e.album.as_str()]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" \u{2014} ");
+    let theme = &app.theme;
+    for (y, text, style) in [
+        (
+            cover.y + rows + 1,
+            e.title.as_str(),
+            theme.heading.add_modifier(Modifier::BOLD),
+        ),
+        (cover.y + rows + 2, subtitle.as_str(), theme.hint_desc),
+    ] {
+        let text = super::text::fit(text, area.width.saturating_sub(4) as usize);
+        let w = crate::text::width(&text) as u16;
+        if y < area.y + area.height {
+            buf.set_string(area.x + (area.width - w) / 2, y, &text, style);
+        }
+    }
+}
+
+/// The words beside or under the cover. Returns how many rows they took.
+fn draw_words(
+    buf: &mut Buffer,
+    app: &mut App,
+    area: Rect,
+    info: &TrackInfo,
+    entry: Option<&QueueEntry>,
+) -> u16 {
+    if area.width < 8 || area.height == 0 {
+        return 0;
+    }
+    let cfg = app.cfg.clone();
+    let output_rate = app.state.output_sample_rate();
+    let dsp = app.state.dsp();
+    let dsp = dsp.as_ref();
+    let playing = app.state.playback_state() == PlaybackState::Playing;
+    let output = output_name(app);
+    let controlled = app.view.controlled.as_ref().map(|(n, r)| (n.as_str(), r));
+    let theme = &app.theme;
+    let hits = &mut app.layout.now_playing;
+    let bottom = area.y + area.height;
+    let mut y = area.y;
+    let mut next = |gap: u16| {
+        let at = y;
+        y += 1 + gap;
+        (at < bottom).then_some(at)
+    };
+    let links = &app.links;
+    let track = entry.and_then(|e| e.db_id);
+    let w = area.width;
+
+    // The track: its title and heart, then the artist and the album.
+    let title = entry.map_or_else(
+        || {
+            info.path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        },
+        |e| e.title.clone(),
+    );
+    if let Some(row) = next(0) {
+        let favourite = entry
+            .and_then(|e| e.db_id)
+            .map(|id| app.favourites.contains(&id));
+        let heart = favourite.map(|on| {
+            if on {
+                (
+                    Span::styled("\u{2665}", Style::new().fg(theme.tokens.accent)),
+                    press(Control::Favourite),
+                )
+            } else {
+                (
+                    Span::styled("\u{2661}", theme.hint_desc),
+                    press(Control::Favourite),
+                )
+            }
+        });
+        let room = w.saturating_sub(if heart.is_some() { 3 } else { 0 });
+        place(
+            buf,
+            &mut hits.controls,
+            links,
+            (area.x, row),
+            room,
+            &[(
+                Span::styled(title, theme.heading.add_modifier(Modifier::BOLD)),
+                None,
+            )],
+        );
+        if let Some(heart) = heart {
+            place(
+                buf,
+                &mut hits.controls,
+                links,
+                (area.x + w - 1, row),
+                1,
+                &[heart],
+            );
+        }
+    }
+    if let Some(e) = entry {
+        if let Some(row) = next(0) {
+            place(
+                buf,
+                &mut hits.controls,
+                links,
+                (area.x, row),
+                w,
+                &[(
+                    Span::styled(e.artist.as_str(), Style::new().fg(theme.tokens.accent)),
+                    track.map(|id| Act::Go(Link::ArtistOfTrack(id))),
+                )],
+            );
+        }
+        if let Some(row) = next(1) {
+            let mut parts = vec![(
+                Span::styled(e.album.as_str(), theme.track_normal),
+                track.map(|id| Act::Go(Link::AlbumOfTrack(id))),
+            )];
+            if let Some(year) = e.year.as_deref().filter(|y| !y.is_empty()) {
+                parts.push((
+                    Span::styled(format!(" \u{b7} {year}"), theme.hint_desc),
+                    None,
+                ));
+            }
+            place(buf, &mut hits.controls, links, (area.x, row), w, &parts);
+        }
+    } else {
+        next(1);
+    }
+
+    // The seek bar, and the controls centred under it.
+    let duration = entry
+        .and_then(|e| e.duration_ms)
+        .unwrap_or(info.duration_ms);
+    if let Some(row) = next(0) {
+        hits.seek = transport::seek_bar(
+            Rect::new(area.x, row, w, 1),
+            buf,
+            theme,
+            app.state.position_ms(),
+            duration,
+            app.state.seek_ceiling_ms(),
+        );
+    }
+    if let Some(row) = next(1) {
+        let mode = app.state.play_mode();
+        let ctl = transport::controls(theme, playing, mode.shuffle, mode.repeat, "    ");
+        let ctl_w = width_of(&ctl);
+        place(
+            buf,
+            &mut hits.controls,
+            links,
+            (area.x + w.saturating_sub(ctl_w) / 2, row),
+            w,
+            &ctl,
+        );
+    }
+
+    // The signal path: the file, what the device was given, and the EQ.
+    let off = deviation(info, output_rate, dsp, cfg.playback.replaygain);
+    let value = |s: String| vec![Span::styled(s, theme.track_normal)];
+    if let Some(row) = next(0) {
+        // The badge, and what it leaves out: red book's name, or a lossy
+        // file's bitrate.
+        let mut source = badge(info, None);
+        match (info.sample_rate, info.bit_depth, info.bitrate_kbps) {
+            (44100, Some(16), _) => source.push_str(" \u{b7} CD quality"),
+            (_, None, Some(kbps)) => source.push_str(&format!(" \u{b7} {kbps} kbps")),
+            _ => {}
+        }
+        field(buf, area.x, row, w, "source", value(source), theme);
+    }
+    if let Some(row) = next(0) {
+        let rate = output_rate.map_or(String::new(), |r| {
+            format!("{} kHz \u{b7} ", transport::khz(r))
+        });
+        let verdict = match &off {
+            None => Span::styled("bit-perfect \u{2713}", Style::new().fg(theme.tokens.accent)),
+            Some(why) => Span::styled(why.clone(), Style::new().fg(theme.warning)),
+        };
+        field(
+            buf,
+            area.x,
+            row,
+            w,
+            "output",
+            vec![Span::styled(rate, theme.track_normal), verdict],
+            theme,
+        );
+    }
+    if let Some(row) = next(0) {
+        let name = dsp.map_or_else(
+            || "off".to_string(),
+            |d| format!("{} ({})", d.profile, dsp_label(d)),
+        );
+        field(buf, area.x, row, w, "eq", value(name), theme);
+        app.layout.eq_hits.push(Rect::new(area.x, row, w, 1));
+    }
+    if let Some(row) = next(1) {
+        let set = app.state.sleep().is_some() || app.state.sleep_fading();
+        let room = w.saturating_sub(10);
+        // Each control named where there is room, its glyph alone where not.
+        let parts = |named: bool| {
+            let word = |glyph: Span<'static>, name: &str| {
+                if named && glyph.content.chars().count() == 1 {
+                    Span::styled(format!("{} {name}", glyph.content), glyph.style)
+                } else {
+                    glyph
+                }
+            };
+            let sleep = Span::styled(
+                transport::sleep_label(app.state.sleep(), app.state.sleep_fading()),
+                if set {
+                    Style::new().fg(theme.tokens.accent)
+                } else {
+                    theme.hint_desc
+                },
+            );
+            let (play_on, act) = transport::play_on(theme, controlled);
+            [
+                (word(sleep, "sleep"), press(Control::Sleep)),
+                (Span::raw("   "), None),
+                (word(play_on, "play on"), act),
+                (Span::raw("   "), None),
+                (
+                    Span::styled(format!("\u{25D4} {output}"), theme.hint_desc),
+                    press(Control::Output),
+                ),
+            ]
+        };
+        let named = parts(true);
+        let parts = if width_of(&named) <= room {
+            named
+        } else {
+            parts(false)
+        };
+        field(buf, area.x, row, w, "play", Vec::new(), theme);
+        place(
+            buf,
+            &mut hits.controls,
+            links,
+            (area.x + 10, row),
+            room,
+            &parts,
+        );
+    }
+
+    // Loudness, momentary and short-term, the true peak held for the track,
+    // and each channel's level.
+    let bar_w = (w as usize).saturating_sub(10 + 2 + 6 + 5).clamp(4, 40);
+    let loudness = app.visualizer.loudness;
+    for (key, lufs) in [
+        ("momentary", loudness.momentary),
+        ("short", loudness.short_term),
+    ] {
+        let Some(row) = next(0) else { break };
+        let lufs = if playing { lufs } else { f64::NEG_INFINITY };
+        let (bar, figure) = lufs_bar(lufs, bar_w);
+        field(
+            buf,
+            area.x,
+            row,
+            w,
+            key,
+            vec![
+                Span::styled(bar, theme.progress_filled),
+                Span::styled(format!(" {figure} LUFS"), theme.hint_desc),
+            ],
+            theme,
+        );
+    }
+    if let Some(row) = next(0) {
+        let peak = app.visualizer.true_peak_hold;
+        let style = if peak > 1.0 {
+            Style::new().fg(theme.tokens.bad)
+        } else {
+            theme.track_normal
+        };
+        field(
+            buf,
+            area.x,
+            row,
+            w,
+            "true peak",
+            vec![
+                Span::styled(dbtp(peak), style),
+                Span::styled(" dBTP, highest this track", theme.hint_desc),
+            ],
+            theme,
+        );
+    }
+    let [l, r] = app.visualizer.vu_levels;
+    for (key, name, level) in [("level", "L", l), ("", "R", r)] {
+        let Some(row) = next(0) else { break };
+        field(
+            buf,
+            area.x,
+            row,
+            w,
+            key,
+            vec![
+                Span::styled(format!("{name} "), theme.hint_desc),
+                Span::styled(meter(level, bar_w.saturating_sub(2)), theme.progress_filled),
+                Span::styled(format!(" {} dB", db_label(level)), theme.hint_desc),
+            ],
+            theme,
+        );
+    }
+    y.min(bottom) - area.y
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use koan_core::player::state::{QueueEntryStatus, SharedPlayerState};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    /// An `App` playing a track from a small queue, apart from any player,
+    /// with covers in half blocks so a dump shows them.
+    pub(crate) fn playing_app() -> App {
+        koan_core::config::isolate_config_for_tests();
+        let state = SharedPlayerState::new();
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let entries: Vec<QueueEntry> = (0..6)
+            .map(|n| QueueEntry {
+                playlist_entry_id: None,
+                id: QueueItemId::new(),
+                db_id: None,
+                path: format!("/music/{n}.flac").into(),
+                title: format!("A Track Called Number {n}"),
+                artist: "Some Artist".into(),
+                album_artist: "Some Artist".into(),
+                album: "An Album of Some Length".into(),
+                year: Some("2007".into()),
+                codec: Some("FLAC".into()),
+                track_number: Some(n + 1),
+                disc: None,
+                duration_ms: Some(213_000),
+                status: if n == 0 {
+                    QueueEntryStatus::Playing
+                } else {
+                    QueueEntryStatus::Queued
+                },
+                download_progress: None,
+                error: None,
+            })
+            .collect();
+        state.set_track_info(Some(TrackInfo {
+            duration_ms: 213_000,
+            ..info(44100)
+        }));
+        let mut app = App::new(state, koan_core::audio::viz::VizSnapshot::new(), tx, 60);
+        if let Some(info) = app.state.track_info() {
+            let mut entries = entries;
+            entries[0].id = info.id;
+            entries[0].path = info.path.clone();
+            app.queue.vq_cache.entries = entries;
+        }
+        app.queue.vq_version = app.state.playlist_version();
+        app.art_size = 24;
+        app.show_fps = false;
+        app.viz_fullscreen = false;
+        app.viz_config.enabled = true;
+        app
+    }
+
+    /// The screen as text, a line a row, the trailing half of each wide
+    /// character left out.
+    pub(crate) fn screen(app: &mut App, w: u16, h: u16) -> Vec<String> {
+        let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+        terminal.draw(|f| crate::ui::render(f, app)).unwrap();
+        let buf = terminal.backend().buffer();
+        (0..h)
+            .map(|y| {
+                let mut line = String::new();
+                let mut skip = 0;
+                for x in 0..w {
+                    if skip > 0 {
+                        skip -= 1;
+                        continue;
+                    }
+                    let sym = buf[(x, y)].symbol();
+                    skip = unicode_width::UnicodeWidthStr::width(sym).saturating_sub(1);
+                    line.push_str(sym);
+                }
+                line
+            })
+            .collect()
+    }
+
+    /// Writes the screen under `target/tui-dumps` when `KOAN_TUI_DUMP` is set,
+    /// for reading a layout by eye.
+    pub(crate) fn dump(name: &str, lines: &[String]) {
+        if std::env::var_os("KOAN_TUI_DUMP").is_none() {
+            return;
+        }
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tui-dumps");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{name}.txt")), lines.join("\n")).unwrap();
+    }
+
+    #[test]
+    fn dumps_now_playing() {
+        let mut app = playing_app();
+        app.go_page(crate::nav::Page::NowPlaying);
+        for (w, h) in [(50, 20), (80, 24), (120, 40), (200, 60)] {
+            let lines = screen(&mut app, w, h);
+            dump(&format!("now-playing-{w}x{h}"), &lines);
+        }
+        app.go_page(crate::nav::Page::Queue);
+        for (w, h) in [(50, 20), (80, 24), (120, 40), (200, 60)] {
+            let lines = screen(&mut app, w, h);
+            dump(&format!("queue-{w}x{h}"), &lines);
+        }
+    }
     use koan_core::player::state::QueueItemId;
 
     fn info(rate: u32) -> TrackInfo {
@@ -413,35 +830,6 @@ mod tests {
             channels: 2,
             duration_ms: 1000,
         }
-    }
-
-    #[test]
-    fn the_curve_survives_config_writes_that_leave_the_profiles_alone() {
-        let cfg = Arc::new(Config::default());
-        let mut curve = EqCurve {
-            made_for: Some(("flat".into(), 44100, cfg.clone())),
-            total: Some(("flat".into(), vec![1.0])),
-            pending: None,
-        };
-        let mut unrelated = (*cfg).clone();
-        unrelated.visualizer.enabled = !unrelated.visualizer.enabled;
-        assert_eq!(
-            curve.get("flat", 44100, &Arc::new(unrelated)),
-            Some(("flat", &[1.0][..]))
-        );
-        assert!(curve.pending.is_none(), "nothing is rebuilt");
-
-        let mut edited = (*cfg).clone();
-        edited.dsp.profiles.push(koan_core::config::DspProfile {
-            name: "flat".into(),
-            ..Default::default()
-        });
-        assert_eq!(
-            curve.get("flat", 44100, &Arc::new(edited)),
-            Some(("flat", &[1.0][..])),
-            "the old curve stays up while the new one is worked out"
-        );
-        assert!(curve.pending.is_some());
     }
 
     #[test]

@@ -1,0 +1,1 @@
+- **A Downloads page in the terminal UI.** It lists the transfers from the server, running first, with their progress, rate and size, then the ones that finished or failed.

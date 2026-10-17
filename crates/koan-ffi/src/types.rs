@@ -1133,6 +1133,49 @@ pub struct BrowseFilter {
     pub genre: Option<String>,
 }
 
+impl From<BrowseFilter> for koan_core::browse::BrowseFilter {
+    fn from(f: BrowseFilter) -> Self {
+        Self {
+            favourites: f.favourites,
+            recent: f.recent,
+            downloaded: f.downloaded,
+            lossless: f.lossless,
+            codec: f.codec,
+            genre: f.genre,
+            year_from: f.year_from,
+            year_to: f.year_to,
+        }
+    }
+}
+
+impl From<AlbumSort> for koan_core::browse::AlbumSort {
+    fn from(sort: AlbumSort) -> Self {
+        match sort {
+            AlbumSort::RecentlyAdded => Self::RecentlyAdded,
+            AlbumSort::Title => Self::Title,
+            AlbumSort::Artist => Self::Artist,
+            AlbumSort::Year => Self::Year,
+            AlbumSort::Random => Self::Random,
+            AlbumSort::LastPlayed => Self::LastPlayed,
+            AlbumSort::Downloaded => Self::Downloaded,
+            AlbumSort::BestMatch => Self::BestMatch,
+        }
+    }
+}
+
+impl From<TrackBrowseSort> for koan_core::browse::TrackSort {
+    fn from(sort: TrackBrowseSort) -> Self {
+        match sort {
+            TrackBrowseSort::Artist => Self::Artist,
+            TrackBrowseSort::Title => Self::Title,
+            TrackBrowseSort::Album => Self::Album,
+            TrackBrowseSort::Duration => Self::Duration,
+            TrackBrowseSort::LastPlayed => Self::LastPlayed,
+            TrackBrowseSort::BestMatch => Self::BestMatch,
+        }
+    }
+}
+
 /// What the codec and genre filters offer: the codecs records are in, most
 /// common first, and the genres most records carry.
 #[derive(uniffi::Record, Debug, Clone)]
