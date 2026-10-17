@@ -41,7 +41,8 @@ max-wide:bottom-[calc(var(--bar-h)+var(--tabs-h)+env(safe-area-inset-bottom)+8px
 /// A track's properties, filled from `/track/{id}/properties` by the UI's script.
 const TRACK_PROPERTIES: &str = "<dialog id=track-properties class=\"m-auto max-h-[85dvh] w-[calc(100%-24px)] \
 max-w-panel overflow-y-auto border border-rule bg-bg px-5 pt-4 pb-5 text-ink backdrop:bg-bg/70\" \
-aria-label=Properties></dialog>";
+aria-label=Properties><div id=track-properties-body></div>\
+<form method=dialog class=\"mt-6 flex justify-end\"><button>Close</button></form></dialog>";
 
 pub(super) const KICKER: &str = "m-0 text-fine text-muted lowercase";
 pub(super) const SUB: &str = "mt-0 mb-3.5 text-muted wrap-anywhere";

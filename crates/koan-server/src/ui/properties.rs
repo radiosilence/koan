@@ -3,21 +3,22 @@
 //! record turns up twice or the wrong file plays.
 //!
 //! Paths describe the server's filesystem, so only an admin is shown them.
+//!
+//! The UI's script asks for the content alone and shows it in the shell's
+//! dialog; a page load gets it as a page of its own.
 
 use axum::Extension;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use koan_core::auth::Role;
 use koan_core::db::queries::{self, UidKind};
 
+use super::pages::respond;
 use super::pages::{COPY_INPUT, COPY_ROW, KICKER, SUB};
-use super::{UiState, html, open};
+use super::{PARTIAL, UiState, html, open};
 use crate::auth::AuthUser;
 use crate::share::{blocking, duration, escape, not_found};
-
-/// The labels of fields that name a place on the server's disk.
-const PATH_FIELDS: &[&str] = &["Path"];
 
 const LIST: &str = "m-0 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1 text-control \
 [&_dd]:m-0 [&_dd]:wrap-anywhere [&_dd]:select-text [&_dt]:text-muted";
@@ -27,10 +28,13 @@ pub(super) async fn page(
     State(s): State<UiState>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<i64>,
+    headers: HeaderMap,
 ) -> Response {
     let admin = user.role == Role::Admin;
-    match blocking(move || render(&s, id, admin)).await {
-        Some(body) => html(StatusCode::OK, body),
+    let state = s.clone();
+    match blocking(move || render(&state, id, admin)).await {
+        Some(body) if headers.contains_key(PARTIAL) => html(StatusCode::OK, body),
+        Some(body) => respond(&s, &headers, &user, "Properties", &body),
         None => not_found(),
     }
 }
@@ -42,14 +46,9 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<String> {
     let album = t
         .album_id
         .and_then(|a| queries::get_album(conn, a).ok().flatten());
-    let uid = |kind, id: Option<i64>| {
-        let id = id?;
-        queries::uids_for(conn, kind, [id]).ok()?.remove(&id)
-    };
-    let (track_uid, album_uid) = (
-        uid(UidKind::Track, Some(t.id)),
-        uid(UidKind::Album, t.album_id),
-    );
+    let uid = |kind, id: i64| queries::uids_for(conn, kind, [id]).ok()?.remove(&id);
+    let track_uid = uid(UidKind::Track, t.id);
+    let album_uid = t.album_id.and_then(|a| uid(UidKind::Album, a));
     let sources = queries::sources_of_track(conn, id).ok()?;
     // Facts only a source holds, from the first that has them: the file's.
     let first = |f: fn(&queries::TrackMeta) -> Option<String>| sources.iter().find_map(f);
@@ -87,7 +86,7 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<String> {
         ("Codec", t.codec.clone()),
         ("Sample rate", t.sample_rate.map(|r| format!("{r} Hz"))),
         ("Bit depth", t.bit_depth.map(|b| format!("{b} bit"))),
-        ("Length", t.duration_ms.map(|ms| duration(Some(ms)))),
+        ("Length", Some(duration(t.duration_ms))),
         ("Size", size),
         ("Track uid", track_uid),
         ("Album uid", album_uid),
@@ -99,23 +98,19 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<String> {
         Some((name, value.filter(|v| !v.is_empty())?))
     })));
 
-    for source in sources {
+    for mut source in sources {
+        if !admin {
+            source.path = None;
+        }
         let heading = if source.source == "remote" {
             "From the remote server"
         } else {
             "From the file"
         };
         out.push_str(&format!("<p class=\"{SECTION}\">{heading}</p>"));
-        out.push_str(&list(
-            source
-                .info_fields()
-                .into_iter()
-                .filter(|(name, _)| admin || !PATH_FIELDS.contains(name)),
-        ));
+        out.push_str(&list(source.info_fields().into_iter()));
     }
-    Some(format!(
-        "{out}<form method=dialog class=\"mt-6 flex justify-end\"><button>Close</button></form>"
-    ))
+    Some(out)
 }
 
 fn list(fields: impl Iterator<Item = (&'static str, String)>) -> String {

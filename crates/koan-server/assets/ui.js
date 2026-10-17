@@ -80,7 +80,7 @@
     return {
       id: Number(d.id), src: `/ui/stream/${d.id}`, dur: Number(d.dur) || 0,
       title: d.title, artist: d.artist, album: d.album, albumId,
-      cover: d.cover || null,
+      artistId: Number(d.artistId) || 0, cover: d.cover || null,
     };
   }
 
@@ -123,7 +123,7 @@
       li.dataset.q = i;
       Object.assign(li.dataset, {
         id: t.id, dur: t.dur, title: t.title, artist: t.artist ?? "", album: t.album ?? "",
-        albumId: t.albumId || 0, cover: t.cover ?? "",
+        albumId: t.albumId || 0, artistId: t.artistId || 0, cover: t.cover ?? "",
       });
       li.classList.toggle("playing", i === cur);
       const n = document.createElement("span");
@@ -257,6 +257,9 @@
           document.querySelector("[data-act-forget]")?.click();
         })]
       : [];
+    const queued = li.dataset.q !== undefined
+      ? [item("Remove from Queue", () => player.remove(Number(li.dataset.q)))]
+      : [];
     const go = [];
     if (Number(d.albumId)) go.push(item("Go to Album", () => navigate(`/album/${d.albumId}`, true)));
     if (Number(d.artistId)) go.push(item("Go to Artist", () => navigate(`/artist/${d.artistId}`, true)));
@@ -271,6 +274,7 @@
       ...group(mine),
       ...group(go),
       ...group(forget),
+      ...group(queued),
       ...group(about),
     );
     if (!menu.matches(":popover-open")) menu.showPopover();
@@ -283,16 +287,39 @@
     }
     menu.querySelector("button").focus();
   }
+  // Opened at once, filled when the server answers; only the latest request
+  // may fill it.
   const properties = document.getElementById("track-properties");
+  const propertiesBody = document.getElementById("track-properties-body");
+  let asked = 0;
   async function showProperties(id) {
     if (!properties) return;
-    const r = await fetch(`/track/${id}/properties`, { headers: { "x-koan-partial": "1" } });
-    if (!r.ok) return;
-    properties.innerHTML = await r.text();
-    properties.showModal();
+    const mine = ++asked;
+    const say = (text) => {
+      const p = document.createElement("p");
+      p.className = "text-muted";
+      p.textContent = text;
+      propertiesBody.replaceChildren(p);
+    };
+    say("Loading…");
+    if (!properties.open) properties.showModal();
+    try {
+      const r = await fetch(`/track/${id}/properties`, { headers: { "x-koan-partial": "1" } });
+      const html = r.ok ? await r.text() : null;
+      if (mine !== asked) return;
+      if (html === null) say(r.status === 404 ? "This track is no longer in the library." : "The server could not say.");
+      else propertiesBody.innerHTML = html;
+    } catch {
+      if (mine === asked) say("The server could not be reached.");
+    }
   }
-  // A click on the backdrop lands on the dialog itself.
-  properties?.addEventListener("click", (e) => { if (e.target === properties) properties.close(); });
+  // A click on the backdrop lands on the dialog itself, as does one in its
+  // padding, so only a click outside its box closes it.
+  properties?.addEventListener("click", (e) => {
+    if (e.target !== properties) return;
+    const r = properties.getBoundingClientRect();
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) properties.close();
+  });
   // A manual popover: the press that opens it ends on the row (a touch stays
   // captured by what it went down on), which a light-dismissing popover would
   // take for a click outside. It closes on the next press outside it, Escape,
