@@ -1,0 +1,1 @@
+Apple TV: a choice opened from a row, such as an EQ's preset, takes focus from the page behind it straight away, rather than leaving it there until the panel had measured itself. Closing a share code returns focus to the row it was shared from, not the page's filter field, and the filter panel's year fields read "from" and "to" like its other labels.

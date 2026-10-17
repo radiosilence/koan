@@ -135,9 +135,49 @@ final class TVBackTests: XCTestCase {
         pause(2)
         XCTAssertEqual(app.state, .runningForeground, "Menu closes the code, not the app")
         snap("13-after-share")
-        XCTExpectFailure("#1085: focus returns to the filter field") {
-            XCTAssertFalse(field.hasFocus, "focus is not on the filter field")
+        XCTAssertFalse(field.hasFocus, "focus is not on the filter field")
+    }
+
+    /// EQ's preset choice takes focus from the page behind it and keeps it
+    /// until it closes, after a visit to Manage EQ as before one.
+    func testEqPresetChoiceTakesFocus() {
+        open(.settings)
+        reach(app.buttons[any: "EQ"], by: .down)
+        press(.select)
+        pause(3)
+        choosePreset("14-eq-presets")
+        let manage = app.buttons[any: "Manage EQ"]
+        reach(manage, by: .down)
+        press(.select)
+        pause(3)
+        press(.menu)
+        pause(2)
+        XCTAssertTrue(manage.waitForExistence(timeout: 3), "back on the EQ page")
+        choosePreset("15-eq-presets-after-manage")
+    }
+
+    /// Opens the preset choice, checks that focus is in it and stays there,
+    /// and closes it with Menu.
+    private func choosePreset(_ shot: String) {
+        // The row reads its choice too: "Preset, Flat" or as tvOS joins them.
+        let preset = app.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] %@", "preset")).firstMatch
+        reach(preset, by: .up)
+        press(.select)
+        pause(2)
+        let flat = app.buttons[any: "Flat"]
+        XCTAssertTrue(flat.waitForExistence(timeout: 5), "the presets")
+        snap(shot)
+        XCTAssertFalse(preset.hasFocus, "the page behind has lost focus")
+        let focused = app.descendants(matching: .any).matching(NSPredicate(format: "hasFocus == true")).firstMatch
+        for direction in [XCUIRemote.Button.down, .up, .left, .right] {
+            press(direction)
+            XCTAssertFalse(preset.hasFocus, "focus stays in the presets after \(direction)")
+            XCTAssertTrue(focused.exists && flat.exists, "the presets are still up")
         }
+        press(.menu)
+        pause(2)
+        XCTAssertEqual(app.state, .runningForeground, "Menu closes the presets")
+        XCTAssertFalse(flat.exists, "the presets are gone")
     }
 
     /// EQ's empty stages take focus and open the account's own profiles.
