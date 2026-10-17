@@ -41,7 +41,7 @@ struct ArtistPill: View {
         // something floating over content, and wrong for a chip sitting *in*
         // it: over the wash a row of them reads as a scatter of
         // half-transparent ones rather than a set. Square on `rule` in the
-        // theme, as the Mac's collection draws its pills; a capsule otherwise.
+        // theme, the Mac collection's ground for its pills; a capsule otherwise.
         .background(KoanTheme.style(.rule), in: Self.shape)
         .contentShape(Self.shape)
         .accessibilityElement(children: .combine)
@@ -57,6 +57,9 @@ struct ArtistPill: View {
 
     private var playable: Playable { .artist(id: artistId, name: name) }
 
-    /// A capsule: SwiftUI holds a corner to half the shorter side.
-    private static var shape: RoundedRectangle { RoundedRectangle(cornerRadius: KoanTheme.radius(100)) }
+    /// A capsule, square in the theme: SwiftUI holds a corner to half the
+    /// shorter side, and `.circular` is the corner `Capsule` draws.
+    private static var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: KoanTheme.radius(100), style: .circular)
+    }
 }
