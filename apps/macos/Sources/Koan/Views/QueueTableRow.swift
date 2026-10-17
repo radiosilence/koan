@@ -154,7 +154,7 @@ final class QueueTableRow: TableCell, TableRow {
             artist.stringValue = !showArtist || content.artist.isEmpty
                 ? ""
                 : (artwork && !content.album.isEmpty ? "\(content.artist) — \(content.album)" : content.artist)
-            number.stringValue = content.number.map(String.init) ?? ""
+            number.stringValue = content.place
             codec.stringValue = content.codec?.uppercased() ?? ""
             duration.stringValue = content.durationMs.map { Format.duration($0) } ?? ""
             showSleeve(artwork ? content.sleeve : nil, art: context.art, corner: 3)
@@ -355,8 +355,10 @@ final class QueueTableRow: TableCell, TableRow {
             x += side + 10
         } else {
             let numberHeight = lineHeight(Self.numberFont)
-            number.frame = CGRect(x: x, y: (height - numberHeight) / 2, width: 20, height: numberHeight)
-            x += 20 + 10
+            // Wide enough for a disc's "2-03" where the row carries one.
+            let numberWidth = max(20, ceil(number.intrinsicContentSize.width))
+            number.frame = CGRect(x: x, y: (height - numberHeight) / 2, width: numberWidth, height: numberHeight)
+            x += numberWidth + 10
         }
 
         var right = bounds.width

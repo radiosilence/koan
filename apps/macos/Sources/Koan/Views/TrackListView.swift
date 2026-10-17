@@ -37,6 +37,20 @@ struct TrackListView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     #endif
 
+    /// A record whose tracks span discs, by the discs the tracks carry: the
+    /// album's own disc total is often missing (#1300). Each disc gets a
+    /// heading and each row its own number rather than its place in the list.
+    private var spansDiscs: Bool {
+        !mixedAlbums && Set(tracks.map { $0.disc ?? 1 }).count > 1
+    }
+
+    /// What a row's number column says: the track's own number on a record,
+    /// its place in the list anywhere else.
+    private func number(_ track: Track, at index: Int) -> Int {
+        guard !mixedAlbums, let number = track.trackNumber, number > 0 else { return index + 1 }
+        return Int(number)
+    }
+
     /// Whether the header scrolls with the tracks, as on a phone, where a
     /// fixed one would take a third of the screen from the list.
     private var headerScrolls: Bool {
@@ -77,7 +91,15 @@ struct TrackListView: View {
     #if os(macOS)
     /// A `KoanTable` — see there for why the Mac's lists are AppKit.
     private var table: some View {
-        let numbered = tracks.enumerated().map { TrackLine(id: $1.id, kind: .track($1), lead: "\($0 + 1)", position: $0) }
+        var numbered: [TrackLine] = []
+        var disc: Int32?
+        for (index, track) in tracks.enumerated() {
+            if spansDiscs, track.disc ?? 1 != disc {
+                disc = track.disc ?? 1
+                numbered.append(TrackLine(id: -Int64(disc ?? 1), kind: .heading("Disc \(disc ?? 1)")))
+            }
+            numbered.append(TrackLine(id: track.id, kind: .track(track), lead: "\(number(track, at: index))", position: index))
+        }
         let queued = mirror.queuedByTrack
         let current = player.currentTrackId
         let playing = player.isPlaying
@@ -158,9 +180,16 @@ struct TrackListView: View {
                                 .onDisappear { headerShown = false }
                         }
                         ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+                            if spansDiscs, index == 0 || tracks[index - 1].disc ?? 1 != track.disc ?? 1 {
+                                KoanSectionHeader("Disc \(track.disc ?? 1)")
+                                    .rowSeparator(.hidden)
+                                    .selectionDisabled()
+                                    .washedRow()
+                            }
                             TrackRow(
                                 track: track,
                                 position: index + 1,
+                                number: number(track, at: index),
                                 showsAlbum: mixedAlbums,
                                 allTrackIds: allTrackIds
                             )
@@ -365,7 +394,10 @@ struct TrackListView: View {
 
 struct TrackRow: View {
     let track: Track
+    /// Where in the list it is, from 1: where playing it starts the list.
     let position: Int
+    /// What its number column says: `TrackListView.number(_:at:)`.
+    var number: Int?
     /// Draws the cover and names the album — see `TrackListView.mixedAlbums`.
     let showsAlbum: Bool
     /// The whole list, so playing this row keeps the rest queued behind it.
@@ -402,7 +434,7 @@ struct TrackRow: View {
                 } else if isCurrent {
                     PlayingIndicator(isPlaying: player.isPlaying)
                 } else {
-                    Text("\(position)")
+                    Text("\(number ?? position)")
                         .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                 }
             }
