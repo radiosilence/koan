@@ -1,1 +1,1 @@
-- **kōan theme.** Views choose between the theme and the platform's look through its roles rather than checking the theme themselves, so the two looks are defined in one place. Nothing on screen changes.
+- **kōan theme.** Most of the views that checked the theme themselves now take its value roles (`KoanTheme.metric`, `style`, `ground`, `UIFont.role`, `hasTextSize`), so a look's values are set where the role is. Nothing on screen changes.

@@ -3093,7 +3093,7 @@ extension View {
             #if os(macOS)
             // Type and spacing are read as views are made, so a new text size
             // makes them again. Only where it applies: in the theme.
-            .id(KoanTheme.isOn ? appearance.textSize : 100)
+            .id(KoanTheme.hasTextSize ? appearance.textSize : 100)
             #endif
     }
 }
