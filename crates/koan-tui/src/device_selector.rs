@@ -5,6 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
 use super::app::DeviceSelectorState;
+use super::browse::fit;
 use super::theme::Theme;
 
 pub struct DeviceSelectorOverlay<'a> {
@@ -15,6 +16,13 @@ pub struct DeviceSelectorOverlay<'a> {
 impl<'a> DeviceSelectorOverlay<'a> {
     pub fn new(state: &'a DeviceSelectorState, theme: &'a Theme) -> Self {
         Self { state, theme }
+    }
+}
+
+impl DeviceSelectorState {
+    /// The first device shown when `rows` fit: the cursor stays on screen.
+    pub fn top(&self, rows: usize) -> usize {
+        (self.cursor + 1).saturating_sub(rows.max(1))
     }
 }
 
@@ -40,10 +48,17 @@ impl Widget for DeviceSelectorOverlay<'_> {
         let inner = block.inner(popup);
         block.render(popup, buf);
 
-        for (i, name) in self.state.devices.iter().enumerate() {
-            if i >= inner.height as usize {
-                break;
-            }
+        let rows = inner.height as usize;
+        let top = self.state.top(rows);
+        for (row, (i, name)) in self
+            .state
+            .devices
+            .iter()
+            .enumerate()
+            .skip(top)
+            .take(rows)
+            .enumerate()
+        {
             let is_selected = i == self.state.cursor;
             // Index 0 is "System Default" — current when no device is configured.
             let is_current = if i == 0 {
@@ -70,19 +85,14 @@ impl Widget for DeviceSelectorOverlay<'_> {
                 self.theme.hint_desc
             };
 
-            // Truncate name to fit.
-            let max_len = inner.width.saturating_sub(3) as usize;
-            let display_name = if name.len() > max_len {
-                format!("{}…", &name[..max_len.saturating_sub(1)])
-            } else {
-                name.clone()
-            };
-
             let line = Line::from(vec![
                 Span::styled(marker, marker_style),
-                Span::styled(display_name, base_style),
+                Span::styled(
+                    fit(name, inner.width.saturating_sub(3) as usize),
+                    base_style,
+                ),
             ]);
-            let row = Rect::new(inner.x, inner.y + i as u16, inner.width, 1);
+            let row = Rect::new(inner.x, inner.y + row as u16, inner.width, 1);
             Paragraph::new(line).render(row, buf);
         }
     }
@@ -169,5 +179,49 @@ impl Widget for PlayOnOverlay<'_> {
             )))
             .render(row, buf);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state(names: &[&str], cursor: usize) -> DeviceSelectorState {
+        DeviceSelectorState {
+            devices: names.iter().map(|n| n.to_string()).collect(),
+            cursor,
+            current_device: None,
+            renderers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_long_name_with_accents_is_cut_without_panicking() {
+        let s = state(
+            &[
+                "System Default",
+                "Kopfhörer – Wohnzimmer – sehr langer Name",
+            ],
+            1,
+        );
+        let theme = Theme::default();
+        for w in [1u16, 10, 16, 24, 30, 50] {
+            let area = Rect::new(0, 0, w, 10);
+            let mut buf = Buffer::empty(area);
+            DeviceSelectorOverlay::new(&s, &theme).render(area, &mut buf);
+        }
+    }
+
+    #[test]
+    fn the_cursor_stays_on_screen_in_a_long_list() {
+        let names: Vec<String> = (0..30).map(|i| format!("device {i}")).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let s = state(&names, 25);
+        assert_eq!(s.top(8), 18);
+        let area = Rect::new(0, 0, 60, 12);
+        let mut buf = Buffer::empty(area);
+        DeviceSelectorOverlay::new(&s, &Theme::default()).render(area, &mut buf);
+        let shown: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(shown.contains("device 25"));
     }
 }
