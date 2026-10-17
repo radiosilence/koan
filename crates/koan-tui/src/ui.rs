@@ -248,7 +248,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             }
         }
         Page::NowPlaying => {
-            heading(frame.buffer_mut(), stage, &app.theme, "now playing", "");
             super::now_playing::render(frame.buffer_mut(), app, stage);
         }
         Page::Playlists => {
@@ -278,9 +277,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             match playlist_page {
                 Some(p) => p.render(stage, frame.buffer_mut(), theme, hover),
                 None => {
-                    heading(frame.buffer_mut(), stage, theme, "playlist", "");
                     frame.buffer_mut().set_string(
-                        stage.x + 1,
+                        stage.x,
                         stage.y + 1,
                         "this playlist is gone",
                         theme.hint_desc,
@@ -374,9 +372,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                     hover,
                 ),
                 None => {
-                    heading(frame.buffer_mut(), stage, theme, "album", "");
                     frame.buffer_mut().set_string(
-                        stage.x + 1,
+                        stage.x,
                         stage.y + 1,
                         "this album is not in the library",
                         theme.hint_desc,
