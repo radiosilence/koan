@@ -179,6 +179,48 @@ fn write(state: &SharedPlayerState, save: Save) {
     }
 }
 
+/// What the system's Now Playing was last told. It runs its own clock from the
+/// playhead it is given, so it hears of a track, a play or pause and a seek,
+/// not of every frame.
+#[derive(Default)]
+struct NowPlaying {
+    track: Option<PathBuf>,
+    playback: Option<PlaybackState>,
+    position_ms: u64,
+    at: Option<Instant>,
+}
+
+impl NowPlaying {
+    /// A playhead this far from where its clock would have it was moved.
+    const SEEKED_MS: u64 = 1000;
+
+    fn sync(&mut self, mk: &mut crate::media_keys::MediaKeyHandler, state: &SharedPlayerState) {
+        let track = state.track_info().map(|t| t.path);
+        let metadata = state.take_metadata_refresh() || track != self.track;
+        if metadata {
+            mk.update_metadata(state, track.as_ref());
+            self.track = track;
+        }
+        let playback = state.playback_state();
+        let position_ms = state.position_ms();
+        let expected = match (self.playback, self.at) {
+            (Some(PlaybackState::Playing), Some(at)) => {
+                self.position_ms + at.elapsed().as_millis() as u64
+            }
+            _ => self.position_ms,
+        };
+        if metadata
+            || self.playback != Some(playback)
+            || position_ms.abs_diff(expected) > Self::SEEKED_MS
+        {
+            mk.update_playback(state);
+            self.playback = Some(playback);
+            self.position_ms = position_ms;
+            self.at = Some(Instant::now());
+        }
+    }
+}
+
 /// Adds the audio files in pasted or dropped text to the queue, at the row
 /// under the pointer when it is over one. Folders add every audio file under
 /// them, in path order.
@@ -312,7 +354,7 @@ pub fn run_tui(
     app.load_favourites();
 
     let mut media = crate::media_keys::MediaKeyHandler::new(tx.clone(), app.state.clone());
-    let mut last_track_path: Option<PathBuf> = None;
+    let mut now_playing = NowPlaying::default();
     let mut autosave = Autosave::start(app.state.clone());
 
     let flush_deletes = |app: &mut app::App| {
@@ -374,14 +416,7 @@ pub fn run_tui(
         app.handle_tick();
 
         if let Some(ref mut mk) = media {
-            mk.update_playback(&app.state);
-            let current = app.state.track_info().map(|t| t.path.clone());
-            let track_changed = current != last_track_path;
-            let metadata_refreshed = app.state.take_metadata_refresh();
-            if track_changed || metadata_refreshed {
-                last_track_path = current.clone();
-                mk.update_metadata(&app.state, current.as_ref());
-            }
+            now_playing.sync(mk, &app.state);
         }
         crate::media_keys::pump_run_loop();
 
