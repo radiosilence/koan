@@ -488,7 +488,7 @@ pub fn render_zoom(buf: &mut Buffer, app: &mut App, area: Rect) {
         (cover.y + rows + 2, subtitle.as_str(), theme.hint_desc),
     ] {
         let text = super::text::fit(text, area.width.saturating_sub(4) as usize);
-        let w = unicode_width::UnicodeWidthStr::width(text.as_ref()) as u16;
+        let w = crate::text::width(&text) as u16;
         if y < area.y + area.height {
             buf.set_string(area.x + (area.width - w) / 2, y, &text, style);
         }
@@ -810,13 +810,7 @@ pub(crate) mod tests {
             duration_ms: 213_000,
             ..info(44100)
         }));
-        let mut app = App::new(
-            state,
-            koan_core::audio::viz::VizSnapshot::new(),
-            tx,
-            std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-            60,
-        );
+        let mut app = App::new(state, koan_core::audio::viz::VizSnapshot::new(), tx, 60);
         if let Some(info) = app.state.track_info() {
             let mut entries = entries;
             entries[0].id = info.id;

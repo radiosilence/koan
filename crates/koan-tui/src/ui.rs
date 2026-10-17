@@ -1,7 +1,7 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph, Widget};
+use ratatui::widgets::Paragraph;
 
 use super::app::{App, Mode, NavTarget};
 use super::context_menu::{ContextMenuOverlay, context_menu_rect_at};
@@ -77,7 +77,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     } else {
         app.art_size
     };
-    let art_height = art_cells / 2; // square via halfblock rendering
+    // The cover's height, and the spectrum's beside it; with neither a
+    // cover nor a track for the spectrum to follow, just the bar's lines.
+    let playing = app.state.track_info().is_some();
+    let art_height = if has_art || (app.viz_config.enabled && playing) {
+        app.art.gfx.rows_for(art_cells)
+    } else {
+        0
+    };
     let transport_height = art_height.max(TRANSPORT_HEIGHT_DEFAULT);
 
     // Main layout: stage (flex) | hairline | transport | hints (1)
