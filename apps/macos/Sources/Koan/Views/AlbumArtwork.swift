@@ -99,9 +99,7 @@ struct AlbumArtwork: View {
                         // there is little left to interpolate and `.high` was
                         // paying for a better answer to an easier question.
                         .interpolation(.medium)
-                        // The viewer shows the whole cover, however far from
-                        // square it is; everywhere else a sleeve fills its tile.
-                        .aspectRatio(contentMode: size == .full ? .fit : .fill)
+                        .aspectRatio(contentMode: .fill)
                         .transition(.opacity)
                 }
             }

@@ -176,21 +176,22 @@ final class KoanPanelCoordinator: NSObject, NSWindowDelegate {
         let gap: CGFloat = 4
         let button = parent.convertToScreen(anchor.convert(anchor.bounds, to: nil))
         let size = window.frame.size
-        // The window under every panel: a panel opened from another is kept
-        // in the page's window, not its parent panel.
+        // A toolbar in full screen is a strip of a window: the screen is the
+        // room there. A panel opened from another takes its side from that
+        // panel, and is kept in the page's window under both.
         var page = top
         while page is KoanPanelWindow, let up = page.parent { page = up }
-        // A toolbar in full screen is a strip of a window: the screen is the
-        // room there.
-        let room = parent === top ? page.frame : (top.screen?.visibleFrame ?? top.frame)
+        let screenRoom = top.screen?.visibleFrame ?? top.frame
+        let room = parent === top ? parent.frame : screenRoom
+        let bounds = parent === top ? page.frame : screenRoom
         let above = button.midY < room.midY
         let leftwards = button.midX > room.midX
         var origin = CGPoint(
             x: leftwards ? button.maxX - size.width : button.minX,
             y: above ? button.maxY + gap : button.minY - gap - size.height
         )
-        if size.width <= room.width {
-            origin.x = min(max(origin.x, room.minX), room.maxX - size.width)
+        if size.width <= bounds.width {
+            origin.x = min(max(origin.x, bounds.minX), bounds.maxX - size.width)
         }
         if let screen = (top.screen ?? NSScreen.main)?.visibleFrame {
             origin.x = min(max(origin.x, screen.minX), screen.maxX - size.width)

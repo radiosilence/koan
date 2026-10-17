@@ -12,7 +12,9 @@ struct ArtworkViewer: View {
     let subtitle: String?
 
     @Environment(\.dismiss) private var dismiss
+    #if os(macOS)
     @Environment(UIState.self) private var ui
+    #endif
 
     /// Room for the caption below the cover, and the margin around the lot.
     private static let caption: CGFloat = 76
