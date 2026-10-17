@@ -263,6 +263,17 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 }
             }
         }
+        Page::Search => {
+            app.layout.browse_area = stage;
+            let hover = match app.hover.zone {
+                super::app::HoverZone::Search(h) => Some(h),
+                _ => None,
+            };
+            let App {
+                search_page, theme, ..
+            } = &mut *app;
+            search_page.render(stage, frame.buffer_mut(), theme, hover);
+        }
         Page::History => {
             app.layout.browse_area = stage;
             let hover = match app.hover.zone {

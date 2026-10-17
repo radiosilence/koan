@@ -24,7 +24,7 @@ See [The terminal UI](../guide/terminal-ui.md). These work from any page.
 
 | Key | Action |
 |-----|--------|
-| `1` to `9` | Queue, Now playing, Albums, Artists, Favourites, Playlists, Recent, History, Settings |
+| `1` to `9`, `0` | Queue, Now playing, Albums, Artists, Favourites, Playlists, Recent, History, Settings, Search |
 | `Tab` / `Shift+Tab` | Next / previous page |
 | `[` / `]` or `Alt+Left` / `Alt+Right` | Back / forward through the pages visited |
 | `Esc` | Leave the page for the one before it |
@@ -142,6 +142,22 @@ Everything on both pages is also a click: the row, `▸`, `×`, `▴`, `▾`, th
 
 ---
 
+## Search (`0`)
+
+| Key | Action |
+|-----|--------|
+| Typing | Search the library; every key is text while the box has focus |
+| `Enter`, `↓` or `Tab` | Move to the results; `Tab` with none, and `Shift+Tab`, change page |
+| `Esc` | Clear the box, then leave the page |
+| `↑` on the first result, or `/` | Back to the box |
+| `Enter` | Open an artist or a record; play a track |
+| `P` / `a` / `N` | Play / add to the queue / put next |
+| `w` | Put the result in a playlist |
+| `f` | Favourite it |
+| `A` / `O` | Open its artist / its record |
+| `i` | Track info (tracks) |
+| `m` | Menu of everything above |
+
 ## Add to a playlist (`w`, `W`)
 
 `w` on the queue (the cursor or the selection), on Now playing (the playing track), on the Albums, Favourites, Recent and artist pages, on an album page, on the Playlists page (the playlist's tracks) and a playlist's page, in History and in the Artists tree opens a list of playlists that can be filled, headed by `+ new playlist…`; `Enter` or a click chooses one, `Esc` or a click outside cancels. `W` in the queue asks for a name and saves the whole queue as a playlist.
@@ -176,8 +192,9 @@ Click a play to select it and again to play it; click the artist or the record t
 | `↑` `↓` or `j` `k` | Move between settings |
 | `→`, `Enter` or `Space` | Next value (flips a toggle), or run the task on the row |
 | `←` | Previous value |
+| `x` or `Delete` | Take the library folder under the cursor out and forget its tracks |
 
-Click the arrows beside a value, or the value, to change it, or `run` to start a task. Changes apply at once, except the frame rate, which applies at the next start. `scan library` and `sync now` run in the background and report how they went in the status line; offline mode narrows the browsing pages, the Artists tree and the pickers to what is on this device.
+Click the arrows beside a value, or the value, to change it, or `run` to start a task (`add folder` asks for a path; `×` on a folder takes it out and forgets its tracks). Changes apply at once, except the frame rate, which applies at the next start. `scan library` and `sync now` run in the background and report how they went in the status line; offline mode narrows the browsing pages, the Artists tree and the pickers to what is on this device.
 
 ---
 

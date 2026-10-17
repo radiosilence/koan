@@ -41,7 +41,7 @@ pub fn hints(mode: &Mode, page: Page, filterable: bool) -> Vec<(&'static str, &'
                     ("p", "track"),
                     ("a", "album"),
                     ("r", "artist"),
-                    ("1-9", "pages"),
+                    ("0-9", "pages"),
                     ("e", "edit"),
                     ("E", "eq"),
                     ("q", "quit"),
@@ -55,7 +55,7 @@ pub fn hints(mode: &Mode, page: Page, filterable: bool) -> Vec<(&'static str, &'
                     ("B", "bypass eq"),
                     ("M", "visualiser"),
                     ("F", "fullscreen"),
-                    ("1-9", "pages"),
+                    ("0-9", "pages"),
                     ("esc", "back"),
                     ("?", "help"),
                 ],
@@ -93,9 +93,18 @@ pub fn hints(mode: &Mode, page: Page, filterable: bool) -> Vec<(&'static str, &'
                     if page == Page::Albums {
                         hints.push(("o", "sort"));
                     }
-                    hints.extend([("E", "eq"), ("1-9", "pages"), ("esc", "back")]);
+                    hints.extend([("E", "eq"), ("0-9", "pages"), ("esc", "back")]);
                     hints
                 }
+                Page::Search => vec![
+                    ("type", "search"),
+                    ("ret", "results/open"),
+                    ("\u{2191}\u{2193}", "move"),
+                    ("P", "play"),
+                    ("a", "add"),
+                    ("m", "actions"),
+                    ("esc", "clear/back"),
+                ],
                 Page::History => vec![
                     ("\u{2191}\u{2193}", "move"),
                     ("ret", "play"),
@@ -109,7 +118,7 @@ pub fn hints(mode: &Mode, page: Page, filterable: bool) -> Vec<(&'static str, &'
                     ("O", "album"),
                     ("/", "filter"),
                     ("E", "eq"),
-                    ("1-9", "pages"),
+                    ("0-9", "pages"),
                     ("esc", "back"),
                 ],
                 Page::Playlists => vec![
@@ -123,7 +132,7 @@ pub fn hints(mode: &Mode, page: Page, filterable: bool) -> Vec<(&'static str, &'
                     ("x", "delete"),
                     ("/", "filter"),
                     ("E", "eq"),
-                    ("1-9", "pages"),
+                    ("0-9", "pages"),
                     ("esc", "back"),
                 ],
                 Page::Playlist(_) => vec![
@@ -141,7 +150,7 @@ pub fn hints(mode: &Mode, page: Page, filterable: bool) -> Vec<(&'static str, &'
                     ("\u{2191}\u{2193}", "move"),
                     ("\u{2190}\u{2192}", "change"),
                     ("E", "eq"),
-                    ("1-9", "pages"),
+                    ("0-9", "pages"),
                     ("esc", "back"),
                 ],
                 Page::Artists => vec![
@@ -154,7 +163,7 @@ pub fn hints(mode: &Mode, page: Page, filterable: bool) -> Vec<(&'static str, &'
                     ("O", "album"),
                     ("/", "filter"),
                     ("E", "eq"),
-                    ("1-9", "pages"),
+                    ("0-9", "pages"),
                     ("esc", "back"),
                 ],
             },

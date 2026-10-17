@@ -28,8 +28,8 @@ const SECTIONS: &[Section] = &[
         title: "Pages",
         bindings: &[
             (
-                "1-9",
-                "Queue / playing / albums / artists / faves / playlists / recent / history / settings",
+                "0-9",
+                "Queue / playing / albums / artists / faves / playlists / recent / history / settings / search (0)",
             ),
             ("tab", "Next page (S-tab previous)"),
             ("[ ]", "Back / forward (also A-\u{2190} A-\u{2192})"),
