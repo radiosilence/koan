@@ -432,8 +432,9 @@ fn walk(path: &Path, result: &mut ScanResult) -> Walked {
 /// `scope` holds the directories and files they were walked from: the scan
 /// cache is read for those alone.
 ///
-/// Returns false when the scan could not run at all, with the reason in
-/// `result.errors` against `context`.
+/// Returns false when the scan could not run or stopped part way because a
+/// transaction would not begin, with the reason in `result.errors` against
+/// `context`. Batches before the failure stay committed.
 fn index_files(
     db: &Database,
     mut audio_files: Vec<PathBuf>,
