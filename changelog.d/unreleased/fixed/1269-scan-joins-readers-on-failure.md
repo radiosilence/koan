@@ -1,0 +1,1 @@
+- **A scan that cannot write waits for its tag readers.** When a scan's database transaction failed to begin, it returned while its readers were still reading tags, so the next scan could overlap them on the same files.

@@ -432,8 +432,9 @@ fn walk(path: &Path, result: &mut ScanResult) -> Walked {
 /// `scope` holds the directories and files they were walked from: the scan
 /// cache is read for those alone.
 ///
-/// Returns false when the scan could not run at all, with the reason in
-/// `result.errors` against `context`.
+/// Returns false when the scan could not run or stopped part way because a
+/// transaction would not begin, with the reason in `result.errors` against
+/// `context`. Batches before the failure stay committed.
 fn index_files(
     db: &Database,
     mut audio_files: Vec<PathBuf>,
@@ -526,6 +527,7 @@ fn index_files(
         return false;
     }
 
+    let mut ran = true;
     loop {
         // Blocks until a full batch is ready or the readers have finished.
         let batch: Vec<(PathBuf, Result<TrackMeta, String>)> =
@@ -550,7 +552,8 @@ fn index_files(
                 result
                     .errors
                     .push((context.to_path_buf(), format!("db error: {}", e)));
-                return false;
+                ran = false;
+                break;
             }
         };
 
@@ -619,14 +622,15 @@ fn index_files(
             // A cancel that lands while the channel is empty stops the
             // readers before they send again, and the loop above ends on an
             // empty batch as though every file had been read. A send fails
-            // only once the loop has left, on a cancel or with the readers
-            // done, so stopping short means cancelled.
-            Ok(true) => result.cancelled = true,
-            Ok(false) => {}
+            // only once the loop has left, on a cancel, a failed transaction
+            // or with the readers done, so stopping short of a scan that ran
+            // means cancelled.
+            Ok(true) if ran => result.cancelled = true,
+            Ok(_) => {}
             Err(_) => log::error!("scan reader thread panicked"),
         }
     }
-    true
+    ran
 }
 
 /// Remove the rows under `path` whose files are gone, in one transaction,
@@ -835,6 +839,54 @@ mod tests {
     fn test_db(dir: &Path) -> Database {
         let db_path = dir.join("test.db");
         Database::open(&db_path).unwrap()
+    }
+
+    /// A scan that cannot write still waits for its readers, so the next scan
+    /// in the lane never overlaps them.
+    #[test]
+    fn a_failed_transaction_joins_the_readers() {
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("music");
+        std::fs::create_dir_all(&music).unwrap();
+        // More than the channel holds, so readers are parked when it fails.
+        let files: Vec<PathBuf> = (0..CHUNK_SIZE * 12)
+            .map(|i| {
+                let path = music.join(format!("{i:03}.wav"));
+                test_utils::generate_wav(&path, 8000, 1, 0.01, 16);
+                path
+            })
+            .collect();
+        let db = test_db(dir.path());
+        // An open transaction makes the scan's own fail to begin.
+        db.conn.execute_batch("BEGIN").unwrap();
+
+        // The reader holds a clone of the cancel flag until it is done.
+        let cancel = Arc::new(AtomicBool::new(false));
+        let opts = ScanOptions {
+            cancel: Some(cancel.clone()),
+            force: true,
+            ..Default::default()
+        };
+        let mut result = ScanResult::default();
+        let ran = index_files(
+            &db,
+            files,
+            std::slice::from_ref(&music),
+            &opts,
+            None,
+            &mut result,
+            &music,
+        );
+        drop(opts);
+
+        assert!(!ran);
+        assert!(!result.cancelled);
+        assert_eq!(result.errors.len(), 1);
+        assert_eq!(
+            Arc::strong_count(&cancel),
+            1,
+            "returned before the reader ended"
+        );
     }
 
     #[test]
