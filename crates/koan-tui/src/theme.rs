@@ -98,6 +98,11 @@ pub struct Theme {
 /// The nearest of the 256-colour palette's colour cube and grey ramp. The
 /// cube's levels are xterm's, which are not evenly spaced.
 fn indexed(r: u8, g: u8, b: u8) -> Color {
+    Color::Indexed(nearest(r, g, b).0)
+}
+
+/// The 256-colour palette's index nearest a colour, and the colour it draws.
+fn nearest(r: u8, g: u8, b: u8) -> (u8, (u8, u8, u8)) {
     const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
     let level = |v: u8| (0..6).min_by_key(|&i| LEVELS[i].abs_diff(v)).unwrap_or(0);
     let distance = |(x, y, z): (u8, u8, u8)| {
@@ -112,9 +117,9 @@ fn indexed(r: u8, g: u8, b: u8) -> Color {
     let step = (mean.saturating_sub(3) / 10).min(23) as u8;
     let grey = 8 + 10 * step;
     if distance((grey, grey, grey)) < distance(cube) {
-        Color::Indexed(232 + step)
+        (232 + step, (grey, grey, grey))
     } else {
-        Color::Indexed(16 + 36 * lr as u8 + 6 * lg as u8 + lb as u8)
+        (16 + 36 * lr as u8 + 6 * lg as u8 + lb as u8, cube)
     }
 }
 
@@ -142,7 +147,13 @@ impl Theme {
             rule: c(0x38, 0x38, 0x38),
             surface: c(0x2a, 0x2a, 0x2a),
             accent: c(accent.0, accent.1, accent.2),
-            accent_text: if super::accent::reads_as_text(accent) {
+            // Judged on the colour drawn, which in 256 colours can be a
+            // fair way from the accent.
+            accent_text: if super::accent::reads_as_text(if truecolor {
+                accent
+            } else {
+                nearest(accent.0, accent.1, accent.2).1
+            }) {
                 c(accent.0, accent.1, accent.2)
             } else {
                 ink
@@ -302,6 +313,13 @@ mod tests {
         assert_eq!(t.tokens.accent, Color::Rgb(40, 60, 200));
         assert_eq!(t.track_playing.fg, Some(t.tokens.ink));
         assert_eq!(t.progress_filled.fg, Some(t.tokens.accent));
+        // Reads as text exactly, but its nearest of the 256 colours does not.
+        let blue = (0, 152, 232);
+        assert!(super::super::accent::reads_as_text(blue));
+        let exact = Theme::new(Palette::Koan { truecolor: true }, blue);
+        assert_eq!(exact.track_playing.fg, Some(exact.tokens.accent));
+        let drawn = Theme::new(Palette::Koan { truecolor: false }, blue);
+        assert_eq!(drawn.track_playing.fg, Some(drawn.tokens.ink));
         let mint = Theme::new(Palette::Koan { truecolor: true }, MINT);
         assert_eq!(mint.track_playing.fg, Some(mint.tokens.accent));
     }
