@@ -3,12 +3,14 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use image::DynamicImage;
-use ratatui::buffer::{Buffer, CellDiffOption};
-use ratatui::layout::Rect;
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Rect, Size};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::Widget;
-use ratatui_image::picker::{Picker, ProtocolType};
+use ratatui_image::picker::cap_parser::QueryStdioOptions;
+use ratatui_image::picker::{Capability, Picker, ProtocolType};
 use ratatui_image::protocol::Protocol;
+use ratatui_image::protocol::kitty::Kitty;
 use ratatui_image::{Image, Resize};
 
 /// A pre-rendered cell: relative position + fg/bg colors.
@@ -32,13 +34,36 @@ struct RenderedArt {
 pub struct Gfx {
     picker: Option<Picker>,
     graphics: bool,
-    drawn: HashMap<(u64, u16, u16, u8), Drawn>,
+    drawn: HashMap<(u64, u16, u16, u8), (u64, Drawn)>,
+    tick: u64,
+    /// Kitty image ids no longer drawn, to be deleted from the terminal.
+    stale: Vec<u32>,
+    next_id: u32,
 }
 
 enum Drawn {
-    Protocol(Protocol),
+    /// With the kitty image id, when it is one the terminal holds.
+    Protocol(Protocol, Option<u32>),
     Cells(RenderedArt),
     Unsupported,
+}
+
+impl Drawn {
+    fn kitty_id(&self) -> Option<u32> {
+        match self {
+            Self::Protocol(_, id) => *id,
+            _ => None,
+        }
+    }
+}
+
+/// Where this run's kitty image ids start, apart from other runs' in the
+/// same terminal.
+fn seed_id() -> u32 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(1, |d| d.subsec_nanos());
+    now ^ std::process::id().rotate_left(16)
 }
 
 /// The protocols covers are drawn in. Sixel is left out: the encoder in the
@@ -48,8 +73,9 @@ fn usable(protocol: ProtocolType) -> bool {
     matches!(protocol, ProtocolType::Kitty | ProtocolType::Iterm2)
 }
 
-/// How many drawings are kept before the lot is dropped. A screenful of
-/// tiles is well under this; scrolling a long library through it is not.
+/// How many drawings are kept. A screenful of tiles is well under this;
+/// scrolling a long library through it is not, so the least recently drawn
+/// go first and the tiles in view stay put.
 const DRAWN_LIMIT: usize = 192;
 
 impl Default for Gfx {
@@ -64,6 +90,9 @@ impl Gfx {
             picker: None,
             graphics: false,
             drawn: HashMap::new(),
+            tick: 0,
+            stale: Vec::new(),
+            next_id: seed_id(),
         }
     }
 
@@ -73,7 +102,12 @@ impl Gfx {
         if !graphics {
             return Self::halfblocks();
         }
-        let picker = Picker::from_query_stdio();
+        let picker = Picker::from_query_stdio_with_options(QueryStdioOptions {
+            // Deflating costs CPU on every transmit; it only pays when the
+            // link to the terminal is slow.
+            kitty_compression: std::env::var_os("SSH_CONNECTION").is_some(),
+            ..QueryStdioOptions::default()
+        });
         match &picker {
             Ok(p) => log::info!(
                 "cover graphics: {:?}, cells {:?}px",
@@ -87,6 +121,9 @@ impl Gfx {
             graphics: picker.as_ref().is_some_and(|p| usable(p.protocol_type())),
             picker,
             drawn: HashMap::new(),
+            tick: 0,
+            stale: Vec::new(),
+            next_id: seed_id(),
         }
     }
 
@@ -108,7 +145,8 @@ impl Gfx {
         let on = on && self.available();
         if on != self.graphics {
             self.graphics = on;
-            self.drawn.clear();
+            self.stale
+                .extend(self.drawn.drain().filter_map(|(_, (_, d))| d.kitty_id()));
         }
         on
     }
@@ -135,25 +173,21 @@ impl Gfx {
             return;
         }
         let slot = (key, area.width, area.height, center as u8);
-        if !self.drawn.contains_key(&slot) {
-            if self.drawn.len() >= DRAWN_LIMIT {
-                self.drawn.clear();
-            }
-            let made = match self.picker.as_ref().filter(|_| self.graphics) {
-                Some(picker) => picker
-                    .new_protocol(
-                        img.clone(),
-                        Rect::new(0, 0, area.width, area.height),
-                        Resize::Scale(Some(image::imageops::FilterType::Triangle)),
-                    )
-                    .map_or(Drawn::Unsupported, Drawn::Protocol),
-                None => Drawn::Cells(pre_render(img, area.width, area.height, center)),
+        self.tick += 1;
+        if let Some((used, _)) = self.drawn.get_mut(&slot) {
+            *used = self.tick;
+        } else {
+            self.make_room();
+            let made = if self.graphics {
+                self.protocol(img, area)
+            } else {
+                Drawn::Cells(pre_render(img, area.width, area.height, center))
             };
-            self.drawn.insert(slot, made);
+            self.drawn.insert(slot, (self.tick, made));
         }
-        match self.drawn.get(&slot) {
-            Some(Drawn::Protocol(proto)) => {
-                let size = proto.area();
+        match self.drawn.get(&slot).map(|(_, d)| d) {
+            Some(Drawn::Protocol(proto, _)) => {
+                let size = proto.size();
                 let (w, h) = (size.width.min(area.width), size.height.min(area.height));
                 let (dx, dy) = if center {
                     ((area.width - w) / 2, (area.height - h) / 2)
@@ -162,20 +196,82 @@ impl Gfx {
                 };
                 let rect = Rect::new(area.x + dx, area.y + dy, w, h);
                 Image::new(proto).render(rect, buf);
-                // Each row of the image is one long string in its first cell,
-                // which ratatui would measure to track the cursor and drift;
-                // newer releases of the crate mark the cell one wide, as here.
-                for y in rect.y..rect.y + rect.height {
-                    if let Some(cell) = buf.cell_mut((rect.x, y)) {
-                        cell.set_diff_option(CellDiffOption::ForcedWidth(
-                            std::num::NonZeroU16::MIN,
-                        ));
-                    }
-                }
             }
             Some(Drawn::Cells(rendered)) => blit(rendered, area, area.height, buf),
             _ => {}
         }
+    }
+
+    /// Drops the least recently drawn quarter once the limit is reached.
+    fn make_room(&mut self) {
+        if self.drawn.len() < DRAWN_LIMIT {
+            return;
+        }
+        let mut ticks: Vec<u64> = self.drawn.values().map(|(used, _)| *used).collect();
+        let cut = *ticks.select_nth_unstable(DRAWN_LIMIT / 4).1;
+        let stale = &mut self.stale;
+        self.drawn.retain(|_, (used, drawn)| {
+            let keep = *used > cut;
+            if !keep {
+                stale.extend(drawn.kitty_id());
+            }
+            keep
+        });
+    }
+
+    /// A kitty image whose pixels the terminal keeps until told otherwise,
+    /// so each evicted cover is deleted there too. Sized to the cell grid and
+    /// transmitted once, as `Picker::new_protocol` does, but with an id of
+    /// our own to delete by.
+    fn protocol(&mut self, img: &DynamicImage, area: Rect) -> Drawn {
+        self.next_id = self.next_id.wrapping_add(1).max(1);
+        let id = self.next_id;
+        let Some(picker) = self.picker.as_ref() else {
+            return Drawn::Unsupported;
+        };
+        let size = Size::new(area.width, area.height);
+        let resize = Resize::Scale(Some(image::imageops::FilterType::Triangle));
+        if picker.protocol_type() != ProtocolType::Kitty {
+            return picker
+                .new_protocol(img.clone(), size, resize)
+                .map_or(Drawn::Unsupported, |p| Drawn::Protocol(p, None));
+        }
+        let font = picker.font_size();
+        let fit = resize.size_for(img, font, size);
+        let scaled = resize.resize(img, font, fit, None);
+        let compress = picker
+            .capabilities()
+            .contains(&Capability::KittyCompression);
+        Kitty::new(scaled, fit, id, picker.tmux_detected(), compress)
+            .map_or(Drawn::Unsupported, |k| {
+                Drawn::Protocol(Protocol::Kitty(k), Some(id))
+            })
+    }
+
+    /// The escape sequences that delete, from the terminal, the covers that
+    /// were dropped since the last call. Written after a frame.
+    pub fn take_deletes(&mut self) -> Option<String> {
+        if self.stale.is_empty() {
+            return None;
+        }
+        let tmux = self.picker.as_ref().is_some_and(Picker::tmux_detected);
+        let (start, escape, end) = if tmux {
+            ("\x1bPtmux;", "\x1b\x1b", "\x1b\\")
+        } else {
+            ("", "\x1b", "")
+        };
+        let out = self
+            .stale
+            .drain(..)
+            .map(|id| format!("{start}{escape}_Ga=d,d=I,i={id},q=2{escape}\\{end}"))
+            .collect();
+        Some(out)
+    }
+
+    /// Queues every cover for deletion, for the exit.
+    pub fn release_all(&mut self) {
+        self.stale
+            .extend(self.drawn.drain().filter_map(|(_, (_, d))| d.kitty_id()));
     }
 
     /// Draws the top `visible` rows of the image that would fill `area`, for a
@@ -196,16 +292,20 @@ impl Gfx {
             return;
         }
         let slot = (key, area.width, area.height, 3u8);
-        if !self.drawn.contains_key(&slot) {
-            if self.drawn.len() >= DRAWN_LIMIT {
-                self.drawn.clear();
-            }
+        self.tick += 1;
+        if let Some((used, _)) = self.drawn.get_mut(&slot) {
+            *used = self.tick;
+        } else {
+            self.make_room();
             self.drawn.insert(
                 slot,
-                Drawn::Cells(pre_render(img, area.width, area.height, true)),
+                (
+                    self.tick,
+                    Drawn::Cells(pre_render(img, area.width, area.height, true)),
+                ),
             );
         }
-        if let Some(Drawn::Cells(rendered)) = self.drawn.get(&slot) {
+        if let Some((_, Drawn::Cells(rendered))) = self.drawn.get(&slot) {
             blit(rendered, area, visible, buf);
         }
     }
@@ -401,6 +501,9 @@ impl Gfx {
             picker: Some(picker),
             graphics: usable(protocol),
             drawn: HashMap::new(),
+            tick: 0,
+            stale: Vec::new(),
+            next_id: seed_id(),
         }
     }
 }
