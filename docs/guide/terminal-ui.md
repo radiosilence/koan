@@ -28,6 +28,10 @@ The wheel and the scrollbars (which can be dragged) scroll every page. Opening a
 
 As in the apps, a record and an artist can be favourites as well as tracks. `f` favourites the record under the cursor on the browsing pages, `H` its artist (on an artist's page, that artist; the heart beside the name does the same with a click), and a favourite record wears a `♥` under its tile. `N` puts a record, a track or whatever the cursor is on next in the queue instead of last, on the browsing pages, the album page, History and the Artists tree. `i` shows what the library knows of a track, wherever it is listed, and `d` and `u` download a record or track to this device or remove the download; the apps' menus offer the same.
 
+## The actions menu
+
+Every action with a key has a way to reach it by pointer. `m`, or `⋯ actions` in the heading of the browsing pages, an album page and History, opens a menu for what the cursor is on. What it offers depends on the page: playing, queueing and putting next everywhere, replacing the queue on the browsing pages, adding to a playlist, favouriting (the artist as well as the record on the browsing pages), going to the record or the artist, track info, downloading and removing the download. `Enter` or a click does one; `Esc` or a click outside closes it. The queue's own menu (the `⋯` at the end of a row) offers the same where it applies.
+
 ## Playlists
 
 Playlists are the apps' playlists, the same rows and the same server copies: an edit is written here and pushed to the server in the background. `6` lists them; `Enter` or a second click opens one, `P` or the `▸` plays it, `a` and `N` add it to the queue or put it next, `c` or `+ new` makes one, `r` renames, `w` puts its tracks in another playlist, and `x` or the `×` deletes on a second press. On a playlist's page `Enter` plays from the track under the cursor, the `shuffle` button plays it shuffled, `K` and `J` (or the `▴` and `▾` at the end of a row) move a track up or down, and `x` or `×` takes it out. Playlists that a file in the library or a server decides, and smart playlists, are shown with `(read-only)` and refuse edits.

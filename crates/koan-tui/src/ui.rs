@@ -465,6 +465,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.render_widget(overlay, area);
     }
 
+    if app.mode == Mode::ActionsMenu
+        && let Some(ref menu) = app.actions_menu
+    {
+        app.layout.modal_area = super::actions_menu::menu_rect(area, &menu.items, &menu.title);
+        let overlay = super::actions_menu::ActionsMenuOverlay::new(menu, &app.theme);
+        frame.render_widget(overlay, area);
+    }
+
     // Help modal overlay.
     if app.mode == Mode::HelpModal {
         let overlay = HelpModalOverlay::new(&app.theme);

@@ -15,6 +15,7 @@ use koan_core::player::state::{
 };
 
 use super::accent::{self, Accent};
+use super::actions_menu::ActionsMenu;
 use super::album_page::{AlbumHit, AlbumPage};
 use super::browse::{self, Browse, Source};
 use super::history_page::{HistoryHit, HistoryPage};
@@ -50,6 +51,8 @@ pub enum Mode {
     NamePrompt,
     /// Choosing the playlist to put tracks in.
     PlaylistChooser,
+    /// The things that can be done with what the cursor is on.
+    ActionsMenu,
     HelpModal,
     VizPicker,
 }
@@ -78,6 +81,11 @@ pub enum ContextAction {
     TrackInfo,
     Organize,
     CopyShareLink,
+    GoToAlbum,
+    GoToArtist,
+    AddToPlaylist,
+    Download,
+    RemoveDownload,
 }
 
 /// A status bar message with the instant it was created (for auto-clear timeout).
@@ -269,6 +277,7 @@ pub struct App {
     pub playlist_page: Option<PlaylistPage>,
     pub name_prompt: Option<NamePrompt>,
     pub chooser: Option<Chooser>,
+    pub actions_menu: Option<ActionsMenu>,
     pub settings_page: SettingsPage,
     /// A drag that began on a page's scrollbar.
     browse_drag: bool,
@@ -428,6 +437,7 @@ impl App {
             playlist_page: None,
             name_prompt: None,
             chooser: None,
+            actions_menu: None,
             settings_page: SettingsPage::new(),
             browse_drag: false,
             thumbs: browse::Thumbs::new(),
@@ -903,6 +913,7 @@ impl App {
             Mode::DspSelector => self.handle_dsp_selector_key(key),
             Mode::NamePrompt => self.handle_name_prompt_key(key),
             Mode::PlaylistChooser => self.handle_chooser_key(key),
+            Mode::ActionsMenu => self.handle_actions_menu_key(key),
             Mode::HelpModal => self.handle_help_modal_key(key),
             Mode::VizPicker => self.handle_viz_picker_key(key),
             Mode::Normal => self.handle_page_key(key),
@@ -1257,6 +1268,41 @@ impl App {
         self.push_mode(Mode::PlaylistChooser);
     }
 
+    fn close_actions_menu(&mut self) {
+        self.actions_menu = None;
+        self.pop_mode();
+    }
+
+    /// Runs the menu's item at `idx` as its key would, and closes the menu.
+    fn run_menu_item(&mut self, idx: usize) {
+        let action = self.actions_menu.as_mut().and_then(|m| m.take(idx));
+        self.close_actions_menu();
+        if let Some(action) = action {
+            self.apply_browse(action);
+        }
+    }
+
+    fn handle_actions_menu_key(&mut self, key: KeyEvent) {
+        let Some(menu) = self.actions_menu.as_mut() else {
+            self.pop_mode();
+            return;
+        };
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('m') => self.close_actions_menu(),
+            KeyCode::Up | KeyCode::Char('k') => menu.move_by(-1),
+            KeyCode::Down | KeyCode::Char('j') => menu.move_by(1),
+            KeyCode::Home | KeyCode::Char('g') => menu.cursor = 0,
+            KeyCode::End | KeyCode::Char('G') => {
+                menu.cursor = menu.items.len().saturating_sub(1);
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                let idx = menu.cursor;
+                self.run_menu_item(idx);
+            }
+            _ => {}
+        }
+    }
+
     fn close_chooser(&mut self) {
         self.chooser = None;
         self.pop_mode();
@@ -1446,6 +1492,10 @@ impl App {
             }
             browse::Action::Info(id) => self.open_track_details(id),
             browse::Action::Choose(ids) => self.open_chooser(ids),
+            browse::Action::Menu(title, items) => {
+                self.actions_menu = Some(ActionsMenu::new(title, items));
+                self.push_mode(Mode::ActionsMenu);
+            }
             browse::Action::Download(ids) => {
                 let wanted: Vec<i64> = koan_core::db::pool::shared()
                     .get()
@@ -2288,6 +2338,15 @@ impl App {
             (ContextAction::Play, "Play", 'p'),
             (ContextAction::ToggleFavourite, fav_label, 'f'),
             (ContextAction::TrackInfo, "Track info", 'i'),
+            (
+                ContextAction::AddToPlaylist,
+                "Add to a playlist\u{2026}",
+                'w',
+            ),
+            (ContextAction::GoToAlbum, "Go to the record", 'a'),
+            (ContextAction::GoToArtist, "Go to the artist", 'r'),
+            (ContextAction::Download, "Download", 'l'),
+            (ContextAction::RemoveDownload, "Remove the download", 'u'),
             (ContextAction::Remove, "Remove", 'd'),
             (ContextAction::Organize, "Organize files", 'o'),
         ];
@@ -2332,6 +2391,38 @@ impl App {
             }
             ContextAction::CopyShareLink => {
                 self.create_and_copy_share_link();
+            }
+            ContextAction::AddToPlaylist => {
+                let ids = self.queue_choice();
+                self.open_chooser(ids);
+            }
+            ContextAction::GoToAlbum | ContextAction::GoToArtist => {
+                let link = if action == ContextAction::GoToAlbum {
+                    queue::HeaderLink::Album
+                } else {
+                    queue::HeaderLink::Artist
+                };
+                let db_id = self
+                    .visible_queue()
+                    .get(self.queue.cursor)
+                    .and_then(|e| e.db_id);
+                self.open_entry_link(db_id, link);
+            }
+            ContextAction::Download => {
+                let ids = self.queue_choice();
+                if ids.is_empty() {
+                    self.say("that track is not in the library");
+                    return;
+                }
+                self.apply_browse(browse::Action::Download(ids));
+            }
+            ContextAction::RemoveDownload => {
+                let ids = self.queue_choice();
+                if ids.is_empty() {
+                    self.say("that track is not in the library");
+                    return;
+                }
+                self.apply_browse(browse::Action::RemoveDownload(ids));
             }
         }
     }
@@ -2621,6 +2712,40 @@ impl App {
 
         // The name prompt and the playlist chooser: click a row, or `ok`;
         // click outside to cancel.
+        if self.mode == Mode::ActionsMenu {
+            let area = self.layout.modal_area;
+            let inner = ratatui::layout::Rect::new(
+                area.x + 1,
+                area.y + 1,
+                area.width.saturating_sub(2),
+                area.height.saturating_sub(2),
+            );
+            match event.kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if !self.is_in_rect(event.column, event.row, area) {
+                        self.close_actions_menu();
+                    } else if self.is_in_rect(event.column, event.row, inner) {
+                        let top = self
+                            .actions_menu
+                            .as_ref()
+                            .map_or(0, |m| m.top(inner.height as usize));
+                        self.run_menu_item(top + (event.row - inner.y) as usize);
+                    }
+                }
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                    if let Some(m) = self.actions_menu.as_mut() {
+                        m.move_by(if matches!(event.kind, MouseEventKind::ScrollUp) {
+                            -1
+                        } else {
+                            1
+                        });
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
         if matches!(self.mode, Mode::NamePrompt | Mode::PlaylistChooser) {
             let area = self.layout.modal_area;
             let inner = ratatui::layout::Rect::new(
