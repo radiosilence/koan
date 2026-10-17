@@ -207,7 +207,9 @@ private struct LibraryFilter: View {
         if KoanTheme.isOn {
             KoanSearchField(text: $library.filter, prompt: placeholder, focus: $focused) {}
                 .onKeyPress(.escape) {
-                    guard !library.filter.isEmpty else { return .ignored }
+                    // An input method's candidate window takes Escape first.
+                    let composing = (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() == true
+                    guard !library.filter.isEmpty, !composing else { return .ignored }
                     library.filter = ""
                     return .handled
                 }

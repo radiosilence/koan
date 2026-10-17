@@ -485,7 +485,7 @@ final class AlbumGridView: NSCollectionView {
 private final class TileLayout: NSCollectionViewFlowLayout {
     private let minimum: CGFloat = 150
     private let maximum: CGFloat = 210
-    private let margin: CGFloat = 20
+    private let margin = RowMetrics.collectionMargin
 
     /// What floats over the grid's leading edge.
     var leading: CGFloat = 0 {

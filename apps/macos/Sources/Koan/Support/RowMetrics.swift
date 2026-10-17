@@ -31,6 +31,9 @@ enum RowMetrics {
     /// The page's margin: where AppKit's inset table style puts its cells,
     /// and so where a header above one sits, from the side and from the top.
     static let pageEdge: CGFloat = 16
+    /// The margin of the Mac's collection views — the album grid, the shelves
+    /// — and so where a header above one sits, from the side.
+    static let collectionMargin: CGFloat = 20
     /// How far down the inset style puts its first row.
     static let tableTop: CGFloat = 10
     /// What a header above a table adds below itself, so that the gap to the

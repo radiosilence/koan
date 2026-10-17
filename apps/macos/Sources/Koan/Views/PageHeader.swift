@@ -8,8 +8,8 @@ import SwiftUI
 /// One layout for records, artists, playlists and the library's own pages, so
 /// the title, its count and its actions are in the same places wherever you
 /// are ("Shared edges" in `docs/design/koan-theme.md`). Top-aligned: the
-/// cover's top meets the title's first line. Wider layouts only; a phone's
-/// stacked headers are their pages' own.
+/// cover's top meets the title's first line. A phone's stacked record, artist
+/// and playlist headers are their pages' own.
 struct PageHeader<Art: View, Lead: View, Detail: View, Actions: View, Trailing: View>: View {
     let title: String
     /// The app's own word ("Tracks") rather than data (a record's name), so it

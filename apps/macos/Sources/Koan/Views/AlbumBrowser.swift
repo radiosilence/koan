@@ -65,7 +65,7 @@ struct AlbumBrowser: View {
                 "Albums", appWords: true,
                 detail: { Text(Format.count(Int64(library.visibleAlbums.count), "album")) }
             )
-            .padding(.horizontal, 20)
+            .padding(.horizontal, RowMetrics.collectionMargin)
             .padding(.top, RowMetrics.pageEdge)
             grid
         }

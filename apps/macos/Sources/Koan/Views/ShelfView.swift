@@ -70,7 +70,7 @@ struct ShelfView: View {
             #if os(macOS)
             // On the collection's margin, which leaves the gap below.
             PageHeader(title, appWords: true, detail: { Text(counts) })
-                .padding(.horizontal, 20)
+                .padding(.horizontal, RowMetrics.collectionMargin)
                 .padding(.top, RowMetrics.pageEdge)
             #endif
 

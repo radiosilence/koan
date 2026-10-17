@@ -283,6 +283,11 @@ struct QueueView: View {
 
     // MARK: - Header
 
+    /// The header's secondary controls, undo, redo and More, in ink as their
+    /// neighbours are; a borderless button or a menu's label otherwise takes
+    /// the accent. The system look keeps the record's.
+    private var secondaryTint: Color { KoanTheme.isOn ? .koanInk : roomTint }
+
     private func header(_ rows: [Row]) -> some View {
         // A queue that is one record, grouped, has that record's heading as its
         // first row, sleeve and counts and all. The theme says it once.
@@ -363,10 +368,7 @@ struct QueueView: View {
                 Button { player.redo() } label: { KoanIcon(Icon.redo) }
                     .help("Redo (⇧⌘Z)")
             }
-            // Secondary controls, in ink as their neighbours are; a borderless
-            // button otherwise takes the accent. The system look keeps the
-            // record's.
-            .tint(KoanTheme.isOn ? Color.koanInk : roomTint)
+            .tint(secondaryTint)
             #endif
 
             Menu {
@@ -392,9 +394,7 @@ struct QueueView: View {
             #if os(tvOS)
             .accessibilityLabel("More")
             #else
-            // A secondary control, in ink as its neighbours are; a menu's label
-            // otherwise takes the accent. The system look keeps the record's.
-            .tint(KoanTheme.isOn ? Color.koanInk : roomTint)
+            .tint(secondaryTint)
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             #if os(iOS)
