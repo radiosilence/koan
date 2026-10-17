@@ -1990,10 +1990,12 @@ impl App {
                 let renderers = koan_core::upnp::discovery::renderers();
                 device_names.extend(renderers.iter().map(|r| renderer_label(&r.name)));
 
-                let cfg = koan_core::config::Config::load().unwrap_or_default();
                 let current = match self.state.renderer() {
                     Some(output) => Some(renderer_label(&output.name)),
-                    None => cfg.playback.output_device,
+                    None => koan_core::config::Config::cached()
+                        .playback
+                        .output_device
+                        .clone(),
                 };
 
                 // Position cursor: None (system default) → index 0, else find the device.
@@ -2010,9 +2012,7 @@ impl App {
                 });
                 self.push_mode(Mode::DeviceSelector);
             }
-            Err(e) => {
-                log::error!("failed to list output devices: {}", e);
-            }
+            Err(e) => self.say(format!("the output devices could not be listed: {e}")),
         }
     }
 
@@ -3045,9 +3045,10 @@ impl App {
                                 .map_or(0, |s| s.top(inner.height as usize));
                             self.apply_dsp(top + row);
                         } else if let Some(sel) = self.device_selector.as_mut()
-                            && row < sel.devices.len()
+                            && let idx = sel.top(inner.height as usize) + row
+                            && idx < sel.devices.len()
                         {
-                            sel.cursor = row;
+                            sel.cursor = idx;
                             self.handle_device_selector_key(KeyEvent::from(KeyCode::Enter));
                         }
                     }

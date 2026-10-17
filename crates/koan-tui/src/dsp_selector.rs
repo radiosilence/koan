@@ -10,6 +10,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
 use koan_core::audio::dsp::profiles;
 
+use super::browse::fit;
 use super::theme::Theme;
 
 pub struct DspEntry {
@@ -131,14 +132,7 @@ impl Widget for DspSelectorOverlay<'_> {
                     buf[(x, inner.y + row as u16)].set_style(style);
                 }
             }
-            let max = inner.width.saturating_sub(3) as usize;
-            let label: String = if entry.label.chars().count() > max {
-                let mut cut: String = entry.label.chars().take(max.saturating_sub(1)).collect();
-                cut.push('\u{2026}');
-                cut
-            } else {
-                entry.label.clone()
-            };
+            let label = fit(&entry.label, inner.width.saturating_sub(3) as usize);
             Paragraph::new(Line::from(vec![
                 Span::styled(marker, marker_style),
                 Span::styled(label, style),
