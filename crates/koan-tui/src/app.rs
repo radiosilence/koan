@@ -1650,6 +1650,7 @@ impl App {
                 self.toggle_collection_favourite(koan_core::helpers::FavouriteKind::Artist, id)
             }
             browse::Action::Info(id) => self.open_track_details(id),
+            browse::Action::ForgetPlays => self.history_page.forget_chosen(),
             browse::Action::Choose(ids) => self.open_chooser(ids),
             browse::Action::OpenFilters => {
                 self.filter_panel = Some(FilterPanel::new(self.browse_filters.clone()));
@@ -3247,7 +3248,7 @@ impl App {
                             self.browse_drag = true;
                             p.scroll_to_bar(row);
                         } else if let Some(hit) = p.hit(col, row) {
-                            action = p.click(hit);
+                            action = p.click(hit, event.modifiers);
                         }
                         self.apply_browse(action);
                         return;

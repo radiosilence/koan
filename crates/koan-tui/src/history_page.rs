@@ -1,7 +1,10 @@
 //! The History page: every play, most recent first, under the day it was
-//! played, as the apps' history page lists them. A play can be forgotten,
-//! here and, signed in to a koan server, on the account's other devices.
+//! played, as the apps' history page lists them. Plays are events, not
+//! tracks: an album played three times is three runs of rows. Plays can be
+//! picked out together, played, queued and forgotten, here and, signed in to
+//! a koan server, on the account's other devices.
 
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use chrono::{Local, NaiveDate, TimeZone};
@@ -12,7 +15,8 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 
 use super::app::PickerAction;
-use super::browse::{Action, fit};
+use super::browse::Action;
+use super::text::{fit, width};
 use super::theme::Theme;
 use super::transport::format_time;
 
@@ -21,6 +25,8 @@ const LIMIT: u32 = 5000;
 const DOUBLE_CLICK: Duration = Duration::from_millis(500);
 /// How long "forget all" waits for the second press.
 const CONFIRM: Duration = Duration::from_secs(4);
+/// The length column, room for an hour and a space.
+const LENGTH_W: u16 = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryHit {
@@ -149,6 +155,9 @@ pub struct HistoryPage {
     pub filter: String,
     pub filter_active: bool,
     armed: Option<Instant>,
+    /// The plays picked out, by their ids, and where a range starts.
+    picked: HashSet<i64>,
+    anchor: Option<usize>,
     /// The history's version when it was read; a play moves it on.
     seen: u64,
     /// The last read asked for, and the last one shown.
@@ -172,7 +181,7 @@ fn day_label(day: NaiveDate, today: NaiveDate) -> String {
     match (today - day).num_days() {
         0 => "today".into(),
         1 => "yesterday".into(),
-        _ => day.format("%a %-d %b %Y").to_string().to_lowercase(),
+        _ => day.format("%A %-d %B %Y").to_string().to_lowercase(),
     }
 }
 
@@ -196,6 +205,8 @@ impl HistoryPage {
             filter: String::new(),
             filter_active: false,
             armed: None,
+            picked: HashSet::new(),
+            anchor: None,
             seen: 0,
             generation: 0,
             shown: 0,
@@ -256,6 +267,8 @@ impl HistoryPage {
             .get(self.cursor)
             .map(|e| (e.id, self.line_of[self.cursor]));
         self.entries = entries;
+        let ids: HashSet<i64> = self.entries.iter().map(|e| e.id).collect();
+        self.picked.retain(|id| ids.contains(id));
         self.today = Local::now().date_naive();
         self.rebuild();
         let Some((id, was)) = kept else { return };
@@ -323,16 +336,58 @@ impl HistoryPage {
         self.entries.get(idx).map(|e| &e.track)
     }
 
-    fn play(&self, idx: usize, how: PickerAction) -> Action {
-        self.track_at(idx)
-            .map_or(Action::None, |t| Action::Play(vec![t.id], how))
+    /// The plays an action is for: those picked out, in the page's order, or
+    /// the one at `idx`.
+    fn chosen(&self, idx: usize) -> Vec<&PlayHistoryRow> {
+        if self.picked.is_empty() {
+            return self.entries.get(idx).into_iter().collect();
+        }
+        self.entries
+            .iter()
+            .filter(|e| self.picked.contains(&e.id))
+            .collect()
     }
 
-    /// Forgets the play at `idx`.
-    fn forget(&mut self, idx: usize) {
-        if let Some(id) = self.entries.get(idx).map(|e| e.id) {
-            self.ask(Some(Forget::Plays(vec![id])));
+    fn chosen_tracks(&self, idx: usize) -> Vec<i64> {
+        self.chosen(idx).iter().map(|e| e.track.id).collect()
+    }
+
+    fn play(&self, idx: usize, how: PickerAction) -> Action {
+        let ids = self.chosen_tracks(idx);
+        if ids.is_empty() {
+            Action::None
+        } else {
+            Action::Play(ids, how)
         }
+    }
+
+    /// Forgets the plays picked out, or the one at `idx`.
+    fn forget(&mut self, idx: usize) {
+        let ids: Vec<i64> = self.chosen(idx).iter().map(|e| e.id).collect();
+        if !ids.is_empty() {
+            self.picked.clear();
+            self.anchor = None;
+            self.ask(Some(Forget::Plays(ids)));
+        }
+    }
+
+    /// Picks out the plays from the anchor to `idx`.
+    fn pick_to(&mut self, idx: usize) {
+        let anchor = *self.anchor.get_or_insert(self.cursor);
+        let (lo, hi) = (anchor.min(idx), anchor.max(idx));
+        self.picked = self.entries[lo..=hi.min(self.entries.len() - 1)]
+            .iter()
+            .map(|e| e.id)
+            .collect();
+    }
+
+    fn toggle_pick(&mut self, idx: usize) {
+        if let Some(id) = self.entries.get(idx).map(|e| e.id)
+            && !self.picked.remove(&id)
+        {
+            self.picked.insert(id);
+        }
+        self.anchor = Some(idx);
     }
 
     /// Forgets every play, on a second press within a few seconds of the first.
@@ -375,7 +430,22 @@ impl HistoryPage {
             return Some(Action::None);
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         let page = self.rows();
+        if self.entries.is_empty() {
+            return match key.code {
+                KeyCode::Char('/') => {
+                    self.filter_active = true;
+                    Some(Action::None)
+                }
+                KeyCode::Esc if !self.filter.is_empty() => {
+                    self.filter.clear();
+                    self.reload();
+                    Some(Action::None)
+                }
+                _ => None,
+            };
+        }
         if key.code != KeyCode::Char('D') {
             let asked = self.armed();
             self.armed = None;
@@ -384,8 +454,28 @@ impl HistoryPage {
             }
         }
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => self.move_to(self.cursor.saturating_sub(1)),
-            KeyCode::Down | KeyCode::Char('j') => self.move_to(self.cursor + 1),
+            KeyCode::Up | KeyCode::Char('K') if shift => {
+                self.anchor.get_or_insert(self.cursor);
+                self.move_to(self.cursor.saturating_sub(1));
+                self.pick_to(self.cursor);
+            }
+            KeyCode::Down | KeyCode::Char('J') if shift => {
+                self.anchor.get_or_insert(self.cursor);
+                self.move_to(self.cursor + 1);
+                self.pick_to(self.cursor);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.anchor = None;
+                self.move_to(self.cursor.saturating_sub(1))
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.anchor = None;
+                self.move_to(self.cursor + 1)
+            }
+            KeyCode::Char(' ') => self.toggle_pick(self.cursor),
+            KeyCode::Char('a') if ctrl => {
+                self.picked = self.entries.iter().map(|e| e.id).collect();
+            }
             KeyCode::PageUp => self.move_to(self.cursor.saturating_sub(page)),
             KeyCode::PageDown => self.move_to(self.cursor + page),
             KeyCode::Char('u') if ctrl => self.move_to(self.cursor.saturating_sub(page)),
@@ -396,23 +486,10 @@ impl HistoryPage {
             KeyCode::Char('a') => return Some(self.play(self.cursor, PickerAction::Append)),
             KeyCode::Char('N') => return Some(self.play(self.cursor, PickerAction::PlayNext)),
             KeyCode::Char('m') => return Some(self.menu(self.cursor)),
-            KeyCode::Char('w') => {
-                return Some(
-                    self.track_at(self.cursor)
-                        .map_or(Action::None, |t| Action::Choose(vec![t.id])),
-                );
-            }
-            KeyCode::Char('d') => {
-                return Some(
-                    self.track_at(self.cursor)
-                        .map_or(Action::None, |t| Action::Download(vec![t.id])),
-                );
-            }
+            KeyCode::Char('w') => return Some(Action::Choose(self.chosen_tracks(self.cursor))),
+            KeyCode::Char('d') => return Some(Action::Download(self.chosen_tracks(self.cursor))),
             KeyCode::Char('u') => {
-                return Some(
-                    self.track_at(self.cursor)
-                        .map_or(Action::None, |t| Action::RemoveDownload(vec![t.id])),
-                );
+                return Some(Action::RemoveDownload(self.chosen_tracks(self.cursor)));
             }
             KeyCode::Char('i') => {
                 return Some(
@@ -437,6 +514,10 @@ impl HistoryPage {
             KeyCode::Char('/') => self.filter_active = true,
             KeyCode::Char('x') | KeyCode::Delete | KeyCode::Backspace => self.forget(self.cursor),
             KeyCode::Char('D') => self.forget_all(),
+            KeyCode::Esc if !self.picked.is_empty() => {
+                self.picked.clear();
+                self.anchor = None;
+            }
             KeyCode::Esc if !self.filter.is_empty() => {
                 self.filter.clear();
                 self.reload();
@@ -446,33 +527,39 @@ impl HistoryPage {
         Some(Action::None)
     }
 
-    /// What can be done with the play at `idx`.
+    /// What can be done with the plays picked out, or the one at `idx`.
     fn menu(&self, idx: usize) -> Action {
         use PickerAction::{Append, AppendAndPlay, PlayNext};
-        let Some(t) = self.track_at(idx) else {
-            return Action::None;
+        let chosen = self.chosen(idx);
+        let ids: Vec<i64> = chosen.iter().map(|e| e.track.id).collect();
+        let (title, single) = match chosen.as_slice() {
+            [] => return Action::None,
+            [one] => (one.track.title.clone(), Some(&one.track)),
+            many => (format!("{} plays", many.len()), None),
         };
-        let one = vec![t.id];
         let mut items = vec![
-            ("Play".to_string(), Action::Play(one.clone(), AppendAndPlay)),
-            ("Add to the queue".into(), Action::Play(one.clone(), Append)),
-            ("Play next".into(), Action::Play(one.clone(), PlayNext)),
+            ("Play".to_string(), Action::Play(ids.clone(), AppendAndPlay)),
+            ("Add to the queue".into(), Action::Play(ids.clone(), Append)),
+            ("Play next".into(), Action::Play(ids.clone(), PlayNext)),
             (
                 "Add to a playlist\u{2026}".into(),
-                Action::Choose(one.clone()),
+                Action::Choose(ids.clone()),
             ),
-            ("Favourite or unfavourite".into(), Action::Favourite(t.id)),
         ];
-        if let Some(a) = t.album_id {
-            items.push(("Go to the record".into(), Action::OpenAlbum(a)));
+        if let Some(t) = single {
+            items.push(("Favourite or unfavourite".into(), Action::Favourite(t.id)));
+            if let Some(a) = t.album_id {
+                items.push(("Go to the album".into(), Action::OpenAlbum(a)));
+            }
+            if let Some(a) = t.artist_id {
+                items.push(("Go to the artist".into(), Action::OpenArtist(a)));
+            }
+            items.push(("Track info".into(), Action::Info(t.id)));
         }
-        if let Some(a) = t.artist_id {
-            items.push(("Go to the artist".into(), Action::OpenArtist(a)));
-        }
-        items.push(("Track info".into(), Action::Info(t.id)));
-        items.push(("Download".into(), Action::Download(one.clone())));
-        items.push(("Remove the download".into(), Action::RemoveDownload(one)));
-        Action::Menu(t.title.clone(), items)
+        items.push(("Download".into(), Action::Download(ids.clone())));
+        items.push(("Remove the download".into(), Action::RemoveDownload(ids)));
+        items.push(("Remove from History".into(), Action::ForgetPlays));
+        Action::Menu(title, items)
     }
 
     pub fn hit(&self, col: u16, row: u16) -> Option<HistoryHit> {
@@ -497,7 +584,16 @@ impl HistoryPage {
         None
     }
 
-    pub fn click(&mut self, hit: HistoryHit) -> Action {
+    /// Forgets what the actions menu was opened on.
+    pub fn forget_chosen(&mut self) {
+        self.forget(self.cursor);
+    }
+
+    /// A click on `hit`. On a play, Shift or Ctrl picks out the run from
+    /// the last click, and Alt picks it out alone or puts it back: most
+    /// terminals pass no Shift with the mouse, and none pass Cmd.
+    pub fn click(&mut self, hit: HistoryHit, modifiers: crossterm::event::KeyModifiers) -> Action {
+        use crossterm::event::KeyModifiers;
         self.armed = self.armed.filter(|_| hit == HistoryHit::ForgetAll);
         match hit {
             HistoryHit::Filter => {
@@ -510,7 +606,10 @@ impl HistoryPage {
             }
             HistoryHit::Menu => self.menu(self.cursor),
             HistoryHit::Forget(i) => {
-                self.forget(i);
+                if let Some(e) = self.entries.get(i) {
+                    self.picked.remove(&e.id);
+                    self.ask(Some(Forget::Plays(vec![e.id])));
+                }
                 Action::None
             }
             HistoryHit::Artist(i) => {
@@ -525,7 +624,21 @@ impl HistoryPage {
                     .and_then(|t| t.album_id)
                     .map_or(Action::None, Action::OpenAlbum)
             }
+            HistoryHit::Play(i)
+                if modifiers.intersects(KeyModifiers::SHIFT | KeyModifiers::CONTROL) =>
+            {
+                self.pick_to(i);
+                self.move_to(i);
+                Action::None
+            }
+            HistoryHit::Play(i) if modifiers.contains(KeyModifiers::ALT) => {
+                self.toggle_pick(i);
+                self.move_to(i);
+                Action::None
+            }
             HistoryHit::Play(i) => {
+                self.picked.clear();
+                self.anchor = Some(i);
                 let double = self
                     .last_click
                     .is_some_and(|(n, at)| n == i && at.elapsed() < DOUBLE_CLICK);
@@ -567,22 +680,26 @@ impl HistoryPage {
         if area.width < 8 || area.height < 3 {
             return;
         }
-        let note = format!(" {} ", self.entries.len());
+        let note = match (self.entries.len(), self.picked.len()) {
+            (1, _) => " 1 play ".to_string(),
+            (n, 0) => format!(" {n} plays "),
+            (n, k) => format!(" {n} plays \u{b7} {k} picked "),
+        };
         super::ui::heading(buf, area, theme, "history", &note);
 
         // The page's controls sit on the heading's rule, at its right.
         let end = area.x + area.width;
         let mut x = end;
         let mut control = |buf: &mut Buffer, text: String, style: Style| -> Rect {
-            let w = (text.chars().count() as u16).min(x.saturating_sub(area.x));
+            let w = (width(&text) as u16).min(x.saturating_sub(area.x));
             x -= w;
             buf.set_stringn(x, area.y, &text, w as usize, style);
             Rect::new(x, area.y, w, 1)
         };
         let clear_text = if self.armed() {
-            " press again to forget every play ".to_string()
+            " press D again to clear every play: this cannot be undone ".to_string()
         } else {
-            " forget all ".to_string()
+            " clear\u{2026} ".to_string()
         };
         let clear_style = if self.armed() {
             theme.heading.add_modifier(Modifier::BOLD)
@@ -616,18 +733,19 @@ impl HistoryPage {
         let list = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
         self.geom.list = list;
         if self.entries.is_empty() {
-            let msg = if self.filter.is_empty() {
-                "nothing played yet"
+            let (msg, detail) = if self.filter.is_empty() {
+                (
+                    "nothing played yet",
+                    "everything you play lands here, most recent first.",
+                )
             } else {
-                "no match"
+                ("no matches", "")
             };
-            buf.set_stringn(
-                list.x + 1,
-                list.y,
-                msg,
-                list.width as usize,
-                theme.hint_desc,
-            );
+            let w = list.width.saturating_sub(2) as usize;
+            buf.set_stringn(list.x + 1, list.y + 1, msg, w, theme.track_normal);
+            if list.height > 2 {
+                buf.set_stringn(list.x + 1, list.y + 2, detail, w, theme.hint_desc);
+            }
             return;
         }
         if self.follow {
@@ -647,7 +765,7 @@ impl HistoryPage {
                 Line::Day(label) => {
                     let style = theme.heading.add_modifier(Modifier::BOLD);
                     buf.set_stringn(list.x + 1, y, label, list.width as usize, style);
-                    let from = list.x + 2 + label.chars().count() as u16;
+                    let from = list.x + 2 + width(label) as u16;
                     for cx in from..text_end {
                         buf[(cx, y)].set_char('\u{2500}').set_style(theme.rule);
                     }
@@ -743,8 +861,9 @@ impl HistoryPage {
             .duration_ms
             .map(|d| format_time(d as u64))
             .unwrap_or_default();
-        let len_w = len.chars().count() as u16;
-        // The forget button is the last three cells; the length sits before it.
+        // The forget button is the last three cells; the length sits before
+        // it, right-aligned in a column of its own so every row's columns
+        // start where the others' do.
         let forget = Rect::new(end.saturating_sub(3), y, 3, 1);
         let forget_on = hover == Some(HistoryHit::Forget(i));
         buf.set_string(
@@ -758,8 +877,14 @@ impl HistoryPage {
             },
         );
         self.geom.links.push((forget, HistoryHit::Forget(i)));
-        let len_x = forget.x.saturating_sub(len_w + 1);
-        buf.set_string(len_x, y, &len, dim);
+        let len_x = forget.x.saturating_sub(LENGTH_W);
+        let len_w = width(&len) as u16;
+        buf.set_string(forget.x.saturating_sub(len_w + 1), y, &len, dim);
+        // A play another client scrobbled in did not happen here.
+        if e.source != "local" {
+            buf.set_string(len_x.saturating_sub(2), y, "\u{21aa}", dim);
+        }
+        let len_x = len_x.saturating_sub(2);
 
         let left = x0 + 9;
         let room = len_x.saturating_sub(left + 2) as usize;
@@ -791,10 +916,10 @@ impl HistoryPage {
             ),
         ] {
             let shown = fit(text, w);
-            let width = shown.chars().count() as u16;
+            let cells = width(&shown) as u16;
             buf.set_string(x, y, &shown, link(linked && hover == Some(hit)));
             if linked {
-                self.geom.links.push((Rect::new(x, y, width, 1), hit));
+                self.geom.links.push((Rect::new(x, y, cells, 1), hit));
             }
         }
     }
@@ -803,7 +928,7 @@ impl HistoryPage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::{KeyCode, KeyEvent};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     fn entry(id: i64, played_at: i64, title: &str) -> PlayHistoryRow {
         PlayHistoryRow {
@@ -892,8 +1017,8 @@ mod tests {
         draw(&mut p, 100, 12);
         let hit = p.hit(40, 3).expect("a play under the pointer");
         assert_eq!(hit, HistoryHit::Play(1));
-        assert_eq!(p.click(hit), Action::None);
-        assert!(matches!(p.click(hit), Action::Play(ids, _) if ids == vec![2]));
+        assert_eq!(p.click(hit, KeyModifiers::NONE), Action::None);
+        assert!(matches!(p.click(hit, KeyModifiers::NONE), Action::Play(ids, _) if ids == vec![2]));
     }
 
     #[test]
@@ -908,7 +1033,7 @@ mod tests {
             .cloned()
             .expect("an artist link");
         assert_eq!(p.hit(rect.x, rect.y), Some(hit));
-        assert_eq!(p.click(hit), Action::OpenArtist(2));
+        assert_eq!(p.click(hit, KeyModifiers::NONE), Action::OpenArtist(2));
     }
 
     #[test]
@@ -1025,13 +1150,100 @@ mod tests {
     }
 
     #[test]
+    fn shift_picks_out_a_run_that_plays_and_is_forgotten_together() {
+        let mut p = page();
+        draw(&mut p, 100, 12);
+        p.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT));
+        p.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT));
+        assert_eq!(p.picked.len(), 3);
+        assert_eq!(
+            p.handle_key(KeyEvent::from(KeyCode::Enter)),
+            Some(Action::Play(vec![1, 2, 3], PickerAction::AppendAndPlay))
+        );
+        let Action::Menu(title, items) = p.menu(p.cursor) else {
+            panic!("a menu");
+        };
+        assert_eq!(title, "3 plays");
+        assert!(items.iter().any(|(_, a)| *a == Action::ForgetPlays));
+        let (tx, rx) = crossbeam_channel::unbounded();
+        p.tx = tx;
+        p.handle_key(KeyEvent::from(KeyCode::Char('x')));
+        let asked = rx.try_recv().unwrap();
+        assert!(matches!(asked.forget, Some(Forget::Plays(ids)) if ids == vec![1, 2, 3]));
+        assert!(p.picked.is_empty());
+    }
+
+    #[test]
+    fn alt_click_picks_one_out_and_esc_lets_them_go() {
+        let mut p = page();
+        draw(&mut p, 100, 12);
+        p.click(HistoryHit::Play(0), KeyModifiers::ALT);
+        p.click(HistoryHit::Play(2), KeyModifiers::ALT);
+        assert_eq!(p.chosen_tracks(0), vec![1, 3]);
+        p.handle_key(KeyEvent::from(KeyCode::Esc));
+        assert!(p.picked.is_empty());
+    }
+
+    #[test]
+    fn columns_start_in_the_same_place_whatever_the_length() {
+        let mut p = page();
+        p.entries[0].track.duration_ms = Some(3_723_000);
+        p.entries[1].track.duration_ms = Some(9_000);
+        p.rebuild();
+        draw(&mut p, 100, 12);
+        let artist_x: Vec<u16> = p
+            .geom
+            .links
+            .iter()
+            .filter(|(_, h)| matches!(h, HistoryHit::Artist(_)))
+            .map(|(r, _)| r.x)
+            .collect();
+        assert_eq!(artist_x.len(), 3);
+        assert!(artist_x.windows(2).all(|w| w[0] == w[1]), "{artist_x:?}");
+    }
+
+    /// Writes the page at the sizes the guide is checked at, with long and
+    /// wide names, to read by eye:
+    /// `cargo test -p koan-tui dump_history -- --ignored`.
+    #[test]
+    #[ignore]
+    fn dump_history() {
+        let mut p = page();
+        p.entries[0].track.title = "千と千尋の神隠し — あの夏へ (piano version, remastered)".into();
+        p.entries[0].track.artist_name = "久石譲".into();
+        p.entries[1].source = "listenbrainz".into();
+        p.entries[2].track.album_title = "A Record Whose Title Goes On Well Past Any Column".into();
+        p.rebuild();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tui-dumps");
+        std::fs::create_dir_all(&dir).unwrap();
+        for (w, h) in [(50, 20), (80, 24), (120, 40), (200, 60)] {
+            let buf = draw(&mut p, w, h);
+            let mut out = String::new();
+            for y in 0..h {
+                let mut skip = 0;
+                for x in 0..w {
+                    if skip > 0 {
+                        skip -= 1;
+                        continue;
+                    }
+                    let sym = buf[(x, y)].symbol();
+                    skip = width(sym).saturating_sub(1);
+                    out.push_str(sym);
+                }
+                out.push('\n');
+            }
+            std::fs::write(dir.join(format!("history-{w}x{h}.txt")), out).unwrap();
+        }
+    }
+
+    #[test]
     fn days_are_named_for_how_far_back_they_are() {
         let today = NaiveDate::from_ymd_opt(2026, 10, 16).unwrap();
         assert_eq!(day_label(today, today), "today");
         assert_eq!(day_label(today.pred_opt().unwrap(), today), "yesterday");
         assert_eq!(
             day_label(NaiveDate::from_ymd_opt(2026, 10, 12).unwrap(), today),
-            "mon 12 oct 2026"
+            "monday 12 october 2026"
         );
     }
 }

@@ -107,6 +107,8 @@ pub enum Action {
     /// Fetch these tracks to this device, or let the copies go.
     Download(Vec<i64>),
     RemoveDownload(Vec<i64>),
+    /// Forget the plays History has picked out, or the one under its cursor.
+    ForgetPlays,
 }
 
 /// Where the pointer is on the page.
