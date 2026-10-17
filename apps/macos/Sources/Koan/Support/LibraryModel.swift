@@ -585,6 +585,7 @@ final class LibraryModel {
                 async let albums = try? await engine.albums(
                     artistId: id, sort: .year, seed: 0, search: nil, filter: .none
                 )
+                async let features = try? await engine.artistFeatures(artistId: id)
                 async let info = try? await engine.artistInfo(artistId: id)
                 let cached = await info ?? nil
                 let owned = await albums ?? []
@@ -596,15 +597,13 @@ final class LibraryModel {
                         albumId: nil, artistId: id, sort: .album, limit: 500, offset: 0
                     )) ?? []
                     : []
-                // The appearances page shows no features.
-                let features =
-                    owned.isEmpty ? [] : (try? await engine.artistFeatures(artistId: id)) ?? []
                 return ArtistRecord(
                     artistId: id,
                     stamp: stamp,
                     artist: await artist ?? nil,
                     albums: owned,
-                    features: features,
+                    // The appearances page shows no features.
+                    features: owned.isEmpty ? [] : await features ?? [],
                     appearances: appearances,
                     info: cached,
                     infoLoading: cached == nil
