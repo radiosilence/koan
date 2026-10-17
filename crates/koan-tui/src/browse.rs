@@ -228,6 +228,12 @@ impl Thumbs {
         }
     }
 
+    /// Forgets which albums had no cover, so they are looked for again: a
+    /// scan or a sync may have brought one.
+    pub fn retry_missing(&mut self) {
+        self.images.retain(|_, image| image.is_some());
+    }
+
     /// Takes in what the loaders have finished. Returns whether anything came.
     pub fn poll(&mut self) -> bool {
         let mut any = false;
@@ -1878,6 +1884,19 @@ pub(super) mod tests {
             None,
         );
         buf
+    }
+
+    #[test]
+    fn an_album_without_a_cover_is_looked_at_again_after_a_sync() {
+        let mut t = Thumbs::new();
+        t.images.insert(1, None);
+        t.images.insert(2, Some(DynamicImage::new_rgb8(1, 1)));
+        t.retry_missing();
+        assert!(
+            !t.images.contains_key(&1),
+            "asked for again when next drawn"
+        );
+        assert!(t.images.contains_key(&2), "a cover that was found is kept");
     }
 
     #[test]

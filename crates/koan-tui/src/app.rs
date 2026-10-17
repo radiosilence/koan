@@ -1611,6 +1611,7 @@ impl App {
     /// sync, downloads removed, or offline turned on or off. The other pages
     /// read it as they open.
     fn reload_library_pages(&mut self) {
+        self.thumbs.retry_missing();
         match self.page() {
             Page::History => self.history_page.reload(),
             Page::Album(id) => self.album_page = AlbumPage::load(id),
