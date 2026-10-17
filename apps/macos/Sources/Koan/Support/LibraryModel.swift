@@ -59,10 +59,11 @@ final class LibraryModel {
     /// it where it is drawn instead.
     func prepare(section: Section) async -> Listing? {
         guard section != self.section else { return nil }
-        // Nothing carries over: a filter you left behind on another view is
-        // invisible here, and an apparently empty library is the result. The
-        // one exception is a shelf's heading, which arrives with the shelf's query.
-        let filter = carried ?? ""
+        // Nothing carries over from another section: a filter left behind on
+        // another view is invisible here, and an apparently empty library is
+        // the result. A section comes back with its own, as it was left, unless
+        // a shelf's heading arrives with the shelf's query.
+        let filter = carried ?? leftFilters[section] ?? ""
         carried = nil
         return await Listing(
             section: section,
@@ -77,6 +78,7 @@ final class LibraryModel {
     /// Adopt a listing, at the moment the navigator moves to it.
     func show(_ listing: Listing) {
         loading?.cancel()
+        leftFilters[section] = filter
         section = listing.section
         // Quietly: the rows for this section are already in hand, so emptying
         // the filter it arrives with is not a reason to ask for them again.
@@ -106,6 +108,10 @@ final class LibraryModel {
     /// The name filter the next prepared section is read with. Set by a See
     /// all, and spent by the move it makes.
     @ObservationIgnored private var carried: String?
+
+    /// Each section's name filter as it was when the section was left, for
+    /// the session.
+    @ObservationIgnored private var leftFilters: [Section: String] = [:]
 
     /// Point a browser at a shelf: its filters and sort set to the shelf's, so
     /// the listing it opens on is the one the shelf's preview is the head of
@@ -233,6 +239,8 @@ final class LibraryModel {
     /// How many rows above the visible ones the list keeps ready, so the top
     /// of what was on screen can be told from the top of what was built.
     @ObservationIgnored var artistsOverscan = 0
+    @ObservationIgnored var tracksOffset: CGFloat?
+    @ObservationIgnored var historyOffset: CGFloat?
 
     /// What the section on screen is showing, as the database handed it over.
     /// Stored rather than computed because a `List` reads its collection far

@@ -446,7 +446,7 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
             guard let parent, row < ids.count else { return nil }
             table?.dragging = true
-            let transfer = parent.drag([ids[row]]).first
+            let transfer = parent.drag([ids[row]]).first?.placed(row)
             guard transfer != nil || parent.move != nil else { return nil }
             let item = transfer.flatMap(pasteboardItem) ?? NSPasteboardItem()
             // Which row, for a drop back into this list to read as a move.

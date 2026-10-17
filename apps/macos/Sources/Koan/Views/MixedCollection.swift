@@ -314,7 +314,7 @@ struct MixedCollection: NSViewRepresentable {
         /// it, otherwise itself.
         fileprivate func transfers(dragging playable: Playable) -> [PlayableTransfer] {
             if let pick = parent?.pick, pick.isActive, pick.contains(playable.key) {
-                return pick.picked.map(PlayableTransfer.init)
+                return PlayableTransfer.dragging(pick.picked)
             }
             return [PlayableTransfer(playable)]
         }
@@ -373,7 +373,7 @@ struct MixedCollection: NSViewRepresentable {
             guard let parent, sections[indexPath.section] == .tracks, indexPath.item < parent.tracks.count,
                   let track = parent.tracks[indexPath.item].track
             else { return nil }
-            return pasteboardItem(PlayableTransfer(.track(track)))
+            return pasteboardItem(PlayableTransfer(.track(track)).placed(indexPath.item))
         }
 
         // MARK: Layout
