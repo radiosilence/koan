@@ -1247,6 +1247,14 @@ impl App {
                     return;
                 }
             },
+            Purpose::Folder => match super::settings_page::add_folder(&prompt.text) {
+                Ok(path) => format!("added {path}; run scan library to index it"),
+                Err(e) => {
+                    self.name_prompt = Some(prompt);
+                    self.say(e);
+                    return;
+                }
+            },
             Purpose::Rename(id) => match super::playlist_ops::rename(*id, &prompt.text) {
                 Ok(()) => format!("renamed to '{}'", prompt.text.trim()),
                 Err(e) => {
@@ -1258,6 +1266,7 @@ impl App {
         };
         self.pop_mode();
         self.playlists_changed();
+        self.settings_page.reload();
         self.say(said);
     }
 
@@ -1483,6 +1492,8 @@ impl App {
         match outcome {
             Outcome::Changed(setting) => self.apply_setting(setting),
             Outcome::Run(task) => self.run_task(task),
+            Outcome::AddFolder => self.open_name_prompt(Purpose::Folder, String::new()),
+            Outcome::Said(text) => self.say(text),
         }
     }
 
@@ -1501,6 +1512,7 @@ impl App {
             match task {
                 Task::Scan => "scanning the library...",
                 Task::Sync => "syncing with the server...",
+                Task::AddFolder => return,
             }
             .into(),
             std::time::Instant::now(),

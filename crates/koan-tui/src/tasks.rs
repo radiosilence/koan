@@ -13,6 +13,7 @@ pub fn run(task: Task) -> String {
     match task {
         Task::Scan => scan(),
         Task::Sync => sync(),
+        Task::AddFolder => String::new(),
     }
 }
 

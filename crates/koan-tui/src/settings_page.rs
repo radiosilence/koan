@@ -26,6 +26,10 @@ pub enum Setting {
     Discoverable,
     NearbyControl,
     Offline,
+    SyncInterval,
+    PlayQueue,
+    DownloadWorkers,
+    CacheLimit,
 }
 
 /// Work a row starts rather than a value it sets.
@@ -33,6 +37,7 @@ pub enum Setting {
 pub enum Task {
     Scan,
     Sync,
+    AddFolder,
 }
 
 impl Task {
@@ -40,6 +45,7 @@ impl Task {
         match self {
             Task::Scan => "scan library",
             Task::Sync => "sync now",
+            Task::AddFolder => "add folder",
         }
     }
 
@@ -47,6 +53,7 @@ impl Task {
         match self {
             Task::Scan => "read the library folders for new, changed and removed files",
             Task::Sync => "pull the server's library, favourites and playlists",
+            Task::AddFolder => "type the path of a folder of music",
         }
     }
 }
@@ -56,6 +63,10 @@ impl Task {
 pub enum Outcome {
     Changed(Setting),
     Run(Task),
+    /// Ask for the path of a folder to add to the library.
+    AddFolder,
+    /// A line to show about something the page did itself.
+    Said(&'static str),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,12 +77,16 @@ pub enum SettingsHit {
     Inc(usize),
     /// The value itself: a toggle flips, a choice moves on.
     Value(usize),
+    /// The `×` on a library folder.
+    Remove(usize),
 }
 
 enum Entry {
     Section(&'static str),
     Item(Setting),
     Action(Task),
+    /// A library folder, by its place in the config.
+    Folder(usize),
     /// Shown, not edited here: what the apps set through folders and sign-in.
     Info(&'static str, String),
 }
@@ -81,6 +96,14 @@ const THEMES: [&str; 2] = ["koan", "ansi"];
 const PALETTES: [&str; 5] = ["theme", "rainbow", "mono", "fire", "neon"];
 const FRAME_RATES: [u8; 3] = [30, 60, 120];
 const NEARBY: [&str; 2] = ["full", "playback"];
+const SYNC_MINUTES: [u64; 6] = [0, 5, 15, 30, 60, 120];
+const CACHE_LIMITS: [&str; 6] = ["unlimited", "5GB", "20GB", "50GB", "100GB", "250GB"];
+
+/// The cache limit as the page names it: a size, or `unlimited`.
+fn cache_limit(set: Option<&str>) -> &str {
+    set.filter(|l| !l.trim().is_empty())
+        .unwrap_or(CACHE_LIMITS[0])
+}
 
 impl Setting {
     fn label(self) -> &'static str {
@@ -98,6 +121,10 @@ impl Setting {
             Setting::Discoverable => "visible to devices",
             Setting::NearbyControl => "devices may",
             Setting::Offline => "offline mode",
+            Setting::SyncInterval => "sync every",
+            Setting::PlayQueue => "queue on server",
+            Setting::DownloadWorkers => "downloads at once",
+            Setting::CacheLimit => "download cache",
         }
     }
 
@@ -117,6 +144,10 @@ impl Setting {
             Setting::Discoverable => "announce this device on the network",
             Setting::NearbyControl => "full, or the queue and playback only",
             Setting::Offline => "play only what is on this device",
+            Setting::SyncInterval => "between automatic syncs",
+            Setting::PlayQueue => "pick this queue up on another device",
+            Setting::DownloadWorkers => "applies at the next start",
+            Setting::CacheLimit => "oldest records go first when full",
         }
     }
 
@@ -144,6 +175,13 @@ impl Setting {
             }
             .into(),
             Setting::Offline => on_off(koan_core::remote::offline::manual()),
+            Setting::SyncInterval => match cfg.remote.auto_sync_interval_mins {
+                0 => "start only".into(),
+                n => format!("{n} min"),
+            },
+            Setting::PlayQueue => on_off(cfg.remote.play_queue),
+            Setting::DownloadWorkers => cfg.remote.download_workers.to_string(),
+            Setting::CacheLimit => cache_limit(cfg.remote.cache_limit.as_deref()).to_string(),
         }
     }
 
@@ -195,6 +233,24 @@ impl Setting {
             Setting::AutoSync => c.remote.auto_sync = !c.remote.auto_sync,
             Setting::Discoverable => c.devices.discoverable = !c.devices.discoverable,
             Setting::Offline => {}
+            Setting::SyncInterval => {
+                let at = SYNC_MINUTES
+                    .iter()
+                    .position(|m| *m == c.remote.auto_sync_interval_mins)
+                    .unwrap_or(2) as isize;
+                c.remote.auto_sync_interval_mins =
+                    SYNC_MINUTES[(at + d).rem_euclid(SYNC_MINUTES.len() as isize) as usize];
+            }
+            Setting::PlayQueue => c.remote.play_queue = !c.remote.play_queue,
+            Setting::DownloadWorkers => {
+                c.remote.download_workers =
+                    (c.remote.download_workers as isize + d).clamp(1, 16) as usize;
+            }
+            Setting::CacheLimit => {
+                let now = cache_limit(c.remote.cache_limit.as_deref()).to_string();
+                let next = cycle(&CACHE_LIMITS, &now);
+                c.remote.cache_limit = (next != CACHE_LIMITS[0]).then_some(next);
+            }
             Setting::NearbyControl => {
                 let now = match c.devices.nearby_control {
                     NearbyControl::Full => "full",
@@ -210,6 +266,28 @@ impl Setting {
     }
 }
 
+/// Adds the folder typed to the library's folders; its path as written.
+pub fn add_folder(typed: &str) -> Result<String, String> {
+    let typed = typed.trim();
+    if typed.is_empty() {
+        return Err("type the path of a folder".into());
+    }
+    let path = match (typed.strip_prefix("~/"), std::env::var_os("HOME")) {
+        (Some(rest), Some(home)) => std::path::Path::new(&home).join(rest),
+        _ => std::path::PathBuf::from(typed),
+    };
+    if !path.is_dir() {
+        return Err(format!("{} is not a folder", path.display()));
+    }
+    if Config::cached().library.folders.contains(&path) {
+        return Err("that folder is already in the library".into());
+    }
+    let shown = path.display().to_string();
+    Config::persist(|c| c.library.folders.push(path))
+        .map(|_| shown)
+        .map_err(|e| e.to_string())
+}
+
 /// The palette's name as the page lists it: `spectrum` and `record` are older
 /// names for the themed palette.
 fn palette_name(configured: &str) -> &str {
@@ -221,7 +299,7 @@ fn palette_name(configured: &str) -> &str {
 
 /// Whether the cursor can rest on `entry`.
 fn selectable(entry: &Entry) -> bool {
-    matches!(entry, Entry::Item(_) | Entry::Action(_))
+    matches!(entry, Entry::Item(_) | Entry::Action(_) | Entry::Folder(_))
 }
 
 fn on_off(on: bool) -> String {
@@ -293,6 +371,10 @@ impl SettingsPage {
         }
         entries.push(Entry::Item(Setting::AutoSync));
         if cfg.remote.enabled {
+            entries.push(Entry::Item(Setting::SyncInterval));
+            entries.push(Entry::Item(Setting::PlayQueue));
+            entries.push(Entry::Item(Setting::DownloadWorkers));
+            entries.push(Entry::Item(Setting::CacheLimit));
             entries.push(Entry::Item(Setting::Offline));
             entries.push(Entry::Action(Task::Sync));
         }
@@ -301,21 +383,11 @@ impl SettingsPage {
         entries.push(Entry::Item(Setting::NearbyControl));
         entries.push(Entry::Section("library"));
         let folders = &cfg.library.folders;
-        if folders.is_empty() {
-            entries.push(Entry::Info(
-                "folders",
-                "none; add one in the app or config".into(),
-            ));
-        }
+        entries.push(Entry::Action(Task::AddFolder));
         if !folders.is_empty() {
             entries.push(Entry::Action(Task::Scan));
         }
-        for (i, f) in folders.iter().enumerate() {
-            entries.push(Entry::Info(
-                if i == 0 { "folders" } else { "" },
-                f.display().to_string(),
-            ));
-        }
+        entries.extend((0..folders.len()).map(Entry::Folder));
         self.entries = entries;
         self.cursor = self.cursor.min(self.entries.len() - 1);
         if !selectable(&self.entries[self.cursor]) {
@@ -375,9 +447,24 @@ impl SettingsPage {
                 self.reload();
                 wrote.then_some(Outcome::Changed(setting))
             }
+            Entry::Action(Task::AddFolder) => forward.then_some(Outcome::AddFolder),
             Entry::Action(task) => forward.then_some(Outcome::Run(*task)),
             _ => None,
         }
+    }
+
+    /// Takes a folder out of the library's folders.
+    fn remove_folder(&mut self, i: usize) -> Option<Outcome> {
+        let wrote = Config::persist(|c| {
+            if i < c.library.folders.len() {
+                c.library.folders.remove(i);
+            }
+        })
+        .is_ok();
+        self.reload();
+        wrote.then_some(Outcome::Said(
+            "removed from the library folders; scan the library to update it",
+        ))
     }
 
     pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> Option<Option<Outcome>> {
@@ -405,6 +492,13 @@ impl SettingsPage {
             }
             KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('-') => {
                 return Some(self.change(self.cursor, false));
+            }
+            KeyCode::Char('x') | KeyCode::Delete | KeyCode::Backspace => {
+                if let Some(Entry::Folder(i)) = self.entries.get(self.cursor) {
+                    let i = *i;
+                    return Some(self.remove_folder(i));
+                }
+                return None;
             }
             KeyCode::Right
             | KeyCode::Char('l')
@@ -440,6 +534,16 @@ impl SettingsPage {
             SettingsHit::Dec(i) => {
                 self.select(i);
                 self.change(i, false)
+            }
+            SettingsHit::Remove(i) => {
+                self.select(i);
+                match self.entries.get(i) {
+                    Some(Entry::Folder(f)) => {
+                        let f = *f;
+                        self.remove_folder(f)
+                    }
+                    _ => None,
+                }
             }
             SettingsHit::Inc(i) | SettingsHit::Value(i) => {
                 self.select(i);
@@ -509,6 +613,54 @@ impl SettingsPage {
                     buf.set_stringn(list.x + 2, y, label, 20, theme.hint_desc);
                     let room = end.saturating_sub(value_x) as usize;
                     buf.set_stringn(value_x, y, text, room, theme.track_normal);
+                }
+                Entry::Folder(f) => {
+                    let selected = idx == self.cursor;
+                    let row_hover = matches!(
+                        hover,
+                        Some(SettingsHit::Row(n) | SettingsHit::Remove(n)) if n == idx
+                    );
+                    if selected {
+                        for cx in list.x..end {
+                            buf[(cx, y)].set_style(theme.library_cursor);
+                        }
+                        buf[(list.x, y)].set_char('\u{258c}').set_style(theme.bar);
+                    } else if row_hover {
+                        for cx in list.x..end {
+                            buf[(cx, y)].set_style(theme.library_hover);
+                        }
+                    }
+                    let (base, dim) = if selected {
+                        (theme.library_cursor, theme.library_cursor)
+                    } else {
+                        (theme.track_normal, theme.hint_desc)
+                    };
+                    if *f == 0 {
+                        buf.set_stringn(list.x + 2, y, "folders", 20, dim);
+                    }
+                    let path = self
+                        .cfg
+                        .library
+                        .folders
+                        .get(*f)
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default();
+                    let room = end.saturating_sub(value_x + 4) as usize;
+                    buf.set_stringn(value_x, y, &path, room, base);
+                    let x = end.saturating_sub(4);
+                    buf.set_string(
+                        x + 1,
+                        y,
+                        "\u{d7}",
+                        if hover == Some(SettingsHit::Remove(idx)) {
+                            theme.heading.add_modifier(Modifier::BOLD)
+                        } else {
+                            dim
+                        },
+                    );
+                    self.geom
+                        .links
+                        .push((Rect::new(x, y, 3, 1), SettingsHit::Remove(idx)));
                 }
                 Entry::Action(task) => {
                     let selected = idx == self.cursor;
@@ -672,6 +824,38 @@ mod tests {
         let mut buf = Buffer::empty(area);
         p.render(area, &mut buf, &theme(), None);
         buf
+    }
+
+    #[test]
+    fn a_folder_that_is_not_there_is_refused_before_anything_is_written() {
+        koan_core::config::isolate_config_for_tests();
+        assert!(add_folder("   ").is_err());
+        assert!(add_folder("/no/such/folder/anywhere").is_err());
+    }
+
+    #[test]
+    fn an_unset_cache_limit_reads_as_unlimited() {
+        assert_eq!(cache_limit(None), "unlimited");
+        assert_eq!(cache_limit(Some(" ")), "unlimited");
+        assert_eq!(cache_limit(Some("50GB")), "50GB");
+    }
+
+    #[test]
+    fn a_folder_can_be_added_from_the_page() {
+        koan_core::config::isolate_config_for_tests();
+        let mut p = SettingsPage::new();
+        let shown: String = draw(&mut p, 100, 60)
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(shown.contains("add folder"));
+        let at = p
+            .entries
+            .iter()
+            .position(|e| matches!(e, Entry::Action(Task::AddFolder)))
+            .unwrap();
+        assert_eq!(p.change(at, true), Some(Outcome::AddFolder));
     }
 
     #[test]
