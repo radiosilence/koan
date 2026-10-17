@@ -83,10 +83,10 @@ impl Widget for VizPickerOverlay<'_> {
         let inner = block.inner(popup);
         block.render(popup, buf);
 
-        for (i, mode) in ALL_MODES.iter().enumerate() {
-            if i >= inner.height as usize {
-                break;
-            }
+        // A terminal too short for the whole list scrolls it to the cursor.
+        let rows = inner.height as usize;
+        let first = (self.state.cursor + 1).saturating_sub(rows);
+        for (row, (i, mode)) in ALL_MODES.iter().enumerate().skip(first).take(rows).enumerate() {
             let is_cursor = i == self.state.cursor;
             let is_current = *mode == self.state.current_mode;
 
@@ -109,8 +109,25 @@ impl Widget for VizPickerOverlay<'_> {
                 Span::styled(marker, marker_style),
                 Span::styled(mode.label(), base_style),
             ]);
-            let row = Rect::new(inner.x, inner.y + i as u16, inner.width, 1);
+            let row = Rect::new(inner.x, inner.y + row as u16, inner.width, 1);
             Paragraph::new(line).render(row, buf);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_cursor_stays_on_screen_in_a_short_terminal() {
+        let theme = Theme::default();
+        let mut state = VizPickerState::new(VisualizerMode::Bars);
+        state.cursor = ALL_MODES.len() - 1;
+        let area = Rect::new(0, 0, 60, 12);
+        let mut buf = Buffer::empty(area);
+        VizPickerOverlay::new(&state, &theme).render(area, &mut buf);
+        let text: String = buf.content.iter().map(|c| c.symbol()).collect();
+        assert!(text.contains(ALL_MODES[state.cursor].label()), "{text}");
     }
 }
