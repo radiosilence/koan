@@ -508,9 +508,9 @@ fn explain(error: &str) -> String {
     }
 }
 
-/// The app is in front again: whatever iOS closed while it was suspended is
-/// opened again, and every device is dialled now rather than when its backoff
-/// runs out.
+/// The app is in front again, or the network changed: whatever iOS closed
+/// while it was suspended is opened again, and every device is dialled now
+/// rather than when its backoff runs out.
 pub fn refresh() {
     let listener = RUNNING.lock().as_mut().and_then(|r| r.listener.take());
     if let Some(stop) = listener {

@@ -38,6 +38,11 @@ final class NetworkWatch: @unchecked Sendable {
     /// which is no change.
     private var current: Route?
     private var pending: DispatchWorkItem?
+    /// When the burst being waited out began: a path that never settles is
+    /// told after `longest` all the same.
+    private var burst: DispatchTime?
+    private static let settle = 1.0
+    private static let longest = 5.0
 
     init(engine: KoanEngine) {
         self.engine = engine
@@ -52,12 +57,22 @@ final class NetworkWatch: @unchecked Sendable {
             self.current = next
             pending?.cancel()
             pending = nil
-            guard path.status != .unsatisfied else { return }
+            guard path.status != .unsatisfied else {
+                burst = nil
+                return
+            }
             // Off the watch's queue: renewing the clients and restarting
             // nearby discovery can take a while, and updates wait behind it.
-            let tell = DispatchWorkItem { [weak self] in self?.engine.networkChanged() }
+            let tell = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                queue.async { self.burst = nil }
+                engine.networkChanged()
+            }
             pending = tell
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1, execute: tell)
+            let began = burst ?? .now()
+            burst = began
+            let at = min(DispatchTime.now() + Self.settle, began + Self.longest)
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: at, execute: tell)
         }
         monitor.start(queue: queue)
     }
