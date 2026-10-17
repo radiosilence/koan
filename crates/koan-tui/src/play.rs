@@ -282,14 +282,14 @@ fn import_dropped(app: &mut app::App, text: String, callbacks: &TuiCallbacks) {
 /// Run the Ratatui TUI event loop.
 ///
 /// Called by koan-cli after spawning the player and setting up initial
-/// playback. `loading` is a thread reading what is to play into the queue;
-/// "loading" shows until it ends.
+/// playback. "loading" shows until `loading` disconnects: its sender is held
+/// by the thread reading what is to play into the queue.
 pub fn run_tui(
     state: Arc<SharedPlayerState>,
     viz_snapshot: Arc<koan_core::audio::viz::VizSnapshot>,
     tx: crossbeam_channel::Sender<PlayerCommand>,
     start_in_library: bool,
-    loading: Option<JoinHandle<()>>,
+    loading: Option<crossbeam_channel::Receiver<()>>,
     callbacks: TuiCallbacks,
 ) -> std::io::Result<()> {
     use crossterm::{
@@ -341,21 +341,26 @@ pub fn run_tui(
     let frame_duration = Duration::from_micros(1_000_000 / target_fps as u64);
     let mut next_frame = Instant::now();
 
-    let mut app = app::App::new(state, viz_snapshot, tx.clone(), target_fps);
+    let mut app = app::App::new(state, viz_snapshot, tx, target_fps);
     // Before anything reads the keyboard: the terminal answers on stdin.
     app.art.gfx = crate::cover_art::Gfx::detect(cfg.playback.art_graphics);
     drop(cfg);
-    if let Some(handle) = loading {
-        app.wait_for(handle);
+    if let Some(done) = loading {
+        app.wait_for(done);
     }
     if start_in_library {
         app.open_library();
     }
     app.load_favourites();
 
-    let mut media = crate::media_keys::MediaKeyHandler::new(tx.clone(), app.state.clone());
+    let mut media = crate::media_keys::MediaKeyHandler::new(
+        app.tx.clone(),
+        app.shown.clone(),
+        app.view.local.clone(),
+    );
     let mut now_playing = NowPlaying::default();
-    let mut autosave = Autosave::start(app.state.clone());
+    // This player's session, whichever device the pages show.
+    let mut autosave = Autosave::start(app.view.local.clone());
 
     let flush_deletes = |app: &mut app::App| {
         if let Some(deletes) = app.art.gfx.take_deletes() {
@@ -370,6 +375,7 @@ pub fn run_tui(
             app.quit = true;
         }
 
+        app.follow_control();
         let frame_start = Instant::now();
         let mut built = Duration::ZERO;
         terminal.draw(|f| {
@@ -420,7 +426,7 @@ pub fn run_tui(
         }
         crate::media_keys::pump_run_loop();
 
-        if app.state.quit_requested() {
+        if app.view.local.quit_requested() {
             app.quit = true;
         }
 
@@ -434,7 +440,14 @@ pub fn run_tui(
 
         if app.quit {
             autosave.finish();
-            app.tx.send(PlayerCommand::Stop).ok();
+            // Behind whatever the router still holds: a barrier through it
+            // reaches this player once every command before it has gone where
+            // it was going.
+            let (reply, drained) = crossbeam_channel::bounded(1);
+            if app.tx.send(PlayerCommand::Barrier(reply)).is_ok() {
+                let _ = drained.recv_timeout(Duration::from_secs(1));
+            }
+            app.local_tx.send(PlayerCommand::Stop).ok();
             app.art.gfx.release_all();
             flush_deletes(&mut app);
             break;

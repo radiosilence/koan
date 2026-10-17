@@ -22,6 +22,9 @@ final class PushDelegate: NSObject, UIApplicationDelegate {
 
     private static var token: String?
     private static var waiting: [String] = []
+    /// Pushes holding the app awake from before the engine was up: a push
+    /// after iOS ended the app launches it, and arrives first.
+    private static var holdsWaiting = 0
 
     /// Which of Apple's two gateways issued the token. A development build is
     /// signed for the sandbox; TestFlight and the App Store for production.
@@ -66,11 +69,19 @@ final class PushDelegate: NSObject, UIApplicationDelegate {
         didReceiveRemoteNotification userInfo: [AnyHashable: Any]
     ) async -> UIBackgroundFetchResult {
         Self.engine?.logNote(message: "push: woken")
-        Self.engine?.holdAwake()
+        Self.hold()
         Self.engine?.linkNudge()
         try? await Task.sleep(for: .seconds(20))
-        Self.engine?.releaseAwake()
+        Self.release()
         return .newData
+    }
+
+    private static func hold() {
+        if let engine { engine.holdAwake() } else { holdsWaiting += 1 }
+    }
+
+    private static func release() {
+        if holdsWaiting > 0 { holdsWaiting -= 1 } else { engine?.releaseAwake() }
     }
 
     #if !os(tvOS)
@@ -133,6 +144,10 @@ final class PushDelegate: NSObject, UIApplicationDelegate {
 
     private static func flush() {
         guard let engine else { return }
+        for _ in 0..<holdsWaiting {
+            engine.holdAwake()
+        }
+        holdsWaiting = 0
         if let token {
             engine.setPushToken(token: token, sandbox: sandbox)
             NSLog("koan: push token handed to the link")

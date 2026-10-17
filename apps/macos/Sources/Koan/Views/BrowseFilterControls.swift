@@ -208,7 +208,7 @@ private struct YearField: View {
             #if os(tvOS)
             // tvOS draws a rounded platter no style removes; the theme draws
             // its own box over the field.
-            .koanField(text, prompt: prompt)
+            .koanField(text, prompt: KoanTheme.label(prompt))
             .frame(width: KoanTheme.isOn ? 180 : 60)
             #elseif os(macOS)
             .koanField()

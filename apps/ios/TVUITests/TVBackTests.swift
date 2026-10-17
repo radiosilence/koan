@@ -135,9 +135,62 @@ final class TVBackTests: XCTestCase {
         pause(2)
         XCTAssertEqual(app.state, .runningForeground, "Menu closes the code, not the app")
         snap("13-after-share")
-        XCTExpectFailure("#1085: focus returns to the filter field") {
-            XCTAssertFalse(field.hasFocus, "focus is not on the filter field")
+        XCTAssertFalse(field.hasFocus, "focus is not on the filter field")
+        // The row is not reported as focused; what it does shows it is.
+        remote.press(.select, forDuration: 1.5)
+        pause(2)
+        XCTAssertTrue(app.buttons[any: "Share…"].exists, "a long press opens an artist's menu: a row has focus")
+        press(.menu)
+        pause(2)
+        press(.up)
+        XCTAssertTrue(field.hasFocus, "Up reaches the filter field: the row is the first, the one shared from")
+    }
+
+    /// EQ's preset choice takes focus from the page behind it and keeps it
+    /// until it closes, after a visit to Manage EQ as before one.
+    func testEqPresetChoiceTakesFocus() {
+        open(.settings)
+        reach(app.buttons[any: "EQ"], by: .down)
+        press(.select)
+        pause(3)
+        choosePreset("14-eq-presets", by: .down)
+        let manage = app.buttons[any: "Manage EQ"]
+        reach(manage, by: .down)
+        press(.select)
+        pause(3)
+        press(.menu)
+        pause(2)
+        XCTAssertTrue(manage.waitForExistence(timeout: 3), "back on the EQ page")
+        choosePreset("15-eq-presets-after-manage", by: .up)
+    }
+
+    /// Opens the preset choice, checks that focus is in it and stays there,
+    /// and closes it with Menu.
+    private func choosePreset(_ shot: String, by direction: XCUIRemote.Button) {
+        // The row reads its choice too: "Preset, Flat" or as tvOS joins them.
+        let preset = app.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] %@", "preset")).firstMatch
+        reach(preset, by: direction)
+        press(.select)
+        pause(2)
+        let flat = app.buttons[any: "Flat"]
+        XCTAssertTrue(flat.waitForExistence(timeout: 5), "the presets")
+        snap(shot)
+        XCTAssertFalse(preset.hasFocus, "the page behind has lost focus")
+        // The panel's rows share its width and centre; the page's do not.
+        func inPanel() -> Bool {
+            let focused = focusedFrame()
+            return abs(focused.midX - flat.frame.midX) < 1 && abs(focused.width - flat.frame.width) < 1
         }
+        XCTAssertTrue(inPanel(), "focus is in the presets")
+        for step in [XCUIRemote.Button.down, .up, .left, .right] {
+            press(step)
+            XCTAssertTrue(flat.exists, "the presets are still up")
+            XCTAssertTrue(inPanel(), "focus stays in the presets after \(step)")
+        }
+        press(.menu)
+        pause(2)
+        XCTAssertEqual(app.state, .runningForeground, "Menu closes the presets")
+        XCTAssertFalse(flat.exists, "the presets are gone")
     }
 
     /// EQ's empty stages take focus and open the account's own profiles.
@@ -208,6 +261,11 @@ final class TVBackTests: XCTestCase {
         let titles = records()
         XCTAssertFalse(titles.isEmpty, "the records named stay")
         XCTAssertTrue(titles.allSatisfy { $0.hasPrefix("Album 3") }, "only records named, not \(titles)")
+    }
+
+    /// Where the focused element is.
+    private func focusedFrame() -> CGRect {
+        app.descendants(matching: .any).matching(NSPredicate(format: "hasFocus == true")).firstMatch.frame
     }
 
     /// The titles of the album tiles on screen.

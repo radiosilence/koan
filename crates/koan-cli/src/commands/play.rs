@@ -98,15 +98,19 @@ pub fn cmd_play(
         }
     }
 
-    // What the TUI shows "loading" for: the tracks asked for on the command
-    // line, being read.
+    // What this session starts with, being read on a thread of its own. The
+    // TUI shows "loading" until the thread drops `reading`.
+    let mut startup = None;
     let mut loading = None;
     if let Some(ids) = track_ids {
         let tx_bg = tx.clone();
-        loading = Some(
+        let (reading, done) = crossbeam_channel::bounded::<()>(0);
+        loading = Some(done);
+        startup = Some(
             std::thread::Builder::new()
                 .name("koan-resolve".into())
                 .spawn(move || {
+                    let _reading = reading;
                     enqueue_playlist(ids, PickerAction::AppendAndPlay, None, tx_bg);
                 })
                 .expect("failed to spawn resolve thread"),
@@ -120,10 +124,13 @@ pub fn cmd_play(
         }
         let owned_paths: Vec<PathBuf> = paths.to_vec();
         let tx_bg = tx.clone();
-        loading = Some(
+        let (reading, done) = crossbeam_channel::bounded::<()>(0);
+        loading = Some(done);
+        startup = Some(
             std::thread::Builder::new()
                 .name("koan-resolve".into())
                 .spawn(move || {
+                    let _reading = reading;
                     let mut audio_paths: Vec<PathBuf> = Vec::new();
                     for path in &owned_paths {
                         if path.is_dir() {
@@ -145,10 +152,8 @@ pub fn cmd_play(
                         return;
                     }
                     let items = playlist_items_from_paths(&audio_paths, None);
-                    if let Some(first) = items.first() {
-                        let first_id = first.id;
-                        tx_bg.send(PlayerCommand::AddToPlaylist(items)).ok();
-                        tx_bg.send(PlayerCommand::Play(first_id)).ok();
+                    if !items.is_empty() {
+                        tx_bg.send(PlayerCommand::AddAndPlay(items)).ok();
                     }
                 })
                 .expect("failed to spawn resolve thread"),
@@ -188,6 +193,43 @@ pub fn cmd_play(
         }
     }
 
+    // Reachable as a device: by the account's other devices through the
+    // server, and by whatever is on this network, as `devices.*` says. Not
+    // before the session it starts with is in the player: a device that
+    // connected sooner would be told an empty queue, and could replace it
+    // before the restore landed on top. Music named on the command line
+    // plays here, whichever device the last run was controlling.
+    {
+        let (state, viz, tx) = (state.clone(), viz_snapshot.clone(), tx.clone());
+        let here = startup.is_some();
+        std::thread::Builder::new()
+            .name("koan-serve".into())
+            .spawn(move || {
+                if let Some(startup) = startup {
+                    let _ = startup.join();
+                }
+                let (applied, done) = crossbeam_channel::bounded(1);
+                if tx.send(PlayerCommand::Barrier(applied)).is_ok() {
+                    let _ = done.recv_timeout(Duration::from_secs(5));
+                }
+                let Some(identity) = koan_core::remote::link::LinkIdentity::terminal() else {
+                    log::info!(
+                        "another terminal on this machine is the terminal device; this one plays here only"
+                    );
+                    return;
+                };
+                koan_core::remote::control::serve(
+                    identity,
+                    state,
+                    viz,
+                    tx,
+                    koan_tui::tasks::library_changed,
+                    here,
+                );
+            })
+            .expect("failed to spawn the serve thread");
+    }
+
     let callbacks = TuiCallbacks {
         sigint_received: crate::sigint_received,
         install_panic_hook: install_terminal_panic_hook,
@@ -209,6 +251,7 @@ pub fn cmd_play(
     // Saved above, playing if it was: a renderer left on our URL would play
     // out its buffer and stop, so it is stopped here and resumed next time.
     koan_core::player::commands::release_renderer(&tx_quit, Duration::from_millis(1500));
+    koan_core::remote::control::stop();
 
     Logger::set_quiet(false);
     std::thread::sleep(Duration::from_millis(100));

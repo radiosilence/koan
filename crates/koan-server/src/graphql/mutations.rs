@@ -92,7 +92,10 @@ impl MutationRoot {
         let count = track_ids.len();
         let track_ids: Vec<String> = track_ids.into_iter().map(|id| id.0).collect();
         let cmd = if enqueue.unwrap_or(false) {
-            LinkCommand::Enqueue { track_ids }
+            LinkCommand::Enqueue {
+                track_ids,
+                play: false,
+            }
         } else {
             LinkCommand::Play {
                 track_ids,

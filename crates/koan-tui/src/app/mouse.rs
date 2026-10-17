@@ -242,12 +242,13 @@ impl App {
                     self.pop_mode();
                 }
             }
-            Mode::DeviceSelector | Mode::DspSelector => {
+            Mode::DeviceSelector | Mode::DspSelector | Mode::PlayOn => {
                 let area = self.layout.selector_area;
                 let rows = inside(area);
                 if down && !hit(area, col, row) {
                     self.dsp_selector = None;
                     self.device_selector = None;
+                    self.play_on = None;
                     self.pop_mode();
                 } else if down && hit(rows, col, row) {
                     let at = (row - rows.y) as usize;
@@ -257,6 +258,11 @@ impl App {
                             .as_ref()
                             .map_or(0, |s| s.top(rows.height as usize));
                         self.apply_dsp(top + at);
+                    } else if let Some(p) = self.play_on.as_mut() {
+                        if at < p.choices.len() {
+                            p.cursor = at;
+                            self.handle_play_on_key(KeyEvent::from(KeyCode::Enter));
+                        }
                     } else if let Some(sel) = self.device_selector.as_mut()
                         && at < sel.devices.len()
                     {
@@ -266,6 +272,8 @@ impl App {
                 } else if wheel != 0 {
                     if let Some(sel) = self.dsp_selector.as_mut() {
                         sel.move_by(wheel);
+                    } else if let Some(p) = self.play_on.as_mut() {
+                        p.move_by(wheel);
                     } else if let Some(sel) = self.device_selector.as_mut()
                         && !sel.devices.is_empty()
                     {

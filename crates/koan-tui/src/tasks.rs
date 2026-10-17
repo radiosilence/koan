@@ -19,6 +19,20 @@ pub enum Report {
     Say(String),
 }
 
+static LIBRARY_CHANGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Rows arrived, or files went, by some route the TUI did not start: a
+/// command from another device. The pages read the library again on the next
+/// frame.
+pub fn library_changed() {
+    LIBRARY_CHANGED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether `library_changed` was told since this was last asked.
+pub fn take_library_changed() -> bool {
+    LIBRARY_CHANGED.swap(false, std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Whether a track has to come from the server to play here.
 pub fn needs_fetch(t: &koan_core::db::queries::TrackRow) -> bool {
     t.remote_id.is_some() && t.path.is_none() && t.cached_path.is_none()
