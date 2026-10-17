@@ -58,9 +58,22 @@ struct AlbumBrowser: View {
     }
 
     #if os(macOS)
+    private var albums: some View {
+        VStack(spacing: 0) {
+            // On the grid's margin, which leaves the gap below.
+            PageHeader(
+                "Albums", appWords: true,
+                detail: { Text(Format.count(Int64(library.visibleAlbums.count), "album")) }
+            )
+            .padding(.horizontal, 20)
+            .padding(.top, RowMetrics.pageEdge)
+            grid
+        }
+    }
+
     /// An `AlbumCollection` — see there for why the Mac's grid is AppKit.
     @ViewBuilder
-    private var albums: some View {
+    private var grid: some View {
         if library.visibleAlbums.isEmpty {
             ScrollView { empty }
         } else {

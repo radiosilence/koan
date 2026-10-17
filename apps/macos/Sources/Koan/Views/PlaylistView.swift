@@ -285,21 +285,34 @@ struct PlaylistView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            // Top-aligned: the cover's top edge meets the title's first line.
-            HStack(alignment: .top, spacing: 18) {
+            PageHeader(playlist?.name ?? "Playlist") {
                 artwork
-
+            } lead: {
+                #if !os(tvOS)
+                if let playable {
+                    PlayableHeaderButton(playable: playable)
+                    ShuffleHeaderButton(playable: playable)
+                }
+                #endif
+            } detail: {
+                Text(summary)
+            } actions: {
                 VStack(alignment: .leading, spacing: 6) {
-                    titleBlock
+                    #if os(tvOS)
+                    if let playable {
+                        HStack {
+                            PlayableHeaderButton(playable: playable)
+                            ShuffleHeaderButton(playable: playable)
+                        }
+                        .padding(.vertical, 8)
+                    }
+                    #endif
                     HStack(spacing: 10) {
                         QueueButtons(playable: playable)
                         shuffleButton
                     }
-                    .padding(.top, 4)
                 }
-
-                Spacer(minLength: 0)
-
+            } trailing: {
                 VStack(alignment: .trailing, spacing: 10) {
                     #if !os(iOS)
                     PlaylistSelectionHeader(selection: $selection, rows: rows) { removeSelected() }

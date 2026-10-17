@@ -357,10 +357,16 @@ struct QueueView: View {
             // Undo is a keyboard's idea of a control. The buttons exist to show
             // ⌘Z is available, and there is no ⌘Z on a phone.
             #if os(macOS)
-            Button { player.undo() } label: { KoanIcon(Icon.undo) }
-                .help("Undo (⌘Z)")
-            Button { player.redo() } label: { KoanIcon(Icon.redo) }
-                .help("Redo (⇧⌘Z)")
+            Group {
+                Button { player.undo() } label: { KoanIcon(Icon.undo) }
+                    .help("Undo (⌘Z)")
+                Button { player.redo() } label: { KoanIcon(Icon.redo) }
+                    .help("Redo (⇧⌘Z)")
+            }
+            // Secondary controls, in ink as their neighbours are; a borderless
+            // button otherwise takes the accent. The system look keeps the
+            // record's.
+            .tint(KoanTheme.isOn ? Color.koanInk : roomTint)
             #endif
 
             Menu {

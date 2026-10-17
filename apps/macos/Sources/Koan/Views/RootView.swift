@@ -192,14 +192,32 @@ struct RootView: View {
 /// SwiftUI charges that read to whichever body the field sits in. Placed in
 /// `RootView` directly, that would be the root: every keystroke would re-run
 /// the window and rebuild the toolbar, field and focus with it.
+///
+/// In the theme it is the sidebar search's field, so the two read as one kind
+/// of control: no box, a muted glyph and a lowercase prompt.
 private struct LibraryFilter: View {
     let placeholder: String
     @Environment(LibraryModel.self) private var library
     @Environment(UIState.self) private var ui
+    @FocusState private var focused: Bool
 
     var body: some View {
         @Bindable var library = library
+        #if os(macOS)
+        if KoanTheme.isOn {
+            KoanSearchField(text: $library.filter, prompt: placeholder, focus: $focused) {}
+                .onKeyPress(.escape) {
+                    guard !library.filter.isEmpty else { return .ignored }
+                    library.filter = ""
+                    return .handled
+                }
+                .onChange(of: ui.filterFocusToken) { _, _ in focused = true }
+        } else {
+            FilterField(placeholder: placeholder, text: $library.filter, focusToken: ui.filterFocusToken)
+        }
+        #else
         FilterField(placeholder: placeholder, text: $library.filter, focusToken: ui.filterFocusToken)
+        #endif
     }
 }
 

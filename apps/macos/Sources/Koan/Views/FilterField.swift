@@ -11,6 +11,9 @@ import SwiftUI
 /// I am looking at, the ones with 'live' in the title" without being thrown
 /// into a results page.
 ///
+/// The platform's look; the theme's is `KoanSearchField`, chosen by
+/// `LibraryFilter`.
+///
 /// A real `NSSearchField` rather than a `TextField`. SwiftUI offers the search
 /// look only through `.searchable`, which the sidebar has already claimed, and
 /// every hand-built substitute loses something — the magnifier, the clear
@@ -27,23 +30,13 @@ struct FilterField: NSViewRepresentable {
     var focusToken = 0
 
     func makeNSView(context: Context) -> NSSearchField {
-        let field: NSSearchField = KoanTheme.isOn ? FlatSearchField() : NSSearchField()
+        let field = NSSearchField()
         field.placeholderString = placeholder
         field.delegate = context.coordinator
         field.sendsSearchStringImmediately = true
         field.sendsWholeSearchString = false
         field.controlSize = .regular
         field.focusRingType = .default
-        if KoanTheme.isOn {
-            // The theme's field: square, on `surface`, in its type. A bezel
-            // would round it.
-            field.isBezeled = false
-            field.isBordered = false
-            field.drawsBackground = true
-            field.backgroundColor = .koanSurface
-            field.font = .koan(.meta)
-            field.focusRingType = .none
-        }
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
         return field
     }
@@ -89,33 +82,6 @@ struct FilterField: NSViewRepresentable {
     }
 }
 
-/// An `NSSearchField` without its bezel. Unbezeled, the cell still draws its
-/// placeholder clear of the magnifier but opens the field editor across its
-/// whole frame, so focusing it put the text and caret under the glyph.
-private final class FlatSearchField: NSSearchField {
-    override class var cellClass: AnyClass? {
-        get { Cell.self }
-        set {}
-    }
-
-    final class Cell: NSSearchFieldCell {
-        override func edit(
-            withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, event: NSEvent?
-        ) {
-            super.edit(withFrame: searchTextRect(forBounds: rect), in: controlView, editor: textObj, delegate: delegate, event: event)
-        }
-
-        override func select(
-            withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?,
-            start selStart: Int, length selLength: Int
-        ) {
-            super.select(
-                withFrame: searchTextRect(forBounds: rect), in: controlView, editor: textObj, delegate: delegate,
-                start: selStart, length: selLength
-            )
-        }
-    }
-}
 #else
 struct FilterField: View {
     let placeholder: String

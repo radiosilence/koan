@@ -68,10 +68,10 @@ struct ShelfView: View {
             // On iOS the navigation bar already says what the page is; the
             // counts go under its title.
             #if os(macOS)
-            header
-                .padding(.horizontal, 24)
-                .padding(.top, 18)
-                .padding(.bottom, 16)
+            // On the collection's margin, which leaves the gap below.
+            PageHeader(title, appWords: true, detail: { Text(counts) })
+                .padding(.horizontal, 20)
+                .padding(.top, RowMetrics.pageEdge)
             #endif
 
             if artists.isEmpty && albums.isEmpty && tracks.isEmpty {
@@ -199,20 +199,6 @@ struct ShelfView: View {
                     return .handled
                 }
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            // A television's navigation title already names the page, above.
-            #if !os(tvOS)
-            Text(title).koanCase()
-                .font(.role(.titleSmall, system: .title2.weight(.semibold)))
-            #endif
-            Text(counts)
-                .font(.role(.fine, system: .caption))
-                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Only the kinds you have, so a tracks-only library reads as a count of
