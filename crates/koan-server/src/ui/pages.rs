@@ -38,6 +38,11 @@ const TRACK_MENU: &str = "<div id=track-menu popover=manual role=menu class=\"fi
 flex-col open:flex border border-rule bg-bg p-1 text-ink max-wide:inset-x-3 max-wide:w-auto \
 max-wide:bottom-[calc(var(--bar-h)+var(--tabs-h)+env(safe-area-inset-bottom)+8px)]\" aria-label=Track></div>";
 
+/// A track's properties, filled from `/track/{id}/properties` by the UI's script.
+const TRACK_PROPERTIES: &str = "<dialog id=track-properties class=\"m-auto max-h-[85dvh] w-[calc(100%-24px)] \
+max-w-panel overflow-y-auto border border-rule bg-bg px-5 pt-4 pb-5 text-ink backdrop:bg-bg/70\" \
+aria-label=Properties></dialog>";
+
 pub(super) const KICKER: &str = "m-0 text-fine text-muted lowercase";
 pub(super) const SUB: &str = "mt-0 mb-3.5 text-muted wrap-anywhere";
 pub(super) const EMPTY: &str = "text-muted";
@@ -202,7 +207,7 @@ max-wide:block [&::-moz-progress-bar]:bg-brand [&::-webkit-progress-bar]:bg-rule
 <img class=\"size-10 flex-none bg-surface object-cover\" data-np=cover alt=\"\" hidden>\
 <span class=\"flex min-w-0 flex-col\"><span class=\"truncate text-meta text-strong\" data-np=title>Nothing playing</span>\
 <span class=\"truncate text-fine text-muted\" data-np=artist></span></span></a>\
-<div class=\"flex min-w-0 flex-col items-center gap-1\">{buttons}{scrub}</div></footer>{TRACK_MENU}</body></html>",
+<div class=\"flex min-w-0 flex-col items-center gap-1\">{buttons}{scrub}</div></footer>{TRACK_MENU}{TRACK_PROPERTIES}</body></html>",
         head = head(title),
         datastar = super::ASSETS.datastar_js,
         player = super::ASSETS.player_js,

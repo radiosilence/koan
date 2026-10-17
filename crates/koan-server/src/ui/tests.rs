@@ -436,6 +436,7 @@ async fn every_class_on_every_page_has_a_rule() {
         "/scrobbling".to_owned(),
         "/users".to_owned(),
         "/connect".to_owned(),
+        format!("/track/{}/properties", f.track_id),
     ] {
         let r = send(&f.app, page(&uri)).await;
         assert_eq!(r.status, StatusCode::OK, "{uri}");
@@ -463,6 +464,54 @@ async fn every_class_on_every_page_has_a_rule() {
             "{uri}: no rule in ui.css for {missing:?}"
         );
     }
+}
+
+#[tokio::test]
+async fn track_properties_show_the_file_path_to_admins_only() {
+    let f = setup(true);
+    let db = Database::open(f.state.pool.path()).unwrap();
+    let boss = queries::auth::create_user(&db.conn, "boss", "sesame", Role::Admin).unwrap();
+    let admin =
+        auth::mint_access_token(&f.state.private_pem, boss, "boss", Role::Admin, 900).unwrap();
+    let uri = format!("/track/{}/properties", f.track_id);
+    let path = f.dir.path().join("a.flac").to_string_lossy().into_owned();
+
+    let r = send(
+        &f.app,
+        get(&uri)
+            .header("x-koan-partial", "1")
+            .header(header::COOKIE, format!("koan_access={admin}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains(&path), "{}", r.body);
+    assert!(r.body.contains("Wet &lt;Moss&gt; &amp; Stone"));
+
+    let r = send(
+        &f.app,
+        authed(&f.state, &uri)
+            .header("x-koan-partial", "1")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(!r.body.contains(&path), "{}", r.body);
+    assert!(!r.body.contains("a.flac"));
+    assert!(r.body.contains("Wet &lt;Moss&gt; &amp; Stone"));
+    assert!(r.body.contains("FLAC"));
+
+    let r = send(
+        &f.app,
+        authed(&f.state, "/track/999999/properties")
+            .header("x-koan-partial", "1")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

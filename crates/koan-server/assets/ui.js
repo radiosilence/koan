@@ -121,6 +121,10 @@
       const li = document.createElement("li");
       li.tabIndex = 0;
       li.dataset.q = i;
+      Object.assign(li.dataset, {
+        id: t.id, dur: t.dur, title: t.title, artist: t.artist ?? "", album: t.album ?? "",
+        albumId: t.albumId || 0, cover: t.cover ?? "",
+      });
       li.classList.toggle("playing", i === cur);
       const n = document.createElement("span");
       n.className = "n";
@@ -140,7 +144,14 @@
       rm.setAttribute("aria-label", "Remove from queue");
       rm.title = "Remove from queue";
       rm.textContent = "×";
-      li.append(n, title, d, rm);
+      const more = document.createElement("button");
+      more.className = "quiet wide:hidden";
+      more.dataset.act = "menu";
+      more.setAttribute("aria-haspopup", "menu");
+      more.setAttribute("aria-label", "More");
+      more.title = "More";
+      more.textContent = "⋯";
+      li.append(n, title, d, rm, more);
       list.append(li);
     });
   }
@@ -249,6 +260,7 @@
     const go = [];
     if (Number(d.albumId)) go.push(item("Go to Album", () => navigate(`/album/${d.albumId}`, true)));
     if (Number(d.artistId)) go.push(item("Go to Artist", () => navigate(`/artist/${d.artistId}`, true)));
+    const about = [item("Properties…", () => showProperties(d.id))];
     const head = document.createElement("p");
     head.textContent = [t.title, t.artist].filter(Boolean).join(" · ");
     menu.replaceChildren(
@@ -259,6 +271,7 @@
       ...group(mine),
       ...group(go),
       ...group(forget),
+      ...group(about),
     );
     if (!menu.matches(":popover-open")) menu.showPopover();
     if (wide.matches) {
@@ -270,6 +283,16 @@
     }
     menu.querySelector("button").focus();
   }
+  const properties = document.getElementById("track-properties");
+  async function showProperties(id) {
+    if (!properties) return;
+    const r = await fetch(`/track/${id}/properties`, { headers: { "x-koan-partial": "1" } });
+    if (!r.ok) return;
+    properties.innerHTML = await r.text();
+    properties.showModal();
+  }
+  // A click on the backdrop lands on the dialog itself.
+  properties?.addEventListener("click", (e) => { if (e.target === properties) properties.close(); });
   // A manual popover: the press that opens it ends on the row (a touch stays
   // captured by what it went down on), which a light-dismissing popover would
   // take for a click outside. It closes on the next press outside it, Escape,

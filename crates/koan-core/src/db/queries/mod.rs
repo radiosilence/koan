@@ -247,6 +247,52 @@ pub struct TrackMeta {
     pub album_added_at: Option<String>,
 }
 
+impl TrackMeta {
+    /// What this source says, labelled for an info view, empty values left
+    /// out. The stream URL carries the account's credentials, so it is left out.
+    pub fn info_fields(self) -> Vec<(&'static str, String)> {
+        let text = |v: Option<String>| v.filter(|v| !v.is_empty());
+        let number = |v: Option<i32>| v.map(|v| v.to_string());
+        let length = self.duration_ms.map(|ms| {
+            let s = ms / 1000;
+            format!("{}:{:02}", s / 60, s % 60)
+        });
+        let modified = self
+            .mtime
+            .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
+            .map(|t| t.to_rfc3339());
+        [
+            ("Title", Some(self.title)),
+            ("Artist", Some(self.artist)),
+            ("Album artist", text(self.album_artist)),
+            ("Album", Some(self.album)),
+            ("Date", text(self.date)),
+            ("Disc", number(self.disc)),
+            ("Track", number(self.track_number)),
+            ("Genre", text(self.genre)),
+            ("Label", text(self.label)),
+            ("Length", length),
+            ("Codec", text(self.codec)),
+            ("Sample rate", self.sample_rate.map(|r| format!("{r} Hz"))),
+            ("Bit depth", self.bit_depth.map(|b| format!("{b} bit"))),
+            ("Channels", number(self.channels)),
+            ("Bitrate", self.bitrate.map(|b| format!("{b} kbps"))),
+            ("Size", self.size_bytes.map(|b| format!("{b} bytes"))),
+            ("Modified", modified),
+            ("Path", text(self.path)),
+            ("Server id", text(self.remote_id)),
+            ("Server album id", text(self.album_remote_id)),
+            ("Server artist id", text(self.artist_remote_id)),
+            ("MusicBrainz recording", text(self.mbid)),
+            ("MusicBrainz release", text(self.album_mbid)),
+            ("Album added", text(self.album_added_at)),
+        ]
+        .into_iter()
+        .filter_map(|(name, value)| Some((name, value?)))
+        .collect()
+    }
+}
+
 /// Test helper: build a sample TrackMeta for use in tests across sub-modules.
 #[cfg(test)]
 pub fn sample_meta(title: &str, artist: &str, album: &str) -> TrackMeta {
