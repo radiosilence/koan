@@ -18,6 +18,9 @@ pub struct Tokens {
     pub surface: Color,
     /// Selection, progress, the playing row. The cover's, while one plays.
     pub accent: Color,
+    /// The accent where it is text: `ink` when the cover's does not reach
+    /// 4.5:1 on the grounds.
+    pub accent_text: Color,
     /// Errors and destructive actions.
     pub bad: Color,
 }
@@ -131,13 +134,19 @@ impl Theme {
                 indexed(r, g, b)
             }
         };
+        let ink = c(0xcc, 0xcc, 0xcc);
         let t = Tokens {
-            ink: c(0xcc, 0xcc, 0xcc),
+            ink,
             strong: c(0xff, 0xff, 0xff),
             muted: c(0x91, 0x91, 0x91),
             rule: c(0x38, 0x38, 0x38),
             surface: c(0x2a, 0x2a, 0x2a),
             accent: c(accent.0, accent.1, accent.2),
+            accent_text: if super::accent::reads_as_text(accent) {
+                c(accent.0, accent.1, accent.2)
+            } else {
+                ink
+            },
             bad: c(0xef, 0x6b, 0x73),
         };
         let bold = Modifier::BOLD;
@@ -148,17 +157,20 @@ impl Theme {
             warning,
             album_header_artist: Style::new().fg(t.strong).add_modifier(bold),
             album_header_album: Style::new().fg(t.ink),
-            track_playing: Style::new().fg(t.accent),
+            track_playing: Style::new().fg(t.accent_text),
             track_normal: Style::new().fg(t.ink),
-            track_cursor: Style::new().fg(t.accent).add_modifier(bold),
-            track_selected: Style::new().fg(t.accent),
+            track_cursor: Style::new().fg(t.accent_text).add_modifier(bold),
+            track_selected: Style::new().fg(t.accent_text),
             track_number: Style::new().fg(t.muted),
-            picker_cursor: Style::new().fg(t.accent).bg(t.surface).add_modifier(bold),
+            picker_cursor: Style::new()
+                .fg(t.accent_text)
+                .bg(t.surface)
+                .add_modifier(bold),
             hint_key: Style::new().fg(t.ink),
             hint_desc: Style::new().fg(t.muted),
             progress_filled: Style::new().fg(t.accent),
             progress_empty: Style::new().fg(t.rule),
-            status_playing: Style::new().fg(t.accent),
+            status_playing: Style::new().fg(t.accent_text),
             status_paused: Style::new().fg(warning),
             status_stopped: Style::new().fg(t.muted),
             spinner: Style::new().fg(t.accent),
@@ -166,7 +178,10 @@ impl Theme {
             library_artist: Style::new().fg(t.strong).add_modifier(bold),
             library_album: Style::new().fg(t.ink),
             library_track: Style::new().fg(t.ink),
-            library_cursor: Style::new().fg(t.accent).bg(t.surface).add_modifier(bold),
+            library_cursor: Style::new()
+                .fg(t.accent_text)
+                .bg(t.surface)
+                .add_modifier(bold),
             track_hover: Style::new().fg(t.strong).add_modifier(Modifier::UNDERLINED),
             library_hover: Style::new().fg(t.strong).add_modifier(Modifier::UNDERLINED),
             favourite: Style::new().fg(t.accent),
@@ -190,6 +205,7 @@ impl Theme {
             rule: Color::DarkGray,
             surface: Color::Reset,
             accent: Color::Cyan,
+            accent_text: Color::Cyan,
             bad: Color::Red,
         };
         Self {
@@ -244,7 +260,7 @@ impl Theme {
             PickerPartKind::Album if ansi => Style::new().fg(Color::Green),
             PickerPartKind::Date if ansi => Style::new().fg(Color::Yellow),
             PickerPartKind::Artist => Style::new().fg(t.strong),
-            PickerPartKind::Album => Style::new().fg(t.accent),
+            PickerPartKind::Album => Style::new().fg(t.accent_text),
             PickerPartKind::Title | PickerPartKind::Plain => Style::new(),
             PickerPartKind::Date
             | PickerPartKind::TrackNum
@@ -278,6 +294,16 @@ mod tests {
         );
         assert_eq!(indexed(0, 0, 0), Color::Indexed(16));
         assert_eq!(indexed(255, 255, 255), Color::Indexed(231));
+    }
+
+    #[test]
+    fn an_accent_that_fails_as_text_leaves_text_in_ink() {
+        let t = Theme::new(Palette::Koan { truecolor: true }, (40, 60, 200));
+        assert_eq!(t.tokens.accent, Color::Rgb(40, 60, 200));
+        assert_eq!(t.track_playing.fg, Some(t.tokens.ink));
+        assert_eq!(t.progress_filled.fg, Some(t.tokens.accent));
+        let mint = Theme::new(Palette::Koan { truecolor: true }, MINT);
+        assert_eq!(mint.track_playing.fg, Some(mint.tokens.accent));
     }
 
     #[test]

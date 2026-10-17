@@ -21,6 +21,9 @@ const LIGHTNESS: (f64, f64) = (0.70, 0.85);
 const CHROMA: (f64, f64) = (0.10, 0.19);
 /// Under this chroma a sleeve has no hue worth carrying.
 const NO_HUE: f64 = 0.04;
+/// Colour over less of the sleeve than this is an accident of its edges or
+/// a sticker, not the record's colour.
+const COVERAGE: f64 = 0.03;
 /// What the accent is read against: `bg` and `surface`.
 const GROUNDS: [u32; 2] = [0x1e1e1e, 0x2a2a2a];
 
@@ -61,7 +64,12 @@ fn from_hsb(h: f64, s: f64, v: f64) -> (f64, f64, f64) {
 /// weighted by their saturation and brightness, so one strong colour on a
 /// mostly black sleeve wins rather than being drowned by the black.
 /// Near-grey, near-black and blown-out samples say nothing about it.
-fn dominant(img: &DynamicImage) -> Option<(f64, f64, f64)> {
+///
+/// Returned with the sleeve's own chroma, measured before the colour is
+/// clamped into a usable saturation: its mean saturation, scaled by how far
+/// the hues agree, so compression noise on a grey sleeve, whose hues scatter,
+/// measures as grey. `None` when too little of the sleeve is coloured.
+fn dominant(img: &DynamicImage) -> Option<((f64, f64, f64), f64)> {
     let small = img.thumbnail(32, 32).to_rgb8();
     let (mut x, mut y, mut saturation, mut total) = (0.0, 0.0, 0.0, 0.0);
     for px in small.pixels() {
@@ -77,11 +85,15 @@ fn dominant(img: &DynamicImage) -> Option<(f64, f64, f64)> {
         saturation += sat * weight;
         total += weight;
     }
-    if total <= 0.0 {
+    if total <= 0.0 || total < small.pixels().len() as f64 * COVERAGE {
         return None;
     }
     let hue = (y / total).atan2(x / total) / std::f64::consts::TAU;
-    Some(from_hsb(hue, (saturation / total).clamp(0.55, 0.85), 0.80))
+    let saturation = saturation / total;
+    let agreement = x.hypot(y) / total;
+    let (r, g, b) = from_hsb(hue, saturation * agreement, 0.80);
+    let (chroma, _) = oklch(r, g, b);
+    Some((from_hsb(hue, saturation.clamp(0.55, 0.85), 0.80), chroma))
 }
 
 fn linear(v: f64) -> f64 {
@@ -171,14 +183,28 @@ fn shade(c: f64, h: f64) -> Option<(f64, f64, f64)> {
 /// The accent a cover gives, or `None` when it holds no colour worth taking
 /// (a greyscale sleeve): the interface keeps mint then.
 pub fn from_image(img: &DynamicImage) -> Option<Rgb> {
-    let (r, g, b) = dominant(img)?;
-    let (c, h) = oklch(r, g, b);
-    if c < NO_HUE {
+    let ((r, g, b), sleeve) = dominant(img)?;
+    if sleeve < NO_HUE {
         return None;
     }
+    let (c, h) = oklch(r, g, b);
     let (r, g, b) = shade(c, h)?;
     let byte = |v: f64| (v * 255.0).round() as u8;
     Some((byte(r), byte(g), byte(b)))
+}
+
+/// Whether `accent` reaches 4.5:1 on both grounds. One that does not is for
+/// fills and indicators only; text that would have been it is `ink`.
+pub fn reads_as_text(accent: Rgb) -> bool {
+    let y = luminance((
+        f64::from(accent.0) / 255.0,
+        f64::from(accent.1) / 255.0,
+        f64::from(accent.2) / 255.0,
+    ));
+    GROUNDS.iter().all(|&hex| {
+        let byte = |shift: u32| f64::from((hex >> shift) & 0xff) / 255.0;
+        contrast(y, luminance((byte(16), byte(8), byte(0)))) >= 4.5
+    })
 }
 
 /// The accent in effect, easing from the last one to the next.
@@ -299,6 +325,31 @@ mod tests {
         }
         let (r, _, b) = from_image(&DynamicImage::ImageRgb8(img)).expect("a blue");
         assert!(b > r);
+    }
+
+    #[test]
+    fn a_small_logo_on_a_grey_sleeve_gives_no_accent() {
+        let mut img = RgbImage::from_pixel(64, 64, P([120, 120, 120]));
+        for x in 0..8 {
+            for y in 0..8 {
+                img.put_pixel(x, y, P([220, 20, 30]));
+            }
+        }
+        assert_eq!(from_image(&DynamicImage::ImageRgb8(img)), None);
+    }
+
+    #[test]
+    fn noise_on_a_grey_sleeve_gives_no_accent() {
+        // Faintly coloured samples whose hues go every way at once.
+        let tints = [[150, 120, 120], [120, 150, 120], [120, 120, 150]];
+        let img = RgbImage::from_fn(64, 64, |x, y| P(tints[((x / 4 + y / 4) % 3) as usize]));
+        assert_eq!(from_image(&DynamicImage::ImageRgb8(img)), None);
+    }
+
+    #[test]
+    fn mint_reads_as_text_and_a_dark_blue_does_not() {
+        assert!(reads_as_text(MINT));
+        assert!(!reads_as_text((40, 60, 200)));
     }
 
     #[test]
