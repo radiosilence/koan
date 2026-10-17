@@ -432,9 +432,8 @@ fn walk(path: &Path, result: &mut ScanResult) -> Walked {
 /// `scope` holds the directories and files they were walked from: the scan
 /// cache is read for those alone.
 ///
-/// Returns false when the scan could not run at all or lost a batch, with the
-/// reason in `result.errors` against `context`: what it did not write is not a
-/// basis for removing anything.
+/// Returns false when the scan could not run at all, with the reason in
+/// `result.errors` against `context`.
 fn index_files(
     db: &Database,
     mut audio_files: Vec<PathBuf>,
@@ -606,14 +605,10 @@ fn index_files(
                 result.arrived.extend(arrived);
             }
             Err(e) => {
-                // Not carried on: removing what this scan did not find would
-                // take the tracks of files that moved in the lost batch.
                 log::error!("failed to commit scan transaction: {}", e);
                 result
                     .errors
                     .push((context.to_path_buf(), format!("db error: {}", e)));
-                ran = false;
-                break;
             }
         }
     }
