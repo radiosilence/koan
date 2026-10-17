@@ -227,6 +227,7 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         }
 
         func userScrolled() {
+            restored = true
             parent?.userScrolled()
         }
 
@@ -275,13 +276,22 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             }
         }
 
-        /// Back to where the list was left, once there are rows to scroll:
-        /// the first layout with them in it. Not during SwiftUI's update,
-        /// where laying the table out is an AppKit exception.
+        /// Back to where the list was left, once there are rows to scroll
+        /// that far: a listing read a page at a time is short at first. Not
+        /// during SwiftUI's update, where laying the table out is an AppKit
+        /// exception. Until then the offset is not noted, so a distance the
+        /// first page cannot reach is not overwritten by one it can; a scroll
+        /// by the person ends the wait.
         func laidOut() {
-            guard !restored, !ids.isEmpty, let parent else { return }
-            restored = true
-            if let offset = parent.offset { scroll(to: offset) }
+            guard !restored, !ids.isEmpty, let parent, let table, let scroll else { return }
+            guard let offset = parent.offset else {
+                restored = true
+                return
+            }
+            let reach = table.frame.height - scroll.contentView.bounds.height
+                + scroll.contentInsets.top + scroll.contentInsets.bottom
+            if offset <= reach { restored = true }
+            self.scroll(to: min(offset, max(reach, 0)))
         }
 
         private func scroll(to offset: CGFloat) {
@@ -446,7 +456,7 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
             guard let parent, row < ids.count else { return nil }
             table?.dragging = true
-            let transfer = parent.drag([ids[row]]).first
+            let transfer = parent.drag([ids[row]]).first?.placed(row)
             guard transfer != nil || parent.move != nil else { return nil }
             let item = transfer.flatMap(pasteboardItem) ?? NSPasteboardItem()
             // Which row, for a drop back into this list to read as a move.

@@ -744,7 +744,7 @@ final class PlayerModel {
         let engine = self.engine
         Task {
             var ids: [Int64] = []
-            for item in dropped {
+            for item in dropped.inDragOrder {
                 ids += await item.trackIds(using: engine)
             }
             guard !ids.isEmpty else { return }

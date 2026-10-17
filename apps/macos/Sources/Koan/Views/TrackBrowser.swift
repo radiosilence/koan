@@ -119,6 +119,9 @@ struct TrackBrowser: View {
                 primaryAction: play,
                 drag: { ids in tracks.filter { ids.contains($0.id) }.map { PlayableTransfer(.track($0)) } },
                 selectAllToken: ui.selectAllToken,
+                offset: library.tracksOffset,
+                noteOffset: { library.tracksOffset = $0 },
+                rewinds: nav.rewinds[.tracks] ?? 0,
                 insets: insets
             )
         }
