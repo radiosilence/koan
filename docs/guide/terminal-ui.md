@@ -17,6 +17,7 @@ The TUI follows the shape of the Mac and mobile apps: pages you move between, a 
 | `7` | Recent | What was played in the last 30 days |
 | `8` | History | Every play, newest first, under the day it was played |
 | `9` | Settings | The settings that otherwise mean editing `config.toml` |
+| `0` | Search | Artists, records and tracks that match what you type |
 
 The wheel and the scrollbars (which can be dragged) scroll every page. Opening a record or an artist (from a tile, a link, or the keys below) goes to the **album page** and the **artist page**. The album page holds the cover, who it is by, its facts and its tracks; the artist page is that artist's photograph and the opening of their Wikipedia article (with `play` and `shuffle`, and a link to the article), above their records as tiles. Both sit under Albums and Artists in the sidebar and in history.
 
@@ -32,9 +33,13 @@ As in the apps, a record and an artist can be favourites as well as tracks. `f` 
 
 Every action with a key has a way to reach it by pointer. `m`, or `⋯ actions` in the heading of the browsing pages, an album page and History, opens a menu for what the cursor is on. What it offers depends on the page: playing, queueing and putting next everywhere, replacing the queue on the browsing pages, adding to a playlist, favouriting (the artist as well as the record on the browsing pages), going to the record or the artist, track info, downloading and removing the download. `Enter` or a click does one; `Esc` or a click outside closes it. The queue's own menu (the `⋯` at the end of a row) offers the same where it applies.
 
+## Search
+
+`0` opens a box that searches the library as you type and lists what matches under artists, records and tracks. `Enter` (or `↓`) moves from the box to the results, and `↑` from the first result or `/` returns to the box. On a result `Enter` opens an artist or a record and plays a track, `P`, `a` and `N` play, add and put next, `w` adds to a playlist, `f` favourites, `m` lists the rest, and the artist and record in a track's row are links. Clicking the box, a result, `clear` or `⋯ actions` does the same by pointer. While the box has focus every key is text, including the page numbers, and `Shift+Tab` (or `Tab` with nothing found) changes page; `Esc` clears it, then leaves.
+
 ## Playlists
 
-Playlists are the apps' playlists, the same rows and the same server copies: an edit is written here and pushed to the server in the background. `6` lists them; `Enter` or a second click opens one, `P` or the `▸` plays it, `a` and `N` add it to the queue or put it next, `c` or `+ new` makes one, `r` renames, `w` puts its tracks in another playlist, and `x` or the `×` deletes on a second press. On a playlist's page `Enter` plays from the track under the cursor, the `shuffle` button plays it shuffled, `K` and `J` (or the `▴` and `▾` at the end of a row) move a track up or down, and `x` or `×` takes it out. Playlists that a file in the library or a server decides, and smart playlists, are shown with `(read-only)` and refuse edits.
+Playlists are the apps' playlists, the same rows and the same server copies: an edit is written here and pushed to the server in the background. `6` lists them; `Enter` or a second click opens one, `P` or the `▸` plays it, `a` and `N` add it to the queue or put it next, `c` or `+ new` makes one, `r` renames, `w` puts its tracks in another playlist, and `x` or the `×` deletes on a second press. On a playlist's page `Enter` plays from the track under the cursor, the `shuffle` button plays it shuffled, `K` and `J` (or the `▴` and `▾` at the end of a row) move a track up or down, and `x` or `×` takes it out; `Ctrl+Z` and `Ctrl+Y`, or `undo` and `redo` under the name, step back and forward through the edits made to that playlist this session. While the queue is exactly a playlist, an edit to the playlist is made to the queue as well, keeping what is playing. Playlists that a file in the library or a server decides, and smart playlists, are shown with `(read-only)` and refuse edits.
 
 `w` puts a record, a track or whatever the cursor is on into a playlist from any page that has `a`, and from the queue and Now playing, by choosing one in a list that starts with `+ new playlist…`. `W` in the queue saves the whole queue as a new playlist.
 
@@ -42,7 +47,7 @@ Playlists are the apps' playlists, the same rows and the same server copies: an 
 
 History lists every play, grouped by day. `x` (or the `×` at the end of a row) forgets a play and `D` forgets all of them, on a second press; signed in to a koan server, a forgotten play is forgotten on the account's other devices too, as in the apps. The artist and the record in a row are links, `/` filters by title, artist or record, and `Enter` or a second click plays the track.
 
-Settings holds the playback, terminal, server and device settings that are a choice rather than a path or a password: ReplayGain and pre-amp, fading on pause, the theme, cover graphics and size, the frame counter and rate, the visualiser's colours, syncing, and what other devices on the network may do. `←` and `→` (or the arrows beside each value, or a click on the value) change one, and each is written to the file that owns it, so a setting that belongs to this machine stays out of a `config.toml` you share. Folders and the server account are shown and are set up in the apps or the config. `scan library` and `sync now` are rows too, and run in the background; offline mode narrows the browsing pages, the Artists tree and the pickers to what is on this device.
+Settings holds the playback, terminal, server and device settings that are a choice rather than a path or a password: ReplayGain and pre-amp, fading on pause, the theme, cover graphics and size, the frame counter and rate, the visualiser's colours, syncing, and what other devices on the network may do. `←` and `→` (or the arrows beside each value, or a click on the value) change one, and each is written to the file that owns it, so a setting that belongs to this machine stays out of a `config.toml` you share. Signed in to a server, the page also sets how often it syncs, whether this device's queue is kept on the server, how many downloads run at once (from the next start) and how large the download cache may grow. The library's folders are rows: `add folder` asks for a path, which `scan library` then reads, and `x` or the `×` takes one out and forgets its tracks in the background (a track the server also has keeps its row). The server account is shown and is set up in the apps or the config. `scan library` and `sync now` run in the background; offline mode narrows the browsing pages, the Artists tree and the pickers to what is on this device.
 
 ## Layout
 
@@ -56,7 +61,7 @@ The transport bar sits at the foot. Drag the hairline above it to resize the cov
 
 ## Browsing records
 
-Albums, Favourites and Recent draw each record as a tile. `v` switches to rows (tracks, on Favourites and Recent). `o` cycles the order on Albums: artist, date added, title, year. `/` filters what is shown; the heading's `/ filter` does the same with a click.
+Albums, Favourites and Recent draw each record as a tile. `v` switches to rows (tracks, on Favourites and Recent). `o` cycles the order on Albums: artist, date added, title, year. `/` filters what is shown by name; the heading's `/ filter` does the same with a click. `Ctrl+F`, or `filters` in the heading, opens the apps' browse filters as a panel: lossless, downloaded, codec, genre and decade. Each row is a key (`Enter`, `←` `→`) or a click; the genre row opens a list that narrows as you type. One set of filters applies to all three pages, and the heading counts how many are on. They apply to records, so they are not offered while a page shows tracks.
 
 | Key | Action |
 |-----|--------|

@@ -1,5 +1,5 @@
-//! The long jobs a page can start: reading the library's folders, and pulling
-//! the server's library. Each runs to its end on the thread it is given and
+//! The long jobs a page can start: reading the library's folders, forgetting
+//! one taken out of them, and pulling the server's library. Each runs to its end on the thread it is given and
 //! comes back as a line to show.
 
 use koan_core::config::Config;
@@ -7,11 +7,11 @@ use koan_core::db::pool;
 use koan_core::helpers;
 use koan_core::index::scanner::{self, ScanOptions};
 
-use crate::settings_page::Task;
+use std::path::Path;
 
 /// What a thread the TUI started sends back.
 pub enum Report {
-    /// A scan or a sync has ended; another may start.
+    /// A scan, a sync or a folder being forgotten has ended; another may start.
     Task(String),
     /// Other work has ended.
     Work(String),
@@ -22,14 +22,7 @@ pub fn needs_fetch(t: &koan_core::db::queries::TrackRow) -> bool {
     t.remote_id.is_some() && t.path.is_none() && t.cached_path.is_none()
 }
 
-pub fn run(task: Task) -> String {
-    match task {
-        Task::Scan => scan(),
-        Task::Sync => sync(),
-    }
-}
-
-fn scan() -> String {
+pub fn scan() -> String {
     let cfg = Config::load().unwrap_or_default();
     if cfg.library.folders.is_empty() {
         return "no library folders to scan".into();
@@ -55,7 +48,7 @@ fn scan() -> String {
     line
 }
 
-fn sync() -> String {
+pub fn sync() -> String {
     let cfg = Config::load().unwrap_or_default();
     let Some(client) = helpers::subsonic_client(&cfg) else {
         return "no server to sync with".into();
@@ -76,6 +69,19 @@ fn sync() -> String {
             s.library.tracks_synced, s.library.albums_synced, s.library.artists_synced
         ),
         Err(e) => format!("sync failed: {e}"),
+    }
+}
+
+pub fn forget(folder: &Path) -> String {
+    let Ok(db) = pool::shared().get() else {
+        return "the library could not be opened".into();
+    };
+    match helpers::forget_folder(&db, folder) {
+        Ok(n) => format!("removed {}: {n} tracks forgotten", folder.display()),
+        Err(e) => format!(
+            "removed {} from the folders, but its tracks could not be forgotten: {e}",
+            folder.display()
+        ),
     }
 }
 

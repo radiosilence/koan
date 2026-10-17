@@ -1,0 +1,1 @@
+- **Browse filters in the terminal UI.** `Ctrl+F`, or `filters` in the heading of Albums, Favourites and Recent, opens a panel for lossless, downloaded, codec, genre and decade, the same narrowing the apps' browser offers.

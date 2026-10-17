@@ -12,7 +12,8 @@ use crate::config::Config;
 use crate::db::connection::{Database, DbError};
 use crate::db::queries;
 use crate::helpers::subsonic_client;
-use crate::player::state::SharedPlayerState;
+use crate::player::commands::PlayerCommand;
+use crate::player::state::{QueueItemId, SharedPlayerState};
 use crate::remote::client::{SubsonicClient, SubsonicError};
 
 /// Each playlist's earlier states, for undo and redo.
@@ -37,19 +38,32 @@ struct Steps {
 /// How many edits back a playlist can go, as the queue's history.
 const HISTORY_DEPTH: usize = 100;
 
+/// A playlist as it was before an edit, recorded once the edit has landed.
+pub struct Before {
+    id: i64,
+    entries: Vec<(i64, i64)>,
+}
+
 impl PlaylistHistory {
-    /// Before an edit: the playlist as it is now. A new edit forgets what had
-    /// been undone.
-    pub fn record(&self, conn: &rusqlite::Connection, id: i64) -> Result<(), DbError> {
-        let before = queries::entry_snapshot(conn, id)?;
+    /// The playlist as it is now, taken before an edit.
+    pub fn before(conn: &rusqlite::Connection, id: i64) -> Result<Before, DbError> {
+        Ok(Before {
+            id,
+            entries: queries::entry_snapshot(conn, id)?,
+        })
+    }
+
+    /// After an edit has landed: the playlist as it was before. An edit that
+    /// failed is never recorded, so undo has nothing to step over. A new edit
+    /// forgets what had been undone.
+    pub fn record(&self, before: Before) {
         let mut steps = self.steps.lock();
-        let steps = steps.entry(id).or_default();
-        steps.undo.push(before);
+        let steps = steps.entry(before.id).or_default();
+        steps.undo.push(before.entries);
         if steps.undo.len() > HISTORY_DEPTH {
             steps.undo.remove(0);
         }
         steps.redo.clear();
-        Ok(())
     }
 
     /// Back one edit. Whether there was one.
@@ -101,11 +115,13 @@ mod history_tests {
         let id = queries::create_playlist(&conn, LOCAL_USER, "Mix", None).unwrap();
         let history = PlaylistHistory::default();
 
-        history.record(&conn, id).unwrap();
+        let before = PlaylistHistory::before(&conn, id).unwrap();
         queries::add_tracks(&conn, id, &[a, b]).unwrap();
+        history.record(before);
         let full = queries::entry_snapshot(&conn, id).unwrap();
-        history.record(&conn, id).unwrap();
+        let before = PlaylistHistory::before(&conn, id).unwrap();
         queries::remove_entries(&conn, id, &[full[0].0]).unwrap();
+        history.record(before);
 
         assert!(history.undo(&conn, id).unwrap());
         assert_eq!(queries::entry_snapshot(&conn, id).unwrap(), full);
@@ -183,6 +199,99 @@ pub struct PlaylistSync {
     pub pulled: usize,
     /// Playlists sent to the server, new or updated.
     pub pushed: usize,
+}
+
+/// Whether the queue is still exactly this playlist.
+pub fn locked_to(db: &Database, state: &SharedPlayerState, playlist_id: i64) -> bool {
+    queue_lock(db, state) == Some(QueueLock::Playlist(playlist_id))
+}
+
+/// Make the queue follow a playlist that has just been edited.
+///
+/// Only when the queue was still exactly that playlist beforehand —
+/// `was_locked` is read *before* the edit lands, because afterwards the two
+/// no longer match and every queue would look diverged.
+///
+/// The edit is applied to the queue rather than the queue being rebuilt
+/// from the playlist: entries that survived keep their queue items, and
+/// with them their ids, what has played, what is mid-download and what the
+/// cursor is pointing at.
+pub fn follow_edit(
+    db: &Database,
+    state: &SharedPlayerState,
+    playlist_id: i64,
+    was_locked: bool,
+    send: &dyn Fn(PlayerCommand),
+) {
+    if !was_locked {
+        return;
+    }
+    let Ok(entries) = queries::playlist_entries(&db.conn, playlist_id) else {
+        return;
+    };
+    let (items, _) = state.snapshot_playlist();
+    let mut cmds = Vec::new();
+
+    // Queue items whose entry has gone from the playlist.
+    let live: std::collections::HashSet<i64> = entries.iter().map(|e| e.id).collect();
+    let doomed: Vec<QueueItemId> = items
+        .iter()
+        .filter(|i| i.playlist_entry_id.is_none_or(|e| !live.contains(&e)))
+        .map(|i| i.id)
+        .collect();
+    if !doomed.is_empty() {
+        cmds.push(PlayerCommand::RemoveFromPlaylistBatch(doomed.clone()));
+    }
+
+    // Entries the queue has never seen.
+    let known: HashMap<i64, QueueItemId> = items
+        .iter()
+        .filter_map(|i| i.playlist_entry_id.map(|e| (e, i.id)))
+        .collect();
+    let missing: Vec<&queries::PlaylistEntry> = entries
+        .iter()
+        .filter(|e| !known.contains_key(&e.id))
+        .collect();
+    let mut added = HashMap::new();
+    // The queue's order once the removals and additions have landed.
+    let mut landed: Vec<QueueItemId> = items
+        .iter()
+        .map(|i| i.id)
+        .filter(|id| !doomed.contains(id))
+        .collect();
+    if !missing.is_empty() {
+        let track_ids: Vec<i64> = missing.iter().map(|e| e.track.id).collect();
+        let rows = queries::tracks_by_ids(&db.conn, &track_ids).unwrap_or_default();
+        let mut new_items = crate::helpers::playlist_items_for_tracks(db, &rows);
+        for (item, entry) in new_items.iter_mut().zip(&missing) {
+            item.playlist_entry_id = Some(entry.id);
+            added.insert(entry.id, item.id);
+        }
+        if !new_items.is_empty() {
+            landed.extend(new_items.iter().map(|i| i.id));
+            cmds.push(PlayerCommand::AddToPlaylist(new_items));
+        }
+    }
+
+    // Then the order, which is what puts the new arrivals in their places —
+    // they were appended, because that is the only thing an add can do.
+    let order: Vec<QueueItemId> = entries
+        .iter()
+        .filter_map(|e| known.get(&e.id).or_else(|| added.get(&e.id)).copied())
+        .collect();
+    if !order.is_empty() && order != landed {
+        cmds.push(PlayerCommand::ReorderPlaylist(order));
+    }
+
+    // One playlist edit is one step of the queue's undo.
+    if cmds.is_empty() {
+        return;
+    }
+    send(PlayerCommand::BeginUndoBatch);
+    for cmd in cmds {
+        send(cmd);
+    }
+    send(PlayerCommand::EndUndoBatch);
 }
 
 /// Reconcile playlists with the server, both directions.
@@ -839,6 +948,87 @@ mod tests {
         // And the playlist catching up locks it again. Nothing had to be reset.
         queries::reorder_entries(&db.conn, id, &[entries[1], entries[0]]).unwrap();
         assert_eq!(queue_lock(&db, &state), Some(QueueLock::Playlist(id)));
+    }
+
+    /// One playlist edit followed by the queue is one step of the queue's undo,
+    /// and a removal that leaves the order as it was sends no reorder.
+    #[test]
+    fn following_an_edit_is_one_undo_step() {
+        use crate::player::state::{ItemState, PlaylistItem, QueueItemId, SharedPlayerState};
+
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let a = upsert_track(&db.conn, &meta("A", &dir.path().join("a.flac"))).unwrap();
+        let b = upsert_track(&db.conn, &meta("B", &dir.path().join("b.flac"))).unwrap();
+        let c = upsert_track(&db.conn, &meta("C", &dir.path().join("c.flac"))).unwrap();
+        let id =
+            queries::create_playlist(&db.conn, crate::db::queries::LOCAL_USER, "Evening", None)
+                .unwrap();
+        let entries = queries::add_tracks(&db.conn, id, &[a, b, c]).unwrap();
+
+        let state = SharedPlayerState::new();
+        let items: Vec<PlaylistItem> = entries
+            .iter()
+            .map(|entry| PlaylistItem {
+                uid: None,
+                id: QueueItemId::new(),
+                db_id: Some(a),
+                playlist_entry_id: Some(*entry),
+                path: dir.path().join("a.flac"),
+                title: "A".into(),
+                artist: "Artist".into(),
+                album_artist: "Artist".into(),
+                album: "Album".into(),
+                year: None,
+                codec: None,
+                track_number: None,
+                disc: None,
+                duration_ms: None,
+                state: ItemState::Ready,
+                played: false,
+            })
+            .collect();
+        let ids: Vec<QueueItemId> = items.iter().map(|i| i.id).collect();
+        state.add_items(items);
+
+        let follow = |was_locked| {
+            let sent = std::cell::RefCell::new(Vec::new());
+            follow_edit(&db, &state, id, was_locked, &|cmd| {
+                sent.borrow_mut().push(cmd)
+            });
+            sent.into_inner()
+        };
+
+        assert!(follow(true).is_empty(), "nothing changed, nothing sent");
+
+        queries::remove_entries(&db.conn, id, &[entries[1]]).unwrap();
+        let sent = follow(true);
+        assert!(
+            matches!(
+                sent.as_slice(),
+                [
+                    PlayerCommand::BeginUndoBatch,
+                    PlayerCommand::RemoveFromPlaylistBatch(gone),
+                    PlayerCommand::EndUndoBatch,
+                ] if gone == &[ids[1]]
+            ),
+            "{sent:?}"
+        );
+
+        state.remove_item(ids[1]);
+        queries::reorder_entries(&db.conn, id, &[entries[2], entries[0]]).unwrap();
+        let sent = follow(true);
+        assert!(
+            matches!(
+                sent.as_slice(),
+                [
+                    PlayerCommand::BeginUndoBatch,
+                    PlayerCommand::ReorderPlaylist(order),
+                    PlayerCommand::EndUndoBatch,
+                ] if order == &[ids[2], ids[0]]
+            ),
+            "{sent:?}"
+        );
     }
 
     /// A record needs no provenance: it *is* an ordered set of tracks, so the

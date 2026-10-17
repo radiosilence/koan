@@ -24,7 +24,7 @@ See [The terminal UI](../guide/terminal-ui.md). These work from any page.
 
 | Key | Action |
 |-----|--------|
-| `1` to `9` | Queue, Now playing, Albums, Artists, Favourites, Playlists, Recent, History, Settings |
+| `1` to `9`, `0` | Queue, Now playing, Albums, Artists, Favourites, Playlists, Recent, History, Settings, Search |
 | `Tab` / `Shift+Tab` | Next / previous page |
 | `[` / `]` or `Alt+Left` / `Alt+Right` | Back / forward through the pages visited |
 | `Esc` | Leave the page for the one before it |
@@ -132,14 +132,31 @@ On a playlist's page:
 | `a` / `N` | Add all to the queue / put them next |
 | `K` / `J` | Move the track up / down |
 | `x`, `Delete` or `Backspace` | Take the track out |
+| `Ctrl+Z` / `Ctrl+Y` | Undo / redo the last edit to this playlist |
 | `r` | Rename |
 | `w` | Put the track in another playlist |
 | `i` | Track info |
 | `A` / `O` | Open the artist / the record |
 
-Everything on both pages is also a click: the row, `▸`, `×`, `▴`, `▾`, the artist and the record in a row, and the buttons under the playlist's name. The wheel and the scrollbar scroll.
+Everything on both pages is also a click: the row, `▸`, `×`, `▴`, `▾`, the artist and the record in a row, and the buttons under the playlist's name (play, shuffle, add to queue, undo, redo). The wheel and the scrollbar scroll.
 
 ---
+
+## Search (`0`)
+
+| Key | Action |
+|-----|--------|
+| Typing | Search the library; every key is text while the box has focus |
+| `Enter`, `↓` or `Tab` | Move to the results; `Tab` with none, and `Shift+Tab`, change page |
+| `Esc` | Clear the box, then leave the page |
+| `↑` on the first result, or `/` | Back to the box |
+| `Enter` | Open an artist or a record; play a track |
+| `P` / `a` / `N` | Play / add to the queue / put next |
+| `w` | Put the result in a playlist |
+| `f` | Favourite it |
+| `A` / `O` | Open its artist / its record |
+| `i` | Track info (tracks) |
+| `m` | Menu of everything above |
 
 ## Add to a playlist (`w`, `W`)
 
@@ -175,8 +192,9 @@ Click a play to select it and again to play it; click the artist or the record t
 | `↑` `↓` or `j` `k` | Move between settings |
 | `→`, `Enter` or `Space` | Next value (flips a toggle), or run the task on the row |
 | `←` | Previous value |
+| `x` or `Delete` | Take the library folder under the cursor out and forget its tracks |
 
-Click the arrows beside a value, or the value, to change it, or `run` to start a task. Changes apply at once, except the frame rate, which applies at the next start. `scan library` and `sync now` run in the background and report how they went in the status line; offline mode narrows the browsing pages, the Artists tree and the pickers to what is on this device.
+Click the arrows beside a value, or the value, to change it, or `run` to start a task (`add folder` asks for a path; `×` on a folder takes it out and forgets its tracks). Changes apply at once, except the frame rate, which applies at the next start. `scan library` and `sync now` run in the background and report how they went in the status line; offline mode narrows the browsing pages, the Artists tree and the pickers to what is on this device.
 
 ---
 
@@ -192,7 +210,8 @@ Click the arrows beside a value, or the value, to change it, or `run` to start a
 | `a` | Append to the queue |
 | `N` | Put it next, after the track playing |
 | `Ctrl+R` | Replace the queue and play |
-| `/` | Filter what is shown |
+| `/` | Filter what is shown by name |
+| `Ctrl+F` | Open the filters panel: lossless, downloaded, codec, genre, decade (not on an artist's page, nor on Favourites and Recent while they show tracks) |
 | `v` | Tiles or rows (tracks, on Favourites and Recent) |
 | `o` | Cycle the order (Albums) |
 | `f` | Favourite the record under the cursor, or the track on a track row |

@@ -263,6 +263,17 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 }
             }
         }
+        Page::Search => {
+            app.layout.browse_area = stage;
+            let hover = match app.hover.zone {
+                super::app::HoverZone::Search(h) => Some(h),
+                _ => None,
+            };
+            let App {
+                search_page, theme, ..
+            } = &mut *app;
+            search_page.render(stage, frame.buffer_mut(), theme, hover);
+        }
         Page::History => {
             app.layout.browse_area = stage;
             let hover = match app.hover.zone {
@@ -383,8 +394,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         ]);
         frame.render_widget(ratatui::widgets::Paragraph::new(line), chunks[3]);
     } else {
-        app.layout.hint_hits = super::keys::hits(&app.mode, app.page(), chunks[3]);
-        let hint_bar = HintBar::new(&app.mode, app.page(), &app.theme);
+        let filterable = app.browse().is_some_and(|b| b.filterable());
+        app.layout.hint_hits = super::keys::hits(&app.mode, app.page(), filterable, chunks[3]);
+        let hint_bar = HintBar::new(&app.mode, app.page(), filterable, &app.theme);
         frame.render_widget(hint_bar, chunks[3]);
     }
 
@@ -462,6 +474,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     {
         app.layout.modal_area = super::playlist_modals::chooser_rect(area, chooser.entries.len());
         let overlay = super::playlist_modals::ChooserOverlay::new(chooser, &app.theme);
+        frame.render_widget(overlay, area);
+    }
+
+    if app.mode == Mode::FilterPanel
+        && let Some(ref panel) = app.filter_panel
+    {
+        app.layout.modal_area = super::browse_filter::panel_rect(area, panel.lines());
+        let overlay = super::browse_filter::FilterPanelOverlay::new(panel, &app.theme);
         frame.render_widget(overlay, area);
     }
 
