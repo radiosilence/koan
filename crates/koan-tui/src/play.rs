@@ -218,7 +218,7 @@ pub fn run_tui(
             let _ = out.flush();
         }
         if total > Duration::from_millis(30) {
-            log::debug!(
+            log::info!(
                 "slow frame: {total:?} (build {built:?}, diff and write {:?}), covers {}",
                 total - built,
                 app.art.gfx.protocol_name()

@@ -185,8 +185,10 @@ impl Thumbs {
         while let Ok((id, out)) = self.rx.try_recv() {
             self.asked.remove(&id);
             if let Loaded::Image(image) = out {
-                if self.images.len() >= THUMB_LIMIT {
-                    self.images.clear();
+                if self.images.len() >= THUMB_LIMIT
+                    && let Ok(wanted) = self.wanted.lock()
+                {
+                    self.images.retain(|id, _| wanted.contains(id));
                 }
                 self.images.insert(id, image);
                 any = true;
