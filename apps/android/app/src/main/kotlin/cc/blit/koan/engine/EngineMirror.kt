@@ -171,6 +171,31 @@ class EngineMirror(deviceName: String) {
      */
     val appearance: StateFlow<Appearance?> = _appearance.asStateFlow()
 
+    /**
+     * Appearance changes, handed to the engine in the order they were made,
+     * which is the order it saves them in. The one coroutine that reads them
+     * is also the only writer of [appearance], so the first read cannot land
+     * over a change.
+     */
+    private val appearanceChanges = Channel<KoanEngine.() -> Unit>(Channel.UNLIMITED).also { changes ->
+        // On IO: a read after a change waits for it to reach the disk.
+        scope.launch(Dispatchers.IO) {
+            val engine = opened.await()
+            var change: (KoanEngine.() -> Unit)? = null
+            while (true) {
+                try {
+                    change?.invoke(engine)
+                    _appearance.value = engine.appearance()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    report(e)
+                }
+                change = changes.receive()
+            }
+        }
+    }
+
     /** The queue as last sent whole, and where each row sits in it. */
     private var base = QueueState(emptyList(), 0)
     private var baseIndex = emptyMap<String, Int>()
@@ -215,31 +240,6 @@ class EngineMirror(deviceName: String) {
     /** Change an appearance setting (`setTheme`, `setThemeIcons`, `setRecordColours`), and redraw in it. */
     fun setAppearance(change: KoanEngine.() -> Unit) {
         appearanceChanges.trySend(change)
-    }
-
-    /**
-     * Appearance changes, handed to the engine in the order they were made,
-     * which is the order it saves them in. The one coroutine that reads them
-     * is also the only writer of [appearance], so the first read cannot land
-     * over a change.
-     */
-    private val appearanceChanges = Channel<KoanEngine.() -> Unit>(Channel.UNLIMITED).also { changes ->
-        // On IO: a read after a change waits for it to reach the disk.
-        scope.launch(Dispatchers.IO) {
-            val engine = opened.await()
-            var change: (KoanEngine.() -> Unit)? = null
-            while (true) {
-                try {
-                    change?.invoke(engine)
-                    _appearance.value = engine.appearance()
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    report(e)
-                }
-                change = changes.receive()
-            }
-        }
     }
 
     private fun apply(slice: StateSlice) {
