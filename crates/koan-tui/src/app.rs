@@ -1271,6 +1271,14 @@ impl App {
                     return;
                 }
             },
+            Purpose::Folder => match super::settings_page::add_folder(&prompt.text) {
+                Ok(path) => format!("added {path}; run scan library to index it"),
+                Err(e) => {
+                    self.name_prompt = Some(prompt);
+                    self.say(e);
+                    return;
+                }
+            },
             Purpose::Rename(id) => match super::playlist_ops::rename(*id, &prompt.text) {
                 Ok(()) => format!("renamed to '{}'", prompt.text.trim()),
                 Err(e) => {
@@ -1282,6 +1290,7 @@ impl App {
         };
         self.pop_mode();
         self.playlists_changed();
+        self.settings_page.reload();
         self.say(said);
     }
 
@@ -1507,33 +1516,49 @@ impl App {
         match outcome {
             Outcome::Changed(setting) => self.apply_setting(setting),
             Outcome::Run(task) => self.run_task(task),
+            Outcome::RemoveFolder(i) => self.remove_folder(i),
         }
     }
 
     /// Starts a scan or a sync on a thread of its own and says how it went.
     fn run_task(&mut self, task: Task) {
+        match task {
+            Task::Scan => self.spawn_task("scanning the library...", super::tasks::scan),
+            Task::Sync => self.spawn_task("syncing with the server...", super::tasks::sync),
+            Task::AddFolder => self.open_name_prompt(Purpose::Folder, String::new()),
+        }
+    }
+
+    /// Takes a library folder out of the config, then forgets its tracks in
+    /// the background: a scan never prunes a folder it is no longer given.
+    fn remove_folder(&mut self, i: usize) {
         if self.task_running {
-            self.status_message = Some((
-                "a scan or sync is already running".into(),
-                std::time::Instant::now(),
-            ));
+            self.say("a scan or sync is already running");
+            return;
+        }
+        match super::settings_page::remove_folder(i) {
+            Ok(path) => {
+                self.settings_page.reload();
+                self.spawn_task("removing the folder's tracks...", move || {
+                    super::tasks::forget(&path)
+                });
+            }
+            Err(e) => self.say(e),
+        }
+    }
+
+    fn spawn_task(&mut self, said: &str, work: impl FnOnce() -> String + Send + 'static) {
+        if self.task_running {
+            self.say("a scan or sync is already running");
             return;
         }
         self.task_running = true;
+        self.say(said);
         let tx = self.task_tx.clone();
-        self.status_message = Some((
-            match task {
-                Task::Scan => "scanning the library...",
-                Task::Sync => "syncing with the server...",
-            }
-            .into(),
-            std::time::Instant::now(),
-        ));
         std::thread::Builder::new()
             .name("koan-task".into())
             .spawn(move || {
-                tx.send(super::tasks::Report::Task(super::tasks::run(task)))
-                    .ok();
+                tx.send(super::tasks::Report::Task(work())).ok();
             })
             .ok();
     }
