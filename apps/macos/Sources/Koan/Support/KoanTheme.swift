@@ -549,8 +549,10 @@ extension UIColor {
 /// the record playing, or mint — and falls back to `ink` for text where the
 /// record's colour cannot reach 4.5:1 (see `KoanAccent`).
 enum KoanTone {
-    /// `rule` is for strokes and fills — chart grids, dividers — never text.
-    case ink, strong, muted, accent, bad, rule
+    /// `rule` is for strokes and fills — chart grids, dividers, an empty
+    /// sleeve — and `hover` the fill behind a row under the pointer; neither
+    /// is for text.
+    case ink, strong, muted, accent, bad, rule, hover
 }
 
 // MARK: - Accent
@@ -864,7 +866,8 @@ extension KoanTheme {
         case (true, .muted): AnyShapeStyle(Color.koanMuted)
         case (true, .bad): AnyShapeStyle(Color.koanBad)
         case (true, .rule): AnyShapeStyle(Color.koanRule)
-        case (false, .rule): AnyShapeStyle(.quaternary)
+        case (true, .hover): AnyShapeStyle(Color.koanHover.opacity(0.3))
+        case (false, .rule), (false, .hover): AnyShapeStyle(.quaternary)
         case (_, .accent): AnyShapeStyle(.tint)
         case (false, .ink), (false, .strong): AnyShapeStyle(.primary)
         case (false, .muted): AnyShapeStyle(.secondary)
@@ -1265,6 +1268,7 @@ private struct KoanTextRole: ViewModifier {
         case .muted: AnyShapeStyle(Color.koanMuted)
         case .bad: AnyShapeStyle(Color.koanBad)
         case .rule: AnyShapeStyle(Color.koanRule)
+        case .hover: AnyShapeStyle(Color.koanHover.opacity(0.3))
         case .accent: accent.shade(scheme).readsAsText ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.koanInk)
         }
     }
@@ -1275,7 +1279,7 @@ private struct KoanTextRole: ViewModifier {
         case .muted: AnyShapeStyle(.secondary)
         case .accent: accent.shade(scheme).readsAsText ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary)
         case .bad: AnyShapeStyle(.red)
-        case .rule: AnyShapeStyle(.quaternary)
+        case .rule, .hover: AnyShapeStyle(.quaternary)
         }
     }
 }

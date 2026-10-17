@@ -108,7 +108,7 @@ struct MiniPlayer: View {
                 .frame(width: Self.sleeveSide, height: Self.sleeveSide)
         } else {
             RoundedRectangle(cornerRadius: KoanTheme.radius(7))
-                .fill(.quaternary)
+                .fill(KoanTheme.style(.rule))
                 .frame(width: Self.sleeveSide, height: Self.sleeveSide)
                 .overlay { KoanIcon(Icon.track).font(.role(.fine, system: .caption)) }
         }

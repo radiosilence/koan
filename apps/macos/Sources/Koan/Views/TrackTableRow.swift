@@ -100,8 +100,10 @@ final class TrackTableRow: TableCell, TableRow {
     private static var durationWidth: CGFloat { max(48, measure("0:00:00", numberFont)) }
     private static var qualityWidth: CGFloat { max(92, measure("VORBIS 44.1 kHz", qualityFont)) }
 
+    /// The width a label needs to show `text` whole: the string's own, and
+    /// the two points a side the label's cell insets it by.
     private static func measure(_ text: String, _ font: NSFont) -> CGFloat {
-        ceil((text as NSString).size(withAttributes: [.font: font]).width) + 2
+        ceil((text as NSString).size(withAttributes: [.font: font]).width) + 5
     }
 
     private enum Part { case lead, artist, album, heart, elsewhere }

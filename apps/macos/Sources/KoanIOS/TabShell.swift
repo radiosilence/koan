@@ -619,18 +619,19 @@ private struct Transport: ViewModifier {
     #if !os(tvOS)
     private var tabs: some View {
         HStack(spacing: 0) {
-            ForEach(Array(Self.items.enumerated()), id: \.element.id) { index, item in
+            ForEach(Self.items, id: \.id) { item in
                 Button {
                     if selection == item.id { reselect(item.id) } else { selection = item.id }
                 } label: {
-                    KoanTabItem(
-                        title: item.title, selected: selection == item.id,
-                        underline: underline, position: (index, Self.items.count)
-                    )
+                    KoanTabItem(title: item.title, selected: selection == item.id, underline: underline)
                 }
                 .buttonStyle(.plain)
             }
         }
+        // A tab bar to VoiceOver, which then reads each item as a tab and
+        // where it sits ("tab, 2 of 4"), as it does the platform's bar.
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isTabBar)
         // The platform's bar's height, the items centred in it as its are.
         // Below it, the home indicator's strip takes the bar's ground and
         // nothing else.
