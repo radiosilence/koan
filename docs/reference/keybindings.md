@@ -24,7 +24,7 @@ See [The terminal UI](../guide/terminal-ui.md). These work from any page.
 
 | Key | Action |
 |-----|--------|
-| `1` to `9` | Queue, Now playing, Albums, Artists, Favourites, Playlists, Recent, History, Settings |
+| `1` to `9`, `0` | Queue, Now playing, Albums, Artists, Favourites, Playlists, Recent, History, Settings, Search |
 | `Tab` / `Shift+Tab` | Next / previous page |
 | `[` / `]` or `Alt+Left` / `Alt+Right` | Back / forward through the pages visited |
 | `Esc` | Leave the page for the one before it |
@@ -139,6 +139,22 @@ On a playlist's page:
 Everything on both pages is also a click: the row, `▸`, `×`, `▴`, `▾`, the artist and the record in a row, and the buttons under the playlist's name (play, shuffle, add to queue, undo, redo). The wheel and the scrollbar scroll.
 
 ---
+
+## Search (`0`)
+
+| Key | Action |
+|-----|--------|
+| Typing | Search the library; every key is text while the box has focus |
+| `Enter` or `↓` | Move to the results |
+| `Esc` | Clear the box, then leave the page |
+| `↑` on the first result, or `/` | Back to the box |
+| `Enter` | Open an artist or a record; play a track |
+| `P` / `a` / `N` | Play / add to the queue / put next |
+| `w` | Put the result in a playlist |
+| `f` | Favourite it |
+| `A` / `O` | Open its artist / its record |
+| `i` | Track info (tracks) |
+| `m` | Menu of everything above |
 
 ## Add to a playlist (`w`, `W`)
 

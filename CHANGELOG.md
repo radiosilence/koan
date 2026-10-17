@@ -9,6 +9,7 @@
 - **Browse filters in the terminal UI.** `Ctrl+F`, or `filters` in the heading of Albums, Favourites and Recent, opens a panel for lossless, downloaded, codec, genre and decade, the same narrowing the apps' browser offers.
 - **Playlist undo and a queue that follows.** The playlist page undoes and redoes edits (`Ctrl+Z`, `Ctrl+Y`, or the buttons under the name), and while the queue is exactly a playlist, adding, removing or moving tracks in it changes the queue too, as in the apps.
 - **Playlists in the terminal UI.** A Playlists page and a page for each playlist, with play, shuffle, create, rename, delete, and moving or removing tracks; `w` puts a record, track or queue selection into a playlist from any page, and `W` saves the queue as one. They are the apps' playlists, pushed to the server as the apps push them. Pages are now numbered `1` to `9`, with Playlists at `6`, so Recent, History and Settings are `7`, `8` and `9`.
+- **Search in the terminal UI.** A Search page on `0` searches the library as you type and lists artists, records and tracks, with open, play, queue, favourite and playlist actions by key or click, as the apps' search results do.
 
 ### Fixed
 

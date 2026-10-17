@@ -27,6 +27,7 @@ use super::picker::{PickerKind, PickerPartKind, PickerState, picker_results_rect
 use super::playlist_modals::{Chooser, NamePrompt, Purpose};
 use super::playlists_page::{ListHit, PlAction, PlaylistHit, PlaylistPage, PlaylistsPage};
 use super::queue;
+use super::search_page::{SearchHit, SearchPage};
 use super::settings_page::{Outcome, Setting, SettingsHit, SettingsPage, Task};
 use super::theme::{Palette, Theme};
 use super::transport::TransportBar;
@@ -136,6 +137,7 @@ pub enum HoverZone {
     Browse(browse::Hit),
     Album(AlbumHit),
     History(HistoryHit),
+    Search(SearchHit),
     Settings(SettingsHit),
     Playlists(ListHit),
     Playlist(PlaylistHit),
@@ -272,6 +274,7 @@ pub struct App {
     task_rx: crossbeam_channel::Receiver<String>,
     pub track_details: Option<Box<koan_core::db::queries::TrackRow>>,
     pub history_page: HistoryPage,
+    pub search_page: SearchPage,
     pub playlists_page: PlaylistsPage,
     pub playlist_page: Option<PlaylistPage>,
     pub name_prompt: Option<NamePrompt>,
@@ -435,6 +438,7 @@ impl App {
             task_rx: task_channel.1,
             track_details: None,
             history_page: HistoryPage::new(),
+            search_page: SearchPage::new(),
             playlists_page: PlaylistsPage::new(),
             playlist_page: None,
             name_prompt: None,
@@ -933,6 +937,7 @@ impl App {
             Page::Artists => self.library.as_ref().is_some_and(|l| l.filter_active),
             Page::Artist(_) => self.artist_page.filter_active,
             Page::History => self.history_page.filter_active,
+            Page::Search => self.search_page.typing,
             Page::Playlists => self.playlists_page.filter_active,
             Page::Queue
             | Page::NowPlaying
@@ -964,6 +969,7 @@ impl App {
             Page::Favourites => self.favourites_page.reload(),
             Page::Recent => self.recent_page.reload(),
             Page::History => self.history_page.reload(),
+            Page::Search => self.search_page.open(),
             Page::Playlists => self.playlists_page.reload(),
             Page::Playlist(id) => self.playlist_page = PlaylistPage::load(id),
             Page::Settings => self.settings_page.reload(),
@@ -1073,6 +1079,11 @@ impl App {
                     None => self.handle_transport_key(key),
                 }
             }
+            Page::Search => match self.search_page.handle_key(key) {
+                Some(action) => self.apply_browse(action),
+                None if key.code == KeyCode::Esc => self.leave_page(),
+                None => self.handle_transport_key(key),
+            },
             Page::History => match self.history_page.handle_key(key) {
                 Some(action) => self.apply_browse(action),
                 None if key.code == KeyCode::Esc => self.leave_page(),
@@ -3051,6 +3062,18 @@ impl App {
                         self.apply_playlist(action);
                         return;
                     }
+                    if self.page() == Page::Search {
+                        let mut action = browse::Action::None;
+                        let p = &mut self.search_page;
+                        if p.on_scrollbar(col, row) {
+                            self.browse_drag = true;
+                            p.scroll_to_bar(row);
+                        } else if let Some(hit) = p.hit(col, row) {
+                            action = p.click(hit);
+                        }
+                        self.apply_browse(action);
+                        return;
+                    }
                     if self.page() == Page::History {
                         let mut action = browse::Action::None;
                         let p = &mut self.history_page;
@@ -3401,6 +3424,8 @@ impl App {
                     if let Some(p) = self.playlist_page.as_mut() {
                         p.scroll_to_bar(row);
                     }
+                } else if self.page() == Page::Search {
+                    self.search_page.scroll_to_bar(row);
                 } else if self.page() == Page::History {
                     self.history_page.scroll_to_bar(row);
                 } else if self.page() == Page::Settings {
@@ -3615,6 +3640,8 @@ impl App {
                         if let Some(p) = self.playlist_page.as_mut() {
                             p.scroll_by(-3);
                         }
+                    } else if self.page() == Page::Search {
+                        self.search_page.scroll_by(-3);
                     } else if self.page() == Page::History {
                         self.history_page.scroll_by(-3);
                     } else if self.page() == Page::Settings {
@@ -3651,6 +3678,8 @@ impl App {
                         if let Some(p) = self.playlist_page.as_mut() {
                             p.scroll_by(3);
                         }
+                    } else if self.page() == Page::Search {
+                        self.search_page.scroll_by(3);
                     } else if self.page() == Page::History {
                         self.history_page.scroll_by(3);
                     } else if self.page() == Page::Settings {
@@ -3810,6 +3839,11 @@ impl App {
             } else if let Page::Playlist(_) = self.page() {
                 if let Some(hit) = self.playlist_page.as_ref().and_then(|p| p.hit(col, row)) {
                     self.hover.zone = HoverZone::Playlist(hit);
+                    return;
+                }
+            } else if self.page() == Page::Search {
+                if let Some(hit) = self.search_page.hit(col, row) {
+                    self.hover.zone = HoverZone::Search(hit);
                     return;
                 }
             } else if self.page() == Page::History {

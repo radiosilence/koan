@@ -17,6 +17,7 @@ The TUI follows the shape of the Mac and mobile apps: pages you move between, a 
 | `7` | Recent | What was played in the last 30 days |
 | `8` | History | Every play, newest first, under the day it was played |
 | `9` | Settings | The settings that otherwise mean editing `config.toml` |
+| `0` | Search | Artists, records and tracks that match what you type |
 
 The wheel and the scrollbars (which can be dragged) scroll every page. Opening a record or an artist (from a tile, a link, or the keys below) goes to the **album page** and the **artist page**. The album page holds the cover, who it is by, its facts and its tracks; the artist page is that artist's photograph and the opening of their Wikipedia article (with `play` and `shuffle`, and a link to the article), above their records as tiles. Both sit under Albums and Artists in the sidebar and in history.
 
@@ -31,6 +32,10 @@ As in the apps, a record and an artist can be favourites as well as tracks. `f` 
 ## The actions menu
 
 Every action with a key has a way to reach it by pointer. `m`, or `⋯ actions` in the heading of the browsing pages, an album page and History, opens a menu for what the cursor is on: play, add to the queue, play next, replace the queue, add to a playlist, favourite the record or the artist, go to the record or the artist, track info, download, and remove the download. `Enter` or a click does one; `Esc` or a click outside closes it. The queue's own menu (the `⋯` at the end of a row) offers the same where it applies.
+
+## Search
+
+`0` opens a box that searches the library as you type and lists what matches under artists, records and tracks. `Enter` (or `↓`) moves from the box to the results, and `↑` from the first result or `/` returns to the box. On a result `Enter` opens an artist or a record and plays a track, `P`, `a` and `N` play, add and put next, `w` adds to a playlist, `f` favourites, `m` lists the rest, and the artist and record in a track's row are links. Clicking the box, a result, `clear` or `⋯ actions` does the same by pointer. While the box has focus every key is text, including the page numbers; `Esc` clears it, then leaves.
 
 ## Playlists
 

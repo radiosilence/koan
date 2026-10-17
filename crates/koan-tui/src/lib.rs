@@ -32,6 +32,7 @@ pub mod playlist_ops;
 pub mod playlists_page;
 pub mod queue;
 pub mod remote_bridge;
+pub mod search_page;
 pub mod settings_page;
 pub mod tasks;
 pub mod theme;
