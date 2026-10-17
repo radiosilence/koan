@@ -192,7 +192,7 @@ Click the arrows beside a value, or the value, to change it, or `run` to start a
 | `N` | Put it next, after the track playing |
 | `Ctrl+R` | Replace the queue and play |
 | `/` | Filter what is shown by name |
-| `Ctrl+F` | Open the filters panel: lossless, downloaded, codec, genre, decade (tiles; not on an artist's page) |
+| `Ctrl+F` | Open the filters panel: lossless, downloaded, codec, genre, decade (not on an artist's page, nor on Favourites and Recent while they show tracks) |
 | `v` | Tiles or rows (tracks, on Favourites and Recent) |
 | `o` | Cycle the order (Albums) |
 | `f` | Favourite the record under the cursor, or the track on a track row |

@@ -377,8 +377,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         ]);
         frame.render_widget(ratatui::widgets::Paragraph::new(line), chunks[3]);
     } else {
-        app.layout.hint_hits = super::keys::hits(&app.mode, app.page(), chunks[3]);
-        let hint_bar = HintBar::new(&app.mode, app.page(), &app.theme);
+        let filterable = app.browse().is_some_and(|b| b.filterable());
+        app.layout.hint_hits = super::keys::hits(&app.mode, app.page(), filterable, chunks[3]);
+        let hint_bar = HintBar::new(&app.mode, app.page(), filterable, &app.theme);
         frame.render_widget(hint_bar, chunks[3]);
     }
 

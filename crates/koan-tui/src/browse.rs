@@ -695,7 +695,13 @@ impl Browse {
             }
             KeyCode::Char('a') => return Some(self.play(self.cursor, PickerAction::Append)),
             KeyCode::Char('N') => return Some(self.play(self.cursor, PickerAction::PlayNext)),
-            KeyCode::Char('f') if ctrl && self.filterable() => return Some(Action::OpenFilters),
+            KeyCode::Char('f') if ctrl => {
+                return Some(if self.filterable() {
+                    Action::OpenFilters
+                } else {
+                    Action::None
+                });
+            }
             KeyCode::Char('f') if self.tracks_in_list() => {
                 return Some(
                     self.track_at_cursor()
@@ -1474,6 +1480,20 @@ mod tests {
         let Some(Hit::Menu) = b.hit(b.geom.menu.x, b.geom.menu.y) else {
             panic!("the actions control is a hit");
         };
+    }
+
+    #[test]
+    fn ctrl_f_opens_the_filters_only_where_they_apply() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let ctrl_f = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL);
+        let mut b = browse(3);
+        assert_eq!(b.handle_key(ctrl_f), Some(Action::OpenFilters));
+        b.source = Source::Favourites;
+        b.view = View::List;
+        assert_eq!(b.handle_key(ctrl_f), Some(Action::None));
+        b.source = Source::Artist(1);
+        b.view = View::Tiles;
+        assert_eq!(b.handle_key(ctrl_f), Some(Action::None));
     }
 
     #[test]

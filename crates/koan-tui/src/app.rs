@@ -942,6 +942,16 @@ impl App {
         }
     }
 
+    pub fn browse(&self) -> Option<&Browse> {
+        match self.page() {
+            Page::Albums => Some(&self.albums_page),
+            Page::Favourites => Some(&self.favourites_page),
+            Page::Recent => Some(&self.recent_page),
+            Page::Artist(_) => Some(&self.artist_page),
+            _ => None,
+        }
+    }
+
     pub fn browse_mut(&mut self) -> Option<&mut Browse> {
         match self.page() {
             Page::Albums => Some(&mut self.albums_page),
