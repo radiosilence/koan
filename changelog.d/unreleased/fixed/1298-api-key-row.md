@@ -1,0 +1,1 @@
+- **API key row: "this device" in line with the row.** In Settings → Account, the label on the key this device signs in with is now the same size and case as the row's other trailing values, on iPhone and Mac.
