@@ -1986,6 +1986,7 @@ pub mod nsd {
                 name: "Pixel".into(),
                 platform: "android".into(),
                 device_id: "d1".into(),
+                files: "",
             };
             // The engine starts, paused, then announces and browses, all
             // before the app has given its host.
@@ -2620,6 +2621,7 @@ pub(crate) mod bonjour {
                 name: "Pixel 9".into(),
                 platform: "android".into(),
                 device_id: "0199c1d2-android".into(),
+                files: "",
             };
             let server = "https://music.example.net";
             let mut wire = Vec::new();
@@ -2828,6 +2830,7 @@ mod tests {
                     name: "Mac".into(),
                     platform: "macos".into(),
                     device_id: "mac".into(),
+                    files: "",
                 },
                 state: Arc::new(LinkState::default),
                 on_command: Arc::new(move |cmd, source, _| seen.lock().push((cmd, source))),

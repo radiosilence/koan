@@ -54,10 +54,13 @@ pub enum LinkCommand {
         #[serde(default, skip_serializing_if = "QueueMode::is_keep")]
         mode: QueueMode,
     },
-    /// Append these tracks to the queue.
+    /// Append these tracks to the queue, and with `play` start the first of
+    /// them. A device that does not know `play` only appends.
     #[serde(rename_all = "camelCase")]
     Enqueue {
         track_ids: Vec<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        play: bool,
     },
     /// Insert these tracks after the current one.
     #[serde(rename_all = "camelCase")]
@@ -402,7 +405,7 @@ impl LinkCommand {
     pub fn track_ids(&self) -> &[String] {
         match self {
             Self::Play { track_ids, .. }
-            | Self::Enqueue { track_ids }
+            | Self::Enqueue { track_ids, .. }
             | Self::PlayNext { track_ids }
             | Self::Remove { track_ids }
             | Self::Evict { track_ids }
@@ -492,7 +495,7 @@ impl LinkCommand {
     pub fn track_ids_mut(&mut self) -> Vec<&mut String> {
         match self {
             Self::Play { track_ids, .. }
-            | Self::Enqueue { track_ids }
+            | Self::Enqueue { track_ids, .. }
             | Self::PlayNext { track_ids }
             | Self::Remove { track_ids }
             | Self::Evict { track_ids }
@@ -742,6 +745,10 @@ pub struct LinkIdentity {
     /// Stable across restarts, so a reconnect replaces its own entry on the
     /// server rather than listing the device twice.
     pub device_id: String,
+    /// Put before the names of the files this device keeps in the config
+    /// directory: its id and the devices it knows. Empty for the apps; the
+    /// terminal UI shares their directory and is a device of its own.
+    pub files: &'static str,
 }
 
 impl LinkIdentity {
@@ -765,7 +772,38 @@ impl LinkIdentity {
                 .unwrap_or_else(|| label.to_string()),
             platform: platform.to_string(),
             device_id: device_id(&config::config_dir()),
+            files: "",
         }
+    }
+
+    /// The terminal UI on this machine: named and kept apart from the app,
+    /// which may be running beside it on the same config directory. `None`
+    /// while another terminal UI on this machine is that device: two
+    /// processes under one id would each take the other's place on the
+    /// server and the network.
+    pub fn terminal() -> Option<Self> {
+        const FILES: &str = "terminal-";
+        // Held for as long as the process runs; the system lets go of it
+        // however the process ends.
+        static HELD: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
+        let dir = config::config_dir();
+        if HELD.get().is_none() {
+            let lock = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(dir.join(format!("{FILES}device.lock")))
+                .ok()?;
+            lock.try_lock().ok()?;
+            let _ = HELD.set(lock);
+        }
+        let app = Self::this_device(None);
+        Some(Self {
+            name: format!("{} (terminal)", app.name),
+            device_id: file_device_id(&dir.join(format!("{FILES}device-id"))),
+            files: FILES,
+            ..app
+        })
     }
 }
 
@@ -1136,6 +1174,17 @@ pub fn resolve_tracks(
     remote_ids: &[String],
     may_sync: bool,
 ) -> (Vec<i64>, bool) {
+    let (found, synced) = resolve_each(db, remote_ids, may_sync);
+    (found.into_iter().flatten().collect(), synced)
+}
+
+/// `resolve_tracks`, one answer per id asked for: `None` where it is still
+/// missing.
+pub fn resolve_each(
+    db: &crate::db::connection::Database,
+    remote_ids: &[String],
+    may_sync: bool,
+) -> (Vec<Option<i64>>, bool) {
     let lookup = |db: &crate::db::connection::Database| {
         let mut stmt = db
             .conn
@@ -1160,7 +1209,7 @@ pub fn resolve_tracks(
         .map(|(id, _)| id)
         .collect();
     if missing.is_empty() || !may_sync || missing.iter().all(|id| recently_missed(id)) {
-        return (found.into_iter().flatten().collect(), false);
+        return (found, false);
     }
     sync(db, crate::helpers::Walk::IfChanged);
     let found = lookup(db);
@@ -1170,7 +1219,7 @@ pub fn resolve_tracks(
     for (id, _) in remote_ids.iter().zip(&found).filter(|(_, f)| f.is_none()) {
         missed.insert(id.clone(), now);
     }
-    (found.into_iter().flatten().collect(), true)
+    (found, true)
 }
 
 /// Ids a sync looked for and did not find, and when.
@@ -1217,25 +1266,26 @@ fn device_id(dir: &Path) -> String {
         {
             return id;
         }
-        let id = file_device_id(dir);
+        let id = file_device_id(&dir.join("device-id"));
         let _ = set_generic_password(SERVICE, "device-id", id.as_bytes());
         id
     }
     #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
-    file_device_id(dir)
+    file_device_id(&dir.join("device-id"))
 }
 
-fn file_device_id(dir: &Path) -> String {
-    let path = dir.join("device-id");
-    if let Ok(id) = std::fs::read_to_string(&path) {
+fn file_device_id(path: &Path) -> String {
+    if let Ok(id) = std::fs::read_to_string(path) {
         let id = id.trim();
         if !id.is_empty() {
             return id.to_string();
         }
     }
     let id = uuid::Uuid::now_v7().to_string();
-    let _ = std::fs::create_dir_all(dir);
-    let _ = std::fs::write(&path, &id);
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, &id);
     id
 }
 
@@ -1343,6 +1393,7 @@ mod tests {
             },
             LinkCommand::Enqueue {
                 track_ids: ids.clone(),
+                play: false,
             },
             LinkCommand::HandOff { to: "x".into() },
             LinkCommand::SetRendererVolume { volume: 1 },
@@ -1493,6 +1544,7 @@ mod tests {
             name: "J's iPhone".into(),
             platform: "ios".into(),
             device_id: "abc".into(),
+            files: "",
         };
         let url = link_url(
             &SubsonicAuth::new("https://music.example.com", "j", "pw"),

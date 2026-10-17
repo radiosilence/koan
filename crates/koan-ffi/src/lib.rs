@@ -2639,19 +2639,8 @@ impl KoanEngine {
     /// picked. Nothing moves; see `move_music`.
     pub async fn control_device(self: Arc<Self>, id: Option<String>) -> Result<(), KoanError> {
         offload::sequenced(move || {
-            if let Some(id) = &id {
-                koan_core::remote::devices::choosable(id)
-                    .map_err(|message| KoanError::Remote { message })?;
-            }
-            if id.is_some() && self.state.playback_state() == PlaybackState::Playing {
-                self.send_local(PlayerCommand::Pause)?;
-            }
-            koan_core::remote::devices::set_target(id.clone());
-            // Asleep: wake it, and let the row say how that is going.
-            if let Some(id) = id {
-                koan_core::remote::devices::wake(&id);
-            }
-            Ok(())
+            koan_core::remote::control::control(id, &self.tx, &self.state)
+                .map_err(|message| KoanError::Remote { message })
         })
         .await
     }
@@ -2662,49 +2651,45 @@ impl KoanEngine {
     /// the server does not have them, which only this device can say, and
     /// whether `to` has said it has the music.
     pub async fn move_music(self: Arc<Self>, to: Option<String>) -> Result<MoveResult, KoanError> {
-        use koan_core::remote::{devices, link::LinkCommand};
+        use koan_core::remote::control::{self, Moved};
+        use koan_core::remote::devices;
         let engine = self.clone();
         // Sent on the lane, in order with every other command; waited for off
         // it, so the transport does not stall behind a device that is slow to
         // answer.
         let sent = offload::sequenced(move || {
-            let from = devices::target();
-            if from == to {
-                return Ok(None);
-            }
-            let sent = match (&from, &to) {
-                (None, Some(to)) => Some(
-                    engine
-                        .hand_off_blocking(to, koan_core::remote::link::CommandSource::Account)?,
-                ),
-                (Some(from), to) => {
-                    let track = devices::current_track(from);
-                    let to_id = match to {
-                        Some(to) => to.clone(),
-                        None => devices::this_id().ok_or_else(|| KoanError::Remote {
-                            message: "this device is not set up to be reached".into(),
-                        })?,
-                    };
-                    let before = to.as_deref().and_then(devices::last_report);
-                    let cursor_before = engine.state.cursor();
-                    let (then, answer) = outcome_channel();
-                    devices::send_then(from, LinkCommand::HandOff { to: to_id }, Some(then))
-                        .map_err(|message| KoanError::Remote { message })?;
-                    Some(HandedOff {
-                        left_out: 0,
-                        to: to.clone(),
-                        track,
-                        before,
-                        cursor_before,
-                        answer: Some(answer),
-                        answer_is_arrival: false,
-                        was_playing: false,
-                    })
-                }
-                (None, None) => None,
-            };
-            devices::set_target(to);
-            Ok(sent)
+            // Read before the music moves: what the device it leaves is on,
+            // and what the one it goes to was doing.
+            let track = devices::target()
+                .as_deref()
+                .and_then(devices::current_track);
+            let before = to.as_deref().and_then(devices::last_report);
+            let cursor_before = engine.state.cursor();
+            let (then, answer) = outcome_channel();
+            let moved = control::move_music(to.clone(), &engine.tx, &engine.state, Some(then))
+                .map_err(|message| KoanError::Remote { message })?;
+            Ok(moved.map(|moved| match moved {
+                Moved::Sent(sent) => HandedOff {
+                    left_out: sent.left_out,
+                    to,
+                    track: Some(sent.track),
+                    before: sent.before,
+                    cursor_before: None,
+                    answer: Some(answer),
+                    answer_is_arrival: true,
+                    was_playing: sent.was_playing,
+                },
+                Moved::Asked => HandedOff {
+                    left_out: 0,
+                    to,
+                    track,
+                    before,
+                    cursor_before,
+                    answer: Some(answer),
+                    answer_is_arrival: false,
+                    was_playing: false,
+                },
+            }))
         })
         .await?;
         let Some(sent) = sent else {
@@ -5962,7 +5947,7 @@ impl KoanEngine {
                 let version = state.playlist_version();
                 let mut held = held.lock().unwrap_or_else(|e| e.into_inner());
                 if held.as_ref().is_none_or(|(v, _)| *v != version) {
-                    *held = Some((version, link_queue(&state)));
+                    *held = Some((version, koan_core::remote::control::link_queue(&state)));
                 }
                 koan_core::remote::link::LinkState {
                     playing: state.playback_state() == PlaybackState::Playing,
@@ -6048,141 +6033,14 @@ impl KoanEngine {
     /// Send to the player this app is controlling: this device's own, or
     /// another's, translated into what the link carries.
     fn send(&self, cmd: PlayerCommand) -> Result<(), KoanError> {
-        match koan_core::remote::devices::target() {
-            Some(target) => self.send_remote(&target, cmd),
-            None => self.send_local(cmd),
-        }
-    }
-
-    /// A player command as the device `to` is sent it. Queue entries are
-    /// named by the ids that device reported them under, which are what the
-    /// app holds while it shows that device's queue; tracks by the server's
-    /// ids, which only a device playing from the same library can resolve.
-    fn send_remote(&self, to: &str, cmd: PlayerCommand) -> Result<(), KoanError> {
-        use koan_core::remote::link::LinkCommand;
-        let entry = |id: QueueItemId| id.0.to_string();
-        let tracks =
-            |items: &[koan_core::player::state::PlaylistItem]| -> Result<Vec<String>, KoanError> {
-                let same =
-                    koan_core::remote::devices::target_device().is_some_and(|d| d.same_library);
-                if !same {
-                    return Err(KoanError::BadArgument {
-                        message: "that device plays from a different library".into(),
-                    });
-                }
-                let ids: Vec<i64> = items.iter().filter_map(|i| i.db_id).collect();
-                let remote = self.remote_ids(&ids);
-                let out: Vec<String> = items
-                    .iter()
-                    .filter_map(|i| i.db_id.and_then(|id| remote.get(&id).cloned()))
-                    .collect();
-                if out.is_empty() {
-                    return Err(KoanError::BadArgument {
-                        message:
-                            "none of these are on the server, so the other device cannot play them"
-                                .into(),
-                    });
-                }
-                Ok(out)
-            };
-        let link = match cmd {
-            PlayerCommand::Play(id) => LinkCommand::PlayItem { id: entry(id) },
-            PlayerCommand::Pause | PlayerCommand::Stop => LinkCommand::Pause,
-            PlayerCommand::Resume => LinkCommand::Resume,
-            PlayerCommand::Seek(position_ms) => LinkCommand::Seek { position_ms },
-            PlayerCommand::NextTrack => LinkCommand::Next,
-            PlayerCommand::PrevTrack => LinkCommand::Previous,
-            PlayerCommand::SetShuffle(on) => LinkCommand::Shuffle { on },
-            PlayerCommand::SetRepeat(mode) => LinkCommand::Repeat { mode },
-            PlayerCommand::SetSleepTimer(timer) => LinkCommand::SleepTimer { timer },
-            PlayerCommand::AddToPlaylist(items) => LinkCommand::Enqueue {
-                track_ids: tracks(&items)?,
+        use koan_core::remote::control::{self, SendError};
+        control::send(cmd, &self.tx).map_err(|e| match e {
+            SendError::Unplayable(message) => KoanError::BadArgument { message },
+            SendError::Missed(message) => KoanError::Remote { message },
+            SendError::Stopped => KoanError::Player {
+                message: e.to_string(),
             },
-            PlayerCommand::InsertInPlaylist { items, after } => LinkCommand::Insert {
-                track_ids: tracks(&items)?,
-                after: entry(after),
-            },
-            PlayerCommand::ReplacePlaylist {
-                items,
-                start,
-                position_ms,
-                play,
-                mode,
-            } => {
-                // Where `start` lands once the tracks the server lacks are
-                // left out: on it, or on the next one that remains.
-                let track_ids = tracks(&items)?;
-                let remote =
-                    self.remote_ids(&items.iter().filter_map(|i| i.db_id).collect::<Vec<_>>());
-                let start_at = items
-                    .iter()
-                    .take(start)
-                    .filter(|i| i.db_id.is_some_and(|id| remote.contains_key(&id)))
-                    .count();
-                LinkCommand::Play {
-                    start_at: start_at.min(track_ids.len().saturating_sub(1)) as u32,
-                    track_ids,
-                    position_ms,
-                    paused: !play,
-                    handoff: false,
-                    mode,
-                }
-            }
-            PlayerCommand::RemoveFromPlaylist(id) => LinkCommand::RemoveItems {
-                ids: vec![entry(id)],
-            },
-            PlayerCommand::RemoveFromPlaylistBatch(ids) => LinkCommand::RemoveItems {
-                ids: ids.into_iter().map(entry).collect(),
-            },
-            PlayerCommand::MoveInPlaylist { id, target, after } => LinkCommand::MoveItems {
-                ids: vec![entry(id)],
-                target: entry(target),
-                after,
-            },
-            PlayerCommand::MoveItemsInPlaylist { ids, target, after } => LinkCommand::MoveItems {
-                ids: ids.into_iter().map(entry).collect(),
-                target: entry(target),
-                after,
-            },
-            PlayerCommand::ClearPlaylist => LinkCommand::Clear,
-            PlayerCommand::Undo => LinkCommand::Undo,
-            PlayerCommand::Redo => LinkCommand::Redo,
-            // Following a playlist, undo batches: bookkeeping of this
-            // device's own queue, which the other device keeps for itself.
-            PlayerCommand::ReorderPlaylist(_)
-            | PlayerCommand::BeginUndoBatch
-            | PlayerCommand::EndUndoBatch => return Ok(()),
-            // This device's own: its output, its renderer and its DSP, and
-            // the player's own events. Named rather than caught by a wildcard,
-            // so a command added later is placed here or mapped above, never
-            // acted on locally by default while another device is controlled.
-            local @ (PlayerCommand::Cue { .. }
-            | PlayerCommand::PauseAndReport(_)
-            | PlayerCommand::Barrier(_)
-            | PlayerCommand::UpdatePaths(_)
-            | PlayerCommand::TrackReady(_)
-            | PlayerCommand::TrackStreamReady(_)
-            | PlayerCommand::StreamProbed { .. }
-            | PlayerCommand::TrackFailed(_)
-            | PlayerCommand::CacheTracks(_)
-            | PlayerCommand::DecodeFinished(_)
-            | PlayerCommand::TrackQueued
-            | PlayerCommand::SetOutputDevice(_)
-            | PlayerCommand::ClearOutputDevice
-            | PlayerCommand::ReloadDsp
-            | PlayerCommand::RouteChanged
-            | PlayerCommand::RestartOutput
-            | PlayerCommand::UseRenderer(_)
-            | PlayerCommand::ResumeRenderer(_)
-            | PlayerCommand::ResumeRendererMissed
-            | PlayerCommand::ReleaseRenderer(_)
-            | PlayerCommand::SetRendererVolume(_)
-            | PlayerCommand::RestorePlayMode(_)
-            | PlayerCommand::Renderer { .. }) => return self.send_local(local),
-        };
-        // A device out of reach is still the one being controlled: the
-        // command fails and says so, rather than playing here instead.
-        koan_core::remote::devices::send(to, link).map_err(|message| KoanError::Remote { message })
+        })
     }
 
     /// The server's ids for these library tracks, where they have one.
@@ -6326,336 +6184,20 @@ impl KoanEngine {
         pending: Option<koan_core::remote::acks::Pending>,
     ) {
         use koan_core::remote::acks::AckOutcome;
-        let outcome = match self.run_link_command(cmd, source) {
+        let applied =
+            koan_core::remote::control::apply(cmd, source, &self.tx, &self.state, &|| {
+                self.library_changed()
+            });
+        let outcome = match applied {
             Ok(()) => AckOutcome::Done,
-            Err(e) => {
-                log::warn!("link: {e}");
-                AckOutcome::Failed {
-                    error: e.to_string(),
-                }
+            Err(error) => {
+                log::warn!("link: {error}");
+                AckOutcome::Failed { error }
             }
         };
         if let Some(pending) = pending {
             pending.finish(outcome);
         }
-    }
-
-    fn run_link_command(
-        &self,
-        cmd: koan_core::remote::link::LinkCommand,
-        source: koan_core::remote::link::CommandSource,
-    ) -> Result<(), KoanError> {
-        use koan_core::remote::link::{CommandSource, LinkCommand};
-        // Only the account may cost a sync: anyone on the network can send a
-        // track id this library has never heard of.
-        let may_sync = source == CommandSource::Account;
-        // Resolving a track the library lacks syncs first; what that brought
-        // in has to reach the pages too.
-        let resolve_tracks = |db: &Database, ids: &[String]| {
-            let (found, synced) = koan_core::remote::link::resolve_tracks(db, ids, may_sync);
-            if synced {
-                self.library_changed();
-            }
-            found
-        };
-        match cmd {
-            LinkCommand::Play {
-                track_ids,
-                start_at,
-                position_ms,
-                paused,
-                handoff,
-                mode,
-            } => self.db().and_then(|db| {
-                // The music is coming back here: stop controlling whatever
-                // this was controlling. A renderer this device was playing to
-                // is still its output, so the music resumes there.
-                if handoff && koan_core::remote::devices::target().is_some() {
-                    log::info!("link: handed the music; taking control back");
-                    koan_core::remote::devices::set_target(None);
-                }
-                let ids = resolve_tracks(&db, &track_ids);
-                let items = self.build_items(&db, &ids);
-                if items.is_empty() {
-                    log::warn!(
-                        "link: none of {} tracks are in the library",
-                        track_ids.len()
-                    );
-                    return Ok(());
-                }
-                let start = (start_at as usize).min(items.len() - 1);
-                self.send_local(PlayerCommand::ReplacePlaylist {
-                    items,
-                    start,
-                    position_ms,
-                    play: !paused,
-                    mode,
-                })
-            }),
-            LinkCommand::PlayItem { id } => {
-                let id = parse_qid(&id);
-                let (items, _) = self.state.snapshot_playlist();
-                match id {
-                    Ok(id) if items.iter().any(|i| i.id == id) => {
-                        self.send_local(PlayerCommand::Play(id))
-                    }
-                    _ => Ok(()),
-                }
-            }
-            LinkCommand::RemoveItems { ids } => parse_qids(&ids)
-                .and_then(|ids| self.send_local(PlayerCommand::RemoveFromPlaylistBatch(ids))),
-            LinkCommand::MoveItems { ids, target, after } => parse_qids(&ids).and_then(|ids| {
-                let target = parse_qid(&target)?;
-                self.send_local(PlayerCommand::MoveItemsInPlaylist { ids, target, after })
-            }),
-            LinkCommand::Insert { track_ids, after } => self.db().and_then(|db| {
-                let after = parse_qid(&after)?;
-                let ids = resolve_tracks(&db, &track_ids);
-                let items = self.build_items(&db, &ids);
-                if items.is_empty() {
-                    return Ok(());
-                }
-                self.send_local(PlayerCommand::InsertInPlaylist { items, after })?;
-                Ok(())
-            }),
-            LinkCommand::Undo => self.send_local(PlayerCommand::Undo),
-            LinkCommand::Redo => self.send_local(PlayerCommand::Redo),
-            // Asked for by another device, which learns the outcome from
-            // what the destination reports; here it is only logged, off the
-            // lane, so later commands do not wait on it.
-            LinkCommand::HandOff { to } => self.hand_off_blocking(&to, source).map(|sent| {
-                let player = self.tx.clone();
-                let _ = std::thread::Builder::new()
-                    .name("koan-hand-off".into())
-                    .spawn(move || {
-                        sent.result(
-                            || None,
-                            || {
-                                let _ = player.send(PlayerCommand::Resume);
-                            },
-                        )
-                    });
-            }),
-            // Taken off the link before it gets here.
-            // From a notification tapped or an outbox: the link's own
-            // check, made again.
-            LinkCommand::Shared { command } => {
-                if command.allowed_playback() {
-                    self.run_link_command(*command, CommandSource::Shared)?;
-                }
-                Ok(())
-            }
-            // Answered by the link session itself, which holds the watch.
-            LinkCommand::Devices { .. }
-            | LinkCommand::DeviceKeys { .. }
-            | LinkCommand::Shares { .. }
-            | LinkCommand::Forgotten { .. }
-            | LinkCommand::WatchLevels { .. }
-            | LinkCommand::Levels { .. }
-            | LinkCommand::Acked { .. } => Ok(()),
-            LinkCommand::SetOutput { output } => {
-                koan_core::remote::outputs::set(output, koan_core::upnp::choose(), &self.tx)
-                    .map_err(|message| KoanError::Audio { message })
-            }
-            LinkCommand::RefreshOutputs => {
-                koan_core::remote::outputs::refresh_for_controller();
-                Ok(())
-            }
-            LinkCommand::SetRendererVolume { volume } => {
-                self.send_local(PlayerCommand::SetRendererVolume(volume))
-            }
-            LinkCommand::SetPreset { device, profile } => self.assign_dsp(profile, &device),
-            LinkCommand::Enqueue { track_ids } => self.db().and_then(|db| {
-                let ids = resolve_tracks(&db, &track_ids);
-                let items = self.build_items(&db, &ids);
-                let Some(first) = items.first().map(|i| i.id) else {
-                    return Ok(());
-                };
-                let was_stopped = self.state.is_idle();
-                self.send_local(PlayerCommand::AddToPlaylist(items))?;
-                if was_stopped {
-                    self.send_local(PlayerCommand::Play(first))?;
-                }
-                Ok(())
-            }),
-            LinkCommand::JumpTo { track_id } => self.db().and_then(|db| {
-                let Some(&local) = resolve_tracks(&db, std::slice::from_ref(&track_id)).first()
-                else {
-                    log::warn!("link: track {track_id} is not in the library");
-                    return Ok(());
-                };
-                let (items, cursor) = self.state.snapshot_playlist();
-                if let Some(item) = items.iter().find(|i| i.db_id == Some(local)) {
-                    return self.send_local(PlayerCommand::Play(item.id));
-                }
-                let mut new = self.build_items(&db, &[local]);
-                let Some(item) = new.pop() else { return Ok(()) };
-                let id = item.id;
-                match cursor {
-                    Some(after) => self.send_local(PlayerCommand::InsertInPlaylist {
-                        items: vec![item],
-                        after,
-                    })?,
-                    None => self.send_local(PlayerCommand::AddToPlaylist(vec![item]))?,
-                }
-                self.send_local(PlayerCommand::Play(id))?;
-                Ok(())
-            }),
-            LinkCommand::PlayNext { track_ids } => self.db().and_then(|db| {
-                let ids = resolve_tracks(&db, &track_ids);
-                let items = self.build_items(&db, &ids);
-                if items.is_empty() {
-                    return Ok(());
-                }
-                match self.state.cursor() {
-                    Some(after) => {
-                        self.send_local(PlayerCommand::InsertInPlaylist { items, after })?
-                    }
-                    None => self.send_local(PlayerCommand::AddToPlaylist(items))?,
-                }
-                Ok(())
-            }),
-            LinkCommand::Remove { track_ids } => self.db().and_then(|db| {
-                let ids: std::collections::HashSet<i64> =
-                    resolve_tracks(&db, &track_ids).into_iter().collect();
-                let (items, _) = self.state.snapshot_playlist();
-                let gone: Vec<QueueItemId> = items
-                    .iter()
-                    .filter(|i| i.db_id.is_some_and(|id| ids.contains(&id)))
-                    .map(|i| i.id)
-                    .collect();
-                if gone.is_empty() {
-                    return Ok(());
-                }
-                self.send_local(PlayerCommand::RemoveFromPlaylistBatch(gone))
-            }),
-            LinkCommand::Clear => self.send_local(PlayerCommand::ClearPlaylist),
-            LinkCommand::Evict { track_ids } => self.db().and_then(|db| {
-                let ids = resolve_tracks(&db, &track_ids);
-                let rows = queries::tracks_by_ids(&db.conn, &ids).unwrap_or_default();
-                for path in rows.iter().filter_map(|t| t.cached_path.as_deref()) {
-                    let _ = std::fs::remove_file(path);
-                }
-                queries::clear_cached_paths_for(&db.conn, &ids).map_err(db_err)?;
-                log::info!("link: evicted {} cached tracks", ids.len());
-                self.library_changed();
-                Ok(())
-            }),
-            LinkCommand::HistoryChanged => self.db().map(|db| {
-                // History and Recently played follow `player::history::changed`,
-                // which the sync rings; a track it had to sync for is the
-                // library's news too.
-                if koan_core::remote::history::sync(&db).library_synced {
-                    self.library_changed();
-                }
-            }),
-            LinkCommand::DspProfilesChanged => self.db().and_then(|db| {
-                if koan_core::remote::dsp_sync::sync(&db).changed() {
-                    // Pages showing profiles follow the library's version.
-                    self.library_changed();
-                    self.send_local(PlayerCommand::ReloadDsp)?;
-                }
-                Ok(())
-            }),
-            LinkCommand::Sync { full } => self.db().map(|db| {
-                let walk = if full {
-                    koan_core::helpers::Walk::Always
-                } else {
-                    koan_core::helpers::Walk::IfChanged
-                };
-                koan_core::remote::link::sync(&db, walk);
-                self.library_changed();
-            }),
-            LinkCommand::Seek { position_ms } => self.send_local(PlayerCommand::Seek(position_ms)),
-            LinkCommand::Pause => self.send_local(PlayerCommand::Pause),
-            LinkCommand::Resume => self.send_local(PlayerCommand::Resume),
-            LinkCommand::Next => self.send_local(PlayerCommand::NextTrack),
-            LinkCommand::Previous => self.send_local(PlayerCommand::PrevTrack),
-            LinkCommand::Shuffle { on } => self.send_local(PlayerCommand::SetShuffle(on)),
-            LinkCommand::Repeat { mode } => self.send_local(PlayerCommand::SetRepeat(mode)),
-            LinkCommand::SleepTimer { timer } => {
-                self.send_local(PlayerCommand::SetSleepTimer(timer))
-            }
-        }
-    }
-
-    /// Send this device's queue and playhead to `to` and pause here. The
-    /// tracks the server does not know are left out, since the other device
-    /// could not play them; returns how many.
-    /// Send this device's music to `to`, asked by `source`: see
-    /// `devices::send_for`, which keeps a hand-off asked by anyone but the
-    /// account off the account's own devices.
-    fn hand_off_blocking(
-        &self,
-        to: &str,
-        source: koan_core::remote::link::CommandSource,
-    ) -> Result<HandedOff, KoanError> {
-        use koan_core::remote::link::LinkCommand;
-        let (items, cursor) = self.state.snapshot_playlist();
-        let remote = self.remote_ids(&items.iter().filter_map(|i| i.db_id).collect::<Vec<_>>());
-        let at = cursor
-            .and_then(|c| items.iter().position(|i| i.id == c))
-            .unwrap_or(0);
-        let kept: Vec<(usize, String)> = items
-            .iter()
-            .enumerate()
-            .filter_map(|(n, i)| {
-                i.db_id
-                    .and_then(|id| remote.get(&id).cloned())
-                    .map(|r| (n, r))
-            })
-            .collect();
-        if kept.is_empty() {
-            return Err(KoanError::BadArgument {
-                message:
-                    "nothing in the queue is on the server, so the other device cannot play it"
-                        .into(),
-            });
-        }
-        let start_at = kept.iter().position(|(n, _)| *n >= at).unwrap_or(0);
-        // Silent here first, and the playhead read where it went silent:
-        // anything heard while the command travels would be heard twice.
-        let paused = self.state.playback_state() == PlaybackState::Paused;
-        let (reply, silent) = crossbeam_channel::bounded(1);
-        self.send_local(PlayerCommand::PauseAndReport(reply))?;
-        let position_ms = silent
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .unwrap_or_else(|_| self.state.position_ms());
-        let position_ms = if kept.get(start_at).is_some_and(|(n, _)| *n == at) {
-            position_ms
-        } else {
-            0
-        };
-        let dropped = (items.len() - kept.len()) as u32;
-        let first = kept[start_at].1.clone();
-        let before = koan_core::remote::devices::last_report(to);
-        let play = LinkCommand::Play {
-            track_ids: kept.into_iter().map(|(_, r)| r).collect(),
-            start_at: start_at as u32,
-            position_ms,
-            paused,
-            handoff: true,
-            mode: QueueMode::Keep,
-        };
-        let (then, answer) = outcome_channel();
-        let sent = koan_core::remote::devices::send_for_then(source, to, play, Some(then));
-        if let Err(message) = sent {
-            if !paused {
-                self.send_local(PlayerCommand::Resume)?;
-            }
-            return Err(KoanError::Remote { message });
-        }
-        log::info!("devices: sent the queue to {to}, {dropped} left out");
-        Ok(HandedOff {
-            left_out: dropped,
-            to: Some(to.to_owned()),
-            track: Some(first),
-            before,
-            cursor_before: None,
-            answer: Some(answer),
-            answer_is_arrival: true,
-            was_playing: !paused,
-        })
     }
 
     /// The queue entry under this device's cursor, and the server's id for
@@ -7059,38 +6601,6 @@ fn saved_by(changed_by: &str) -> String {
         None if changed_by == "koan" => "a kōan device".to_owned(),
         None => changed_by.to_owned(),
     }
-}
-
-/// The queue as the server is told it, with each track's id on the server. At
-/// most `LINK_QUEUE_MAX` entries, from a few before the current one.
-fn link_queue(state: &SharedPlayerState) -> Vec<koan_core::remote::link::LinkQueueEntry> {
-    const LINK_QUEUE_MAX: usize = 300;
-    let (window, cursor) = state.playlist_window(20, LINK_QUEUE_MAX);
-
-    let remote: std::collections::HashMap<i64, String> = koan_core::db::pool::shared()
-        .get()
-        .ok()
-        .and_then(|db| {
-            let ids: Vec<i64> = window.iter().filter_map(|i| i.db_id).collect();
-            queries::tracks_by_ids(&db.conn, &ids).ok()
-        })
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|t| t.remote_id.map(|r| (t.id, r)))
-        .collect();
-
-    window
-        .iter()
-        .map(|i| koan_core::remote::link::LinkQueueEntry {
-            id: Some(i.id.0.to_string()),
-            track_id: i.db_id.and_then(|id| remote.get(&id).cloned()),
-            title: i.title.clone(),
-            artist: i.artist.clone(),
-            album: i.album.clone(),
-            duration_ms: i.duration_ms.unwrap_or(0),
-            current: Some(i.id) == cursor,
-        })
-        .collect()
 }
 
 /// The account client, on a server whose invites this app can open. Checked
