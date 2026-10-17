@@ -2302,10 +2302,7 @@ impl App {
     fn toggle_shuffle(&mut self) {
         let on = !self.state.play_mode().shuffle;
         self.tx.send(PlayerCommand::SetShuffle(on)).ok();
-        self.status_message = Some((
-            if on { "shuffle on" } else { "shuffle off" }.into(),
-            std::time::Instant::now(),
-        ));
+        self.say(if on { "shuffle on" } else { "shuffle off" });
     }
 
     /// Off, then each choice in turn, then off again.
@@ -2330,24 +2327,18 @@ impl App {
             Some(Sleep::EndOfRecord) => None,
         };
         self.tx.send(PlayerCommand::SetSleepTimer(next)).ok();
-        self.status_message = Some((
-            match next {
-                None => "sleep timer off".into(),
-                Some(SleepTimer::After { minutes }) => format!("sleep in {minutes} min"),
-                Some(SleepTimer::EndOfTrack) => "sleep at the end of the track".into(),
-                Some(SleepTimer::EndOfRecord) => "sleep at the end of the album".into(),
-            },
-            std::time::Instant::now(),
-        ));
+        self.say(match next {
+            None => "sleep timer off".into(),
+            Some(SleepTimer::After { minutes }) => format!("sleep in {minutes} min"),
+            Some(SleepTimer::EndOfTrack) => "sleep at the end of the track".into(),
+            Some(SleepTimer::EndOfRecord) => "sleep at the end of the album".into(),
+        });
     }
 
     fn cycle_repeat(&mut self) {
         let repeat = self.state.play_mode().repeat.cycled();
         self.tx.send(PlayerCommand::SetRepeat(repeat)).ok();
-        self.status_message = Some((
-            format!("repeat {}", repeat.as_str()),
-            std::time::Instant::now(),
-        ));
+        self.say(format!("repeat {}", repeat.as_str()));
     }
 
     /// What a click on a control of the transport or Now playing does.
@@ -2381,7 +2372,7 @@ impl App {
             Control::Eq => self.open_dsp_selector(),
             Control::Cover => {
                 if self.art.now_playing_art.cached().is_some() {
-                    self.mode = Mode::CoverArtZoom;
+                    self.push_mode(Mode::CoverArtZoom);
                 }
             }
         }
