@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use koan_core::db::queries::{self, AlbumRow, ArtistRow, LibraryStats, Place, TrackRow};
+use koan_core::db::queries::{self, AlbumRow, ArtistRow, LibraryStats, TrackRow};
 use koan_core::helpers;
 use koan_core::player::state::{
     LoadState, PlaybackState, PlaylistItem, QueueEntry, QueueEntryStatus, TrackInfo,
@@ -103,7 +103,11 @@ impl From<helpers::CreditPart> for CreditPart {
     }
 }
 
-fn parts(credit: &str, filed: Option<i64>, artists: &[(i64, String)]) -> Vec<CreditPart> {
+pub(crate) fn credit_parts(
+    credit: &str,
+    filed: Option<i64>,
+    artists: &[(i64, String)],
+) -> Vec<CreditPart> {
     helpers::credit_parts(credit, filed, artists)
         .into_iter()
         .map(Into::into)
@@ -146,7 +150,7 @@ impl Album {
             id: r.id,
             title: r.title,
             artist_id: r.artist_id,
-            artist_credit: parts(&r.artist_name, Some(r.artist_id), artists),
+            artist_credit: credit_parts(&r.artist_name, Some(r.artist_id), artists),
             artist_name: r.artist_name,
             year,
             codec: r.codec,
@@ -292,7 +296,7 @@ impl Track {
         Self {
             id: r.id,
             title: r.title,
-            artist_credit: parts(&r.artist_name, r.artist_id, artists),
+            artist_credit: credit_parts(&r.artist_name, r.artist_id, artists),
             artist_name: r.artist_name,
             album_artist_name: r.album_artist_name,
             album_title: r.album_title,
@@ -495,6 +499,9 @@ pub struct QueueItem {
     pub title: String,
     pub artist: String,
     pub album_artist: String,
+    /// `artist` and `album_artist` with each artist they credit linked.
+    pub artist_credit: Vec<CreditPart>,
+    pub album_artist_credit: Vec<CreditPart>,
     pub album: String,
     pub year: Option<String>,
     pub codec: Option<String>,
@@ -647,6 +654,8 @@ impl QueueItem {
             artist_id: None,
             album_artist_id: None,
             title: item.title.clone(),
+            artist_credit: credit_parts(&item.artist, None, &[]),
+            album_artist_credit: credit_parts(&item.album_artist, None, &[]),
             artist: item.artist.clone(),
             album_artist: item.album_artist.clone(),
             album: item.album.clone(),
@@ -671,24 +680,14 @@ impl QueueItem {
 }
 
 impl QueueItem {
-    /// Build from a derived queue entry, taking album IDs from a map resolved
-    /// for the whole queue in one query — one statement per queue read rather
-    /// than one per row.
-    pub(crate) fn from_entry(
-        e: &QueueEntry,
-        places: &HashMap<i64, Place>,
-        sources: &HashMap<i64, (bool, bool)>,
-    ) -> Self {
-        let place = e
-            .db_id
-            .and_then(|id| places.get(&id))
-            .copied()
-            .unwrap_or_default();
-        let (on_server, on_disk) = e
-            .db_id
-            .and_then(|id| sources.get(&id))
-            .copied()
-            .unwrap_or((false, false));
+    /// Build from a derived queue entry, taking what the library says from
+    /// joins read for the whole queue at once — a few statements per queue
+    /// read rather than a few per row.
+    pub(crate) fn from_entry(e: &QueueEntry, joins: &crate::queue_slice::Joins) -> Self {
+        let place = joins.place(e.db_id);
+        let (on_server, on_disk) = joins.sources(e.db_id);
+        let (artist_credit, album_artist_credit) =
+            joins.credits(e.db_id, &e.artist, &e.album_artist);
         Self {
             queue_item_id: e.id.0.to_string(),
             track_id: e.db_id,
@@ -697,6 +696,8 @@ impl QueueItem {
             artist_id: place.artist_id,
             album_artist_id: place.album_artist_id,
             title: e.title.clone(),
+            artist_credit,
+            album_artist_credit,
             artist: e.artist.clone(),
             album_artist: e.album_artist.clone(),
             album: e.album.clone(),
@@ -891,6 +892,8 @@ pub struct PlaylistEntry {
     pub track: Track,
     /// The track's record's artist, for the heading over a run of the record.
     pub album_artist_id: Option<i64>,
+    /// The record's artist with each artist it credits linked.
+    pub album_artist_credit: Vec<CreditPart>,
 }
 
 /// What writing a playlist out to a file managed.

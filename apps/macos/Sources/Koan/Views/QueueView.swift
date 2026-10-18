@@ -210,9 +210,8 @@ struct QueueView: View {
         case .album(let id, let group):
             QueueLine(id: id, kind: .heading(QueueHeading(
                 title: group.title,
-                artist: group.album.isEmpty ? nil : (group.albumArtist.isEmpty ? "Unknown Artist" : group.albumArtist),
+                artist: group.album.isEmpty ? nil : group.artistCredit,
                 albumId: group.items.first?.albumId,
-                artistId: group.items.first?.albumArtistId,
                 detail: group.detail,
                 sleeve: group.items.first?.sleeve,
                 sleeveSize: 52
@@ -825,6 +824,12 @@ struct QueueGroup: Identifiable {
 
     var year: String? { items.first?.year }
 
+    /// The record's artist as its heading links it.
+    var artistCredit: [CreditPart] {
+        if albumArtist.isEmpty { return [CreditPart(text: "Unknown Artist", artistId: items.first?.albumArtistId)] }
+        return items.first?.albumArtistCredit ?? [CreditPart(text: albumArtist, artistId: nil)]
+    }
+
     var title: String {
         if !album.isEmpty { return album }
         return albumArtist.isEmpty ? "Unknown Artist" : albumArtist
@@ -1039,11 +1044,7 @@ private struct QueueAlbumHeader: View {
                 // Only when the line above is the record: a group with no album
                 // title already leads with the artist.
                 if !group.album.isEmpty {
-                    LinkText(
-                        text: group.albumArtist.isEmpty ? "Unknown Artist" : group.albumArtist,
-                        target: group.items.first?.albumArtistId.map { .artist($0) },
-                        font: .role(.fine, system: .caption)
-                    )
+                    CreditLinks(parts: group.artistCredit, font: .role(.fine, system: .caption))
                 }
 
                 Text(group.detail)

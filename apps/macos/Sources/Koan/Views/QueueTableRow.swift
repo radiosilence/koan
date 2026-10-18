@@ -23,12 +23,11 @@ struct QueueLine: Equatable {
 /// `PlaylistAlbumHeader` draw it.
 struct QueueHeading: Equatable {
     let title: String
-    /// The record's artist, under its title.
-    let artist: String?
-    /// The record and its artist, where the library knows them: where the
-    /// title and the artist lead.
+    /// The record's artist, under its title, each credited artist's name
+    /// leading to them.
+    let artist: [CreditPart]?
+    /// The record, where the library knows it: where the title leads.
     let albumId: Int64?
-    let artistId: Int64?
     /// "2007 · 11 tracks · 59:10 · FLAC", where the list says it.
     let detail: String?
     let sleeve: AlbumArtwork.Source?
@@ -159,14 +158,14 @@ final class QueueTableRow: TableCell, TableRow {
         case .heading(let heading):
             title.font = Self.headingFont
             title.stringValue = Format.title(heading.title)
-            artist.stringValue = heading.artist ?? ""
+            artist.stringValue = CreditLabel.text(heading.artist ?? [])
             album.stringValue = ""
             detail.stringValue = heading.detail ?? ""
             showSleeve(heading.sleeve, art: context.art, corner: 5)
         case .track(let content, _, let showArtist, let artwork):
             title.font = Self.titleFont
             title.stringValue = Format.title(content.title)
-            artist.stringValue = !showArtist ? "" : content.artist
+            artist.stringValue = !showArtist ? "" : CreditLabel.text(content.artistCredit)
             album.stringValue = !showArtist || content.artist.isEmpty || !artwork ? "" : content.album
             number.stringValue = content.place
             wideNumber = content.disc != nil
@@ -274,17 +273,26 @@ final class QueueTableRow: TableCell, TableRow {
     private func styleNames() {
         guard let line, let context else { return }
         let selected = backgroundStyle == .emphasized
+        let onAccent: NSColor = .alternateSelectedControlTextColor
         let ink = { (part: Part, rest: NSColor) -> NSColor in
-            selected ? .alternateSelectedControlTextColor : (self.hoveredPart == part ? .koanLabel : rest)
+            selected ? onAccent : (self.hoveredPart == part ? .koanLabel : rest)
+        }
+        let styleArtist = { (rest: NSColor) in
+            let linked = self.linkedArtist
+            self.artist.attributedStringValue = CreditLabel.attributed(
+                self.credit, font: Self.captionFont, colour: selected ? onAccent : rest,
+                linked: linked, linkColour: selected ? onAccent : .koanLabel
+            )
+            self.artist.toolTip = linked.map { "Go to \(self.credit[$0].text)" }
         }
         switch line.kind {
         case .heading:
             title.styleLink(font: Self.headingFont, colour: ink(.title, .koanLabel), underlined: hoveredPart == .title)
-            artist.styleLink(font: Self.captionFont, colour: ink(.artist, .koanSecondaryLabel), underlined: hoveredPart == .artist)
+            styleArtist(.koanSecondaryLabel)
         case .track(let content, _, _, _):
             let dimmed = content.status == .played || (context.offline && !content.onDisk && content.status != .playing)
             let caption: NSColor = dimmed ? .koanTertiaryLabel : .koanSecondaryLabel
-            artist.styleLink(font: Self.captionFont, colour: ink(.artist, caption), underlined: hoveredPart == .artist)
+            styleArtist(caption)
             separator.textColor = selected ? .alternateSelectedControlTextColor : (dimmed ? .koanQuaternaryLabel : .koanTertiaryLabel)
             album.styleLink(font: Self.captionFont, colour: ink(.album, caption), underlined: hoveredPart == .album)
         }
@@ -439,7 +447,24 @@ final class QueueTableRow: TableCell, TableRow {
 
     // MARK: Pointer
 
-    private enum Part { case title, artist, album }
+    /// The artist is the credit part under the pointer.
+    private enum Part: Equatable { case title, artist(Int), album }
+
+    /// The credit the artist label draws.
+    private var credit: [CreditPart] {
+        switch line?.kind {
+        case .heading(let heading): heading.artist ?? []
+        case .track(let content, _, _, _): content.artistCredit
+        case nil: []
+        }
+    }
+
+    /// The hovered artist, while the credit still has that part: a row shown
+    /// again for the same item keeps its hover and may get a shorter credit.
+    private var linkedArtist: Int? {
+        guard case .artist(let i) = hoveredPart, credit.indices.contains(i) else { return nil }
+        return i
+    }
 
     /// Where each name leads, if anywhere.
     private func target(of part: Part) -> LinkText.Target? {
@@ -447,10 +472,8 @@ final class QueueTableRow: TableCell, TableRow {
         switch (line.kind, part) {
         case (.heading(let heading), .title):
             return heading.artist == nil ? nil : heading.albumId.map { .album($0) }
-        case (.heading(let heading), .artist):
-            return heading.artistId.map { .artist($0) }
-        case (.track(let content, _, _, _), .artist):
-            return content.artistId.map { .artist($0) }
+        case (_, .artist(let i)):
+            return credit.indices.contains(i) ? credit[i].artistId.map { .artist($0) } : nil
         case (.track(let content, _, _, _), .album):
             return content.albumId.map { .album($0) }
         default:
@@ -461,12 +484,17 @@ final class QueueTableRow: TableCell, TableRow {
     /// The name under the pointer that leads somewhere.
     private func part(at point: NSPoint) -> Part? {
         guard let line else { return nil }
-        let candidates: [(Part, NSTextField)] = line.isTrack
-            ? [(.artist, artist), (.album, album)]
-            : [(.title, title), (.artist, artist)]
-        return candidates.first { _, label in !label.isHidden && label.frame.contains(point) }
-            .map { $0.0 }
-            .flatMap { target(of: $0) == nil ? nil : $0 }
+        let found: Part?
+        if !artist.isHidden, artist.frame.contains(point) {
+            found = CreditLabel.artist(
+                at: point.x - artist.frame.minX, in: credit, font: Self.captionFont, width: artist.frame.width
+            ).map(Part.artist)
+        } else if line.isTrack {
+            found = !album.isHidden && album.frame.contains(point) ? .album : nil
+        } else {
+            found = title.frame.contains(point) ? .title : nil
+        }
+        return found.flatMap { target(of: $0) == nil ? nil : $0 }
     }
 
     func hover(at point: NSPoint?) -> Bool {
