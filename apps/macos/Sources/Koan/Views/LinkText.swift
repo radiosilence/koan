@@ -79,7 +79,7 @@ struct LinkText: View {
 
 /// An artist credit as it reads, each credited artist's name a `LinkText` of
 /// its own and the text joining them ("×", " feat. ") plain. A credit naming
-/// one artist is a single link, as before collaborations were split.
+/// one artist is a single link.
 struct CreditLinks: View {
     let parts: [CreditPart]
     var font: Font?

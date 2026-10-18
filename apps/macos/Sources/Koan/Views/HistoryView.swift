@@ -269,11 +269,7 @@ private struct HistoryRow: View {
                 Text(track.title)
                     .lineLimit(1)
                 HStack(spacing: 5) {
-                    LinkText(
-                        text: track.artistName,
-                        target: track.artistId.map { .artist($0) },
-                        font: .role(.fine, system: .caption)
-                    )
+                    CreditLinks(parts: track.artistCredit, font: .role(.fine, system: .caption))
                     Text("·")
                         .font(.role(.fine, system: .caption))
                         .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))

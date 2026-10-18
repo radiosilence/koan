@@ -215,6 +215,9 @@ final class PlayerModel {
             return
         }
         placeResolvedFor = nil
+        // The last track's credit would draw beside this one's title until
+        // the lookup lands; the entry's own name stands in meanwhile.
+        if currentArtistCredit != nil { currentArtistCredit = nil }
         let engine = self.engine
         Task {
             let track = (try? await engine.track(trackId: trackId)) ?? nil

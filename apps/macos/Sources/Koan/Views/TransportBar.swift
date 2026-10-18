@@ -137,8 +137,8 @@ struct TransportBar: View {
                         .lineLimit(1)
                         .rainbowShimmer()
                     // Both names go where they say they go, rather than the
-                    // line as a whole meaning one of them. `LinkText` is the
-                    // same one the rows and headers use.
+                    // line as a whole meaning one of them. `CreditLinks` and
+                    // `LinkText` are the ones the rows and headers use.
                     HStack(spacing: 0) {
                         CreditLinks(
                             parts: player.currentArtistCredit ?? [CreditPart(text: entry.artist, artistId: nil)],

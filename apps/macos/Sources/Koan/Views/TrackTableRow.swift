@@ -495,7 +495,10 @@ final class TrackTableRow: TableCell, TableRow {
             if point.x < RowMetrics.sleeve + 4 { return .lead }
         } else if point.x < (context?.leadWidth ?? 22) + 4 { return .lead }
         if artist.frame.contains(point), let track = item?.track {
-            let i = CreditLabel.artist(at: point.x - artist.frame.minX, in: track.artistCredit, font: Self.captionFont)
+            let i = CreditLabel.artist(
+                at: point.x - artist.frame.minX, in: track.artistCredit,
+                font: Self.captionFont, width: artist.frame.width
+            )
             return i.map(Part.artist) ?? .elsewhere
         }
         if context?.showsAlbum == true, album.frame.contains(point) { return .album }
@@ -513,8 +516,11 @@ final class TrackTableRow: TableCell, TableRow {
         return linkedArtist != nil || (now == .album && track.albumId != nil)
     }
 
+    /// The hovered artist, while the credit still has that part: a row shown
+    /// again for the same track keeps its hover and may get a shorter credit.
     private var linkedArtist: Int? {
-        if case .artist(let i) = hovered { i } else { nil }
+        guard case .artist(let i) = hovered, let credit = item?.track?.artistCredit, credit.indices.contains(i) else { return nil }
+        return i
     }
 
     func hit(at point: NSPoint) -> RowHit {
@@ -524,7 +530,7 @@ final class TrackTableRow: TableCell, TableRow {
         case .lead: return .button { [weak self] in _ = self?.play() }
         case .heart: return .button { context.toggleFavourite(track.id) }
         case .artist(let i):
-            guard let id = track.artistCredit[i].artistId else { return .plain }
+            guard track.artistCredit.indices.contains(i), let id = track.artistCredit[i].artistId else { return .plain }
             return .link { context.openArtist(id) }
         case .album:
             guard let id = track.albumId else { return .plain }

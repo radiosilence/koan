@@ -712,6 +712,9 @@ final class AlbumTile: NSCollectionViewItem {
         titleLabel.stringValue = album.title
         artistLabel.stringValue = CreditLabel.text(album.artistCredit)
         artistLabel.toolTip = nil
+        // The labels were just set plain, so whatever hover marks there were
+        // are to be drawn again.
+        underlined = (false, nil)
         yearLabel.stringValue = album.year.map { "· \($0)" } ?? ""
         codec.string = album.codec?.uppercased()
         badge.isHidden = album.codec == nil
@@ -943,14 +946,18 @@ final class AlbumTile: NSCollectionViewItem {
         if sleeve.frame.contains(point) { return .sleeve }
         if titleLabel.frame.contains(point) { return .title }
         if artistLabel.frame.contains(point), let album,
-           let i = CreditLabel.artist(at: point.x - artistLabel.frame.minX, in: album.artistCredit, font: Self.detailFont) {
+           let i = CreditLabel.artist(
+               at: point.x - artistLabel.frame.minX, in: album.artistCredit,
+               font: Self.detailFont, width: artistLabel.frame.width
+           ) {
             return .artist(i)
         }
         return .elsewhere
     }
 
     private var linkedArtist: Int? {
-        if case .artist(let i) = hovered { i } else { nil }
+        guard case .artist(let i) = hovered, let album, album.artistCredit.indices.contains(i) else { return nil }
+        return i
     }
 
     /// The pointer is at `point` in the tile, or has left it. Whether it is
@@ -982,7 +989,7 @@ final class AlbumTile: NSCollectionViewItem {
         case .sleeve: play(album, context: context)
         case .title: context.actions.open(album.id)
         case .artist(let i):
-            guard let id = album.artistCredit[i].artistId else { return false }
+            guard album.artistCredit.indices.contains(i), let id = album.artistCredit[i].artistId else { return false }
             context.actions.openArtist(id)
         case .elsewhere: return false
         }
@@ -1019,7 +1026,8 @@ final class AlbumTile: NSCollectionViewItem {
     /// the record — or the whole pick, when the record is part of it.
     fileprivate func dragged(from point: NSPoint) -> [PlayableTransfer] {
         guard let album, let context else { return [] }
-        if case .artist(let i) = part(at: point), !context.selecting, let id = album.artistCredit[i].artistId {
+        if case .artist(let i) = part(at: point), !context.selecting,
+           album.artistCredit.indices.contains(i), let id = album.artistCredit[i].artistId {
             return [PlayableTransfer(kind: .artist, id: id, name: album.artistCredit[i].text)]
         }
         let key = Playable.album(album).key
