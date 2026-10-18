@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.64.1
+
+### Added
+
+- **Track properties in the web UI.** A track row's menu opens its properties: each source's tags and format, its uids and MusicBrainz ids, and for admins the file's path on the server, for working out why a record appears twice or the wrong file plays.
+
+### Fixed
+
+- **Multi-disc records show their discs on the Mac and iPhone.** On an album page, tracks spanning more than one disc number get a heading per disc and show their own numbers, rather than one run numbered by position. In the queue, a record whose tracks run past disc 1 numbers them by disc and track ("2.03"). Both read the tracks' disc numbers, so they work where the files give no disc total.
+
+### Internal
+
+- **`just release` resolves the lockfile online and refuses a release branch that already exists on origin.** The offline lockfile update failed on a machine whose cargo cache lacked a locked dependency, after the branch had been made and the version bumped.
+
 ## 0.64.0
 
 ### Added
