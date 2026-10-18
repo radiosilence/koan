@@ -1,0 +1,1 @@
+- **Collaborations under each artist can be turned off.** `library.artist_credits` (Settings → Library on the Mac, Settings → Server on iPhone and Android, the web UI's Library page) lists each record only under its credit as it reads when off. The tags stay in the index, so switching it takes effect at once, with no rescan or sync.
