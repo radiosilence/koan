@@ -17,6 +17,7 @@ class PlaylistRowsTest {
             onServer = true, onDisk = false, path = null, isFavourite = false,
         ),
         albumArtistId = 1,
+        albumArtistCredit = emptyList(),
     )
 
     private fun playlist(smart: Boolean = false, readonly: Boolean = false, fromFile: Boolean = false, tracks: UInt = 3u) = Playlist(

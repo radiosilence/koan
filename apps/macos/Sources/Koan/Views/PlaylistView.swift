@@ -181,9 +181,8 @@ struct PlaylistView: View {
                 let track = group.entries.first?.track
                 return QueueLine(id: id, kind: .heading(QueueHeading(
                     title: group.album,
-                    artist: group.artist.isEmpty ? "Unknown Artist" : group.artist,
+                    artist: group.artistCredit,
                     albumId: track?.albumId,
-                    artistId: group.entries.first?.albumArtistId,
                     detail: nil,
                     sleeve: track.map { $0.albumId.map { .album($0) } ?? .track($0.id) },
                     sleeveSize: 44
@@ -695,6 +694,12 @@ struct PlaylistGroup {
     let artist: String
     let positions: [Int]
     let entries: [PlaylistEntry]
+
+    /// The record's artist as its heading links it.
+    var artistCredit: [CreditPart] {
+        if artist.isEmpty { return [CreditPart(text: "Unknown Artist", artistId: entries.first?.albumArtistId)] }
+        return entries.first?.albumArtistCredit ?? [CreditPart(text: artist, artistId: nil)]
+    }
 }
 
 /// One entry, wearing whatever the queue currently thinks of it.
@@ -772,11 +777,7 @@ private struct PlaylistAlbumHeader: View {
                     font: .role(.body, system: .system(size: 14, weight: .semibold)),
                     prominent: true
                 )
-                LinkText(
-                    text: group.artist.isEmpty ? "Unknown Artist" : group.artist,
-                    target: group.entries.first?.albumArtistId.map { .artist($0) },
-                    font: .role(.fine, system: .caption)
-                )
+                CreditLinks(parts: group.artistCredit, font: .role(.fine, system: .caption))
             }
             Spacer()
         }

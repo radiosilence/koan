@@ -1,0 +1,1 @@
+- **Every credited artist links from the queue and playlists.** A track or record credited to several artists links each of them on the Mac's and iOS's queue and playlist rows and record headings, as album and artist pages already did.

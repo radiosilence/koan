@@ -1979,14 +1979,30 @@ impl KoanEngine {
             let ids: Vec<i64> = entries.iter().map(|e| e.id).collect();
             let track_ids: Vec<i64> = entries.iter().map(|e| e.track.id).collect();
             let places = queries::places_for_tracks(&db.conn, &track_ids).unwrap_or_default();
+            let mut albums: Vec<i64> = places.values().filter_map(|p| p.album_id).collect();
+            albums.sort_unstable();
+            albums.dedup();
+            let records = credits(&db, queries::batch::CreditsOf::Albums, &albums);
             let tracks = self.decorate(&db, entries.into_iter().map(|e| e.track).collect());
             Ok(ids
                 .into_iter()
                 .zip(tracks)
-                .map(|(entry_id, track)| PlaylistEntry {
-                    entry_id,
-                    album_artist_id: places.get(&track.id).and_then(|p| p.album_artist_id),
-                    track,
+                .map(|(entry_id, track)| {
+                    let place = places.get(&track.id).copied().unwrap_or_default();
+                    let record = place
+                        .album_id
+                        .and_then(|id| records.get(&id))
+                        .map_or(&[][..], Vec::as_slice);
+                    PlaylistEntry {
+                        entry_id,
+                        album_artist_id: place.album_artist_id,
+                        album_artist_credit: types::credit_parts(
+                            &track.album_artist_name,
+                            place.album_artist_id,
+                            record,
+                        ),
+                        track,
+                    }
                 })
                 .collect())
         })
@@ -5497,11 +5513,7 @@ impl KoanEngine {
         let ids: Vec<String> = st.queue.iter().filter_map(|e| e.track_id.clone()).collect();
         let rows = self.rows_for_remote(&ids);
         let row_ids: Vec<i64> = rows.values().map(|r| r.id).collect();
-        let places = self
-            .db()
-            .ok()
-            .and_then(|db| queries::places_for_tracks(&db.conn, &row_ids).ok())
-            .unwrap_or_default();
+        let joins = self.queue_joins(&row_ids);
         let current = st.queue.iter().position(|e| e.current);
         let items: Vec<QueueItem> = st
             .queue
@@ -5509,18 +5521,21 @@ impl KoanEngine {
             .enumerate()
             .map(|(n, e)| {
                 let row = e.track_id.as_ref().and_then(|r| rows.get(r));
+                let album_artist =
+                    row.map_or_else(|| e.artist.clone(), |r| r.album_artist_name.clone());
+                let (artist_credit, album_artist_credit) =
+                    joins.credits(row.map(|r| r.id), &e.artist, &album_artist);
                 QueueItem {
                     queue_item_id: e.id.clone().unwrap_or_else(|| format!("remote-{n}")),
                     track_id: row.map(|r| r.id),
                     album_id: row.and_then(|r| r.album_id),
                     artist_id: row.and_then(|r| r.artist_id),
-                    album_artist_id: row
-                        .and_then(|r| places.get(&r.id))
-                        .and_then(|p| p.album_artist_id),
+                    album_artist_id: row.and_then(|r| joins.place(Some(r.id)).album_artist_id),
                     title: e.title.clone(),
                     artist: e.artist.clone(),
-                    album_artist: row
-                        .map_or_else(|| e.artist.clone(), |r| r.album_artist_name.clone()),
+                    album_artist,
+                    artist_credit,
+                    album_artist_credit,
                     album: if e.album.is_empty() {
                         row.map(|r| r.album_title.clone()).unwrap_or_default()
                     } else {
@@ -5599,8 +5614,8 @@ impl KoanEngine {
             .collect()
     }
 
-    /// The library's reading of the queue's tracks, in two statements rather
-    /// than one per row.
+    /// The library's reading of the queue's tracks, in a few statements
+    /// rather than a few per row.
     ///
     /// A client draws one sleeve per album, and without an ID to group by it
     /// asks for artwork per track — the same image fetched once for every track
@@ -5610,9 +5625,16 @@ impl KoanEngine {
         let Ok(db) = self.db() else {
             return queue_slice::Joins::default();
         };
+        use queries::batch::CreditsOf;
+        let places = queries::batch::places_for_tracks(&db.conn, track_ids).unwrap_or_default();
+        let mut albums: Vec<i64> = places.values().filter_map(|p| p.album_id).collect();
+        albums.sort_unstable();
+        albums.dedup();
         queue_slice::Joins {
-            places: queries::batch::places_for_tracks(&db.conn, track_ids).unwrap_or_default(),
             sources: queries::batch::sources_for_tracks(&db.conn, track_ids).unwrap_or_default(),
+            track_credits: credits(&db, CreditsOf::Tracks, track_ids),
+            album_credits: credits(&db, CreditsOf::Albums, &albums),
+            places,
         }
     }
 

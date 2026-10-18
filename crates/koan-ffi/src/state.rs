@@ -415,6 +415,8 @@ mod tests {
                     title: format!("Track {i}"),
                     artist: "An Artist Whose Name Is Of Ordinary Length".into(),
                     album_artist: "An Artist Whose Name Is Of Ordinary Length".into(),
+                    artist_credit: Vec::new(),
+                    album_artist_credit: Vec::new(),
                     album: "A Record With A Reasonably Long Title".into(),
                     year: Some("1994".into()),
                     codec: Some("flac".into()),
