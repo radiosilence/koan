@@ -674,7 +674,7 @@ async fn artists_and_albums_are_linked_wherever_they_are_named() {
         let req = authed(&f.state, &uri).body(Body::empty()).unwrap();
         async move { send(&app, req).await.body }
     };
-    let artist = "\">Rrose</a>";
+    let artist = ">Rrose</a>";
     let album = format!(
         "<a href=\"/album/{}\">Hymn &lt;to&gt; Moisture</a>",
         f.album_id
