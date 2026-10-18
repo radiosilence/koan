@@ -1,0 +1,1 @@
+- **`job` and `jobs` are admin-only.** Only admins can start a job, so only they read them; a non-admin's query is now refused.

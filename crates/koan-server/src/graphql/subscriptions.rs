@@ -226,19 +226,23 @@ mod tests {
         );
         let query = "subscription { jobs { kind reason state done total } }";
 
-        let listener = AuthUser {
+        let user = |role| AuthUser {
             user_id: 2,
-            username: "listener".into(),
-            role: koan_core::auth::Role::User,
+            username: "someone".into(),
+            role,
         };
         let refused = schema
-            .execute_stream(async_graphql::Request::new(query).data(listener))
+            .execute_stream(
+                async_graphql::Request::new(query).data(user(koan_core::auth::Role::User)),
+            )
             .next()
             .await
             .unwrap();
         assert!(!refused.errors.is_empty(), "{refused:?}");
 
-        let mut stream = schema.execute_stream(query);
+        let mut stream = schema.execute_stream(
+            async_graphql::Request::new(query).data(user(koan_core::auth::Role::Admin)),
+        );
         let first = stream.next().await.unwrap();
         assert!(first.errors.is_empty(), "{first:?}");
         assert_eq!(first.data.to_string(), "{jobs: []}");

@@ -1,1 +1,1 @@
-- **Jobs over a GraphQL subscription.** `subscription { jobs { … } }` sends the server's jobs as they start, move and end, scans included, so a client can show a scan without polling. `job`, `jobs` and the subscription are now admin-only, as starting a job already was.
+- **Jobs over a GraphQL subscription.** `subscription { jobs { … } }` sends the server's jobs as they start, move and end, scans included, so a client can show a scan without polling. Admins only.
