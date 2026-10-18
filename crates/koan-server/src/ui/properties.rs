@@ -14,7 +14,7 @@ use axum::response::Response;
 use koan_core::auth::Role;
 use koan_core::db::queries::{self, UidKind};
 
-use super::pages::{COPY_INPUT, KICKER, SUB, respond, unavailable};
+use super::pages::{COPY_INPUT, KICKER, SUB, link, respond, unavailable};
 use super::{UiState, open};
 use crate::auth::AuthUser;
 use crate::share::{blocking, duration, escape, not_found};
@@ -74,7 +74,7 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
     let mut out = format!(
         "<p class=\"{KICKER}\">Properties</p><h2 class=\"my-1 normal-case\">{}</h2><p class=\"{SUB}\">{}</p>",
         escape(&t.title),
-        escape(&t.artist_name),
+        link("artist", t.artist_id, &t.artist_name),
     );
     if admin && let Some(path) = crate::subsonic::track_file_path(&t) {
         out.push_str(&format!(
@@ -86,25 +86,35 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
     }
 
     let number = |v: Option<i32>| v.map(|v| v.to_string());
+    let text = |v: Option<String>| v.map(|v| escape(&v));
+    // Names that have a page are linked to it.
+    let linked = |kind, id, name: &str| (!name.is_empty()).then(|| link(kind, id, name));
     let track = [
-        ("Title", Some(t.title.clone())),
-        ("Artist", Some(t.artist_name.clone())),
-        ("Album artist", Some(t.album_artist_name.clone())),
-        ("Album", Some(t.album_title.clone())),
+        ("Title", text(Some(t.title.clone()))),
+        ("Artist", linked("artist", t.artist_id, &t.artist_name)),
+        (
+            "Album artist",
+            linked(
+                "artist",
+                album.as_ref().map(|a| a.artist_id),
+                &t.album_artist_name,
+            ),
+        ),
+        ("Album", linked("album", t.album_id, &t.album_title)),
         ("Disc", number(t.disc)),
         ("Track", number(t.track_number)),
         ("Discs", album.as_ref().and_then(|a| number(a.total_discs))),
-        ("Date", date),
-        ("Genre", t.genre.clone()),
-        ("Codec", t.codec.clone()),
+        ("Date", text(date)),
+        ("Genre", text(t.genre.clone())),
+        ("Codec", text(t.codec.clone())),
         ("Sample rate", t.sample_rate.map(|r| format!("{r} Hz"))),
         ("Bit depth", t.bit_depth.map(|b| format!("{b} bit"))),
         ("Length", Some(duration(t.duration_ms))),
         ("Size", size),
-        ("Track uid", track_uid),
-        ("Album uid", album_uid),
-        ("MusicBrainz recording", first(|m| m.mbid.clone())),
-        ("MusicBrainz release", first(|m| m.album_mbid.clone())),
+        ("Track uid", text(track_uid)),
+        ("Album uid", text(album_uid)),
+        ("MusicBrainz recording", text(first(|m| m.mbid.clone()))),
+        ("MusicBrainz release", text(first(|m| m.album_mbid.clone()))),
     ];
     out.push_str(&format!("<p class=\"{SECTION}\">Track</p>"));
     out.push_str(&list(track.into_iter().filter_map(|(name, value)| {
@@ -121,14 +131,20 @@ fn render(s: &UiState, id: i64, admin: bool) -> Option<Option<String>> {
             "From the file"
         };
         out.push_str(&format!("<p class=\"{SECTION}\">{heading}</p>"));
-        out.push_str(&list(source.info_fields().into_iter()));
+        out.push_str(&list(
+            source
+                .info_fields()
+                .into_iter()
+                .map(|(name, value)| (name, escape(&value))),
+        ));
     }
     Some(Some(out))
 }
 
+/// A definition list of `fields`, whose values are HTML.
 fn list(fields: impl Iterator<Item = (&'static str, String)>) -> String {
     let rows: String = fields
-        .map(|(name, value)| format!("<dt>{name}</dt><dd>{}</dd>", escape(&value)))
+        .map(|(name, value)| format!("<dt>{name}</dt><dd>{value}</dd>"))
         .collect();
     format!("<dl class=\"{LIST}\">{rows}</dl>")
 }
