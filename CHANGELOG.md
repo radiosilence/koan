@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.64.1
+
+### Added
+
+- **Track properties in the web UI.** A track row's menu opens its properties: each source's tags and format, its uids and MusicBrainz ids, and for admins the file's path on the server, for working out why a record appears twice or the wrong file plays.
+- **Collaborations are listed under each artist.** A record or track whose tags name its artists one by one (`ARTISTS`, `ALBUMARTISTS` and MusicBrainz artist ids, or OpenSubsonic's `artists` and `albumArtists`) appears on every credited artist's page and in the artist list, while keeping its credit as it reads. The koan server publishes the same lists to Subsonic clients and in GraphQL. The first scan and sync after upgrading read every file and server entry again so existing libraries pick them up.
+- **Rescan from the web UI.** Admins can rescan the library from the foot of the Library page, optionally reading every file's tags again, which is how a remote server picks up tags an upgrade starts reading. `triggerScan(reread: true)` does the same over GraphQL.
+
+### Fixed
+
+- **Multi-disc records show their discs on the Mac and iPhone.** On an album page, tracks spanning more than one disc number get a heading per disc and show their own numbers, rather than one run numbered by position. In the queue, a record whose tracks run past disc 1 numbers them by disc and track ("2.03"). Both read the tracks' disc numbers, so they work where the files give no disc total.
+
+### Internal
+
+- **`just release` resolves the lockfile online and refuses a release branch that already exists on origin.** The offline lockfile update failed on a machine whose cargo cache lacked a locked dependency, after the branch had been made and the version bumped.
+
 ## 0.64.0
 
 ### Added
