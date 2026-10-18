@@ -1,6 +1,7 @@
 //! Helpers shared by every front end: koan-tui, koan-server, koan-ffi and koan-cli.
 
 mod cache;
+mod credits;
 mod download;
 mod favourites;
 mod library;
@@ -12,6 +13,7 @@ mod text;
 mod watch;
 
 pub use cache::*;
+pub use credits::*;
 pub(crate) use download::*;
 pub use favourites::*;
 pub use library::*;
