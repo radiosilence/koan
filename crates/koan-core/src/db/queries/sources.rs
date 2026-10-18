@@ -1501,7 +1501,7 @@ pub(crate) fn build_from_tracks(conn: &Connection) -> Result<(), DbError> {
                     al.date, t.disc, t.track_number, t.genre, al.label, t.duration_ms,
                     t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
                     t.size_bytes, t.mtime, t.path, t.remote_id, t.remote_url,
-                    al.remote_id, aa.remote_id, t.mbid, al.mbid, al.added_at
+                    al.remote_id, aa.remote_id, t.mbid, al.mbid, al.added_at, NULL
                FROM tracks t
                LEFT JOIN artists a ON a.id = t.artist_id
                LEFT JOIN albums al ON al.id = t.album_id
