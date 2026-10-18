@@ -72,7 +72,8 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          shared-key: testflight
+          # Per platform set: an iOS-only run has no tvOS build to save.
+          shared-key: testflight-${{ inputs.platform }}
           cache-on-failure: true
           workspaces: |
             . -> target/ios-26.0
@@ -119,7 +120,8 @@ jobs:
       # hand it is this one's. The time always rises.
       - id: build
         run: echo "KOAN_BUILD=$(date -u +%s)" >> "$GITHUB_ENV"
-      - if: env.IOS == 'true'
+      - id: ios
+        if: env.IOS == 'true'
         run: just ios-testflight "$KOAN_BUILD"
         env:
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
@@ -128,7 +130,8 @@ jobs:
       # The television app: the same record in App Store Connect, under its
       # tvOS platform. Tried when the phone's upload failed, but not when
       # setup did: without the certificate Xcode mints a new one each run.
-      - if: ${{ !cancelled() && env.TVOS == 'true' && steps.build.outcome == 'success' }}
+      - id: tvos
+        if: ${{ !cancelled() && env.TVOS == 'true' && steps.build.outcome == 'success' }}
         run: just tv-testflight "$KOAN_BUILD"
         env:
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
@@ -138,13 +141,13 @@ jobs:
       # of the changelog. Waits for App Store Connect to finish processing,
       # so it comes after both uploads. The upload has happened by now; notes
       # that fail to land are not a failed release.
-      - if: ${{ !cancelled() && env.IOS == 'true' && steps.build.outcome == 'success' }}
+      - if: ${{ !cancelled() && steps.ios.outcome == 'success' }}
         run: uv run apps/ios/store/whats_new.py "$KOAN_BUILD"
         continue-on-error: true
         env:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
-      - if: ${{ !cancelled() && env.TVOS == 'true' && steps.build.outcome == 'success' }}
+      - if: ${{ !cancelled() && steps.tvos.outcome == 'success' }}
         run: uv run apps/ios/store/whats_new.py "$KOAN_BUILD" TV_OS
         continue-on-error: true
         env:

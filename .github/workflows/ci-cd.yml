@@ -309,6 +309,9 @@ jobs:
     env:
       RUN: ${{ needs.changes.outputs.code == 'true' && needs.changes.outputs.macos == 'true' }}
       RELEASE: ${{ needs.check-version.outputs.should_release == 'true' }}
+      # A release pull request packages too, unsigned, so a packaging failure
+      # shows before the version is merged rather than after.
+      PACKAGE: ${{ needs.check-version.outputs.should_release == 'true' || needs.changes.outputs.release == 'true' }}
       # The tvOS build itself runs on release pull requests only. Every other
       # pull request typechecks the shared sources for tvOS, which catches an
       # API tvOS lacks, and a release uploads a tvOS build to TestFlight.
@@ -331,33 +334,33 @@ jobs:
             . -> target/tv-26.0
       - if: env.RUN == 'true'
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
-      - if: env.RUN == 'true' && env.RELEASE != 'true'
+      - if: ${{ !cancelled() && env.RUN == 'true' && env.RELEASE != 'true' }}
         run: cargo clippy --all-targets -- -D warnings
-      - if: env.RUN == 'true' && env.RELEASE != 'true'
+      - if: ${{ !cancelled() && env.RUN == 'true' && env.RELEASE != 'true' }}
         run: cargo test --all-targets
-      - if: env.RUN == 'true' && env.RELEASE != 'true'
+      - if: ${{ !cancelled() && env.RUN == 'true' && env.RELEASE != 'true' }}
         run: cargo test --doc
       # Builds koan-ffi, regenerates the Swift bindings from it, then compiles
       # the app. The bindings are generated, so this catches drift between the
-      # Rust surface and the Swift that calls it. A release builds the app
-      # through `macos-dmg` below instead, once.
-      - if: env.RUN == 'true' && env.RELEASE != 'true'
+      # Rust surface and the Swift that calls it. When packaging, the app is
+      # built through `macos-dmg` below instead, once.
+      - if: ${{ !cancelled() && env.RUN == 'true' && env.PACKAGE != 'true' }}
         run: just macos-build
       # The shared sources also build for iOS and tvOS. These need the same
       # bindings and nothing else: no Rust build for either, no simulator.
-      - if: env.RUN == 'true' && env.RELEASE != 'true'
+      - if: ${{ !cancelled() && env.RUN == 'true' && env.RELEASE != 'true' }}
         run: just ios-typecheck
-      - if: env.RUN == 'true' && env.RELEASE != 'true'
+      - if: ${{ !cancelled() && env.RUN == 'true' && env.RELEASE != 'true' }}
         run: just tv-typecheck
       - if: env.RUN == 'true' && env.RELEASE != 'true' && env.TVOS == 'true'
         run: brew install xcodegen
       # The device target as well as the simulator's: they take different
       # cfgs in places, and only the simulator is built below.
-      - if: env.RUN == 'true' && env.RELEASE != 'true' && env.TVOS == 'true'
+      - if: ${{ !cancelled() && env.RUN == 'true' && env.RELEASE != 'true' && env.TVOS == 'true' }}
         run: cargo check -p koan-ffi --target aarch64-apple-tvos --target-dir target/tv-26.0
         env:
           TVOS_DEPLOYMENT_TARGET: "26.0"
-      - if: env.RUN == 'true' && env.RELEASE != 'true' && env.TVOS == 'true'
+      - if: ${{ !cancelled() && env.RUN == 'true' && env.RELEASE != 'true' && env.TVOS == 'true' }}
         run: just tv-build
       # Developer ID signed (hardened runtime, secure timestamp) here, and
       # notarised by `notarise` once the release is out: Apple's queue is no
@@ -370,10 +373,11 @@ jobs:
         with:
           certificate-p12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           certificate-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      - if: env.RUN == 'true' && env.PACKAGE == 'true'
+        run: cargo build --release -p koan-cli
       - name: Package the CLI
         if: env.RUN == 'true' && env.RELEASE == 'true'
         run: |
-          cargo build --release -p koan-cli
           cp target/release/koan koan
           codesign --force --options runtime --timestamp --sign "$KOAN_SIGN_IDENTITY" koan
           codesign --verify --strict --verbose=2 koan
@@ -386,7 +390,7 @@ jobs:
       # Build, bundle and package in one invocation, so `macos-build` runs
       # once; then check the kōan.app the disk image was made from.
       - name: Package the app
-        if: env.RUN == 'true' && env.RELEASE == 'true'
+        if: env.RUN == 'true' && env.PACKAGE == 'true'
         run: |
           just macos-dmg
           just macos-verify arm64
