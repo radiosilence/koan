@@ -145,7 +145,7 @@ The macOS app needs `just macos-ffi` to have run at least once — it generates 
 
 Development builds are signed with a self-signed certificate — `just macos-signing-cert` creates it, once. Without it the app is ad-hoc signed, which derives its identity from the binary's own hash: every rebuild is a different application to macOS, so TCC permissions are forgotten each time. It buys nothing against Gatekeeper, which wants Developer ID and notarisation.
 
-Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy --workspace -- -D warnings` before any `git push`. If clippy fails, fix before pushing.
+Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` before any `git push` and refuses the push if it changed anything. Clippy and the tests are CI's, so a push is never held up running them locally.
 
 `deploy/pulumi/package.json`'s `version` and `deploy/pulumi/src/versions.ts`'s `APP_VERSION` move with the workspace version in `Cargo.toml`; `check-version` in CI fails a build where they drift.
 
