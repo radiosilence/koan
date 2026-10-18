@@ -7,7 +7,6 @@ use unicode_normalization::UnicodeNormalization;
 
 use crate::db::connection::DbError;
 use crate::db::queries::batch::{CreditsOf, credited_artists};
-use crate::db::queries::sources::fold;
 
 /// One stretch of a credit: an artist's name, linked to them, or the plain
 /// text joining two names.
@@ -21,7 +20,7 @@ pub struct CreditPart {
 /// and the joining text ("×", ", ", " feat. ") plain.
 ///
 /// The names are looked for in credit order, as whole words, ignoring case,
-/// whitespace and Unicode normalisation (`fold`), so a link reads as the credit
+/// whitespace and Unicode normalisation, so a link reads as the credit
 /// spells it. When one is not there, as when MusicBrainz spells an artist
 /// differently from the credit, the artists are listed joined by commas
 /// instead. With fewer than two credited artists the credit is one part,
@@ -43,7 +42,7 @@ pub fn credit_parts<S: AsRef<str>>(
     let mut at = 0;
     let mut byte = 0;
     for (id, name) in artists {
-        let name: Vec<char> = fold(name.as_ref()).chars().collect();
+        let name = Folded::name(name.as_ref());
         let Some(found) = folded.find(&name, at) else {
             return comma_joined(artists);
         };
@@ -70,8 +69,11 @@ pub fn credit_parts<S: AsRef<str>>(
     parts
 }
 
-/// A credit as `fold` sees it, each folded character keeping the bytes of the
-/// credit it came from.
+/// A credit folded as names are matched: NFC, lowercased a character at a
+/// time, whitespace collapsed, final sigma read as sigma. Each folded
+/// character keeps the bytes of the credit it came from. Names are folded the
+/// same way: a word-final Σ lowers to σ a character at a time and to ς in a
+/// whole string, and a name may be spelt either way.
 struct Folded {
     chars: Vec<char>,
     spans: Vec<(usize, usize)>,
@@ -92,12 +94,22 @@ impl Folded {
                 }
             } else {
                 for lower in c.to_lowercase() {
-                    chars.push(lower);
+                    chars.push(if lower == 'ς' { 'σ' } else { lower });
                     spans.push(span);
                 }
             }
         }
         Self { chars, spans }
+    }
+
+    fn name(name: &str) -> Vec<char> {
+        let name: String = name.nfc().collect();
+        let mut chars = Self::new(&name).chars;
+        while chars.last() == Some(&' ') {
+            chars.pop();
+        }
+        let lead = chars.iter().take_while(|c| **c == ' ').count();
+        chars.split_off(lead)
     }
 
     /// Where `name` next occurs from `from` as a whole word: not run into a
@@ -239,6 +251,15 @@ mod tests {
         assert_eq!(
             read(&parts),
             [("Ann", Some(1)), (" & ", None), ("Annabel", Some(2))]
+        );
+    }
+
+    #[test]
+    fn a_name_ending_in_sigma_is_found() {
+        let parts = credit_parts("ΧΆΟΣ & Βήμα", None, &[(1, "Χάος"), (2, "Βήμα")]);
+        assert_eq!(
+            read(&parts),
+            [("ΧΆΟΣ", Some(1)), (" & ", None), ("Βήμα", Some(2))]
         );
     }
 
