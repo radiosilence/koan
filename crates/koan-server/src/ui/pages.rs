@@ -1016,7 +1016,10 @@ pub(super) async fn library(
             );
             out
         });
-    let inner = format!("<h1>Library</h1><ul>{rows}</ul>");
+    let inner = format!(
+        "<h1>Library</h1><ul>{rows}</ul>{}",
+        super::scan::section(&s, &user)
+    );
     respond(&s, &headers, &user, "Library", &inner)
 }
 

@@ -99,6 +99,7 @@ fn setup_full(
             public_url.map(str::to_owned),
             Vec::new(),
             proxy_auth,
+            Default::default(),
         ),
         dir,
         state,
@@ -2590,6 +2591,7 @@ fn unset(setup_wizard: bool) -> (tempfile::TempDir, axum::Router) {
         None,
         Vec::new(),
         None,
+        Default::default(),
     );
     (dir, app)
 }
@@ -2824,4 +2826,49 @@ async fn lastfm_connects_through_last_fm_and_disconnects_without_showing_the_key
             .unwrap()
             .is_none()
     );
+}
+
+#[tokio::test]
+async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
+    static CONFIG: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    let config = CONFIG.get_or_init(|| {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("config.toml"), "[library]\nfolders = []\n").unwrap();
+        dir
+    });
+    koan_core::config::set_config_dir(config.path());
+    let f = setup(true);
+    let db = Database::open(f.state.pool.path()).unwrap();
+    let boss = queries::auth::create_user(&db.conn, "boss", "sesame", Role::Admin).unwrap();
+    let admin = auth::mint_access_token(&f.state.private_pem, boss, "boss", Role::Admin, 900).unwrap();
+    let scan = |access: &str| {
+        Request::post("/library/scan")
+            .header(header::HOST, HOST)
+            .header(header::COOKIE, format!("koan_access={access}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("datastar-request", "true")
+            .body(Body::from(r#"{"reread":true}"#))
+            .unwrap()
+    };
+    let library = |access: &str| {
+        get("/library")
+            .header(header::COOKIE, format!("koan_access={access}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    let r = send(&f.app, library(&access_token(&f.state))).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(!r.body.contains("/library/scan"), "{}", r.body);
+    let r = send(&f.app, scan(&access_token(&f.state))).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+
+    let r = send(&f.app, library(&admin)).await;
+    assert!(r.body.contains("@post('/library/scan')"), "{}", r.body);
+    // The stream follows the scan to its end, so the whole body is its story.
+    let r = send(&f.app, scan(&admin)).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("Last scan: 0 added, 0 updated, 0 unchanged"), "{}", r.body);
+    let r = send(&f.app, library(&admin)).await;
+    assert!(r.body.contains("Last scan:"), "the page remembers it: {}", r.body);
 }

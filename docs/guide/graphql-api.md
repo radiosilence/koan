@@ -204,7 +204,7 @@ mutation { triggerScan { id kind state } }
 { job(id: "0199...") { state message } }
 ```
 
-`state` is `RUNNING`, `SUCCEEDED` or `FAILED`; `message` carries the outcome. Only one job of each
+`state` is `RUNNING`, `SUCCEEDED` or `FAILED`; `message` carries the outcome. `triggerScan(reread: true)` reads every file's tags again, including files the scan cache says are unchanged. Only one job of each
 kind runs at a time — calling again while one is live returns the running job rather than starting a
 second.
 

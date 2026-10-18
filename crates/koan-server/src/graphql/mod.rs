@@ -1,5 +1,5 @@
 mod helpers;
-mod jobs;
+pub(crate) mod jobs;
 mod loaders;
 mod mutations;
 mod queries;
@@ -341,6 +341,19 @@ pub fn build_schema(
     viz: Option<Arc<VizSnapshot>>,
 ) -> KoanSchema {
     build_schema_with(DbHandle::new(pool), state, cmd_tx, viz)
+}
+
+/// `build_schema`, with its jobs kept in `jobs`, which the web UI shares.
+pub(crate) fn build_schema_sharing(
+    state: Arc<SharedPlayerState>,
+    cmd_tx: Sender<PlayerCommand>,
+    pool: Arc<Pool>,
+    viz: Option<Arc<VizSnapshot>>,
+    jobs: jobs::JobRegistry,
+) -> KoanSchema {
+    builder_with(DbHandle::new(pool), state, cmd_tx, viz)
+        .data(jobs)
+        .finish()
 }
 
 /// `build_schema` with `extension` running on every request.

@@ -1231,23 +1231,19 @@ impl MutationRoot {
     /// A full scan walks the filesystem and writes for minutes, so it runs on a
     /// detached thread rather than holding a runtime worker that in-flight audio
     /// streams need.
-    async fn trigger_scan(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlJob> {
+    async fn trigger_scan(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(desc = "Read every file's tags again, even files the scan cache says are \
+                          unchanged: after an upgrade that reads more from tags.")]
+        reread: Option<bool>,
+    ) -> async_graphql::Result<GqlJob> {
         require_role(ctx, Role::Admin)?;
-        spawn_job(ctx, "scan", |db, _| {
-            let cfg = Config::load().unwrap_or_default();
-            crate::clients::changed_if_library_moved(&db.conn);
-            let result = koan_core::index::scanner::full_scan(
-                &db,
-                &cfg.library.folders,
-                koan_core::index::scanner::ScanOptions::default(),
-                None,
-            );
-            crate::clients::changed_if_library_moved(&db.conn);
-            Ok(format!(
-                "{} added, {} updated, {} unchanged",
-                result.added, result.updated, result.skipped
-            ))
-        })
+        let registry = ctx.data::<JobRegistry>()?;
+        let pool = ctx.data::<DbHandle>()?.pool.pool.clone();
+        super::jobs::start_scan(registry, pool, reread.unwrap_or(false))
+            .map(Into::into)
+            .map_err(async_graphql::Error::new)
     }
 
     /// Start a remote library sync and return immediately.
@@ -1556,47 +1552,24 @@ fn describe_sync(p: koan_core::remote::sync::SyncProgress) -> String {
     }
 }
 
-/// Run `work` on a detached thread with its own connection, returning a job
-/// handle. A job of the same kind already running is returned as-is rather than
-/// started twice.
+/// Run `work` on a detached thread with its own connection, as
+/// [`JobRegistry::spawn`].
 fn spawn_job<F>(ctx: &Context<'_>, kind: &'static str, work: F) -> async_graphql::Result<GqlJob>
 where
     F: FnOnce(koan_core::db::connection::Database, JobHandle) -> Result<String, String>
         + Send
         + 'static,
 {
-    let registry = ctx.data::<JobRegistry>()?.clone();
+    let registry = ctx.data::<JobRegistry>()?;
     let handle = ctx.data::<DbHandle>()?.clone();
-
-    let job = match registry.start(kind) {
-        Ok(job) => job,
-        Err(running) => return Ok(running.into()),
-    };
-
-    let id = job.id.clone();
-    let finisher = registry.clone();
-    let reporter = registry.handle(&id);
-    let spawned = std::thread::Builder::new()
-        .name(format!("koan-job-{}", kind))
-        .spawn(move || {
-            // Deliberately outside the pool: this connection is held for
-            // minutes and must not deny one to request-path resolvers.
-            registry.run(&id, || match handle.open_detached() {
-                Ok(db) => work(db, reporter),
-                Err(e) => Err(e.to_string()),
-            });
-        });
-
-    if spawned.is_err() {
-        finisher.finish(
-            &job.id,
-            JobState::Failed,
-            "failed to spawn worker thread".into(),
-        );
-        return Err(async_graphql::Error::new("failed to start job"));
-    }
-
-    Ok(job.into())
+    registry
+        .spawn(
+            kind,
+            move || handle.open_detached().map_err(|e| e.to_string()),
+            work,
+        )
+        .map(Into::into)
+        .map_err(async_graphql::Error::new)
 }
 
 async fn send_to_client(
