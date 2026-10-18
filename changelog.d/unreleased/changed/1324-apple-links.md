@@ -1,0 +1,1 @@
+- **Artists and albums link in the queue, playlists and search on macOS and iOS.** Album headings link the record and its artist, track rows link the artist and album separately, and the queue header links the record it follows.
