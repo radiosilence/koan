@@ -1036,7 +1036,7 @@ impl From<Job> for GqlJob {
     fn from(job: Job) -> Self {
         Self {
             id: job.id,
-            kind: job.kind,
+            kind: job.kind.to_owned(),
             state: job.state,
             message: job.message,
             done: job.done,

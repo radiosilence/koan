@@ -27,7 +27,7 @@ pub(crate) enum JobState {
 #[derive(Clone, Debug)]
 pub(crate) struct Job {
     pub id: String,
-    pub kind: String,
+    pub kind: &'static str,
     pub state: JobState,
     pub message: String,
     /// How far a running job has got, where it counts.
@@ -63,7 +63,11 @@ impl JobRegistry {
     ///
     /// Two concurrent scans of the same library fight over the same rows, so
     /// the second caller gets the first job's handle instead of a second scan.
-    pub(crate) fn start(&self, kind: &str, reason: Option<&'static str>) -> Result<Job, Job> {
+    pub(crate) fn start(
+        &self,
+        kind: &'static str,
+        reason: Option<&'static str>,
+    ) -> Result<Job, Job> {
         let mut jobs = self.inner.lock();
         if let Some(running) = jobs
             .values()
@@ -83,7 +87,7 @@ impl JobRegistry {
         }
         let job = Job {
             id: Uuid::now_v7().to_string(),
-            kind: kind.to_string(),
+            kind,
             state: JobState::Running,
             message: format!("{} started", kind),
             done: None,
@@ -188,7 +192,7 @@ impl JobRegistry {
     pub(crate) fn current(&self, kinds: &[&str]) -> Option<Job> {
         // Ids are UUIDv7, so they sort by when the job started.
         let jobs = self.inner.lock();
-        let of_kind = || jobs.values().filter(|j| kinds.contains(&j.kind.as_str()));
+        let of_kind = || jobs.values().filter(|j| kinds.contains(&j.kind));
         of_kind()
             .filter(|j| j.state == JobState::Running)
             .min_by(|a, b| a.id.cmp(&b.id))
