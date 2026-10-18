@@ -173,12 +173,24 @@ pub(crate) fn merge_albums(conn: &Connection, keep: i64, gone: i64) -> rusqlite:
         ] {
             conn.execute(sql, params![keep, gone])?;
         }
+        let credited: Vec<i64> = conn
+            .prepare_cached("SELECT artist_id FROM album_credits WHERE album_id = ?1")?
+            .query_map(params![gone], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        // By hand rather than by cascade: upgrades merge albums with foreign
+        // keys off.
         for sql in [
             "DELETE FROM favourite_albums WHERE album_id = ?1",
             "DELETE FROM album_ratings WHERE album_id = ?1",
+            "DELETE FROM album_credits WHERE album_id = ?1",
             "DELETE FROM albums WHERE id = ?1",
         ] {
             conn.execute(sql, params![gone])?;
+        }
+        // The tracks it gave up count towards the album they joined.
+        super::sources::recount_album_credits(conn, keep)?;
+        for artist in credited {
+            super::tracks::prune_if_empty(conn, None, Some(artist))?;
         }
         if let Some(uid) = &server_uid {
             conn.execute(
@@ -533,14 +545,18 @@ fn album_body(
     }
     if let Some(id) = q.artist_id {
         params.push(Box::new(id));
-        wheres.push("al.artist_id = ?".into());
+        wheres
+            .push("al.id IN (SELECT album_id FROM album_artist_links WHERE artist_id = ?)".into());
     }
     if let Some(id) = q.features_of {
         params.push(Box::new(id));
         params.push(Box::new(id));
+        params.push(Box::new(id));
         wheres.push(
-            "al.id IN (SELECT album_id FROM tracks WHERE artist_id = ?)
-             AND al.artist_id IS NOT ?"
+            "al.id IN (SELECT album_id FROM tracks WHERE artist_id = ?
+                       UNION SELECT t.album_id FROM track_credits c
+                               JOIN tracks t ON t.id = c.track_id WHERE c.artist_id = ?)
+             AND al.id NOT IN (SELECT album_id FROM album_artist_links WHERE artist_id = ?)"
                 .into(),
         );
     }

@@ -54,6 +54,7 @@ fn meta(artist: &str, album: &str, title: &str, n: Option<i32>) -> TrackMeta {
         mbid: None,
         album_mbid: None,
         album_added_at: None,
+        credits: Default::default(),
     }
 }
 

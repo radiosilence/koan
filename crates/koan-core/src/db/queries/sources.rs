@@ -88,7 +88,8 @@ pub(crate) const SOURCE_TABLES: &str = "
         artist_remote_id TEXT,
         mbid             TEXT,
         album_mbid       TEXT,
-        album_added_at   TEXT
+        album_added_at   TEXT,
+        credits          TEXT
     );
     CREATE TABLE IF NOT EXISTS remote_entries (
         remote_id        TEXT PRIMARY KEY,
@@ -118,7 +119,8 @@ pub(crate) const SOURCE_TABLES: &str = "
         artist_remote_id TEXT,
         mbid             TEXT,
         album_mbid       TEXT,
-        album_added_at   TEXT
+        album_added_at   TEXT,
+        credits          TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_local_files_slot ON local_files(slot_key);
     CREATE INDEX IF NOT EXISTS idx_local_files_mbid ON local_files(mbid, album_mbid)
@@ -132,7 +134,7 @@ pub(crate) const SOURCE_TABLES: &str = "
 const COLUMNS: &str = "title, artist, album_artist, album, date, disc, track_number, genre,
     label, duration_ms, codec, sample_rate, bit_depth, channels, bitrate, size_bytes, mtime,
     path, remote_id, remote_url, album_remote_id, artist_remote_id, mbid, album_mbid,
-    album_added_at";
+    album_added_at, credits";
 
 /// A source row as stored, in `COLUMNS` order from `at`.
 fn read_meta(row: &rusqlite::Row, at: usize, kind: Kind) -> rusqlite::Result<TrackMeta> {
@@ -167,6 +169,10 @@ fn read_meta(row: &rusqlite::Row, at: usize, kind: Kind) -> rusqlite::Result<Tra
             Kind::Remote => "remote",
         }
         .into(),
+        credits: row
+            .get::<_, Option<String>>(at + 25)?
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default(),
     })
 }
 
@@ -389,7 +395,7 @@ fn write(conn: &Connection, kind: Kind, track: i64, meta: &TrackMeta) -> Result<
     conn.prepare_cached(&format!(
         "INSERT INTO {} (track_id, slot_key, artist_key, {COLUMNS})
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                 ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)
+                 ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)
          ON CONFLICT({}) DO UPDATE SET
              track_id = excluded.track_id, slot_key = excluded.slot_key,
              artist_key = excluded.artist_key, title = excluded.title,
@@ -403,7 +409,8 @@ fn write(conn: &Connection, kind: Kind, track: i64, meta: &TrackMeta) -> Result<
              mtime = excluded.mtime, path = excluded.path, remote_id = excluded.remote_id,
              remote_url = excluded.remote_url, album_remote_id = excluded.album_remote_id,
              artist_remote_id = excluded.artist_remote_id, mbid = excluded.mbid,
-             album_mbid = excluded.album_mbid, album_added_at = excluded.album_added_at",
+             album_mbid = excluded.album_mbid, album_added_at = excluded.album_added_at,
+             credits = excluded.credits",
         kind.table(),
         kind.key()
     ))?
@@ -436,6 +443,8 @@ fn write(conn: &Connection, kind: Kind, track: i64, meta: &TrackMeta) -> Result<
         meta.mbid,
         meta.album_mbid,
         meta.album_added_at,
+        (!meta.credits.is_empty())
+            .then(|| serde_json::to_string(&meta.credits).expect("credits serialise")),
     ])?;
     Ok(())
 }
@@ -673,6 +682,26 @@ fn derive(conn: &Connection, track: i64) -> Result<Option<String>, DbError> {
         super::adopt_uid(conn, super::UidKind::Track, track, rid)?;
     }
     derive_record(conn, album_id, album_artist_id, remote.as_ref())?;
+    // Each list from the file where it names one, else from the server: a
+    // file may name its track artists and leave the album's to the server.
+    let list = |f: fn(&super::Credits) -> &Vec<super::Credit>| {
+        Some(f(&primary.credits))
+            .filter(|l| !l.is_empty())
+            .or_else(|| fallback.map(|m| f(&m.credits)))
+            .cloned()
+            .unwrap_or_default()
+    };
+    let credits = super::Credits {
+        artists: list(|c| &c.artists),
+        album_artists: list(|c| &c.album_artists),
+    };
+    // `derive_record` may have folded the album into another holding the
+    // server's id, and the track with it.
+    let album_id: i64 = conn
+        .prepare_cached("SELECT album_id FROM tracks WHERE id = ?1")?
+        .query_row(params![track], |r| r.get::<_, Option<i64>>(0))?
+        .unwrap_or(album_id);
+    derive_credits(conn, track, before.album_id, album_id, &credits)?;
 
     let artist_text = if primary.artist == album_artist {
         primary.artist.clone()
@@ -751,6 +780,191 @@ fn derive_record(
         }
     }
     Ok(())
+}
+
+/// Link the track, and its album, to each artist its credits name, so a
+/// collaboration is listed under every artist on it. The track's and album's
+/// own artist stays the credit as it reads; these rows are beside it. A track
+/// whose sources name no one in particular has none, and keeps its album's.
+///
+/// A list naming one artist links nothing: that artist is the credit, or a
+/// spelling of it, and the track and album are filed under them already.
+///
+/// The credits the links were made from are kept on the track, so a sync,
+/// which passes every track through here, resolves nothing when they have
+/// not changed.
+fn derive_credits(
+    conn: &Connection,
+    track: i64,
+    before_album: Option<i64>,
+    album: i64,
+    credits: &super::Credits,
+) -> Result<(), DbError> {
+    let json =
+        (!credits.is_empty()).then(|| serde_json::to_string(credits).expect("credits serialise"));
+    let stored: Option<String> = conn
+        .prepare_cached("SELECT credits FROM tracks WHERE id = ?1")?
+        .query_row(params![track], |r| r.get(0))?;
+    let moved = before_album != Some(album);
+    if stored == json && !moved {
+        return Ok(());
+    }
+    conn.prepare_cached("UPDATE tracks SET credits = ?1 WHERE id = ?2")?
+        .execute(params![json, track])?;
+    let artists = resolve_credits(conn, several(&credits.artists))?;
+    let mut dropped = replace_links(conn, "track_credits", "track_id", track, &artists)?;
+    // The album's tally changes only with this track's album artists, or
+    // with the track moving between albums.
+    let had = stored
+        .and_then(|j| serde_json::from_str::<super::Credits>(&j).ok())
+        .unwrap_or_default();
+    if moved || had.album_artists != credits.album_artists {
+        dropped.extend(derive_album_credits(conn, album)?);
+        if let Some(old) = before_album.filter(|_| moved) {
+            dropped.extend(derive_album_credits(conn, old)?);
+        }
+    }
+    for artist in dropped {
+        super::tracks::prune_if_empty(conn, None, Some(artist))?;
+    }
+    Ok(())
+}
+
+/// An album's credited artists: the album artists most of its tracks name,
+/// the first track's on a tie, and none when no track names them. Returns
+/// the artists no longer credited on it.
+fn derive_album_credits(conn: &Connection, album: i64) -> Result<Vec<i64>, DbError> {
+    let named: Vec<String> = conn
+        .prepare_cached(
+            "SELECT credits FROM tracks WHERE album_id = ?1 AND credits IS NOT NULL
+              ORDER BY disc, track_number, id",
+        )?
+        .query_map(params![album], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut tally: Vec<(Vec<super::Credit>, usize)> = Vec::new();
+    for json in named {
+        let Ok(credits) = serde_json::from_str::<super::Credits>(&json) else {
+            continue;
+        };
+        if credits.album_artists.len() < 2 {
+            continue;
+        }
+        match tally.iter_mut().find(|(l, _)| *l == credits.album_artists) {
+            Some((_, n)) => *n += 1,
+            None => tally.push((credits.album_artists, 1)),
+        }
+    }
+    // `max_by_key` keeps the last of equals; the first is wanted.
+    let chosen = tally
+        .iter()
+        .rev()
+        .max_by_key(|(_, n)| *n)
+        .map(|(l, _)| l.as_slice())
+        .unwrap_or_default();
+    let artists = resolve_credits(conn, chosen)?;
+    replace_links(conn, "album_credits", "album_id", album, &artists)
+}
+
+/// `list`, when it names more than one artist.
+fn several(list: &[super::Credit]) -> &[super::Credit] {
+    if list.len() > 1 { list } else { &[] }
+}
+
+/// Count an album's credits again after its tracks were moved onto it or off
+/// it other than by deriving them, and prune the artists it no longer credits.
+pub(crate) fn recount_album_credits(conn: &Connection, album: i64) -> rusqlite::Result<()> {
+    let recount = || -> Result<(), DbError> {
+        for artist in derive_album_credits(conn, album)? {
+            super::tracks::prune_if_empty(conn, None, Some(artist))?;
+        }
+        Ok(())
+    };
+    recount().map_err(|e| match e {
+        DbError::Sqlite(e) => e,
+        other => rusqlite::Error::ToSqlConversionFailure(Box::new(other)),
+    })
+}
+
+fn resolve_credits(conn: &Connection, list: &[super::Credit]) -> Result<Vec<i64>, DbError> {
+    let mut ids = Vec::with_capacity(list.len());
+    for c in list {
+        if let Some(id) = credited_artist(conn, c)?
+            && !ids.contains(&id)
+        {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
+}
+
+/// The artist row a credit names: the one holding its MusicBrainz id, then
+/// the one of its name, which learns the id. None when that name belongs to
+/// another MusicBrainz id and no row holds this one: artists are unique by
+/// name, so the credit's artist has no row, and linking the homonym would list
+/// the record under the wrong artist.
+fn credited_artist(conn: &Connection, credit: &super::Credit) -> Result<Option<i64>, DbError> {
+    let mbid = credit.mbid.as_deref().filter(|m| !m.is_empty());
+    if let Some(mbid) = mbid {
+        let by_id: Option<i64> = conn
+            .prepare_cached("SELECT id FROM artists WHERE mbid = ?1 ORDER BY id LIMIT 1")?
+            .query_row(params![mbid], |r| r.get(0))
+            .optional()?;
+        if let Some(id) = by_id {
+            if let Some(rid) = credit.remote_id.as_deref() {
+                conn.prepare_cached(
+                    "UPDATE artists SET remote_id = ?1 WHERE id = ?2 AND remote_id IS NOT ?1",
+                )?
+                .execute(params![rid, id])?;
+                super::adopt_uid(conn, super::UidKind::Artist, id, rid)?;
+            }
+            return Ok(Some(id));
+        }
+        let named: Option<Option<String>> = conn
+            .prepare_cached("SELECT mbid FROM artists WHERE name_key = ?1")?
+            .query_row(params![fold(&credit.name)], |r| r.get(0))
+            .optional()?;
+        if named.is_some_and(|stored| stored.is_some_and(|s| s != mbid)) {
+            return Ok(None);
+        }
+    }
+    let id = get_or_create_artist(conn, &credit.name, credit.remote_id.as_deref())?;
+    if let Some(mbid) = mbid {
+        conn.prepare_cached("UPDATE artists SET mbid = ?1 WHERE id = ?2 AND mbid IS NULL")?
+            .execute(params![mbid, id])?;
+    }
+    Ok(Some(id))
+}
+
+/// Make `table`'s artists for `owner` exactly `artists`, in order, writing
+/// only when they differ. Returns the artists it no longer links.
+fn replace_links(
+    conn: &Connection,
+    table: &str,
+    owner_column: &str,
+    owner: i64,
+    artists: &[i64],
+) -> Result<Vec<i64>, DbError> {
+    let stored: Vec<i64> = conn
+        .prepare_cached(&format!(
+            "SELECT artist_id FROM {table} WHERE {owner_column} = ?1 ORDER BY position"
+        ))?
+        .query_map(params![owner], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    if stored == artists {
+        return Ok(Vec::new());
+    }
+    conn.prepare_cached(&format!("DELETE FROM {table} WHERE {owner_column} = ?1"))?
+        .execute(params![owner])?;
+    let mut insert = conn.prepare_cached(&format!(
+        "INSERT INTO {table} ({owner_column}, artist_id, position) VALUES (?1, ?2, ?3)"
+    ))?;
+    for (position, artist) in artists.iter().enumerate() {
+        insert.execute(params![owner, artist, position as i64])?;
+    }
+    Ok(stored
+        .into_iter()
+        .filter(|a| !artists.contains(a))
+        .collect())
 }
 
 fn album_has_files(conn: &Connection, album: i64) -> Result<bool, DbError> {
@@ -889,13 +1103,28 @@ fn delete_track(conn: &Connection, track: i64) -> Result<Option<String>, DbError
     else {
         return Ok(None);
     };
+    // The track's credits go with it, and its album's if the album goes too.
+    let credited: Vec<i64> = conn
+        .prepare_cached(
+            "SELECT artist_id FROM track_credits WHERE track_id = ?1
+             UNION SELECT artist_id FROM album_credits WHERE album_id = ?2",
+        )?
+        .query_map(params![track, album], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
     for sql in [
         "DELETE FROM tracks_fts WHERE rowid = ?1",
+        "DELETE FROM track_credits WHERE track_id = ?1",
         "DELETE FROM tracks WHERE id = ?1",
     ] {
         conn.prepare_cached(sql)?.execute(params![track])?;
     }
     super::tracks::prune_if_empty(conn, album, artist)?;
+    if let Some(album) = album {
+        derive_album_credits(conn, album)?;
+    }
+    for artist in credited {
+        super::tracks::prune_if_empty(conn, None, Some(artist))?;
+    }
     Ok(cached)
 }
 
@@ -960,13 +1189,28 @@ pub(crate) fn fold_rows(conn: &Connection, winner: i64, loser: i64) -> rusqlite:
            WHERE id = ?1 AND cached_path IS NULL",
     )?
     .execute(params![winner, loser])?;
+    let album: Option<i64> = conn
+        .prepare_cached("SELECT album_id FROM tracks WHERE id = ?1")?
+        .query_row(params![loser], |r| r.get(0))?;
+    let credited: Vec<i64> = conn
+        .prepare_cached("SELECT artist_id FROM track_credits WHERE track_id = ?1")?
+        .query_map(params![loser], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
     // What did not move across, a duplicate favourite or a second set of
-    // lyrics, goes with it by its foreign keys.
+    // lyrics, goes with it by its foreign keys. Its credits go by hand, since
+    // an upgrade folds tracks with foreign keys off and they are counted next.
     for sql in [
         "DELETE FROM tracks_fts WHERE rowid = ?1",
+        "DELETE FROM track_credits WHERE track_id = ?1",
         "DELETE FROM tracks WHERE id = ?1",
     ] {
         conn.prepare_cached(sql)?.execute(params![loser])?;
+    }
+    if let Some(album) = album {
+        recount_album_credits(conn, album)?;
+    }
+    for artist in credited {
+        super::tracks::prune_if_empty(conn, None, Some(artist))?;
     }
     Ok(())
 }
@@ -1402,7 +1646,7 @@ pub(crate) fn build_from_tracks(conn: &Connection) -> Result<(), DbError> {
                     al.date, t.disc, t.track_number, t.genre, al.label, t.duration_ms,
                     t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
                     t.size_bytes, t.mtime, t.path, t.remote_id, t.remote_url,
-                    al.remote_id, aa.remote_id, t.mbid, al.mbid, al.added_at
+                    al.remote_id, aa.remote_id, t.mbid, al.mbid, al.added_at, NULL
                FROM tracks t
                LEFT JOIN artists a ON a.id = t.artist_id
                LEFT JOIN albums al ON al.id = t.album_id

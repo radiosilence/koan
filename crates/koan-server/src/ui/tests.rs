@@ -40,6 +40,7 @@ fn meta(path: &std::path::Path, title: &str, n: i32) -> TrackMeta {
         mbid: None,
         album_mbid: None,
         album_added_at: None,
+        credits: Default::default(),
     }
 }
 

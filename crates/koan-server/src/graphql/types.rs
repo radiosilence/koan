@@ -11,7 +11,8 @@ use koan_core::player::state::{
 use super::helpers::paginate;
 use super::jobs::{Job, JobState};
 use super::loaders::{
-    AlbumStatsOf, AlbumTracks, ArtistAlbums, ArtistStatsOf, ArtistTracks, DbLoader, FavouriteTrack,
+    AlbumCredits, AlbumStatsOf, AlbumTracks, ArtistAlbums, ArtistStatsOf, ArtistTracks, DbLoader,
+    FavouriteTrack, TrackCredits,
 };
 use super::{opt_uid, uid, uids};
 
@@ -201,6 +202,19 @@ impl GqlAlbum {
         &self.row.artist_name
     }
 
+    /// Each artist the album's credits name, where they name them one by one
+    /// ("A × B" as A and B); empty where the album names only its credit,
+    /// whose artist is `artistId`.
+    async fn artists(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<GqlArtist>> {
+        Ok(loader(ctx)?
+            .load_one(AlbumCredits(self.row.id))
+            .await?
+            .unwrap_or_default()
+            .into_iter()
+            .map(|c| GqlArtist { row: c.artist })
+            .collect())
+    }
+
     async fn date(&self) -> Option<&str> {
         self.row.date.as_deref()
     }
@@ -271,6 +285,18 @@ impl GqlTrack {
 
     async fn album_artist(&self) -> &str {
         &self.row.album_artist_name
+    }
+
+    /// Each artist the track's credits name, where they name them one by
+    /// one; empty where the track names only its credit, `artist`.
+    async fn artists(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<GqlArtist>> {
+        Ok(loader(ctx)?
+            .load_one(TrackCredits(self.row.id))
+            .await?
+            .unwrap_or_default()
+            .into_iter()
+            .map(|c| GqlArtist { row: c.artist })
+            .collect())
     }
 
     async fn album(&self) -> &str {

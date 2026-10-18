@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 23;
+pub const SCHEMA_VERSION: i64 = 24;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -599,6 +599,9 @@ fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
         ",
     )?;
     conn.execute_batch(crate::db::queries::sources::SOURCE_TABLES)?;
+    // Before the migrations: rebuilding source rows derives tracks, and
+    // deriving writes their credits.
+    conn.execute_batch(CREDIT_TABLES)?;
     apply_migrations(conn, found)?;
     // After the migrations: rebuilding `play_history` drops its triggers.
     //
@@ -699,12 +702,57 @@ fn refuse_dangling_references(conn: &Connection) -> rusqlite::Result<()> {
     ))
 }
 
+/// Each artist a track's or an album's credits name, beside its own artist,
+/// which stays the credit as it reads ("A × B"). Derived from the sources by
+/// `sources::derive_credits`, like every other track column.
+///
+/// `album_artist_links` is an album's artists either way: its credited
+/// artists, and the artist it is filed under. `listed` marks the ones the
+/// artist browser shows, which leaves out a credit string standing for
+/// artists credited one by one; its page still holds the album.
+///
+/// Run on every upgrade, so the view is redefined whenever the schema moves.
+const CREDIT_TABLES: &str = "
+    CREATE TABLE IF NOT EXISTS track_credits (
+        track_id  INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+        artist_id INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+        position  INTEGER NOT NULL,
+        PRIMARY KEY (track_id, artist_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_track_credits_artist ON track_credits(artist_id);
+    CREATE TABLE IF NOT EXISTS album_credits (
+        album_id  INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+        artist_id INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+        position  INTEGER NOT NULL,
+        PRIMARY KEY (album_id, artist_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_album_credits_artist ON album_credits(artist_id);
+    -- A credit finds its artist by MusicBrainz id before name.
+    CREATE INDEX IF NOT EXISTS idx_artists_credit_mbid ON artists(mbid) WHERE mbid IS NOT NULL;
+    DROP VIEW IF EXISTS album_artist_links;
+    CREATE VIEW album_artist_links AS
+        SELECT al.id AS album_id, al.artist_id AS artist_id,
+               NOT EXISTS (SELECT 1 FROM album_credits c WHERE c.album_id = al.id)
+               OR EXISTS (SELECT 1 FROM album_credits c
+                           WHERE c.album_id = al.id AND c.artist_id = al.artist_id) AS listed
+          FROM albums al WHERE al.artist_id IS NOT NULL
+        UNION ALL
+        SELECT c.album_id, c.artist_id, 1 FROM album_credits c
+         WHERE NOT EXISTS (SELECT 1 FROM albums al
+                            WHERE al.id = c.album_id AND al.artist_id = c.artist_id);
+";
+
 /// Columns added after the initial schema. Applied when absent, so a database
 /// created by any earlier version converges on the current shape.
 ///
 /// `organize_log.size_bytes`/`mtime` are checked against the file before undo
 /// moves it back, so a file replaced since the organize is left alone.
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    // Each artist a source's credits name, as JSON (`queries::Credits`), and
+    // on the track, the credits its links were derived from.
+    ("local_files", "credits", "TEXT"),
+    ("remote_entries", "credits", "TEXT"),
+    ("tracks", "credits", "TEXT"),
     // The device a key signed in, and the public key that device proves
     // itself with to the account's other devices on the local network. On the
     // key's row, so revoking the key drops it. See `api_keys::device_keys`.
@@ -1014,6 +1062,15 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
             crate::db::connection::DbError::Sqlite(e) => e,
             other => rusqlite::Error::ToSqlConversionFailure(Box::new(other)),
         })?;
+        conn.execute_batch(
+            "DELETE FROM scan_cache;
+             UPDATE remote_servers SET library_version = NULL;",
+        )?;
+    }
+
+    // Sources read before credits were kept: every file's tags are read
+    // again on the next scan, and every server walked again on its next sync.
+    if (14..24).contains(&found) {
         conn.execute_batch(
             "DELETE FROM scan_cache;
              UPDATE remote_servers SET library_version = NULL;",
@@ -1343,6 +1400,8 @@ fn merge_folded_artists(conn: &Connection) -> rusqlite::Result<()> {
                 "UPDATE albums SET artist_id = ?1 WHERE artist_id = ?2",
                 "UPDATE tracks SET artist_id = ?1 WHERE artist_id = ?2",
                 "UPDATE OR IGNORE favourite_artists SET artist_id = ?1 WHERE artist_id = ?2",
+                "UPDATE OR IGNORE track_credits SET artist_id = ?1 WHERE artist_id = ?2",
+                "UPDATE OR IGNORE album_credits SET artist_id = ?1 WHERE artist_id = ?2",
                 "UPDATE shares SET subject_id = ?1 WHERE kind = 'artist' AND subject_id = ?2",
                 "UPDATE artists SET
                      remote_id = COALESCE(remote_id, (SELECT remote_id FROM artists WHERE id = ?2)),
@@ -1352,9 +1411,13 @@ fn merge_folded_artists(conn: &Connection) -> rusqlite::Result<()> {
             ] {
                 conn.execute(sql, [keep, gone])?;
             }
+            // Upgrades run with foreign keys off, so nothing cascades here:
+            // what did not move across is deleted by hand.
             for sql in [
                 "DELETE FROM favourite_artists WHERE artist_id = ?1",
                 "DELETE FROM artist_info WHERE artist_id = ?1",
+                "DELETE FROM track_credits WHERE artist_id = ?1",
+                "DELETE FROM album_credits WHERE artist_id = ?1",
                 "DELETE FROM artists WHERE id = ?1",
             ] {
                 conn.execute(sql, [gone])?;
@@ -1603,6 +1666,77 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> rusqlite::Resu
 
 #[cfg(test)]
 mod tests {
+    /// Upgrades merge artists, albums and tracks with foreign keys off, so
+    /// nothing cascades: every credit row has to be moved or deleted by hand,
+    /// or the upgrade's own check refuses the database.
+    #[test]
+    fn merges_with_foreign_keys_off_leave_no_credit_naming_what_is_gone() {
+        use crate::db::queries::sources::Forget;
+        use crate::db::queries::{Credit, Credits, sample_meta, upsert_track};
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+        super::create_tables(&conn).unwrap();
+        let both = Credits {
+            artists: ["Lauer", "The Golden Filter"]
+                .map(|name| Credit {
+                    name: name.into(),
+                    ..Default::default()
+                })
+                .to_vec(),
+            album_artists: ["Lauer", "The Golden Filter"]
+                .map(|name| Credit {
+                    name: name.into(),
+                    ..Default::default()
+                })
+                .to_vec(),
+        };
+        let mut tracks = Vec::new();
+        for (n, album) in [(1, "Arumbav / Aya"), (2, "Arumbav / Aya"), (3, "Arumba")] {
+            let mut m = sample_meta(&format!("t{n}"), "Lauer & The Golden Filter", album);
+            m.track_number = Some(n);
+            m.path = Some(format!("/music/{n}.flac"));
+            m.credits = both.clone();
+            tracks.push(upsert_track(&conn, &m).unwrap());
+        }
+        let id = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        let filter = id("SELECT id FROM artists WHERE name = 'The Golden Filter'");
+        // A spelling twin, as an older database could hold, named by the
+        // credits in place of the row it folds into.
+        conn.execute(
+            "INSERT INTO artists (name, uid) VALUES ('the golden filter', 'twin')",
+            [],
+        )
+        .unwrap();
+        let twin = id("SELECT id FROM artists WHERE uid = 'twin'");
+        for table in ["track_credits", "album_credits"] {
+            conn.execute(
+                &format!("UPDATE {table} SET artist_id = ?1 WHERE artist_id = ?2"),
+                [twin, filter],
+            )
+            .unwrap();
+        }
+        let split = id("SELECT id FROM albums WHERE title = 'Arumbav / Aya'");
+        let single = id("SELECT id FROM albums WHERE title = 'Arumba'");
+
+        conn.pragma_update(None, "foreign_keys", "off").unwrap();
+        super::merge_folded_artists(&conn).unwrap();
+        crate::db::queries::merge_albums(&conn, split, single).unwrap();
+        crate::db::queries::sources::forget_tracks(&conn, &tracks[..1], Forget::Delete).unwrap();
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+
+        super::refuse_dangling_references(&conn).unwrap();
+        let credited = id(&format!(
+            "SELECT COUNT(*) FROM album_credits WHERE album_id = {split}"
+        ));
+        assert_eq!(credited, 2, "the merged album keeps both artists");
+        assert_eq!(
+            id(&format!(
+                "SELECT COUNT(*) FROM track_credits WHERE artist_id = {twin}"
+            )),
+            0
+        );
+    }
+
     #[test]
     fn case_duplicate_artists_are_merged_on_open() {
         let dir = tempfile::tempdir().unwrap();
@@ -2545,11 +2679,14 @@ mod tests {
         assert!(fk_cascades(&conn, "scan_cache").unwrap());
         assert!(fk_cascades(&conn, "lyrics_cache").unwrap());
         let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
-        assert_eq!(
-            count("SELECT COUNT(*) FROM scan_cache WHERE track_id = 7"),
-            1
-        );
-        assert_eq!(count("SELECT COUNT(*) FROM scan_cache"), 1);
+        // Upgrading from 23 also empties the scan cache, so every file is
+        // read again; the rebuilt table's cascade is checked with a new row.
+        assert_eq!(count("SELECT COUNT(*) FROM scan_cache"), 0);
+        conn.execute(
+            "INSERT INTO scan_cache (path, mtime, size, track_id) VALUES ('/m/t.flac', 1, 2, 7)",
+            [],
+        )
+        .unwrap();
         assert_eq!(count("SELECT COUNT(*) FROM lyrics_cache"), 1);
 
         conn.execute("DELETE FROM tracks WHERE id = 7", []).unwrap();

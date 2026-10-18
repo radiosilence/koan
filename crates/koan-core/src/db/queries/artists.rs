@@ -215,14 +215,25 @@ fn artist_body(
     conn: &Connection,
     q: &ArtistQuery,
 ) -> Result<(String, Vec<Box<dyn rusqlite::ToSql>>), DbError> {
-    let mut sql = String::from(if q.without_track_counts {
-        "FROM artists a
-         INNER JOIN albums al ON al.artist_id = a.id"
+    // An album is under each artist its credits name, and the artist list
+    // leaves out a credit string standing for artists credited one by one.
+    // A shelf of what someone hearted or played keeps it: they chose it.
+    let listed = if q.favourites_of.is_some() || q.played.is_some() {
+        ""
     } else {
+        " AND l.listed"
+    };
+    let mut sql = format!(
         "FROM artists a
-         INNER JOIN albums al ON al.artist_id = a.id
+         INNER JOIN album_artist_links l ON l.artist_id = a.id{listed}
+         INNER JOIN albums al ON al.id = l.album_id{}",
+        if q.without_track_counts {
+            ""
+        } else {
+            "
          LEFT JOIN tracks t ON t.album_id = al.id"
-    });
+        }
+    );
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
     if let Some(user) = q.favourites_of {
         params.push(Box::new(super::auth::resolve_user(conn, user)?));
@@ -285,10 +296,13 @@ pub fn get_artist(conn: &Connection, artist_id: i64) -> Result<Option<ArtistRow>
     Ok(conn
         .query_row(
             "SELECT a.id, a.name, a.sort_name, a.remote_id,
-                    (SELECT COUNT(*) FROM albums WHERE artist_id = a.id),
+                    (SELECT COUNT(DISTINCT album_id) FROM album_artist_links
+                      WHERE artist_id = a.id),
                     (SELECT COUNT(*) FROM tracks
                       WHERE artist_id = a.id
-                         OR album_id IN (SELECT id FROM albums WHERE artist_id = a.id))
+                         OR id IN (SELECT track_id FROM track_credits WHERE artist_id = a.id)
+                         OR album_id IN (SELECT album_id FROM album_artist_links
+                                          WHERE artist_id = a.id))
              FROM artists a
              WHERE a.id = ?1",
             params![artist_id],
@@ -360,6 +374,163 @@ mod tests {
             upsert_track(&db.conn, &m).unwrap();
         }
         db
+    }
+
+    const DUCHAMP: &str = "Orchestre Tout Puissant Marcel Duchamp";
+    const ATLAS: &str = "Frànçois & the Atlas Mountains";
+
+    /// The Duchamp × Atlas Mountains EP as sift tags it: the credit as it
+    /// reads, and each artist with their MusicBrainz id beside it. Each
+    /// artist also has an album of their own.
+    fn collaboration_db(credited: bool) -> Database {
+        use crate::db::queries::{Credit, Credits, sample_meta, upsert_track};
+        let db = test_db();
+        for (i, artist) in [DUCHAMP, ATLAS].iter().enumerate() {
+            let mut m = sample_meta("t", artist, &format!("Own {i}"));
+            m.path = Some(format!("/music/own{i}.flac"));
+            upsert_track(&db.conn, &m).unwrap();
+        }
+        let credit = format!("{DUCHAMP} × {ATLAS}");
+        let both = vec![
+            Credit {
+                name: DUCHAMP.into(),
+                mbid: Some("177de814-d272-43ef-a42d-fb2ed79a0f78".into()),
+                remote_id: None,
+            },
+            Credit {
+                name: ATLAS.into(),
+                mbid: Some("63862e0f-4e06-458e-88d7-2baabbf27398".into()),
+                remote_id: None,
+            },
+        ];
+        for (n, title) in [(1, "Revenant du nord"), (2, "Siilent")] {
+            let mut m = sample_meta(title, &credit, "Revenant du nord / Siilent");
+            m.track_number = Some(n);
+            m.path = Some(format!("/music/ep/{n}.mp3"));
+            if credited {
+                m.credits = Credits {
+                    artists: both.clone(),
+                    album_artists: both.clone(),
+                };
+            }
+            upsert_track(&db.conn, &m).unwrap();
+        }
+        db
+    }
+
+    fn artist_id(db: &Database, name: &str) -> i64 {
+        db.conn
+            .query_row("SELECT id FROM artists WHERE name = ?1", [name], |r| {
+                r.get(0)
+            })
+            .unwrap()
+    }
+
+    fn album_titles(db: &Database, artist: i64) -> Vec<String> {
+        crate::db::queries::list_albums(
+            &db.conn,
+            &crate::db::queries::AlbumQuery {
+                artist_id: Some(artist),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .into_iter()
+        .map(|a| a.title)
+        .collect()
+    }
+
+    #[test]
+    fn a_collaboration_is_listed_under_each_artist_it_credits() {
+        let db = collaboration_db(true);
+        let ep = "Revenant du nord / Siilent".to_string();
+        for name in [DUCHAMP, ATLAS] {
+            let id = artist_id(&db, name);
+            assert!(album_titles(&db, id).contains(&ep), "{name}");
+            let tracks = crate::db::queries::tracks_for_artist(&db.conn, id).unwrap();
+            assert_eq!(tracks.len(), 3, "{name}: own track and the EP's two");
+            assert_eq!(get_artist(&db.conn, id).unwrap().unwrap().album_count, 2);
+        }
+        let names: Vec<_> = all_artists(&db.conn)
+            .unwrap()
+            .into_iter()
+            .map(|a| a.name)
+            .collect();
+        assert_eq!(
+            names,
+            [ATLAS, DUCHAMP],
+            "the credit string is not an artist"
+        );
+        let credit = artist_id(&db, &format!("{DUCHAMP} × {ATLAS}"));
+        assert_eq!(
+            album_titles(&db, credit),
+            [ep],
+            "its page still holds the EP"
+        );
+        let mbid: Option<String> = db
+            .conn
+            .query_row(
+                "SELECT mbid FROM artists WHERE id = ?1",
+                [artist_id(&db, ATLAS)],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            mbid.as_deref(),
+            Some("63862e0f-4e06-458e-88d7-2baabbf27398")
+        );
+    }
+
+    #[test]
+    fn retagging_without_the_lists_takes_the_credits_away() {
+        use crate::db::queries::{sample_meta, upsert_track};
+        let db = collaboration_db(true);
+        let credit = format!("{DUCHAMP} × {ATLAS}");
+        for (n, title) in [(1, "Revenant du nord"), (2, "Siilent")] {
+            let mut m = sample_meta(title, &credit, "Revenant du nord / Siilent");
+            m.track_number = Some(n);
+            m.path = Some(format!("/music/ep/{n}.mp3"));
+            upsert_track(&db.conn, &m).unwrap();
+        }
+        assert_eq!(album_titles(&db, artist_id(&db, ATLAS)), ["Own 1"]);
+        let links: i64 = db
+            .conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM track_credits) + (SELECT COUNT(*) FROM album_credits)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(links, 0);
+        assert!(
+            all_artists(&db.conn)
+                .unwrap()
+                .iter()
+                .any(|a| a.name == credit),
+            "the credit is an artist again"
+        );
+    }
+
+    #[test]
+    fn a_credit_named_only_as_a_string_is_left_as_it_was() {
+        let db = collaboration_db(false);
+        let credit = format!("{DUCHAMP} × {ATLAS}");
+        let names: Vec<_> = all_artists(&db.conn)
+            .unwrap()
+            .into_iter()
+            .map(|a| a.name)
+            .collect();
+        assert_eq!(names, [ATLAS, DUCHAMP, credit.as_str()]);
+        assert_eq!(album_titles(&db, artist_id(&db, ATLAS)), ["Own 1"]);
+        let links: i64 = db
+            .conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM track_credits) + (SELECT COUNT(*) FROM album_credits)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(links, 0);
     }
 
     #[test]

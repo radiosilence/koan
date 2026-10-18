@@ -1328,7 +1328,7 @@ fn track_node(track: &queries::TrackRow, tag: &str, extras: &SongExtras) -> XmlN
         .as_deref()
         .map(codec_to_mime)
         .unwrap_or(("bin", "application/octet-stream"));
-    XmlNode::new(tag)
+    let node = XmlNode::new(tag)
         .attr("id", &extras.uids.track(track.id))
         .attr("title", &track.title)
         .attr("album", &track.album_title)
@@ -1382,10 +1382,24 @@ fn track_node(track: &queries::TrackRow, tag: &str, extras: &SongExtras) -> XmlN
         .list("genres", track.genre.iter().map(|g| genre_node(g)))
         .list(
             "artists",
-            track
-                .artist_id
-                .map(|id| artist_ref("artists", &extras.uids.artist(id), &track.artist_name)),
-        )
+            credited_or_filed(
+                extras.credits.get(&track.id),
+                track.artist_id.map(|id| (id, track.artist_name.as_str())),
+                &extras.uids,
+            ),
+        );
+    // Only where the album credits its artists one by one: an album filed
+    // under one artist names it in `artist` already.
+    let album_artists = credit_refs(
+        "albumArtists",
+        track.album_id.and_then(|a| extras.album_credits.get(&a)),
+        &extras.uids,
+    );
+    if album_artists.is_empty() {
+        node
+    } else {
+        node.list("albumArtists", album_artists)
+    }
 }
 
 fn track_to_xml_node(track: &queries::TrackRow, extras: &SongExtras) -> XmlNode {
@@ -1471,11 +1485,11 @@ fn album_to_xml_node(album: &queries::AlbumRow, extras: &AlbumExtras) -> XmlNode
         .list("genres", genres.iter().map(|g| genre_node(g)))
         .list(
             "artists",
-            [artist_ref(
-                "artists",
-                &extras.uids.artist(album.artist_id),
-                &album.artist_name,
-            )],
+            credited_or_filed(
+                extras.credits.get(&album.id),
+                Some((album.artist_id, album.artist_name.as_str())),
+                &extras.uids,
+            ),
         )
         .list(
             "recordLabels",
@@ -1546,6 +1560,9 @@ fn by_id<T>(
 #[derive(Default)]
 struct SongExtras {
     uids: Uids,
+    /// Each artist a track's credits name, by track, and its album's, by album.
+    credits: HashMap<i64, Vec<Credited>>,
+    album_credits: HashMap<i64, Vec<Credited>>,
     mbid: HashMap<i64, String>,
     /// Last play, seconds since the epoch.
     played: HashMap<i64, i64>,
@@ -1572,13 +1589,27 @@ fn song_extras<'a>(
     }
     let ids = json_ids(tracks.iter().map(|t| t.id));
     let user = history_user(db, user)?;
+    let credits = credits_of(db, CreditsOf::Tracks, tracks.iter().map(|t| t.id))?;
+    let album_credits = credits_of(
+        db,
+        CreditsOf::Albums,
+        tracks.iter().filter_map(|t| t.album_id),
+    )?;
+    let credited = credits
+        .values()
+        .chain(album_credits.values())
+        .flatten()
+        .map(|c| c.artist.id)
+        .collect::<Vec<_>>();
     Ok(SongExtras {
         uids: Uids::load(
             db,
-            tracks.iter().filter_map(|t| t.artist_id),
+            tracks.iter().filter_map(|t| t.artist_id).chain(credited),
             tracks.iter().filter_map(|t| t.album_id),
             tracks.iter().map(|t| t.id),
         )?,
+        credits,
+        album_credits,
         mbid: by_id(
             db,
             "SELECT id, mbid FROM tracks
@@ -1606,6 +1637,48 @@ fn song_extras<'a>(
         )?,
         starred: starred(db, user, Favourite::Track, &ids)?,
     })
+}
+
+use queries::batch::{CreditedArtist as Credited, CreditsOf};
+
+/// Each artist the credits of these tracks or albums name, by owner.
+fn credits_of(
+    db: &Database,
+    of: CreditsOf,
+    ids: impl IntoIterator<Item = i64>,
+) -> Result<HashMap<i64, Vec<Credited>>, SubsonicError> {
+    let ids: Vec<i64> = ids.into_iter().collect();
+    queries::batch::credited_artists(&db.conn, of, &ids)
+        .map_err(|e| SubsonicError::internal(e.to_string()))
+}
+
+/// A song's or album's `artists`: each credited artist where its credits name
+/// them, otherwise the one it is filed under.
+fn credited_or_filed(
+    credits: Option<&Vec<Credited>>,
+    filed: Option<(i64, &str)>,
+    uids: &Uids,
+) -> Vec<XmlNode> {
+    let credited = credit_refs("artists", credits, uids);
+    if !credited.is_empty() {
+        return credited;
+    }
+    filed
+        .map(|(id, name)| artist_ref("artists", &uids.artist(id), name))
+        .into_iter()
+        .collect()
+}
+
+/// Each credited artist of a song or album, as `tag` elements.
+fn credit_refs(tag: &str, credits: Option<&Vec<Credited>>, uids: &Uids) -> Vec<XmlNode> {
+    credits
+        .into_iter()
+        .flatten()
+        .map(|c| {
+            artist_ref(tag, &uids.artist(c.artist.id), &c.artist.name)
+                .attr_opt("musicBrainzId", c.mbid.as_deref())
+        })
+        .collect()
 }
 
 /// The caller's ratings of these rows.
@@ -1657,6 +1730,7 @@ fn starred(
 #[derive(Default)]
 struct AlbumExtras {
     uids: Uids,
+    credits: HashMap<i64, Vec<Credited>>,
     /// MusicBrainz release id and sort name.
     names: HashMap<i64, (Option<String>, Option<String>)>,
     genres: HashMap<i64, Vec<String>>,
@@ -1701,13 +1775,20 @@ fn album_extras<'a>(
             (genres, stats)
         }
     };
+    let credits = credits_of(db, CreditsOf::Albums, album_ids.iter().copied())?;
+    let credited = credits
+        .values()
+        .flatten()
+        .map(|c| c.artist.id)
+        .collect::<Vec<_>>();
     Ok(AlbumExtras {
         uids: Uids::load(
             db,
-            albums.iter().map(|a| a.artist_id),
+            albums.iter().map(|a| a.artist_id).chain(credited),
             album_ids.iter().copied(),
             [],
         )?,
+        credits,
         names: by_id(
             db,
             "SELECT id, mbid, sort_name FROM albums WHERE id IN (SELECT value FROM json_each(?1))",
@@ -7004,6 +7085,7 @@ mod tests {
             mbid: None,
             album_mbid: None,
             album_added_at: None,
+            credits: Default::default(),
         }
     }
 

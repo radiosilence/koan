@@ -42,6 +42,12 @@ Recently Played and Favourites show the first few of each kind. Each section's h
 
 An artist's page holds the records they are the album artist of, and below them, under **Features on**, the records someone else is the album artist of that they are credited on: compilations, splits, guest spots. The page's Play, Shuffle and Queue act on the artist's own records only, and Play on an artist elsewhere in the apps and the terminal UI (a row, a menu) plays the same. Features on has its own smaller Play and Queue for those records, so everything they appear on is their records queued and then the features. Records picked with Select can come from both sections. An artist with no records of their own has only Features on, and the page's Play plays the tracks credited to them.
 
+### Collaborations
+
+A record credited to several artists ("Orchestre Tout Puissant Marcel Duchamp × Frànçois & the Atlas Mountains") is listed under each of them when its tags name them one by one: the `ARTISTS` and `ALBUMARTISTS` tags and the MusicBrainz artist ids that Picard and sift write, or the `artists` and `albumArtists` an OpenSubsonic server sends. The record keeps its credit as it reads, and the credit itself is no longer listed as an artist. kōan does not split credits that are only a single string, because "&", "," and " x " also occur inside band names; retag them instead.
+
+After upgrading, the next scan reads every file's tags again and the next sync walks the whole server, so a library already indexed picks these tags up without a rescan by hand.
+
 ## Downloaded and offline
 
 **Downloaded**, in the Mac's and the iPad's sidebar and the iPhone's Library tab, is a shelf like Favourites: the artists, records and tracks with files on this device, records fully there first, each with a bar along the foot of its sleeve showing how much of it is. On the Mac every record in the library folder is whole.

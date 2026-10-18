@@ -1660,6 +1660,7 @@ mod tests {
             mbid: None,
             album_mbid: None,
             album_added_at: None,
+            credits: Default::default(),
         }
     }
 

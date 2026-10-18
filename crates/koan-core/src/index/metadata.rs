@@ -9,7 +9,7 @@ use lofty::prelude::*;
 use symphonia::core::meta::{MetadataRevision, StandardTag};
 use thiserror::Error;
 
-use crate::db::queries::TrackMeta;
+use crate::db::queries::{Credits, TrackMeta};
 
 #[derive(Debug, Error)]
 pub enum MetadataError {
@@ -138,6 +138,7 @@ fn read_metadata_lofty(
     };
     let mbid = musicbrainz(ItemKey::MusicBrainzRecordingId);
     let album_mbid = musicbrainz(ItemKey::MusicBrainzReleaseId);
+    let credits = tag.map(credits_of).unwrap_or_default();
 
     let (title, artist, album_artist, album, date, disc, track_number, genre, label) =
         if let Some(tag) = tag {
@@ -209,7 +210,60 @@ fn read_metadata_lofty(
         album_mbid,
         remote_url: None,
         album_added_at: mtime.and_then(iso8601_utc),
+        credits,
     })
+}
+
+/// Each artist the tag names one by one, with their MusicBrainz ids: the
+/// `ARTISTS` and `ALBUMARTISTS` Picard and sift write, or for a Vorbis comment
+/// without them, a repeated `ARTIST` or `ALBUMARTIST`. ID3v2.4 joins a multi-valued frame with
+/// NULs, which is split here whichever way lofty hands it over.
+fn credits_of(tag: &lofty::tag::Tag) -> Credits {
+    let all = |key: ItemKey| -> Vec<String> {
+        tag.get_strings(key)
+            .flat_map(|v| v.split('\0'))
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+            .collect()
+    };
+    let list = |plural: ItemKey, single: ItemKey| {
+        let named = all(plural);
+        let repeated = all(single);
+        if named.is_empty() && repeated.len() > 1 {
+            repeated
+        } else {
+            named
+        }
+    };
+    Credits {
+        artists: slashed(
+            list(ItemKey::TrackArtists, ItemKey::TrackArtist),
+            all(ItemKey::MusicBrainzArtistId),
+        ),
+        album_artists: slashed(
+            list(ItemKey::AlbumArtists, ItemKey::AlbumArtist),
+            all(ItemKey::MusicBrainzReleaseArtistId),
+        ),
+    }
+}
+
+/// Picard writes ID3v2.3's multi-valued frames joined with "/". A name may
+/// hold a slash of its own ("AC/DC"), so names are split only where the ids,
+/// which never do, say how many artists there are.
+fn slashed(mut names: Vec<String>, mut ids: Vec<String>) -> Vec<crate::db::queries::Credit> {
+    if let [joined] = ids.as_slice()
+        && joined.contains('/')
+    {
+        ids = joined.split('/').map(|s| s.trim().to_string()).collect();
+        if let [name] = names.as_slice() {
+            let parts: Vec<String> = name.split('/').map(|s| s.trim().to_string()).collect();
+            if parts.len() == ids.len() {
+                names = parts;
+            }
+        }
+    }
+    Credits::pair(names, ids)
 }
 
 /// Fallback metadata read when lofty fails. Uses Symphonia to probe
@@ -271,6 +325,7 @@ fn read_metadata_fallback(path: &Path) -> Result<TrackMeta, MetadataError> {
         album_mbid: None,
         remote_url: None,
         album_added_at: mtime.and_then(iso8601_utc),
+        credits: Default::default(),
     })
 }
 
@@ -618,11 +673,26 @@ pub fn metadata_from_probe_result(meta: &MetadataRevision, fallback_title: &str)
         album_mbid: None,
         remote_url: None,
         album_added_at: None,
+        credits: Default::default(),
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn slash_joined_credits_split_only_where_the_ids_do() {
+        let ids = |s: &str| vec![s.to_string()];
+        let both = slashed(ids("A/B"), ids("id-a/id-b"));
+        assert_eq!(
+            both.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+            ["A", "B"]
+        );
+        assert_eq!(both[1].mbid.as_deref(), Some("id-b"));
+        let acdc = slashed(ids("AC/DC"), ids("66c662b6-6e2f-4930-8610-912e24c63ed1"));
+        assert_eq!(acdc.len(), 1);
+        assert_eq!(acdc[0].name, "AC/DC");
+    }
+
     use super::*;
 
     /// A file carrying both tags must be read from ID3v2. ID3v1's fields are a

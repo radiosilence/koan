@@ -12,7 +12,7 @@ use crate::db::connection::DbError;
 
 use super::json_list;
 use super::tracks::row_to_track_row;
-use super::{AlbumRow, TrackRow};
+use super::{AlbumRow, ArtistRow, TrackRow};
 
 const TRACK_COLUMNS: &str = "t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
@@ -56,34 +56,97 @@ pub fn albums_for_artists(
     let sql = format!(
         "SELECT al.id, al.title, al.artist_id, a.name, al.date,
                 al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id,
-                al.added_at
-         FROM albums al
+                al.added_at, l.artist_id
+         FROM album_artist_links l
+         JOIN albums al ON al.id = l.album_id
          LEFT JOIN artists a ON al.artist_id = a.id
-         WHERE al.artist_id IN {IN_LIST}
+         WHERE l.artist_id IN {IN_LIST}
          ORDER BY al.date, al.title COLLATE LIBRARY"
     );
     let mut stmt = conn.prepare_cached(&sql)?;
     let rows = stmt.query_map([json_list(artist_ids)], |row| {
-        Ok(AlbumRow {
-            id: row.get(0)?,
-            title: row.get(1)?,
-            artist_id: row.get(2)?,
-            artist_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-            date: row.get(4)?,
-            total_discs: row.get(5)?,
-            total_tracks: row.get(6)?,
-            codec: row.get(7)?,
-            label: row.get(8)?,
-            remote_id: row.get(9)?,
-            added_at: row.get(10)?,
-            on_device: None,
-        })
+        Ok((
+            row.get::<_, i64>(11)?,
+            AlbumRow {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                artist_id: row.get(2)?,
+                artist_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                date: row.get(4)?,
+                total_discs: row.get(5)?,
+                total_tracks: row.get(6)?,
+                codec: row.get(7)?,
+                label: row.get(8)?,
+                remote_id: row.get(9)?,
+                added_at: row.get(10)?,
+                on_device: None,
+            },
+        ))
     })?;
 
     let mut out: HashMap<i64, Vec<AlbumRow>> = HashMap::new();
-    for album in rows {
-        let album = album?;
-        out.entry(album.artist_id).or_default().push(album);
+    for row in rows {
+        let (artist, album) = row?;
+        out.entry(artist).or_default().push(album);
+    }
+    Ok(out)
+}
+
+/// Whose credits [`credited_artists`] reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreditsOf {
+    Tracks,
+    Albums,
+}
+
+/// An artist a credit names. The row carries no counts.
+#[derive(Debug, Clone)]
+pub struct CreditedArtist {
+    pub artist: ArtistRow,
+    pub mbid: Option<String>,
+}
+
+/// Each artist the credits of these tracks or albums name, in credit order,
+/// keyed by track or album. Absent for one that names only its credit.
+pub fn credited_artists(
+    conn: &Connection,
+    of: CreditsOf,
+    ids: &[i64],
+) -> Result<HashMap<i64, Vec<CreditedArtist>>, DbError> {
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let (table, owner) = match of {
+        CreditsOf::Tracks => ("track_credits", "track_id"),
+        CreditsOf::Albums => ("album_credits", "album_id"),
+    };
+    let sql = format!(
+        "SELECT c.{owner}, a.id, a.name, a.sort_name, a.remote_id, a.mbid
+           FROM {table} c JOIN artists a ON a.id = c.artist_id
+          WHERE c.{owner} IN {IN_LIST}
+          ORDER BY c.{owner}, c.position"
+    );
+    let mut stmt = conn.prepare_cached(&sql)?;
+    let rows = stmt.query_map([json_list(ids)], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            CreditedArtist {
+                artist: ArtistRow {
+                    id: row.get(1)?,
+                    name: row.get(2)?,
+                    sort_name: row.get(3)?,
+                    remote_id: row.get(4)?,
+                    album_count: 0,
+                    track_count: 0,
+                },
+                mbid: row.get(5)?,
+            },
+        ))
+    })?;
+    let mut out: HashMap<i64, Vec<CreditedArtist>> = HashMap::new();
+    for row in rows {
+        let (owner, artist) = row?;
+        out.entry(owner).or_default().push(artist);
     }
     Ok(out)
 }
@@ -129,27 +192,27 @@ pub fn tracks_for_artists(
         return Ok(HashMap::new());
     }
     let sql = format!(
-        "SELECT {TRACK_COLUMNS}, al.artist_id {TRACK_JOINS}
-          WHERE t.artist_id IN {IN_LIST}
-             OR t.album_id IN (SELECT id FROM albums WHERE artist_id IN {IN_LIST})
+        "SELECT {TRACK_COLUMNS}, k.artist_id {TRACK_JOINS}
+          JOIN (SELECT id AS track_id, artist_id FROM tracks WHERE artist_id IN {IN_LIST}
+                UNION SELECT track_id, artist_id FROM track_credits WHERE artist_id IN {IN_LIST}
+                UNION SELECT t2.id, l.artist_id FROM album_artist_links l
+                        JOIN tracks t2 ON t2.album_id = l.album_id
+                       WHERE l.artist_id IN {IN_LIST}) k ON k.track_id = t.id
           ORDER BY al.date, al.title, t.disc, t.track_number"
     );
     let mut stmt = conn.prepare_cached(&sql)?;
     let ids = json_list(artist_ids);
-    let rows = stmt.query_map([&ids, &ids], |row| {
+    let rows = stmt.query_map([&ids, &ids, &ids], |row| {
         Ok((row_to_track_row(row)?, row.get::<_, Option<i64>>(20)?))
     })?;
 
     let wanted: HashSet<i64> = artist_ids.iter().copied().collect();
     let mut out: HashMap<i64, Vec<TrackRow>> = HashMap::new();
     for row in rows {
-        let (track, album_artist_id) = row?;
-        for key in [track.artist_id, album_artist_id].into_iter().flatten() {
-            if wanted.contains(&key)
-                && !out.entry(key).or_default().iter().any(|t| t.id == track.id)
-            {
-                out.entry(key).or_default().push(track.clone());
-            }
+        let (track, key) = row?;
+        // The UNION yields each track once per artist.
+        if let Some(key) = key.filter(|k| wanted.contains(k)) {
+            out.entry(key).or_default().push(track);
         }
     }
     Ok(out)
@@ -213,7 +276,8 @@ pub fn artist_stats(
         .collect();
 
     let album_sql = format!(
-        "SELECT artist_id, COUNT(*) FROM albums WHERE artist_id IN {IN_LIST} GROUP BY artist_id"
+        "SELECT artist_id, COUNT(DISTINCT album_id) FROM album_artist_links
+          WHERE artist_id IN {IN_LIST} GROUP BY artist_id"
     );
     let mut stmt = conn.prepare_cached(&album_sql)?;
     let rows = stmt.query_map([&ids], |row| {
@@ -227,16 +291,16 @@ pub fn artist_stats(
     // Every track the artist is on, own credit or album artist, counted once:
     // what they appear on, which is more than `tracks_for_artist` plays.
     let track_sql = format!(
-        "SELECT k.id, COUNT(DISTINCT t.id)
-         FROM artists k
-         JOIN tracks t ON t.artist_id = k.id OR t.album_id IN (
-             SELECT al.id FROM albums al WHERE al.artist_id = k.id
-         )
-         WHERE k.id IN {IN_LIST}
-         GROUP BY k.id"
+        "SELECT k.artist_id, COUNT(DISTINCT k.track_id)
+         FROM (SELECT artist_id, id AS track_id FROM tracks WHERE artist_id IN {IN_LIST}
+               UNION SELECT artist_id, track_id FROM track_credits WHERE artist_id IN {IN_LIST}
+               UNION SELECT l.artist_id, t.id FROM album_artist_links l
+                       JOIN tracks t ON t.album_id = l.album_id
+                      WHERE l.artist_id IN {IN_LIST}) k
+         GROUP BY k.artist_id"
     );
     let mut stmt = conn.prepare_cached(&track_sql)?;
-    let rows = stmt.query_map([&ids], |row| {
+    let rows = stmt.query_map([&ids, &ids, &ids], |row| {
         Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
     })?;
     for row in rows {
@@ -549,9 +613,11 @@ fn track_body(
         // `tracks_for_artists`: an `OR` across two tables cannot use an index.
         clauses.push(format!(
             "(t.artist_id IN {IN_LIST}
-              OR t.album_id IN (SELECT id FROM albums WHERE artist_id IN {IN_LIST}))"
+              OR t.id IN (SELECT track_id FROM track_credits WHERE artist_id IN {IN_LIST})
+              OR t.album_id IN (SELECT album_id FROM album_artist_links WHERE artist_id IN {IN_LIST}))"
         ));
         let ids = json_list(ids);
+        binds.push(Box::new(ids.clone()));
         binds.push(Box::new(ids.clone()));
         binds.push(Box::new(ids));
     }

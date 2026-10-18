@@ -286,6 +286,10 @@ pub(crate) fn prune_if_empty(
         )?;
         if emptied > 0 {
             conn.execute(
+                "DELETE FROM album_credits WHERE album_id = ?1",
+                params![album_id],
+            )?;
+            conn.execute(
                 "DELETE FROM favourite_albums WHERE album_id = ?1",
                 params![album_id],
             )?;
@@ -299,7 +303,9 @@ pub(crate) fn prune_if_empty(
     if let Some(artist_id) = artist_id {
         let stranded: bool = conn.query_row(
             "SELECT NOT EXISTS (SELECT 1 FROM tracks WHERE artist_id = ?1)
-                AND NOT EXISTS (SELECT 1 FROM albums WHERE artist_id = ?1)",
+                AND NOT EXISTS (SELECT 1 FROM albums WHERE artist_id = ?1)
+                AND NOT EXISTS (SELECT 1 FROM track_credits WHERE artist_id = ?1)
+                AND NOT EXISTS (SELECT 1 FROM album_credits WHERE artist_id = ?1)",
             params![artist_id],
             |row| row.get(0),
         )?;
@@ -506,9 +512,10 @@ pub fn tracks_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<TrackR
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
          LEFT JOIN artists aa ON al.artist_id = aa.id
-         WHERE t.album_id IN (SELECT id FROM albums WHERE artist_id = ?1)
-            OR (t.artist_id = ?1
-                AND NOT EXISTS (SELECT 1 FROM albums WHERE artist_id = ?1))
+         WHERE t.album_id IN (SELECT album_id FROM album_artist_links WHERE artist_id = ?1)
+            OR ((t.artist_id = ?1
+                 OR t.id IN (SELECT track_id FROM track_credits WHERE artist_id = ?1))
+                AND NOT EXISTS (SELECT 1 FROM album_artist_links WHERE artist_id = ?1))
          ORDER BY al.date, al.title COLLATE LIBRARY, t.disc, t.track_number",
     )?;
     let rows = stmt
@@ -669,8 +676,12 @@ pub fn random_tracks_where(
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     if let Some(aid) = filter.artist_id {
         wheres.push(
-            "(r.artist_id = ? OR r.album_id IN (SELECT id FROM albums WHERE artist_id = ?))".into(),
+            "(r.artist_id = ?
+              OR r.id IN (SELECT track_id FROM track_credits WHERE artist_id = ?)
+              OR r.album_id IN (SELECT album_id FROM album_artist_links WHERE artist_id = ?))"
+                .into(),
         );
+        params.push(Box::new(aid));
         params.push(Box::new(aid));
         params.push(Box::new(aid));
     }
@@ -1135,9 +1146,13 @@ pub fn genres_by_artist_ids(
         "SELECT t.artist_id, t.genre FROM tracks t
          WHERE t.artist_id IN (SELECT value FROM json_each(?1)) AND t.genre IS NOT NULL
          UNION
-         SELECT al.artist_id, t.genre FROM tracks t
-         JOIN albums al ON t.album_id = al.id
-         WHERE al.artist_id IN (SELECT value FROM json_each(?1)) AND t.genre IS NOT NULL",
+         SELECT c.artist_id, t.genre FROM tracks t
+         JOIN track_credits c ON c.track_id = t.id
+         WHERE c.artist_id IN (SELECT value FROM json_each(?1)) AND t.genre IS NOT NULL
+         UNION
+         SELECT l.artist_id, t.genre FROM tracks t
+         JOIN album_artist_links l ON l.album_id = t.album_id
+         WHERE l.artist_id IN (SELECT value FROM json_each(?1)) AND t.genre IS NOT NULL",
     )?;
     let rows = stmt.query_map([super::json_list(ids)], |row| {
         Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
