@@ -48,6 +48,7 @@ struct Fixture {
     dir: tempfile::TempDir,
     app: axum::Router,
     state: AuthRouteState,
+    jobs: crate::graphql::jobs::JobRegistry,
     album_id: i64,
     track_id: i64,
 }
@@ -90,6 +91,7 @@ fn setup_full(
         login_limiter: Arc::new(RateLimiter::default()),
         users: Arc::new(crate::auth::password::PasswordVerifier::new(pool.clone())),
     };
+    let jobs = crate::graphql::jobs::JobRegistry::default();
     Fixture {
         app: super::router(
             pool,
@@ -100,10 +102,11 @@ fn setup_full(
             public_url.map(str::to_owned),
             Vec::new(),
             proxy_auth,
-            Default::default(),
+            jobs.clone(),
         ),
         dir,
         state,
+        jobs,
         album_id,
         track_id,
     }
@@ -2891,7 +2894,7 @@ async fn only_admins_see_and_start_a_rescan_which_reports_when_it_ends() {
     );
 
     // A scan the folder watcher runs shows with what started it.
-    let record = crate::graphql::jobs::record_watch(&f.state.jobs);
+    let record = crate::graphql::jobs::record_watch(&f.jobs);
     record(&koan_core::helpers::WatchScan::Started("start-up"));
     record(&koan_core::helpers::WatchScan::Read {
         done: 50,
