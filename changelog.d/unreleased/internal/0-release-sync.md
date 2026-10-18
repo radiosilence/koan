@@ -1,0 +1,1 @@
+- **`just release` resolves the lockfile online and refuses a release branch that already exists on origin.** The offline lockfile update failed on a machine whose cargo cache lacked a locked dependency, after the branch had been made and the version bumped.
