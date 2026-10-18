@@ -179,7 +179,7 @@ struct QueueView: View {
                     art: art,
                     levels: levels,
                     toggleFavourite: { library.toggleFavourite(track: $0) },
-                    open: { [nav, engine = library.engine] in nav.follow($0, engine: engine) },
+                    open: { [nav] in nav.follow($0) },
                     offline: offline
                 ),
                 contextKey: AnyHashable(key),
@@ -212,6 +212,7 @@ struct QueueView: View {
                 title: group.title,
                 artist: group.album.isEmpty ? nil : (group.albumArtist.isEmpty ? "Unknown Artist" : group.albumArtist),
                 albumId: group.items.first?.albumId,
+                artistId: group.items.first?.albumArtistId,
                 detail: group.detail,
                 sleeve: group.items.first?.sleeve,
                 sleeveSize: 52
@@ -1040,7 +1041,7 @@ private struct QueueAlbumHeader: View {
                 if !group.album.isEmpty {
                     LinkText(
                         text: group.albumArtist.isEmpty ? "Unknown Artist" : group.albumArtist,
-                        target: albumId.map { .artistOfAlbum($0) },
+                        target: group.items.first?.albumArtistId.map { .artist($0) },
                         font: .role(.fine, system: .caption)
                     )
                 }

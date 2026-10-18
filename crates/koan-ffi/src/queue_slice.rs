@@ -15,6 +15,7 @@
 
 use std::collections::HashMap;
 
+use koan_core::db::queries::Place;
 use koan_core::player::state::{QueueItemId, QueueReading, SharedPlayerState};
 
 use crate::state::StateSlice;
@@ -25,11 +26,11 @@ use crate::types::{EntryStatus, QueueItem};
 /// drifted far makes every later patch carry the drift.
 pub(crate) const PATCH_MAX: usize = 512;
 
-/// What the library says about each queued track: its album, and where its
-/// bytes are (on a server, on this machine).
+/// What the library says about each queued track: its place (record and
+/// artists), and where its bytes are (on a server, on this machine).
 #[derive(Default)]
 pub(crate) struct Joins {
-    pub album_ids: HashMap<i64, i64>,
+    pub places: HashMap<i64, Place>,
     pub sources: HashMap<i64, (bool, bool)>,
 }
 
@@ -57,7 +58,7 @@ struct Base {
 /// What the library says about one row.
 #[derive(Clone, Copy, PartialEq)]
 struct Library {
-    album_id: Option<i64>,
+    place: Place,
     on_server: bool,
     on_disk: bool,
 }
@@ -69,7 +70,10 @@ impl Library {
             .copied()
             .unwrap_or((false, false));
         Self {
-            album_id: track.and_then(|id| joins.album_ids.get(&id).copied()),
+            place: track
+                .and_then(|id| joins.places.get(&id))
+                .copied()
+                .unwrap_or_default(),
             on_server,
             on_disk,
         }
@@ -135,8 +139,8 @@ impl QueueSender {
         // ask it again.
         let pairs = || readings.iter().zip(&base.library);
         let held = Joins {
-            album_ids: pairs()
-                .filter_map(|(r, l)| Some((r.db_id?, l.album_id?)))
+            places: pairs()
+                .filter_map(|(r, l)| Some((r.db_id?, l.place)))
                 .collect(),
             sources: pairs()
                 .filter_map(|(r, l)| Some((r.db_id?, (l.on_server, l.on_disk))))
@@ -158,7 +162,7 @@ impl QueueSender {
         let joins = joins(&track_ids);
         let items: Vec<QueueItem> = entries
             .iter()
-            .map(|e| QueueItem::from_entry(e, &joins.album_ids, &joins.sources))
+            .map(|e| QueueItem::from_entry(e, &joins.places, &joins.sources))
             .collect();
         let slices = vec![
             StateSlice::Queue {
@@ -193,14 +197,18 @@ fn moved(sent: &QueueItem, reading: &QueueReading, library: Library) -> Option<Q
         && reading.error == sent.failure_reason
         && library.on_server == sent.on_server
         && library.on_disk == sent.on_disk
-        && library.album_id == sent.album_id;
+        && library.place.album_id == sent.album_id
+        && library.place.artist_id == sent.artist_id
+        && library.place.album_artist_id == sent.album_artist_id;
     (!same).then(|| QueueItem {
         status,
         duration_ms: reading.duration_ms,
         failure_reason: reading.error.clone(),
         on_server: library.on_server,
         on_disk: library.on_disk,
-        album_id: library.album_id,
+        album_id: library.place.album_id,
+        artist_id: library.place.artist_id,
+        album_artist_id: library.place.album_artist_id,
         ..sent.clone()
     })
 }
@@ -255,10 +263,19 @@ mod tests {
         (state, ids)
     }
 
+    /// A track on `album`, by the record's own artist.
+    fn record(album: i64) -> Place {
+        Place {
+            album_id: Some(album),
+            artist_id: Some(7),
+            album_artist_id: Some(7),
+        }
+    }
+
     /// Half the queue's tracks on disk, as a library with a cache would say.
     fn joins(ids: &[i64]) -> Joins {
         Joins {
-            album_ids: ids.iter().map(|&id| (id, id / 12)).collect(),
+            places: ids.iter().map(|&id| (id, record(id / 12))).collect(),
             sources: ids.iter().map(|&id| (id, (true, id % 2 == 0))).collect(),
         }
     }
@@ -306,9 +323,9 @@ mod tests {
     /// has been split off into an album of its own.
     fn landed(ids: &[i64]) -> Joins {
         Joins {
-            album_ids: ids
+            places: ids
                 .iter()
-                .map(|&id| (id, if id < 12 { 1_000 } else { id / 12 }))
+                .map(|&id| (id, record(if id < 12 { 1_000 } else { id / 12 })))
                 .collect(),
             sources: ids.iter().map(|&id| (id, (true, true))).collect(),
         }
@@ -324,7 +341,7 @@ mod tests {
         let j = joins(&ids);
         entries
             .iter()
-            .map(|e| QueueItem::from_entry(e, &j.album_ids, &j.sources))
+            .map(|e| QueueItem::from_entry(e, &j.places, &j.sources))
             .collect()
     }
 

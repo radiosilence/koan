@@ -488,23 +488,12 @@ struct TrackRow: View {
                             : KoanTheme.style(.ink, system: .primary)
                     )
                 if credited {
-                    HStack(spacing: 5) {
-                        LinkText(
-                            text: track.artistName,
-                            target: track.artistId.map { .artist($0) },
-                            font: .role(.fine, system: .caption)
-                        )
-                        if showsAlbum {
-                            Text("·")
-                                .font(.role(.fine, system: .caption))
-                                .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
-                            LinkText(
-                                text: track.albumTitle,
-                                target: track.albumId.map { .album($0) },
-                                font: .role(.fine, system: .caption)
-                            )
-                        }
-                    }
+                    ArtistAlbumLine(
+                        artist: track.artistName,
+                        artistId: track.artistId,
+                        album: showsAlbum ? track.albumTitle : nil,
+                        albumId: track.albumId
+                    )
                 }
             }
 

@@ -410,6 +410,8 @@ mod tests {
                     queue_item_id: format!("01930000-0000-7000-8000-{i:012}"),
                     track_id: Some(i as i64),
                     album_id: Some((i / 12) as i64),
+                    artist_id: Some(1),
+                    album_artist_id: Some(1),
                     title: format!("Track {i}"),
                     artist: "An Artist Whose Name Is Of Ordinary Length".into(),
                     album_artist: "An Artist Whose Name Is Of Ordinary Length".into(),

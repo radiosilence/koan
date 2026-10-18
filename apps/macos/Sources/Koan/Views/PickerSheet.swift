@@ -253,7 +253,7 @@ struct PickerSheet: View {
                             id: $0.id,
                             kind: .track,
                             title: $0.title,
-                            subtitle: "\($0.artistName) — \($0.albumTitle)",
+                            subtitle: "\($0.artistName) · \($0.albumTitle)",
                             durationMs: $0.durationMs
                         )
                     }

@@ -108,7 +108,7 @@ struct SidebarSearch: View {
         search.tracks.prefix(5).map {
             Suggestion(
                 kind: "tracks", albumId: $0.albumId, title: $0.title,
-                subtitle: "\($0.artistName) — \($0.albumTitle)",
+                subtitle: "\($0.artistName) · \($0.albumTitle)",
                 token: SearchModel.Selection.track($0.id, album: $0.albumId).token
             )
         } + search.albums.prefix(4).map {

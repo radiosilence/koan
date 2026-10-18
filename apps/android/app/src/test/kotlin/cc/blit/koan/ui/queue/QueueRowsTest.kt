@@ -10,6 +10,8 @@ class QueueRowsTest {
         queueItemId = id,
         trackId = id.hashCode().toLong(),
         albumId = null,
+        artistId = null,
+        albumArtistId = null,
         title = title,
         artist = artist,
         albumArtist = artist,

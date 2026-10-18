@@ -108,7 +108,7 @@ struct TransportBar: View {
                             source: sleeve,
                             title: player.currentEntry?.title ?? "",
                             subtitle: player.currentEntry.map {
-                                "\($0.artist) — \($0.album)"
+                                "\($0.artist) · \($0.album)"
                             }
                         )
                 } else {
@@ -137,25 +137,14 @@ struct TransportBar: View {
                         .lineLimit(1)
                         .rainbowShimmer()
                     // Both names go where they say they go, rather than the
-                    // line as a whole meaning one of them. `LinkText` is the
-                    // same one the rows and headers use.
-                    HStack(spacing: 0) {
-                        LinkText(
-                            text: entry.artist,
-                            target: player.currentArtistId.map { .artist($0) },
-                            font: .role(.fine, system: .caption)
-                        )
-                        if !entry.album.isEmpty {
-                            Text(" — ")
-                                .koanText(.fine, .muted)
-                            LinkText(
-                                text: entry.album,
-                                target: player.currentAlbumId.map { .album($0) },
-                                font: .role(.fine, system: .caption)
-                            )
-                        }
-                    }
-                    .lineLimit(1)
+                    // line as a whole meaning one of them, drawn as every row
+                    // draws them.
+                    ArtistAlbumLine(
+                        artist: entry.artist,
+                        artistId: player.currentArtistId,
+                        album: entry.album,
+                        albumId: player.currentAlbumId
+                    )
                 } else {
                     Text("Nothing playing").koanCase()
                         .koanText(.meta, .muted)

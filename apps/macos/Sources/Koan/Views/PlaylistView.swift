@@ -183,6 +183,7 @@ struct PlaylistView: View {
                     title: group.album,
                     artist: group.artist.isEmpty ? "Unknown Artist" : group.artist,
                     albumId: track?.albumId,
+                    artistId: group.entries.first?.albumArtistId,
                     detail: nil,
                     sleeve: track.map { $0.albumId.map { .album($0) } ?? .track($0.id) },
                     sleeveSize: 44
@@ -225,7 +226,7 @@ struct PlaylistView: View {
                     art: art,
                     levels: levels,
                     toggleFavourite: { library.toggleFavourite(track: $0) },
-                    open: { [nav, engine = library.engine] in nav.follow($0, engine: engine) }
+                    open: { [nav] in nav.follow($0) }
                 ),
                 contextKey: AnyHashable(key),
                 selection: $selection,
@@ -773,7 +774,7 @@ private struct PlaylistAlbumHeader: View {
                 )
                 LinkText(
                     text: group.artist.isEmpty ? "Unknown Artist" : group.artist,
-                    target: albumId.map { .artistOfAlbum($0) },
+                    target: group.entries.first?.albumArtistId.map { .artist($0) },
                     font: .role(.fine, system: .caption)
                 )
             }

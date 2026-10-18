@@ -1977,11 +1977,17 @@ impl KoanEngine {
                 entries.retain(|e| e.track.cached_path.is_some() || e.track.path.is_some());
             }
             let ids: Vec<i64> = entries.iter().map(|e| e.id).collect();
+            let track_ids: Vec<i64> = entries.iter().map(|e| e.track.id).collect();
+            let places = queries::places_for_tracks(&db.conn, &track_ids).unwrap_or_default();
             let tracks = self.decorate(&db, entries.into_iter().map(|e| e.track).collect());
             Ok(ids
                 .into_iter()
                 .zip(tracks)
-                .map(|(entry_id, track)| PlaylistEntry { entry_id, track })
+                .map(|(entry_id, track)| PlaylistEntry {
+                    entry_id,
+                    album_artist_id: places.get(&track.id).and_then(|p| p.album_artist_id),
+                    track,
+                })
                 .collect())
         })
         .await
@@ -5269,15 +5275,18 @@ impl KoanEngine {
                         last_store = store_version;
                         let transfers = store.all();
                         let ids: Vec<i64> = transfers.iter().map(|d| d.track_id).collect();
-                        let albums = engine
+                        let rows: HashMap<i64, queries::TrackRow> = engine
                             .db()
                             .ok()
-                            .and_then(|db| queries::album_ids_for_tracks(&db.conn, &ids).ok())
-                            .unwrap_or_default();
+                            .and_then(|db| queries::tracks_by_ids(&db.conn, &ids).ok())
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|r| (r.id, r))
+                            .collect();
                         out.publish(StateSlice::Transfers {
                             transfers: transfers
                                 .iter()
-                                .map(|d| Transfer::of(d, albums.get(&d.track_id).copied()))
+                                .map(|d| Transfer::of(d, rows.get(&d.track_id)))
                                 .collect(),
                         });
                         let now_running: HashSet<_> = transfers
@@ -5487,6 +5496,12 @@ impl KoanEngine {
         let st = device.and_then(|d| d.state.clone()).unwrap_or_default();
         let ids: Vec<String> = st.queue.iter().filter_map(|e| e.track_id.clone()).collect();
         let rows = self.rows_for_remote(&ids);
+        let row_ids: Vec<i64> = rows.values().map(|r| r.id).collect();
+        let places = self
+            .db()
+            .ok()
+            .and_then(|db| queries::places_for_tracks(&db.conn, &row_ids).ok())
+            .unwrap_or_default();
         let current = st.queue.iter().position(|e| e.current);
         let items: Vec<QueueItem> = st
             .queue
@@ -5498,6 +5513,10 @@ impl KoanEngine {
                     queue_item_id: e.id.clone().unwrap_or_else(|| format!("remote-{n}")),
                     track_id: row.map(|r| r.id),
                     album_id: row.and_then(|r| r.album_id),
+                    artist_id: row.and_then(|r| r.artist_id),
+                    album_artist_id: row
+                        .and_then(|r| places.get(&r.id))
+                        .and_then(|p| p.album_artist_id),
                     title: e.title.clone(),
                     artist: e.artist.clone(),
                     album_artist: row
@@ -5592,8 +5611,7 @@ impl KoanEngine {
             return queue_slice::Joins::default();
         };
         queue_slice::Joins {
-            album_ids: queries::batch::album_ids_for_tracks(&db.conn, track_ids)
-                .unwrap_or_default(),
+            places: queries::batch::places_for_tracks(&db.conn, track_ids).unwrap_or_default(),
             sources: queries::batch::sources_for_tracks(&db.conn, track_ids).unwrap_or_default(),
         }
     }

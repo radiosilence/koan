@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use koan_core::db::queries::{self, AlbumRow, ArtistRow, LibraryStats, TrackRow};
+use koan_core::db::queries::{self, AlbumRow, ArtistRow, LibraryStats, Place, TrackRow};
 use koan_core::player::state::{
     LoadState, PlaybackState, PlaylistItem, QueueEntry, QueueEntryStatus, TrackInfo,
 };
@@ -453,6 +453,10 @@ pub struct QueueItem {
     /// client can draw one sleeve per album rather than asking for artwork once
     /// per track and fetching the same image a dozen times.
     pub album_id: Option<i64>,
+    /// The artist credited on the track and the record's artist, where the
+    /// library knows them: where the names on the row lead.
+    pub artist_id: Option<i64>,
+    pub album_artist_id: Option<i64>,
     pub title: String,
     pub artist: String,
     pub album_artist: String,
@@ -491,8 +495,11 @@ pub struct Transfer {
     pub track_id: i64,
     /// The record it belongs to, so a record's tile can say it is downloading.
     pub album_id: Option<i64>,
+    pub artist_id: Option<i64>,
     pub title: String,
     pub artist: String,
+    /// The record's title, empty where the library has none.
+    pub album: String,
     pub state: TransferState,
     /// Why it stopped, when it failed.
     pub failure_reason: Option<String>,
@@ -531,13 +538,16 @@ impl TransferState {
 }
 
 impl Transfer {
-    pub(crate) fn of(d: &koan_core::remote::downloads::Download, album_id: Option<i64>) -> Self {
+    /// `row` is the library's track, where it still has it.
+    pub(crate) fn of(d: &koan_core::remote::downloads::Download, row: Option<&TrackRow>) -> Self {
         use koan_core::remote::downloads::DownloadState;
         Self {
             track_id: d.track_id,
-            album_id,
+            album_id: row.and_then(|r| r.album_id),
+            artist_id: row.and_then(|r| r.artist_id),
             title: d.title.clone(),
             artist: d.artist.clone(),
+            album: row.map(|r| r.album_title.clone()).unwrap_or_default(),
             state: match &d.state {
                 DownloadState::Queued => TransferState::Queued,
                 DownloadState::Running => TransferState::Running,
@@ -599,6 +609,8 @@ impl QueueItem {
             // The transport polls this and there is no connection here to ask.
             // `PlayerModel` resolves the album for what is playing on its own.
             album_id: None,
+            artist_id: None,
+            album_artist_id: None,
             title: item.title.clone(),
             artist: item.artist.clone(),
             album_artist: item.album_artist.clone(),
@@ -629,9 +641,14 @@ impl QueueItem {
     /// than one per row.
     pub(crate) fn from_entry(
         e: &QueueEntry,
-        album_ids: &HashMap<i64, i64>,
+        places: &HashMap<i64, Place>,
         sources: &HashMap<i64, (bool, bool)>,
     ) -> Self {
+        let place = e
+            .db_id
+            .and_then(|id| places.get(&id))
+            .copied()
+            .unwrap_or_default();
         let (on_server, on_disk) = e
             .db_id
             .and_then(|id| sources.get(&id))
@@ -641,7 +658,9 @@ impl QueueItem {
             queue_item_id: e.id.0.to_string(),
             track_id: e.db_id,
             playlist_entry_id: e.playlist_entry_id,
-            album_id: e.db_id.and_then(|id| album_ids.get(&id).copied()),
+            album_id: place.album_id,
+            artist_id: place.artist_id,
+            album_artist_id: place.album_artist_id,
             title: e.title.clone(),
             artist: e.artist.clone(),
             album_artist: e.album_artist.clone(),
@@ -835,6 +854,8 @@ pub enum QueueLock {
 pub struct PlaylistEntry {
     pub entry_id: i64,
     pub track: Track,
+    /// The track's record's artist, for the heading over a run of the record.
+    pub album_artist_id: Option<i64>,
 }
 
 /// What writing a playlist out to a file managed.

@@ -25,9 +25,10 @@ struct QueueHeading: Equatable {
     let title: String
     /// The record's artist, under its title.
     let artist: String?
-    /// The record, where the library knows it: the title opens it and the
-    /// artist opens whoever it is filed under.
+    /// The record and its artist, where the library knows them: where the
+    /// title and the artist lead.
     let albumId: Int64?
+    let artistId: Int64?
     /// "2007 · 11 tracks · 59:10 · FLAC", where the list says it.
     let detail: String?
     let sleeve: AlbumArtwork.Source?
@@ -97,7 +98,7 @@ final class QueueTableRow: TableCell, TableRow {
     private var wideNumber = false
     private let title = NSTextField(labelWithString: "")
     private let artist = NSTextField(labelWithString: "")
-    private let separator = NSTextField(labelWithString: " — ")
+    private let separator = NSTextField(labelWithString: "·")
     private let album = NSTextField(labelWithString: "")
     private let detail = NSTextField(labelWithString: "")
     private let availability = AvailabilityMark()
@@ -214,8 +215,7 @@ final class QueueTableRow: TableCell, TableRow {
             heart.isHidden = true
             sleeve.opacity = 1
             CATransaction.commit()
-            title.styleLink(font: Self.headingFont, colour: selected ? onAccent : .koanLabel, underlined: hoveredPart == .title)
-            artist.styleLink(font: Self.captionFont, colour: selected ? onAccent : (hoveredPart == .artist ? .koanLabel : .koanSecondaryLabel), underlined: hoveredPart == .artist)
+            styleNames()
             detail.textColor = selected ? onAccent : .koanTertiaryLabel
             needsLayout = true
             return
@@ -259,10 +259,7 @@ final class QueueTableRow: TableCell, TableRow {
         CATransaction.commit()
 
         title.textColor = isCurrent && !selected ? context.tint : (selected ? onAccent : (dimmed ? .koanSecondaryLabel : .koanLabel))
-        let caption: NSColor = selected ? onAccent : (dimmed ? .koanTertiaryLabel : .koanSecondaryLabel)
-        artist.styleLink(font: Self.captionFont, colour: hoveredPart == .artist && !selected ? .koanLabel : caption, underlined: hoveredPart == .artist)
-        separator.textColor = caption
-        album.styleLink(font: Self.captionFont, colour: hoveredPart == .album && !selected ? .koanLabel : caption, underlined: hoveredPart == .album)
+        styleNames()
         number.textColor = selected ? onAccent : (dimmed ? .koanQuaternaryLabel : .koanTertiaryLabel)
         codec.textColor = selected ? onAccent : (dimmed ? .koanQuaternaryLabel : .koanTertiaryLabel)
         duration.textColor = selected ? onAccent : (dimmed ? .koanTertiaryLabel : .koanSecondaryLabel)
@@ -270,6 +267,27 @@ final class QueueTableRow: TableCell, TableRow {
             : content.status == .failed ? content.failureReason ?? "Couldn't be fetched"
             : (content.status == .priorityPending ? "Queued for download" : nil)
         needsLayout = true
+    }
+
+    /// The names that lead somewhere, which follow the pointer between them.
+    /// A move from one to another redraws these and nothing else.
+    private func styleNames() {
+        guard let line, let context else { return }
+        let selected = backgroundStyle == .emphasized
+        let ink = { (part: Part, rest: NSColor) -> NSColor in
+            selected ? .alternateSelectedControlTextColor : (self.hoveredPart == part ? .koanLabel : rest)
+        }
+        switch line.kind {
+        case .heading:
+            title.styleLink(font: Self.headingFont, colour: ink(.title, .koanLabel), underlined: hoveredPart == .title)
+            artist.styleLink(font: Self.captionFont, colour: ink(.artist, .koanSecondaryLabel), underlined: hoveredPart == .artist)
+        case .track(let content, _, _, _):
+            let dimmed = content.status == .played || (context.offline && !content.onDisk && content.status != .playing)
+            let caption: NSColor = dimmed ? .koanTertiaryLabel : .koanSecondaryLabel
+            artist.styleLink(font: Self.captionFont, colour: ink(.artist, caption), underlined: hoveredPart == .artist)
+            separator.textColor = selected ? .alternateSelectedControlTextColor : (dimmed ? .koanQuaternaryLabel : .koanTertiaryLabel)
+            album.styleLink(font: Self.captionFont, colour: ink(.album, caption), underlined: hoveredPart == .album)
+        }
     }
 
     /// The playing row's bars, made for that row only — see `PlayingIndicator`.
@@ -404,13 +422,13 @@ final class QueueTableRow: TableCell, TableRow {
         let captionY = top + titleHeight + 1
         artist.frame = CGRect(x: x, y: captionY, width: min(TrackTableRow.measure(artist.stringValue, Self.captionFont), width), height: captionHeight)
         // An artist that fills the line leaves no room for the record.
-        let separatorWidth = TrackTableRow.measure(separator.stringValue, Self.captionFont)
-        let fits = artist.frame.maxX + separatorWidth < x + width
+        // The same measures as `TrackTableRow`'s artist, dot and record.
+        let fits = artist.frame.maxX + 12 < x + width
         separator.isHidden = album.stringValue.isEmpty || !fits
         album.isHidden = separator.isHidden
         if !album.isHidden {
-            separator.frame = CGRect(x: artist.frame.maxX, y: captionY, width: separatorWidth, height: captionHeight)
-            let albumX = separator.frame.maxX
+            separator.frame = CGRect(x: artist.frame.maxX, y: captionY, width: 10, height: captionHeight)
+            let albumX = separator.frame.maxX + 2
             album.frame = CGRect(
                 x: albumX, y: captionY,
                 width: min(TrackTableRow.measure(album.stringValue, Self.captionFont), x + width - albumX),
@@ -430,9 +448,9 @@ final class QueueTableRow: TableCell, TableRow {
         case (.heading(let heading), .title):
             return heading.artist == nil ? nil : heading.albumId.map { .album($0) }
         case (.heading(let heading), .artist):
-            return heading.albumId.map { .artistOfAlbum($0) }
+            return heading.artistId.map { .artist($0) }
         case (.track(let content, _, _, _), .artist):
-            return content.artistLink
+            return content.artistId.map { .artist($0) }
         case (.track(let content, _, _, _), .album):
             return content.albumId.map { .album($0) }
         default:
@@ -454,10 +472,13 @@ final class QueueTableRow: TableCell, TableRow {
     func hover(at point: NSPoint?) -> Bool {
         let now = point != nil
         let part = point.flatMap(part(at:))
-        if now != hovered || part != hoveredPart {
+        if now != hovered {
             hovered = now
             hoveredPart = part
             restyle()
+        } else if part != hoveredPart {
+            hoveredPart = part
+            styleNames()
         }
         return part != nil
     }

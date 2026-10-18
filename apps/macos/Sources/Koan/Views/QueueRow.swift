@@ -14,7 +14,7 @@ struct QueueRowContent: Equatable {
     var artist: String
     var album: String
     /// Where the artist and the album names lead.
-    var artistLink: LinkText.Target?
+    var artistId: Int64?
     var albumId: Int64?
     /// Its place: the track number in the queue, the position in a playlist.
     /// Int64 because the two sources disagree on width and this only ever gets
@@ -47,7 +47,7 @@ struct QueueRowContent: Equatable {
         title = item.title
         artist = item.artist
         album = item.album
-        artistLink = item.trackId.map { .artistOfTrack($0) }
+        artistId = item.artistId
         albumId = item.albumId
         number = item.trackNumber
         if let album = item.albumId, discs.contains(album) { disc = item.disc ?? 1 }
@@ -78,7 +78,7 @@ struct QueueRowContent: Equatable {
         title = track.title
         artist = track.artistName
         album = track.albumTitle
-        artistLink = track.artistId.map { .artist($0) }
+        artistId = track.artistId
         albumId = track.albumId
         number = Int64(position)
         codec = track.codec
@@ -155,16 +155,13 @@ struct QueueRow: View {
                 // Only worth a second line when it differs from the album
                 // artist — compilations and features, not every track.
                 if showArtist && !item.artist.isEmpty {
-                    HStack(spacing: 0) {
-                        LinkText(text: item.artist, target: item.artistLink, font: .role(.fine, system: .caption), dimmed: played)
-                        if artwork && !item.album.isEmpty {
-                            Text(" — ")
-                                .font(.role(.fine, system: .caption))
-                                .foregroundStyle(played ? .tertiary : .secondary)
-                            LinkText(text: item.album, target: item.albumId.map { .album($0) }, font: .role(.fine, system: .caption), dimmed: played)
-                        }
-                    }
-                    .lineLimit(1)
+                    ArtistAlbumLine(
+                        artist: item.artist,
+                        artistId: item.artistId,
+                        album: artwork ? item.album : nil,
+                        albumId: item.albumId,
+                        dimmed: played
+                    )
                 }
             }
 
