@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.65.1
+
+### Added
+
+- **Jobs over a GraphQL subscription.** `subscription { jobs { … } }` sends the server's jobs as they start, move and end, scans included, so a client can show a scan without polling. Admins only.
+
+### Changed
+
+- **`job` and `jobs` are admin-only.** Only admins can start a job, so only they read them; a non-admin's query is now refused.
+
+### Fixed
+
+- **Every credited artist links from the queue and playlists.** A track or record credited to several artists links each of them on the Mac's and iOS's queue and playlist rows and record headings, as album and artist pages already did.
+- **Queue rows drag onto playlists again on the Mac.** A track dragged out of the queue lands on a playlist or New Playlist, and a record's heading brings the whole record; since the queue became a table they carried nothing outside it.
+- **⌘A selects everything in the Mac's lists.** Select All in the queue, playlists, track lists, favourites and search held only the row selected before it, so deleting or dragging afterwards acted on that one row.
+
 ## 0.65.0
 
 ### Added
