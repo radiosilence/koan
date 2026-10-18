@@ -80,7 +80,7 @@ struct Folded {
 impl Folded {
     fn new(credit: &str) -> Self {
         let mut chars = Vec::with_capacity(credit.len());
-        let mut spans = Vec::with_capacity(credit.len());
+        let mut spans: Vec<(usize, usize)> = Vec::with_capacity(credit.len());
         for (at, c) in credit.char_indices() {
             let span = (at, at + c.len_utf8());
             if c.is_whitespace() {
@@ -251,9 +251,9 @@ mod tests {
     #[test]
     fn a_credit_naming_no_artists_links_where_it_is_filed() {
         assert_eq!(
-            read(&credit_parts("Solo", Some(4), &[])),
+            read(&credit_parts::<&str>("Solo", Some(4), &[])),
             [("Solo", Some(4))]
         );
-        assert_eq!(read(&credit_parts("", None, &[])), [("", None)]);
+        assert_eq!(read(&credit_parts::<&str>("", None, &[])), [("", None)]);
     }
 }
