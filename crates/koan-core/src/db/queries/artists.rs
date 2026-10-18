@@ -475,6 +475,36 @@ mod tests {
     }
 
     #[test]
+    fn retagging_without_the_lists_takes_the_credits_away() {
+        use crate::db::queries::{sample_meta, upsert_track};
+        let db = collaboration_db(true);
+        let credit = format!("{DUCHAMP} × {ATLAS}");
+        for (n, title) in [(1, "Revenant du nord"), (2, "Siilent")] {
+            let mut m = sample_meta(title, &credit, "Revenant du nord / Siilent");
+            m.track_number = Some(n);
+            m.path = Some(format!("/music/ep/{n}.mp3"));
+            upsert_track(&db.conn, &m).unwrap();
+        }
+        assert_eq!(album_titles(&db, artist_id(&db, ATLAS)), ["Own 1"]);
+        let links: i64 = db
+            .conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM track_credits) + (SELECT COUNT(*) FROM album_credits)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(links, 0);
+        assert!(
+            all_artists(&db.conn)
+                .unwrap()
+                .iter()
+                .any(|a| a.name == credit),
+            "the credit is an artist again"
+        );
+    }
+
+    #[test]
     fn a_credit_named_only_as_a_string_is_left_as_it_was() {
         let db = collaboration_db(false);
         let credit = format!("{DUCHAMP} × {ATLAS}");

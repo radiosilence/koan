@@ -674,6 +674,20 @@ pub fn metadata_from_probe_result(meta: &MetadataRevision, fallback_title: &str)
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn slash_joined_credits_split_only_where_the_ids_do() {
+        let ids = |s: &str| vec![s.to_string()];
+        let both = slashed(ids("A/B"), ids("id-a/id-b"));
+        assert_eq!(
+            both.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+            ["A", "B"]
+        );
+        assert_eq!(both[1].mbid.as_deref(), Some("id-b"));
+        let acdc = slashed(ids("AC/DC"), ids("66c662b6-6e2f-4930-8610-912e24c63ed1"));
+        assert_eq!(acdc.len(), 1);
+        assert_eq!(acdc[0].name, "AC/DC");
+    }
+
     use super::*;
 
     /// A file carrying both tags must be read from ID3v2. ID3v1's fields are a
