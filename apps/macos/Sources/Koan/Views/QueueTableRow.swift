@@ -492,7 +492,7 @@ final class QueueTableRow: TableCell, TableRow {
         } else if line.isTrack {
             found = !album.isHidden && album.frame.contains(point) ? .album : nil
         } else {
-            found = title.frame.contains(point) ? .title : nil
+            found = !title.isHidden && title.frame.contains(point) ? .title : nil
         }
         return found.flatMap { target(of: $0) == nil ? nil : $0 }
     }

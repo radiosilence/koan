@@ -104,25 +104,30 @@ struct Base {
 }
 
 /// What the library says about one row.
-#[derive(Clone, PartialEq)]
 struct Library {
     place: Place,
     on_server: bool,
     on_disk: bool,
-    artist_credit: Vec<CreditPart>,
-    album_artist_credit: Vec<CreditPart>,
+    /// The row's artist and record artist credits, only where they now read
+    /// differently from the row as sent: a pass over the rows compares no
+    /// strings.
+    credits: Option<(Vec<CreditPart>, Vec<CreditPart>)>,
 }
 
 impl Library {
-    fn of(track: Option<i64>, artist: &str, album_artist: &str, joins: &Joins) -> Self {
+    /// The library's reading of `track`, where `sent` is the row as last sent
+    /// whole, if it differs in its credits.
+    fn of(track: Option<i64>, joins: &Joins, sent: Option<&QueueItem>) -> Self {
         let (on_server, on_disk) = joins.sources(track);
-        let (artist_credit, album_artist_credit) = joins.credits(track, artist, album_artist);
+        let credits = sent.and_then(|sent| {
+            let now = joins.credits(track, &sent.artist, &sent.album_artist);
+            (now.0 != sent.artist_credit || now.1 != sent.album_artist_credit).then_some(now)
+        });
         Self {
             place: joins.place(track),
             on_server,
             on_disk,
-            artist_credit,
-            album_artist_credit,
+            credits,
         }
     }
 }
@@ -164,9 +169,7 @@ impl QueueSender {
             base.library = readings
                 .iter()
                 .zip(&base.items)
-                .map(|(r, sent)| {
-                    Library::of(r.db_id, &sent.artist, &sent.album_artist, &base.joins)
-                })
+                .map(|(r, sent)| Library::of(r.db_id, &base.joins, Some(sent)))
                 .collect();
         }
 
@@ -222,7 +225,7 @@ impl QueueSender {
             ids: entries.iter().map(|e| e.id).collect(),
             library: entries
                 .iter()
-                .map(|e| Library::of(e.db_id, &e.artist, &e.album_artist, &joins))
+                .map(|e| Library::of(e.db_id, &joins, None))
                 .collect(),
             items,
             joins,
@@ -243,20 +246,25 @@ fn moved(sent: &QueueItem, reading: &QueueReading, library: &Library) -> Option<
         && library.place.album_id == sent.album_id
         && library.place.artist_id == sent.artist_id
         && library.place.album_artist_id == sent.album_artist_id
-        && library.artist_credit == sent.artist_credit
-        && library.album_artist_credit == sent.album_artist_credit;
-    (!same).then(|| QueueItem {
-        status,
-        duration_ms: reading.duration_ms,
-        failure_reason: reading.error.clone(),
-        on_server: library.on_server,
-        on_disk: library.on_disk,
-        album_id: library.place.album_id,
-        artist_id: library.place.artist_id,
-        album_artist_id: library.place.album_artist_id,
-        artist_credit: library.artist_credit.clone(),
-        album_artist_credit: library.album_artist_credit.clone(),
-        ..sent.clone()
+        && library.credits.is_none();
+    (!same).then(|| {
+        let (artist_credit, album_artist_credit) = library
+            .credits
+            .clone()
+            .unwrap_or_else(|| (sent.artist_credit.clone(), sent.album_artist_credit.clone()));
+        QueueItem {
+            status,
+            duration_ms: reading.duration_ms,
+            failure_reason: reading.error.clone(),
+            on_server: library.on_server,
+            on_disk: library.on_disk,
+            album_id: library.place.album_id,
+            artist_id: library.place.artist_id,
+            album_artist_id: library.place.album_artist_id,
+            artist_credit,
+            album_artist_credit,
+            ..sent.clone()
+        }
     })
 }
 
