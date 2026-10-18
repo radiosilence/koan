@@ -1720,9 +1720,10 @@ pub struct SubsonicSong {
     #[serde(default, deserialize_with = "non_empty")]
     pub music_brainz_id: Option<String>,
     /// OpenSubsonic: each artist the song's and its album's credits name.
-    #[serde(default)]
+    /// Servers send null or leave out fields here; neither costs the song.
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub artists: Vec<SubsonicArtistRef>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub album_artists: Vec<SubsonicArtistRef>,
 }
 
@@ -1732,7 +1733,8 @@ pub struct SubsonicSong {
 pub struct SubsonicArtistRef {
     #[serde(default, deserialize_with = "non_empty")]
     pub id: Option<String>,
-    pub name: String,
+    #[serde(default, deserialize_with = "non_empty")]
+    pub name: Option<String>,
     #[serde(default, deserialize_with = "non_empty")]
     pub music_brainz_id: Option<String>,
 }
@@ -1742,9 +1744,10 @@ impl SubsonicSong {
     pub fn credits(&self) -> crate::db::queries::Credits {
         let list = |refs: &[SubsonicArtistRef]| {
             refs.iter()
-                .filter(|r| !r.name.trim().is_empty())
-                .map(|r| crate::db::queries::Credit {
-                    name: r.name.clone(),
+                .filter_map(|r| Some((r, r.name.as_deref()?.trim())))
+                .filter(|(_, name)| !name.is_empty())
+                .map(|(r, name)| crate::db::queries::Credit {
+                    name: name.to_string(),
                     mbid: r.music_brainz_id.clone(),
                     remote_id: r.id.clone(),
                 })
@@ -1851,6 +1854,14 @@ fn non_empty<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D
     Ok(Option::<String>::deserialize(d)?.filter(|s| !s.is_empty()))
 }
 
+fn null_as_empty<'de, D, T>(d: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(d)?.unwrap_or_default())
+}
+
 /// Generate a random hex salt string for Subsonic auth.
 ///
 /// The salt goes on the wire next to `md5(password + salt)`, so it has to be
@@ -1865,6 +1876,28 @@ fn random_salt() -> Result<String, getrandom::Error> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_song_with_null_or_nameless_credits_still_reads() {
+        let song: SubsonicSong = serde_json::from_value(serde_json::json!({
+            "id": "s1",
+            "title": "Siilent",
+            "artists": null,
+            "albumArtists": [
+                {"id": "ar1"},
+                {"id": "ar2", "name": "Frànçois & the Atlas Mountains", "musicBrainzId": "63862e0f"}
+            ]
+        }))
+        .unwrap();
+        let credits = song.credits();
+        assert!(credits.artists.is_empty());
+        assert_eq!(credits.album_artists.len(), 1);
+        assert_eq!(
+            credits.album_artists[0].name,
+            "Frànçois & the Atlas Mountains"
+        );
+        assert_eq!(credits.album_artists[0].remote_id.as_deref(), Some("ar2"));
+    }
+
     use std::time::{Duration, Instant};
 
     use super::*;

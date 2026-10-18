@@ -286,6 +286,10 @@ pub(crate) fn prune_if_empty(
         )?;
         if emptied > 0 {
             conn.execute(
+                "DELETE FROM album_credits WHERE album_id = ?1",
+                params![album_id],
+            )?;
+            conn.execute(
                 "DELETE FROM favourite_albums WHERE album_id = ?1",
                 params![album_id],
             )?;

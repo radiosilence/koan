@@ -173,15 +173,17 @@ pub(crate) fn merge_albums(conn: &Connection, keep: i64, gone: i64) -> rusqlite:
         ] {
             conn.execute(sql, params![keep, gone])?;
         }
+        // By hand rather than by cascade: upgrades merge albums with foreign
+        // keys off.
         for sql in [
             "DELETE FROM favourite_albums WHERE album_id = ?1",
             "DELETE FROM album_ratings WHERE album_id = ?1",
+            "DELETE FROM album_credits WHERE album_id = ?1",
             "DELETE FROM albums WHERE id = ?1",
         ] {
             conn.execute(sql, params![gone])?;
         }
-        // The deleted album's credits went with it; the tracks it gave up
-        // count towards the album they joined.
+        // The tracks it gave up count towards the album they joined.
         super::sources::recount_album_credits(conn, keep)?;
         if let Some(uid) = &server_uid {
             conn.execute(

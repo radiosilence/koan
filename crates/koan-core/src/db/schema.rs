@@ -1400,6 +1400,8 @@ fn merge_folded_artists(conn: &Connection) -> rusqlite::Result<()> {
                 "UPDATE albums SET artist_id = ?1 WHERE artist_id = ?2",
                 "UPDATE tracks SET artist_id = ?1 WHERE artist_id = ?2",
                 "UPDATE OR IGNORE favourite_artists SET artist_id = ?1 WHERE artist_id = ?2",
+                "UPDATE OR IGNORE track_credits SET artist_id = ?1 WHERE artist_id = ?2",
+                "UPDATE OR IGNORE album_credits SET artist_id = ?1 WHERE artist_id = ?2",
                 "UPDATE shares SET subject_id = ?1 WHERE kind = 'artist' AND subject_id = ?2",
                 "UPDATE artists SET
                      remote_id = COALESCE(remote_id, (SELECT remote_id FROM artists WHERE id = ?2)),
@@ -1409,9 +1411,13 @@ fn merge_folded_artists(conn: &Connection) -> rusqlite::Result<()> {
             ] {
                 conn.execute(sql, [keep, gone])?;
             }
+            // Upgrades run with foreign keys off, so nothing cascades here:
+            // what did not move across is deleted by hand.
             for sql in [
                 "DELETE FROM favourite_artists WHERE artist_id = ?1",
                 "DELETE FROM artist_info WHERE artist_id = ?1",
+                "DELETE FROM track_credits WHERE artist_id = ?1",
+                "DELETE FROM album_credits WHERE artist_id = ?1",
                 "DELETE FROM artists WHERE id = ?1",
             ] {
                 conn.execute(sql, [gone])?;
@@ -1660,6 +1666,77 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> rusqlite::Resu
 
 #[cfg(test)]
 mod tests {
+    /// Upgrades merge artists, albums and tracks with foreign keys off, so
+    /// nothing cascades: every credit row has to be moved or deleted by hand,
+    /// or the upgrade's own check refuses the database.
+    #[test]
+    fn merges_with_foreign_keys_off_leave_no_credit_naming_what_is_gone() {
+        use crate::db::queries::sources::Forget;
+        use crate::db::queries::{Credit, Credits, sample_meta, upsert_track};
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+        super::create_tables(&conn).unwrap();
+        let both = Credits {
+            artists: ["Lauer", "The Golden Filter"]
+                .map(|name| Credit {
+                    name: name.into(),
+                    ..Default::default()
+                })
+                .to_vec(),
+            album_artists: ["Lauer", "The Golden Filter"]
+                .map(|name| Credit {
+                    name: name.into(),
+                    ..Default::default()
+                })
+                .to_vec(),
+        };
+        let mut tracks = Vec::new();
+        for (n, album) in [(1, "Arumbav / Aya"), (2, "Arumbav / Aya"), (3, "Arumba")] {
+            let mut m = sample_meta(&format!("t{n}"), "Lauer & The Golden Filter", album);
+            m.track_number = Some(n);
+            m.path = Some(format!("/music/{n}.flac"));
+            m.credits = both.clone();
+            tracks.push(upsert_track(&conn, &m).unwrap());
+        }
+        let id = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        let filter = id("SELECT id FROM artists WHERE name = 'The Golden Filter'");
+        // A spelling twin, as an older database could hold, named by the
+        // credits in place of the row it folds into.
+        conn.execute(
+            "INSERT INTO artists (name, uid) VALUES ('the golden filter', 'twin')",
+            [],
+        )
+        .unwrap();
+        let twin = id("SELECT id FROM artists WHERE uid = 'twin'");
+        for table in ["track_credits", "album_credits"] {
+            conn.execute(
+                &format!("UPDATE {table} SET artist_id = ?1 WHERE artist_id = ?2"),
+                [twin, filter],
+            )
+            .unwrap();
+        }
+        let split = id("SELECT id FROM albums WHERE title = 'Arumbav / Aya'");
+        let single = id("SELECT id FROM albums WHERE title = 'Arumba'");
+
+        conn.pragma_update(None, "foreign_keys", "off").unwrap();
+        super::merge_folded_artists(&conn).unwrap();
+        crate::db::queries::merge_albums(&conn, split, single).unwrap();
+        crate::db::queries::sources::forget_tracks(&conn, &tracks[..1], Forget::Delete).unwrap();
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+
+        super::refuse_dangling_references(&conn).unwrap();
+        let credited = id(&format!(
+            "SELECT COUNT(*) FROM album_credits WHERE album_id = {split}"
+        ));
+        assert_eq!(credited, 2, "the merged album keeps both artists");
+        assert_eq!(
+            id(&format!(
+                "SELECT COUNT(*) FROM track_credits WHERE artist_id = {twin}"
+            )),
+            0
+        );
+    }
+
     #[test]
     fn case_duplicate_artists_are_merged_on_open() {
         let dir = tempfile::tempdir().unwrap();

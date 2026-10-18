@@ -197,31 +197,49 @@ impl Loader<AlbumStatsOf> for DbLoader {
     }
 }
 
-/// Each artist an album's or a track's credits name.
-macro_rules! credits_loader {
-    ($key:ident, $of:expr) => {
-        impl Loader<$key> for DbLoader {
-            type Value = Vec<queries::batch::CreditedArtist>;
-            type Error = async_graphql::Error;
+impl Loader<AlbumCredits> for DbLoader {
+    type Value = Vec<queries::batch::CreditedArtist>;
+    type Error = async_graphql::Error;
 
-            async fn load(&self, keys: &[$key]) -> Result<HashMap<$key, Self::Value>, Self::Error> {
-                self.batch(keys, |db, keys| {
-                    let ids: Vec<i64> = keys.iter().map(|k| k.0).collect();
-                    let mut credits = queries::batch::credited_artists(&db.conn, $of, &ids)
-                        .map_err(|e| internal_error("db", e))?;
-                    Ok(keys
-                        .into_iter()
-                        .map(|k| (k, credits.remove(&k.0).unwrap_or_default()))
-                        .collect())
-                })
-                .await
-            }
-        }
-    };
+    async fn load(
+        &self,
+        keys: &[AlbumCredits],
+    ) -> Result<HashMap<AlbumCredits, Self::Value>, Self::Error> {
+        self.batch(keys, |db, keys| {
+            let ids: Vec<i64> = keys.iter().map(|k| k.0).collect();
+            let mut credits =
+                queries::batch::credited_artists(&db.conn, queries::batch::CreditsOf::Albums, &ids)
+                    .map_err(|e| internal_error("db", e))?;
+            Ok(keys
+                .into_iter()
+                .map(|k| (k, credits.remove(&k.0).unwrap_or_default()))
+                .collect())
+        })
+        .await
+    }
 }
 
-credits_loader!(AlbumCredits, queries::batch::CreditsOf::Albums);
-credits_loader!(TrackCredits, queries::batch::CreditsOf::Tracks);
+impl Loader<TrackCredits> for DbLoader {
+    type Value = Vec<queries::batch::CreditedArtist>;
+    type Error = async_graphql::Error;
+
+    async fn load(
+        &self,
+        keys: &[TrackCredits],
+    ) -> Result<HashMap<TrackCredits, Self::Value>, Self::Error> {
+        self.batch(keys, |db, keys| {
+            let ids: Vec<i64> = keys.iter().map(|k| k.0).collect();
+            let mut credits =
+                queries::batch::credited_artists(&db.conn, queries::batch::CreditsOf::Tracks, &ids)
+                    .map_err(|e| internal_error("db", e))?;
+            Ok(keys
+                .into_iter()
+                .map(|k| (k, credits.remove(&k.0).unwrap_or_default()))
+                .collect())
+        })
+        .await
+    }
+}
 
 impl Loader<FavouriteTrack> for DbLoader {
     type Value = bool;

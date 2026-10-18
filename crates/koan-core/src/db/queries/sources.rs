@@ -1103,6 +1103,7 @@ fn delete_track(conn: &Connection, track: i64) -> Result<Option<String>, DbError
         .collect::<rusqlite::Result<_>>()?;
     for sql in [
         "DELETE FROM tracks_fts WHERE rowid = ?1",
+        "DELETE FROM track_credits WHERE track_id = ?1",
         "DELETE FROM tracks WHERE id = ?1",
     ] {
         conn.prepare_cached(sql)?.execute(params![track])?;
@@ -1186,9 +1187,11 @@ pub(crate) fn fold_rows(conn: &Connection, winner: i64, loser: i64) -> rusqlite:
         .query_map(params![loser], |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     // What did not move across, a duplicate favourite or a second set of
-    // lyrics, goes with it by its foreign keys.
+    // lyrics, goes with it by its foreign keys. Its credits go by hand, since
+    // an upgrade folds tracks with foreign keys off and they are counted next.
     for sql in [
         "DELETE FROM tracks_fts WHERE rowid = ?1",
+        "DELETE FROM track_credits WHERE track_id = ?1",
         "DELETE FROM tracks WHERE id = ?1",
     ] {
         conn.prepare_cached(sql)?.execute(params![loser])?;

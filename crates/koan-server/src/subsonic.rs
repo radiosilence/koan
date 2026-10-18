@@ -1392,8 +1392,8 @@ fn track_node(track: &queries::TrackRow, tag: &str, extras: &SongExtras) -> XmlN
                 credited
             }
         });
-    // Only where the album credits its artists one by one; absent otherwise,
-    // as it was before credits.
+    // Only where the album credits its artists one by one: an album filed
+    // under one artist names it in `artist` already.
     let album_artists = credit_refs(
         "albumArtists",
         track.album_id.and_then(|a| extras.album_credits.get(&a)),
