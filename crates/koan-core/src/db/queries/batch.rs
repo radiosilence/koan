@@ -12,7 +12,7 @@ use crate::db::connection::DbError;
 
 use super::json_list;
 use super::tracks::row_to_track_row;
-use super::{AlbumRow, TrackRow};
+use super::{AlbumRow, ArtistRow, TrackRow};
 
 const TRACK_COLUMNS: &str = "t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
